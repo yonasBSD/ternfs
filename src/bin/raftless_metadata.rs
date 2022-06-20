@@ -124,7 +124,8 @@ fn do_mkdir(parent_id: u64, next_id: &mut u64, subname: &str, db: &rocksdb::DB
         });
     }
 
-    *next_id += 1;
+    // LSB is creator shard
+    *next_id += 0x100;
 
     Ok(MetadataResponseBody::MkDir(ResolvedInode{
         id: this_id,
@@ -136,11 +137,14 @@ fn do_mkdir(parent_id: u64, next_id: &mut u64, subname: &str, db: &rocksdb::DB
 
 
 // on success returns creation_ts and value bytes
-fn do_resolve(parent_id: u64, subname: &str, snapshot_ts: u64, db: &rocksdb::DB
+fn do_resolve(parent_id: u64, subname: &str, ts: u64, db: &rocksdb::DB
     ) -> MetadataResult<MetadataResponseBody> {
 
+    // when querying "the present" set snapshot_ts to !0u64, as our upper bound
+    let creation_ts_upper_bound = if ts == 0 { !0u64 } else { ts };
+
     let key_lower_bound = make_key(parent_id, subname, 0);
-    let key_upper_bound = make_key(parent_id, subname, snapshot_ts);
+    let key_upper_bound = make_key(parent_id, subname, creation_ts_upper_bound);
 
     let iter_mode = rocksdb::IteratorMode::From(&key_upper_bound,
         rocksdb::Direction::Reverse);
@@ -189,9 +193,19 @@ fn main() {
             "Could not load db");
 
     let mut next_inode_id = match db.get(b"M_LAST_INODE_ID").unwrap() {
-        None => (shard as u64) << 56,
-        Some(v) => u64::from_le_bytes(v.try_into().expect(
-            "Bad format for M_LAST_INODE_ID")) + 1,
+        None => {
+            if shard == 0 {
+                // id 0 is reserved for root
+                1u64 << 8
+            } else {
+                shard as u64
+            }
+        },
+        Some(v) => {
+            let last_id = u64::from_le_bytes(v.try_into().expect(
+                "Bad format for M_LAST_INODE_ID"));
+            last_id + 0x100 // LSB is creator shard
+        }
     };
 
     println!("Using {:#018X} as next inode id", next_inode_id);

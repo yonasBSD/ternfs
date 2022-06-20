@@ -24,8 +24,9 @@ pub enum MetadataRequestBody {
     // creation_time on RmDir ensures it's idempotent
     RmDir{ parent_id: u64, subdirname: String, creation_time: u64 },
     MvDir,
-    // if you're looking at "the present" use !0u64 as ts
+    // if you're looking at "the present" use 0 as ts
     // otherwise populate it with snapshot ts
+    // (0 chosen due to efficient varint encoding)
     Resolve{ parent_id: u64, subname: String, ts: u64 },
 }
 

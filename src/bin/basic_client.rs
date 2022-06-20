@@ -16,7 +16,7 @@ use metadata_msgs::*;
 
 
 // this root id is ineffecient to encode
-const ROOT_ID: u64 = !0u64;
+const ROOT_ID: u64 = 0;
 
 const UDP_MTU: usize = 1472;
 
@@ -192,7 +192,7 @@ fn main() {
     sock.set_read_timeout(Some(Duration::new(2, 0))).expect(
         "Could not set read_timeout");
 
-    let result = resolve_abs_path(&resolve_path, !0u64);
+    let result = resolve_abs_path(&resolve_path, 0);
     let resolved_inode = match result {
         Ok(resolved) => resolved,
         Err(e) => {

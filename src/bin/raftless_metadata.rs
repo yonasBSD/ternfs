@@ -14,6 +14,9 @@ use metadata_msgs::*;
 const UDP_MTU: usize = 1472;
 
 
+const PROTOCOL_VERSION: u32 = 0;
+
+
 #[derive(Debug, Serialize, Deserialize)]
 struct InodeTableValue {
     id: u64,
@@ -208,39 +211,46 @@ fn main() {
                 hex::hexdump(&buf[..len])),
             Ok(m) => {
                 println!("Got {:?} from {}", m, origin);
-                let maybe_response_body = match m.body {
-                    MetadataRequestBody::Resolve { parent_id, subname, ts }
-                        => Some(do_resolve(parent_id, &subname, ts, &db)),
-                    MetadataRequestBody::MkDir { parent_id, subdirname }
-                        => Some(do_mkdir(parent_id, &mut next_inode_id,
-                            &subdirname, &db)),
-                    _ => {
-                        eprintln!("Command not supported yet, ignoring");
-                        None
-                    },
+                let response_body = if m.ver > PROTOCOL_VERSION {
+                    Err(MetadataError {
+                        kind: MetadataErrorKind::UnsupportedVersion,
+                        text: format!(
+                            "Unsupported ver ({} vs {}) on request",
+                            m.ver, PROTOCOL_VERSION),
+                    })
+                } else {
+                    match m.body {
+                        MetadataRequestBody::Resolve { parent_id, subname, ts }
+                            => do_resolve(parent_id, &subname, ts, &db),
+                        MetadataRequestBody::MkDir { parent_id, subdirname }
+                            => do_mkdir(parent_id, &mut next_inode_id, &subdirname,
+                                &db),
+                        _ => {
+                            eprintln!("Command not supported yet, ignoring");
+                            continue;
+                        },
+                    }
                 };
-                if let Some(response_body) = maybe_response_body {
-                    let response = MetadataResponse{
-                        request_id: m.request_id,
-                        body: response_body,
-                    };
-                    let response_sz = bincode_opt().serialized_size(&response
-                        ).unwrap() as usize;
-                    if response_sz > UDP_MTU {
-                        eprintln!("response {:?} is too big for UDP_MTU {}",
-                            response, UDP_MTU);
-                    }
-                    let res0 = bincode_opt().serialize_into(&mut buf[..],
-                        &response);
-                    if let Err(e) = res0 {
-                        eprintln!("Failed to Serialise\n{:#?}, reason: {}",
-                            response, e);
-                    }
-                    let res1 = sock.send_to(&buf[..response_sz], origin);
-                    if let Err(e) = res1 {
-                        eprintln!("Failed to send to {}, reason: {}", origin,
-                            e);
-                    }
+                let response = MetadataResponse{
+                    request_id: m.request_id,
+                    body: response_body,
+                };
+                let response_sz = bincode_opt().serialized_size(&response
+                    ).unwrap() as usize;
+                if response_sz > UDP_MTU {
+                    eprintln!("response {:?} is too big for UDP_MTU {}",
+                        response, UDP_MTU);
+                }
+                let res0 = bincode_opt().serialize_into(&mut buf[..],
+                    &response);
+                if let Err(e) = res0 {
+                    eprintln!("Failed to Serialise\n{:#?}, reason: {}",
+                        response, e);
+                }
+                let res1 = sock.send_to(&buf[..response_sz], origin);
+                if let Err(e) = res1 {
+                    eprintln!("Failed to send to {}, reason: {}", origin,
+                        e);
                 }
             },
         };

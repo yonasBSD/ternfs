@@ -23,12 +23,14 @@ const UDP_MTU: usize = 1472;
 const LOCAL_HOST: std::net::IpAddr = std::net::IpAddr::V4(
     std::net::Ipv4Addr::new(127, 0, 0, 1));
 
+const PROTOCOL_VERSION: u32 = 0;
 
-fn generate_request_id() -> u64 {
+
+fn generate_request_id() -> u32 {
     let now = std::time::SystemTime::now();
     let now_ns = now.duration_since(std::time::SystemTime::UNIX_EPOCH
         ).expect("Now is less than UNIX_EPOCH!").as_nanos();
-    now_ns as u64
+    now_ns as u32
 }
 
 
@@ -40,6 +42,7 @@ fn resolve(parent_id: u64, subname: String, ts: u64
     let port = schema::shard(parent_id) as u16 + 22272;
     let target = std::net::SocketAddr::new(LOCAL_HOST, port);
     let msg = MetadataRequest {
+        ver: PROTOCOL_VERSION,
         request_id: request_id,
         body: MetadataRequestBody::Resolve{
             parent_id: parent_id, subname: subname, ts: ts,
@@ -193,7 +196,7 @@ fn main() {
     let resolved_inode = match result {
         Ok(resolved) => resolved,
         Err(e) => {
-            eprintln!("Failed to resolve {}: {:?}", resolve_path, e);
+            eprintln!("Failed to resolve {}: {:#?}", resolve_path, e);
             std::process::exit(2);
         }
     };
@@ -227,6 +230,7 @@ fn main() {
     };
 
     let msg = MetadataRequest{
+        ver: PROTOCOL_VERSION,
         request_id: generate_request_id(),
         body: body,
     };

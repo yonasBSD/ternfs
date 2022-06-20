@@ -32,7 +32,8 @@ pub enum MetadataRequestBody {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetadataRequest {
-    pub request_id: u64, // echoed back to the client in response
+    pub ver: u32,
+    pub request_id: u32, // echoed back to the client in response
                          // client's responsibiltity to keep unique
     pub body: MetadataRequestBody,
 }
@@ -56,6 +57,7 @@ pub enum MetadataErrorKind {
     NetworkError,
     BincodeError,
     LogicError,
+    UnsupportedVersion,
 }
 
 
@@ -78,6 +80,6 @@ pub enum MetadataResponseBody {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetadataResponse {
-    pub request_id: u64, // echoed back from request
+    pub request_id: u32, // echoed back from request
     pub body: MetadataResult<MetadataResponseBody>,
 }

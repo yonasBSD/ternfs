@@ -25,12 +25,15 @@ struct InodeTableValue {
 }
 
 
+const FIXED_KEY_LEN: usize = 1 + 8 + 1 + 8;
+
+
 fn make_key(parent_id: u64, subname: &str, ts: u64) -> Vec<u8> {
     // key format: b'D' + parent_id + subname + ts
     // subname is stored as a pascal string
     // which gives us desirable sorting properties
     // e.g. make_key(-1, "a", 0) < make_key(-1, "a", !0u64) < make_key(-1, "ab", 1234)
-    let key_len = 1 + 8 + 1 + subname.len() + 8;
+    let key_len = subname.len() + FIXED_KEY_LEN;
     let mut key = vec![0u8; key_len];
     key[0] = b'D';
     key[1..9].copy_from_slice(&parent_id.to_le_bytes());
@@ -38,6 +41,30 @@ fn make_key(parent_id: u64, subname: &str, ts: u64) -> Vec<u8> {
     key[10..key_len-8].copy_from_slice(subname.as_bytes());
     key[key_len-8..].copy_from_slice(&ts.to_le_bytes());
     key
+}
+
+
+fn decompose_key<'a>(key: &'a [u8]) -> (u64, &'a str, u64) {
+    let subname_len = key.len() - FIXED_KEY_LEN;
+
+    assert!(key.len() >= FIXED_KEY_LEN, "Runt key:\n{}", hex::hexdump(key));
+    assert!(subname_len == (key[9] as usize), "Inconsistent size ({} vs {})",
+        subname_len, key[9] as usize);
+    assert!(key[0] == b'D');
+
+    let parent_id = u64::from_le_bytes(key[1..9].try_into().unwrap());
+
+    let subname_raw = &key[10..subname_len+10];
+
+    debug_assert!(std::str::from_utf8(subname_raw).is_ok(),
+        "Bad key in db: 0x{}", hex::hexstr(key));
+
+    let subname = unsafe { std::str::from_utf8_unchecked(subname_raw) };
+
+    let creation_ts = u64::from_le_bytes(
+        key[key.len()-8..].try_into().unwrap());
+
+    (parent_id, subname, creation_ts)
 }
 
 
@@ -176,6 +203,34 @@ fn do_resolve(parent_id: u64, subname: &str, ts: u64, db: &rocksdb::DB
 
     Ok(MetadataResponseBody::Resolve(maybe_resolved))
 }
+
+
+// fn do_lsdir(id: u64, from: &str, ts: u64, db: &rocksdb::DB
+//     ) -> MetadataResult<MetadataResponseBody> {
+
+//     let key_lower_bound = make_key(id, from, 0);
+//     let key_upper_bound = make_key(id + 1, "", 0);
+
+//     let mut read_options = rocksdb::ReadOptions::default();
+//     read_options.set_iterate_upper_bound(key_upper_bound);
+
+//     let mut iter = db.raw_iterator_opt(read_options);
+
+//     iter.seek(key_lower_bound);
+
+//     while let Some(key) = iter.key() {
+
+//     }
+
+//     if let Err(e) = iter.status() {
+//         Err(MetadataError{
+//             kind: MetadataErrorKind::RocksDbError,
+//             text: format!("{}", e),
+//         })
+//     }
+
+
+// }
 
 
 fn main() {

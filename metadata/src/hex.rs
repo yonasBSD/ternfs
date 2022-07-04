@@ -42,6 +42,19 @@ const ASCII_CHARS: [u8; 256] = [
 ];
 
 
+pub fn hexstr(data: &[u8]) -> String {
+    let mut ret = String::with_capacity(2 * data.len());
+
+    for b in data {
+        let double_hex_char = HEX_CHARS[*b as usize];
+        ret.push((double_hex_char & 0xFF) as u8 as char);
+        ret.push((double_hex_char >> 8) as u8 as char);
+    }
+
+    ret
+}
+
+
 pub fn hexdump(data: &[u8]) -> String {
     let n_lines = (data.len() + 15) >> 4;
     let mut retval = vec![0u8; 68 * n_lines];

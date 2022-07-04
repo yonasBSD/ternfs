@@ -19,7 +19,8 @@ pub enum MetadataRequestBody {
     PurgeFileRequest,
     PurgeFileComplete,
     MvFile,
-    LsDir,
+    // LsDir puts as many results as possible into one packet
+    LsDir{ id: u64, from: String, snapshot_time: u64 },
     MkDir{ parent_id: u64, subdirname: String },
     // creation_time on RmDir ensures it's idempotent
     RmDir{ parent_id: u64, subdirname: String, creation_time: u64 },
@@ -70,6 +71,34 @@ pub struct MetadataError {
 
 
 pub type MetadataResult<T> = Result<T, MetadataError>;
+
+
+#[derive(Serialize, Debug)]
+pub struct LsItemRef<'a> {
+    pub name: &'a str,
+    pub inode: ResolvedInode,
+}
+
+
+#[derive(Serialize, Debug)]
+pub struct LsPayloadRef<'a> {
+    pub have_more: bool,
+    pub results: Vec<LsItemRef<'a>>,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LsItem {
+    pub name: String,
+    pub inode: ResolvedInode,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LsPayload {
+    pub have_more: bool,
+    pub results: Vec<LsItem>,
+}
 
 
 #[derive(Serialize, Deserialize, Debug)]

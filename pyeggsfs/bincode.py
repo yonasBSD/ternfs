@@ -12,7 +12,6 @@ U128_MAX = 2**128 - 1
 # support for varint encoding
 # see: https://github.com/bincode-org/bincode/blob/v2.0.0-rc.1/docs/spec.md
 def pack_unsigned_into(x: int, b: bytearray) -> None:
-    '''Returns: bytes written'''
     if x > U128_MAX:
         raise ValueError('Larger than u128 unsupported')
 
@@ -59,7 +58,6 @@ def zigzag(x: int) -> int:
 
 
 def pack_signed_into(x: int, b: bytearray) -> None:
-    '''Returns: bytes written'''
     pack_unsigned_into(zigzag(x), b)
 
 
@@ -67,10 +65,10 @@ class UnpackWrapper:
     def __init__(self, data: bytes):
         self.data = data
         self.idx = 0
-    
+
     def read(self) -> bytes:
         return self.data[self.idx:]
-    
+
     def advance(self, i: int) -> None:
         if self.idx + i > len(self.data):
             raise ValueError('Attempt to advance past end')
@@ -121,6 +119,13 @@ def unzigzag(x: int) -> int:
 def unpack_signed(u: UnpackWrapper) -> int:
     '''Returns: (value, bytes_consumed)'''
     return unzigzag(unpack_unsigned(u))
+
+
+def unpack_bytes(u: UnpackWrapper) -> bytes:
+    size = unpack_unsigned(u)
+    ret = u.read()[:size]
+    u.advance(size)
+    return ret
 
 
 if __name__ == '__main__':

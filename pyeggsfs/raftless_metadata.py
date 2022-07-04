@@ -2,14 +2,18 @@
 
 import argparse
 import enum
-from typing import Dict, List, NamedTuple, Optional, Union
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 from sortedcontainers import SortedDict
 import os
 import pickle
+import socket
 import sys
+
+import metadata_msgs
 
 
 ROOT_INODE_NUMBER = 0
+PROTOCOL_VERSION = 0
 
 
 def shard_from_inode(inode_number: int) -> int:
@@ -47,7 +51,6 @@ class DeadValue:
 
 
 class Directory:
-    inode_id: int
     parent_inode_id: Optional[int]
     mtime: int
     living_items: 'SortedDict[LivingKey, LivingValue]'
@@ -77,7 +80,6 @@ class Span:
 
 
 class File:
-    inode_id: int
     mtime: int
     is_eden: bool
     cookie: int # or maybe str?
@@ -86,17 +88,63 @@ class File:
     spans: List[Span]
 
 
+class StorageNode:
+    write_weight: float # used to weight random variable for block creation
+    private_key: bytes
+    addr: Tuple[str, int]
+
+
 class MetadataShard:
     def __init__(self, shard: int):
         assert 0 <= shard <= 255
-        self.shard = shard
-        self.next_inode_id = shard if shard != 0 else 0x100 # never root
-        self.next_block_id = shard
+        self.shard_id = shard
+        self.next_inode_id = shard | 0x100 # 00-FF is reserved
+        self.next_block_id = shard | 0x100
         self.directories: Dict[int, Directory] = {}
         self.files: Dict[int, File] = {}
+        self.storage_nodes: Dict[int, StorageNode] = {}
 
-    def run_forever(self) -> None:
-        pass
+    def resolve(self, r: metadata_msgs.ResolveReq) -> Optional[metadata_msgs.ResolvedInode]:
+        parent = self.directories.get(r.parent_id)
+        if parent is None:
+            return None
+        hashed_name = hash(r.subname)
+        res = parent.living_items.get(LivingKey(hashed_name, r.subname))
+        if res is None:
+            #TODO: maybe check dead items? (or not since interface will change)
+            return None
+        return metadata_msgs.ResolvedInode(
+            id=res.inode_id,
+            creation_time=res.creation_time,
+            deletion_time=0,
+            is_file=(res.type != InodeType.DIRECTORY),
+        )
+
+def run_forever(shard: MetadataShard) -> None:
+    port = shard.shard_id + 22272
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.bind(('', port))
+    while True:
+        data, addr = sock.recvfrom(8192)
+        request = metadata_msgs.unpack_request(data)
+        if request.ver != PROTOCOL_VERSION:
+            print('Ignoring request, unsupported ver:', request.ver,
+                file=sys.stderr)
+            continue
+        if isinstance(request.body, metadata_msgs.ResolveReq):
+            result = shard.resolve(request.body)
+            resp_body = metadata_msgs.ResolveResp(result)
+        else:
+            print('Ignoring request, unrecognised body:', request.body,
+                file=sys.stderr)
+            continue
+        resp = metadata_msgs.MetadataResponse(
+            request_id=request.request_id,
+            body=resp_body
+        )
+        print(request, resp, '', sep='\n')
+        packed = metadata_msgs.pack_response(resp)
+        sock.sendto(packed, addr)
 
 
 def main() -> None:
@@ -123,7 +171,7 @@ def main() -> None:
         shard_object = MetadataShard(config.shard)
 
     try:
-        shard_object.run_forever()
+        run_forever(shard_object)
     finally:
         print(f'Dumping to {db_fn}')
         with open(db_fn, 'wb') as f:

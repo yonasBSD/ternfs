@@ -129,6 +129,43 @@ def pack_response(r: MetadataResponse) -> bytearray:
     return b
 
 
+def unpack_response(b: bytes) -> MetadataResponse:
+    u = bincode.UnpackWrapper(b)
+    request_id = bincode.unpack_unsigned(u)
+    result_kind = bincode.unpack_unsigned(u)
+    body: RespBodyTy
+    if result_kind == 0:
+        # Result::Ok
+        response_kind = bincode.unpack_unsigned(u)
+        if response_kind == ResponseKind.RESOLVE:
+            option_kind = bincode.unpack_unsigned(u)
+            if option_kind == 0:
+                # Option::None
+                body = ResolveResp(None)
+            else:
+                # Option::Some
+                id = bincode.unpack_unsigned(u)
+                creation_time = bincode.unpack_unsigned(u)
+                deletion_time = bincode.unpack_unsigned(u)
+                is_file = bool(bincode.unpack_unsigned(u))
+                body = ResolveResp(ResolvedInode(
+                    id,
+                    creation_time,
+                    deletion_time,
+                    is_file,
+                ))
+        else:
+            raise ValueError(f'Unrecognised response kind: {response_kind}')
+    else:
+        # Result::Err
+        error_kind = MetadataErrorKind(bincode.unpack_unsigned(u))
+        text = bincode.unpack_bytes(u).decode()
+        body = MetadataError(error_kind, text)
+    if u.idx != len(b):
+        raise ValueError(f'Extra bytes found after request: {b[u.idx:]!r}')
+    return MetadataResponse(request_id, body)
+
+
 def __tests() -> None:
     packed = bytes([0, 123, 13, 251, 0, 2, 11, 104, 101, 108, 108, 111, 95, 119,
         111, 114, 108, 100, 251, 57, 48])
@@ -151,6 +188,10 @@ def __tests() -> None:
         request_id=456,
         body=ResolveResp(f=ResolvedInode(
             id=9001, creation_time=2468, deletion_time=3579, is_file=True)))
+
+    unpack_res2 = unpack_response(packed2)
+
+    assert(unpack_res2 == unpacked2)
 
     pack_res2 = pack_response(unpacked2)
 

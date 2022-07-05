@@ -10,14 +10,10 @@ import socket
 import sys
 
 import metadata_msgs
+import metadata_utils
 
 
-ROOT_INODE_NUMBER = 0
 PROTOCOL_VERSION = 0
-
-
-def shard_from_inode(inode_number: int) -> int:
-    return inode_number & 0xFF
 
 
 class InodeType(enum.IntEnum):
@@ -35,7 +31,7 @@ class LivingValue:
     creation_time: int
     inode_id: int
     type: InodeType
-    is_owning: bool
+    is_owning: bool # maybe not needed? living things are implicitly owning
 
 
 class DeadKey(NamedTuple):
@@ -121,11 +117,11 @@ class MetadataShard:
         )
 
 def run_forever(shard: MetadataShard) -> None:
-    port = shard.shard_id + 22272
+    port = metadata_utils.shard_to_port(shard.shard_id)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', port))
     while True:
-        data, addr = sock.recvfrom(8192)
+        data, addr = sock.recvfrom(metadata_utils.UDP_MTU)
         request = metadata_msgs.unpack_request(data)
         if request.ver != PROTOCOL_VERSION:
             print('Ignoring request, unsupported ver:', request.ver,

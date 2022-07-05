@@ -54,50 +54,32 @@ def aes_encrypt(buf: bytes, rk: List[int]) -> bytes:
     s0, s1, s2, s3 = aes_encrypt_impl(s0, s1, s2, s3, rk)
     return struct.pack('>IIII', s0, s1, s2, s3)
 
+def cbc_mac_impl(m: bytes, rk: List[int]) -> bytes:
+    assert len(m) % 16 == 0
+    s0, s1, s2, s3 = 0, 0, 0, 0
+    for i in range(0, len(m), 16):
+        m0, m1, m2, m3 = struct.unpack('>IIII', m[i*16:i*16+16])
+        s0 ^= m0
+        s1 ^= m1
+        s2 ^= m2
+        s3 ^= m3
+        s0, s1, s2, s3 = aes_encrypt_impl(s0, s1, s2, s3, rk)
+    return struct.pack('>IIII', s0, s1, s2, s3)
+
+# these functions are safe so long as no message is a prefix of another message
+# this can be achieved with fixed length messages, length prefixing or (length determining) type prefixing
 def add_mac(buf: bytes, rk: List[int]) -> bytes:
-    # prefix with length and pad to AES block size
-    prefix = len(buf).to_bytes(2, 'little')
-    m = prefix + buf
-    n_blocks = (len(m) + 15) // 16
-    m += b'\x00'*(n_blocks*16 - len(m))
+    n_blocks = (len(buf) + 15) // 16
+    buf_pad = buf + b'\x00'*(n_blocks*16 - len(buf))
+    mac = cbc_mac_impl(buf_pad, rk)
+    return buf + mac
 
-    # main CBC-MAC loop
-    s0, s1, s2, s3 = 0, 0, 0, 0
-    for i in range(n_blocks):
-        m0, m1, m2, m3 = struct.unpack('>IIII', m[i*16:i*16+16])
-        s0 ^= m0
-        s1 ^= m1
-        s2 ^= m2
-        s3 ^= m3
-        s0, s1, s2, s3 = aes_encrypt_impl(s0, s1, s2, s3, rk)
-    m += struct.pack('>IIII', s0, s1, s2, s3)
-    return m
-
-def remove_mac(buf: bytes, rk: List[int]) -> Optional[bytes]:
-    # split into body and MAC
-    assert len(buf) % 16 == 0
-    n_blocks = len(buf) // 16 - 1
-    m = buf[:n_blocks*16]
-    x0, x1, x2, x3 = struct.unpack('>IIII', buf[n_blocks*16:])
-
-    # recompute the MAC
-    s0, s1, s2, s3 = 0, 0, 0, 0
-    for i in range(n_blocks):
-        m0, m1, m2, m3 = struct.unpack('>IIII', m[i*16:i*16+16])
-        s0 ^= m0
-        s1 ^= m1
-        s2 ^= m2
-        s3 ^= m3
-        s0, s1, s2, s3 = aes_encrypt_impl(s0, s1, s2, s3, rk)
-    if (s0, s1, s2, s3) != (x0, x1, x2, x3):
-        # invalid MAC, ignore the message
+def remove_mac(buf: bytes, rk: List[int]) -> bytes:
+    n_blocks_plus_one = (len(buf) + 15) // 16
+    buf_pad = buf[:-16] + b'\x00'*(n_blocks_plus_one*16 - len(buf))
+    if cbc_mac_impl(buf_pad, rk) != buf[-16:]:
         return None
-
-    # now remove the length padding
-    length = int.from_bytes(m[:2], 'little')
-    body = m[2:2+length]
-    assert len(body) == length # should be impossible given it was secured
-    return body
+    return buf[:-16]
 
 if __name__ == '__main__':
     # checks for crc32c taken from from rfc3720 (iscsi)
@@ -132,3 +114,4 @@ if __name__ == '__main__':
     # and if we alter the message it's bad
     bad_foo = b'x' + foo[1:]
     assert remove_mac(bad_foo, rk) is None
+

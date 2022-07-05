@@ -1,73 +1,81 @@
 #!/usr/bin/env python3
 
+from dataclasses import dataclass
 import enum
-from typing import NamedTuple, Optional, Union
+from typing import ClassVar, Dict, Optional, Tuple, Type, Union
 
 import bincode
 
 
+class InodeType(enum.IntEnum):
+    DIRECTORY = 0
+    FILE = 1
+    SYMLINK = 2
+
+
 class RequestKind(enum.IntEnum):
-    # values derrived from metadata_msgs.rs
+    ERROR = 0
     MK_DIR = 10
     RESOLVE = 13
 
 
-class ResponseKind(enum.IntEnum):
-    MK_DIR = 0
-    RESOLVE = 1
-
-
-class ResolveReq(NamedTuple):
+@dataclass
+class ResolveReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.RESOLVE
     parent_id: int
     subname: str
-    ts: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_bytes_into(self.subname.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ResolveReq':
+        parent_id = bincode.unpack_unsigned(u)
+        subname = bincode.unpack_bytes(u).decode()
+        return ResolveReq(parent_id, subname)
 
 
-class MkDirReq(NamedTuple):
+@dataclass
+class MkDirReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.MK_DIR
     parent_id: int
     subname: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_bytes_into(self.subname.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MkDirReq':
+        parent_id = bincode.unpack_unsigned(u)
+        subname = bincode.unpack_bytes(u).decode()
+        return MkDirReq(parent_id, subname)
 
 
 ReqBodyTy = Union[ResolveReq, MkDirReq]
 
 
-class MetadataRequest(NamedTuple):
+@dataclass
+class MetadataRequest(bincode.Packable):
     ver: int
     request_id: int
     body: ReqBodyTy
 
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.ver, b)
+        bincode.pack_unsigned_into(self.request_id, b)
+        bincode.pack_unsigned_into(self.body.kind, b)
+        self.body.pack_into(b)
 
-def pack_request(r: MetadataRequest) -> bytearray:
-    b = bytearray()
-    bincode.pack_unsigned_into(r.ver, b)
-    bincode.pack_unsigned_into(r.request_id, b)
-    if isinstance(r.body, ResolveReq):
-        bincode.pack_unsigned_into(RequestKind.RESOLVE, b)
-        bincode.pack_unsigned_into(r.body.parent_id, b)
-        bincode.pack_bytes_into(r.body.subname.encode(), b)
-        bincode.pack_unsigned_into(r.body.ts, b)
-    else:
-        raise ValueError(f'Unrecognised body: {r.body}')
-    return b
-
-
-def unpack_request(b: bytes) -> MetadataRequest:
-    u = bincode.UnpackWrapper(b)
-    ver = bincode.unpack_unsigned(u)
-    request_id = bincode.unpack_unsigned(u)
-    kind = bincode.unpack_unsigned(u)
-    if kind == RequestKind.RESOLVE:
-        parent_id = bincode.unpack_unsigned(u)
-        subname_len = bincode.unpack_unsigned(u)
-        subname = u.read()[:subname_len].decode()
-        u.advance(subname_len)
-        ts = bincode.unpack_unsigned(u)
-        body = ResolveReq(parent_id, subname, ts)
-    else:
-        raise ValueError(f'Unrecognised kind: {kind}')
-    if u.idx != len(b):
-        raise ValueError(f'Extra bytes found after request: {b[u.idx:]!r}')
-    return MetadataRequest(ver, request_id, body)
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MetadataRequest':
+        ver = bincode.unpack_unsigned(u)
+        request_id = bincode.unpack_unsigned(u)
+        body_kind = RequestKind(bincode.unpack_unsigned(u))
+        body_type = requests[body_kind][0]
+        body = body_type.unpack(u)
+        return MetadataRequest(ver, request_id, body)
 
 
 class MetadataErrorKind(enum.IntEnum):
@@ -81,121 +89,111 @@ class MetadataErrorKind(enum.IntEnum):
     UNSUPPORTED_VERSION = 7
 
 
-class MetadataError(NamedTuple):
-    kind: MetadataErrorKind
+@dataclass
+class MetadataError(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.ERROR
+    error_kind: MetadataErrorKind
     text: str
 
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.error_kind, b)
+        bincode.pack_bytes_into(self.text.encode(), b)
 
-class ResolvedInode(NamedTuple):
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MetadataError':
+        error_kind = MetadataErrorKind(bincode.unpack_unsigned(u))
+        text = bincode.unpack_bytes(u).decode()
+        return MetadataError(error_kind, text)
+
+
+@dataclass
+class ResolvedInode(bincode.Packable):
     id: int
-    creation_time: int
-    deletion_time: int
-    is_file: bool
+    inode_type: InodeType
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.id, b)
+        bincode.pack_unsigned_into(self.inode_type, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ResolvedInode':
+        id = bincode.unpack_unsigned(u)
+        inode_type = InodeType(bincode.unpack_unsigned(u))
+        return ResolvedInode(id, inode_type)
 
 
-class ResolveResp(NamedTuple):
+@dataclass
+class ResolveResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.RESOLVE
     f: Optional[ResolvedInode]
+
+    def pack_into(self, b: bytearray) -> None:
+        if self.f is None:
+            bincode.pack_unsigned_into(0, b)
+        else:
+            bincode.pack_unsigned_into(1, b)
+            self.f.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ResolveResp':
+        option_kind = bincode.unpack_unsigned(u)
+        f = ResolvedInode.unpack(u) if option_kind else None
+        return ResolveResp(f)
 
 
 RespBodyTy = Union[MetadataError, ResolveResp]
 
 
-class MetadataResponse(NamedTuple):
+requests: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
+    RequestKind.RESOLVE: (ResolveReq, ResolveResp),
+}
+
+
+@dataclass
+class MetadataResponse(bincode.Packable):
     request_id: int
     body: RespBodyTy
 
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.request_id, b)
+        bincode.pack_unsigned_into(self.body.kind, b)
+        self.body.pack_into(b)
 
-def pack_response(r: MetadataResponse) -> bytearray:
-    b = bytearray()
-    bincode.pack_unsigned_into(r.request_id, b)
-    if isinstance(r.body, MetadataError):
-        bincode.pack_unsigned_into(1, b) # Result::Err
-        bincode.pack_unsigned_into(r.body.kind, b)
-        bincode.pack_bytes_into(r.body.text.encode(), b)
-        return b
-    bincode.pack_unsigned_into(0, b) # Result::Ok
-    if isinstance(r.body, ResolveResp):
-        bincode.pack_unsigned_into(ResponseKind.RESOLVE, b)
-        if r.body.f is None:
-            bincode.pack_unsigned_into(0, b) # Option::None
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MetadataResponse':
+        request_id = bincode.unpack_unsigned(u)
+        resp_kind = RequestKind(bincode.unpack_unsigned(u))
+        body: RespBodyTy
+        if resp_kind == RequestKind.ERROR:
+            body = MetadataError.unpack(u)
         else:
-            bincode.pack_unsigned_into(1, b) # Option::Some
-            bincode.pack_unsigned_into(r.body.f.id, b)
-            bincode.pack_unsigned_into(r.body.f.creation_time, b)
-            bincode.pack_unsigned_into(r.body.f.deletion_time, b)
-            bincode.pack_unsigned_into(r.body.f.is_file, b)
-    else:
-        raise ValueError(f'Unrecognised body: {r.body}')
-    return b
-
-
-def unpack_response(b: bytes) -> MetadataResponse:
-    u = bincode.UnpackWrapper(b)
-    request_id = bincode.unpack_unsigned(u)
-    result_kind = bincode.unpack_unsigned(u)
-    body: RespBodyTy
-    if result_kind == 0:
-        # Result::Ok
-        response_kind = bincode.unpack_unsigned(u)
-        if response_kind == ResponseKind.RESOLVE:
-            option_kind = bincode.unpack_unsigned(u)
-            if option_kind == 0:
-                # Option::None
-                body = ResolveResp(None)
-            else:
-                # Option::Some
-                id = bincode.unpack_unsigned(u)
-                creation_time = bincode.unpack_unsigned(u)
-                deletion_time = bincode.unpack_unsigned(u)
-                is_file = bool(bincode.unpack_unsigned(u))
-                body = ResolveResp(ResolvedInode(
-                    id,
-                    creation_time,
-                    deletion_time,
-                    is_file,
-                ))
-        else:
-            raise ValueError(f'Unrecognised response kind: {response_kind}')
-    else:
-        # Result::Err
-        error_kind = MetadataErrorKind(bincode.unpack_unsigned(u))
-        text = bincode.unpack_bytes(u).decode()
-        body = MetadataError(error_kind, text)
-    if u.idx != len(b):
-        raise ValueError(f'Extra bytes found after request: {b[u.idx:]!r}')
-    return MetadataResponse(request_id, body)
+            body = requests[resp_kind][1].unpack(u)
+        return MetadataResponse(request_id, body)
 
 
 def __tests() -> None:
     packed = bytes([0, 123, 13, 251, 0, 2, 11, 104, 101, 108, 108, 111, 95, 119,
         111, 114, 108, 100, 251, 57, 48])
 
-    unpacked = MetadataRequest(ver=0, request_id=123,
-        body=ResolveReq(parent_id=512, subname='hello_world', ts=12345))
+    original = MetadataRequest(ver=0, request_id=123,
+        body=ResolveReq(parent_id=512, subname='hello_world'))
 
-    unpack_res = unpack_request(packed)
+    packed = bincode.pack(original)
 
-    assert(unpack_res == unpacked)
+    unpacked = MetadataRequest.unpack(bincode.UnpackWrapper(packed))
 
-    pack_res = pack_request(unpacked)
+    assert(original == unpacked)
 
-    assert(pack_res == packed)
-
-    packed2 = bytes([251, 200, 1, 0, 1, 1, 251, 41, 35, 251, 164, 9, 251, 251,
-        13, 1])
-
-    unpacked2 = MetadataResponse(
+    original2 = MetadataResponse(
         request_id=456,
         body=ResolveResp(f=ResolvedInode(
-            id=9001, creation_time=2468, deletion_time=3579, is_file=True)))
+            id=9001, inode_type=InodeType.FILE)))
 
-    unpack_res2 = unpack_response(packed2)
+    packed2 = bincode.pack(original2)
 
-    assert(unpack_res2 == unpacked2)
+    unpacked2 = MetadataResponse.unpack(bincode.UnpackWrapper(packed2))
 
-    pack_res2 = pack_response(unpacked2)
-
-    assert(pack_res2 == packed2)
+    assert(original2 == unpacked2)
 
 
 if __name__ == '__main__':

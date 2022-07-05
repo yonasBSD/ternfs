@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Callable, Dict, Optional
 
+import bincode
 import metadata_msgs
 from metadata_msgs import ResolvedInode
 import metadata_utils
@@ -27,16 +28,16 @@ def resolve(parent_id: int, subname: str, ts: int) -> Optional[ResolvedInode]:
         body=metadata_msgs.ResolveReq(
             parent_id=parent_id,
             subname=subname,
-            ts=ts,
         ),
     )
-    packed_req = metadata_msgs.pack_request(request)
+    packed_req = bincode.pack(request)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', 0))
     sock.sendto(packed_req, target)
     sock.settimeout(2.0)
     packed_resp = sock.recv(metadata_utils.UDP_MTU)
-    response = metadata_msgs.unpack_response(packed_resp)
+    response = metadata_msgs.MetadataResponse.unpack(
+        bincode.UnpackWrapper(packed_resp))
     if request_id != response.request_id:
         raise ValueError('Bad request_id from server:'
             f' expected {request_id} got {response.request_id}')
@@ -55,18 +56,16 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
     # start at root
     cur_inode = ResolvedInode(
         id=metadata_utils.ROOT_INODE_NUMBER,
-        creation_time=0,
-        deletion_time=0,
-        is_file=False,
+        inode_type=metadata_msgs.InodeType.DIRECTORY,
     )
 
     if path == '/':
         return cur_inode
 
     for i, bit in enumerate(bits[1:]):
-        if cur_inode.is_file:
+        if cur_inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
             filename = '/'.join(bits[:i+1])
-            raise ValueError(f"'{filename}' is a file")
+            raise ValueError(f"'{filename}' is not a directory")
 
         next_inode = resolve(cur_inode.id, bit, ts)
 

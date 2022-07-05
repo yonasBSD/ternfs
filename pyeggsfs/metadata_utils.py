@@ -12,3 +12,9 @@ def shard_from_inode(inode_number: int) -> int:
 
 def shard_to_port(shard: int) -> int:
     return shard + 22272
+
+
+def string_hash(s: str) -> int:
+    # the built-in hash uses SIP... except for small (<= 7) strings
+    # for production we should consider alternatives, e.g. murmur3 or xxhash
+    return hash(s)

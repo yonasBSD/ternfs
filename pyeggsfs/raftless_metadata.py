@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from dataclasses import dataclass
 import enum
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 from sortedcontainers import SortedDict
@@ -9,29 +10,26 @@ import pickle
 import socket
 import sys
 
+import bincode
 import metadata_msgs
+from metadata_msgs import InodeType, MetadataRequest
 import metadata_utils
 
 
 PROTOCOL_VERSION = 0
 
 
-class InodeType(enum.IntEnum):
-    DIRECTORY = 0
-    FILE = 1
-    SYMLINK = 2
-
-
+@dataclass
 class LivingKey(NamedTuple):
     hash_name: int
     name: str
 
 
+@dataclass
 class LivingValue:
     creation_time: int
     inode_id: int
     type: InodeType
-    is_owning: bool # maybe not needed? living things are implicitly owning
 
 
 class DeadKey(NamedTuple):
@@ -40,12 +38,14 @@ class DeadKey(NamedTuple):
     creation_time: int
 
 
+@dataclass
 class DeadValue:
     inode_id: int
     type: InodeType
     is_owning: bool
 
 
+@dataclass
 class Directory:
     parent_inode_id: Optional[int]
     mtime: int
@@ -59,6 +59,7 @@ class Directory:
     # </opaque_data>
 
 
+@dataclass
 class Block:
     storage_id: int
     block_id: int
@@ -67,6 +68,7 @@ class Block:
     block_idx: int
 
 
+@dataclass
 class Span:
     parity: int # (two nibbles, 8+3 is stored as (8,3))
     storage_class: int # opaque (except for 0 => inline)
@@ -75,6 +77,7 @@ class Span:
     payload: Union[bytes, List[Block]] # storage_class == 0 means bytes
 
 
+@dataclass
 class File:
     mtime: int
     is_eden: bool
@@ -84,6 +87,7 @@ class File:
     spans: List[Span]
 
 
+@dataclass
 class StorageNode:
     write_weight: float # used to weight random variable for block creation
     private_key: bytes
@@ -104,17 +108,15 @@ class MetadataShard:
         parent = self.directories.get(r.parent_id)
         if parent is None:
             return None
-        hashed_name = hash(r.subname)
+        hashed_name = metadata_utils.string_hash(r.subname)
         res = parent.living_items.get(LivingKey(hashed_name, r.subname))
         if res is None:
-            #TODO: maybe check dead items? (or not since interface will change)
             return None
-        return metadata_msgs.ResolvedInode(
-            id=res.inode_id,
-            creation_time=res.creation_time,
-            deletion_time=0,
-            is_file=(res.type != InodeType.DIRECTORY),
-        )
+        else:
+            return metadata_msgs.ResolvedInode(
+                id=res.inode_id,
+                inode_type=res.type,
+            )
 
 def run_forever(shard: MetadataShard) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
@@ -122,7 +124,7 @@ def run_forever(shard: MetadataShard) -> None:
     sock.bind(('', port))
     while True:
         data, addr = sock.recvfrom(metadata_utils.UDP_MTU)
-        request = metadata_msgs.unpack_request(data)
+        request = MetadataRequest.unpack(bincode.UnpackWrapper(data))
         if request.ver != PROTOCOL_VERSION:
             print('Ignoring request, unsupported ver:', request.ver,
                 file=sys.stderr)
@@ -139,7 +141,7 @@ def run_forever(shard: MetadataShard) -> None:
             body=resp_body
         )
         print(request, resp, '', sep='\n')
-        packed = metadata_msgs.pack_response(resp)
+        packed = bincode.pack(resp)
         sock.sendto(packed, addr)
 
 

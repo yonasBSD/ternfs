@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import abc
 import struct
 
 
@@ -126,6 +127,18 @@ def unpack_bytes(u: UnpackWrapper) -> bytes:
     ret = u.read()[:size]
     u.advance(size)
     return ret
+
+
+class Packable(abc.ABC):
+    @abc.abstractmethod
+    def pack_into(self, b: bytearray) -> None:
+        pass
+
+
+def pack(x: Packable) -> bytes:
+    ret = bytearray()
+    x.pack_into(ret)
+    return bytes(ret)
 
 
 if __name__ == '__main__':

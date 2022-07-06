@@ -1,0 +1,26 @@
+<!doctype html>
+<title>Block services</title>
+<meta http-equiv="refresh" content="2">
+<h1>Block services</h1>
+<table border=1 cellpadding=10>
+<thead>
+<tr>
+    <th>Id
+    <th>Address
+    <th>Status
+    <th>Last registered
+    <th>Last checked
+    <th>Stored bytes
+    <th>Available bytes
+<tbody>
+{% for item in devices %}
+<tr>
+    <td>{{ item.id }}
+    <td>{{ item.ip }}:{{ item.port }}
+    <td>{{ item.status }}
+    <td>{{ item.last_register|dateformat }}
+    <td>{{ item.last_check|dateformat }}
+    <td>{{ item.used_bytes|filesizeformat }}
+    <td>{{ item.free_bytes|filesizeformat }}
+{% endfor %}
+</table>

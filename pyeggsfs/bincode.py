@@ -2,6 +2,7 @@
 
 import abc
 import struct
+from typing import Type, TypeVar
 
 
 U16_MAX = 2**16 - 1
@@ -129,9 +130,17 @@ def unpack_bytes(u: UnpackWrapper) -> bytes:
     return ret
 
 
+T = TypeVar('T', bound='Packable')
+
+
 class Packable(abc.ABC):
     @abc.abstractmethod
     def pack_into(self, b: bytearray) -> None:
+        pass
+
+    @classmethod
+    @abc.abstractmethod
+    def unpack(cls: Type[T], u: UnpackWrapper) -> T:
         pass
 
 
@@ -139,6 +148,11 @@ def pack(x: Packable) -> bytes:
     ret = bytearray()
     x.pack_into(ret)
     return bytes(ret)
+
+
+def unpack(cls: Type[T], b: bytes) -> T:
+    u = UnpackWrapper(b)
+    return cls.unpack(u)
 
 
 if __name__ == '__main__':

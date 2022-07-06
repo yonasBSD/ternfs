@@ -137,8 +137,7 @@ class ResolveResp(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolveResp':
         option_kind = bincode.unpack_unsigned(u)
-        f = ResolvedInode.unpack(u) if option_kind else None
-        return ResolveResp(f)
+        return ResolveResp(ResolvedInode.unpack(u) if option_kind else None)
 
 
 RespBodyTy = Union[MetadataError, ResolveResp]
@@ -180,7 +179,7 @@ def __tests() -> None:
 
     packed = bincode.pack(original)
 
-    unpacked = MetadataRequest.unpack(bincode.UnpackWrapper(packed))
+    unpacked = bincode.unpack(MetadataRequest, packed)
 
     assert(original == unpacked)
 
@@ -191,7 +190,7 @@ def __tests() -> None:
 
     packed2 = bincode.pack(original2)
 
-    unpacked2 = MetadataResponse.unpack(bincode.UnpackWrapper(packed2))
+    unpacked2 = bincode.unpack(MetadataResponse, packed2)
 
     assert(original2 == unpacked2)
 

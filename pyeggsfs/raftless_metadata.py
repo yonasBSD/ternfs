@@ -12,7 +12,7 @@ import sys
 
 import bincode
 import metadata_msgs
-from metadata_msgs import InodeType, MetadataRequest
+from metadata_msgs import InodeType, MetadataRequest, MetadataResponse
 import metadata_utils
 
 
@@ -124,7 +124,7 @@ def run_forever(shard: MetadataShard) -> None:
     sock.bind(('', port))
     while True:
         data, addr = sock.recvfrom(metadata_utils.UDP_MTU)
-        request = MetadataRequest.unpack(bincode.UnpackWrapper(data))
+        request = bincode.unpack(MetadataRequest, data)
         if request.ver != PROTOCOL_VERSION:
             print('Ignoring request, unsupported ver:', request.ver,
                 file=sys.stderr)
@@ -136,7 +136,7 @@ def run_forever(shard: MetadataShard) -> None:
             print('Ignoring request, unrecognised body:', request.body,
                 file=sys.stderr)
             continue
-        resp = metadata_msgs.MetadataResponse(
+        resp = MetadataResponse(
             request_id=request.request_id,
             body=resp_body
         )

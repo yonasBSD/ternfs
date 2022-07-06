@@ -89,11 +89,17 @@ def deser_write_block(m, rk):
     assert kind == b'w'
     return block_id, crc, size
 
+def deser_stats(m):
+    # prefix=s, length=9
+    kind, token = struct.unpack('<cQ', m)
+    assert kind == b's'
+    return token
+
 def ser_erase_cert(block_id, rk):
     # confirm block_id was erased
     # prefix=E, length=9
     m = struct.pack('<cQ', b'E', block_id)
-    return crypto.add_mac_fixed_len(m, rk)
+    return crypto.add_mac(m, rk)
 
 def ser_fetch_response(size):
     # just return the four byte size followed by the data
@@ -109,11 +115,12 @@ def ser_write_cert(block_id):
     # confirm block was written
     # prefix=W, length=9
     m = struct.pack('<cQ', b'W', block_id)
-    return crypto.add_mac_fixed_len(m, rk)
+    return crypto.add_mac(m, rk)
 
-def ser_stats(used_bytes, free_bytes, used_n, free_n):
-    # prefix=S, length=33
-    return struct.pack('<cQQQQ', b'S', used_bytes, free_bytes, used_n, free_n)
+def ser_stats(token, used_bytes, free_bytes, used_n, free_n, rk):
+    # prefix=S, length=41
+    m = struct.pack('<cQQQQQ', b'S', token, used_bytes, free_bytes, used_n, free_n)
+    return crypto.add_mac(m, rk)
 
 ###########################################
 # main client handling code
@@ -162,10 +169,10 @@ async def handle_client(reader, writer, rk, base_path):
             writer.write(m)
 
         elif kind == b's':
-            # status report (no MAC is required)
-            # TODO we need a MAC so they can verify that they're talking to the correct process
+            # status report (return a MAC so they can verify we are the correct process)
+            token = deser_stats(kind + (await reader.readexactly(8)))
             used_bytes, free_bytes, used_n, free_n = get_stats(base_path)
-            m = ser_stats(used_bytes, free_bytes, used_n, free_n)
+            m = ser_stats(token, used_bytes, free_bytes, used_n, free_n, rk)
             writer.write(m)
 
         elif kind == b'':

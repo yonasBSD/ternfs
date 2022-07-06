@@ -8,7 +8,9 @@
 
 from quart import Quart, request, g, jsonify, render_template
 import asyncio
+import crypto
 import datetime
+import secrets
 import sqlite3
 import struct
 
@@ -18,24 +20,30 @@ app = Quart(__name__)
 # device polling
 ###########################################
 
-async def check_one_device(ip, port):
+async def check_one_device(ip, port, secret_key):
+    rk = crypto.aes_expand_key(bytes.fromhex(secret_key))
     reader, writer = await asyncio.open_connection(ip, port)
-    writer.write(b's')
-    m = await reader.readexactly(33)
-    kind, used_bytes, free_bytes, used_n, free_n = struct.unpack('<cQQQQ', m)
-    assert kind == b'S'
+    token = secrets.token_bytes(8)
+    writer.write(b's' + token)
+    m = await reader.readexactly(49)
+    m = crypto.remove_mac(m, rk)
+    assert m is not None, 'bad mac'
+    kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m)
+    assert kind == b'S', 'bad response kind'
+    assert got_token == token, 'token mismatch'
     return used_bytes, free_bytes, used_n, free_n
 
 async def check_all_devices():
     c = app.db.execute('select id from block_services')
     all_ids = [row[0] for row in c.fetchall()]
     for i in all_ids:
-        c = app.db.execute('select ip, port from block_services where id=? and status!="terminal"', (i,))
+        c = app.db.execute('select ip, port, secret_key from block_services where id=? and status!="terminal"', (i,))
         try:
-            ip, port = c.fetchone()
+            ip, port, secret_key = c.fetchone()
             now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
-            used_bytes, free_bytes, used_n, free_n = await check_one_device(ip, port)
+            used_bytes, free_bytes, used_n, free_n = await check_one_device(ip, port, secret_key)
         except Exception as e:
+            print(e)
             continue
         app.db.execute('update block_services set last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=? where id=?', (now, used_bytes, free_bytes, used_n, free_n, i))
 

@@ -3,8 +3,6 @@
 # TODO provide a nice ui
 #      provide an endpoint where we pretend to be dead devices and fake deletion certs
 #      provide an endpoint to return write weights for devices
-#      don't insert things into the db until we have validated them
-#      udp registration
 
 from quart import Quart, request, g, jsonify, render_template
 import asyncio
@@ -13,15 +11,26 @@ import datetime
 import secrets
 import sqlite3
 import struct
+import collections
 
 app = Quart(__name__)
 
 ###########################################
-# device polling
+# device polling and registration
 ###########################################
 
-async def check_one_device(ip, port, secret_key):
-    rk = crypto.aes_expand_key(bytes.fromhex(secret_key))
+# queue of keys that we should check and upsert in the db
+# push None to shutdown the cororoutine
+# TODO when it becomes terminal we need to remove it!
+KEYS_TO_CHECK = collections.deque()
+KEY_TO_IP_PORT = {}
+
+# verify we can contact a device, if we can update the database
+async def check_one_device(secret_key, ip, port):
+    now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
+
+    # connect to the device and fetch the stats
+    rk = crypto.aes_expand_key(secret_key)
     reader, writer = await asyncio.open_connection(ip, port)
     token = secrets.token_bytes(8)
     writer.write(b's' + token)
@@ -31,67 +40,82 @@ async def check_one_device(ip, port, secret_key):
     kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m)
     assert kind == b'S', 'bad response kind'
     assert got_token == token, 'token mismatch'
-    return used_bytes, free_bytes, used_n, free_n
 
-async def check_all_devices():
-    c = app.db.execute('select id from block_services')
-    all_ids = [row[0] for row in c.fetchall()]
-    for i in all_ids:
-        c = app.db.execute('select ip, port, secret_key from block_services where id=? and status!="terminal"', (i,))
-        try:
-            ip, port, secret_key = c.fetchone()
-            now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
-            used_bytes, free_bytes, used_n, free_n = await check_one_device(ip, port, secret_key)
-        except Exception as e:
-            print(e)
-            continue
-        app.db.execute('update block_services set last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=? where id=?', (now, used_bytes, free_bytes, used_n, free_n, i))
+    # put the information into the database
+    # (either creating a new record or updating an old one
+    app.db.execute("""
+        insert into block_services (secret_key, ip, port, last_check, used_bytes, free_bytes, used_n, free_n)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict (secret_key) do update set ip=?, port=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
+    """, (secret_key.hex(), ip, port, now, used_bytes, free_bytes, used_n, free_n, ip, port, now, used_bytes, free_bytes, used_n, free_n))
+    app.db.commit()
+
+    # given we have updated the database we should ensure this is getting covered by periodic checks
+    # and that it's being checked with the right ip/port
+    if secret_key not in KEY_TO_IP_PORT:
+        KEYS_TO_CHECK.append(secret_key) # it's brand new
+    KEY_TO_IP_PORT[secret_key] = (ip, port)
+
 
 async def check_devices_forever():
-    while not app.is_shutting_down:
-        await check_all_devices()
-        for _ in range(5):
-            await asyncio.sleep(1)
+    # first fetch all existing devices from the database
+    c = app.db.execute('select secret_key, ip, port from block_services where status != "terminal"')
+    for key, ip, port in c.fetchall():
+        key = bytes.fromhex(key)
+        KEYS_TO_CHECK.append(key)
+        KEY_TO_IP_PORT[key] = (ip, port)
+    app.logger.info(f'Started periodic check routine, loaded {len(KEYS_TO_CHECK)} devices')
+    # now repeatedly take a device from the front of the queue and check it
+    while True:
+        await asyncio.sleep(1)
+        if not KEYS_TO_CHECK: continue
+        KEYS_TO_CHECK.rotate(-1)
+        key = KEYS_TO_CHECK[-1]
+        ip, port = KEY_TO_IP_PORT[key]
+        try:
+            app.logger.info(f'Running periodic check for {ip}:{port}')
+            await check_one_device(key, ip, port)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            app.logger.error(f'Failed to check device at {ip}:{port}', exc_info=True)
+
+async def listen_for_registrations():
+    # open a udp socket and listen for registration messages
+    # if it's a new device or and ip/port change then we need to check it immediately
+    loop = asyncio.get_running_loop()
+    q = asyncio.Queue()
+    class UdpTransport:
+        def connection_made(self, transport):
+            pass
+        def datagram_received(self, data, addr):
+            q.put_nowait((data, addr))
+    transport, protocol = await loop.create_datagram_endpoint(lambda: UdpTransport(), local_addr=('localhost', 5000))
+    while True:
+        try:
+            data, (ip, port) = await q.get()
+            key, tcp_port = struct.unpack('<16sH', data)
+            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT[key] != (ip, tcp_port):
+                # it's new or changed ip - need to check it
+                await check_one_device(key, ip, tcp_port)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            app.logger.error(f'Error processing registration for {ip}:{tcp_port}', exc_info=True)
+
+
+
+
+
 
 ###########################################
-# new device registration
+# web ui
 ###########################################
 
-async def register_device_impl(secret_key: bytes, ip: str, port: int) -> int:
-    secret_key = secret_key.hex()
-    now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
-    c = app.db.execute('select id from block_services where secret_key=?', (secret_key,))
-    row = c.fetchone()
-    if row is None:
-        # we need to insert it
-        c = app.db.execute('insert into block_services (secret_key, last_register, ip, port) values (?, ?, ?, ?)', (secret_key, now, ip, port))
-        app.db.commit()
-        return c.lastrowid
-    else:
-        # there is an existing entry for it, just update it
-        app.db.execute('update block_services set last_register=?, ip=?, port=? where id=?', (now, ip, port, row[0]))
-        app.db.commit()
-        return row[0]
-
-@app.route('/register_new_device', methods=['POST'])
-async def register_new_device():
-    secret_key = bytes.fromhex(request.args.get('key'))
-    assert len(secret_key) == 16
-    port = int(request.args.get('port'))
-    assert port < 65536
-    ip = request.remote_addr
-    unique_id = await register_device_impl(secret_key, ip, port)
-    app.logger.info(f'registered device ip={ip} port={port} key={secret_key.hex()}, assigned id is {unique_id}')
-    return jsonify(unique_id=unique_id)
-
-
-
-
-
-
-
-
-
+@app.template_filter('dateformat')
+def date_format(value):
+    dt = datetime.datetime(2020, 1, 1) + datetime.timedelta(seconds=value)
+    return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 @app.route('/list_devices')
 async def list_devices():
@@ -103,6 +127,11 @@ async def index():
     c = app.db.execute('select * from block_services')
     return await render_template('index.html', devices=list(c.fetchall()))
 
+
+###########################################
+# initialization
+###########################################
+
 def init_db():
     db = sqlite3.connect('database.db')
     db.execute("""
@@ -110,14 +139,13 @@ def init_db():
             id integer primary key,
             secret_key text unique not null,
             status integer not null default "ok",
-            last_register integer not null,
             ip text not null,
             port int not null,
-            last_check integer,
-            used_bytes integer,
-            free_bytes integer,
-            used_n integer,
-            free_n integer
+            last_check integer not null,
+            used_bytes integer not null,
+            free_bytes integer not null,
+            used_n integer not null,
+            free_n integer not null
         )
     """)
     db.commit()
@@ -126,19 +154,13 @@ def init_db():
 async def startup():
     app.db = sqlite3.connect('database.db')
     app.db.row_factory = sqlite3.Row
-    app.is_shutting_down = False
-    app.add_background_task(check_devices_forever)
+    app.check_devices_forever_task = asyncio.create_task(check_devices_forever())
+    app.listen_for_registrations_task = asyncio.create_task(listen_for_registrations())
 
 @app.after_serving
 async def shutdown():
-    app.is_shutting_down = True
-    app.db.close()
-    app.db = None
-
-@app.template_filter('dateformat')
-def date_format(value):
-    dt = datetime.datetime(2020, 1, 1) + datetime.timedelta(seconds=value)
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
+    app.check_devices_forever_task.cancel()
+    app.listen_for_registrations_task.cancel()
 
 if __name__ == '__main__':
     init_db()

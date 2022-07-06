@@ -187,19 +187,12 @@ async def handle_client(reader, writer, rk, base_path):
 # initialization
 ###########################################
 
-def register(key, port):
-    # TODO we should switch to just sending a UDP packet
-    try:
-        r = requests.post('http://localhost:5000/register_new_device', params=dict(key=key.hex(), port=port))
-        r.raise_for_status()
-        unique_id = r.json()['unique_id']
-    except Exception:   
-        pass
-
 async def periodically_register(key, port):
-    loop = asyncio.get_running_loop()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    m = struct.pack('<16sH', key, port)
+    shuckle = ('localhost', 5000)
     while True:
-        await loop.run_in_executor(None, lambda: register(key, port))
+        sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
         await asyncio.sleep(60)
 
 async def main():

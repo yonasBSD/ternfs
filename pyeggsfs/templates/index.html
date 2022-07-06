@@ -8,7 +8,6 @@
     <th>Id
     <th>Address
     <th>Status
-    <th>Last registered
     <th>Last checked
     <th>Stored bytes
     <th>Available bytes
@@ -18,7 +17,6 @@
     <td>{{ item.id }}
     <td>{{ item.ip }}:{{ item.port }}
     <td>{{ item.status }}
-    <td>{{ item.last_register|dateformat }}
     <td>{{ item.last_check|dateformat }}
     <td>{{ item.used_bytes|filesizeformat }}
     <td>{{ item.free_bytes|filesizeformat }}

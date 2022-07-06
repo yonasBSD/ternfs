@@ -68,18 +68,19 @@ def cbc_mac_impl(m: bytes, rk: List[int]) -> bytes:
 
 # these functions are safe so long as no message is a prefix of another message
 # this can be achieved with fixed length messages, length prefixing or (length determining) type prefixing
+def _zero_pad(buf: bytes) -> bytes:
+    n = (len(buf) + 15) // 16
+    return buf + b'\x00'*(n * 16 - len(buf))
+
 def add_mac(buf: bytes, rk: List[int]) -> bytes:
-    n_blocks = (len(buf) + 15) // 16
-    buf_pad = buf + b'\x00'*(n_blocks*16 - len(buf))
-    mac = cbc_mac_impl(buf_pad, rk)
-    return buf + mac
+    mac = cbc_mac_impl(_zero_pad(buf), rk)
+    return buf + mac[:8]
 
 def remove_mac(buf: bytes, rk: List[int]) -> bytes:
-    n_blocks_plus_one = (len(buf) + 15) // 16
-    buf_pad = buf[:-16] + b'\x00'*(n_blocks_plus_one*16 - len(buf))
-    if cbc_mac_impl(buf_pad, rk) != buf[-16:]:
+    m = buf[:-8]
+    if cbc_mac_impl(_zero_pad(m), rk)[:8] != buf[-8:]:
         return None
-    return buf[:-16]
+    return m
 
 if __name__ == '__main__':
     # checks for crc32c taken from from rfc3720 (iscsi)

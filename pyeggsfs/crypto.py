@@ -58,7 +58,7 @@ def cbc_mac_impl(m: bytes, rk: List[int]) -> bytes:
     assert len(m) % 16 == 0
     s0, s1, s2, s3 = 0, 0, 0, 0
     for i in range(0, len(m), 16):
-        m0, m1, m2, m3 = struct.unpack('>IIII', m[i*16:i*16+16])
+        m0, m1, m2, m3 = struct.unpack('>IIII', m[i:i+16])
         s0 ^= m0
         s1 ^= m1
         s2 ^= m2
@@ -116,3 +116,7 @@ if __name__ == '__main__':
     bad_foo = b'x' + foo[1:]
     assert remove_mac(bad_foo, rk) is None
 
+    # something that failed in testing
+    odd_msg = b'S\x95\xef7\xcc,o`\xdd\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xdf\xba\x07\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x95\x13\xf3\x02\x00\x00\x00\x00'
+    foo = add_mac(odd_msg, rk)
+    assert remove_mac(foo, rk) == odd_msg

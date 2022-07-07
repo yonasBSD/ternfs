@@ -76,7 +76,7 @@ def add_mac(buf: bytes, rk: List[int]) -> bytes:
     mac = cbc_mac_impl(_zero_pad(buf), rk)
     return buf + mac[:8]
 
-def remove_mac(buf: bytes, rk: List[int]) -> bytes:
+def remove_mac(buf: bytes, rk: List[int]) -> Optional[bytes]:
     m = buf[:-8]
     if cbc_mac_impl(_zero_pad(m), rk)[:8] != buf[-8:]:
         return None

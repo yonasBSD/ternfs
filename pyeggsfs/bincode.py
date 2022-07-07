@@ -152,7 +152,10 @@ def pack(x: Packable) -> bytes:
 
 def unpack(cls: Type[T], b: bytes) -> T:
     u = UnpackWrapper(b)
-    return cls.unpack(u)
+    ret = cls.unpack(u)
+    if u.idx != len(b):
+        raise ValueError('Some bytes not unpacked')
+    return ret
 
 
 if __name__ == '__main__':

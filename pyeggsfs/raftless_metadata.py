@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import enum
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 from sortedcontainers import SortedDict
@@ -9,6 +9,7 @@ import os
 import pickle
 import socket
 import sys
+import time
 
 import bincode
 import metadata_msgs
@@ -19,7 +20,6 @@ import metadata_utils
 PROTOCOL_VERSION = 0
 
 
-@dataclass
 class LivingKey(NamedTuple):
     hash_name: int
     name: str
@@ -47,16 +47,13 @@ class DeadValue:
 
 @dataclass
 class Directory:
-    parent_inode_id: Optional[int]
+    parent_inode_id: int # NULL_INODE => no parent
     mtime: int
-    living_items: 'SortedDict[LivingKey, LivingValue]'
-    dead_items: 'SortedDict[DeadKey, Optional[DeadValue]]'
-    purge_policy_id: int
-    # <opaque_data>
-    storage_class_policy: int
-    parity_mode_policy: int
-    preferred_block_size: int
-    # </opaque_data>
+    # used by clients when selecting storage classes, parity modes, etc
+    # unclear what size this should be, for now it's variable-length
+    opaque: bytes
+    living_items: 'SortedDict[LivingKey, LivingValue]' = field(default_factory=SortedDict)
+    dead_items: 'SortedDict[DeadKey, Optional[DeadValue]]' = field(default_factory=SortedDict)
 
 
 @dataclass
@@ -80,11 +77,14 @@ class Span:
 @dataclass
 class File:
     mtime: int
+    size: int # redundant: must equal sum(spans.size)
     is_eden: bool
-    cookie: int # or maybe str?
     last_span_is_dirty: bool
     type: InodeType # must not be InodeType.DIRECTORY
-    spans: List[Span]
+    spans: List[Span] = field(default_factory=list)
+
+
+InodePayload = Union[Directory, File]
 
 
 @dataclass
@@ -100,13 +100,20 @@ class MetadataShard:
         self.shard_id = shard
         self.next_inode_id = shard | 0x100 # 00-FF is reserved
         self.next_block_id = shard | 0x100
-        self.directories: Dict[int, Directory] = {}
-        self.files: Dict[int, File] = {}
-        self.storage_nodes: Dict[int, StorageNode] = {}
+        self.inodes: SortedDict[int, InodePayload] = SortedDict()
+        self.storage_nodes: SortedDict[int, StorageNode] = SortedDict()
+        # if we're the shard that contains root, create it now
+        if shard == metadata_utils.shard_from_inode(metadata_utils.ROOT_INODE):
+            self.inodes[metadata_utils.ROOT_INODE] = Directory(
+                parent_inode_id=metadata_utils.ROOT_INODE,
+                mtime=int(time.time()),
+                opaque=b'', #FIXME: what should opaque be for root?
+            )
 
-    def resolve(self, r: metadata_msgs.ResolveReq) -> Optional[metadata_msgs.ResolvedInode]:
-        parent = self.directories.get(r.parent_id)
-        if parent is None:
+    def resolve(self, r: metadata_msgs.ResolveReq
+        ) -> Optional[metadata_msgs.ResolvedInode]:
+        parent = self.inodes.get(r.parent_id)
+        if parent is None or not isinstance(parent, Directory):
             return None
         hashed_name = metadata_utils.string_hash(r.subname)
         res = parent.living_items.get(LivingKey(hashed_name, r.subname))
@@ -117,6 +124,28 @@ class MetadataShard:
                 id=res.inode_id,
                 inode_type=res.type,
             )
+
+    def do_stat(self, r: metadata_msgs.StatReq
+        ) -> metadata_msgs.RespBodyTy:
+        res = self.inodes.get(r.inode_id)
+        if res is None:
+            return metadata_msgs.MetadataError(
+                metadata_msgs.MetadataErrorKind.NOT_FOUND,
+                f'No entry for {r.inode_id}',
+            )
+        payload: metadata_msgs.StatPayloadTy
+        if isinstance(res, Directory):
+            inode_type = metadata_msgs.InodeType.DIRECTORY
+            payload = metadata_msgs.StatDirPayload(
+                res.mtime, res.parent_inode_id, res.opaque,
+            )
+        else:
+            inode_type = res.type
+            payload = metadata_msgs.StatFilePayload(
+                res.mtime, res.size,
+            )
+        return metadata_msgs.StatResp(inode_type, payload)
+
 
 def run_forever(shard: MetadataShard) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
@@ -129,9 +158,12 @@ def run_forever(shard: MetadataShard) -> None:
             print('Ignoring request, unsupported ver:', request.ver,
                 file=sys.stderr)
             continue
+        resp_body: metadata_msgs.RespBodyTy
         if isinstance(request.body, metadata_msgs.ResolveReq):
             result = shard.resolve(request.body)
             resp_body = metadata_msgs.ResolveResp(result)
+        elif isinstance(request.body, metadata_msgs.StatReq):
+            resp_body = shard.do_stat(request.body)
         else:
             print('Ignoring request, unrecognised body:', request.body,
                 file=sys.stderr)

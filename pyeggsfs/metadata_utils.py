@@ -1,5 +1,6 @@
 
-ROOT_INODE_NUMBER = 0
+NULL_INODE = 0 # used for parent_inode to indicate no parent
+ROOT_INODE = 1
 
 
 # assume jumbo frames are enabled

@@ -17,20 +17,16 @@ LOCAL_HOST = '127.0.0.1'
 PROTOCOL_VER = 0
 
 
-def resolve(parent_id: int, subname: str, ts: int) -> Optional[ResolvedInode]:
-    request_id = int(time.time())
-    shard = metadata_utils.shard_from_inode(parent_id)
+# "key_inode" means the inode you use to determine the shard
+def send_request(req_body: metadata_msgs.ReqBodyTy, key_inode: int
+    ) -> metadata_msgs.RespBodyTy:
+    shard = metadata_utils.shard_from_inode(key_inode)
     port = metadata_utils.shard_to_port(shard)
-    target = (LOCAL_HOST, port)
-    request = metadata_msgs.MetadataRequest(
-        ver=PROTOCOL_VER,
-        request_id=request_id,
-        body=metadata_msgs.ResolveReq(
-            parent_id=parent_id,
-            subname=subname,
-        ),
-    )
-    packed_req = bincode.pack(request)
+    ver = PROTOCOL_VER
+    request_id = int(time.time())
+    target = target = (LOCAL_HOST, port)
+    req = metadata_msgs.MetadataRequest(ver, request_id, req_body)
+    packed_req = bincode.pack(req)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', 0))
     sock.sendto(packed_req, target)
@@ -41,10 +37,29 @@ def resolve(parent_id: int, subname: str, ts: int) -> Optional[ResolvedInode]:
     if request_id != response.request_id:
         raise ValueError('Bad request_id from server:'
             f' expected {request_id} got {response.request_id}')
-    if not isinstance(response.body, metadata_msgs.ResolveResp):
+    return response.body
+
+
+def resolve(parent_id: int, subname: str) -> Optional[ResolvedInode]:
+    req_body = metadata_msgs.ResolveReq(
+        parent_id=parent_id,
+        subname=subname,
+    )
+    resp_body = send_request(req_body, parent_id)
+    if not isinstance(resp_body, metadata_msgs.ResolveResp):
         raise ValueError(f'Bad response from server:'
-            f' expected ResolveResp got {response.body}')
-    return response.body.f
+            f' expected ResolveResp got {resp_body}')
+    return resp_body.f
+
+
+def stat(inode: int) -> metadata_msgs.StatResp:
+    req_body = metadata_msgs.StatReq(
+        inode,
+    )
+    resp_body = send_request(req_body, inode)
+    if not isinstance(resp_body, metadata_msgs.StatResp):
+        raise Exception(f'Bad response from stat: {resp_body}')
+    return resp_body
 
 
 def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
@@ -55,7 +70,7 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
 
     # start at root
     cur_inode = ResolvedInode(
-        id=metadata_utils.ROOT_INODE_NUMBER,
+        id=metadata_utils.ROOT_INODE,
         inode_type=metadata_msgs.InodeType.DIRECTORY,
     )
 
@@ -67,7 +82,7 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
             filename = '/'.join(bits[:i+1])
             raise ValueError(f"'{filename}' is not a directory")
 
-        next_inode = resolve(cur_inode.id, bit, ts)
+        next_inode = resolve(cur_inode.id, bit)
 
         if next_inode is None:
             subdirname = '/'.join(bits[:i+2])
@@ -78,25 +93,64 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
     return cur_inode
 
 
-def do_resolve(parent_inode: ResolvedInode, basename: str, creation_ts: int
+def do_resolve(parent_inode: ResolvedInode, name: str, creation_ts: int
     ) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for resolve')
 
     inode: Optional[ResolvedInode]
-    if basename == '':
+    if name == '':
         inode = parent_inode
     else:
-        inode = resolve(parent_inode.id, basename, creation_ts)
+        inode = resolve(parent_inode.id, name)
     print(inode)
 
 
 def do_mkdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for mkdir')
+
+    # before talking to the cross-dir co-ordinator, check whether this
+    # subdirectory already exists
+    # this ensures we're not wasting the rename co-ordinator's time
+
+    inode = resolve(parent_inode.id, name)
+    if inode is not None:
+        # if this inode is a directory, return success (ensures idempotency)
+        if inode.inode_type == metadata_msgs.InodeType.DIRECTORY:
+            print(f'Created successfully: {inode}')
+            return
+        raise Exception(f'Target is not a directory: {inode}')
 
     raise NotImplementedError()
+
+
+def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for stat')
+
+    inode: Optional[ResolvedInode]
+    if parent_inode.id == metadata_utils.ROOT_INODE and name == '':
+        inode = ResolvedInode(metadata_utils.ROOT_INODE,
+            metadata_msgs.InodeType.DIRECTORY)
+    else:
+        inode = resolve(parent_inode.id, name)
+    if inode is None:
+        raise Exception(f'resolve ({parent_inode.id}, {name}) returned None')
+
+    resp = stat(inode.id)
+    if resp.inode_type != inode.inode_type:
+        raise Exception('Bad inode type:'
+            f' expected {inode.inode_type} got {resp.inode_type}')
+
+    print(resp)
+
 
 
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': do_resolve,
     'mkdir': do_mkdir,
+    'stat': do_stat,
 }
 
 

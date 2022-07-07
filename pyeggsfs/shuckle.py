@@ -5,6 +5,7 @@
 #      provide an endpoint to return write weights for devices
 
 from quart import Quart, request, g, jsonify, render_template
+from typing import Dict, Tuple, Deque, Optional
 import asyncio
 import crypto
 import datetime
@@ -22,11 +23,14 @@ app = Quart(__name__)
 # queue of keys that we should check and upsert in the db
 # push None to shutdown the cororoutine
 # TODO when it becomes terminal we need to remove it!
-KEYS_TO_CHECK = collections.deque()
-KEY_TO_IP_PORT = {}
+KEYS_TO_CHECK: Deque[bytes] = collections.deque()
+KEY_TO_IP_PORT: Dict[bytes, Tuple[str, int]] = {}
+
+DB = sqlite3.connect('database.db')
+DB.row_factory = sqlite3.Row
 
 # verify we can contact a device, if we can update the database
-async def check_one_device(secret_key, ip, port):
+async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
     now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
 
     # connect to the device and fetch the stats
@@ -35,20 +39,20 @@ async def check_one_device(secret_key, ip, port):
     token = secrets.token_bytes(8)
     writer.write(b's' + token)
     m = await reader.readexactly(49)
-    m = crypto.remove_mac(m, rk)
-    assert m is not None, 'bad mac'
-    kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m)
+    m2 = crypto.remove_mac(m, rk)
+    assert m2 is not None, 'bad mac'
+    kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m2)
     assert kind == b'S', 'bad response kind'
     assert got_token == token, 'token mismatch'
 
     # put the information into the database
     # (either creating a new record or updating an old one
-    app.db.execute("""
+    DB.execute("""
         insert into block_services (secret_key, ip, port, last_check, used_bytes, free_bytes, used_n, free_n)
         values (?, ?, ?, ?, ?, ?, ?, ?)
         on conflict (secret_key) do update set ip=?, port=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
     """, (secret_key.hex(), ip, port, now, used_bytes, free_bytes, used_n, free_n, ip, port, now, used_bytes, free_bytes, used_n, free_n))
-    app.db.commit()
+    DB.commit()
 
     # given we have updated the database we should ensure this is getting covered by periodic checks
     # and that it's being checked with the right ip/port
@@ -57,9 +61,9 @@ async def check_one_device(secret_key, ip, port):
     KEY_TO_IP_PORT[secret_key] = (ip, port)
 
 
-async def check_devices_forever():
+async def check_devices_forever() -> None:
     # first fetch all existing devices from the database
-    c = app.db.execute('select secret_key, ip, port from block_services where status != "terminal"')
+    c = DB.execute('select secret_key, ip, port from block_services where status != "terminal"')
     for key, ip, port in c.fetchall():
         key = bytes.fromhex(key)
         KEYS_TO_CHECK.append(key)
@@ -80,15 +84,15 @@ async def check_devices_forever():
         except Exception as e:
             app.logger.error(f'Failed to check device at {ip}:{port}', exc_info=True)
 
-async def listen_for_registrations():
+async def listen_for_registrations() -> None:
     # open a udp socket and listen for registration messages
     # if it's a new device or and ip/port change then we need to check it immediately
     loop = asyncio.get_running_loop()
-    q = asyncio.Queue()
-    class UdpTransport:
-        def connection_made(self, transport):
+    q: asyncio.Queue[Tuple[bytes, Tuple[str, int]]] = asyncio.Queue()
+    class UdpTransport(asyncio.BaseProtocol):
+        def connection_made(self, transport: asyncio.BaseTransport) -> None:
             pass
-        def datagram_received(self, data, addr):
+        def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
             q.put_nowait((data, addr))
     transport, protocol = await loop.create_datagram_endpoint(lambda: UdpTransport(), local_addr=('localhost', 5000))
     while True:
@@ -113,26 +117,33 @@ async def listen_for_registrations():
 ###########################################
 
 @app.template_filter('dateformat')
-def date_format(value):
+def date_format(value: int) -> str:
     dt = datetime.datetime(2020, 1, 1) + datetime.timedelta(seconds=value)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 @app.route('/list_devices')
-async def list_devices():
+async def list_devices() -> None:
     # TODO provide ip, port, write_weight for each device
     pass
 
 @app.route('/')
-async def index():
-    c = app.db.execute('select * from block_services')
+async def index() -> str:
+    c = DB.execute('select * from block_services')
     return await render_template('index.html', devices=list(c.fetchall()))
 
+@app.route('/change_status', methods=['POST'])
+async def change_status() -> None:
+    # valid transitions:
+    #   normal -> drain
+    #   drain -> normal
+    #   any -> terminal [if we haven't heard from it for a long time]
+    pass
 
 ###########################################
 # initialization
 ###########################################
 
-def init_db():
+def init_db() -> None:
     db = sqlite3.connect('database.db')
     db.execute("""
         create table if not exists block_services (
@@ -150,17 +161,24 @@ def init_db():
     """)
     db.commit()
 
+CHECK_DEVICES_FOREVER_TASK: Optional[asyncio.Task[None]] = None
+LISTEN_FOR_REGISTRATIONS_TASK: Optional[asyncio.Task[None]] = None
+
 @app.before_serving
-async def startup():
-    app.db = sqlite3.connect('database.db')
-    app.db.row_factory = sqlite3.Row
-    app.check_devices_forever_task = asyncio.create_task(check_devices_forever())
-    app.listen_for_registrations_task = asyncio.create_task(listen_for_registrations())
+async def startup() -> None:
+    global CHECK_DEVICES_FOREVER_TASK
+    global LISTEN_FOR_REGISTRATIONS_TASK
+    assert CHECK_DEVICES_FOREVER_TASK is None
+    assert LISTEN_FOR_REGISTRATIONS_TASK is None
+    CHECK_DEVICES_FOREVER_TASK = asyncio.create_task(check_devices_forever())
+    LISTEN_FOR_REGISTRATIONS_TASK = asyncio.create_task(listen_for_registrations())
 
 @app.after_serving
-async def shutdown():
-    app.check_devices_forever_task.cancel()
-    app.listen_for_registrations_task.cancel()
+async def shutdown() -> None:
+    assert CHECK_DEVICES_FOREVER_TASK is not None
+    assert LISTEN_FOR_REGISTRATIONS_TASK is not None
+    CHECK_DEVICES_FOREVER_TASK.cancel()
+    LISTEN_FOR_REGISTRATIONS_TASK.cancel()
 
 if __name__ == '__main__':
     init_db()

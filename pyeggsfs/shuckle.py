@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 
 # TODO provide a nice ui
-#      provide an endpoint where we pretend to be dead devices and fake deletion certs
-#      provide an endpoint to return write weights for devices
+#      we need a way of identifying the device (not just the host, but the particular disk, eg. a serial number)
+#      if a new devices comes along we should refuse to register it unless it has zero objects
 
-from quart import Quart, request, g, jsonify, render_template
+from quart import Quart, request, g, jsonify, render_template, Response
 from typing import Dict, Tuple, Deque, Optional
 import asyncio
+import collections
 import crypto
 import datetime
+import humanize
 import secrets
+import socket
 import sqlite3
 import struct
-import collections
 
 app = Quart(__name__)
 
@@ -22,7 +24,6 @@ app = Quart(__name__)
 
 # queue of keys that we should check and upsert in the db
 # push None to shutdown the cororoutine
-# TODO when it becomes terminal we need to remove it!
 KEYS_TO_CHECK: Deque[bytes] = collections.deque()
 KEY_TO_IP_PORT: Dict[bytes, Tuple[str, int]] = {}
 
@@ -35,7 +36,10 @@ async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
 
     # connect to the device and fetch the stats
     rk = crypto.aes_expand_key(secret_key)
-    reader, writer = await asyncio.open_connection(ip, port)
+    try:
+        reader, writer = await asyncio.open_connection(ip, port)
+    except ConnectionRefusedError:
+        return
     token = secrets.token_bytes(8)
     writer.write(b's' + token)
     m = await reader.readexactly(49)
@@ -48,10 +52,10 @@ async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
     # put the information into the database
     # (either creating a new record or updating an old one
     DB.execute("""
-        insert into block_services (secret_key, ip, port, last_check, used_bytes, free_bytes, used_n, free_n)
-        values (?, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (secret_key) do update set ip=?, port=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
-    """, (secret_key.hex(), ip, port, now, used_bytes, free_bytes, used_n, free_n, ip, port, now, used_bytes, free_bytes, used_n, free_n))
+        insert into block_services (secret_key, ip_port, last_check, used_bytes, free_bytes, used_n, free_n)
+        values (?, ?, ?, ?, ?, ?, ?)
+        on conflict (secret_key) do update set ip_port=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
+    """, (secret_key.hex(), f'{ip}:{port}', now, used_bytes, free_bytes, used_n, free_n, f'{ip}:{port}', now, used_bytes, free_bytes, used_n, free_n))
     DB.commit()
 
     # given we have updated the database we should ensure this is getting covered by periodic checks
@@ -63,8 +67,10 @@ async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
 
 async def check_devices_forever() -> None:
     # first fetch all existing devices from the database
-    c = DB.execute('select secret_key, ip, port from block_services where status != "terminal"')
-    for key, ip, port in c.fetchall():
+    c = DB.execute('select secret_key, ip_port from block_services')
+    for key, ip_port in c.fetchall():
+        ip, port = ip_port.split(':')
+        port = int(port)
         key = bytes.fromhex(key)
         KEYS_TO_CHECK.append(key)
         KEY_TO_IP_PORT[key] = (ip, port)
@@ -77,12 +83,13 @@ async def check_devices_forever() -> None:
         key = KEYS_TO_CHECK[-1]
         ip, port = KEY_TO_IP_PORT[key]
         try:
-            app.logger.info(f'Running periodic check for {ip}:{port}')
+            #app.logger.info(f'Running periodic check for {ip}:{port}')
             await check_one_device(key, ip, port)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            app.logger.error(f'Failed to check device at {ip}:{port}', exc_info=True)
+            #app.logger.error(f'Failed to check device at {ip}:{port}', exc_info=True)
+            pass
 
 async def listen_for_registrations() -> None:
     # open a udp socket and listen for registration messages
@@ -116,15 +123,25 @@ async def listen_for_registrations() -> None:
 # web ui
 ###########################################
 
+HOST_CACHE: Dict[str, str] = {}
+
+@app.template_filter('resolve')
+async def resolve_host(ip_port: str) -> str:
+    ip, port = ip_port.split(':')
+    if ip not in HOST_CACHE:
+        loop = asyncio.get_running_loop()
+        try:
+            hostname, _, _ = await asyncio.wait_for(loop.run_in_executor(None, socket.gethostbyaddr, ip), timeout=1.0)
+        except asyncio.TimeoutError:
+            hostname = ip
+        HOST_CACHE[ip] = hostname
+    return f'{HOST_CACHE[ip]}:{port}'
+
 @app.template_filter('dateformat')
 def date_format(value: int) -> str:
     dt = datetime.datetime(2020, 1, 1) + datetime.timedelta(seconds=value)
-    return dt.strftime('%Y-%m-%d %H:%M:%S')
-
-@app.route('/list_devices')
-async def list_devices() -> None:
-    # TODO provide ip, port, write_weight for each device
-    pass
+    delta = datetime.datetime.utcnow() - dt
+    return humanize.naturaldelta(delta) + ' ago'
 
 @app.route('/')
 async def index() -> str:
@@ -132,12 +149,42 @@ async def index() -> str:
     return await render_template('index.html', devices=list(c.fetchall()))
 
 @app.route('/change_status', methods=['POST'])
-async def change_status() -> None:
-    # valid transitions:
-    #   normal -> drain
-    #   drain -> normal
-    #   any -> terminal [if we haven't heard from it for a long time]
-    pass
+async def change_status() -> Response:
+    body = await request.json
+    action, id = body['action'], body['id']
+    if action == 'drain':
+        # normal -> drain
+        DB.execute("update block_services set status='drain' where id=? and status='ok'", (id,))
+        DB.commit()
+    elif action == 'resume':
+        # drain -> normal
+        DB.execute("update block_services set status='ok' where id=? and status='drain'", (id,))
+        DB.commit()
+    elif action == 'terminate':
+        # * -> terminal
+        # TODO ensure the device is stale before we allow this
+        DB.execute("update block_services set status='terminal' where id=?", (id,))
+        DB.commit()
+    else:
+        assert False
+    return jsonify({})
+
+@app.route('/show_me_what_you_got')
+async def list_devices() -> Response:
+    c = DB.execute("select id, ip_port, last_check, status, used_bytes, free_bytes, secret_key from block_services")
+    ret = []
+    for row in c.fetchall():
+        # TODO comptue weight from last_check/status/used_bytes/free_bytes
+        weight = 0.0
+        ret.append({
+            'ip': row['ip_port'].split(':')[0],
+            'port': int(row['ip_port'].split(':')[1]),
+            'terminal': row['status'] == 'terminal',
+            'write_weight': weight,
+            'secret_key': row['secret_key'],
+        })
+    return jsonify(ret)
+
 
 ###########################################
 # initialization
@@ -150,8 +197,7 @@ def init_db() -> None:
             id integer primary key,
             secret_key text unique not null,
             status integer not null default "ok",
-            ip text not null,
-            port int not null,
+            ip_port text,
             last_check integer not null,
             used_bytes integer not null,
             free_bytes integer not null,
@@ -161,8 +207,8 @@ def init_db() -> None:
     """)
     db.commit()
 
-CHECK_DEVICES_FOREVER_TASK: Optional[asyncio.Task[None]] = None
-LISTEN_FOR_REGISTRATIONS_TASK: Optional[asyncio.Task[None]] = None
+CHECK_DEVICES_FOREVER_TASK: Optional['asyncio.Task[None]'] = None
+LISTEN_FOR_REGISTRATIONS_TASK: Optional['asyncio.Task[None]'] = None
 
 @app.before_serving
 async def startup() -> None:

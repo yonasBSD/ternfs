@@ -1,6 +1,6 @@
 <!doctype html>
 <title>Block services</title>
-<meta http-equiv="refresh" content="2">
+<meta http-equiv="refresh" content="30">
 <h1>Block services</h1>
 <table border=1 cellpadding=10>
 <thead>
@@ -10,15 +10,40 @@
     <th>Status
     <th>Last checked
     <th>Stored bytes
-    <th>Available bytes
+    <th>Free space
 <tbody>
 {% for item in devices %}
 <tr>
     <td>{{ item.id }}
-    <td>{{ item.ip }}:{{ item.port }}
+    <td>{{ item.ip_port|resolve }}
     <td>{{ item.status }}
     <td>{{ item.last_check|dateformat }}
     <td>{{ item.used_bytes|filesizeformat }}
     <td>{{ item.free_bytes|filesizeformat }}
+    {% if item.status == "ok" %}
+    <td><button onclick="change_status('drain', {{ item.id }})">Drain</button>
+    {% elif item.status == "drain" %}
+    <td><button onclick="change_status('resume', {{ item.id }})">Resume</button>
+    {% endif %}
+    <!-- TODO termination control -->
 {% endfor %}
 </table>
+<script>
+async function post_data(url, data) {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+    });
+    return response.json();
+}
+async function change_status(action, id) {
+    await post_data('/change_status', {
+        'action': action,
+        'id': id,
+    });
+    location.reload();
+}
+</script>

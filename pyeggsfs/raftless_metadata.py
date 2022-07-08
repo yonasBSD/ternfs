@@ -116,13 +116,44 @@ class MetadataShard:
         if parent is None or not isinstance(parent, Directory):
             return None
         hashed_name = metadata_utils.string_hash(r.subname)
-        res = parent.living_items.get(LivingKey(hashed_name, r.subname))
-        if res is None:
-            return None
+        if r.mode == metadata_msgs.ResolveMode.ALIVE:
+            res = parent.living_items.get(LivingKey(hashed_name, r.subname))
+            if res is None:
+                return None
+            else:
+                return metadata_msgs.ResolvedInode(
+                    id=res.inode_id,
+                    inode_type=res.type,
+                    creation_ts=res.creation_time,
+                    is_owning=True,
+                )
         else:
+            assert r.mode == metadata_msgs.ResolveMode.DEAD_LE
+            search_ts = r.creation_ts or 2**64 - 1
+            search_key = DeadKey(hashed_name, r.subname, search_ts)
+            result_idx = parent.dead_items.bisect_left(search_key)
+            if result_idx >= len(parent.dead_items):
+                return None
+            result_key = parent.dead_items.keys()[result_idx]
+            if result_key.name != r.subname:
+                return None
+            result_value = parent.dead_items[result_key]
+            if result_value is None:
+                # in the snapshot history, the inode is dead at creation_ts
+                # we want the most recently deleted one, i.e. one before
+                # this should exist (invariant of the data structure)
+                # TODO: - is this invariant real?
+                #       - will the None entry definitely be removed?
+                assert result_idx != 0
+                result_key = parent.dead_items.keys()[result_idx - 1]
+                assert(result_key.name == r.subname)
+                result_value = parent.dead_items[result_key]
+            assert result_value is not None
             return metadata_msgs.ResolvedInode(
-                id=res.inode_id,
-                inode_type=res.type,
+                id=result_value.inode_id,
+                inode_type=result_value.type,
+                creation_ts=result_key.creation_time,
+                is_owning=result_value.is_owning,
             )
 
     def do_stat(self, r: metadata_msgs.StatReq

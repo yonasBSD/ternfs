@@ -19,21 +19,33 @@ class RequestKind(enum.IntEnum):
     STAT = 2
 
 
+class ResolveMode(enum.IntEnum):
+    ALIVE = 0
+    # returns dead entry with largest creation_ts <= given ts
+    DEAD_LE = 1
+
+
 @dataclass
 class ResolveReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.RESOLVE
+    mode: ResolveMode
     parent_id: int
+    creation_ts: int # ignored for ALIVE requests
     subname: str
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.mode, b)
         bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_unsigned_into(self.creation_ts, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolveReq':
+        mode = ResolveMode(bincode.unpack_unsigned(u))
         parent_id = bincode.unpack_unsigned(u)
+        creation_ts = bincode.unpack_unsigned(u)
         subname = bincode.unpack_bytes(u).decode()
-        return ResolveReq(parent_id, subname)
+        return ResolveReq(mode, parent_id, creation_ts, subname)
 
 
 @dataclass
@@ -107,16 +119,22 @@ class MetadataError(bincode.Packable):
 class ResolvedInode(bincode.Packable):
     id: int
     inode_type: InodeType
+    creation_ts: int
+    is_owning: bool # always true for living inodes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_unsigned_into(self.id, b)
         bincode.pack_unsigned_into(self.inode_type, b)
+        bincode.pack_unsigned_into(self.creation_ts, b)
+        bincode.pack_unsigned_into(self.is_owning, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolvedInode':
         id = bincode.unpack_unsigned(u)
         inode_type = InodeType(bincode.unpack_unsigned(u))
-        return ResolvedInode(id, inode_type)
+        creation_ts = bincode.unpack_unsigned(u)
+        is_owning = bool(bincode.unpack_unsigned(u))
+        return ResolvedInode(id, inode_type, creation_ts, is_owning)
 
 
 @dataclass
@@ -229,7 +247,8 @@ class MetadataResponse(bincode.Packable):
 
 def __tests() -> None:
     original = MetadataRequest(ver=0, request_id=123,
-        body=ResolveReq(parent_id=512, subname='hello_world'))
+        body=ResolveReq(mode=ResolveMode.ALIVE, parent_id=512,
+            creation_ts=0, subname='hello_world'))
 
     packed = bincode.pack(original)
 
@@ -240,7 +259,8 @@ def __tests() -> None:
     original2 = MetadataResponse(
         request_id=456,
         body=ResolveResp(f=ResolvedInode(
-            id=9001, inode_type=InodeType.FILE)))
+            id=9001, inode_type=InodeType.FILE, creation_ts=1657216525,
+            is_owning=True)))
 
     packed2 = bincode.pack(original2)
 

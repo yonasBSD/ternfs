@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import functools
 import posixpath
 import socket
 import sys
@@ -9,7 +10,7 @@ from typing import Callable, Dict, Optional
 
 import bincode
 import metadata_msgs
-from metadata_msgs import ResolvedInode
+from metadata_msgs import ResolvedInode, ResolveMode
 import metadata_utils
 
 
@@ -35,29 +36,36 @@ def send_request(req_body: metadata_msgs.ReqBodyTy, key_inode: int
     response = metadata_msgs.MetadataResponse.unpack(
         bincode.UnpackWrapper(packed_resp))
     if request_id != response.request_id:
-        raise ValueError('Bad request_id from server:'
+        raise Exception('Bad request_id from server:'
             f' expected {request_id} got {response.request_id}')
     return response.body
 
 
-def resolve(parent_id: int, subname: str) -> Optional[ResolvedInode]:
+def resolve(parent_id: int, subname: str, creation_ts: int = 0,
+    mode: ResolveMode = ResolveMode.ALIVE) -> Optional[ResolvedInode]:
+
     req_body = metadata_msgs.ResolveReq(
+        mode=mode,
         parent_id=parent_id,
+        creation_ts=creation_ts,
         subname=subname,
     )
     resp_body = send_request(req_body, parent_id)
     if not isinstance(resp_body, metadata_msgs.ResolveResp):
-        raise ValueError(f'Bad response from server:'
+        raise Exception(f'Bad response from server:'
             f' expected ResolveResp got {resp_body}')
     return resp_body.f
 
 
-def stat(inode: int) -> metadata_msgs.StatResp:
+def stat(inode: int) -> Optional[metadata_msgs.StatResp]:
     req_body = metadata_msgs.StatReq(
         inode,
     )
     resp_body = send_request(req_body, inode)
     if not isinstance(resp_body, metadata_msgs.StatResp):
+        if (isinstance(resp_body, metadata_msgs.MetadataError)
+            and resp_body.error_kind == metadata_msgs.MetadataErrorKind.NOT_FOUND):
+            return None
         raise Exception(f'Bad response from stat: {resp_body}')
     return resp_body
 
@@ -72,6 +80,8 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
     cur_inode = ResolvedInode(
         id=metadata_utils.ROOT_INODE,
         inode_type=metadata_msgs.InodeType.DIRECTORY,
+        creation_ts=0,
+        is_owning=True,
     )
 
     if path == '/':
@@ -93,16 +103,16 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
     return cur_inode
 
 
-def do_resolve(parent_inode: ResolvedInode, name: str, creation_ts: int
-    ) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for resolve')
-
+def do_resolve(mode: metadata_msgs.ResolveMode, parent_inode: ResolvedInode,
+    name: str, creation_ts: int) -> None:
     inode: Optional[ResolvedInode]
     if name == '':
-        inode = parent_inode
+        if mode == metadata_msgs.ResolveMode.ALIVE:
+            inode = parent_inode
+        else:
+            inode = None
     else:
-        inode = resolve(parent_inode.id, name)
+        inode = resolve(parent_inode.id, name, creation_ts, mode)
     print(inode)
 
 
@@ -131,15 +141,18 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
 
     inode: Optional[ResolvedInode]
     if parent_inode.id == metadata_utils.ROOT_INODE and name == '':
-        inode = ResolvedInode(metadata_utils.ROOT_INODE,
-            metadata_msgs.InodeType.DIRECTORY)
+        inode = ResolvedInode(
+            id=metadata_utils.ROOT_INODE,
+            inode_type=metadata_msgs.InodeType.DIRECTORY,
+            creation_ts=0,
+            is_owning=True)
     else:
         inode = resolve(parent_inode.id, name)
     if inode is None:
         raise Exception(f'resolve ({parent_inode.id}, {name}) returned None')
 
     resp = stat(inode.id)
-    if resp.inode_type != inode.inode_type:
+    if resp is not None and resp.inode_type != inode.inode_type:
         raise Exception('Bad inode type:'
             f' expected {inode.inode_type} got {resp.inode_type}')
 
@@ -148,7 +161,8 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
 
 
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
-    'resolve': do_resolve,
+    'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
+    'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
     'mkdir': do_mkdir,
     'stat': do_stat,
 }

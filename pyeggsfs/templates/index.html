@@ -15,7 +15,11 @@
 <tr>
     <td>{{ item.ip_port|resolve }}
     <td>{{ item.status }}
+    {% if item.last_check is stale %}
+    <td style="color:red">{{ item.last_check|dateformat }}
+    {% else %}
     <td>{{ item.last_check|dateformat }}
+    {% endif %}
     <td>{{ item.used_bytes|filesizeformat }}
     <td>{{ item.free_bytes|filesizeformat }}
     {% if item.status == "ok" %}
@@ -23,12 +27,9 @@
     {% elif item.status == "drain" %}
     <td><button onclick="change_status('resume', {{ item.id }})">Resume</button>
     {% endif %}
-    {% if item.status == "drain" %}
+    {% if item.status == "drain" and item.last_check is stale %}
     <td><button onclick="change_status('terminate', {{ item.id }}, true)">Terminate</button>
-    {% else %}
-    <td>
     {% endif %}
-    <!-- TODO termination control -->
 {% endfor %}
 </table>
 <script>

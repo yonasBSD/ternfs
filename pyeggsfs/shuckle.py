@@ -140,9 +140,13 @@ def date_format(value: int) -> str:
     delta = datetime.datetime.utcnow() - dt
     return humanize.naturaldelta(delta) + ' ago'
 
+@app.template_test('stale')
+def is_stale(value: int) -> bool:
+    now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
+    return value <= now - MAX_STALE_SECS
+
 @app.route('/')
 async def index() -> str:
-    # TODO need to render in red if stale
     c = DB.execute('select * from block_services')
     return await render_template('index.html', devices=list(c.fetchall()))
 
@@ -159,9 +163,9 @@ async def change_status() -> Response:
         DB.execute("update block_services set status='ok' where id=? and status='drain'", (id,))
         DB.commit()
     elif action == 'terminate':
-        # * -> terminal
-        # TODO ensure the device is stale before we allow this
-        DB.execute("update block_services set status='terminal' where id=?", (id,))
+        # * -> terminal (only if it's stale!)
+        now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
+        DB.execute("update block_services set status='terminal' where id=? and last_check<=?", (id, now-MAX_STALE_SECS))
         DB.commit()
     else:
         assert False

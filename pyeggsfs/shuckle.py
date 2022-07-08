@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 
-# TODO provide a nice ui
-#      we need a way of identifying the device (not just the host, but the particular disk, eg. a serial number)
-#      if a new devices comes along we should refuse to register it unless it has zero objects
-
 from quart import Quart, request, g, jsonify, render_template, Response
 from typing import Dict, Tuple, Deque, Optional
 import asyncio
@@ -11,6 +7,8 @@ import collections
 import crypto
 import datetime
 import humanize
+import numpy as np
+import scipy.optimize
 import secrets
 import socket
 import sqlite3
@@ -30,9 +28,12 @@ KEY_TO_IP_PORT: Dict[bytes, Tuple[str, int]] = {}
 DB = sqlite3.connect('database.db')
 DB.row_factory = sqlite3.Row
 
+EPOCH = datetime.datetime(2020, 1, 1)
+MAX_STALE_SECS = 600
+
 # verify we can contact a device, if we can update the database
 async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
-    now = int((datetime.datetime.utcnow() - datetime.datetime(2020, 1, 1)).total_seconds())
+    now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
 
     # connect to the device and fetch the stats
     rk = crypto.aes_expand_key(secret_key)
@@ -115,10 +116,6 @@ async def listen_for_registrations() -> None:
             app.logger.error(f'Error processing registration for {ip}:{tcp_port}', exc_info=True)
 
 
-
-
-
-
 ###########################################
 # web ui
 ###########################################
@@ -139,12 +136,13 @@ async def resolve_host(ip_port: str) -> str:
 
 @app.template_filter('dateformat')
 def date_format(value: int) -> str:
-    dt = datetime.datetime(2020, 1, 1) + datetime.timedelta(seconds=value)
+    dt = EPOCH + datetime.timedelta(seconds=value)
     delta = datetime.datetime.utcnow() - dt
     return humanize.naturaldelta(delta) + ' ago'
 
 @app.route('/')
 async def index() -> str:
+    # TODO need to render in red if stale
     c = DB.execute('select * from block_services')
     return await render_template('index.html', devices=list(c.fetchall()))
 
@@ -169,19 +167,64 @@ async def change_status() -> Response:
         assert False
     return jsonify({})
 
+def calc_weights(used_bytes: np.array, total_bytes: np.array, simulate_add_frac: float = 0.2) -> np.array:
+    # linear program
+    #   variables: target_fill_ratio, bytes_added (for each device) [both >= 0]
+    #   objective: minimize sum(bytes_added)
+    #   s.t. bytes_added_i >= target_fill_ratio * total_space_i - used_space_i
+    #        sum(bytes_added_i) >= 0.2 * sum(capacity)
+    # you might think this overflows once there is less than 20% space remaining, however
+    # the alternative is pretty terrible as it would degenerate to extremely uneven fill
+    # behavior
+    assert total_bytes.shape == used_bytes.shape
+    n, = used_bytes.shape
+    scale = 1.0 / total_bytes.sum()
+
+    c = np.zeros((n+1,))
+    c[1:] = 1.0
+
+    A_ub = np.zeros((n+1, n+1))
+    A_ub[0,1:] = -1.0
+    A_ub[1:,0] = total_bytes * scale
+    np.fill_diagonal(A_ub[1:,1:], -1.0)
+
+    b_ub = np.zeros((n+1,))
+    b_ub[0] = -simulate_add_frac
+    b_ub[1:] = used_bytes * scale
+
+    ret = scipy.optimize.linprog(c, A_ub, b_ub)
+    assert ret.success
+    bytes_to_add = ret.x[1:]
+    w = bytes_to_add * (1.0 / simulate_add_frac)
+    return w
+
 @app.route('/show_me_what_you_got')
 async def list_devices() -> Response:
-    c = DB.execute("select id, ip_port, last_check, status, used_bytes, free_bytes, secret_key from block_services")
+    now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
+
+    # first let's compute the weights
+    c = DB.execute("select id, used_bytes, used_bytes + free_bytes from block_services where status='ok' and last_check>?", (now-MAX_STALE_SECS,))
+    rows = list(c.fetchall())
+    if rows:
+        ids, used_bytes, total_bytes = zip(*rows)
+        ws = calc_weights(np.array(used_bytes), np.array(total_bytes))
+        id_to_w = {i: w for i, w in zip(ids, ws)}
+    else:
+        id_to_w = {}
+
+    # build the response
+    c = DB.execute("select id, ip_port, last_check, status, secret_key from block_services")
     ret = []
-    for row in c.fetchall():
-        # TODO comptue weight from last_check/status/used_bytes/free_bytes
-        weight = 0.0
+    for id, ip_port, last_check, status, secret_key in c.fetchall():
+        is_stale = last_check <= now - MAX_STALE_SECS
+        if is_stale or status != 'ok': assert id not in id_to_w
         ret.append({
-            'ip': row['ip_port'].split(':')[0],
-            'port': int(row['ip_port'].split(':')[1]),
-            'terminal': row['status'] == 'terminal',
-            'write_weight': weight,
-            'secret_key': row['secret_key'],
+            'ip': ip_port.split(':')[0],
+            'port': int(ip_port.split(':')[1]),
+            'is_terminal': status == 'terminal',
+            'is_stale': is_stale,
+            'write_weight': id_to_w.get(id, 0.0),
+            'secret_key': secret_key,
         })
     return jsonify(ret)
 

@@ -2,7 +2,7 @@
 
 import abc
 import struct
-from typing import Type, TypeVar
+from typing import Any, Tuple, Type, TypeVar
 
 
 U16_MAX = 2**16 - 1
@@ -121,6 +121,20 @@ def unzigzag(x: int) -> int:
 def unpack_signed(u: UnpackWrapper) -> int:
     '''Returns: (value, bytes_consumed)'''
     return unzigzag(unpack_unsigned(u))
+
+
+def unpack_u8(u: UnpackWrapper) -> int:
+    ret = int(u.read()[0])
+    u.advance(1)
+    return ret
+
+
+# def unpack_struct(u: UnpackWrapper, struct_format: str) -> Tuple[Any, ...]:
+#     size = struct.calcsize(struct_format)
+#     b = u.read()
+#     ret = struct.unpack(struct_format, b[:size])
+#     u.advance(size)
+#     return ret
 
 
 def unpack_bytes(u: UnpackWrapper) -> bytes:

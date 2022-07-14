@@ -9,6 +9,8 @@ import time
 from typing import Callable, Dict, Optional
 
 import bincode
+import crypto
+import cross_dir_msgs
 import metadata_msgs
 from metadata_msgs import ResolvedInode, ResolveMode
 import metadata_utils
@@ -18,27 +20,48 @@ LOCAL_HOST = '127.0.0.1'
 PROTOCOL_VER = 0
 
 
-# "key_inode" means the inode you use to determine the shard
-def send_request(req_body: metadata_msgs.ReqBodyTy, key_inode: int
-    ) -> metadata_msgs.RespBodyTy:
-    shard = metadata_utils.shard_from_inode(key_inode)
+def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
+    key: Optional[crypto.ExpandedKey] = None) -> metadata_msgs.RespBodyTy:
+
+    assert (key is not None) == req_body.kind.is_privilaged()
     port = metadata_utils.shard_to_port(shard)
     ver = PROTOCOL_VER
     request_id = int(time.time())
     target = target = (LOCAL_HOST, port)
     req = metadata_msgs.MetadataRequest(ver, request_id, req_body)
     packed_req = bincode.pack(req)
+    if key is not None:
+        packed_req = crypto.add_mac(packed_req, key)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', 0))
     sock.sendto(packed_req, target)
     sock.settimeout(2.0)
     packed_resp = sock.recv(metadata_utils.UDP_MTU)
-    response = metadata_msgs.MetadataResponse.unpack(
-        bincode.UnpackWrapper(packed_resp))
+    response = bincode.unpack(metadata_msgs.MetadataResponse, packed_resp)
     if request_id != response.request_id:
         raise Exception('Bad request_id from server:'
             f' expected {request_id} got {response.request_id}')
     return response.body
+
+
+def cross_dir_request(req_body: cross_dir_msgs.ReqBodyTy
+    ) -> cross_dir_msgs.CrossDirResponse:
+
+    ver = PROTOCOL_VER
+    request_id = int(time.time())
+    target = target = (LOCAL_HOST, metadata_utils.CROSS_DIR_PORT)
+    req = cross_dir_msgs.CrossDirRequest(ver, request_id, req_body)
+    packed_req = bincode.pack(req)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.bind(('', 0))
+    sock.sendto(packed_req, target)
+    sock.settimeout(2.0)
+    packed_resp = sock.recv(metadata_utils.UDP_MTU)
+    response = bincode.unpack(cross_dir_msgs.CrossDirResponse, packed_resp)
+    if request_id != response.request_id:
+        raise Exception('Bad request_id from server:'
+            f' expected {request_id} got {response.request_id}')
+    return response
 
 
 def resolve(parent_id: int, subname: str, creation_ts: int = 0,
@@ -50,7 +73,7 @@ def resolve(parent_id: int, subname: str, creation_ts: int = 0,
         creation_ts=creation_ts,
         subname=subname,
     )
-    resp_body = send_request(req_body, parent_id)
+    resp_body = send_request(req_body, metadata_utils.shard_from_inode(parent_id))
     if not isinstance(resp_body, metadata_msgs.ResolveResp):
         raise Exception(f'Bad response from server:'
             f' expected ResolveResp got {resp_body}')
@@ -61,7 +84,7 @@ def stat(inode: int) -> Optional[metadata_msgs.StatResp]:
     req_body = metadata_msgs.StatReq(
         inode,
     )
-    resp_body = send_request(req_body, inode)
+    resp_body = send_request(req_body, metadata_utils.shard_from_inode(inode))
     if not isinstance(resp_body, metadata_msgs.StatResp):
         if (isinstance(resp_body, metadata_msgs.MetadataError)
             and resp_body.error_kind == metadata_msgs.MetadataErrorKind.NOT_FOUND):
@@ -132,7 +155,9 @@ def do_mkdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
             return
         raise Exception(f'Target is not a directory: {inode}')
 
-    raise NotImplementedError()
+    body = cross_dir_msgs.MkDirReq(parent_inode.id, name)
+    response = cross_dir_request(body)
+    print(response)
 
 
 def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
@@ -149,7 +174,7 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     else:
         inode = resolve(parent_inode.id, name)
     if inode is None:
-        raise Exception(f'resolve ({parent_inode.id}, {name}) returned None')
+        raise Exception(f'resolve ({parent_inode.id}, "{name}") returned None')
 
     resp = stat(inode.id)
     if resp is not None and resp.inode_type != inode.inode_type:

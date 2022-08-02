@@ -218,8 +218,8 @@ class MetadataShard:
                 mtime=mtime,
                 opaque=r.opaque,
             )
-            new_dir_inode = self.next_block_id
-            self.next_block_id += 0x100
+            new_dir_inode = self.next_inode_id
+            self.next_inode_id += 0x100
             self.last_created_inode = new_dir_inode
         else:
             # implies the previous created dir failed and didn't get linked in
@@ -229,7 +229,7 @@ class MetadataShard:
             recycled_dir.parent_inode = r.new_parent
             recycled_dir.mtime = mtime
             recycled_dir.opaque = r.opaque
-            new_dir_inode = self.next_block_id
+            new_dir_inode = self.next_inode_id
         return CreateDirResp(
             inode=new_dir_inode,
             mtime=mtime,
@@ -282,7 +282,7 @@ class MetadataShard:
             target = parent.living_items.get(LivingKey(hashname, r.subname))
             if target is not None:
                 target.is_owning = True
-        return InjectDirentResp()
+        return ReleaseDirentResp()
 
 
 def run_forever(shard: MetadataShard, db_fn: str) -> None:

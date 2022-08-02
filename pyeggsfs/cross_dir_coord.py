@@ -5,6 +5,7 @@ import os
 import random
 import socket
 import sys
+import time
 from typing import (Any, Callable, ClassVar, Dict, NamedTuple, NewType,
     Optional, Tuple, Type, Union)
 
@@ -122,14 +123,22 @@ class MkDir(StateMachineBase):
             self.parent_id,
             self.subname,
         )
-        resp = basic_client.send_request(
-            body,
-            metadata_utils.shard_from_inode(self.parent_id),
-            cross_dir_key.CROSS_DIR_KEY
-        )
-        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
-            c.send_reply(ResponseStatus.GENERAL_ERROR, None, str(resp))
-            return None
+        while True:
+            try:
+                resp = basic_client.send_request(
+                    body,
+                    metadata_utils.shard_from_inode(self.parent_id),
+                    cross_dir_key.CROSS_DIR_KEY
+                )
+                if isinstance(resp, metadata_msgs.ReleaseDirentResp):
+                    break
+                error = str(resp)
+            except Exception as e:
+                error = str(e)
+            # must keep retrying until we get a success
+            # in a pipelined world this may want to be
+            print('[WARNING] ReleaseDirent failed', error, file=sys.stderr)
+            time.sleep(0.1)
         new_dir_shard = metadata_utils.shard_from_inode(self.new_inode)
         c.persist_state.token_inodes[new_dir_shard] = self.new_inode
         c.send_reply(ResponseStatus.OK, self.new_inode, '')

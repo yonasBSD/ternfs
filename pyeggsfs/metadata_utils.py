@@ -1,4 +1,5 @@
 
+import hashlib
 import os
 import pickle
 import sys
@@ -23,9 +24,10 @@ CROSS_DIR_PORT = 36137
 
 
 def string_hash(s: str) -> int:
-    # the built-in hash uses SIP... except for small (<= 7) strings
     # for production we should consider alternatives, e.g. murmur3 or xxhash
-    return hash(s)
+    h = hashlib.md5()
+    h.update(s.encode())
+    return int.from_bytes(h.digest()[:8], 'little')
 
 
 # persist/restore use a double buffered system

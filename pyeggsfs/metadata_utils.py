@@ -1,4 +1,5 @@
 
+import enum
 import hashlib
 import os
 import pickle
@@ -22,13 +23,6 @@ def shard_to_port(shard: int) -> int:
     return shard + 22272
 
 CROSS_DIR_PORT = 36137
-
-
-def string_hash(s: str) -> int:
-    # for production we should consider alternatives, e.g. murmur3 or xxhash
-    h = hashlib.md5()
-    h.update(s.encode())
-    return int.from_bytes(h.digest()[:8], 'little')
 
 
 # persist/restore use a double buffered system

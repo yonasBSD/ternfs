@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass, field
 import enum
+import hashlib
 from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple, Union
 from sortedcontainers import SortedDict
 import os
@@ -46,6 +47,10 @@ class DeadValue:
     is_owning: bool
 
 
+class HashMode(enum.IntEnum):
+    TRUNC_MD5 = 1
+
+
 @dataclass
 class Directory:
     parent_inode: int # NULL_INODE => no parent
@@ -53,9 +58,18 @@ class Directory:
     # used by clients when selecting storage classes, parity modes, etc
     # unclear what size this should be, for now it's variable-length
     opaque: bytes
+    hash_mode: HashMode = HashMode.TRUNC_MD5
     living_items: 'SortedDict[LivingKey, LivingValue]' = field(default_factory=SortedDict)
     dead_items: 'SortedDict[DeadKey, Optional[DeadValue]]' = field(default_factory=SortedDict)
-    #TODO add "hash function mode"
+
+    def hash_name(self, n: str) -> int:
+        # for production we should consider alternatives, e.g. murmur3 or xxhash
+        if self.hash_mode == HashMode.TRUNC_MD5:
+            h = hashlib.md5()
+            h.update(n.encode())
+            return int.from_bytes(h.digest()[:8], 'little')
+        else:
+            raise ValueError(f'Unsupported hash mode: {self.hash_mode}')
 
 
 @dataclass
@@ -117,7 +131,7 @@ class MetadataShard:
         parent = self.inodes.get(r.parent_id)
         if parent is None or not isinstance(parent, Directory):
             return None
-        hashed_name = metadata_utils.string_hash(r.subname)
+        hashed_name = parent.hash_name(r.subname)
         if r.mode == ResolveMode.ALIVE:
             res = parent.living_items.get(LivingKey(hashed_name, r.subname))
             if res is None:
@@ -351,7 +365,7 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 f'{r.parent_inode} has no parent'
             )
-        hashed_name = metadata_utils.string_hash(r.subname)
+        hashed_name = parent.hash_name(r.subname)
         expected_val = LivingValue(
             r.creation_ts,
             r.child_inode,
@@ -377,7 +391,7 @@ class MetadataShard:
         # a 3rd party.
         parent = self.inodes.get(r.parent_inode)
         if isinstance(parent, Directory): # implictly checks for None
-            hashname = metadata_utils.string_hash(r.subname)
+            hashname = parent.hash_name(r.subname)
             target = parent.living_items.get(LivingKey(hashname, r.subname))
             if target is not None:
                 target.is_owning = True
@@ -467,6 +481,8 @@ def main() -> None:
     if maybe_shard_object is not None:
         print(f'Loading from {db_fn}')
         shard_object = maybe_shard_object
+        import pprint
+        pprint.pprint(shard_object.inodes)
     else:
         print('Creating fresh db')
         shard_object = MetadataShard(config.shard)

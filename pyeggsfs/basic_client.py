@@ -7,7 +7,7 @@ import pprint
 import socket
 import sys
 import time
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import bincode
 import crypto
@@ -207,7 +207,7 @@ def do_ls(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     continuation_key = 0
     flags = metadata_msgs.LsFlags(0)
     shard = metadata_utils.shard_from_inode(inode.id)
-    all_results = []
+    all_results: List[str] = []
     while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
         resp = send_request(
             metadata_msgs.LsDirReq(

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import enum
-from typing import ClassVar, Dict, Optional, Tuple, Type, Union
+from typing import ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 import bincode
+import metadata_utils
 
 
 class InodeType(enum.IntEnum):
@@ -20,6 +21,7 @@ class RequestKind(enum.IntEnum):
     # unprivilaged
     RESOLVE = 0x01
     STAT = 0x02
+    LS_DIR = 0x03
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -71,6 +73,35 @@ class StatReq(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatReq':
         return StatReq(bincode.unpack_unsigned(u))
+
+
+class LsFlags(enum.IntFlag):
+    NEWER_THAN_AS_OF = 1 # should we return before or after as_of time?
+    INCLUDE_NOTHING_ENTRIES = 2
+    USE_DEAD_MAP = 4
+
+
+@dataclass
+class LsDirReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.LS_DIR
+    inode: int
+    as_of: int
+    continuation_key: int
+    flags: LsFlags
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.as_of, b)
+        bincode.pack_unsigned_into(self.continuation_key, b)
+        bincode.pack_unsigned_into(self.flags, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LsDirReq':
+        inode = bincode.unpack_unsigned(u)
+        as_of = bincode.unpack_unsigned(u)
+        continuation_key = bincode.unpack_unsigned(u)
+        flags = LsFlags(bincode.unpack_unsigned(u))
+        return LsDirReq(inode, as_of, continuation_key, flags)
 
 
 @dataclass
@@ -154,7 +185,7 @@ class ReleaseDirentReq(bincode.Packable):
         return ReleaseDirentReq(parent_inode, subname)
 
 
-ReqBodyTy = Union[ResolveReq, StatReq, SetParentReq, CreateDirReq,
+ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, SetParentReq, CreateDirReq,
     InjectDirentReq, ReleaseDirentReq]
 
 
@@ -165,16 +196,16 @@ class MetadataRequest(bincode.Packable):
     body: ReqBodyTy
 
     def pack_into(self, b: bytearray) -> None:
-        b.append(self.body.kind)
+        bincode.pack_u8_into(self.body.kind, b)
         bincode.pack_unsigned_into(self.ver, b)
-        bincode.pack_unsigned_into(self.request_id, b)
+        bincode.pack_u64_into(self.request_id, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MetadataRequest':
         kind = RequestKind(bincode.unpack_u8(u))
         ver = bincode.unpack_unsigned(u)
-        request_id = bincode.unpack_unsigned(u)
+        request_id = bincode.unpack_u64(u)
         body_type = REQUESTS[kind][0]
         body = body_type.unpack(u)
         return MetadataRequest(ver, request_id, body)
@@ -312,6 +343,61 @@ class StatResp(bincode.Packable):
 
 
 @dataclass
+class LsPayload(bincode.Packable):
+    inode: int # NULL_INODE => a "nothing" entry
+    hash_of_name: int
+    name: str
+    inode_type: InodeType
+
+    def calc_packed_size(self) -> int:
+        ret = 8 + 1 # sizeof(inode) + sizeof(len(name))
+        ret += bincode.varint_packed_size(self.inode)
+        ret += len(self.name.encode())
+        ret += bincode.varint_packed_size(self.inode_type)
+        return ret
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.hash_of_name, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_unsigned_into(self.inode_type, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LsPayload':
+        inode = bincode.unpack_unsigned(u)
+        hash_of_name = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u).decode()
+        inode_type = InodeType(bincode.unpack_unsigned(u))
+        return LsPayload(inode, hash_of_name, name, inode_type)
+
+
+@dataclass
+class LsDirResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.LS_DIR
+    SIZE: ClassVar[int] = 8 + 1
+    continuation_key: int # UINT64_MAX => no more results
+    results: List[LsPayload]
+
+    # def capacity(self) -> int:
+    #     sz = bincode.varint_packed_size(len(self.results))
+    #     sz += sum(len(x.calc_packed_size()) for x in self.results)
+    #     return metadata_utils.UDP_MTU - 27 - sz
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.continuation_key, b)
+        bincode.pack_unsigned_into(len(self.results), b)
+        for r in self.results:
+            r.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LsDirResp':
+        continuation_key = bincode.unpack_u64(u)
+        count = bincode.unpack_unsigned(u)
+        results = [LsPayload.unpack(u) for _ in range(count)]
+        return LsDirResp(continuation_key, results)
+
+
+@dataclass
 class SetParentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
 
@@ -364,34 +450,40 @@ class ReleaseDirentResp(bincode.Packable):
         return ReleaseDirentResp()
 
 
-RespBodyTy = Union[MetadataError, ResolveResp, StatResp, SetParentResp,
-    CreateDirResp, InjectDirentResp, ReleaseDirentResp]
+RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
+    SetParentResp, CreateDirResp, InjectDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.RESOLVE: (ResolveReq, ResolveResp),
     RequestKind.STAT: (StatReq, StatResp),
+    RequestKind.LS_DIR: (LsDirReq, LsDirResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),
     RequestKind.RELEASE_DIRENT: (ReleaseDirentReq, ReleaseDirentResp),
 }
 
+for kind, (req, resp) in REQUESTS.items():
+    assert req.kind == kind, f'{kind}, {req}'
+    assert resp.kind == kind, f'{kind}, {resp}'
+
 
 @dataclass
 class MetadataResponse(bincode.Packable):
+    SIZE: ClassVar[int] = 8 + 1
     request_id: int
     body: RespBodyTy
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.request_id, b)
-        bincode.pack_unsigned_into(self.body.kind, b)
+        bincode.pack_u64_into(self.request_id, b)
+        bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MetadataResponse':
-        request_id = bincode.unpack_unsigned(u)
-        resp_kind = RequestKind(bincode.unpack_unsigned(u))
+        request_id = bincode.unpack_u64(u)
+        resp_kind = RequestKind(bincode.unpack_u8(u))
         body: RespBodyTy
         if resp_kind == RequestKind.ERROR:
             body = MetadataError.unpack(u)

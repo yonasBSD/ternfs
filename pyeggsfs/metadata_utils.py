@@ -9,8 +9,9 @@ NULL_INODE = 0 # used for parent_inode to indicate no parent
 ROOT_INODE = 1
 
 
-# assume jumbo frames are enabled
-UDP_MTU = 8192
+# DON'T assume jumbo frames are enabled
+# (should be an optimisation rather than correctness requirement)
+UDP_MTU = 1472
 
 
 def shard_from_inode(inode_number: int) -> int:

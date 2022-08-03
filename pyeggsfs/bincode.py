@@ -11,6 +11,19 @@ U64_MAX = 2**64 - 1
 U128_MAX = 2**128 - 1
 
 
+def varint_packed_size(x: int) -> int:
+    if x < 251:
+        return 1
+    elif x < 2**16:
+        return 3
+    elif x < 2**32:
+        return 5
+    elif x < 2**64:
+        return 9
+    else:
+        return 17
+
+
 # support for varint encoding
 # see: https://github.com/bincode-org/bincode/blob/v2.0.0-rc.1/docs/spec.md
 def pack_unsigned_into(x: int, b: bytearray) -> None:
@@ -36,6 +49,14 @@ def pack_unsigned_into(x: int, b: bytearray) -> None:
 def pack_bytes_into(x: bytes, b: bytearray) -> None:
     pack_unsigned_into(len(x), b)
     b.extend(x)
+
+
+def pack_u8_into(x: int, b: bytearray) -> None:
+    b.append(x)
+
+
+def pack_u64_into(x: int, b: bytearray) -> None:
+    b.extend(struct.pack('<Q', x))
 
 
 # converts signed values to unsigned using a "zigzag"
@@ -98,6 +119,18 @@ def unpack_unsigned(u: UnpackWrapper) -> int:
         raise ValueError('Runt')
     u.advance(bytes_read)
     return value
+
+
+def upack_u8(u: UnpackWrapper) -> int:
+    ret = u.read()[0]
+    u.advance(1)
+    return ret
+
+
+def unpack_u64(u: UnpackWrapper) -> int:
+    ret: int = struct.unpack('<Q', u.read()[:8])[0]
+    u.advance(8)
+    return ret
 
 
 def unzigzag(x: int) -> int:

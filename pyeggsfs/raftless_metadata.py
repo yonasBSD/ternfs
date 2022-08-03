@@ -3,7 +3,7 @@
 import argparse
 from dataclasses import dataclass, field
 import enum
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple, Union
 from sortedcontainers import SortedDict
 import os
 import socket
@@ -55,6 +55,7 @@ class Directory:
     opaque: bytes
     living_items: 'SortedDict[LivingKey, LivingValue]' = field(default_factory=SortedDict)
     dead_items: 'SortedDict[DeadKey, Optional[DeadValue]]' = field(default_factory=SortedDict)
+    #TODO add "hash function mode"
 
 
 @dataclass
@@ -177,6 +178,104 @@ class MetadataShard:
             )
         return StatResp(inode_type, payload)
 
+    def do_ls_dir(self, r: LsDirReq) -> RespBodyTy:
+        dir = self.inodes.get(r.inode)
+        if dir is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'No such inode {r.inode}'
+            )
+        elif not isinstance(dir, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                f'{r.inode} not a directory',
+            )
+        #TODO
+
+        def living_iter() -> Iterator[LsPayload]:
+            assert isinstance(dir, Directory)
+            lower_bound = LivingKey(r.continuation_key, '')
+            key_range = dir.living_items.irange(lower_bound)
+            for k in key_range:
+                v = dir.living_items[k]
+                yield LsPayload(v.inode_id, k.hash_name, k.name, v.type)
+
+        def dead_iter() -> Iterator[LsPayload]:
+            assert isinstance(dir, Directory)
+            last_key = r.continuation_key
+            as_of = r.as_of
+            yield_newest_since = r.flags & LsFlags.NEWER_THAN_AS_OF
+            keys_sorted_list = dir.dead_items.keys()
+            while True:
+                # two lookups required:
+                #    1) determine the name of the next inode
+                #    2) locate the required version based on as_of time
+                lower_bound = DeadKey(last_key, '', 0)
+                next_name_idx = dir.dead_items.bisect_left(lower_bound)
+                if next_name_idx >= len(dir.dead_items):
+                    # we have reached the end
+                    return
+                next_name_k = keys_sorted_list[next_name_idx]
+                last_key = next_name_k.hash_name
+
+                locator_key = DeadKey(next_name_k.hash_name, next_name_k.name,
+                    as_of)
+                if yield_newest_since:
+                    # Note that left/right bisection only differ when we get
+                    # an exact match on the as_of time. In this case we always
+                    # want this exactly-matching result.
+                    # Left gives us this result, whereas right skips it.
+                    res_idx = dir.dead_items.bisect_left(locator_key)
+                else:
+                    # Bisect always returns the point where locator_key
+                    # would be inserted - but if we want the element <= locator_key
+                    # we need to decrement this.
+                    # (The decrement is why we want bisect_right here.)
+                    res_idx = dir.dead_items.bisect_right(locator_key) - 1
+
+                # yeild a "nothing_result" if we we "overshot" or "undershot"
+                # the name we wanted, or the value is a None placeholder
+                nothing_result = LsPayload(
+                    metadata_utils.NULL_INODE,
+                    locator_key.hash_name,
+                    locator_key.name,
+                    InodeType.SYMLINK, # arbitrary
+                )
+                if res_idx < 0 or res_idx >= len(dir.dead_items):
+                    yield nothing_result
+                    continue
+                res_k = keys_sorted_list[res_idx]
+                if res_k.hash_name != locator_key.hash_name:
+                    yield nothing_result
+                    continue
+                res_v = dir.dead_items[res_k]
+                if res_v is None:
+                    yield nothing_result
+                    continue
+
+                yield LsPayload(res_v.inode_id, res_k.hash_name, res_k.name,
+                    res_v.type)
+
+        i = dead_iter() if r.flags & LsFlags.USE_DEAD_MAP else living_iter()
+        results = []
+        budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - LsDirResp.SIZE
+        for result in i:
+            continuation_key = result.hash_of_name
+            cost = result.calc_packed_size()
+            if cost > budget:
+                break
+            budget -= cost
+            results.append(result)
+        else:
+            continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+
+        print(budget)
+
+        return LsDirResp(
+            continuation_key,
+            results,
+        )
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -186,7 +285,7 @@ class MetadataShard:
             )
         if not isinstance(affected_inode, Directory):
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.BAD_INODE_TYPE,
                 f'{r.inode} not a directory',
             )
         # can only set parent to null if inode has no living children
@@ -317,6 +416,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 resp_body = ResolveResp(result)
             elif isinstance(request.body, StatReq):
                 resp_body = shard.do_stat(request.body)
+            elif isinstance(request.body, LsDirReq):
+                resp_body = shard.do_ls_dir(request.body)
             elif isinstance(request.body, SetParentReq):
                 resp_body = shard.do_set_parent(request.body)
                 dirty = True

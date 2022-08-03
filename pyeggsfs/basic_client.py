@@ -3,6 +3,7 @@
 import argparse
 import functools
 import posixpath
+import pprint
 import socket
 import sys
 import time
@@ -18,6 +19,7 @@ import metadata_utils
 
 LOCAL_HOST = '127.0.0.1'
 PROTOCOL_VER = 0
+VERBOSE = False
 
 
 def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
@@ -41,6 +43,9 @@ def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
     if request_id != response.request_id:
         raise Exception('Bad request_id from server:'
             f' expected {request_id} got {response.request_id}')
+    if VERBOSE:
+        print('>', req)
+        print('<', response, end='\n\n')
     return response.body
 
 
@@ -184,22 +189,63 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(resp)
 
 
+def do_ls(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for stat')
+
+    if name == '':
+        inode = parent_inode
+    else:
+        maybe_inode = resolve(parent_inode.id, name)
+        if maybe_inode is None:
+            raise Exception('Target not found')
+        inode = maybe_inode
+
+    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+        raise Exception('Target not a directory')
+
+    continuation_key = 0
+    flags = metadata_msgs.LsFlags(0)
+    shard = metadata_utils.shard_from_inode(inode.id)
+    all_results = []
+    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+        resp = send_request(
+            metadata_msgs.LsDirReq(
+                inode.id,
+                creation_ts,
+                continuation_key,
+                flags,
+            ),
+            shard
+        )
+        if not isinstance(resp, metadata_msgs.LsDirResp):
+            raise Exception(f'Bad response: {resp}')
+        all_results.extend(r.name for r in resp.results)
+        continuation_key = resp.continuation_key
+    all_results.sort()
+    pprint.pprint(all_results)
+
 
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
     'mkdir': do_mkdir,
     'stat': do_stat,
+    'ls': do_ls,
 }
 
 
 def main() -> None:
+    global VERBOSE
     parser = argparse.ArgumentParser(
         description='Runs a single metadata shard without raft')
     parser.add_argument('request', choices=requests)
     parser.add_argument('path')
     parser.add_argument('creation_ts', nargs='?', default=0, type=int)
+    parser.add_argument('--verbose', action='store_true')
     config = parser.parse_args(sys.argv[1:])
+
+    VERBOSE = config.verbose
 
     if not posixpath.isabs(config.path):
         raise ValueError('Only abs paths supported')

@@ -1,6 +1,4 @@
 
-import enum
-import hashlib
 import os
 import pickle
 import sys

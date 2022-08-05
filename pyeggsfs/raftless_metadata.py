@@ -158,15 +158,12 @@ class MetadataShard:
                 result_idx = parent.dead_items.bisect_left(search_key)
                 idxes_to_check = [result_idx, result_idx + 1]
             for idx in idxes_to_check:
-                print(idx)
                 if idx < 0 or idx >= len(parent.dead_items):
                     return None
                 result_key = parent.dead_items.keys()[idx]
-                print(result_key)
                 if result_key.name != r.subname:
                     return None
                 result_value = parent.dead_items[result_key]
-                print(result_value)
                 if result_value is not None:
                     # found a good result
                     break

@@ -11,6 +11,7 @@ class RequestKind(enum.IntEnum):
     MK_DIR = 1
     MV_FILE = 2
     MV_DIR = 3
+    RM_DIR = 4
 
 
 @dataclass
@@ -33,8 +34,6 @@ class MkDirReq(bincode.Packable):
 @dataclass
 class MvDirReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.MV_DIR
-    parent_id: int
-    subname: str
 
     def pack_into(self, b: bytearray) -> None:
         raise NotImplementedError()
@@ -44,12 +43,30 @@ class MvDirReq(bincode.Packable):
         raise NotImplementedError()
 
 
-ReqBodyTy = Union[MkDirReq, MvDirReq]
+@dataclass
+class RmDirReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.RM_DIR
+    parent_id: int
+    subname: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_bytes_into(self.subname.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RmDirReq':
+        parent_id = bincode.unpack_unsigned(u)
+        subname = bincode.unpack_bytes(u).decode()
+        return RmDirReq(parent_id, subname)
+
+
+ReqBodyTy = Union[MkDirReq, MvDirReq, RmDirReq]
 
 
 REQUESTS: Dict[RequestKind, Type[ReqBodyTy]] = {
     RequestKind.MK_DIR: MkDirReq,
     RequestKind.MV_DIR: MvDirReq,
+    RequestKind.RM_DIR: RmDirReq,
 }
 
 
@@ -79,6 +96,8 @@ class ResponseStatus(enum.IntEnum):
     OK = 0
     GENERAL_ERROR = 1
     PARENT_INVALID = 2
+    NOT_FOUND = 3
+    BAD_INODE_TYPE = 4
 
 
 @dataclass

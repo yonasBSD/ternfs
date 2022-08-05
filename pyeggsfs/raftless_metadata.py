@@ -44,7 +44,7 @@ class DeadKey(NamedTuple):
 class DeadValue:
     inode_id: int
     type: InodeType
-    is_owning: bool
+    is_owning: bool # always false?
 
 
 class HashMode(enum.IntEnum):
@@ -204,7 +204,6 @@ class MetadataShard:
                 MetadataErrorKind.BAD_INODE_TYPE,
                 f'{r.inode} not a directory',
             )
-        #TODO
 
         def living_iter() -> Iterator[LsPayload]:
             assert isinstance(dir, Directory)
@@ -283,8 +282,6 @@ class MetadataShard:
         else:
             continuation_key = 0xFFFF_FFFF_FFFF_FFFF
 
-        print(budget)
-
         return LsDirResp(
             continuation_key,
             results,
@@ -303,13 +300,17 @@ class MetadataShard:
                 f'{r.inode} not a directory',
             )
         # can only set parent to null if inode has no living children
-        if (r.new_parent == metadata_utils.NULL_INODE
-            and len(affected_inode.living_items) != 0):
-            return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
-                f'{r.inode} is not empty',
-            )
-
+        if r.new_parent == metadata_utils.NULL_INODE:
+            if len(affected_inode.living_items) != 0:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'{r.inode} is not empty',
+                )
+            elif len(affected_inode.dead_items) == 0:
+                # null parent + empty living + empty dead => free the directory
+                print(f'PURGING INODE {r.inode}; reason: parent set to null;')
+                del self.inodes[r.inode]
+                return SetParentResp()
         affected_inode.parent_inode = r.new_parent
         return SetParentResp()
 
@@ -383,6 +384,37 @@ class MetadataShard:
             )
         return InjectDirentResp()
 
+    def do_acquire_dirent(self, r: AcquireDirentReq) -> RespBodyTy:
+        parent = self.inodes.get(r.parent_inode)
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'No such inode {r.parent_inode}'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                f'Inode {r.parent_inode} is not a directory'
+            )
+
+        hashed_name = parent.hash_name(r.subname)
+        res = parent.living_items.get(LivingKey(hashed_name, r.subname))
+        if res is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'Inode {r.parent_inode} has no living element {r.subname}'
+            )
+        if not (r.acceptable_types & res.type):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                f'Target inode {res.inode_id} as wrong type {res.type}'
+            )
+
+        return AcquireDirentResp(
+            res.inode_id,
+            res.type
+        )
+
     def do_release_dirent(self, r: ReleaseDirentReq) -> RespBodyTy:
         # this operation cannot fail, even if the target doesn't exist
         # this is for idempotency
@@ -390,12 +422,31 @@ class MetadataShard:
         # and then after that, the target was removed and cleaned up by
         # a 3rd party.
         parent = self.inodes.get(r.parent_inode)
+        found = False
+        now = int(time.time())
         if isinstance(parent, Directory): # implictly checks for None
+            found = True
             hashname = parent.hash_name(r.subname)
-            target = parent.living_items.get(LivingKey(hashname, r.subname))
+            living_key = LivingKey(hashname, r.subname)
+            target = parent.living_items.get(living_key)
             if target is not None:
-                target.is_owning = True
-        return ReleaseDirentResp()
+                if r.kill:
+                    dead_key = DeadKey(hashname, r.subname,
+                        target.creation_time)
+                    # TODO: should we check that target.is_owning is False?
+                    # target.is_owning == True would imply some kind of logic
+                    # error, though it's not clear how to handle this error
+                    # given the release operation cannot fail
+                    # (maybe it should emit a warning and then do nothing?)
+                    dead_value = DeadValue(target.inode_id, target.type,
+                        target.is_owning)
+                    parent.dead_items[dead_key] = dead_value
+                    placeholder_key = DeadKey(hashname, r.subname, now)
+                    parent.dead_items[placeholder_key] = None
+                    del parent.living_items[living_key]
+                else:
+                    target.is_owning = True
+        return ReleaseDirentResp(found)
 
 
 def run_forever(shard: MetadataShard, db_fn: str) -> None:
@@ -440,6 +491,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 dirty = True
             elif isinstance(request.body, InjectDirentReq):
                 resp_body = shard.do_inject_dirent(request.body)
+                dirty = True
+            elif isinstance(request.body, AcquireDirentReq):
+                resp_body = shard.do_acquire_dirent(request.body)
                 dirty = True
             elif isinstance(request.body, ReleaseDirentReq):
                 resp_body = shard.do_release_dirent(request.body)

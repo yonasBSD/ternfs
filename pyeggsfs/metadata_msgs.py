@@ -8,10 +8,11 @@ import bincode
 import metadata_utils
 
 
+# one-hot encoding to allow "acceptable-types" bitset
 class InodeType(enum.IntEnum):
-    DIRECTORY = 0
-    FILE = 1
-    SYMLINK = 2
+    DIRECTORY = 1
+    FILE = 2
+    SYMLINK = 4
 
 
 # u8 where MSb states whether this request is privilaged
@@ -26,8 +27,11 @@ class RequestKind(enum.IntEnum):
     # privilaged (needs MAC)
     SET_PARENT = 0x81
     CREATE_UNLINKED_DIR = 0x82
-    INJECT_DIRENT = 0x83
-    RELEASE_DIRENT = 0x84
+
+    # a release must follow and inject or acquire
+    INJECT_DIRENT = 0x83  # insert a new living dirent with owning == false
+    ACQUIRE_DIRENT = 0x84 # if living dirent exists, set owning := false
+    RELEASE_DIRENT = 0x85 # if living dirent exists, set owning := true
 
     def is_privilaged(self) -> bool:
         return bool(self.value & 0x80)
@@ -154,7 +158,7 @@ class InjectDirentReq(bincode.Packable):
         bincode.pack_unsigned_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
         bincode.pack_unsigned_into(self.child_inode, b)
-        bincode.pack_unsigned_into(self.child_type, b)
+        bincode.pack_u8_into(self.child_type, b)
         bincode.pack_unsigned_into(self.creation_ts, b)
 
     @staticmethod
@@ -162,10 +166,30 @@ class InjectDirentReq(bincode.Packable):
         parent_inode = bincode.unpack_unsigned(u)
         subname = bincode.unpack_bytes(u).decode()
         child_inode = bincode.unpack_unsigned(u)
-        child_type = InodeType(bincode.unpack_unsigned(u))
+        child_type = InodeType(bincode.unpack_u8(u))
         creation_ts = bincode.unpack_unsigned(u)
         return InjectDirentReq(parent_inode, subname, child_inode, child_type,
             creation_ts)
+
+
+@dataclass
+class AcquireDirentReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.ACQUIRE_DIRENT
+    parent_inode: int
+    subname: str
+    acceptable_types: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.subname.encode(), b)
+        bincode.pack_u8_into(self.acceptable_types, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        subname = bincode.unpack_bytes(u).decode()
+        acceptable_types = bincode.unpack_u8(u)
+        return AcquireDirentReq(parent_inode, subname, acceptable_types)
 
 
 @dataclass
@@ -173,20 +197,23 @@ class ReleaseDirentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.RELEASE_DIRENT
     parent_inode: int
     subname: str
+    kill: bool
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_unsigned_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
+        bincode.pack_u8_into(self.kill, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ReleaseDirentReq':
         parent_inode = bincode.unpack_unsigned(u)
         subname = bincode.unpack_bytes(u).decode()
-        return ReleaseDirentReq(parent_inode, subname)
+        kill = bool(bincode.unpack_u8(u))
+        return ReleaseDirentReq(parent_inode, subname, kill)
 
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, ReleaseDirentReq]
+    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -224,6 +251,7 @@ class MetadataErrorKind(enum.IntEnum):
     NOT_AUTHORISED = 9
     BAD_REQUEST = 10
     BAD_INODE_TYPE = 11
+    TIMED_OUT = 12
 
 
 @dataclass
@@ -248,18 +276,18 @@ class ResolvedInode(bincode.Packable):
     id: int
     inode_type: InodeType
     creation_ts: int
-    is_owning: bool # always true for living inodes
+    is_owning: bool
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_unsigned_into(self.id, b)
-        bincode.pack_unsigned_into(self.inode_type, b)
+        bincode.pack_u8_into(self.inode_type, b)
         bincode.pack_unsigned_into(self.creation_ts, b)
         bincode.pack_unsigned_into(self.is_owning, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolvedInode':
         id = bincode.unpack_unsigned(u)
-        inode_type = InodeType(bincode.unpack_unsigned(u))
+        inode_type = InodeType(bincode.unpack_u8(u))
         creation_ts = bincode.unpack_unsigned(u)
         is_owning = bool(bincode.unpack_unsigned(u))
         return ResolvedInode(id, inode_type, creation_ts, is_owning)
@@ -328,12 +356,12 @@ class StatResp(bincode.Packable):
     payload: StatPayloadTy
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode_type, b)
+        bincode.pack_u8_into(self.inode_type, b)
         self.payload.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatResp':
-        file_type = InodeType(bincode.unpack_unsigned(u))
+        file_type = InodeType(bincode.unpack_u8(u))
         payload: StatPayloadTy
         if file_type == InodeType.DIRECTORY:
             payload = StatDirPayload.unpack(u)
@@ -360,14 +388,14 @@ class LsPayload(bincode.Packable):
         bincode.pack_unsigned_into(self.inode, b)
         bincode.pack_u64_into(self.hash_of_name, b)
         bincode.pack_bytes_into(self.name.encode(), b)
-        bincode.pack_unsigned_into(self.inode_type, b)
+        bincode.pack_u8_into(self.inode_type, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsPayload':
         inode = bincode.unpack_unsigned(u)
         hash_of_name = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
-        inode_type = InodeType(bincode.unpack_unsigned(u))
+        inode_type = InodeType(bincode.unpack_u8(u))
         return LsPayload(inode, hash_of_name, name, inode_type)
 
 
@@ -439,19 +467,39 @@ class InjectDirentResp(bincode.Packable):
 
 
 @dataclass
-class ReleaseDirentResp(bincode.Packable):
-    kind: ClassVar[RequestKind] = RequestKind.RELEASE_DIRENT
+class AcquireDirentResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.ACQUIRE_DIRENT
+    inode: int
+    inode_type: InodeType
 
     def pack_into(self, b: bytearray) -> None:
-        pass
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u8_into(self.inode_type, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentResp':
+        inode = bincode.unpack_unsigned(u)
+        inode_type = InodeType(bincode.unpack_u8(u))
+        return AcquireDirentResp(inode, inode_type)
+
+
+@dataclass
+class ReleaseDirentResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.RELEASE_DIRENT
+    did_exist: bool
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u8_into(self.did_exist, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ReleaseDirentResp':
-        return ReleaseDirentResp()
+        did_exist = bool(bincode.unpack_u8(u))
+        return ReleaseDirentResp(did_exist)
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
-    SetParentResp, CreateDirResp, InjectDirentResp, ReleaseDirentResp]
+    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
+    ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -461,6 +509,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),
+    RequestKind.ACQUIRE_DIRENT: (AcquireDirentReq, AcquireDirentResp),
     RequestKind.RELEASE_DIRENT: (ReleaseDirentReq, ReleaseDirentResp),
 }
 

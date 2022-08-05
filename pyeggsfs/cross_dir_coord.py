@@ -122,26 +122,138 @@ class MkDir(StateMachineBase):
         body = metadata_msgs.ReleaseDirentReq(
             self.parent_id,
             self.subname,
+            False
         )
-        while True:
-            try:
-                resp = basic_client.send_request(
-                    body,
-                    metadata_utils.shard_from_inode(self.parent_id),
-                    cross_dir_key.CROSS_DIR_KEY
-                )
-                if isinstance(resp, metadata_msgs.ReleaseDirentResp):
-                    break
-                error = str(resp)
-            except Exception as e:
-                error = str(e)
+        resp: object = None
+        try:
+            resp = basic_client.send_request(
+                body,
+                metadata_utils.shard_from_inode(self.parent_id),
+                cross_dir_key.CROSS_DIR_KEY
+            )
+        except Exception as e:
+            resp = e
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] ReleaseDirent failed', resp, file=sys.stderr)
             # must keep retrying until we get a success
-            # in a pipelined world this may want to be
-            print('[WARNING] ReleaseDirent failed', error, file=sys.stderr)
-            time.sleep(0.1)
+            return 'release_dirent'
         new_dir_shard = metadata_utils.shard_from_inode(self.new_inode)
         c.persist_state.token_inodes[new_dir_shard] = self.new_inode
         c.send_reply(ResponseStatus.OK, self.new_inode, '')
+        return None
+
+
+class RmDir(StateMachineBase):
+    # 1)  Acquire Dirent - success => goto 2;       fail => return error;
+    # 2)  Unset Parent   - success => goto 3a;      fail => goto 3b;
+    # 3a) Kill Dirent    - success => return ok;    fail => retry;
+    # 3b) Release Dirent - success => return error; fail => retry;
+
+    def __init__(self, req: RmDirReq) -> None:
+        self.parent_id = req.parent_id
+        self.subname = req.subname
+        self.child_id: Optional[int] = None
+
+    @state_func
+    def initial(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ResolveReq(
+                metadata_msgs.ResolveMode.ALIVE,
+                self.parent_id,
+                0,
+                self.subname
+            ),
+            metadata_utils.shard_from_inode(self.parent_id)
+        )
+        if not isinstance(resp, metadata_msgs.ResolveResp):
+            c.send_reply(ResponseStatus.GENERAL_ERROR, None, str(resp))
+            return None
+        if resp.f is None:
+            c.send_reply(ResponseStatus.NOT_FOUND, None,
+                f'No result for resolve({self.parent_id}, {self.subname})')
+            return None
+        if resp.f.inode_type != metadata_msgs.InodeType.DIRECTORY:
+            c.send_reply(ResponseStatus.BAD_INODE_TYPE, None,
+                f'{self.parent_id} has type {resp.f.inode_type}')
+            return None
+        if not resp.f.is_owning:
+            # theoretically impossible?
+            c.send_reply(ResponseStatus.PARENT_INVALID, None,
+                f'{self.parent_id} is non-owning')
+            return None
+        self.child_id = resp.f.id
+        return 'acquire_dirent'
+
+    @state_func
+    def acquire_dirent(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.AcquireDirentReq(
+                self.parent_id,
+                self.subname,
+                metadata_msgs.InodeType.DIRECTORY
+            ),
+            metadata_utils.shard_from_inode(self.parent_id),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.AcquireDirentResp):
+            # presumably a timeout
+            # must retry, otherwise we may leak the dirent
+            print('[WARNING] AcquireDirent failed, retrying', resp)
+            return 'acquire_dirent'
+        return 'unset_parent'
+
+    @state_func
+    def unset_parent(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        assert self.child_id is not None
+        resp = basic_client.send_request(
+            metadata_msgs.SetParentReq(
+                self.child_id,
+                metadata_utils.NULL_INODE
+            ),
+            metadata_utils.shard_from_inode(self.child_id),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if isinstance(resp, metadata_msgs.SetParentResp):
+            # success
+            return 'kill_dirent'
+        else:
+            # failure, need to rollback
+            # TODO: depending on the error, it might be worth retrying?
+            return 'release_dirent'
+
+    @state_func
+    def kill_dirent(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ReleaseDirentReq(
+                self.parent_id,
+                self.subname,
+                True
+            ),
+            metadata_utils.shard_from_inode(self.parent_id),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] KillDirent failed, retrying', resp)
+            return 'kill_dirent'
+        c.send_reply(ResponseStatus.OK, None, '')
+        return None
+
+    @state_func
+    def release_dirent(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ReleaseDirentReq(
+                self.parent_id,
+                self.subname,
+                False
+            ),
+            metadata_utils.shard_from_inode(self.parent_id),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] ReleaseDirent failed, retrying', resp)
+            return 'release_dirent'
+        c.send_reply(ResponseStatus.GENERAL_ERROR, None,
+            'Failed to unset parent')
         return None
 
 
@@ -150,7 +262,7 @@ class Transaction:
         return_addr: Tuple[str, int]) -> None:
 
         self.state_machine = state_machine
-        self.next_state = 'initial'
+        self.next_state = ''
         self.request_id = request_id
         self.return_addr = return_addr
 
@@ -183,12 +295,15 @@ class CrossDirCoordinator:
         t = self.persist_state.transaction
         assert t is not None
         state_funcs = t.state_machine.state_machine_nodes
-        next_state: Optional[str] = t.next_state
+        next_state: Optional[str] = t.next_state or 'initial'
 
         while next_state is not None:
-            t.next_state = next_state
+            # states can transition to themselves (i.e. a retry)
+            # no need to persist these retry transitions
+            if t.next_state != next_state:
+                t.next_state = next_state
+                self._persist()
             next_func = state_funcs[next_state]
-            self._persist()
             next_state = next_func(t.state_machine, self)
 
         self.persist_state.transaction = None
@@ -223,6 +338,8 @@ class CrossDirCoordinator:
             state_machine: StateMachineBase
             if isinstance(request.body, MkDirReq):
                 state_machine = MkDir(request.body)
+            elif isinstance(request.body, RmDirReq):
+                state_machine = RmDir(request.body)
             else:
                 print('Ignoring request, unsupported msg:', request.body,
                     file=sys.stderr)

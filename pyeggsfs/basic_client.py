@@ -23,7 +23,8 @@ VERBOSE = False
 
 
 def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
-    key: Optional[crypto.ExpandedKey] = None) -> metadata_msgs.RespBodyTy:
+    key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0
+    ) -> metadata_msgs.RespBodyTy:
 
     assert (key is not None) == req_body.kind.is_privilaged()
     port = metadata_utils.shard_to_port(shard)
@@ -37,8 +38,14 @@ def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', 0))
     sock.sendto(packed_req, target)
-    sock.settimeout(2.0)
-    packed_resp = sock.recv(metadata_utils.UDP_MTU)
+    sock.settimeout(timeout_secs)
+    try:
+        packed_resp = sock.recv(metadata_utils.UDP_MTU)
+    except socket.timeout:
+        return metadata_msgs.MetadataError(
+            metadata_msgs.MetadataErrorKind.TIMED_OUT,
+            f'timed out after {timeout_secs} secs'
+        )
     response = bincode.unpack(metadata_msgs.MetadataResponse, packed_resp)
     if request_id != response.request_id:
         raise Exception('Bad request_id from server:'
@@ -165,6 +172,15 @@ def do_mkdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(response)
 
 
+def do_rmdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for rmdir')
+
+    body = cross_dir_msgs.RmDirReq(parent_inode.id, name)
+    response = cross_dir_request(body)
+    print(response)
+
+
 def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     if creation_ts != 0:
         raise ValueError('creation_ts should be unspecified for stat')
@@ -230,6 +246,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
     'mkdir': do_mkdir,
+    'rmdir': do_rmdir,
     'stat': do_stat,
     'ls': do_ls,
 }

@@ -246,6 +246,7 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
+    'resolve_dead_ge': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_GE),
     'mkdir': do_mkdir,
     'rmdir': do_rmdir,
     'stat': do_stat,

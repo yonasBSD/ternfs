@@ -144,26 +144,35 @@ class MetadataShard:
                     is_owning=True,
                 )
         else:
-            assert r.mode == ResolveMode.DEAD_LE
-            search_ts = r.creation_ts or 2**64 - 1
-            search_key = DeadKey(hashed_name, r.subname, search_ts)
-            result_idx = parent.dead_items.bisect_right(search_key) - 1
-            if result_idx < 0:
-                return None
-            result_key = parent.dead_items.keys()[result_idx]
-            if result_key.name != r.subname:
-                return None
-            result_value = parent.dead_items[result_key]
-            if result_value is None:
-                # in the snapshot history, the inode is dead at creation_ts
-                # we want the most recently deleted one, i.e. one before
-                # this should exist (invariant of the data structure)
-                # TODO: - is this invariant real?
-                #       - will the None entry definitely be removed?
-                assert result_idx != 0
-                result_key = parent.dead_items.keys()[result_idx - 1]
-                assert(result_key.name == r.subname)
+            assert r.mode in (ResolveMode.DEAD_LE, ResolveMode.DEAD_GE)
+            search_key = DeadKey(hashed_name, r.subname, r.creation_ts)
+
+            # need to probe around the result if we land on a None placeholder
+            # invariant: never have two Nones beloning to the same name next to
+            # each other, meaning we only need to probe at most one element to
+            # the left or right (direction depends on search mode)
+            if r.mode == ResolveMode.DEAD_LE:
+                result_idx = parent.dead_items.bisect_right(search_key) - 1
+                idxes_to_check = [result_idx, result_idx - 1]
+            else:
+                result_idx = parent.dead_items.bisect_left(search_key)
+                idxes_to_check = [result_idx, result_idx + 1]
+            for idx in idxes_to_check:
+                print(idx)
+                if idx < 0 or idx >= len(parent.dead_items):
+                    return None
+                result_key = parent.dead_items.keys()[idx]
+                print(result_key)
+                if result_key.name != r.subname:
+                    return None
                 result_value = parent.dead_items[result_key]
+                print(result_value)
+                if result_value is not None:
+                    # found a good result
+                    break
+            else:
+                return None
+
             assert result_value is not None
             return ResolvedInode(
                 id=result_value.inode_id,

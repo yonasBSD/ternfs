@@ -41,6 +41,7 @@ class ResolveMode(enum.IntEnum):
     ALIVE = 0
     # returns dead entry with largest creation_ts <= given ts
     DEAD_LE = 1
+    DEAD_GE = 2
 
 
 @dataclass

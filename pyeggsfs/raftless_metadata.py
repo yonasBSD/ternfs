@@ -147,8 +147,8 @@ class MetadataShard:
             assert r.mode == ResolveMode.DEAD_LE
             search_ts = r.creation_ts or 2**64 - 1
             search_key = DeadKey(hashed_name, r.subname, search_ts)
-            result_idx = parent.dead_items.bisect_left(search_key)
-            if result_idx >= len(parent.dead_items):
+            result_idx = parent.dead_items.bisect_right(search_key) - 1
+            if result_idx < 0:
                 return None
             result_key = parent.dead_items.keys()[result_idx]
             if result_key.name != r.subname:

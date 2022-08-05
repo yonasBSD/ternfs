@@ -205,9 +205,8 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(resp)
 
 
-def do_ls(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for stat')
+def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
+    creation_ts: int) -> None:
 
     if name == '':
         inode = parent_inode
@@ -221,7 +220,6 @@ def do_ls(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
         raise Exception('Target not a directory')
 
     continuation_key = 0
-    flags = metadata_msgs.LsFlags(0)
     shard = metadata_utils.shard_from_inode(inode.id)
     all_results: List[str] = []
     while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
@@ -236,7 +234,10 @@ def do_ls(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
         )
         if not isinstance(resp, metadata_msgs.LsDirResp):
             raise Exception(f'Bad response: {resp}')
-        all_results.extend(r.name for r in resp.results)
+        all_results.extend(
+            '[deleted]' if r.inode == metadata_utils.NULL_INODE else r.name
+            for r in resp.results
+        )
         continuation_key = resp.continuation_key
     all_results.sort()
     pprint.pprint(all_results)
@@ -248,7 +249,20 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'mkdir': do_mkdir,
     'rmdir': do_rmdir,
     'stat': do_stat,
-    'ls': do_ls,
+    'ls': functools.partial(do_ls,
+        metadata_msgs.LsFlags(0)),
+    'ls_dead_le': functools.partial(do_ls,
+        metadata_msgs.LsFlags.USE_DEAD_MAP),
+    'ls_dead_ge': functools.partial(do_ls,
+        metadata_msgs.LsFlags.NEWER_THAN_AS_OF
+        | metadata_msgs.LsFlags.USE_DEAD_MAP),
+    'ls_dead_all_le': functools.partial(do_ls,
+        metadata_msgs.LsFlags.INCLUDE_NOTHING_ENTRIES
+        | metadata_msgs.LsFlags.USE_DEAD_MAP),
+    'ls_dead_all_ge': functools.partial(do_ls,
+        metadata_msgs.LsFlags.INCLUDE_NOTHING_ENTRIES
+        | metadata_msgs.LsFlags.NEWER_THAN_AS_OF
+        | metadata_msgs.LsFlags.USE_DEAD_MAP),
 }
 
 

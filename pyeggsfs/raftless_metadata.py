@@ -216,6 +216,7 @@ class MetadataShard:
         def dead_iter() -> Iterator[LsPayload]:
             assert isinstance(dir, Directory)
             last_key = r.continuation_key
+            last_name = ''
             as_of = r.as_of
             yield_newest_since = r.flags & LsFlags.NEWER_THAN_AS_OF
             keys_sorted_list = dir.dead_items.keys()
@@ -223,13 +224,14 @@ class MetadataShard:
                 # two lookups required:
                 #    1) determine the name of the next inode
                 #    2) locate the required version based on as_of time
-                lower_bound = DeadKey(last_key, '', 0)
+                lower_bound = DeadKey(last_key, last_name, 0xFFFF_FFFF_FFFF_FFFF)
                 next_name_idx = dir.dead_items.bisect_left(lower_bound)
                 if next_name_idx >= len(dir.dead_items):
                     # we have reached the end
                     return
                 next_name_k = keys_sorted_list[next_name_idx]
                 last_key = next_name_k.hash_name
+                last_name = next_name_k.name
 
                 locator_key = DeadKey(next_name_k.hash_name, next_name_k.name,
                     as_of)
@@ -270,6 +272,7 @@ class MetadataShard:
                     res_v.type)
 
         i = dead_iter() if r.flags & LsFlags.USE_DEAD_MAP else living_iter()
+        include_nothing_results = r.flags & LsFlags.INCLUDE_NOTHING_ENTRIES
         results = []
         budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - LsDirResp.SIZE
         for result in i:
@@ -278,7 +281,9 @@ class MetadataShard:
             if cost > budget:
                 break
             budget -= cost
-            results.append(result)
+            if (result.inode != metadata_utils.NULL_INODE
+                or include_nothing_results):
+                results.append(result)
         else:
             continuation_key = 0xFFFF_FFFF_FFFF_FFFF
 

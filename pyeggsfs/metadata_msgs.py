@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, field
 import enum
-from typing import ClassVar, Dict, List, Optional, Tuple, Type, Union
+from typing import (ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type,
+    Union)
 
 import bincode
 import metadata_utils
@@ -24,6 +25,7 @@ class RequestKind(enum.IntEnum):
     STAT = 0x02
     LS_DIR = 0x03
     CREATE_EDEN_FILE = 0x04
+    ADD_EDEN_SPAN = 0x05
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -122,6 +124,61 @@ class CreateEdenFileReq(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'CreateEdenFileReq':
         type = InodeType(bincode.unpack_u8(u))
         return CreateEdenFileReq(type)
+
+
+@dataclass
+class NewBlockInfo(bincode.Packable):
+    crc32: int
+    size: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u32_into(self.crc32, b)
+        bincode.pack_unsigned_into(self.size, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'NewBlockInfo':
+        crc32 = bincode.unpack_u32(u)
+        size = bincode.unpack_unsigned(u)
+        return NewBlockInfo(crc32, size)
+
+
+@dataclass
+class AddEdenSpanReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.ADD_EDEN_SPAN
+    storage_class: int
+    parity_mode: int
+    size: int
+    byte_offset: int
+    inode: int
+    cookie: int
+    block_infos: List[NewBlockInfo]
+
+    def pack_into(self, b: bytearray) -> None:
+        if metadata_utils.total_blocks(self.parity_mode) != len(self.block_infos):
+            raise ValueError('Inconsistent block counts')
+        bincode.pack_u8_into(self.storage_class, b)
+        bincode.pack_u8_into(self.parity_mode, b)
+        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.cookie, b)
+        for info in self.block_infos:
+            info.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'AddEdenSpanReq':
+        storage_class = bincode.unpack_u8(u)
+        parity_mode = bincode.unpack_u8(u)
+        size = bincode.unpack_unsigned(u)
+        byte_offset = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_unsigned(u)
+        cookie = bincode.unpack_u64(u)
+        block_infos = [
+            NewBlockInfo.unpack(u)
+            for _ in range(metadata_utils.total_blocks(parity_mode))
+        ]
+        return AddEdenSpanReq(storage_class, parity_mode, size, byte_offset,
+            inode, cookie, block_infos)
 
 
 @dataclass
@@ -268,7 +325,8 @@ class MetadataErrorKind(enum.IntEnum):
     NOT_AUTHORISED = 9
     BAD_REQUEST = 10
     BAD_INODE_TYPE = 11
-    TIMED_OUT = 12
+    TIMED_OUT = 12 # not sent, but used by client as sentinel
+    EDEN_TIME_EXPIRED = 13
 
 
 @dataclass

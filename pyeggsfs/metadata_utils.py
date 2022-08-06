@@ -53,3 +53,15 @@ def restore(fn: str) -> Optional[Any]:
             print(f"Failed to unpickle {candidate_fn}, reason {e}",
                 file=sys.stderr)
     raise Exception('Restore failed')
+
+
+def num_data_blocks(parity_mode: int) -> int:
+    return parity_mode & 0x0F
+
+
+def num_parity_blocks(parity_mode: int) -> int:
+    return parity_mode >> 4
+
+
+def total_blocks(parity_mode: int) -> int:
+    return num_data_blocks(parity_mode) + num_parity_blocks(parity_mode)

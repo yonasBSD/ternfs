@@ -55,6 +55,10 @@ def pack_u8_into(x: int, b: bytearray) -> None:
     b.append(x)
 
 
+def pack_u32_into(x: int, b: bytearray) -> None:
+    b.extend(struct.pack('<I', x))
+
+
 def pack_u64_into(x: int, b: bytearray) -> None:
     b.extend(struct.pack('<Q', x))
 
@@ -124,6 +128,12 @@ def unpack_unsigned(u: UnpackWrapper) -> int:
 def upack_u8(u: UnpackWrapper) -> int:
     ret = u.read()[0]
     u.advance(1)
+    return ret
+
+
+def unpack_u32(u: UnpackWrapper) -> int:
+    ret: int = struct.unpack('<I', u.read()[:4])[0]
+    u.advance(4)
     return ret
 
 

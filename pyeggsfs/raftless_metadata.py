@@ -4,15 +4,18 @@ import argparse
 from dataclasses import dataclass, field
 import enum
 import hashlib
-from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Tuple,
-    Union)
-from sortedcontainers import SortedDict
+import itertools
+import math
 import os
+import random
 import requests
 import secrets
 import socket
+from sortedcontainers import SortedDict
 import sys
 import time
+from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Sequence,
+    Tuple, Union)
 
 import bincode
 import cross_dir_key
@@ -79,9 +82,9 @@ class Directory:
 
 @dataclass
 class Block:
-    storage_id: int
+    storage_id: int # IP and port?
     block_id: int
-    crc32: bytes
+    crc32: int
     size: int
     block_idx: int
 
@@ -90,7 +93,7 @@ class Block:
 class Span:
     parity: int # (two nibbles, 8+3 is stored as (8,3))
     storage_class: int # opaque (except for 0 => inline)
-    crc32: bytes
+    crc32: int
     size: int
     payload: Union[bytes, List[Block]] # storage_class == 0 means bytes
 
@@ -511,7 +514,7 @@ class BlockServerInfo(NamedTuple):
     port: int
     is_terminal: bool
     is_stale: bool
-    write_wait: float
+    write_weight: float
     secret_key: bytes
 
     @staticmethod
@@ -521,7 +524,7 @@ class BlockServerInfo(NamedTuple):
             port=json_obj['port'],
             is_terminal=json_obj['is_terminal'],
             is_stale=json_obj['is_stale'],
-            write_wait=json_obj['write_weight'],
+            write_weight=json_obj['write_weight'],
             secret_key=bytes.fromhex(json_obj['secret_key']),
         )
 
@@ -536,6 +539,28 @@ def try_fetch_block_metadata() -> Optional[List[BlockServerInfo]]:
     except requests.RequestException as e:
         print('WARNING: failed to get shuckle data:', e)
         return None
+
+
+class BlockPicker:
+    def __init__(self, block_meta: Sequence[BlockServerInfo]):
+        if not block_meta:
+            raise ValueError('No blocks to pick')
+        if any(b.write_weight < 0.0 for b in block_meta):
+            raise ValueError('Negative weights not OK')
+
+        self.block_meta = block_meta
+        self.cum_weights = list(
+            itertools.accumulate(b.write_weight for b in block_meta)
+        )
+        if math.isclose(self.cum_weights[-1], 0.0):
+            raise ValueError('Need some nonzero weights')
+
+    def pick_block(self) -> BlockServerInfo:
+        return self.pick_blocks(1)[0]
+
+    def pick_blocks(self, num: int) -> List[BlockServerInfo]:
+        return random.choices(self.block_meta, cum_weights=self.cum_weights,
+            k=num)
 
 
 SHUCKLE_POLL_PERIOD_SEC = 60.0

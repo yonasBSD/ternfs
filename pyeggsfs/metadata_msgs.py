@@ -23,6 +23,7 @@ class RequestKind(enum.IntEnum):
     RESOLVE = 0x01
     STAT = 0x02
     LS_DIR = 0x03
+    CREATE_EDEN_FILE = 0x04
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -107,6 +108,20 @@ class LsDirReq(bincode.Packable):
         continuation_key = bincode.unpack_unsigned(u)
         flags = LsFlags(bincode.unpack_unsigned(u))
         return LsDirReq(inode, as_of, continuation_key, flags)
+
+
+@dataclass
+class CreateEdenFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CREATE_EDEN_FILE
+    type: InodeType # must not be DIRECTORY
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u8_into(self.type, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CreateEdenFileReq':
+        type = InodeType(bincode.unpack_u8(u))
+        return CreateEdenFileReq(type)
 
 
 @dataclass
@@ -213,8 +228,9 @@ class ReleaseDirentReq(bincode.Packable):
         return ReleaseDirentReq(parent_inode, subname, kill)
 
 
-ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
+ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
+    SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
+    ReleaseDirentReq]
 
 
 @dataclass
@@ -407,11 +423,6 @@ class LsDirResp(bincode.Packable):
     continuation_key: int # UINT64_MAX => no more results
     results: List[LsPayload]
 
-    # def capacity(self) -> int:
-    #     sz = bincode.varint_packed_size(len(self.results))
-    #     sz += sum(len(x.calc_packed_size()) for x in self.results)
-    #     return metadata_utils.UDP_MTU - 27 - sz
-
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.continuation_key, b)
         bincode.pack_unsigned_into(len(self.results), b)
@@ -424,6 +435,23 @@ class LsDirResp(bincode.Packable):
         count = bincode.unpack_unsigned(u)
         results = [LsPayload.unpack(u) for _ in range(count)]
         return LsDirResp(continuation_key, results)
+
+
+@dataclass
+class CreateEdenFileResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CREATE_EDEN_FILE
+    inode: int
+    cookie: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.cookie, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CreateEdenFileResp':
+        inode = bincode.unpack_unsigned(u)
+        cookie = bincode.unpack_u64(u)
+        return CreateEdenFileResp(inode, cookie)
 
 
 @dataclass
@@ -499,14 +527,15 @@ class ReleaseDirentResp(bincode.Packable):
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
-    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
-    ReleaseDirentResp]
+    CreateEdenFileResp, SetParentResp, CreateDirResp, InjectDirentResp,
+    AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.RESOLVE: (ResolveReq, ResolveResp),
     RequestKind.STAT: (StatReq, StatResp),
     RequestKind.LS_DIR: (LsDirReq, LsDirResp),
+    RequestKind.CREATE_EDEN_FILE: (CreateEdenFileReq, CreateEdenFileResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

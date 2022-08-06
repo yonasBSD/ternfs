@@ -4,9 +4,12 @@ import argparse
 from dataclasses import dataclass, field
 import enum
 import hashlib
-from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple, Union
+from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Tuple,
+    Union)
 from sortedcontainers import SortedDict
 import os
+import requests
+import secrets
 import socket
 import sys
 import time
@@ -19,6 +22,8 @@ import metadata_utils
 
 
 PROTOCOL_VERSION = 0
+
+DEADLINE_DURATION_SEC = 60 * 60 * 24
 
 
 class LivingKey(NamedTuple):
@@ -94,10 +99,23 @@ class Span:
 class File:
     mtime: int
     size: int # redundant: must equal sum(spans.size)
-    is_eden: bool
-    last_span_is_dirty: bool
     type: InodeType # must not be InodeType.DIRECTORY
-    spans: List[Span] = field(default_factory=list)
+    spans: List[Span] = field(default_factory=list) # TODO: wants to be SortedDict? (keyed on offset)
+
+
+class SpanState(enum.IntEnum):
+    CLEAN = 0
+    DIRTY = 1
+    CONDEMNED = 2
+
+
+@dataclass
+class EdenFile:
+    mtime: int
+    type: InodeType
+    deadline_time: float
+    last_span_state: SpanState
+    spans: List[Span] = field(default_factory=list) # TODO: wants to be SortedDict? (keyed on offset)
 
 
 InodePayload = Union[Directory, File]
@@ -118,7 +136,10 @@ class MetadataShard:
         self.next_block_id = shard | 0x100
         self.inodes: SortedDict[int, InodePayload] = SortedDict()
         self.storage_nodes: SortedDict[int, StorageNode] = SortedDict()
+        self.eden: SortedDict[int, EdenFile] = SortedDict()
         self.last_created_inode = metadata_utils.NULL_INODE
+        token = secrets.token_bytes(16)
+        self.secret_key = crypto.aes_expand_key(token)
         # if we're the shard that contains root, create it now
         if shard == metadata_utils.shard_from_inode(metadata_utils.ROOT_INODE):
             self.inodes[metadata_utils.ROOT_INODE] = Directory(
@@ -298,6 +319,22 @@ class MetadataShard:
             results,
         )
 
+    def do_create_eden_file(self, r: CreateEdenFileReq) -> RespBodyTy:
+        if r.type == InodeType.DIRECTORY:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Cannot create an eden directory'
+            )
+        now = int(time.time())
+        new_inode = self._dispense_inode()
+        self.eden[new_inode] = EdenFile(
+            now,
+            r.type,
+            now + DEADLINE_DURATION_SEC,
+            SpanState.CLEAN
+        )
+        return CreateEdenFileResp(new_inode, self._calc_cookie(new_inode))
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -338,13 +375,12 @@ class MetadataShard:
             or self.last_created_inode == metadata_utils.NULL_INODE):
             # implies the previous created dir succeeded, so we need to create
             # a "true" new directory (can't just reuse the existing one)
-            self.inodes[self.next_inode_id] = Directory(
+            new_dir_inode = self._dispense_inode()
+            self.inodes[new_dir_inode] = Directory(
                 parent_inode=r.new_parent,
                 mtime=mtime,
                 opaque=r.opaque,
             )
-            new_dir_inode = self.next_inode_id
-            self.next_inode_id += 0x100
             self.last_created_inode = new_dir_inode
         else:
             # implies the previous created dir failed and didn't get linked in
@@ -354,7 +390,7 @@ class MetadataShard:
             recycled_dir.parent_inode = r.new_parent
             recycled_dir.mtime = mtime
             recycled_dir.opaque = r.opaque
-            new_dir_inode = self.next_inode_id
+            new_dir_inode = self.last_created_inode
         return CreateDirResp(
             inode=new_dir_inode,
             mtime=mtime,
@@ -459,71 +495,136 @@ class MetadataShard:
                     target.is_owning = True
         return ReleaseDirentResp(found)
 
+    def _dispense_inode(self) -> int:
+        ret = self.next_inode_id
+        self.next_inode_id += 0x100 # preserve LSB
+        return ret
+
+    def _calc_cookie(self, eden_inode: int) -> int:
+        b = eden_inode.to_bytes(8, 'little') + (b'\x00' * 8)
+        mac = crypto.cbc_mac_impl(b, self.secret_key)
+        return int.from_bytes(mac[-8:], 'little')
+
+
+class BlockServerInfo(NamedTuple):
+    ip: str
+    port: int
+    is_terminal: bool
+    is_stale: bool
+    write_wait: float
+    secret_key: bytes
+
+    @staticmethod
+    def from_shuckle(json_obj: Dict[str, Any]) -> 'BlockServerInfo':
+        return BlockServerInfo(
+            ip=json_obj['ip'],
+            port=json_obj['port'],
+            is_terminal=json_obj['is_terminal'],
+            is_stale=json_obj['is_stale'],
+            write_wait=json_obj['write_weight'],
+            secret_key=bytes.fromhex(json_obj['secret_key']),
+        )
+
+
+# returned in the order from shuckle
+# (which doesn't appear to be specifically ordered currently)
+def try_fetch_block_metadata() -> Optional[List[BlockServerInfo]]:
+    try:
+        resp = requests.get('http://localhost:5000/show_me_what_you_got')
+        resp.raise_for_status()
+        return [BlockServerInfo.from_shuckle(datum) for datum in resp.json()]
+    except requests.RequestException as e:
+        print('WARNING: failed to get shuckle data:', e)
+        return None
+
+
+SHUCKLE_POLL_PERIOD_SEC = 60.0
+
 
 def run_forever(shard: MetadataShard, db_fn: str) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', port))
+    shuckle_data = try_fetch_block_metadata() or []
+    last_shuckle_update = time.time()
     while True:
         authorised = False
-        data, addr = sock.recvfrom(metadata_utils.UDP_MTU)
-        if data[0] & 0x80:
-            # this is a privilaged command
-            maybe_data = crypto.remove_mac(data, cross_dir_key.CROSS_DIR_KEY)
-            if maybe_data is not None:
-                authorised = True
-                data = maybe_data
-        else:
-            authorised = True
-        resp_body: RespBodyTy
-        dirty = False
-        if not authorised:
-            resp_body = MetadataError(
-                MetadataErrorKind.NOT_AUTHORISED,
-                '')
-        else:
-            request = bincode.unpack(MetadataRequest, data)
-            if request.ver != PROTOCOL_VERSION:
-                print('Ignoring request, unsupported ver:', request.ver,
-                    file=sys.stderr)
-                continue
-            if isinstance(request.body, ResolveReq):
-                result = shard.resolve(request.body)
-                resp_body = ResolveResp(result)
-            elif isinstance(request.body, StatReq):
-                resp_body = shard.do_stat(request.body)
-            elif isinstance(request.body, LsDirReq):
-                resp_body = shard.do_ls_dir(request.body)
-            elif isinstance(request.body, SetParentReq):
-                resp_body = shard.do_set_parent(request.body)
-                dirty = True
-            elif isinstance(request.body, CreateDirReq):
-                resp_body = shard.do_create_unlinked_dir(request.body)
-                dirty = True
-            elif isinstance(request.body, InjectDirentReq):
-                resp_body = shard.do_inject_dirent(request.body)
-                dirty = True
-            elif isinstance(request.body, AcquireDirentReq):
-                resp_body = shard.do_acquire_dirent(request.body)
-                dirty = True
-            elif isinstance(request.body, ReleaseDirentReq):
-                resp_body = shard.do_release_dirent(request.body)
-                # TODO: maybe dirty should be returned by do_blah
-                # sometimes do_release_dirent has no effect
-                dirty = True
+        try:
+            next_timeout = max(0.0,
+                (last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC) - time.time())
+            sock.settimeout(next_timeout)
+            data, addr = sock.recvfrom(metadata_utils.UDP_MTU)
+            if data[0] & 0x80:
+                # this is a privilaged command
+                maybe_data = crypto.remove_mac(data, cross_dir_key.CROSS_DIR_KEY)
+                if maybe_data is not None:
+                    authorised = True
+                    data = maybe_data
             else:
+                authorised = True
+            resp_body: RespBodyTy
+            dirty = False
+            if not authorised:
                 resp_body = MetadataError(
-                    MetadataErrorKind.LOGIC_ERROR,
-                    'unrecognised message kind')
-        resp = MetadataResponse(
-            request_id=request.request_id,
-            body=resp_body,
-        )
-        if dirty:
-            metadata_utils.persist(shard, db_fn)
-        packed = bincode.pack(resp)
-        sock.sendto(packed, addr)
-        print(request, resp, '', sep='\n')
+                    MetadataErrorKind.NOT_AUTHORISED,
+                    '')
+            else:
+                request = bincode.unpack(MetadataRequest, data)
+                if request.ver != PROTOCOL_VERSION:
+                    print('Ignoring request, unsupported ver:', request.ver,
+                        file=sys.stderr)
+                    continue
+                if isinstance(request.body, ResolveReq):
+                    result = shard.resolve(request.body)
+                    resp_body = ResolveResp(result)
+                elif isinstance(request.body, StatReq):
+                    resp_body = shard.do_stat(request.body)
+                elif isinstance(request.body, LsDirReq):
+                    resp_body = shard.do_ls_dir(request.body)
+                elif isinstance(request.body, CreateEdenFileReq):
+                    resp_body = shard.do_create_eden_file(request.body)
+                    dirty = True
+                elif isinstance(request.body, SetParentReq):
+                    resp_body = shard.do_set_parent(request.body)
+                    dirty = True
+                elif isinstance(request.body, CreateDirReq):
+                    resp_body = shard.do_create_unlinked_dir(request.body)
+                    dirty = True
+                elif isinstance(request.body, InjectDirentReq):
+                    resp_body = shard.do_inject_dirent(request.body)
+                    dirty = True
+                elif isinstance(request.body, AcquireDirentReq):
+                    resp_body = shard.do_acquire_dirent(request.body)
+                    dirty = True
+                elif isinstance(request.body, ReleaseDirentReq):
+                    resp_body = shard.do_release_dirent(request.body)
+                    # TODO: maybe dirty should be returned by do_blah
+                    # sometimes do_release_dirent has no effect
+                    dirty = True
+                else:
+                    resp_body = MetadataError(
+                        MetadataErrorKind.LOGIC_ERROR,
+                        'unrecognised message kind')
+            resp = MetadataResponse(
+                request_id=request.request_id,
+                body=resp_body,
+            )
+            if dirty:
+                metadata_utils.persist(shard, db_fn)
+            packed = bincode.pack(resp)
+            sock.sendto(packed, addr)
+            print(request, resp, '', sep='\n')
+        except socket.timeout:
+            pass
+
+        if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
+            maybe_shuckle_data = try_fetch_block_metadata()
+            if maybe_shuckle_data is None:
+                print('WARNING: could not connect to shuckle')
+            else:
+                shuckle_data = maybe_shuckle_data
+            last_shuckle_update = time.time()
+
 
 
 def main() -> None:
@@ -548,6 +649,7 @@ def main() -> None:
         shard_object = maybe_shard_object
         import pprint
         pprint.pprint(shard_object.inodes)
+        pprint.pprint(shard_object.eden)
     else:
         print('Creating fresh db')
         shard_object = MetadataShard(config.shard)

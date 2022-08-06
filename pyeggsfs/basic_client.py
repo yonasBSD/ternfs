@@ -243,6 +243,30 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
     pprint.pprint(all_results)
 
 
+def do_create_eden_file(parent_inode: ResolvedInode, name: str,
+    creation_ts: int) -> None:
+
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for create eden')
+
+    if name == '':
+        inode = parent_inode
+    else:
+        maybe_inode = resolve(parent_inode.id, name)
+        if maybe_inode is None:
+            raise Exception('Target not found')
+        inode = maybe_inode
+
+    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+        raise Exception('Target not a directory')
+
+    resp = send_request(
+        metadata_msgs.CreateEdenFileReq(metadata_msgs.InodeType.FILE),
+        metadata_utils.shard_from_inode(inode.id)
+    )
+    print(resp)
+
+
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
@@ -264,6 +288,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         metadata_msgs.LsFlags.INCLUDE_NOTHING_ENTRIES
         | metadata_msgs.LsFlags.NEWER_THAN_AS_OF
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
+    'create_eden_file': do_create_eden_file,
 }
 
 

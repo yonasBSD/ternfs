@@ -27,6 +27,7 @@ class RequestKind(enum.IntEnum):
     LS_DIR = 0x03
     CREATE_EDEN_FILE = 0x04
     ADD_EDEN_SPAN = 0x05
+    CERTIFY_EDEN_SPAN = 0x06
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -201,6 +202,33 @@ class AddEdenSpanReq(bincode.Packable):
 
 
 @dataclass
+class CertifyEdenSpanReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EDEN_SPAN
+    inode: int
+    byte_offset: int
+    cookie: int
+    proofs: List[bytes]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert all(len(proof) == 8 for proof in self.proofs)
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.cookie, b)
+        bincode.pack_unsigned_into(len(self.proofs), b)
+        for proof in self.proofs:
+            bincode.pack_fixed_into(proof, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CertifyEdenSpanReq':
+        inode = bincode.unpack_unsigned(u)
+        byte_offset = bincode.unpack_unsigned(u)
+        cookie = bincode.unpack_u64(u)
+        num_proofs = bincode.unpack_unsigned(u)
+        proofs = [bincode.unpack_fixed(u, 8) for _ in range(num_proofs)]
+        return CertifyEdenSpanReq(inode, byte_offset, cookie, proofs)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -305,8 +333,8 @@ class ReleaseDirentReq(bincode.Packable):
 
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
-    AddEdenSpanReq, SetParentReq, CreateDirReq, InjectDirentReq,
-    AcquireDirentReq, ReleaseDirentReq]
+    AddEdenSpanReq, CertifyEdenSpanReq, SetParentReq, CreateDirReq,
+    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -575,6 +603,24 @@ class AddEdenSpanResp(bincode.Packable):
 
 
 @dataclass
+class CertifyEdenSpanResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EDEN_SPAN
+    # echoed back
+    inode: int
+    byte_offset: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.byte_offset, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CertifyEdenSpanResp':
+        inode = bincode.unpack_unsigned(u)
+        byte_offset = bincode.unpack_unsigned(u)
+        return CertifyEdenSpanResp(inode, byte_offset)
+
+
+@dataclass
 class SetParentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
 
@@ -647,8 +693,8 @@ class ReleaseDirentResp(bincode.Packable):
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
-    CreateEdenFileResp, AddEdenSpanResp, SetParentResp, CreateDirResp,
-    InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
+    CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, SetParentResp,
+    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -657,6 +703,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.LS_DIR: (LsDirReq, LsDirResp),
     RequestKind.CREATE_EDEN_FILE: (CreateEdenFileReq, CreateEdenFileResp),
     RequestKind.ADD_EDEN_SPAN: (AddEdenSpanReq, AddEdenSpanResp),
+    RequestKind.CERTIFY_EDEN_SPAN: (CertifyEdenSpanReq, CertifyEdenSpanResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

@@ -460,7 +460,7 @@ class MetadataShard:
         )
         return CreateEdenFileResp(new_inode, self._calc_cookie(new_inode))
 
-    def do_add_eden_span_req(self, r: AddEdenSpanReq, s: Optional[ShuckleData]
+    def do_add_eden_span(self, r: AddEdenSpanReq, s: Optional[ShuckleData]
         ) -> RespBodyTy:
 
         now = metadata_utils.now()
@@ -601,6 +601,74 @@ class MetadataShard:
                     )
 
         return AddEdenSpanResp(resp_payload)
+
+    def do_certify_eden_span(self, r: CertifyEdenSpanReq,
+        s: Optional[ShuckleData]) -> RespBodyTy:
+
+        now = metadata_utils.now()
+        eden_file = self.eden.get(r.inode)
+        if eden_file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'No such eden file {r.inode}'
+            )
+        if now > eden_file.deadline_time:
+            return MetadataError(
+                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                f'now={now} deadline_time={eden_file.deadline_time}'
+            )
+        if r.cookie != self._calc_cookie(r.inode):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Wrong cookie'
+            )
+        target_span = eden_file.f.spans.get(r.byte_offset)
+        if target_span is None:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                f'Byte offset {r.byte_offset} not found in {r.inode}'
+            )
+        if not isinstance(target_span.payload, list):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Span is blockless, certification not required'
+            )
+        if len(target_span.payload) != len(r.proofs):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                f'Expected {len(target_span.payload)} proofs, got {len(r.proofs)}'
+            )
+        if s is None:
+            return MetadataError(
+                MetadataErrorKind.SHUCKLE_ERROR,
+                'No shuckle data'
+            )
+
+        for block, proof in zip(target_span.payload, r.proofs):
+            bserver = s.lookup(block.ip, block.port)
+            if bserver is None:
+                return MetadataError(
+                    MetadataErrorKind.SHUCKLE_ERROR,
+                    f'Storage node ({socket.inet_ntoa(block.ip)}, {block.port})'
+                    ' not found'
+                )
+            b = bytearray(16)
+            struct.pack_into('<cQ', b, 0, b'W', block.block_id)
+            mac = crypto.cbc_mac_impl(b, bserver.secret_key)
+            if mac[:8] != proof:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Bad proof for block {block.block_id}'
+                )
+
+        # all checks passed, we can now do the thing
+        eden_file.deadline_time = now + DEADLINE_DURATION_NS
+        if ((eden_file.f.size == r.byte_offset + target_span.size)
+            and (eden_file.last_span_state == SpanState.DIRTY)
+            ):
+            eden_file.last_span_state = SpanState.CLEAN
+
+        return CertifyEdenSpanResp(r.inode, r.byte_offset)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -820,7 +888,11 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_create_eden_file(request.body)
                     dirty = True
                 elif isinstance(request.body, AddEdenSpanReq):
-                    resp_body = shard.do_add_eden_span_req(request.body,
+                    resp_body = shard.do_add_eden_span(request.body,
+                        shuckle_data)
+                    dirty = True
+                elif isinstance(request.body, CertifyEdenSpanReq):
+                    resp_body = shard.do_certify_eden_span(request.body,
                         shuckle_data)
                     dirty = True
                 elif isinstance(request.body, SetParentReq):

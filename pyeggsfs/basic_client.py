@@ -298,11 +298,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     new_inode_id = resp.inode
     cookie = resp.cookie
 
-    cur_offset = 0
-
-    def add_span(data: bytes, crc: int, mode: str) -> metadata_msgs.RespBodyTy:
-        nonlocal cur_offset
-
+    def add_span(data: bytes, crc: int, byte_offset: int, mode: str) -> metadata_msgs.RespBodyTy:
         payload: Union[bytes, List[metadata_msgs.NewBlockInfo]]
 
         if mode == 'INLINE':
@@ -327,15 +323,13 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
                 parity_mode,
                 crc,
                 len(data),
-                cur_offset,
+                byte_offset,
                 new_inode_id,
                 cookie,
                 payload
             ),
             shard
         )
-
-        cur_offset += len(data)
 
         return ret
 
@@ -349,6 +343,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
             resp = conn.recv(1024)
         if len(resp) != 17:
             raise RuntimeError(f'Bad response len {resp!r}')
+        proof: bytes
         rkind, rblock_id, proof = struct.unpack('<cQ8s', resp)
         if rkind != b'W':
             raise RuntimeError(f'Unexpected response kind {rkind} {resp!r}')
@@ -356,9 +351,10 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
             raise RuntimeError(f'Bad block id, expected {block_id} got {rblock_id}')
         return proof
 
+    cur_offset = 0
     for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
         crc = int.from_bytes(crypto.crc32c(data), 'little')
-        resp = add_span(data, crc, mode)
+        resp = add_span(data, crc, cur_offset, mode)
         if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
             raise RuntimeError(f'{resp}')
         write_proofs = []
@@ -372,9 +368,19 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
             assert mode in ['INLINE', 'ZERO_FILL']
 
         if write_proofs:
-            #TODO
-            pprint.pprint(write_proofs)
-            raise NotImplementedError()
+            resp = send_request(
+                metadata_msgs.CertifyEdenSpanReq(
+                    new_inode_id,
+                    cur_offset,
+                    cookie,
+                    write_proofs
+                ),
+                shard
+            )
+            if not isinstance(resp, metadata_msgs.CertifyEdenSpanResp):
+                raise RuntimeError(f'{resp}')
+
+        cur_offset += len(data)
 
 
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {

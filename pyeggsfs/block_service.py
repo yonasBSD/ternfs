@@ -13,6 +13,8 @@ import socket
 import struct
 import sys
 
+import metadata_utils
+
 def block_id_to_path(base_path: Path, block_id: int) -> Path:
     # 256 subdirectories
     hex_block_id = block_id.to_bytes(8, 'little').hex()
@@ -132,6 +134,10 @@ def ser_stats(token: int, used_bytes: int, free_bytes: int, used_n: int, free_n:
 
 MAX_OBJECT_SIZE = 100e6
 
+ONE_HOUR_IN_NS = 60 * 60 * 1000 * 1000 * 1000
+PAST_CUTOFF = ONE_HOUR_IN_NS * 22
+FUTURE_CUTOFF = ONE_HOUR_IN_NS * 2
+
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, rk: crypto.ExpandedKey, base_path: Path) -> None:
     writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x00'*8)
     while True:
@@ -157,6 +163,13 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             # write block
             # (block_id, crc, size, mac) -> data
             block_id, crc, size = deser_write_block(kind + (await reader.readexactly(24)), rk)
+            # check that block_id is inside expected range
+            # this ensures we don't have "reply attack"-esque issues
+            now = metadata_utils.now()
+            if not (now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF):
+                print(f'Block {block_id} in the past', file=sys.stderr)
+                writer.close()
+                return
             assert size <= MAX_OBJECT_SIZE
             data = await reader.readexactly(size)
             assert crypto.crc32c(data) == crc

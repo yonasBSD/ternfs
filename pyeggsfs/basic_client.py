@@ -5,9 +5,10 @@ import functools
 import posixpath
 import pprint
 import socket
+import struct
 import sys
 import time
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import bincode
 import crypto
@@ -299,10 +300,8 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
     cur_offset = 0
 
-    def add_span(data: bytes, mode: str) -> metadata_msgs.RespBodyTy:
+    def add_span(data: bytes, crc: int, mode: str) -> metadata_msgs.RespBodyTy:
         nonlocal cur_offset
-        crc = int.from_bytes(crypto.crc32c(data), 'little')
-        assert crc < 2**32
 
         payload: Union[bytes, List[metadata_msgs.NewBlockInfo]]
 
@@ -340,12 +339,41 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
         return ret
 
+    # writes block, returns proof
+    def write_block(data: bytes, addr: Tuple[str, int], block_id: int, crc: int,
+        certificate: bytes) -> bytes:
+        header = struct.pack('<cQII8s', b'w', block_id, crc, len(data),
+            certificate)
+        with socket.create_connection(addr) as conn:
+            conn.send(header + data)
+            resp = conn.recv(1024)
+        if len(resp) != 17:
+            raise RuntimeError(f'Bad response len {resp!r}')
+        rkind, rblock_id, proof = struct.unpack('<cQ8s', resp)
+        if rkind != b'W':
+            raise RuntimeError(f'Unexpected response kind {rkind} {resp!r}')
+        if rblock_id != block_id:
+            raise RuntimeError(f'Bad block id, expected {block_id} got {rblock_id}')
+        return proof
+
     for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
-        resp = add_span(data, mode)
+        crc = int.from_bytes(crypto.crc32c(data), 'little')
+        resp = add_span(data, crc, mode)
         if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
             raise RuntimeError(f'{resp}')
-        if mode not in ['INLINE', 'ZERO_FILL']:
-            #TODO: actually write the data
+        write_proofs = []
+        if mode == 'MIRRORING':
+            write_proofs = [
+                write_block(data, (socket.inet_ntoa(binfo.ip), binfo.port),
+                    binfo.block_id, crc, binfo.certificate)
+                for binfo in resp.span
+            ]
+        else:
+            assert mode in ['INLINE', 'ZERO_FILL']
+
+        if write_proofs:
+            #TODO
+            pprint.pprint(write_proofs)
             raise NotImplementedError()
 
 

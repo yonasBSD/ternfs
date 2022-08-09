@@ -238,6 +238,7 @@ async def list_devices() -> Response:
 ###########################################
 
 def init_db() -> None:
+    #TODO: add storage_mode
     db = sqlite3.connect('database.db')
     db.execute("""
         create table if not exists block_services (

@@ -667,6 +667,7 @@ class MetadataShard:
             and (eden_file.last_span_state == SpanState.DIRTY)
             ):
             eden_file.last_span_state = SpanState.CLEAN
+            eden_file.f.mtime = now
 
         return CertifyEdenSpanResp(r.inode, r.byte_offset)
 

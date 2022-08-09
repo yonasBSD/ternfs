@@ -51,8 +51,16 @@ def pack_bytes_into(x: bytes, b: bytearray) -> None:
     b.extend(x)
 
 
+def pack_fixed_into(x: bytes, b: bytearray) -> None:
+    b.extend(x)
+
+
 def pack_u8_into(x: int, b: bytearray) -> None:
     b.append(x)
+
+
+def pack_u16_into(x: int, b: bytearray) -> None:
+    b.extend(struct.pack('<H', x))
 
 
 def pack_u32_into(x: int, b: bytearray) -> None:
@@ -125,9 +133,15 @@ def unpack_unsigned(u: UnpackWrapper) -> int:
     return value
 
 
-def upack_u8(u: UnpackWrapper) -> int:
+def unpack_u8(u: UnpackWrapper) -> int:
     ret = u.read()[0]
     u.advance(1)
+    return ret
+
+
+def unpack_u16(u: UnpackWrapper) -> int:
+    ret: int = struct.unpack('<H', u.read()[:2])[0]
+    u.advance(2)
     return ret
 
 
@@ -166,22 +180,12 @@ def unpack_signed(u: UnpackWrapper) -> int:
     return unzigzag(unpack_unsigned(u))
 
 
-def unpack_u8(u: UnpackWrapper) -> int:
-    ret = int(u.read()[0])
-    u.advance(1)
-    return ret
-
-
-# def unpack_struct(u: UnpackWrapper, struct_format: str) -> Tuple[Any, ...]:
-#     size = struct.calcsize(struct_format)
-#     b = u.read()
-#     ret = struct.unpack(struct_format, b[:size])
-#     u.advance(size)
-#     return ret
-
-
 def unpack_bytes(u: UnpackWrapper) -> bytes:
     size = unpack_unsigned(u)
+    return unpack_fixed(u, size)
+
+
+def unpack_fixed(u: UnpackWrapper, size: int) -> bytes:
     ret = u.read()[:size]
     u.advance(size)
     return ret

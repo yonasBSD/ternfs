@@ -2,7 +2,8 @@
 import os
 import pickle
 import sys
-from typing import Any, Optional
+import time
+from typing import Any, NewType, Optional
 
 NULL_INODE = 0 # used for parent_inode to indicate no parent
 ROOT_INODE = 1
@@ -65,3 +66,16 @@ def num_parity_blocks(parity_mode: int) -> int:
 
 def total_blocks(parity_mode: int) -> int:
     return num_data_blocks(parity_mode) + num_parity_blocks(parity_mode)
+
+
+def create_parity_mode(data_blocks: int, parity_blocks: int) -> int:
+    if not all(0 <= x <= 0xF for x in [data_blocks, parity_blocks]):
+        raise ValueError('More blocks than we support')
+    return data_blocks | (parity_blocks << 4)
+
+
+# EGGS EPOCH is 2020-01-01
+UNIX_EGGS_OFFSET = 1_577_836_800_000_000_000
+
+def now() -> int:
+    return time.time_ns() - UNIX_EGGS_OFFSET

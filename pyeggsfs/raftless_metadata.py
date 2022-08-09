@@ -10,6 +10,7 @@ import os
 import random
 import requests
 import secrets
+import struct
 import socket
 from sortedcontainers import SortedDict
 import sys
@@ -26,7 +27,8 @@ import metadata_utils
 
 PROTOCOL_VERSION = 0
 
-DEADLINE_DURATION_SEC = 60 * 60 * 24
+# one hour in ns
+DEADLINE_DURATION_NS = 1000 * 1000 * 1000 * 60 * 60
 
 
 class LivingKey(NamedTuple):
@@ -82,20 +84,70 @@ class Directory:
 
 @dataclass
 class Block:
-    storage_id: int # IP and port?
+    ip: bytes
+    port: int
     block_id: int
     crc32: int
     size: int
     block_idx: int
 
+    def create_cert(self, key: crypto.ExpandedKey) -> bytes:
+        b = bytearray(32)
+        struct.pack_into('<cQII', b, 0, b'w', self.block_id, self.crc32,
+            self.size)
+        return crypto.cbc_mac_impl(b, key)[:8]
+
 
 @dataclass
 class Span:
     parity: int # (two nibbles, 8+3 is stored as (8,3))
-    storage_class: int # opaque (except for 0 => inline)
+    storage_class: int # opaque (except inline and zero-fill)
     crc32: int
     size: int
-    payload: Union[bytes, List[Block]] # storage_class == 0 means bytes
+    payload: Union[bytes, List[Block]]
+
+    # returns None if consistent
+    # otherwise returns inconsistency reason
+    def check_consistency(self) -> bool:
+        # special case: inline
+        if self.storage_class == INLINE_STORAGE:
+            if self.parity != 0:
+                return False
+            return (self.parity == 0
+                and isinstance(self.payload, bytes)
+                and (self.size == len(self.payload))
+            )
+
+        # special case: zero fill
+        if self.storage_class == ZERO_FILL_STORAGE:
+            if self.parity != 0:
+                return False
+            return crypto.crc32c(b'\x00' * self.size) == self.crc32.to_bytes(
+                4, 'little')
+
+        # for non-special cases, want a block list in payload
+        if not isinstance(self.payload, list):
+            return False
+
+        # TODO: implement crc consistency check
+        #
+        # implementation strategy as per the doc:
+        # For parity mode 1+M (mirroring), for any M, the server can validate
+        # that the CRC of the span equals the CRC of every block.
+        # For N+M in the general case, it can probably validate that the CRC of
+        # the span equals the concatenation of the CRCs of the N, and that the
+        # CRC of the 1st of the M equals the XOR of the CRCs of the N.
+        # It cannot validate anything about the rest of the M though (scrubbing
+        # can validate the rest, if it wants to, but it would be too expensive
+        # for the metadata server to validate).
+
+        # also check size consistency
+        num_data_blocks = metadata_utils.num_data_blocks(self.parity)
+        implied_size = sum(b.size for b in self.payload[:num_data_blocks])
+        if self.size != implied_size:
+            return False
+
+        return True
 
 
 @dataclass
@@ -103,7 +155,8 @@ class File:
     mtime: int
     size: int # redundant: must equal sum(spans.size)
     type: InodeType # must not be InodeType.DIRECTORY
-    spans: List[Span] = field(default_factory=list) # TODO: wants to be SortedDict? (keyed on offset)
+    # offset -> span
+    spans: 'SortedDict[int, Span]' = field(default_factory=SortedDict)
 
 
 class SpanState(enum.IntEnum):
@@ -114,11 +167,9 @@ class SpanState(enum.IntEnum):
 
 @dataclass
 class EdenFile:
-    mtime: int
-    type: InodeType
-    deadline_time: float
+    f: File
+    deadline_time: int
     last_span_state: SpanState
-    spans: List[Span] = field(default_factory=list) # TODO: wants to be SortedDict? (keyed on offset)
 
 
 InodePayload = Union[Directory, File]
@@ -131,12 +182,83 @@ class StorageNode:
     addr: Tuple[str, int]
 
 
+class BlockServerInfo(NamedTuple):
+    ip: bytes
+    port: int
+    is_terminal: bool
+    is_stale: bool
+    write_weight: float
+    secret_key: crypto.ExpandedKey
+
+    @staticmethod
+    def from_shuckle(json_obj: Dict[str, Any]) -> 'BlockServerInfo':
+        return BlockServerInfo(
+            ip=socket.inet_aton(json_obj['ip']),
+            port=json_obj['port'],
+            is_terminal=json_obj['is_terminal'],
+            is_stale=json_obj['is_stale'],
+            write_weight=json_obj['write_weight'],
+            secret_key=crypto.aes_expand_key(
+                bytes.fromhex(json_obj['secret_key'])),
+        )
+
+
+class ShuckleData:
+    def __init__(self, block_meta: Sequence[BlockServerInfo]):
+        self.block_meta = block_meta
+
+        if not block_meta:
+            self._cum_weights = None
+        else:
+            if any(b.write_weight < 0.0 for b in block_meta):
+                raise ValueError('Negative weights not OK')
+            cum_weights = list(
+                itertools.accumulate(b.write_weight for b in block_meta)
+            )
+            if math.isclose(cum_weights[-1], 0.0):
+                self._cum_weights = None
+            else:
+                self._cum_weights = cum_weights
+
+        self._block_index = {
+            (bserver.ip, bserver.port): idx
+            for idx, bserver in enumerate(block_meta)
+        }
+
+    def try_pick_blocks(self, num: int) -> Optional[List[BlockServerInfo]]:
+        if self._cum_weights is None:
+            return None
+        return random.choices(self.block_meta, cum_weights=self._cum_weights,
+            k=num)
+
+    def lookup(self, ip: bytes, port: int) -> Optional[BlockServerInfo]:
+        maybe_idx = self._block_index.get((ip, port))
+        if maybe_idx is None:
+            return None
+        return self.block_meta[maybe_idx]
+
+
+# returned in the order from shuckle
+# (which doesn't appear to be specifically ordered currently)
+def try_fetch_block_metadata() -> Optional[ShuckleData]:
+    try:
+        resp = requests.get('http://localhost:5000/show_me_what_you_got')
+        resp.raise_for_status()
+        block_meta = [
+            BlockServerInfo.from_shuckle(datum) for datum in resp.json()
+        ]
+        return ShuckleData(block_meta)
+    except Exception as e:
+        print('WARNING: failed to get shuckle data:', e)
+        return None
+
+
 class MetadataShard:
     def __init__(self, shard: int):
         assert 0 <= shard <= 255
         self.shard_id = shard
         self.next_inode_id = shard | 0x100 # 00-FF is reserved
-        self.next_block_id = shard | 0x100
+        self.last_block_id = shard | 0x100
         self.inodes: SortedDict[int, InodePayload] = SortedDict()
         self.storage_nodes: SortedDict[int, StorageNode] = SortedDict()
         self.eden: SortedDict[int, EdenFile] = SortedDict()
@@ -147,7 +269,7 @@ class MetadataShard:
         if shard == metadata_utils.shard_from_inode(metadata_utils.ROOT_INODE):
             self.inodes[metadata_utils.ROOT_INODE] = Directory(
                 parent_inode=metadata_utils.ROOT_INODE,
-                mtime=int(time.time()),
+                mtime=metadata_utils.now(),
                 opaque=b'', #FIXME: what should opaque be for root?
             )
 
@@ -254,7 +376,8 @@ class MetadataShard:
                 # two lookups required:
                 #    1) determine the name of the next inode
                 #    2) locate the required version based on as_of time
-                lower_bound = DeadKey(last_key, last_name, 0xFFFF_FFFF_FFFF_FFFF)
+                lower_bound = DeadKey(last_key, last_name,
+                    0xFFFF_FFFF_FFFF_FFFF)
                 next_name_idx = dir.dead_items.bisect_left(lower_bound)
                 if next_name_idx >= len(dir.dead_items):
                     # we have reached the end
@@ -328,15 +451,156 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 'Cannot create an eden directory'
             )
-        now = int(time.time())
+        now = metadata_utils.now()
         new_inode = self._dispense_inode()
         self.eden[new_inode] = EdenFile(
-            now,
-            r.type,
-            now + DEADLINE_DURATION_SEC,
+            File(now, 0, r.type),
+            now + DEADLINE_DURATION_NS,
             SpanState.CLEAN
         )
         return CreateEdenFileResp(new_inode, self._calc_cookie(new_inode))
+
+    def do_add_eden_span_req(self, r: AddEdenSpanReq, s: Optional[ShuckleData]
+        ) -> RespBodyTy:
+
+        now = metadata_utils.now()
+        eden_file = self.eden.get(r.inode)
+        if eden_file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'No such eden file {r.inode}'
+            )
+        if now > eden_file.deadline_time:
+            return MetadataError(
+                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                f'now={now} deadline_time={eden_file.deadline_time}'
+            )
+        if r.cookie != self._calc_cookie(r.inode):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Wrong cookie'
+            )
+        # "blockless requests" use no blocks
+        # we support two kinds, INLINE and ZERO_FILL
+        blockless_req = (r.parity_mode == 0)
+        if (blockless_req
+            != (r.storage_class in [INLINE_STORAGE, ZERO_FILL_STORAGE])):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Inconsistent storage class/parity mode'
+            )
+        if not blockless_req and s is None:
+            return MetadataError(
+                MetadataErrorKind.SHUCKLE_ERROR,
+                'No shuckle data'
+            )
+
+        # left empty for a blockless request
+        resp_payload: List[BlockInfo] = []
+
+        # if r.offset is end of file, create and append new span
+        # otherwise, resynthesis previous response from existing span
+        if r.byte_offset == eden_file.f.size:
+            if eden_file.last_span_state != SpanState.CLEAN:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Last span in state {eden_file.last_span_state} not clean'
+                )
+            num_blocks = metadata_utils.total_blocks(r.parity_mode)
+
+            if blockless_req:
+                assert isinstance(r.payload, bytes)
+                new_span = Span(
+                    r.parity_mode,
+                    r.storage_class,
+                    r.crc32,
+                    r.size,
+                    r.payload
+                )
+            else:
+                assert s is not None
+                assert isinstance(r.payload, list)
+                target_block_servers = s.try_pick_blocks(num_blocks)
+                if target_block_servers is None:
+                    return MetadataError(
+                        MetadataErrorKind.SHUCKLE_ERROR,
+                        'No block servers available'
+                    )
+
+                assert len(target_block_servers) == len(r.payload)
+                new_blocks = [
+                    Block(
+                        bserver.ip,
+                        bserver.port,
+                        self._dispense_block_id(now),
+                        binfo.crc32,
+                        binfo.size,
+                        idx
+                    )
+                    for idx, (binfo, bserver)
+                    in enumerate(zip(r.payload, target_block_servers))
+                ]
+                new_span = Span(
+                    r.parity_mode,
+                    r.storage_class,
+                    r.crc32,
+                    r.size,
+                    new_blocks
+                )
+                resp_payload = [
+                    BlockInfo(
+                        binfo.ip,
+                        binfo.port,
+                        binfo.block_id,
+                        binfo.create_cert(bserver.secret_key)
+                    )
+                    for binfo, bserver in zip(new_blocks, target_block_servers)
+                ]
+
+            if not new_span.check_consistency():
+                return MetadataError(MetadataErrorKind.BAD_REQUEST,
+                    'Span/Block data not consistent')
+            eden_file.f.spans[eden_file.f.size] = new_span
+            eden_file.f.size += new_span.size
+            if new_span.parity:
+                eden_file.last_span_state = SpanState.DIRTY
+            eden_file.deadline_time = now + DEADLINE_DURATION_NS
+        else:
+            existing_span = eden_file.f.spans.get(r.byte_offset)
+            if existing_span is None:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Offset {r.byte_offset} not found in {r.inode}'
+                )
+            if (existing_span.parity != r.parity_mode
+                or existing_span.storage_class != r.storage_class
+                or existing_span.crc32 != r.crc32
+                or existing_span.size != r.size):
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Not consistent with existing span'
+                )
+            if not blockless_req:
+                assert s is not None
+                assert isinstance(existing_span.payload, list)
+                for b in existing_span.payload:
+                    bserver = s.lookup(b.ip, b.port)
+                    if bserver is None:
+                        return MetadataError(
+                            MetadataErrorKind.SHUCKLE_ERROR,
+                            f'Storage node ({socket.inet_ntoa(b.ip)}, {b.port})'
+                            ' not found'
+                        )
+                    resp_payload.append(
+                        BlockInfo(
+                            b.ip,
+                            b.port,
+                            b.block_id,
+                            b.create_cert(bserver.secret_key)
+                        )
+                    )
+
+        return AddEdenSpanResp(resp_payload)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -366,14 +630,7 @@ class MetadataShard:
         return SetParentResp()
 
     def do_create_unlinked_dir(self, r: CreateDirReq) -> RespBodyTy:
-        # int(time.time()) might not be the best way to do this
-        # but it's the python prototype so ¯\_(-_-))_/¯
-        #
-        # although a real problem I thought of here is idempotency... does the
-        # mtime need to be identical on each re-request?
-        # for that reason it might be better if mtime is a parameter to
-        # CreateDirReq
-        mtime = int(time.time())
+        now = metadata_utils.now()
         if (self.last_created_inode == r.token_inode
             or self.last_created_inode == metadata_utils.NULL_INODE):
             # implies the previous created dir succeeded, so we need to create
@@ -381,7 +638,7 @@ class MetadataShard:
             new_dir_inode = self._dispense_inode()
             self.inodes[new_dir_inode] = Directory(
                 parent_inode=r.new_parent,
-                mtime=mtime,
+                mtime=now,
                 opaque=r.opaque,
             )
             self.last_created_inode = new_dir_inode
@@ -391,12 +648,12 @@ class MetadataShard:
             recycled_dir = self.inodes[self.last_created_inode]
             assert isinstance(recycled_dir, Directory)
             recycled_dir.parent_inode = r.new_parent
-            recycled_dir.mtime = mtime
+            recycled_dir.mtime = now
             recycled_dir.opaque = r.opaque
             new_dir_inode = self.last_created_inode
         return CreateDirResp(
             inode=new_dir_inode,
-            mtime=mtime,
+            mtime=now,
         )
 
     def do_inject_dirent(self, r: InjectDirentReq) -> RespBodyTy:
@@ -473,7 +730,7 @@ class MetadataShard:
         # a 3rd party.
         parent = self.inodes.get(r.parent_inode)
         found = False
-        now = int(time.time())
+        now = metadata_utils.now()
         if isinstance(parent, Directory): # implictly checks for None
             found = True
             hashname = parent.hash_name(r.subname)
@@ -503,64 +760,17 @@ class MetadataShard:
         self.next_inode_id += 0x100 # preserve LSB
         return ret
 
+    def _dispense_block_id(self, now: int) -> int:
+        # now is embedded into the id
+        # (other than LSB which is shard)
+        ret = max(self.last_block_id + 0x100, self.shard_id | (now & ~0xFF))
+        self.last_block_id = ret
+        return ret
+
     def _calc_cookie(self, eden_inode: int) -> int:
         b = eden_inode.to_bytes(8, 'little') + (b'\x00' * 8)
         mac = crypto.cbc_mac_impl(b, self.secret_key)
         return int.from_bytes(mac[-8:], 'little')
-
-
-class BlockServerInfo(NamedTuple):
-    ip: str
-    port: int
-    is_terminal: bool
-    is_stale: bool
-    write_weight: float
-    secret_key: bytes
-
-    @staticmethod
-    def from_shuckle(json_obj: Dict[str, Any]) -> 'BlockServerInfo':
-        return BlockServerInfo(
-            ip=json_obj['ip'],
-            port=json_obj['port'],
-            is_terminal=json_obj['is_terminal'],
-            is_stale=json_obj['is_stale'],
-            write_weight=json_obj['write_weight'],
-            secret_key=bytes.fromhex(json_obj['secret_key']),
-        )
-
-
-# returned in the order from shuckle
-# (which doesn't appear to be specifically ordered currently)
-def try_fetch_block_metadata() -> Optional[List[BlockServerInfo]]:
-    try:
-        resp = requests.get('http://localhost:5000/show_me_what_you_got')
-        resp.raise_for_status()
-        return [BlockServerInfo.from_shuckle(datum) for datum in resp.json()]
-    except requests.RequestException as e:
-        print('WARNING: failed to get shuckle data:', e)
-        return None
-
-
-class BlockPicker:
-    def __init__(self, block_meta: Sequence[BlockServerInfo]):
-        if not block_meta:
-            raise ValueError('No blocks to pick')
-        if any(b.write_weight < 0.0 for b in block_meta):
-            raise ValueError('Negative weights not OK')
-
-        self.block_meta = block_meta
-        self.cum_weights = list(
-            itertools.accumulate(b.write_weight for b in block_meta)
-        )
-        if math.isclose(self.cum_weights[-1], 0.0):
-            raise ValueError('Need some nonzero weights')
-
-    def pick_block(self) -> BlockServerInfo:
-        return self.pick_blocks(1)[0]
-
-    def pick_blocks(self, num: int) -> List[BlockServerInfo]:
-        return random.choices(self.block_meta, cum_weights=self.cum_weights,
-            k=num)
 
 
 SHUCKLE_POLL_PERIOD_SEC = 60.0
@@ -570,7 +780,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', port))
-    shuckle_data = try_fetch_block_metadata() or []
+    shuckle_data = try_fetch_block_metadata()
     last_shuckle_update = time.time()
     while True:
         authorised = False
@@ -609,6 +819,10 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 elif isinstance(request.body, CreateEdenFileReq):
                     resp_body = shard.do_create_eden_file(request.body)
                     dirty = True
+                elif isinstance(request.body, AddEdenSpanReq):
+                    resp_body = shard.do_add_eden_span_req(request.body,
+                        shuckle_data)
+                    dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True
@@ -644,9 +858,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
 
         if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
             maybe_shuckle_data = try_fetch_block_metadata()
-            if maybe_shuckle_data is None:
-                print('WARNING: could not connect to shuckle')
-            else:
+            if maybe_shuckle_data is not None:
                 shuckle_data = maybe_shuckle_data
             last_shuckle_update = time.time()
 

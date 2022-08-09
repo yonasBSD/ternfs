@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import enum
+import itertools
 from typing import (ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type,
     Union)
 
@@ -142,43 +143,61 @@ class NewBlockInfo(bincode.Packable):
         return NewBlockInfo(crc32, size)
 
 
+INLINE_STORAGE = 0
+ZERO_FILL_STORAGE = 1
+
+
 @dataclass
 class AddEdenSpanReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.ADD_EDEN_SPAN
     storage_class: int
     parity_mode: int
+    crc32: int
     size: int
     byte_offset: int
     inode: int
     cookie: int
-    block_infos: List[NewBlockInfo]
+    payload: Union[bytes, List[NewBlockInfo]]
 
     def pack_into(self, b: bytearray) -> None:
-        if metadata_utils.total_blocks(self.parity_mode) != len(self.block_infos):
-            raise ValueError('Inconsistent block counts')
+        assert (self.parity_mode == 0) == isinstance(self.payload, bytes)
         bincode.pack_u8_into(self.storage_class, b)
         bincode.pack_u8_into(self.parity_mode, b)
+        bincode.pack_u32_into(self.crc32, b)
         bincode.pack_unsigned_into(self.size, b)
         bincode.pack_unsigned_into(self.byte_offset, b)
         bincode.pack_unsigned_into(self.inode, b)
         bincode.pack_u64_into(self.cookie, b)
-        for info in self.block_infos:
-            info.pack_into(b)
+        if self.storage_class == INLINE_STORAGE:
+            assert isinstance(self.payload, bytes)
+            assert len(self.payload) == self.size
+            bincode.pack_fixed_into(self.payload, b)
+        elif isinstance(self.payload, list):
+            assert metadata_utils.total_blocks(self.parity_mode) == len(self.payload)
+            for info in self.payload:
+                info.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'AddEdenSpanReq':
         storage_class = bincode.unpack_u8(u)
         parity_mode = bincode.unpack_u8(u)
+        crc32 = bincode.unpack_u32(u)
         size = bincode.unpack_unsigned(u)
         byte_offset = bincode.unpack_unsigned(u)
         inode = bincode.unpack_unsigned(u)
         cookie = bincode.unpack_u64(u)
-        block_infos = [
-            NewBlockInfo.unpack(u)
-            for _ in range(metadata_utils.total_blocks(parity_mode))
-        ]
-        return AddEdenSpanReq(storage_class, parity_mode, size, byte_offset,
-            inode, cookie, block_infos)
+        payload: Union[bytes, List[NewBlockInfo]]
+        if storage_class == INLINE_STORAGE:
+            payload = bincode.unpack_fixed(u, size)
+        elif storage_class == ZERO_FILL_STORAGE:
+            payload = b''
+        else:
+            payload = [
+                NewBlockInfo.unpack(u)
+                for _ in range(metadata_utils.total_blocks(parity_mode))
+            ]
+        return AddEdenSpanReq(storage_class, parity_mode, crc32, size,
+            byte_offset, inode, cookie, payload)
 
 
 @dataclass
@@ -286,8 +305,8 @@ class ReleaseDirentReq(bincode.Packable):
 
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
-    SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
-    ReleaseDirentReq]
+    AddEdenSpanReq, SetParentReq, CreateDirReq, InjectDirentReq,
+    AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -327,6 +346,7 @@ class MetadataErrorKind(enum.IntEnum):
     BAD_INODE_TYPE = 11
     TIMED_OUT = 12 # not sent, but used by client as sentinel
     EDEN_TIME_EXPIRED = 13
+    SHUCKLE_ERROR = 14
 
 
 @dataclass
@@ -513,6 +533,48 @@ class CreateEdenFileResp(bincode.Packable):
 
 
 @dataclass
+class BlockInfo(bincode.Packable):
+    ip: bytes
+    port: int
+    block_id: int
+    # certificate := MAC(b'w' + block_id + crc + size)[:8]
+    certificate: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        assert len(self.ip) == 4
+        assert len(self.certificate) == 8, self.certificate
+        bincode.pack_fixed_into(self.ip, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_unsigned_into(self.block_id, b)
+        bincode.pack_fixed_into(self.certificate, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockInfo':
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        block_id = bincode.unpack_unsigned(u)
+        certificate = bincode.unpack_fixed(u, 8)
+        return BlockInfo(ip, port, block_id, certificate)
+
+
+@dataclass
+class AddEdenSpanResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.ADD_EDEN_SPAN
+    span: List[BlockInfo]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(len(self.span), b)
+        for block in self.span:
+            block.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'AddEdenSpanResp':
+        size = bincode.unpack_unsigned(u)
+        span = [BlockInfo.unpack(u) for _ in range(size)]
+        return AddEdenSpanResp(span)
+
+
+@dataclass
 class SetParentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
 
@@ -585,8 +647,8 @@ class ReleaseDirentResp(bincode.Packable):
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
-    CreateEdenFileResp, SetParentResp, CreateDirResp, InjectDirentResp,
-    AcquireDirentResp, ReleaseDirentResp]
+    CreateEdenFileResp, AddEdenSpanResp, SetParentResp, CreateDirResp,
+    InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -594,6 +656,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.STAT: (StatReq, StatResp),
     RequestKind.LS_DIR: (LsDirReq, LsDirResp),
     RequestKind.CREATE_EDEN_FILE: (CreateEdenFileReq, CreateEdenFileResp),
+    RequestKind.ADD_EDEN_SPAN: (AddEdenSpanReq, AddEdenSpanResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),
@@ -605,6 +668,7 @@ for kind, (req, resp) in REQUESTS.items():
     assert req.kind == kind, f'{kind}, {req}'
     assert resp.kind == kind, f'{kind}, {resp}'
 
+assert all(k in REQUESTS for k in itertools.islice(RequestKind, 1, None))
 
 @dataclass
 class MetadataResponse(bincode.Packable):

@@ -7,7 +7,7 @@ import pprint
 import socket
 import sys
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 import bincode
 import crypto
@@ -267,6 +267,88 @@ def do_create_eden_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
+def do_create_test_file(parent_inode: ResolvedInode, name: str,
+    creation_ts: int) -> None:
+
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for create eden')
+
+    if name == '':
+        inode = parent_inode
+    else:
+        maybe_inode = resolve(parent_inode.id, name)
+        if maybe_inode is None:
+            raise Exception('Target not found')
+        inode = maybe_inode
+
+    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+        raise Exception('Target not a directory')
+
+    shard = metadata_utils.shard_from_inode(inode.id)
+
+    resp = send_request(
+        metadata_msgs.CreateEdenFileReq(metadata_msgs.InodeType.FILE),
+        shard
+    )
+
+    if not isinstance(resp, metadata_msgs.CreateEdenFileResp):
+        raise RuntimeError(f'{resp}')
+
+    new_inode_id = resp.inode
+    cookie = resp.cookie
+
+    cur_offset = 0
+
+    def add_span(data: bytes, mode: str) -> metadata_msgs.RespBodyTy:
+        nonlocal cur_offset
+        crc = int.from_bytes(crypto.crc32c(data), 'little')
+        assert crc < 2**32
+
+        payload: Union[bytes, List[metadata_msgs.NewBlockInfo]]
+
+        if mode == 'INLINE':
+            storage_class = metadata_msgs.INLINE_STORAGE
+            parity_mode = 0
+            payload = data
+        elif mode == 'ZERO_FILL':
+            assert all(b == 0 for b in data)
+            storage_class = metadata_msgs.ZERO_FILL_STORAGE
+            parity_mode = 0
+            payload = b''
+        elif mode == 'MIRRORING':
+            storage_class = 2 # arbitrary, but not inline or zero-fill
+            parity_mode = metadata_utils.create_parity_mode(1, 2)
+            payload = [metadata_msgs.NewBlockInfo(crc, len(data))] * 3
+        else:
+            raise Exception(f'unknown mode {mode}')
+
+        ret = send_request(
+            metadata_msgs.AddEdenSpanReq(
+                storage_class,
+                parity_mode,
+                crc,
+                len(data),
+                cur_offset,
+                new_inode_id,
+                cookie,
+                payload
+            ),
+            shard
+        )
+
+        cur_offset += len(data)
+
+        return ret
+
+    for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
+        resp = add_span(data, mode)
+        if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
+            raise RuntimeError(f'{resp}')
+        if mode not in ['INLINE', 'ZERO_FILL']:
+            #TODO: actually write the data
+            raise NotImplementedError()
+
+
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
@@ -289,6 +371,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         | metadata_msgs.LsFlags.NEWER_THAN_AS_OF
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
     'create_eden_file': do_create_eden_file,
+    'create_test_file': do_create_test_file,
 }
 
 

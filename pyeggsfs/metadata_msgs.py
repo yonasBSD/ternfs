@@ -28,6 +28,7 @@ class RequestKind(enum.IntEnum):
     CREATE_EDEN_FILE = 0x04
     ADD_EDEN_SPAN = 0x05
     CERTIFY_EDEN_SPAN = 0x06
+    LINK_EDEN_FILE = 0x07
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -229,6 +230,29 @@ class CertifyEdenSpanReq(bincode.Packable):
 
 
 @dataclass
+class LinkEdenFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.LINK_EDEN_FILE
+    eden_inode: int
+    cookie: int
+    parent_inode: int
+    new_name: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.eden_inode, b)
+        bincode.pack_u64_into(self.cookie, b)
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.new_name.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LinkEdenFileReq':
+        eden_inode = bincode.unpack_unsigned(u)
+        cookie = bincode.unpack_u64(u)
+        parent_inode = bincode.unpack_unsigned(u)
+        new_name = bincode.unpack_bytes(u).decode()
+        return LinkEdenFileReq(eden_inode, cookie, parent_inode, new_name)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -333,8 +357,8 @@ class ReleaseDirentReq(bincode.Packable):
 
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
-    AddEdenSpanReq, CertifyEdenSpanReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
+    AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, SetParentReq,
+    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -692,9 +716,22 @@ class ReleaseDirentResp(bincode.Packable):
         return ReleaseDirentResp(did_exist)
 
 
+@dataclass
+class LinkEdenFileResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.LINK_EDEN_FILE
+
+    def pack_into(self, b: bytearray) -> None:
+        pass
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LinkEdenFileResp':
+        return LinkEdenFileResp()
+
+
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
-    CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, SetParentResp,
-    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
+    CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
+    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
+    ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -704,6 +741,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.CREATE_EDEN_FILE: (CreateEdenFileReq, CreateEdenFileResp),
     RequestKind.ADD_EDEN_SPAN: (AddEdenSpanReq, AddEdenSpanResp),
     RequestKind.CERTIFY_EDEN_SPAN: (CertifyEdenSpanReq, CertifyEdenSpanResp),
+    RequestKind.LINK_EDEN_FILE: (LinkEdenFileReq, LinkEdenFileResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

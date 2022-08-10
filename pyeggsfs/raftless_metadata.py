@@ -671,6 +671,75 @@ class MetadataShard:
 
         return CertifyEdenSpanResp(r.inode, r.byte_offset)
 
+    def do_link_eden_file(self, r: LinkEdenFileReq) -> RespBodyTy:
+        now = metadata_utils.now()
+        eden_file = self.eden.get(r.eden_inode)
+        parent = self.inodes.get(r.parent_inode)
+        if eden_file is None:
+            return MetadataError(
+                # for this request, only use NOT_FOUND for the eden file
+                # gives a hint that a previous invocation may have succeeded
+                MetadataErrorKind.NOT_FOUND,
+                'Eden file not found'
+            )
+        assert r.eden_inode not in self.inodes
+        if now > eden_file.deadline_time:
+            return MetadataError(
+                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                f'now={now} deadline_time={eden_file.deadline_time}'
+            )
+        if r.cookie != self._calc_cookie(r.eden_inode):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Wrong cookie'
+            )
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST, # not NOT_FOUND (see above)
+                'Parent inode not found'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Parent inode is not a directory'
+            )
+
+        # try inserting the new value
+        # fails => consider overriding the existing thing
+        hashed_name = parent.hash_name(r.new_name)
+        new_key = LivingKey(parent.hash_name(r.new_name), r.new_name)
+        new_val = LivingValue(now, r.eden_inode, eden_file.f.type, True)
+        res = parent.living_items.setdefault(new_key, new_val)
+        if res.inode_id != metadata_utils.NULL_INODE:
+            # sentinal not inserted, check if we can overwrite
+            if res.type == InodeType.DIRECTORY:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Cannot overwrite directory'
+                )
+            if not res.is_owning:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Cannot overwrite non-owning file'
+                )
+            # add old file into dead map
+            parent.dead_items[DeadKey(hashed_name, r.new_name, now)] = DeadValue(
+                res.inode_id,
+                res.type,
+                res.is_owning
+            )
+            # can reuse the old value object
+            res.creation_time = now
+            res.inode_id = r.eden_inode
+            res.type = eden_file.f.type
+            res.is_owning = True
+
+        # move file out of eden into this shard
+        self.inodes[r.eden_inode] = eden_file.f
+        del self.eden[r.eden_inode]
+
+        return LinkEdenFileResp()
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -895,6 +964,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 elif isinstance(request.body, CertifyEdenSpanReq):
                     resp_body = shard.do_certify_eden_span(request.body,
                         shuckle_data)
+                    dirty = True
+                elif isinstance(request.body, LinkEdenFileReq):
+                    resp_body = shard.do_link_eden_file(request.body)
                     dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)

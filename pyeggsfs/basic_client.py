@@ -275,17 +275,12 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
         raise ValueError('creation_ts should be unspecified for create eden')
 
     if name == '':
-        inode = parent_inode
-    else:
-        maybe_inode = resolve(parent_inode.id, name)
-        if maybe_inode is None:
-            raise Exception('Target not found')
-        inode = maybe_inode
+        raise ValueError('Cannot use empty name')
 
-    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+    if parent_inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
         raise Exception('Target not a directory')
 
-    shard = metadata_utils.shard_from_inode(inode.id)
+    shard = metadata_utils.shard_from_inode(parent_inode.id)
 
     resp = send_request(
         metadata_msgs.CreateEdenFileReq(metadata_msgs.InodeType.FILE),
@@ -381,6 +376,19 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
                 raise RuntimeError(f'{resp}')
 
         cur_offset += len(data)
+
+    # a beautiful file with all the required bytes is in eden
+    # now just need to link it
+    resp = send_request(
+        metadata_msgs.LinkEdenFileReq(
+            new_inode_id,
+            cookie,
+            parent_inode.id,
+            name
+        ),
+        shard
+    )
+    print(resp)
 
 
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {

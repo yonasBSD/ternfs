@@ -36,17 +36,17 @@ def send_request(req_body: metadata_msgs.ReqBodyTy, shard: int,
     packed_req = bincode.pack(req)
     if key is not None:
         packed_req = crypto.add_mac(packed_req, key)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.bind(('', 0))
-    sock.sendto(packed_req, target)
-    sock.settimeout(timeout_secs)
-    try:
-        packed_resp = sock.recv(metadata_utils.UDP_MTU)
-    except socket.timeout:
-        return metadata_msgs.MetadataError(
-            metadata_msgs.MetadataErrorKind.TIMED_OUT,
-            f'timed out after {timeout_secs} secs'
-        )
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
+        sock.bind(('', 0))
+        sock.sendto(packed_req, target)
+        sock.settimeout(timeout_secs)
+        try:
+            packed_resp = sock.recv(metadata_utils.UDP_MTU)
+        except socket.timeout:
+            return metadata_msgs.MetadataError(
+                metadata_msgs.MetadataErrorKind.TIMED_OUT,
+                f'timed out after {timeout_secs} secs'
+            )
     response = bincode.unpack(metadata_msgs.MetadataResponse, packed_resp)
     if request_id != response.request_id:
         raise Exception('Bad request_id from server:'
@@ -65,11 +65,11 @@ def cross_dir_request(req_body: cross_dir_msgs.ReqBodyTy
     target = target = (LOCAL_HOST, metadata_utils.CROSS_DIR_PORT)
     req = cross_dir_msgs.CrossDirRequest(ver, request_id, req_body)
     packed_req = bincode.pack(req)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.bind(('', 0))
-    sock.sendto(packed_req, target)
-    sock.settimeout(2.0)
-    packed_resp = sock.recv(metadata_utils.UDP_MTU)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
+        sock.bind(('', 0))
+        sock.sendto(packed_req, target)
+        sock.settimeout(2.0)
+        packed_resp = sock.recv(metadata_utils.UDP_MTU)
     response = bincode.unpack(cross_dir_msgs.CrossDirResponse, packed_resp)
     if request_id != response.request_id:
         raise Exception('Bad request_id from server:'
@@ -293,7 +293,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     new_inode_id = resp.inode
     cookie = resp.cookie
 
-    def add_span(data: bytes, crc: int, byte_offset: int, mode: str) -> metadata_msgs.RespBodyTy:
+    def add_span(data: bytes, crc: bytes, byte_offset: int, mode: str) -> metadata_msgs.RespBodyTy:
         payload: Union[bytes, List[metadata_msgs.NewBlockInfo]]
 
         if mode == 'INLINE':
@@ -329,9 +329,9 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
         return ret
 
     # writes block, returns proof
-    def write_block(data: bytes, addr: Tuple[str, int], block_id: int, crc: int,
-        certificate: bytes) -> bytes:
-        header = struct.pack('<cQII8s', b'w', block_id, crc, len(data),
+    def write_block(data: bytes, addr: Tuple[str, int], block_id: int,
+        crc: bytes, certificate: bytes) -> bytes:
+        header = struct.pack('<cQ4sI8s', b'w', block_id, crc, len(data),
             certificate)
         with socket.create_connection(addr) as conn:
             conn.send(header + data)
@@ -348,7 +348,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
     cur_offset = 0
     for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
-        crc = int.from_bytes(crypto.crc32c(data), 'little')
+        crc = crypto.crc32c(data)
         resp = add_span(data, crc, cur_offset, mode)
         if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
             raise RuntimeError(f'{resp}')
@@ -391,6 +391,25 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
+def do_playground(parent_inode: ResolvedInode, name: str,
+    creation_ts: int) -> None:
+    source = (513, 16334980891291861289)
+    sink = (769, 981523036800970143)
+    target = 257
+    resp = send_request(
+        metadata_msgs.RepairSpansReq(
+            source[0],
+            source[1],
+            sink[0],
+            sink[1],
+            target,
+            0
+        ),
+        1
+    )
+    print(resp)
+
+
 requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
@@ -414,6 +433,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
     'create_eden_file': do_create_eden_file,
     'create_test_file': do_create_test_file,
+    'playground': do_playground,
 }
 
 

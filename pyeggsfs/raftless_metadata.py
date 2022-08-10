@@ -87,13 +87,13 @@ class Block:
     ip: bytes
     port: int
     block_id: int
-    crc32: int
+    crc32: bytes
     size: int
     block_idx: int
 
     def create_cert(self, key: crypto.ExpandedKey) -> bytes:
         b = bytearray(32)
-        struct.pack_into('<cQII', b, 0, b'w', self.block_id, self.crc32,
+        struct.pack_into('<cQ4sI', b, 0, b'w', self.block_id, self.crc32,
             self.size)
         return crypto.cbc_mac_impl(b, key)[:8]
 
@@ -102,7 +102,7 @@ class Block:
 class Span:
     parity: int # (two nibbles, 8+3 is stored as (8,3))
     storage_class: int # opaque (except inline and zero-fill)
-    crc32: int
+    crc32: bytes
     size: int
     payload: Union[bytes, List[Block]]
 
@@ -122,8 +122,7 @@ class Span:
         if self.storage_class == ZERO_FILL_STORAGE:
             if self.parity != 0:
                 return False
-            return crypto.crc32c(b'\x00' * self.size) == self.crc32.to_bytes(
-                4, 'little')
+            return crypto.crc32c(b'\x00' * self.size) == self.crc32
 
         # for non-special cases, want a block list in payload
         if not isinstance(self.payload, list):
@@ -740,6 +739,106 @@ class MetadataShard:
 
         return LinkEdenFileResp()
 
+    def do_repair_spans(self, r: RepairSpansReq) -> RespBodyTy:
+        if r.source_inode == r.sink_inode:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source and sink are the same'
+            )
+        source = self.eden.get(r.source_inode)
+        sink = self.eden.get(r.sink_inode)
+        target = self.inodes.get(r.target_inode)
+        if not (source and sink and target):
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                "At least one inode doesn't exist"
+            )
+        inode_cookie_pairs= [
+            (r.source_inode, r.source_cookie),
+            (r.sink_inode, r.sink_cookie)
+        ]
+        for id, cookie in inode_cookie_pairs:
+            if self._calc_cookie(id) != cookie:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Wrong cookie for {id}'
+                )
+        if not isinstance(target, File):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Target not a file'
+            )
+        if source.f.size == 0:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source is empty'
+            )
+        now = metadata_utils.now()
+        for eden_file in [source, sink]:
+            if eden_file.last_span_state != SpanState.CLEAN:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Unclean eden file'
+                )
+            if now > eden_file.deadline_time:
+                return MetadataError(
+                    MetadataErrorKind.EDEN_TIME_EXPIRED,
+                    ''
+                )
+        begin_offset = r.byte_offset
+        end_offset = r.byte_offset + source.f.size
+        for required_offset in [begin_offset, end_offset]:
+            if not (required_offset == target.size
+                or required_offset in target.spans):
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Offset {required_offset} not in target'
+                )
+
+        def combine_crcs(spans: Sequence[Tuple[int, Span]]) -> bytes:
+            assert spans
+            crc = spans[0][1].crc32
+            for _, span in spans[1:]:
+                crc = crypto.crc32c_combine(crc, span.crc32, span.size)
+            return crc
+
+        outgoing_spans = [
+            (k, target.spans[k])
+            for k in target.spans.irange(begin_offset, end_offset)
+        ]
+        incoming_spans = list(source.f.spans.items())
+
+        if combine_crcs(outgoing_spans) != combine_crcs(incoming_spans):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'CRC mismatch between source and target'
+            )
+
+        # copy outgoing values into sink
+        new_sink_offsets = itertools.accumulate(
+            s.size for _, s in outgoing_spans)
+        sink.f.spans.update(
+            (sink.f.size + o, s[1])
+            for o, s in zip(new_sink_offsets, outgoing_spans)
+        )
+        sink.f.size += source.f.size
+
+        # as far as I can tell, there's no efficient way to splice values
+        # into a SortedDict
+        for offset, _ in outgoing_spans:
+            del target.spans[offset]
+        new_target_offsets = itertools.accumulate(
+            s.size for _, s in incoming_spans)
+        target.spans.update(
+            (r.byte_offset + o, s[1])
+            for o, s in zip(new_target_offsets, incoming_spans)
+        )
+
+        source.f.spans.clear()
+        source.f.size = 0
+
+        return RepairSpansResp()
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -967,6 +1066,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     dirty = True
                 elif isinstance(request.body, LinkEdenFileReq):
                     resp_body = shard.do_link_eden_file(request.body)
+                    dirty = True
+                elif isinstance(request.body, RepairSpansReq):
+                    resp_body = shard.do_repair_spans(request.body)
                     dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)

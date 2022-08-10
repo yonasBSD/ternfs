@@ -45,7 +45,7 @@ def x2n_mod_p(n: int, k: int) -> int:
         k += 1
     return p
 
-def crc32c_combine(crc_a: bytes, crc_b: bytes, len_b: int) -> int:
+def crc32c_combine(crc_a: bytes, crc_b: bytes, len_b: int) -> bytes:
     crc_a_int = int.from_bytes(crc_a, 'little')
     crc_b_int = int.from_bytes(crc_b, 'little')
     crc_int = mult_mod_p(x2n_mod_p(len_b, 3), crc_a_int) ^ crc_b_int

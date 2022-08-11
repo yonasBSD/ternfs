@@ -91,10 +91,25 @@ class Block:
     size: int
     block_idx: int
 
-    def create_cert(self, key: crypto.ExpandedKey) -> bytes:
+    def calc_create_cert(self, key: crypto.ExpandedKey) -> bytes:
         b = bytearray(32)
         struct.pack_into('<cQ4sI', b, 0, b'w', self.block_id, self.crc32,
             self.size)
+        return crypto.cbc_mac_impl(b, key)[:8]
+
+    def calc_create_proof(self, key: crypto.ExpandedKey) -> bytes:
+        b = bytearray(16)
+        struct.pack_into('<cQ', b, 0, b'W', self.block_id)
+        return crypto.cbc_mac_impl(b, key)[:8]
+
+    def calc_delete_cert(self, key: crypto.ExpandedKey) -> bytes:
+        b = bytearray(16)
+        struct.pack_into('<cQ', b, 0, b'e', self.block_id)
+        return crypto.cbc_mac_impl(b, key)[:8]
+
+    def calc_delete_proof(self, key: crypto.ExpandedKey) -> bytes:
+        b = bytearray(16)
+        struct.pack_into('<cQ', b, 0, b'E', self.block_id)
         return crypto.cbc_mac_impl(b, key)[:8]
 
 
@@ -471,7 +486,7 @@ class MetadataShard:
             )
         if now > eden_file.deadline_time:
             return MetadataError(
-                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                MetadataErrorKind.EDEN_DEADLINE,
                 f'now={now} deadline_time={eden_file.deadline_time}'
             )
         if r.cookie != self._calc_cookie(r.inode):
@@ -551,7 +566,7 @@ class MetadataShard:
                         binfo.ip,
                         binfo.port,
                         binfo.block_id,
-                        binfo.create_cert(bserver.secret_key)
+                        binfo.calc_create_cert(bserver.secret_key)
                     )
                     for binfo, bserver in zip(new_blocks, target_block_servers)
                 ]
@@ -595,7 +610,7 @@ class MetadataShard:
                             b.ip,
                             b.port,
                             b.block_id,
-                            b.create_cert(bserver.secret_key)
+                            b.calc_create_cert(bserver.secret_key)
                         )
                     )
 
@@ -613,7 +628,7 @@ class MetadataShard:
             )
         if now > eden_file.deadline_time:
             return MetadataError(
-                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                MetadataErrorKind.EDEN_DEADLINE,
                 f'now={now} deadline_time={eden_file.deadline_time}'
             )
         if r.cookie != self._calc_cookie(r.inode):
@@ -651,10 +666,7 @@ class MetadataShard:
                     f'Storage node ({socket.inet_ntoa(block.ip)}, {block.port})'
                     ' not found'
                 )
-            b = bytearray(16)
-            struct.pack_into('<cQ', b, 0, b'W', block.block_id)
-            mac = crypto.cbc_mac_impl(b, bserver.secret_key)
-            if mac[:8] != proof:
+            if proof != block.calc_create_proof(bserver.secret_key):
                 return MetadataError(
                     MetadataErrorKind.BAD_REQUEST,
                     f'Bad proof for block {block.block_id}'
@@ -684,7 +696,7 @@ class MetadataShard:
         assert r.eden_inode not in self.inodes
         if now > eden_file.deadline_time:
             return MetadataError(
-                MetadataErrorKind.EDEN_TIME_EXPIRED,
+                MetadataErrorKind.EDEN_DEADLINE,
                 f'now={now} deadline_time={eden_file.deadline_time}'
             )
         if r.cookie != self._calc_cookie(r.eden_inode):
@@ -782,7 +794,7 @@ class MetadataShard:
                 )
             if now > eden_file.deadline_time:
                 return MetadataError(
-                    MetadataErrorKind.EDEN_TIME_EXPIRED,
+                    MetadataErrorKind.EDEN_DEADLINE,
                     ''
                 )
         begin_offset = r.byte_offset
@@ -838,6 +850,116 @@ class MetadataShard:
         source.f.size = 0
 
         return RepairSpansResp()
+
+    def do_expunge_eden_span(self, r: ExpungeEdenSpanReq,
+        s: Optional[ShuckleData]) -> RespBodyTy:
+        eden_file = self.eden.get(r.inode)
+        now = metadata_utils.now()
+        if eden_file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'No such inode in eden'
+            )
+        if False:#now < eden_file.deadline_time:
+            return MetadataError(
+                MetadataErrorKind.EDEN_DEADLINE,
+                f'now={now} deadline_time={eden_file.deadline_time}'
+            )
+        if not eden_file.f.spans:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST_IDEMPOTENT_HINT,
+                'Eden file is empty'
+            )
+        last_offset, last_span = eden_file.f.spans.peekitem()
+        block_infos: List[BlockInfo] = []
+        if isinstance(last_span.payload, list):
+            if s is None:
+                return MetadataError(
+                    MetadataErrorKind.SHUCKLE_ERROR,
+                    'No shuckle data'
+                )
+            for block in last_span.payload:
+                bserver = s.lookup(block.ip, block.port)
+                if bserver is None:
+                    return MetadataError(
+                        MetadataErrorKind.SHUCKLE_ERROR,
+                        f'Storage node ({socket.inet_ntoa(block.ip)},'
+                        f' {block.port}) not found'
+                    )
+                block_infos.append(BlockInfo(
+                    block.ip,
+                    block.port,
+                    block.block_id,
+                    block.calc_delete_cert(bserver.secret_key)
+                ))
+            if eden_file.last_span_state != SpanState.CONDEMNED:
+                eden_file.last_span_state = SpanState.CONDEMNED
+        else:
+            # last span is blockless, delete immediately
+            del eden_file.f.spans[last_offset]
+            eden_file.f.size = last_offset
+        return ExpungeEdenSpanResp(last_offset, block_infos)
+
+    def do_certify_expunge(self, r: CertifyExpungeReq,
+        s: Optional[ShuckleData]) -> RespBodyTy:
+        eden_file = self.eden.get(r.inode)
+        if eden_file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'No such inode in eden'
+            )
+
+        if not eden_file.f.spans:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST_IDEMPOTENT_HINT,
+                'Eden file has no spans'
+            )
+        last_offset, last_span = eden_file.f.spans.peekitem()
+        if last_offset != r.offset:
+            kind = MetadataErrorKind.BAD_REQUEST
+            if last_offset < r.offset:
+                kind = MetadataErrorKind.BAD_REQUEST_IDEMPOTENT_HINT
+            return MetadataError(
+                kind,
+                f'Offset {r.offset} is not last span offset {last_offset}'
+            )
+
+        if eden_file.last_span_state != SpanState.CONDEMNED:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Span not condemned'
+            )
+        if not isinstance(last_span.payload, list):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                ''
+            )
+
+        if s is None:
+            return MetadataError(
+                MetadataErrorKind.SHUCKLE_ERROR,
+                'No shuckle data'
+            )
+
+        for block, proof in zip(last_span.payload, r.proofs):
+            bserver = s.lookup(block.ip, block.port)
+            if bserver is None:
+                return MetadataError(
+                    MetadataErrorKind.SHUCKLE_ERROR,
+                    f'Storage node ({socket.inet_ntoa(block.ip)},'
+                    f' {block.port}) not found'
+                )
+            if proof != block.calc_delete_proof(bserver.secret_key):
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Bad proof for block {block.block_id}'
+                )
+
+        # all checks passed, we can now do the thing
+        del eden_file.f.spans[last_offset]
+        eden_file.f.size = last_offset
+        eden_file.last_span_state = SpanState.CLEAN
+        return CertifyExpungeResp()
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -1069,6 +1191,14 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     dirty = True
                 elif isinstance(request.body, RepairSpansReq):
                     resp_body = shard.do_repair_spans(request.body)
+                    dirty = True
+                elif isinstance(request.body, ExpungeEdenSpanReq):
+                    resp_body = shard.do_expunge_eden_span(request.body,
+                        shuckle_data)
+                    dirty = True
+                elif isinstance(request.body, CertifyExpungeReq):
+                    resp_body = shard.do_certify_expunge(request.body,
+                        shuckle_data)
                     dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)

@@ -268,6 +268,59 @@ def do_create_eden_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
+def do_expunge_span(parent_inode: ResolvedInode, name: str,
+    eden_inode: int) -> None:
+
+    if eden_inode == 0:
+        raise Exception('Eden inode must be supplied')
+
+    if name == '':
+        inode = parent_inode
+    else:
+        maybe_inode = resolve(parent_inode.id, name)
+        if maybe_inode is None:
+            raise Exception('Target not found')
+        inode = maybe_inode
+
+    shard = metadata_utils.shard_from_inode(inode.id)
+
+    resp = send_request(
+        metadata_msgs.ExpungeEdenSpanReq(
+            eden_inode
+        ),
+        shard
+    )
+    if not isinstance(resp, metadata_msgs.ExpungeEdenSpanResp):
+        raise Exception(str(resp))
+    if resp.span:
+        offset = resp.offset
+        proofs: List[bytes] = []
+        for block_info in resp.span:
+            payload = struct.pack('<cQ8s', b'e', block_info.block_id,
+                block_info.certificate)
+            ip = socket.inet_ntoa(block_info.ip)
+            with socket.create_connection((ip, block_info.port)) as conn:
+                conn.send(payload)
+                block_server_reply = conn.recv(1024)
+            if len(block_server_reply) != 17:
+                raise RuntimeError(f'Bad response len {block_server_reply!r}')
+            rkind, rblock_id, proof = struct.unpack('<cQ8s', block_server_reply)
+            if rkind != b'E':
+                raise RuntimeError(f'Unexpected response kind {rkind} {block_server_reply!r}')
+            if rblock_id != block_info.block_id:
+                raise RuntimeError(f'Bad block id, expected {block_info.block_id} got {rblock_id}')
+            proofs.append(proof)
+        resp = send_request(
+            metadata_msgs.CertifyExpungeReq(
+                eden_inode,
+                offset,
+                proofs
+            ),
+            shard
+        )
+    print(resp)
+
+
 def do_create_test_file(parent_inode: ResolvedInode, name: str,
     creation_ts: int) -> None:
 
@@ -432,6 +485,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         | metadata_msgs.LsFlags.NEWER_THAN_AS_OF
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
     'create_eden_file': do_create_eden_file,
+    'expunge_span': do_expunge_span,
     'create_test_file': do_create_test_file,
     'playground': do_playground,
 }

@@ -30,12 +30,14 @@ class RequestKind(enum.IntEnum):
     CERTIFY_EDEN_SPAN = 0x06
     LINK_EDEN_FILE = 0x07
     REPAIR_SPANS = 0x08
+    EXPUNGE_SPAN = 0x09
+    CERTIFY_EXPUNGE = 0x0A
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
     CREATE_UNLINKED_DIR = 0x82
 
-    # a release must follow and inject or acquire
+    # a release must follow an inject or acquire
     INJECT_DIRENT = 0x83  # insert a new living dirent with owning == false
     ACQUIRE_DIRENT = 0x84 # if living dirent exists, set owning := false
     RELEASE_DIRENT = 0x85 # if living dirent exists, set owning := true
@@ -255,7 +257,6 @@ class LinkEdenFileReq(bincode.Packable):
         return LinkEdenFileReq(eden_inode, cookie, parent_inode, new_name)
 
 
-
 @dataclass
 class RepairSpansReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.REPAIR_SPANS
@@ -284,6 +285,44 @@ class RepairSpansReq(bincode.Packable):
         byte_offset = bincode.unpack_unsigned(u)
         return RepairSpansReq(source_inode, source_cookie, sink_inode,
             sink_cookie, target_inode, byte_offset)
+
+
+@dataclass
+class ExpungeEdenSpanReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_SPAN
+    inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanReq':
+        inode = bincode.unpack_unsigned(u)
+        return ExpungeEdenSpanReq(inode)
+
+
+@dataclass
+class CertifyExpungeReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EXPUNGE
+    inode: int
+    offset: int
+    proofs: List[bytes]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert all(len(proof) == 8 for proof in self.proofs)
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.offset, b)
+        bincode.pack_unsigned_into(len(self.proofs), b)
+        for proof in self.proofs:
+            bincode.pack_fixed_into(proof, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeReq':
+        inode = bincode.unpack_unsigned(u)
+        offset = bincode.unpack_unsigned(u)
+        num_proofs = bincode.unpack_unsigned(u)
+        proofs = [bincode.unpack_fixed(u, 8) for _ in range(num_proofs)]
+        return CertifyExpungeReq(inode, offset, proofs)
 
 
 @dataclass
@@ -392,8 +431,8 @@ class ReleaseDirentReq(bincode.Packable):
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
-    SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
-    ReleaseDirentReq]
+    ExpungeEdenSpanReq, CertifyExpungeReq, SetParentReq, CreateDirReq,
+    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -432,8 +471,9 @@ class MetadataErrorKind(enum.IntEnum):
     BAD_REQUEST = 10
     BAD_INODE_TYPE = 11
     TIMED_OUT = 12 # not sent, but used by client as sentinel
-    EDEN_TIME_EXPIRED = 13
+    EDEN_DEADLINE = 13
     SHUCKLE_ERROR = 14
+    BAD_REQUEST_IDEMPOTENT_HINT = 15 # previous invocation may have succeeded
 
 
 @dataclass
@@ -624,7 +664,7 @@ class BlockInfo(bincode.Packable):
     ip: bytes
     port: int
     block_id: int
-    # certificate := MAC(b'w' + block_id + crc + size)[:8]
+    # certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
     certificate: bytes
 
     def pack_into(self, b: bytearray) -> None:
@@ -775,10 +815,42 @@ class RepairSpansResp(bincode.Packable):
         return RepairSpansResp()
 
 
+@dataclass
+class ExpungeEdenSpanResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_SPAN
+    offset: int
+    span: List[BlockInfo] # empty => blockless, no certification required
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.offset, b)
+        bincode.pack_unsigned_into(len(self.span), b)
+        for block in self.span:
+            block.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanResp':
+        offset = bincode.unpack_unsigned(u)
+        size = bincode.unpack_unsigned(u)
+        span = [BlockInfo.unpack(u) for _ in range(size)]
+        return ExpungeEdenSpanResp(offset, span)
+
+
+@dataclass
+class CertifyExpungeResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EXPUNGE
+
+    def pack_into(self, b: bytearray) -> None:
+        pass
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeResp':
+        return CertifyExpungeResp()
+
+
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
-    RepairSpansResp, SetParentResp, CreateDirResp, InjectDirentResp,
-    AcquireDirentResp, ReleaseDirentResp]
+    RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp, SetParentResp,
+    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -790,6 +862,8 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.CERTIFY_EDEN_SPAN: (CertifyEdenSpanReq, CertifyEdenSpanResp),
     RequestKind.LINK_EDEN_FILE: (LinkEdenFileReq, LinkEdenFileResp),
     RequestKind.REPAIR_SPANS: (RepairSpansReq, RepairSpansResp),
+    RequestKind.EXPUNGE_SPAN: (ExpungeEdenSpanReq, ExpungeEdenSpanResp),
+    RequestKind.CERTIFY_EXPUNGE: (CertifyExpungeReq, CertifyExpungeResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

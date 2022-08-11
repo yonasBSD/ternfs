@@ -33,6 +33,7 @@ class RequestKind(enum.IntEnum):
     EXPUNGE_SPAN = 0x09
     CERTIFY_EXPUNGE = 0x0A
     EXPUNGE_FILE = 0x0B
+    DELETE_FILE = 0x0C
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -341,6 +342,23 @@ class ExpungeEdenFileReq(bincode.Packable):
 
 
 @dataclass
+class DeleteFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.DELETE_FILE
+    parent_inode: int
+    name: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'DeleteFileReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        return DeleteFileReq(parent_inode, name)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -446,8 +464,9 @@ class ReleaseDirentReq(bincode.Packable):
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
-    ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, SetParentReq,
-    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
+    ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
+    SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
+    ReleaseDirentReq]
 
 
 @dataclass
@@ -884,11 +903,28 @@ class ExpungeEdenFileResp(bincode.Packable):
         return ExpungeEdenFileResp(inode)
 
 
+@dataclass
+class DeleteFileResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.DELETE_FILE
+    parent_inode: int
+    name: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'DeleteFileResp':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        return DeleteFileResp(parent_inode, name)
+
+
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
-    ExpungeEdenFileResp, SetParentResp, CreateDirResp, InjectDirentResp,
-    AcquireDirentResp, ReleaseDirentResp]
+    ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, SetParentResp,
+    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -903,6 +939,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.EXPUNGE_SPAN: (ExpungeEdenSpanReq, ExpungeEdenSpanResp),
     RequestKind.CERTIFY_EXPUNGE: (CertifyExpungeReq, CertifyExpungeResp),
     RequestKind.EXPUNGE_FILE: (ExpungeEdenFileReq, ExpungeEdenFileResp),
+    RequestKind.DELETE_FILE: (DeleteFileReq, DeleteFileResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

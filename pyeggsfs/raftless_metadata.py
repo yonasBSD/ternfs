@@ -898,6 +898,45 @@ class MetadataShard:
             eden_file.f.size = last_offset
         return ExpungeEdenSpanResp(r.inode, last_offset, block_infos)
 
+    def do_delete_file(self, r: DeleteFileReq) -> RespBodyTy:
+        parent = self.inodes.get(r.parent_inode)
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Parent inode not found'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Parent inode is not a directory'
+            )
+        hashed_name = parent.hash_name(r.name)
+        living_key = LivingKey(hashed_name, r.name)
+        target = parent.living_items.get(LivingKey(hashed_name, r.name))
+        if target is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                "Inode not found in parent's living items"
+            )
+        if target.type == InodeType.DIRECTORY:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Target is a directory'
+            )
+        if not target.is_owning:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Target is non-owning'
+            )
+        parent.dead_items[DeadKey(hashed_name, r.name, target.creation_time)] = DeadValue(
+            target.inode_id,
+            target.type,
+            target.is_owning
+        )
+        parent.dead_items[DeadKey(hashed_name, r.name, metadata_utils.now())] = None
+        del parent.living_items[living_key]
+        return DeleteFileResp(r.parent_inode, r.name)
+
     def do_certify_expunge(self, r: CertifyExpungeReq,
         s: Optional[ShuckleData]) -> RespBodyTy:
         eden_file = self.eden.get(r.inode)
@@ -1215,6 +1254,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_expunge_eden_span(request.body,
                         shuckle_data)
                     dirty = True
+                elif isinstance(request.body, DeleteFileReq):
+                    resp_body = shard.do_delete_file(request.body)
                 elif isinstance(request.body, CertifyExpungeReq):
                     resp_body = shard.do_certify_expunge(request.body,
                         shuckle_data)

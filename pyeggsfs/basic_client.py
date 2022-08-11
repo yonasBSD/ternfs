@@ -206,6 +206,20 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(resp)
 
 
+def do_rm(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if creation_ts != 0:
+        raise ValueError('creation_ts should be unspecified for stat')
+
+    resp = send_request(
+        metadata_msgs.DeleteFileReq(
+            parent_inode.id,
+            name
+        ),
+        metadata_utils.shard_from_inode(parent_inode.id)
+    )
+    print(resp)
+
+
 def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
     creation_ts: int) -> None:
 
@@ -475,6 +489,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'mkdir': do_mkdir,
     'rmdir': do_rmdir,
     'stat': do_stat,
+    'rm': do_rm,
     'ls': functools.partial(do_ls,
         metadata_msgs.LsFlags(0)),
     'ls_dead_le': functools.partial(do_ls,

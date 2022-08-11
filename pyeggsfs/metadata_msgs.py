@@ -32,6 +32,7 @@ class RequestKind(enum.IntEnum):
     REPAIR_SPANS = 0x08
     EXPUNGE_SPAN = 0x09
     CERTIFY_EXPUNGE = 0x0A
+    EXPUNGE_FILE = 0x0B
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -326,6 +327,20 @@ class CertifyExpungeReq(bincode.Packable):
 
 
 @dataclass
+class ExpungeEdenFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_FILE
+    inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenFileReq':
+        inode = bincode.unpack_unsigned(u)
+        return ExpungeEdenFileReq(inode)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -431,8 +446,8 @@ class ReleaseDirentReq(bincode.Packable):
 
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
-    ExpungeEdenSpanReq, CertifyExpungeReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
+    ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, SetParentReq,
+    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -818,10 +833,12 @@ class RepairSpansResp(bincode.Packable):
 @dataclass
 class ExpungeEdenSpanResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_SPAN
+    inode: int
     offset: int
     span: List[BlockInfo] # empty => blockless, no certification required
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
         bincode.pack_unsigned_into(self.offset, b)
         bincode.pack_unsigned_into(len(self.span), b)
         for block in self.span:
@@ -829,28 +846,49 @@ class ExpungeEdenSpanResp(bincode.Packable):
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanResp':
+        inode = bincode.unpack_unsigned(u)
         offset = bincode.unpack_unsigned(u)
         size = bincode.unpack_unsigned(u)
         span = [BlockInfo.unpack(u) for _ in range(size)]
-        return ExpungeEdenSpanResp(offset, span)
+        return ExpungeEdenSpanResp(inode, offset, span)
 
 
 @dataclass
 class CertifyExpungeResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EXPUNGE
+    inode: int
+    offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        pass
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeResp':
-        return CertifyExpungeResp()
+        inode = bincode.unpack_unsigned(u)
+        offset = bincode.unpack_unsigned(u)
+        return CertifyExpungeResp(inode, offset)
+
+
+@dataclass
+class ExpungeEdenFileResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_FILE
+    inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenFileResp':
+        inode = bincode.unpack_unsigned(u)
+        return ExpungeEdenFileResp(inode)
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
-    RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp, SetParentResp,
-    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
+    RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
+    ExpungeEdenFileResp, SetParentResp, CreateDirResp, InjectDirentResp,
+    AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -864,6 +902,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.REPAIR_SPANS: (RepairSpansReq, RepairSpansResp),
     RequestKind.EXPUNGE_SPAN: (ExpungeEdenSpanReq, ExpungeEdenSpanResp),
     RequestKind.CERTIFY_EXPUNGE: (CertifyExpungeReq, CertifyExpungeResp),
+    RequestKind.EXPUNGE_FILE: (ExpungeEdenFileReq, ExpungeEdenFileResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

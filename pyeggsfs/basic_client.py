@@ -268,21 +268,9 @@ def do_create_eden_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
-def do_expunge_span(parent_inode: ResolvedInode, name: str,
-    eden_inode: int) -> None:
-
-    if eden_inode == 0:
-        raise Exception('Eden inode must be supplied')
-
-    if name == '':
-        inode = parent_inode
-    else:
-        maybe_inode = resolve(parent_inode.id, name)
-        if maybe_inode is None:
-            raise Exception('Target not found')
-        inode = maybe_inode
-
-    shard = metadata_utils.shard_from_inode(inode.id)
+# returns the offset of the expunged span
+def expunge_one_span(eden_inode: int) -> int:
+    shard = metadata_utils.shard_from_inode(eden_inode)
 
     resp = send_request(
         metadata_msgs.ExpungeEdenSpanReq(
@@ -292,8 +280,8 @@ def do_expunge_span(parent_inode: ResolvedInode, name: str,
     )
     if not isinstance(resp, metadata_msgs.ExpungeEdenSpanResp):
         raise Exception(str(resp))
+    offset = resp.offset
     if resp.span:
-        offset = resp.offset
         proofs: List[bytes] = []
         for block_info in resp.span:
             payload = struct.pack('<cQ8s', b'e', block_info.block_id,
@@ -318,6 +306,23 @@ def do_expunge_span(parent_inode: ResolvedInode, name: str,
             ),
             shard
         )
+    return offset
+
+
+def do_expunge_span(parent_inode: ResolvedInode, name: str,
+    eden_inode: int) -> None:
+    print(expunge_one_span(eden_inode))
+
+
+def do_expunge_file(parent_inode: ResolvedInode, name: str,
+    eden_inode: int) -> None:
+    offset = expunge_one_span(eden_inode)
+    while offset != 0:
+        offset = expunge_one_span(eden_inode)
+    resp = send_request(
+        metadata_msgs.ExpungeEdenFileReq(eden_inode),
+        metadata_utils.shard_from_inode(eden_inode)
+    )
     print(resp)
 
 
@@ -486,6 +491,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
     'create_eden_file': do_create_eden_file,
     'expunge_span': do_expunge_span,
+    'expunge_file': do_expunge_file,
     'create_test_file': do_create_test_file,
     'playground': do_playground,
 }

@@ -860,16 +860,14 @@ class MetadataShard:
                 MetadataErrorKind.NOT_FOUND,
                 'No such inode in eden'
             )
-        if False:#now < eden_file.deadline_time:
+        if now < eden_file.deadline_time:
             return MetadataError(
                 MetadataErrorKind.EDEN_DEADLINE,
                 f'now={now} deadline_time={eden_file.deadline_time}'
             )
         if not eden_file.f.spans:
-            return MetadataError(
-                MetadataErrorKind.BAD_REQUEST_IDEMPOTENT_HINT,
-                'Eden file is empty'
-            )
+            # the expunger is free to expunge the file now
+            return ExpungeEdenSpanResp(r.inode, 0, [])
         last_offset, last_span = eden_file.f.spans.peekitem()
         block_infos: List[BlockInfo] = []
         if isinstance(last_span.payload, list):
@@ -898,7 +896,7 @@ class MetadataShard:
             # last span is blockless, delete immediately
             del eden_file.f.spans[last_offset]
             eden_file.f.size = last_offset
-        return ExpungeEdenSpanResp(last_offset, block_infos)
+        return ExpungeEdenSpanResp(r.inode, last_offset, block_infos)
 
     def do_certify_expunge(self, r: CertifyExpungeReq,
         s: Optional[ShuckleData]) -> RespBodyTy:
@@ -959,7 +957,28 @@ class MetadataShard:
         del eden_file.f.spans[last_offset]
         eden_file.f.size = last_offset
         eden_file.last_span_state = SpanState.CLEAN
-        return CertifyExpungeResp()
+        return CertifyExpungeResp(r.inode, r.offset)
+
+    def do_expunge_eden_file(self, r: ExpungeEdenFileReq) -> RespBodyTy:
+        eden_file = self.eden.get(r.inode)
+        now = metadata_utils.now()
+        if eden_file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'No such file in eden'
+            )
+        if now < eden_file.deadline_time:
+            return MetadataError(
+                MetadataErrorKind.EDEN_DEADLINE,
+                f'now={now} deadline_time={eden_file.deadline_time}'
+            )
+        if eden_file.f.spans:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Eden file not empty'
+            )
+        del self.eden[r.inode]
+        return ExpungeEdenFileResp(r.inode)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -1199,6 +1218,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 elif isinstance(request.body, CertifyExpungeReq):
                     resp_body = shard.do_certify_expunge(request.body,
                         shuckle_data)
+                    dirty = True
+                elif isinstance(request.body, ExpungeEdenFileReq):
+                    resp_body = shard.do_expunge_eden_file(request.body)
                     dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)

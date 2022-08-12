@@ -84,12 +84,13 @@ class Directory:
 
 @dataclass
 class Block:
+    #FIXME: should use a dense id for block, not (ip, port) (not stable)
     ip: bytes
     port: int
     block_id: int
     crc32: bytes
     size: int
-    block_idx: int
+    block_idx: int #FIXME: this should be implicit
 
     def calc_create_cert(self, key: crypto.ExpandedKey) -> bytes:
         b = bytearray(32)
@@ -199,18 +200,22 @@ class StorageNode:
 class BlockServerInfo(NamedTuple):
     ip: bytes
     port: int
-    is_terminal: bool
-    is_stale: bool
+    flags: BlockFlags
     write_weight: float
     secret_key: crypto.ExpandedKey
 
     @staticmethod
     def from_shuckle(json_obj: Dict[str, Any]) -> 'BlockServerInfo':
+        flags = BlockFlags(0)
+        if json_obj['is_stale']:
+            flags |= BlockFlags.STALE
+        if json_obj['is_terminal']:
+            #TODO: the "terminal"-ness needs to be persisted on each shard
+            flags |= BlockFlags.TERMINAL
         return BlockServerInfo(
             ip=socket.inet_aton(json_obj['ip']),
             port=json_obj['port'],
-            is_terminal=json_obj['is_terminal'],
-            is_stale=json_obj['is_stale'],
+            flags=flags,
             write_weight=json_obj['write_weight'],
             secret_key=crypto.aes_expand_key(
                 bytes.fromhex(json_obj['secret_key'])),
@@ -218,6 +223,7 @@ class BlockServerInfo(NamedTuple):
 
 
 class ShuckleData:
+    # TODO: add support for storage classes
     def __init__(self, block_meta: Sequence[BlockServerInfo]):
         self.block_meta = block_meta
 
@@ -452,6 +458,7 @@ class MetadataShard:
                 or include_nothing_results):
                 results.append(result)
         else:
+            # FIXME: inefficient varint encoding
             continuation_key = 0xFFFF_FFFF_FFFF_FFFF
 
         return LsDirResp(
@@ -711,7 +718,7 @@ class MetadataShard:
             )
         if not isinstance(parent, Directory):
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.BAD_INODE_TYPE,
                 'Parent inode is not a directory'
             )
 
@@ -884,6 +891,8 @@ class MetadataShard:
                         f'Storage node ({socket.inet_ntoa(block.ip)},'
                         f' {block.port}) not found'
                     )
+                if bserver.flags & BlockFlags.TERMINAL:
+                    continue
                 block_infos.append(BlockInfo(
                     block.ip,
                     block.port,
@@ -907,7 +916,7 @@ class MetadataShard:
             )
         if not isinstance(parent, Directory):
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.BAD_INODE_TYPE,
                 'Parent inode is not a directory'
             )
         hashed_name = parent.hash_name(r.name)
@@ -920,7 +929,7 @@ class MetadataShard:
             )
         if target.type == InodeType.DIRECTORY:
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.BAD_INODE_TYPE,
                 'Target is a directory'
             )
         if not target.is_owning:
@@ -978,14 +987,35 @@ class MetadataShard:
                 'No shuckle data'
             )
 
-        for block, proof in zip(last_span.payload, r.proofs):
-            bserver = s.lookup(block.ip, block.port)
-            if bserver is None:
-                return MetadataError(
-                    MetadataErrorKind.SHUCKLE_ERROR,
-                    f'Storage node ({socket.inet_ntoa(block.ip)},'
-                    f' {block.port}) not found'
-                )
+        block_bserver_pairs = [
+            (block, s.lookup(block.ip, block.port))
+            for block in last_span.payload
+        ]
+        not_found_blocks = [
+            block for block, bserver in block_bserver_pairs if bserver is None
+        ]
+        if not_found_blocks:
+            example = not_found_blocks[0]
+            return MetadataError(
+                MetadataErrorKind.SHUCKLE_ERROR,
+                f'{len(not_found_blocks)} blocks not found, e.g.'
+                f' ({socket.inet_ntoa(example.ip)}, {example.port})'
+            )
+
+        nonterminal_blocks = [
+            (block, bserver)
+            for block, bserver in block_bserver_pairs
+            if not bserver.is_terminal #type: ignore[union-attr]
+        ]
+        if len(r.proofs) != len(nonterminal_blocks):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                f'Expected {len(nonterminal_blocks)} proofs, got {len(r.proofs)}'
+            )
+        #FIXME: this shouldn't be zip based (it's fragile if bserver
+        # becomes terminal after deletion)
+        for (block, bserver), proof in zip(nonterminal_blocks, r.proofs):
+            assert bserver is not None
             if proof != block.calc_delete_proof(bserver.secret_key):
                 return MetadataError(
                     MetadataErrorKind.BAD_REQUEST,
@@ -1018,6 +1048,75 @@ class MetadataShard:
             )
         del self.eden[r.inode]
         return ExpungeEdenFileResp(r.inode)
+
+    def do_fetch_spans(self, r: FetchSpansReq, s: Optional[ShuckleData]
+        ) -> RespBodyTy:
+
+        file = self.inodes.get(r.inode)
+        if file is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'No such inode'
+            )
+        if not isinstance(file, File):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                'Not a file'
+            )
+        if s is None:
+            return MetadataError(
+                MetadataErrorKind.SHUCKLE_ERROR,
+                'No shuckle data'
+            )
+        budget = metadata_utils.UDP_MTU
+        budget -= MetadataResponse.SIZE
+        budget -= FetchSpansResp.SIZE_UPPER_BOUND
+        # start from first offset <= r.offset
+        next_offset = 0
+        fetched_spans = []
+        begin_idx = max(file.spans.bisect_right(r.offset) - 1, 0)
+        for next_offset in file.spans.islice(begin_idx):
+            span = file.spans[next_offset]
+            payload: Union[bytes, List[FetchedBlock]]
+            if isinstance(span.payload, bytes):
+                payload = span.payload
+            else:
+                payload = []
+                # FIXME: needs to be changed when metadata server
+                # can self-identify terminal bservers
+                for block in span.payload:
+                    bserver = s.lookup(block.ip, block.port)
+                    if bserver is None:
+                        # don't fail just because we don't know where the
+                        # bserver is, client may be able to continue using
+                        # parity data
+                        flags = BlockFlags.STALE
+                    else:
+                        flags = bserver.flags
+                    payload.append(FetchedBlock(
+                        block.ip,
+                        block.port,
+                        block.block_id,
+                        block.crc32,
+                        block.size,
+                        flags
+                    ))
+            fetched_span = FetchedSpan(
+                next_offset,
+                span.parity,
+                span.storage_class,
+                span.crc32,
+                span.size,
+                payload
+            )
+            size = fetched_span.calc_packed_size()
+            if size > budget:
+                break
+            budget -= size
+            fetched_spans.append(fetched_span)
+        else:
+            next_offset = 0
+        return FetchSpansResp(next_offset, fetched_spans)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -1256,6 +1355,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     dirty = True
                 elif isinstance(request.body, DeleteFileReq):
                     resp_body = shard.do_delete_file(request.body)
+                    dirty = True
                 elif isinstance(request.body, CertifyExpungeReq):
                     resp_body = shard.do_certify_expunge(request.body,
                         shuckle_data)
@@ -1263,6 +1363,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 elif isinstance(request.body, ExpungeEdenFileReq):
                     resp_body = shard.do_expunge_eden_file(request.body)
                     dirty = True
+                elif isinstance(request.body, FetchSpansReq):
+                    resp_body = shard.do_fetch_spans(request.body, shuckle_data)
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True

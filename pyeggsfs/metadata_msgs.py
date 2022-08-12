@@ -34,6 +34,7 @@ class RequestKind(enum.IntEnum):
     CERTIFY_EXPUNGE = 0x0A
     EXPUNGE_FILE = 0x0B
     DELETE_FILE = 0x0C
+    FETCH_SPANS = 0x0D
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -107,14 +108,14 @@ class LsDirReq(bincode.Packable):
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.as_of, b)
+        bincode.pack_u64_into(self.as_of, b)
         bincode.pack_unsigned_into(self.continuation_key, b)
         bincode.pack_unsigned_into(self.flags, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsDirReq':
         inode = bincode.unpack_unsigned(u)
-        as_of = bincode.unpack_unsigned(u)
+        as_of = bincode.unpack_u64(u)
         continuation_key = bincode.unpack_unsigned(u)
         flags = LsFlags(bincode.unpack_unsigned(u))
         return LsDirReq(inode, as_of, continuation_key, flags)
@@ -359,6 +360,23 @@ class DeleteFileReq(bincode.Packable):
 
 
 @dataclass
+class FetchSpansReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.FETCH_SPANS
+    inode: int
+    offset: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_unsigned_into(self.offset, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'FetchSpansReq':
+        inode = bincode.unpack_unsigned(u)
+        offset = bincode.unpack_unsigned(u)
+        return FetchSpansReq(inode, offset)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -465,8 +483,8 @@ class ReleaseDirentReq(bincode.Packable):
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
-    SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
-    ReleaseDirentReq]
+    FetchSpansReq, SetParentReq, CreateDirReq, InjectDirentReq,
+    AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -920,11 +938,129 @@ class DeleteFileResp(bincode.Packable):
         return DeleteFileResp(parent_inode, name)
 
 
+class BlockFlags(enum.IntFlag):
+    STALE = 1
+    TERMINAL = 2
+
+
+@dataclass
+class FetchedBlock(bincode.Packable):
+    ip: bytes
+    port: int
+    block_id: int
+    crc: bytes
+    size: int
+    flags: BlockFlags
+
+    def calc_packed_size(self) -> int:
+        return 4 + 2 + 8 + 4 + bincode.varint_packed_size(self.size) + 1
+
+    def pack_into(self, b: bytearray) -> None:
+        assert len(self.ip) == 4
+        assert len(self.crc) == 4
+        bincode.pack_fixed_into(self.ip, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u64_into(self.block_id, b)
+        bincode.pack_fixed_into(self.crc, b)
+        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_u8_into(self.flags, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'FetchedBlock':
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        block_id = bincode.unpack_u64(u)
+        crc = bincode.unpack_fixed(u, 4)
+        size = bincode.unpack_unsigned(u)
+        flags = BlockFlags(bincode.unpack_u8(u))
+        return FetchedBlock(ip, port, block_id, crc, size, flags)
+
+
+@dataclass
+class FetchedSpan(bincode.Packable):
+    file_offset: int
+    parity: int
+    storage_class: int # maybe not needed?
+    crc: bytes
+    size: int # ditto?
+    payload: Union[bytes, List[FetchedBlock]]
+
+    def calc_packed_size(self) -> int:
+        ret = 1 + 1 + 4 # partity + storage_class
+        ret += bincode.varint_packed_size(self.file_offset)
+        ret += bincode.varint_packed_size(self.size)
+        if isinstance(self.payload, bytes):
+            ret += bincode.varbytes_packed_size(self.payload)
+        else:
+            ret += sum(block.calc_packed_size() for block in self.payload)
+        return ret
+
+    def pack_into(self, b: bytearray) -> None:
+        assert len(self.crc) == 4
+        bincode.pack_unsigned_into(self.file_offset, b)
+        bincode.pack_u8_into(self.parity, b)
+        bincode.pack_u8_into(self.storage_class, b)
+        bincode.pack_fixed_into(self.crc, b)
+        bincode.pack_unsigned_into(self.size, b)
+        if self.storage_class == INLINE_STORAGE:
+            assert isinstance(self.payload, bytes)
+            assert self.size == len(self.payload)
+            bincode.pack_fixed_into(self.payload, b)
+        elif self.storage_class == ZERO_FILL_STORAGE:
+            assert self.payload == b''
+        else:
+            assert isinstance(self.payload, list)
+            assert len(self.payload) == metadata_utils.total_blocks(self.parity)
+            for block in self.payload:
+                block.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'FetchedSpan':
+        file_offset = bincode.unpack_unsigned(u)
+        parity = bincode.unpack_u8(u)
+        storage_class = bincode.unpack_u8(u)
+        crc = bincode.unpack_fixed(u, 4)
+        size = bincode.unpack_unsigned(u)
+        payload: Union[bytes, List[FetchedBlock]]
+        if storage_class == INLINE_STORAGE:
+            payload = bincode.unpack_fixed(u, size)
+        elif storage_class == ZERO_FILL_STORAGE:
+            payload = b''
+        else:
+            num_blocks = metadata_utils.total_blocks(parity)
+            assert num_blocks
+            payload = [FetchedBlock.unpack(u) for _ in range(num_blocks)]
+        return FetchedSpan(file_offset, parity, storage_class, crc, size, payload)
+
+
+@dataclass
+class FetchSpansResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.FETCH_SPANS
+    SIZE_UPPER_BOUND: ClassVar[int] = 9 + 3
+    next_offset: int # 0 => no more spans (0 more efficient than UINT64_MAX)
+    spans: List[FetchedSpan]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert len(self.spans) < 2**16
+        bincode.pack_unsigned_into(self.next_offset, b)
+        bincode.pack_unsigned_into(len(self.spans), b)
+        for span in self.spans:
+            span.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'FetchSpansResp':
+        next_offset = bincode.unpack_unsigned(u)
+        num_spans = bincode.unpack_unsigned(u)
+        spans = [FetchedSpan.unpack(u) for _ in range(num_spans)]
+        return FetchSpansResp(next_offset, spans)
+
+
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
-    ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, SetParentResp,
-    CreateDirResp, InjectDirentResp, AcquireDirentResp, ReleaseDirentResp]
+    ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
+    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
+    ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -940,6 +1076,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.CERTIFY_EXPUNGE: (CertifyExpungeReq, CertifyExpungeResp),
     RequestKind.EXPUNGE_FILE: (ExpungeEdenFileReq, ExpungeEdenFileResp),
     RequestKind.DELETE_FILE: (DeleteFileReq, DeleteFileResp),
+    RequestKind.FETCH_SPANS: (FetchSpansReq, FetchSpansResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

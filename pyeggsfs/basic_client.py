@@ -258,6 +258,65 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
     pprint.pprint(all_results)
 
 
+def do_cat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+    if name == '':
+        inode = parent_inode
+    else:
+        maybe_inode = resolve(parent_inode.id, name)
+        if maybe_inode is None:
+            raise Exception('Target not found')
+        inode = maybe_inode
+
+    if inode.inode_type == metadata_msgs.InodeType.DIRECTORY:
+        raise Exception('Target is a directory')
+
+    shard = metadata_utils.shard_from_inode(inode.id)
+    next_offset = 0
+    while True:
+        resp = send_request(
+            metadata_msgs.FetchSpansReq(inode.id, next_offset), shard)
+        if not isinstance(resp, metadata_msgs.FetchSpansResp):
+            raise Exception(str(resp))
+        next_offset = resp.next_offset
+        for span in resp.spans:
+            num_data_blocks = metadata_utils.num_data_blocks(span.parity)
+            if num_data_blocks == 0:
+                assert isinstance(span.payload, bytes)
+                if span.storage_class == metadata_msgs.INLINE_STORAGE:
+                    data = span.payload
+                elif span.storage_class == metadata_msgs.ZERO_FILL_STORAGE:
+                    data = b'\x00' * span.size
+                else:
+                    assert False
+            else:
+                assert isinstance(span.payload, list)
+                data = bytearray(span.size)
+                view = memoryview(data)
+                data_idx = 0
+                for block in span.payload[:num_data_blocks]:
+                    ip = socket.inet_ntoa(block.ip)
+                    msg = struct.pack('<cQ', b'f', block.block_id)
+                    with socket.create_connection((ip, block.port)) as conn:
+                        conn.send(msg)
+                        reply = conn.recv(5)
+                        if len(reply) != 5:
+                            raise Exception('Runt reply')
+                        kind, ret_block_sz = struct.unpack('<cI', reply)
+                        if kind != b'F':
+                            raise Exception(f'Bad reply {reply!r}')
+                        if ret_block_sz != block.size:
+                            raise Exception(
+                                f'Block {block.block_id} inconsistent size:'
+                                f' metadata says {block.size}'
+                                f' block service says {ret_block_sz}')
+                        next_block_idx = data_idx + ret_block_sz
+                        while data_idx < next_block_idx:
+                            data_idx += conn.recv_into(view[data_idx:], 0)
+                        assert data_idx == next_block_idx
+            print(data.decode(), end='')
+        if next_offset == 0: # python lacks do..while loops
+            break
+
 def do_create_eden_file(parent_inode: ResolvedInode, name: str,
     creation_ts: int) -> None:
 
@@ -504,6 +563,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
         metadata_msgs.LsFlags.INCLUDE_NOTHING_ENTRIES
         | metadata_msgs.LsFlags.NEWER_THAN_AS_OF
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
+    'cat': do_cat,
     'create_eden_file': do_create_eden_file,
     'expunge_span': do_expunge_span,
     'expunge_file': do_expunge_file,

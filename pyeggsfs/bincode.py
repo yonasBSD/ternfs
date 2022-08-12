@@ -24,6 +24,10 @@ def varint_packed_size(x: int) -> int:
         return 17
 
 
+def varbytes_packed_size(x: bytes) -> int:
+    return varint_packed_size(len(x)) + len(x)
+
+
 # support for varint encoding
 # see: https://github.com/bincode-org/bincode/blob/v2.0.0-rc.1/docs/spec.md
 def pack_unsigned_into(x: int, b: bytearray) -> None:

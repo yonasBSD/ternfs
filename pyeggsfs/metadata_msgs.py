@@ -309,14 +309,15 @@ class CertifyExpungeReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EXPUNGE
     inode: int
     offset: int
-    proofs: List[bytes]
+    proofs: List[Tuple[int, bytes]]
 
     def pack_into(self, b: bytearray) -> None:
         assert all(len(proof) == 8 for proof in self.proofs)
         bincode.pack_unsigned_into(self.inode, b)
         bincode.pack_unsigned_into(self.offset, b)
         bincode.pack_unsigned_into(len(self.proofs), b)
-        for proof in self.proofs:
+        for block_id, proof in self.proofs:
+            bincode.pack_u32_into(block_id, b)
             bincode.pack_fixed_into(proof, b)
 
     @staticmethod
@@ -324,7 +325,10 @@ class CertifyExpungeReq(bincode.Packable):
         inode = bincode.unpack_unsigned(u)
         offset = bincode.unpack_unsigned(u)
         num_proofs = bincode.unpack_unsigned(u)
-        proofs = [bincode.unpack_fixed(u, 8) for _ in range(num_proofs)]
+        proofs = [
+            (bincode.unpack_u32(u), bincode.unpack_fixed(u, 8))
+            for _ in range(num_proofs)
+        ]
         return CertifyExpungeReq(inode, offset, proofs)
 
 

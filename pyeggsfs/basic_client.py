@@ -355,7 +355,7 @@ def expunge_one_span(eden_inode: int) -> int:
         raise Exception(str(resp))
     offset = resp.offset
     if resp.span:
-        proofs: List[bytes] = []
+        proofs: List[Tuple[int, bytes]] = []
         for block_info in resp.span:
             payload = struct.pack('<cQ8s', b'e', block_info.block_id,
                 block_info.certificate)
@@ -370,7 +370,7 @@ def expunge_one_span(eden_inode: int) -> int:
                 raise RuntimeError(f'Unexpected response kind {rkind} {block_server_reply!r}')
             if rblock_id != block_info.block_id:
                 raise RuntimeError(f'Bad block id, expected {block_info.block_id} got {rblock_id}')
-            proofs.append(proof)
+            proofs.append((block_info.block_id, proof))
         resp = send_request(
             metadata_msgs.CertifyExpungeReq(
                 eden_inode,

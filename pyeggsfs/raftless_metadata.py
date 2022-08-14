@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import collections
 from dataclasses import dataclass, field
 import enum
 import hashlib
@@ -15,8 +16,8 @@ import socket
 from sortedcontainers import SortedDict
 import sys
 import time
-from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Sequence,
-    Tuple, Union)
+from typing import (Any, DefaultDict, Dict, Iterator, List, Mapping, NamedTuple,
+    Optional, Sequence, Set, Tuple, Union)
 
 import bincode
 import cross_dir_key
@@ -84,9 +85,7 @@ class Directory:
 
 @dataclass
 class Block:
-    #FIXME: should use a dense id for block, not (ip, port) (not stable)
-    ip: bytes
-    port: int
+    bserver_id: int
     block_id: int
     crc32: bytes
     size: int
@@ -198,6 +197,7 @@ class StorageNode:
 
 
 class BlockServerInfo(NamedTuple):
+    id: int
     ip: bytes
     port: int
     flags: BlockFlags
@@ -205,20 +205,30 @@ class BlockServerInfo(NamedTuple):
     secret_key: crypto.ExpandedKey
 
     @staticmethod
-    def from_shuckle(json_obj: Dict[str, Any]) -> 'BlockServerInfo':
+    def from_shuckle(json_obj: Dict[str, Any], shard: 'MetadataShard'
+        ) -> 'BlockServerInfo':
+        secret = bytes.fromhex(json_obj['secret_key'])
+        id = shard.register_bserver(secret)
         flags = BlockFlags(0)
         if json_obj['is_stale']:
             flags |= BlockFlags.STALE
+
+        write_weight = json_obj['write_weight']
+
         if json_obj['is_terminal']:
-            #TODO: the "terminal"-ness needs to be persisted on each shard
+            shard.notify_terminal_bserver(id)
             flags |= BlockFlags.TERMINAL
+        elif shard.is_bserver_terminal(id):
+            flags |= BlockFlags.TERMINAL
+            write_weight = 0.0
+
         return BlockServerInfo(
+            id=id,
             ip=socket.inet_aton(json_obj['ip']),
             port=json_obj['port'],
             flags=flags,
-            write_weight=json_obj['write_weight'],
-            secret_key=crypto.aes_expand_key(
-                bytes.fromhex(json_obj['secret_key'])),
+            write_weight=write_weight,
+            secret_key=crypto.aes_expand_key(secret),
         )
 
 
@@ -241,7 +251,7 @@ class ShuckleData:
                 self._cum_weights = cum_weights
 
         self._block_index = {
-            (bserver.ip, bserver.port): idx
+            bserver.id: idx
             for idx, bserver in enumerate(block_meta)
         }
 
@@ -251,8 +261,8 @@ class ShuckleData:
         return random.choices(self.block_meta, cum_weights=self._cum_weights,
             k=num)
 
-    def lookup(self, ip: bytes, port: int) -> Optional[BlockServerInfo]:
-        maybe_idx = self._block_index.get((ip, port))
+    def lookup(self, dense_id: int) -> Optional[BlockServerInfo]:
+        maybe_idx = self._block_index.get(dense_id)
         if maybe_idx is None:
             return None
         return self.block_meta[maybe_idx]
@@ -260,13 +270,16 @@ class ShuckleData:
 
 # returned in the order from shuckle
 # (which doesn't appear to be specifically ordered currently)
-def try_fetch_block_metadata() -> Optional[ShuckleData]:
+def try_fetch_block_metadata(shard: 'MetadataShard') -> Optional[ShuckleData]:
     try:
         resp = requests.get('http://localhost:5000/show_me_what_you_got')
         resp.raise_for_status()
         block_meta = [
-            BlockServerInfo.from_shuckle(datum) for datum in resp.json()
+            BlockServerInfo.from_shuckle(datum, shard)
+            for datum in resp.json()
         ]
+        import pprint
+        pprint.pprint(block_meta)
         return ShuckleData(block_meta)
     except Exception as e:
         print('WARNING: failed to get shuckle data:', e)
@@ -279,6 +292,7 @@ class MetadataShard:
         self.shard_id = shard
         self.next_inode_id = shard | 0x100 # 00-FF is reserved
         self.last_block_id = shard | 0x100
+        self.next_bserver_id = 0
         self.inodes: SortedDict[int, InodePayload] = SortedDict()
         self.storage_nodes: SortedDict[int, StorageNode] = SortedDict()
         self.eden: SortedDict[int, EdenFile] = SortedDict()
@@ -292,6 +306,18 @@ class MetadataShard:
                 mtime=metadata_utils.now(),
                 opaque=b'', #FIXME: what should opaque be for root?
             )
+        self.bserver_secret_to_id: DefaultDict[bytes, int] = (
+            collections.defaultdict(self._dispense_bserver_id))
+        self.terminal_bservers: Set[int] = set()
+
+    def register_bserver(self, secret: bytes) -> int:
+        return self.bserver_secret_to_id[secret]
+
+    def notify_terminal_bserver(self, bserver_id: int) -> None:
+        self.terminal_bservers.add(bserver_id)
+
+    def is_bserver_terminal(self, bserver_id: int) -> bool:
+        return bserver_id in self.terminal_bservers
 
     def resolve(self, r: ResolveReq) -> Optional[ResolvedInode]:
         parent = self.inodes.get(r.parent_id)
@@ -551,8 +577,7 @@ class MetadataShard:
                 assert len(target_block_servers) == len(r.payload)
                 new_blocks = [
                     Block(
-                        bserver.ip,
-                        bserver.port,
+                        bserver.id,
                         self._dispense_block_id(now),
                         binfo.crc32,
                         binfo.size,
@@ -570,8 +595,8 @@ class MetadataShard:
                 )
                 resp_payload = [
                     BlockInfo(
-                        binfo.ip,
-                        binfo.port,
+                        bserver.ip,
+                        bserver.port,
                         binfo.block_id,
                         binfo.calc_create_cert(bserver.secret_key)
                     )
@@ -605,17 +630,16 @@ class MetadataShard:
                 assert s is not None
                 assert isinstance(existing_span.payload, list)
                 for b in existing_span.payload:
-                    bserver = s.lookup(b.ip, b.port)
+                    bserver = s.lookup(b.bserver_id)
                     if bserver is None:
                         return MetadataError(
                             MetadataErrorKind.SHUCKLE_ERROR,
-                            f'Storage node ({socket.inet_ntoa(b.ip)}, {b.port})'
-                            ' not found'
+                            f'Previously allocated storage node not found'
                         )
                     resp_payload.append(
                         BlockInfo(
-                            b.ip,
-                            b.port,
+                            bserver.ip,
+                            bserver.port,
                             b.block_id,
                             b.calc_create_cert(bserver.secret_key)
                         )
@@ -666,12 +690,11 @@ class MetadataShard:
             )
 
         for block, proof in zip(target_span.payload, r.proofs):
-            bserver = s.lookup(block.ip, block.port)
+            bserver = s.lookup(block.bserver_id)
             if bserver is None:
                 return MetadataError(
                     MetadataErrorKind.SHUCKLE_ERROR,
-                    f'Storage node ({socket.inet_ntoa(block.ip)}, {block.port})'
-                    ' not found'
+                    f'Storage node for {block.block_id} not found'
                 )
             if proof != block.calc_create_proof(bserver.secret_key):
                 return MetadataError(
@@ -884,18 +907,17 @@ class MetadataShard:
                     'No shuckle data'
                 )
             for block in last_span.payload:
-                bserver = s.lookup(block.ip, block.port)
+                if self.is_bserver_terminal(block.bserver_id):
+                    continue
+                bserver = s.lookup(block.bserver_id)
                 if bserver is None:
                     return MetadataError(
                         MetadataErrorKind.SHUCKLE_ERROR,
-                        f'Storage node ({socket.inet_ntoa(block.ip)},'
-                        f' {block.port}) not found'
+                        f'Storage node for {block.block_id} not found'
                     )
-                if bserver.flags & BlockFlags.TERMINAL:
-                    continue
                 block_infos.append(BlockInfo(
-                    block.ip,
-                    block.port,
+                    bserver.ip,
+                    bserver.port,
                     block.block_id,
                     block.calc_delete_cert(bserver.secret_key)
                 ))
@@ -987,40 +1009,35 @@ class MetadataShard:
                 'No shuckle data'
             )
 
-        block_bserver_pairs = [
-            (block, s.lookup(block.ip, block.port))
+        blocks_to_cert = {
+            block.block_id: block
             for block in last_span.payload
-        ]
-        not_found_blocks = [
-            block for block, bserver in block_bserver_pairs if bserver is None
-        ]
-        if not_found_blocks:
-            example = not_found_blocks[0]
-            return MetadataError(
-                MetadataErrorKind.SHUCKLE_ERROR,
-                f'{len(not_found_blocks)} blocks not found, e.g.'
-                f' ({socket.inet_ntoa(example.ip)}, {example.port})'
-            )
+            if not self.is_bserver_terminal(block.bserver_id)
+        }
 
-        nonterminal_blocks = [
-            (block, bserver)
-            for block, bserver in block_bserver_pairs
-            if not bserver.is_terminal #type: ignore[union-attr]
-        ]
-        if len(r.proofs) != len(nonterminal_blocks):
-            return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
-                f'Expected {len(nonterminal_blocks)} proofs, got {len(r.proofs)}'
-            )
-        #FIXME: this shouldn't be zip based (it's fragile if bserver
-        # becomes terminal after deletion)
-        for (block, bserver), proof in zip(nonterminal_blocks, r.proofs):
-            assert bserver is not None
+        for block_id, proof in r.proofs:
+            block = blocks_to_cert.get(block_id)
+            if block is None:
+                continue
+            bserver = s.lookup(block_id)
+            if bserver is None:
+                return MetadataError(
+                    MetadataErrorKind.SHUCKLE_ERROR,
+                    f'Storage node for {block.block_id} not found'
+                )
             if proof != block.calc_delete_proof(bserver.secret_key):
                 return MetadataError(
                     MetadataErrorKind.BAD_REQUEST,
                     f'Bad proof for block {block.block_id}'
                 )
+            del blocks_to_cert[block_id]
+
+        if blocks_to_cert:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                f'Missing proofs for {len(blocks_to_cert)} blocks:'
+                f' {", ".join(str(bid) for bid in blocks_to_cert)}'
+            )
 
         # all checks passed, we can now do the thing
         del eden_file.f.spans[last_offset]
@@ -1085,17 +1102,23 @@ class MetadataShard:
                 # FIXME: needs to be changed when metadata server
                 # can self-identify terminal bservers
                 for block in span.payload:
-                    bserver = s.lookup(block.ip, block.port)
+                    bserver = s.lookup(block.bserver_id)
                     if bserver is None:
                         # don't fail just because we don't know where the
                         # bserver is, client may be able to continue using
                         # parity data
+                        ip = b'\xff\xff\xff\xff'
+                        port = 65535
                         flags = BlockFlags.STALE
+                        if self.is_bserver_terminal(block.bserver_id):
+                            flags |= BlockFlags.TERMINAL
                     else:
+                        ip = bserver.ip
+                        port = bserver.port
                         flags = bserver.flags
                     payload.append(FetchedBlock(
-                        block.ip,
-                        block.port,
+                        ip,
+                        port,
                         block.block_id,
                         block.crc32,
                         block.size,
@@ -1283,6 +1306,11 @@ class MetadataShard:
         self.last_block_id = ret
         return ret
 
+    def _dispense_bserver_id(self) -> int:
+        ret = self.next_bserver_id
+        self.next_bserver_id += 1
+        return ret
+
     def _calc_cookie(self, eden_inode: int) -> int:
         b = eden_inode.to_bytes(8, 'little') + (b'\x00' * 8)
         mac = crypto.cbc_mac_impl(b, self.secret_key)
@@ -1296,7 +1324,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', port))
-    shuckle_data = try_fetch_block_metadata()
+    shuckle_data = try_fetch_block_metadata(shard)
     last_shuckle_update = time.time()
     while True:
         authorised = False
@@ -1399,9 +1427,10 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
             pass
 
         if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
-            maybe_shuckle_data = try_fetch_block_metadata()
+            maybe_shuckle_data = try_fetch_block_metadata(shard)
             if maybe_shuckle_data is not None:
                 shuckle_data = maybe_shuckle_data
+                metadata_utils.persist(shard, db_fn)
             last_shuckle_update = time.time()
 
 

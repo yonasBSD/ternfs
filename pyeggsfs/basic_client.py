@@ -209,7 +209,7 @@ def do_stat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
 
 def do_rm(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     if arg2 != '':
-        raise ValueError('No arg2 for stat')
+        raise ValueError('No arg2 for rm')
 
     resp = send_request(
         metadata_msgs.DeleteFileReq(
@@ -233,7 +233,18 @@ def same_dir_mv(parent_inode: int, old_name: str, new_name: str) -> None:
 
 def cross_dir_mv(old_parent: int, new_parent: int, old_name: str, new_name: str
     ) -> None:
-    raise NotImplementedError('Cross-dir renames not supported yet')
+    resolved = resolve(old_parent, old_name)
+    if resolved is None:
+        raise Exception(f'Failed to resolve ({old_parent}, {old_name})')
+
+    if resolved.inode_type == metadata_msgs.InodeType.DIRECTORY:
+        raise NotImplementedError(
+            'Cross-dir subdirectory renames not supported yet')
+    else:
+        resp = cross_dir_request(
+            cross_dir_msgs.MvFileReq(old_parent, new_parent, old_name, new_name)
+        )
+    print(resp)
 
 def do_mv(old_parent_inode: ResolvedInode, old_name: str, arg2: str) -> None:
     if not posixpath.isabs(arg2):

@@ -1,6 +1,7 @@
 
 from dataclasses import dataclass
 import enum
+import itertools
 from typing import ClassVar, Dict, Optional, Tuple, Type, Union
 
 import bincode
@@ -32,6 +33,30 @@ class MkDirReq(bincode.Packable):
 
 
 @dataclass
+class MvFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.MV_FILE
+    source_parent_inode: int
+    target_parent_inode: int
+    source_name: str
+    target_name: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.source_parent_inode, b)
+        bincode.pack_unsigned_into(self.target_parent_inode, b)
+        bincode.pack_bytes_into(self.source_name.encode(), b)
+        bincode.pack_bytes_into(self.target_name.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MvFileReq':
+        source_parent_inode = bincode.unpack_unsigned(u)
+        target_parent_inode = bincode.unpack_unsigned(u)
+        source_name = bincode.unpack_bytes(u).decode()
+        target_name = bincode.unpack_bytes(u).decode()
+        return MvFileReq(source_parent_inode, target_parent_inode, source_name,
+            target_name)
+
+
+@dataclass
 class MvDirReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.MV_DIR
 
@@ -60,15 +85,20 @@ class RmDirReq(bincode.Packable):
         return RmDirReq(parent_id, subname)
 
 
-ReqBodyTy = Union[MkDirReq, MvDirReq, RmDirReq]
+ReqBodyTy = Union[MkDirReq, MvFileReq, MvDirReq, RmDirReq]
 
 
 REQUESTS: Dict[RequestKind, Type[ReqBodyTy]] = {
-    RequestKind.MK_DIR: MkDirReq,
-    RequestKind.MV_DIR: MvDirReq,
-    RequestKind.RM_DIR: RmDirReq,
+    RequestKind.MK_DIR:  MkDirReq,
+    RequestKind.MV_FILE: MvFileReq,
+    RequestKind.MV_DIR:  MvDirReq,
+    RequestKind.RM_DIR:  RmDirReq,
 }
 
+for kind, req in REQUESTS.items():
+    assert kind == req.kind, f'{kind}, {req}'
+
+assert all(k in REQUESTS for k in itertools.islice(RequestKind, 1, None))
 
 @dataclass
 class CrossDirRequest(bincode.Packable):
@@ -98,6 +128,8 @@ class ResponseStatus(enum.IntEnum):
     PARENT_INVALID = 2
     NOT_FOUND = 3
     BAD_INODE_TYPE = 4
+    BAD_REQUEST = 5
+    CANNOT_OVERRIDE_TARGET = 6
 
 
 @dataclass

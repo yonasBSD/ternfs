@@ -14,7 +14,7 @@ import bincode
 import cross_dir_key
 from cross_dir_msgs import *
 import metadata_msgs
-from metadata_msgs import InodeType
+from metadata_msgs import InodeType, MetadataErrorKind
 import metadata_utils
 from metadata_utils import NULL_INODE
 
@@ -98,7 +98,7 @@ class MkDir(StateMachineBase):
             self.parent_id,
             self.subname,
             self.new_inode,
-            metadata_msgs.InodeType.DIRECTORY,
+            InodeType.DIRECTORY,
             self.new_creation_ts
         )
         resp = basic_client.send_request(
@@ -143,6 +143,146 @@ class MkDir(StateMachineBase):
         return None
 
 
+class MvFile(StateMachineBase):
+    # 1)  Acquire Source Dirent - success => goto 2;       fail => retry;
+    # 2)  Inject  Target Dirent - success => goto 3a;      fail => goto 3b;
+    # 3a) Release Target Dirent - success => goto 4;       fail => retry;
+    # 3b) Release Source Dirent - success => return error; fail => retry;
+    # 4)  Kill Source Dirent    - success => return ok;    fail => retry;
+
+    def __init__(self, req: MvFileReq) -> None:
+        self.source_parent_inode = req.source_parent_inode
+        self.target_parent_inode = req.target_parent_inode
+        self.source_name = req.source_name
+        self.target_name = req.target_name
+        self.target_child_inode: Optional[int] = None
+        self.target_type: Optional[InodeType] = None
+        self.new_creation_ts = metadata_utils.now()
+        self.fail_reason = ResponseStatus.GENERAL_ERROR
+
+    @state_func
+    def initial(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        if self.source_parent_inode == self.target_parent_inode:
+            c.send_reply(ResponseStatus.BAD_REQUEST, None,
+                "Don't use cross-dir coordinator for same dir renames")
+            return None
+        resp = basic_client.send_request(
+            metadata_msgs.AcquireDirentReq(
+                self.source_parent_inode,
+                self.source_name,
+                InodeType.FILE | InodeType.SYMLINK
+            ),
+            metadata_utils.shard_from_inode(self.source_parent_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+
+        if isinstance(resp, metadata_msgs.MetadataError):
+            if resp.error_kind == MetadataErrorKind.TIMED_OUT:
+                # must retry, otherwise we may leak the dirent
+                print('[WARNING] AcquireDirent failed, retrying', resp)
+                return 'initial'
+            elif resp.error_kind in (
+                MetadataErrorKind.NOT_FOUND, MetadataErrorKind.BAD_INODE_TYPE):
+                # either client gave us a bad request, or the inode disappeared
+                # underneath us (perhaps we lost a race with a SameDirRename)
+                status = (ResponseStatus.NOT_FOUND
+                    if resp.error_kind == MetadataErrorKind.NOT_FOUND
+                    else ResponseStatus.BAD_INODE_TYPE)
+                c.send_reply(status, None, 'Failed to acquire dirent')
+                return None
+            else:
+                # other error kinds are (currently) impossible
+                assert False, f'Unexpected error {resp}'
+
+        assert isinstance(resp, metadata_msgs.AcquireDirentResp)
+        self.target_child_inode = resp.inode
+        self.target_type = resp.inode_type
+        return 'inject_target'
+
+    @state_func
+    def inject_target(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        assert self.target_child_inode is not None
+        assert self.target_type is not None
+        resp = basic_client.send_request(
+            metadata_msgs.InjectDirentReq(
+                self.target_parent_inode,
+                self.target_name,
+                self.target_child_inode,
+                self.target_type,
+                self.new_creation_ts,
+            ),
+            metadata_utils.shard_from_inode(self.target_parent_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+
+        if isinstance(resp, metadata_msgs.MetadataError):
+            if resp.error_kind == MetadataErrorKind.TIMED_OUT:
+                # must retry, otherwise we may leak the dirent
+                print('[WARNING] AcquireDirent failed, retrying', resp)
+                return 'inject_target'
+            else:
+                # failed to create the link, time to rollback
+                if resp.error_kind == MetadataErrorKind.NOT_FOUND:
+                    self.fail_reason = ResponseStatus.NOT_FOUND
+                elif resp.error_kind == MetadataErrorKind.BAD_INODE_TYPE:
+                    self.fail_reason = ResponseStatus.BAD_INODE_TYPE
+                elif resp.error_kind == MetadataErrorKind.ALREADY_EXISTS:
+                    self.fail_reason = ResponseStatus.CANNOT_OVERRIDE_TARGET
+                return 'release_source'
+
+        assert isinstance(resp, metadata_msgs.InjectDirentResp)
+        return 'release_target'
+
+    @state_func
+    def release_target(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ReleaseDirentReq(
+                self.target_parent_inode,
+                self.target_name,
+                kill=False
+            ),
+            metadata_utils.shard_from_inode(self.target_parent_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] ReleaseDirent failed, retrying', resp)
+            return 'release_target'
+        return 'kill_source'
+
+    @state_func
+    def kill_source(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ReleaseDirentReq(
+                self.source_parent_inode,
+                self.source_name,
+                kill=True
+            ),
+            metadata_utils.shard_from_inode(self.source_parent_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] ReleaseDirent failed, retrying', resp)
+            return 'kill_source'
+        c.send_reply(ResponseStatus.OK, self.target_child_inode, '')
+        return None
+
+    @state_func
+    def release_source(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.ReleaseDirentReq(
+                self.source_parent_inode,
+                self.source_name,
+                kill=False
+            ),
+            metadata_utils.shard_from_inode(self.source_parent_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if not isinstance(resp, metadata_msgs.ReleaseDirentResp):
+            print('[WARNING] ReleaseDirent failed, retrying', resp)
+            return 'release_source'
+        c.send_reply(self.fail_reason, None, 'Failed to inject target')
+        return None
+
 class RmDir(StateMachineBase):
     # 1)  Acquire Dirent - success => goto 2;       fail => return error;
     # 2)  Unset Parent   - success => goto 3a;      fail => goto 3b;
@@ -172,7 +312,7 @@ class RmDir(StateMachineBase):
             c.send_reply(ResponseStatus.NOT_FOUND, None,
                 f'No result for resolve({self.parent_id}, {self.subname})')
             return None
-        if resp.f.inode_type != metadata_msgs.InodeType.DIRECTORY:
+        if resp.f.inode_type != InodeType.DIRECTORY:
             c.send_reply(ResponseStatus.BAD_INODE_TYPE, None,
                 f'{self.parent_id} has type {resp.f.inode_type}')
             return None
@@ -190,16 +330,29 @@ class RmDir(StateMachineBase):
             metadata_msgs.AcquireDirentReq(
                 self.parent_id,
                 self.subname,
-                metadata_msgs.InodeType.DIRECTORY
+                InodeType.DIRECTORY
             ),
             metadata_utils.shard_from_inode(self.parent_id),
             cross_dir_key.CROSS_DIR_KEY
         )
         if not isinstance(resp, metadata_msgs.AcquireDirentResp):
-            # presumably a timeout
-            # must retry, otherwise we may leak the dirent
-            print('[WARNING] AcquireDirent failed, retrying', resp)
-            return 'acquire_dirent'
+            assert isinstance(resp, metadata_msgs.MetadataError), f'{resp}'
+            if resp.error_kind == MetadataErrorKind.TIMED_OUT:
+                # must retry, otherwise we may leak the dirent
+                print('[WARNING] AcquireDirent failed, retrying', resp)
+                return 'acquire_dirent'
+            elif resp.error_kind in (
+                MetadataErrorKind.NOT_FOUND, MetadataErrorKind.BAD_INODE_TYPE):
+                # implies the dirent changed before we were able to acquire
+                # it, perhaps we lost a race with a SameDirRename
+                status = (ResponseStatus.NOT_FOUND
+                    if resp.error_kind == MetadataErrorKind.NOT_FOUND
+                    else ResponseStatus.BAD_INODE_TYPE)
+                c.send_reply(status, None, 'Failed to acquire dirent')
+                return None
+            else:
+                # other error kinds are (currently) impossible
+                assert False, f'Unexpected error {resp}'
         return 'unset_parent'
 
     @state_func
@@ -217,8 +370,11 @@ class RmDir(StateMachineBase):
             # success
             return 'kill_dirent'
         else:
+            assert isinstance(resp, metadata_msgs.MetadataError)
+            if resp.error_kind == MetadataErrorKind.TIMED_OUT:
+                # must retry, otherwise could leak the directory
+                return 'unset_parent'
             # failure, need to rollback
-            # TODO: depending on the error, it might be worth retrying?
             return 'release_dirent'
 
     @state_func
@@ -338,6 +494,8 @@ class CrossDirCoordinator:
             state_machine: StateMachineBase
             if isinstance(request.body, MkDirReq):
                 state_machine = MkDir(request.body)
+            elif isinstance(request.body, MvFileReq):
+                state_machine = MvFile(request.body)
             elif isinstance(request.body, RmDirReq):
                 state_machine = RmDir(request.body)
             else:

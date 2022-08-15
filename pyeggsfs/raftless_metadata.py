@@ -294,17 +294,20 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
     now: int) -> Optional[MetadataError]:
     # try inserting the new value
     # fails => consider overriding the existing thing
+    #
+    # N.B. if the link is already there, this will quietly succeed
+    # (for idempotency reasons this is usually the desired behaviour)
     res = parent.living_items.setdefault(new_key, new_val)
     if res.inode_id != new_val.inode_id:
         # not inserted, check if we can overwrite
         if res.type == InodeType.DIRECTORY:
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.ALREADY_EXISTS,
                 'Cannot overwrite directory'
             )
         if not res.is_owning:
             return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
+                MetadataErrorKind.ALREADY_EXISTS,
                 'Cannot overwrite non-owning file'
             )
         # add old file into dead map
@@ -1326,21 +1329,16 @@ class MetadataShard:
                 f'{r.parent_inode} has no parent'
             )
         hashed_name = parent.hash_name(r.subname)
-        expected_val = LivingValue(
+        new_val = LivingValue(
             r.creation_ts,
             r.child_inode,
-            InodeType.DIRECTORY,
+            r.child_type,
             False,
         )
-        actual_val = parent.living_items.setdefault(
-            LivingKey(hashed_name, r.subname), expected_val)
-        if actual_val != expected_val:
-            # if the expect val happened to be in there, should return success
-            # for idempotency; if there was any deviation, fail
-            return MetadataError(
-                MetadataErrorKind.ALREADY_EXISTS,
-                f'{actual_val}',
-            )
+        error = _try_link(parent, LivingKey(hashed_name, r.subname), new_val,
+            metadata_utils.now())
+        if error is not None:
+            return error
         return InjectDirentResp()
 
     def do_acquire_dirent(self, r: AcquireDirentReq) -> RespBodyTy:

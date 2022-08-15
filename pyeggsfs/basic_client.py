@@ -106,7 +106,7 @@ def stat(inode: int) -> Optional[metadata_msgs.StatResp]:
     return resp_body
 
 
-def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
+def resolve_abs_path(path: str) -> ResolvedInode:
 
     bits = path.split('/')
     if bits[0] != "":
@@ -140,7 +140,8 @@ def resolve_abs_path(path: str, ts: int) -> ResolvedInode:
 
 
 def do_resolve(mode: metadata_msgs.ResolveMode, parent_inode: ResolvedInode,
-    name: str, creation_ts: int) -> None:
+    name: str, arg2: str) -> None:
+    creation_ts = int(arg2 or '0')
     inode: Optional[ResolvedInode]
     if name == '':
         if mode == metadata_msgs.ResolveMode.ALIVE:
@@ -152,9 +153,9 @@ def do_resolve(mode: metadata_msgs.ResolveMode, parent_inode: ResolvedInode,
     print(inode)
 
 
-def do_mkdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for mkdir')
+def do_mkdir(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    if arg2 != '':
+        raise ValueError('No arg2 for mkdir')
 
     # before talking to the cross-dir co-ordinator, check whether this
     # subdirectory already exists
@@ -173,18 +174,18 @@ def do_mkdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(response)
 
 
-def do_rmdir(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for rmdir')
+def do_rmdir(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    if arg2 != '':
+        raise ValueError('No arg2 for rmdir')
 
     body = cross_dir_msgs.RmDirReq(parent_inode.id, name)
     response = cross_dir_request(body)
     print(response)
 
 
-def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for stat')
+def do_stat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    if arg2 != '':
+        raise ValueError('No arg2 for stat')
 
     inode: Optional[ResolvedInode]
     if parent_inode.id == metadata_utils.ROOT_INODE and name == '':
@@ -206,9 +207,9 @@ def do_stat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     print(resp)
 
 
-def do_rm(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for stat')
+def do_rm(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    if arg2 != '':
+        raise ValueError('No arg2 for stat')
 
     resp = send_request(
         metadata_msgs.DeleteFileReq(
@@ -219,9 +220,37 @@ def do_rm(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
     )
     print(resp)
 
+def same_dir_mv(parent_inode: int, old_name: str, new_name: str) -> None:
+    resp = send_request(
+        metadata_msgs.SameDirRenameReq(
+            parent_inode,
+            old_name,
+            new_name
+        ),
+        metadata_utils.shard_from_inode(parent_inode)
+    )
+    print(resp)
+
+def cross_dir_mv(old_parent: int, new_parent: int, old_name: str, new_name: str
+    ) -> None:
+    raise NotImplementedError('Cross-dir renames not supported yet')
+
+def do_mv(old_parent_inode: ResolvedInode, old_name: str, arg2: str) -> None:
+    if not posixpath.isabs(arg2):
+        raise ValueError('Only abs paths supported')
+    new_parent_path = posixpath.dirname(arg2)
+    new_name = posixpath.basename(arg2)
+
+    new_parent_inode = resolve_abs_path(new_parent_path)
+    if old_parent_inode.id == new_parent_inode.id:
+        same_dir_mv(old_parent_inode.id, old_name, new_name)
+    else:
+        cross_dir_mv(old_parent_inode.id, new_parent_inode.id, old_name,
+            new_name)
 
 def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
-    creation_ts: int) -> None:
+    arg2: str) -> None:
+    creation_ts = int(arg2 or '0')
 
     if name == '':
         inode = parent_inode
@@ -258,7 +287,7 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
     pprint.pprint(all_results)
 
 
-def do_cat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
+def do_cat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     if name == '':
         inode = parent_inode
     else:
@@ -318,10 +347,10 @@ def do_cat(parent_inode: ResolvedInode, name: str, creation_ts: int) -> None:
             break
 
 def do_create_eden_file(parent_inode: ResolvedInode, name: str,
-    creation_ts: int) -> None:
+    arg2: str) -> None:
 
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for create eden')
+    if arg2 != '':
+        raise ValueError('No arg2 for create eden')
 
     if name == '':
         inode = parent_inode
@@ -383,12 +412,14 @@ def expunge_one_span(eden_inode: int) -> int:
 
 
 def do_expunge_span(parent_inode: ResolvedInode, name: str,
-    eden_inode: int) -> None:
+    arg2: str) -> None:
+    eden_inode = int(arg2)
     print(expunge_one_span(eden_inode))
 
 
 def do_expunge_file(parent_inode: ResolvedInode, name: str,
-    eden_inode: int) -> None:
+    arg2: str) -> None:
+    eden_inode = int(arg2)
     offset = expunge_one_span(eden_inode)
     while offset != 0:
         offset = expunge_one_span(eden_inode)
@@ -400,10 +431,10 @@ def do_expunge_file(parent_inode: ResolvedInode, name: str,
 
 
 def do_create_test_file(parent_inode: ResolvedInode, name: str,
-    creation_ts: int) -> None:
+    arg2: str) -> None:
 
-    if creation_ts != 0:
-        raise ValueError('creation_ts should be unspecified for create eden')
+    if arg2 != '':
+        raise ValueError('No arg2 for create eden')
 
     if name == '':
         raise ValueError('Cannot use empty name')
@@ -523,7 +554,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
 
 def do_playground(parent_inode: ResolvedInode, name: str,
-    creation_ts: int) -> None:
+    arg2: str) -> None:
     source = (1537, 6600462696362219263)
     sink = (1025, 16789667482989277050)
     target = (1281, 14025209132833556664)
@@ -542,7 +573,7 @@ def do_playground(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
-requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
+requests: Dict[str, Callable[[ResolvedInode, str, str], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
     'resolve_dead_ge': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_GE),
@@ -550,6 +581,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
     'rmdir': do_rmdir,
     'stat': do_stat,
     'rm': do_rm,
+    'mv': do_mv,
     'ls': functools.partial(do_ls,
         metadata_msgs.LsFlags(0)),
     'ls_dead_le': functools.partial(do_ls,
@@ -576,10 +608,10 @@ requests: Dict[str, Callable[[ResolvedInode, str, int], None]] = {
 def main() -> None:
     global VERBOSE
     parser = argparse.ArgumentParser(
-        description='Runs a single metadata shard without raft')
+        description='A basic eggsfs client for doing simple ops')
     parser.add_argument('request', choices=requests)
     parser.add_argument('path')
-    parser.add_argument('creation_ts', nargs='?', default=0, type=int)
+    parser.add_argument('arg2', nargs='?', default='')
     parser.add_argument('--verbose', action='store_true')
     config = parser.parse_args(sys.argv[1:])
 
@@ -590,10 +622,10 @@ def main() -> None:
     parent_path = posixpath.dirname(config.path)
     basename = posixpath.basename(config.path)
 
-    parent_inode = resolve_abs_path(parent_path, config.creation_ts)
+    parent_inode = resolve_abs_path(parent_path)
 
     request_doer = requests[config.request]
-    request_doer(parent_inode, basename, config.creation_ts)
+    request_doer(parent_inode, basename, config.arg2)
 
 
 if __name__ == '__main__':

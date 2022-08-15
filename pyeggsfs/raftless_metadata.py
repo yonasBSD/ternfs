@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import dataclasses
 from dataclasses import dataclass, field
 import enum
 import hashlib
@@ -287,6 +288,38 @@ def try_fetch_block_metadata(shard: 'MetadataShard') -> Optional[ShuckleData]:
     except Exception as e:
         print('WARNING: failed to get shuckle data:', e)
         return None
+
+
+def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
+    now: int) -> Optional[MetadataError]:
+    # try inserting the new value
+    # fails => consider overriding the existing thing
+    res = parent.living_items.setdefault(new_key, new_val)
+    if res.inode_id != new_val.inode_id:
+        # not inserted, check if we can overwrite
+        if res.type == InodeType.DIRECTORY:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Cannot overwrite directory'
+            )
+        if not res.is_owning:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Cannot overwrite non-owning file'
+            )
+        # add old file into dead map
+        dead_key = DeadKey(new_key.hash_name, new_key.name, now)
+        parent.dead_items[dead_key] = DeadValue(
+            res.inode_id,
+            res.type,
+            res.is_owning
+        )
+        # can reuse the old value object
+        res.creation_time = new_val.creation_time
+        res.inode_id = new_val.inode_id
+        res.type = new_val.type
+        res.is_owning = new_val.is_owning
+    return None
 
 
 class MetadataShard:
@@ -748,35 +781,11 @@ class MetadataShard:
                 'Parent inode is not a directory'
             )
 
-        # try inserting the new value
-        # fails => consider overriding the existing thing
-        hashed_name = parent.hash_name(r.new_name)
         new_key = LivingKey(parent.hash_name(r.new_name), r.new_name)
         new_val = LivingValue(now, r.eden_inode, eden_file.f.type, True)
-        res = parent.living_items.setdefault(new_key, new_val)
-        if res.inode_id != metadata_utils.NULL_INODE:
-            # sentinal not inserted, check if we can overwrite
-            if res.type == InodeType.DIRECTORY:
-                return MetadataError(
-                    MetadataErrorKind.BAD_REQUEST,
-                    'Cannot overwrite directory'
-                )
-            if not res.is_owning:
-                return MetadataError(
-                    MetadataErrorKind.BAD_REQUEST,
-                    'Cannot overwrite non-owning file'
-                )
-            # add old file into dead map
-            parent.dead_items[DeadKey(hashed_name, r.new_name, now)] = DeadValue(
-                res.inode_id,
-                res.type,
-                res.is_owning
-            )
-            # can reuse the old value object
-            res.creation_time = now
-            res.inode_id = r.eden_inode
-            res.type = eden_file.f.type
-            res.is_owning = True
+        error = _try_link(parent, new_key, new_val, now)
+        if error is not None:
+            return error
 
         # move file out of eden into this shard
         self.inodes[r.eden_inode] = eden_file.f
@@ -1188,6 +1197,63 @@ class MetadataShard:
             next_offset = 0
         return FetchSpansResp(next_offset, fetched_spans)
 
+    def do_same_dir_rename(self, r: SameDirRenameReq) -> RespBodyTy:
+        now = metadata_utils.now()
+        parent = self.inodes.get(r.parent_inode)
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f'No such inode {r.parent_inode}'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                f'Inode {r.parent_inode} not a directory'
+            )
+        if r.old_name == r.new_name:
+            # or maybe just return success?
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Cannot rename file to itself'
+            )
+        hash_old_name = parent.hash_name(r.old_name)
+        old_living_key = LivingKey(hash_old_name, r.old_name)
+        old_living_val = parent.living_items.get(
+            LivingKey(hash_old_name, r.old_name))
+        if old_living_val is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                f"{r.parent_inode} has no living child named '{r.old_name}'"
+            )
+        if not old_living_val.is_owning:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source inode is non-owning'
+            )
+        hash_new_name = parent.hash_name(r.new_name)
+        new_living_key = LivingKey(hash_new_name, r.new_name)
+        new_living_val = dataclasses.replace(old_living_val, creation_time=now)
+
+        # attempt to link into the new location
+        error = _try_link(parent, new_living_key, new_living_val, now)
+        if error is not None:
+            return error
+
+        new_dead_key = DeadKey(hash_old_name, r.old_name,
+            old_living_val.creation_time)
+        new_dead_val = DeadValue(
+            old_living_val.inode_id,
+            old_living_val.type,
+            old_living_val.is_owning,
+        )
+        new_placeholder = DeadKey(hash_old_name, r.old_name, now)
+        parent.dead_items.update([
+            (new_dead_key, new_dead_val),
+            (new_placeholder, None),
+        ])
+        del parent.living_items[old_living_key]
+        return SameDirRenameResp()
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -1440,6 +1506,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     dirty = True
                 elif isinstance(request.body, FetchSpansReq):
                     resp_body = shard.do_fetch_spans(request.body, shuckle_data)
+                elif isinstance(request.body, SameDirRenameReq):
+                    resp_body = shard.do_same_dir_rename(request.body)
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True

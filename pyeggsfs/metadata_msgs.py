@@ -35,11 +35,11 @@ class RequestKind(enum.IntEnum):
     EXPUNGE_FILE = 0x0B
     DELETE_FILE = 0x0C
     FETCH_SPANS = 0x0D
+    SAME_DIR_RENAME = 0x0E
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
     CREATE_UNLINKED_DIR = 0x82
-
     # a release must follow an inject or acquire
     INJECT_DIRENT = 0x83  # insert a new living dirent with owning == false
     ACQUIRE_DIRENT = 0x84 # if living dirent exists, set owning := false
@@ -384,6 +384,26 @@ class FetchSpansReq(bincode.Packable):
 
 
 @dataclass
+class SameDirRenameReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.SAME_DIR_RENAME
+    parent_inode: int
+    old_name: str
+    new_name: str
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.old_name.encode(), b)
+        bincode.pack_bytes_into(self.new_name.encode(), b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'SameDirRenameReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        old_name = bincode.unpack_bytes(u).decode()
+        new_name = bincode.unpack_bytes(u).decode()
+        return SameDirRenameReq(parent_inode, old_name, new_name)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -490,8 +510,8 @@ class ReleaseDirentReq(bincode.Packable):
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
-    FetchSpansReq, SetParentReq, CreateDirReq, InjectDirentReq,
-    AcquireDirentReq, ReleaseDirentReq]
+    FetchSpansReq, SameDirRenameReq, SetParentReq, CreateDirReq,
+    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
 
 
 @dataclass
@@ -1062,12 +1082,25 @@ class FetchSpansResp(bincode.Packable):
         return FetchSpansResp(next_offset, spans)
 
 
+@dataclass
+class SameDirRenameResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.SAME_DIR_RENAME
+
+    def pack_into(self, b: bytearray) -> None:
+        pass
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'SameDirRenameResp':
+        return SameDirRenameResp()
+
+
+
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
     ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
-    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
-    ReleaseDirentResp]
+    SameDirRenameResp, SetParentResp, CreateDirResp, InjectDirentResp,
+    AcquireDirentResp, ReleaseDirentResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -1084,6 +1117,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.EXPUNGE_FILE: (ExpungeEdenFileReq, ExpungeEdenFileResp),
     RequestKind.DELETE_FILE: (DeleteFileReq, DeleteFileResp),
     RequestKind.FETCH_SPANS: (FetchSpansReq, FetchSpansResp),
+    RequestKind.SAME_DIR_RENAME: (SameDirRenameReq, SameDirRenameResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

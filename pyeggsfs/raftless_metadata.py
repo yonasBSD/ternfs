@@ -782,53 +782,84 @@ class MetadataShard:
         return LinkEdenFileResp()
 
     def do_repair_spans(self, r: RepairSpansReq) -> RespBodyTy:
-        if r.source_inode == r.sink_inode:
+        if (r.source_inode == r.sink_inode
+            or r.source_inode == r.target_inode
+            or r.sink_inode == r.target_inode):
             return MetadataError(
                 MetadataErrorKind.BAD_REQUEST,
-                'Source and sink are the same'
+                'Source, sink and target must be distinct files'
             )
         source = self.eden.get(r.source_inode)
         sink = self.eden.get(r.sink_inode)
-        target = self.inodes.get(r.target_inode)
-        if not (source and sink and target):
+        if not (source and sink):
             return MetadataError(
                 MetadataErrorKind.NOT_FOUND,
                 "At least one inode doesn't exist"
             )
-        inode_cookie_pairs= [
+        eden_files = [('source', source), ('sink', sink)]
+        inode_cookie_pairs = [
             (r.source_inode, r.source_cookie),
             (r.sink_inode, r.sink_cookie)
         ]
+        begin_offset = r.byte_offset
+        end_offset = r.byte_offset + source.f.size
+        end_span_state = SpanState.CLEAN
+        if r.target_cookie:
+            eden_target = self.eden.get(r.target_inode)
+            if eden_target is None:
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'Target inode not found in eden'
+                )
+            eden_files.append(('target', eden_target))
+            inode_cookie_pairs.append((r.target_inode, r.target_cookie))
+            target = eden_target.f
+            # all spans in an eden file are CLEAN execpt the final span
+            if end_offset == target.size:
+                end_span_state = eden_target.last_span_state
+        else:
+            maybe_target = self.inodes.get(r.target_inode)
+            if maybe_target is None:
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'Target inode not found'
+                )
+            if not isinstance(maybe_target, File):
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Target not a file'
+                )
+            target = maybe_target
+        if source.last_span_state != end_span_state:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source and target have inconsistent end span states'
+                f' source={eden_file.last_span_state};'
+                f' target={end_span_state}'
+            )
+        if sink.last_span_state != SpanState.CLEAN:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Sink must have last span state == CLEAN'
+            )
         for id, cookie in inode_cookie_pairs:
             if self._calc_cookie(id) != cookie:
                 return MetadataError(
                     MetadataErrorKind.BAD_REQUEST,
                     f'Wrong cookie for {id}'
                 )
-        if not isinstance(target, File):
-            return MetadataError(
-                MetadataErrorKind.BAD_REQUEST,
-                'Target not a file'
-            )
         if source.f.size == 0:
             return MetadataError(
                 MetadataErrorKind.BAD_REQUEST,
                 'Source is empty'
             )
         now = metadata_utils.now()
-        for eden_file in [source, sink]:
-            if eden_file.last_span_state != SpanState.CLEAN:
-                return MetadataError(
-                    MetadataErrorKind.BAD_REQUEST,
-                    'Unclean eden file'
-                )
+        for name, eden_file in eden_files:
             if now > eden_file.deadline_time:
                 return MetadataError(
                     MetadataErrorKind.EDEN_DEADLINE,
-                    ''
+                    f'{name} has expired deadline time'
                 )
-        begin_offset = r.byte_offset
-        end_offset = r.byte_offset + source.f.size
         for required_offset in [begin_offset, end_offset]:
             if not (required_offset == target.size
                 or required_offset in target.spans):
@@ -878,6 +909,14 @@ class MetadataShard:
 
         source.f.spans.clear()
         source.f.size = 0
+        source.last_span_state = SpanState.CLEAN
+
+        # sink inheriets the end span state of the target
+        sink.last_span_state = end_span_state
+
+        # update deadline time for any touched eden files
+        for _, eden_file in eden_files:
+            eden_file.deadline_time = now + DEADLINE_DURATION_NS
 
         return RepairSpansResp()
 

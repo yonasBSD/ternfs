@@ -524,16 +524,17 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
 def do_playground(parent_inode: ResolvedInode, name: str,
     creation_ts: int) -> None:
-    source = (513, 16334980891291861289)
-    sink = (769, 981523036800970143)
-    target = 257
+    source = (1537, 6600462696362219263)
+    sink = (1025, 16789667482989277050)
+    target = (1281, 14025209132833556664)
     resp = send_request(
         metadata_msgs.RepairSpansReq(
             source[0],
             source[1],
             sink[0],
             sink[1],
-            target,
+            target[0],
+            target[1],
             0
         ),
         1

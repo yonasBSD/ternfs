@@ -268,6 +268,7 @@ class RepairSpansReq(bincode.Packable):
     sink_inode: int
     sink_cookie: int
     target_inode: int
+    target_cookie: int # 0 implies target is not in eden
     byte_offset: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -276,6 +277,7 @@ class RepairSpansReq(bincode.Packable):
         bincode.pack_unsigned_into(self.sink_inode, b)
         bincode.pack_u64_into(self.sink_cookie, b)
         bincode.pack_unsigned_into(self.target_inode, b)
+        bincode.pack_u64_into(self.target_cookie, b)
         bincode.pack_unsigned_into(self.byte_offset, b)
 
     @staticmethod
@@ -285,9 +287,10 @@ class RepairSpansReq(bincode.Packable):
         sink_inode = bincode.unpack_unsigned(u)
         sink_cookie = bincode.unpack_u64(u)
         target_inode = bincode.unpack_unsigned(u)
+        target_cookie = bincode.unpack_u64(u)
         byte_offset = bincode.unpack_unsigned(u)
         return RepairSpansReq(source_inode, source_cookie, sink_inode,
-            sink_cookie, target_inode, byte_offset)
+            sink_cookie, target_inode, target_cookie, byte_offset)
 
 
 @dataclass

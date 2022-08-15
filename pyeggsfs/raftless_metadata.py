@@ -1244,7 +1244,7 @@ class MetadataShard:
         new_dead_val = DeadValue(
             old_living_val.inode_id,
             old_living_val.type,
-            old_living_val.is_owning,
+            False,
         )
         new_placeholder = DeadKey(hash_old_name, r.old_name, now)
         parent.dead_items.update([

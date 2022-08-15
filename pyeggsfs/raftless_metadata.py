@@ -29,7 +29,10 @@ import metadata_utils
 PROTOCOL_VERSION = 0
 
 # one hour in ns
-DEADLINE_DURATION_NS = 1000 * 1000 * 1000 * 60 * 60
+DEADLINE_DURATION_NS = 60 * 60 * 1000 * 1000 * 1000
+
+# 24 hours in ns
+BLOCK_CREATION_DEADLINE = 24 * DEADLINE_DURATION_NS
 
 
 class LivingKey(NamedTuple):
@@ -948,6 +951,11 @@ class MetadataShard:
             for block in last_span.payload:
                 if self.is_bserver_terminal(block.bserver_id):
                     continue
+                if now < block.block_id + BLOCK_CREATION_DEADLINE:
+                    return MetadataError(
+                        MetadataErrorKind.BAD_REQUEST,
+                        f'Block {block.block_id} still inside creation window'
+                    )
                 bserver = s.lookup(block.bserver_id)
                 if bserver is None:
                     return MetadataError(

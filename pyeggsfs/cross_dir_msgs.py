@@ -59,13 +59,25 @@ class MvFileReq(bincode.Packable):
 @dataclass
 class MvDirReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.MV_DIR
+    source_parent_inode: int
+    target_parent_inode: int
+    source_name: str
+    target_name: str
 
     def pack_into(self, b: bytearray) -> None:
-        raise NotImplementedError()
+        bincode.pack_unsigned_into(self.source_parent_inode, b)
+        bincode.pack_unsigned_into(self.target_parent_inode, b)
+        bincode.pack_bytes_into(self.source_name.encode(), b)
+        bincode.pack_bytes_into(self.target_name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MvDirReq':
-        raise NotImplementedError()
+        source_parent_inode = bincode.unpack_unsigned(u)
+        target_parent_inode = bincode.unpack_unsigned(u)
+        source_name = bincode.unpack_bytes(u).decode()
+        target_name = bincode.unpack_bytes(u).decode()
+        return MvDirReq(source_parent_inode, target_parent_inode, source_name,
+            target_name)
 
 
 @dataclass
@@ -130,6 +142,7 @@ class ResponseStatus(enum.IntEnum):
     BAD_INODE_TYPE = 4
     BAD_REQUEST = 5
     CANNOT_OVERRIDE_TARGET = 6
+    LOOP_DETECTED = 7
 
 
 @dataclass

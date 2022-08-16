@@ -238,8 +238,9 @@ def cross_dir_mv(old_parent: int, new_parent: int, old_name: str, new_name: str
         raise Exception(f'Failed to resolve ({old_parent}, {old_name})')
 
     if resolved.inode_type == metadata_msgs.InodeType.DIRECTORY:
-        raise NotImplementedError(
-            'Cross-dir subdirectory renames not supported yet')
+        resp = cross_dir_request(
+            cross_dir_msgs.MvDirReq(old_parent, new_parent, old_name, new_name)
+        )
     else:
         resp = cross_dir_request(
             cross_dir_msgs.MvFileReq(old_parent, new_parent, old_name, new_name)

@@ -448,6 +448,7 @@ class InjectDirentReq(bincode.Packable):
     child_inode: int
     child_type: InodeType
     creation_ts: int
+    dry: bool
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_unsigned_into(self.parent_inode, b)
@@ -455,6 +456,7 @@ class InjectDirentReq(bincode.Packable):
         bincode.pack_unsigned_into(self.child_inode, b)
         bincode.pack_u8_into(self.child_type, b)
         bincode.pack_unsigned_into(self.creation_ts, b)
+        bincode.pack_u8_into(self.dry, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'InjectDirentReq':
@@ -463,8 +465,9 @@ class InjectDirentReq(bincode.Packable):
         child_inode = bincode.unpack_unsigned(u)
         child_type = InodeType(bincode.unpack_u8(u))
         creation_ts = bincode.unpack_unsigned(u)
+        dry = bool(bincode.unpack_u8(u))
         return InjectDirentReq(parent_inode, subname, child_inode, child_type,
-            creation_ts)
+            creation_ts, dry)
 
 
 @dataclass
@@ -830,13 +833,15 @@ class CreateDirResp(bincode.Packable):
 @dataclass
 class InjectDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.INJECT_DIRENT
+    dry: bool # echoed back (should we echo back more things?)
 
     def pack_into(self, b: bytearray) -> None:
-        pass
+        bincode.pack_u8_into(self.dry, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'InjectDirentResp':
-        return InjectDirentResp()
+        dry = bool(bincode.unpack_u8(u))
+        return InjectDirentResp(dry)
 
 
 @dataclass

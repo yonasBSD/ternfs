@@ -282,8 +282,6 @@ def try_fetch_block_metadata(shard: 'MetadataShard') -> Optional[ShuckleData]:
             BlockServerInfo.from_shuckle(datum, shard)
             for datum in resp.json()
         ]
-        import pprint
-        pprint.pprint(block_meta)
         return ShuckleData(block_meta)
     except Exception as e:
         print('WARNING: failed to get shuckle data:', e)
@@ -291,13 +289,16 @@ def try_fetch_block_metadata(shard: 'MetadataShard') -> Optional[ShuckleData]:
 
 
 def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
-    now: int) -> Optional[MetadataError]:
+    now: int, *, dry: bool = False) -> Optional[MetadataError]:
     # try inserting the new value
     # fails => consider overriding the existing thing
     #
     # N.B. if the link is already there, this will quietly succeed
     # (for idempotency reasons this is usually the desired behaviour)
-    res = parent.living_items.setdefault(new_key, new_val)
+    if dry:
+        res = parent.living_items.get(new_key, new_val)
+    else:
+        res = parent.living_items.setdefault(new_key, new_val)
     if res.inode_id != new_val.inode_id:
         # not inserted, check if we can overwrite
         if res.type == InodeType.DIRECTORY:
@@ -310,18 +311,19 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
                 MetadataErrorKind.ALREADY_EXISTS,
                 'Cannot overwrite non-owning file'
             )
-        # add old file into dead map
-        dead_key = DeadKey(new_key.hash_name, new_key.name, now)
-        parent.dead_items[dead_key] = DeadValue(
-            res.inode_id,
-            res.type,
-            res.is_owning
-        )
-        # can reuse the old value object
-        res.creation_time = new_val.creation_time
-        res.inode_id = new_val.inode_id
-        res.type = new_val.type
-        res.is_owning = new_val.is_owning
+        if not dry:
+            # add old file into dead map
+            dead_key = DeadKey(new_key.hash_name, new_key.name, now)
+            parent.dead_items[dead_key] = DeadValue(
+                res.inode_id,
+                res.type,
+                res.is_owning
+            )
+            # can reuse the old value object
+            res.creation_time = new_val.creation_time
+            res.inode_id = new_val.inode_id
+            res.type = new_val.type
+            res.is_owning = new_val.is_owning
     return None
 
 
@@ -1336,10 +1338,10 @@ class MetadataShard:
             False,
         )
         error = _try_link(parent, LivingKey(hashed_name, r.subname), new_val,
-            metadata_utils.now())
+            metadata_utils.now(), dry=r.dry)
         if error is not None:
             return error
-        return InjectDirentResp()
+        return InjectDirentResp(r.dry)
 
     def do_acquire_dirent(self, r: AcquireDirentReq) -> RespBodyTy:
         parent = self.inodes.get(r.parent_inode)
@@ -1366,6 +1368,8 @@ class MetadataShard:
                 MetadataErrorKind.BAD_INODE_TYPE,
                 f'Target inode {res.inode_id} as wrong type {res.type}'
             )
+
+        res.is_owning = False
 
         return AcquireDirentResp(
             res.inode_id,
@@ -1395,6 +1399,7 @@ class MetadataShard:
                     # error, though it's not clear how to handle this error
                     # given the release operation cannot fail
                     # (maybe it should emit a warning and then do nothing?)
+                    assert not target.is_owning
                     dead_value = DeadValue(target.inode_id, target.type,
                         target.is_owning)
                     parent.dead_items[dead_key] = dead_value

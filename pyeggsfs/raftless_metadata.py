@@ -1311,6 +1311,10 @@ class MetadataShard:
             if next_val is None:
                 del parent.dead_items[next_key]
         del parent.dead_items[key]
+        if (parent.parent_inode == metadata_utils.NULL_INODE
+            and len(parent.dead_items) == 0):
+            print(f'PURGING INODE {r.parent_inode}; reason: last item purged;')
+            del self.inodes[r.parent_inode]
         return PurgeDirentResp(r.parent_inode, r.name, r.creation_time)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
@@ -1498,6 +1502,10 @@ class MetadataShard:
             if next_val is None:
                 del parent.dead_items[next_key]
         del parent.dead_items[key]
+        if (parent.parent_inode == metadata_utils.NULL_INODE
+            and len(parent.dead_items) == 0):
+            print(f'PURGING INODE {r.parent_inode}; reason: last item purged;')
+            del self.inodes[r.parent_inode]
         return PurgeRemoteOwningDirentResp(r.parent_inode, r.name,
             r.creation_time)
 

@@ -567,21 +567,36 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
 def do_playground(parent_inode: ResolvedInode, name: str,
     arg2: str) -> None:
-    source = (1537, 6600462696362219263)
-    sink = (1025, 16789667482989277050)
-    target = (1281, 14025209132833556664)
+    # source = (1537, 6600462696362219263)
+    # sink = (1025, 16789667482989277050)
+    # target = (1281, 14025209132833556664)
+    # resp = send_request(
+    #     metadata_msgs.RepairSpansReq(
+    #         source[0],
+    #         source[1],
+    #         sink[0],
+    #         sink[1],
+    #         target[0],
+    #         target[1],
+    #         0
+    #     ),
+    #     1
+    # )
     resp = send_request(
-        metadata_msgs.RepairSpansReq(
-            source[0],
-            source[1],
-            sink[0],
-            sink[1],
-            target[0],
-            target[1],
-            0
+        metadata_msgs.PurgeDirentReq(
+            1,
+            'test.txt',
+            82912919704299850,
         ),
         1
     )
+    # resp = cross_dir_request(
+    #     cross_dir_msgs.PurgeRemoteFileReq(
+    #         1,
+    #         'test.txt',
+    #         82912756340648967,
+    #     ),
+    # )
     print(resp)
 
 

@@ -36,6 +36,7 @@ class RequestKind(enum.IntEnum):
     DELETE_FILE = 0x0C
     FETCH_SPANS = 0x0D
     SAME_DIR_RENAME = 0x0E
+    PURGE_DIRENT = 0x0F # won't work for remote owning dirents
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -44,6 +45,8 @@ class RequestKind(enum.IntEnum):
     INJECT_DIRENT = 0x83  # insert a new living dirent with owning == false
     ACQUIRE_DIRENT = 0x84 # if living dirent exists, set owning := false
     RELEASE_DIRENT = 0x85 # if living dirent exists, set owning := true
+    PURGE_REMOTE_OWNING_DIRENT = 0x86
+    MOVE_FILE_TO_EDEN = 0x87
 
     def is_privilaged(self) -> bool:
         return bool(self.value & 0x80)
@@ -404,6 +407,26 @@ class SameDirRenameReq(bincode.Packable):
 
 
 @dataclass
+class PurgeDirentReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.PURGE_DIRENT
+    parent_inode: int
+    name: str
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_u64_into(self.creation_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'PurgeDirentReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        creation_time = bincode.unpack_u64(u)
+        return PurgeDirentReq(parent_inode, name, creation_time)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -510,11 +533,46 @@ class ReleaseDirentReq(bincode.Packable):
         return ReleaseDirentReq(parent_inode, subname, kill)
 
 
+@dataclass
+class PurgeRemoteOwningDirentReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
+    parent_inode: int
+    name: str
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_u64_into(self.creation_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteOwningDirentReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        creation_time = bincode.unpack_u64(u)
+        return PurgeRemoteOwningDirentReq(parent_inode, name, creation_time)
+
+
+@dataclass
+class MoveFileToEdenReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.MOVE_FILE_TO_EDEN
+    inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MoveFileToEdenReq':
+        inode = bincode.unpack_unsigned(u)
+        return MoveFileToEdenReq(inode)
+
+
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
-    FetchSpansReq, SameDirRenameReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq]
+    FetchSpansReq, SameDirRenameReq, PurgeDirentReq, SetParentReq,
+    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq,
+    PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
 
 
 @dataclass
@@ -1099,13 +1157,67 @@ class SameDirRenameResp(bincode.Packable):
         return SameDirRenameResp()
 
 
+@dataclass
+class PurgeDirentResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.PURGE_DIRENT
+    parent_inode: int
+    name: str
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_u64_into(self.creation_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'PurgeDirentResp':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        creation_time = bincode.unpack_u64(u)
+        return PurgeDirentResp(parent_inode, name, creation_time)
+
+
+@dataclass
+class PurgeRemoteOwningDirentResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
+    parent_inode: int
+    name: str
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_u64_into(self.creation_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteOwningDirentResp':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        creation_time = bincode.unpack_u64(u)
+        return PurgeRemoteOwningDirentResp(parent_inode, name, creation_time)
+
+
+@dataclass
+class MoveFileToEdenResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.MOVE_FILE_TO_EDEN
+    inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MoveFileToEdenResp':
+        inode = bincode.unpack_unsigned(u)
+        return MoveFileToEdenResp(inode)
+
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
     ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
-    SameDirRenameResp, SetParentResp, CreateDirResp, InjectDirentResp,
-    AcquireDirentResp, ReleaseDirentResp]
+    SameDirRenameResp, PurgeDirentResp, SetParentResp, CreateDirResp,
+    InjectDirentResp, AcquireDirentResp, ReleaseDirentResp,
+    PurgeRemoteOwningDirentResp, MoveFileToEdenResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -1123,11 +1235,15 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.DELETE_FILE: (DeleteFileReq, DeleteFileResp),
     RequestKind.FETCH_SPANS: (FetchSpansReq, FetchSpansResp),
     RequestKind.SAME_DIR_RENAME: (SameDirRenameReq, SameDirRenameResp),
+    RequestKind.PURGE_DIRENT: (PurgeDirentReq, PurgeDirentResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),
     RequestKind.ACQUIRE_DIRENT: (AcquireDirentReq, AcquireDirentResp),
     RequestKind.RELEASE_DIRENT: (ReleaseDirentReq, ReleaseDirentResp),
+    RequestKind.PURGE_REMOTE_OWNING_DIRENT: (PurgeRemoteOwningDirentReq,
+        PurgeRemoteOwningDirentResp),
+    RequestKind.MOVE_FILE_TO_EDEN: (MoveFileToEdenReq, MoveFileToEdenResp),
 }
 
 for kind, (req, resp) in REQUESTS.items():
@@ -1135,6 +1251,7 @@ for kind, (req, resp) in REQUESTS.items():
     assert resp.kind == kind, f'{kind}, {resp}'
 
 assert all(k in REQUESTS for k in itertools.islice(RequestKind, 1, None))
+
 
 @dataclass
 class MetadataResponse(bincode.Packable):

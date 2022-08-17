@@ -21,6 +21,10 @@ from metadata_utils import NULL_INODE
 
 PROTOCOL_VERSION = 0
 
+# 1 Hours in nanoseconds
+# this is a line of defense against a misbehaving purger
+PURGE_TIME_LOWER_BOUND = 60 * 60 * 1000 * 1000 * 1000
+
 
 # <boilerplate>
 
@@ -660,6 +664,106 @@ class RmDir(StateMachineBase):
         return None
 
 
+class PurgeRemoteFile(StateMachineBase):
+    # 1) Verify Exists && IsOwning - success => goto 2;    fail => return error;
+    # 2) Purge Parent Link         - success => goto 3;    fail => goto 3;
+    # 3) Move Child to Eden        - success => return ok; fail => retry;
+
+    def __init__(self, req: PurgeRemoteFileReq) -> None:
+        self.parent_id = req.parent_inode
+        self.name = req.name
+        self.creation_time = req.creation_time
+        self.child_inode: Optional[int] = None
+
+    @state_func
+    def initial(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        if metadata_utils.now() < self.creation_time + PURGE_TIME_LOWER_BOUND:
+            c.send_reply(ResponseStatus.BAD_REQUEST, None,
+                'Too early to purge')
+            return None
+        parent_shard = metadata_utils.shard_from_inode(self.parent_id)
+        resp = basic_client.send_request(
+            metadata_msgs.ResolveReq(
+                metadata_msgs.ResolveMode.DEAD_GE,
+                self.parent_id,
+                self.creation_time,
+                self.name,
+            ),
+            metadata_utils.shard_from_inode(self.parent_id)
+        )
+        if isinstance(resp, metadata_msgs.MetadataError):
+            c.send_reply(ResponseStatus.GENERAL_ERROR, None, str(resp))
+            return None
+        assert isinstance(resp, metadata_msgs.ResolveResp)
+        if resp.f is None:
+            c.send_reply(ResponseStatus.NOT_FOUND, None, 'Target not found')
+            return None
+        if resp.f.creation_ts != self.creation_time:
+            c.send_reply(ResponseStatus.NOT_FOUND, None,
+                f'Expected creation_time {self.creation_time},'
+                f' got {resp.f.creation_ts}')
+            return None
+        if not resp.f.is_owning:
+            c.send_reply(ResponseStatus.BAD_REQUEST, None, 'Target not owning')
+            return None
+        if parent_shard == metadata_utils.shard_from_inode(resp.f.id):
+            c.send_reply(ResponseStatus.BAD_REQUEST, None,
+                'Target is shard local - no need to use coordinator')
+            return None
+        self.child_inode = resp.f.id
+        return 'purge_dirent'
+
+    @state_func
+    def purge_dirent(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        resp = basic_client.send_request(
+            metadata_msgs.PurgeRemoteOwningDirentReq(
+                self.parent_id,
+                self.name,
+                self.creation_time
+            ),
+            metadata_utils.shard_from_inode(self.parent_id),
+            cross_dir_key.CROSS_DIR_KEY,
+        )
+        if isinstance(resp, metadata_msgs.MetadataError):
+            if resp.error_kind == MetadataErrorKind.TIMED_OUT:
+                # must retry, or may leak file
+                print('[WARNING] PurgeDirent failed, retrying')
+                return 'purge_dirent'
+            elif resp.error_kind == MetadataErrorKind.NOT_FOUND:
+                # a previous invocation of purge dirent succeeded, we're good
+                pass
+            else:
+                assert False, f'Unexpected reply {resp}'
+        else:
+            assert isinstance(resp, metadata_msgs.PurgeRemoteOwningDirentResp)
+        return 'move_child_to_eden'
+
+    @state_func
+    def move_child_to_eden(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        assert self.child_inode is not None
+        resp = basic_client.send_request(
+            metadata_msgs.MoveFileToEdenReq(
+                self.child_inode
+            ),
+            metadata_utils.shard_from_inode(self.child_inode),
+            cross_dir_key.CROSS_DIR_KEY
+        )
+        if isinstance(resp, metadata_msgs.MetadataError):
+            if (resp.error_kind == MetadataErrorKind.TIMED_OUT):
+                # must retry, or may leak file
+                print('[WARNING] MoveFileToEden timed out, retrying')
+                return 'move_child_to_eden'
+            elif resp.error_kind == MetadataErrorKind.NOT_FOUND:
+                # a previous invocation of purge dirent succeeded, we're good
+                pass
+            else:
+                assert False, f'Unexpected reply {resp}'
+        else:
+            assert isinstance(resp, metadata_msgs.MoveFileToEdenResp)
+        c.send_reply(ResponseStatus.OK, self.child_inode, '')
+        return None
+
+
 class Transaction:
     def __init__(self, state_machine: StateMachineBase, request_id: int,
         return_addr: Tuple[str, int]) -> None:
@@ -748,6 +852,8 @@ class CrossDirCoordinator:
                 state_machine = MvDir(request.body)
             elif isinstance(request.body, RmDirReq):
                 state_machine = RmDir(request.body)
+            elif isinstance(request.body, PurgeRemoteFileReq):
+                state_machine = PurgeRemoteFile(request.body)
             else:
                 print('Ignoring request, unsupported msg:', request.body,
                     file=sys.stderr)

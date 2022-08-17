@@ -32,6 +32,8 @@ PROTOCOL_VERSION = 0
 # one hour in ns
 DEADLINE_DURATION_NS = 60 * 60 * 1000 * 1000 * 1000
 
+PURGE_TIME_LOWER_BOUND = DEADLINE_DURATION_NS
+
 # 24 hours in ns
 BLOCK_CREATION_DEADLINE = 24 * DEADLINE_DURATION_NS
 
@@ -1259,6 +1261,58 @@ class MetadataShard:
         del parent.living_items[old_living_key]
         return SameDirRenameResp()
 
+    def do_purge_dirent(self, r: PurgeDirentReq) -> RespBodyTy:
+        now = metadata_utils.now()
+        if (now < r.creation_time + PURGE_TIME_LOWER_BOUND):
+            return MetadataError(
+                MetadataErrorKind.TOO_SOON,
+                'Too early to purge'
+            )
+        parent = self.inodes.get(r.parent_inode)
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Could not find parent'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                'Parent not a directory'
+            )
+        key = DeadKey(parent.hash_name(r.name), r.name, r.creation_time)
+        target = parent.dead_items.get(key)
+        if target is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                "Target not found in parent's dead map"
+            )
+        if (self.shard_id != metadata_utils.shard_from_inode(target.inode_id)
+            and target.is_owning):
+            return MetadataError(
+                MetadataErrorKind.NOT_AUTHORISED,
+                'Target is an owning reference to a remote file'
+            )
+        if (target.is_owning):
+            assert target.type != InodeType.DIRECTORY
+            # the target is an owning link to a shard-local file
+            # before purging the target, need to transfer the file to eden
+            # and then eden cleanup will expunge it later
+            file = self.inodes.pop(target.inode_id)
+            assert isinstance(file, File)
+            self.eden[target.inode_id] = EdenFile(
+                f=file,
+                deadline_time=now,
+                last_span_state=SpanState.CLEAN,
+            )
+        # if adjacent element is None, it also needs to be removed
+        idx = parent.dead_items.index(key)
+        if idx + 1 < len(parent.dead_items):
+            next_key, next_val = parent.dead_items.peekitem(idx + 1)
+            if next_val is None:
+                del parent.dead_items[next_key]
+        del parent.dead_items[key]
+        return PurgeDirentResp(r.parent_inode, r.name, r.creation_time)
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -1410,6 +1464,60 @@ class MetadataShard:
                     target.is_owning = True
         return ReleaseDirentResp(found)
 
+    def do_purge_remote_owning_dirent(self, r: PurgeRemoteOwningDirentReq
+        ) -> RespBodyTy:
+
+        parent = self.inodes.get(r.parent_inode)
+        if parent is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Could not find parent'
+            )
+        if not isinstance(parent, Directory):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                'Parent not a directory'
+            )
+        key = DeadKey(parent.hash_name(r.name), r.name, r.creation_time)
+        target = parent.dead_items.get(key)
+        if target is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                "Target not found in parent's dead map"
+            )
+        if (self.shard_id == metadata_utils.shard_from_inode(target.inode_id)
+            or not target.is_owning):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Target is not an owning reference to a remote file'
+            )
+        # if adjacent element is None, it also needs to be removed
+        idx = parent.dead_items.index(key)
+        if idx + 1 < len(parent.dead_items):
+            next_key, next_val = parent.dead_items.peekitem(idx + 1)
+            if next_val is None:
+                del parent.dead_items[next_key]
+        del parent.dead_items[key]
+        return PurgeRemoteOwningDirentResp(r.parent_inode, r.name,
+            r.creation_time)
+
+    def do_move_file_to_eden(self, r: MoveFileToEdenReq) -> RespBodyTy:
+        target = self.inodes.get(r.inode)
+        if target is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Target not found'
+            )
+        if not isinstance(target, File):
+            return MetadataError(
+                MetadataErrorKind.BAD_INODE_TYPE,
+                'Target not a file'
+            )
+        self.eden[r.inode] = EdenFile(target, metadata_utils.now(),
+            SpanState.CLEAN)
+        del self.inodes[r.inode]
+        return MoveFileToEdenResp(r.inode)
+
     def _dispense_inode(self) -> int:
         ret = self.next_inode_id
         self.next_inode_id += 0x100 # preserve LSB
@@ -1511,6 +1619,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_fetch_spans(request.body, shuckle_data)
                 elif isinstance(request.body, SameDirRenameReq):
                     resp_body = shard.do_same_dir_rename(request.body)
+                elif isinstance(request.body, PurgeDirentReq):
+                    resp_body = shard.do_purge_dirent(request.body)
+                    dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True
@@ -1527,6 +1638,13 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_release_dirent(request.body)
                     # TODO: maybe dirty should be returned by do_blah
                     # sometimes do_release_dirent has no effect
+                    dirty = True
+                elif isinstance(request.body, PurgeRemoteOwningDirentReq):
+                    resp_body = shard.do_purge_remote_owning_dirent(
+                        request.body)
+                    dirty = True
+                elif isinstance(request.body, MoveFileToEdenReq):
+                    resp_body = shard.do_move_file_to_eden(request.body)
                     dirty = True
                 else:
                     resp_body = MetadataError(

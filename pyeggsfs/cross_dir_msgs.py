@@ -13,6 +13,7 @@ class RequestKind(enum.IntEnum):
     MV_FILE = 2
     MV_DIR = 3
     RM_DIR = 4
+    PURGE_REMOTE_FILE = 5
 
 
 @dataclass
@@ -97,14 +98,35 @@ class RmDirReq(bincode.Packable):
         return RmDirReq(parent_id, subname)
 
 
-ReqBodyTy = Union[MkDirReq, MvFileReq, MvDirReq, RmDirReq]
+@dataclass
+class PurgeRemoteFileReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_FILE
+    parent_inode: int
+    name: str
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_bytes_into(self.name.encode(), b)
+        bincode.pack_u64_into(self.creation_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteFileReq':
+        parent_inode = bincode.unpack_unsigned(u)
+        name = bincode.unpack_bytes(u).decode()
+        creation_time = bincode.unpack_u64(u)
+        return PurgeRemoteFileReq(parent_inode, name, creation_time)
+
+
+ReqBodyTy = Union[MkDirReq, MvFileReq, MvDirReq, RmDirReq, PurgeRemoteFileReq]
 
 
 REQUESTS: Dict[RequestKind, Type[ReqBodyTy]] = {
-    RequestKind.MK_DIR:  MkDirReq,
-    RequestKind.MV_FILE: MvFileReq,
-    RequestKind.MV_DIR:  MvDirReq,
-    RequestKind.RM_DIR:  RmDirReq,
+    RequestKind.MK_DIR:            MkDirReq,
+    RequestKind.MV_FILE:           MvFileReq,
+    RequestKind.MV_DIR:            MvDirReq,
+    RequestKind.RM_DIR:            RmDirReq,
+    RequestKind.PURGE_REMOTE_FILE: PurgeRemoteFileReq
 }
 
 for kind, req in REQUESTS.items():

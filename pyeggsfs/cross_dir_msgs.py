@@ -23,12 +23,12 @@ class MkDirReq(bincode.Packable):
     subname: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_u64_into(self.parent_id, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MkDirReq':
-        parent_id = bincode.unpack_unsigned(u)
+        parent_id = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         return MkDirReq(parent_id, subname)
 
@@ -42,15 +42,15 @@ class MvFileReq(bincode.Packable):
     target_name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.source_parent_inode, b)
-        bincode.pack_unsigned_into(self.target_parent_inode, b)
+        bincode.pack_u64_into(self.source_parent_inode, b)
+        bincode.pack_u64_into(self.target_parent_inode, b)
         bincode.pack_bytes_into(self.source_name.encode(), b)
         bincode.pack_bytes_into(self.target_name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MvFileReq':
-        source_parent_inode = bincode.unpack_unsigned(u)
-        target_parent_inode = bincode.unpack_unsigned(u)
+        source_parent_inode = bincode.unpack_u64(u)
+        target_parent_inode = bincode.unpack_u64(u)
         source_name = bincode.unpack_bytes(u).decode()
         target_name = bincode.unpack_bytes(u).decode()
         return MvFileReq(source_parent_inode, target_parent_inode, source_name,
@@ -66,15 +66,15 @@ class MvDirReq(bincode.Packable):
     target_name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.source_parent_inode, b)
-        bincode.pack_unsigned_into(self.target_parent_inode, b)
+        bincode.pack_u64_into(self.source_parent_inode, b)
+        bincode.pack_u64_into(self.target_parent_inode, b)
         bincode.pack_bytes_into(self.source_name.encode(), b)
         bincode.pack_bytes_into(self.target_name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MvDirReq':
-        source_parent_inode = bincode.unpack_unsigned(u)
-        target_parent_inode = bincode.unpack_unsigned(u)
+        source_parent_inode = bincode.unpack_u64(u)
+        target_parent_inode = bincode.unpack_u64(u)
         source_name = bincode.unpack_bytes(u).decode()
         target_name = bincode.unpack_bytes(u).decode()
         return MvDirReq(source_parent_inode, target_parent_inode, source_name,
@@ -88,12 +88,12 @@ class RmDirReq(bincode.Packable):
     subname: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_id, b)
+        bincode.pack_u64_into(self.parent_id, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'RmDirReq':
-        parent_id = bincode.unpack_unsigned(u)
+        parent_id = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         return RmDirReq(parent_id, subname)
 
@@ -106,13 +106,13 @@ class PurgeRemoteFileReq(bincode.Packable):
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u64_into(self.creation_time, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteFileReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         creation_time = bincode.unpack_u64(u)
         return PurgeRemoteFileReq(parent_inode, name, creation_time)
@@ -141,16 +141,16 @@ class CrossDirRequest(bincode.Packable):
     body: ReqBodyTy
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.ver, b)
-        bincode.pack_unsigned_into(self.request_id, b)
-        bincode.pack_unsigned_into(self.body.kind, b)
+        bincode.pack_u8_into(self.ver, b)
+        bincode.pack_u64_into(self.request_id, b)
+        bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CrossDirRequest':
-        ver = bincode.unpack_unsigned(u)
-        request_id = bincode.unpack_unsigned(u)
-        body_kind = RequestKind(bincode.unpack_unsigned(u))
+        ver = bincode.unpack_u8(u)
+        request_id = bincode.unpack_u64(u)
+        body_kind = RequestKind(bincode.unpack_u8(u))
         body_type = REQUESTS[body_kind]
         body = body_type.unpack(u)
         return CrossDirRequest(ver, request_id, body)
@@ -175,21 +175,21 @@ class CrossDirResponse(bincode.Packable):
     text: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.request_id, b)
-        bincode.pack_unsigned_into(self.status_code, b)
+        bincode.pack_u64_into(self.request_id, b)
+        bincode.pack_u8_into(self.status_code, b)
         if self.new_inode is None:
-            bincode.pack_unsigned_into(0, b)
+            bincode.pack_u8_into(0, b)
         else:
-            bincode.pack_unsigned_into(1, b)
-            bincode.pack_unsigned_into(self.new_inode, b)
+            bincode.pack_u8_into(1, b)
+            bincode.pack_u64_into(self.new_inode, b)
         bincode.pack_bytes_into(self.text.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CrossDirResponse':
-        request_id = bincode.unpack_unsigned(u)
-        status_code = ResponseStatus(bincode.unpack_unsigned(u))
-        has_inode = bincode.unpack_unsigned(u)
-        new_inode = bincode.unpack_unsigned(u) if has_inode else None
+        request_id = bincode.unpack_u64(u)
+        status_code = ResponseStatus(bincode.unpack_u8(u))
+        has_inode = bincode.unpack_u8(u)
+        new_inode = bincode.unpack_u64(u) if has_inode else None
         text = bincode.unpack_bytes(u).decode()
         return CrossDirResponse(request_id, status_code, new_inode, text)
 

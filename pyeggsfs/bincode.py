@@ -2,60 +2,50 @@
 
 import abc
 import struct
-from typing import Any, Tuple, Type, TypeVar
+from typing import Type, TypeVar
 
 
-U16_MAX = 2**16 - 1
-U32_MAX = 2**32 - 1
-U64_MAX = 2**64 - 1
-U128_MAX = 2**128 - 1
+V61_MAX = 2**61 - 1
 
 
-def varint_packed_size(x: int) -> int:
-    if x < 251:
+# v61 is an unsigned type with range [0, 2**61)
+# encoded using between 1 and 8 bytes
+# 3 bits of the first byte give the length bytes of the int, so that it
+# is more efficient to encode smaller numbers
+
+def v61_packed_size(x: int) -> int:
+    # in C++ this can be implemented efficiently using _BitScanReverse64
+    if x < 2**5:
         return 1
-    elif x < 2**16:
+    elif x < 2**13:
+        return 2
+    elif x < 2**21:
         return 3
-    elif x < 2**32:
+    elif x < 2**29:
+        return 4
+    elif x < 2**37:
         return 5
-    elif x < 2**64:
-        return 9
-    else:
-        return 17
+    elif x < 2**45:
+        return 6
+    elif x < 2**53:
+        return 7
+    elif x < 2**61:
+        return 8
+    raise ValueError(f'{x} too large for v61')
 
 
-def varbytes_packed_size(x: bytes) -> int:
-    return varint_packed_size(len(x)) + len(x)
-
-
-# support for varint encoding
-# see: https://github.com/bincode-org/bincode/blob/v2.0.0-rc.1/docs/spec.md
-def pack_unsigned_into(x: int, b: bytearray) -> None:
-    if x > U128_MAX:
-        raise ValueError('Larger than u128 unsupported')
-
-    if x < 251:
-        b.append(x)
-    elif x < 2**16:
-        b.append(251)
-        b.extend(struct.pack('<H', x))
-    elif x < 2**32:
-        b.append(252)
-        b.extend(struct.pack('<I', x))
-    elif x < 2**64:
-        b.append(253)
-        b.extend(struct.pack('<Q', x))
-    else:
-        b.append(254)
-        b.extend(struct.pack('<QQ', x & 0xFFFF_FFFF_FFFF_FFFF, x >> 64))
+def bytes_packed_size(x: bytes) -> int:
+    return 1 + len(x)
 
 
 def pack_bytes_into(x: bytes, b: bytearray) -> None:
-    pack_unsigned_into(len(x), b)
+    pack_u8_into(len(x), b)
     b.extend(x)
 
 
-def pack_fixed_into(x: bytes, b: bytearray) -> None:
+def pack_fixed_into(x: bytes, size: int, b: bytearray) -> None:
+    if (len(x) != size):
+        raise Exception(f'Bad size bytes: {x!r} vs {size}')
     b.extend(x)
 
 
@@ -75,29 +65,11 @@ def pack_u64_into(x: int, b: bytearray) -> None:
     b.extend(struct.pack('<Q', x))
 
 
-# converts signed values to unsigned using a "zigzag"
-# this means signed values close to zero are smaller in varint representation
-def zigzag(x: int) -> int:
-    '''Converts signed values to unsigned using "zigzag" algorithm.
-    This means signed values close to zero are smaller in varint representation.
-    >>> zigzag(0)
-    0
-    >>> zigzag(-1)
-    1
-    >>> zigzag(1)
-    2
-    >>> zigzag(-2)
-    3
-    >>> zigzag(2)
-    4
-    >>> zigzag(-2**63)
-    18446744073709551615
-    '''
-    return (~x << 1) + 1 if x < 0 else x << 1
-
-
-def pack_signed_into(x: int, b: bytearray) -> None:
-    pack_unsigned_into(zigzag(x), b)
+def pack_v61_into(x: int, b: bytearray) -> None:
+    num_bytes = v61_packed_size(x)
+    with_length = (x << 3) | num_bytes
+    packed = struct.pack('<Q', with_length)
+    b.extend(packed[:num_bytes])
 
 
 class UnpackWrapper:
@@ -115,29 +87,6 @@ class UnpackWrapper:
 
     def bytes_remaining(self) -> int:
         return len(self.data) - self.idx
-
-
-def unpack_unsigned(u: UnpackWrapper) -> int:
-    b = u.read()
-    bytes_read = 0
-    try:
-        if b[0] < 251:
-            bytes_read, value = 1, b[0]
-        elif b[0] == 251:
-            bytes_read, value = 3, struct.unpack('<H', b[1:3])[0]
-        elif b[0] == 252:
-            bytes_read, value = 5, struct.unpack('<I', b[1:5])[0]
-        elif b[0] == 253:
-            bytes_read, value = 9, struct.unpack('<Q', b[1:9])[0]
-        elif b[0] == 254:
-            lower, upper = struct.unpack('<QQ', b[1:17])
-            bytes_read, value = 17, lower + (upper << 64)
-        else:
-            raise ValueError('Invalid first byte: 255')
-    except (IndexError, struct.error):
-        raise ValueError('Runt')
-    u.advance(bytes_read)
-    return value
 
 
 def unpack_u8(u: UnpackWrapper) -> int:
@@ -164,31 +113,17 @@ def unpack_u64(u: UnpackWrapper) -> int:
     return ret
 
 
-def unzigzag(x: int) -> int:
-    '''
-    >>> unzigzag(0)
-    0
-    >>> unzigzag(1)
-    -1
-    >>> unzigzag(2)
-    1
-    >>> unzigzag(3)
-    -2
-    >>> unzigzag(4)
-    2
-    >>> unzigzag(2**64 - 1)
-    -9223372036854775808
-    '''
-    return ~(x >> 1) if x & 1 else x >> 1
-
-
-def unpack_signed(u: UnpackWrapper) -> int:
-    '''Returns: (value, bytes_consumed)'''
-    return unzigzag(unpack_unsigned(u))
+def unpack_v61(u: UnpackWrapper) -> int:
+    num_bytes = u.read()[0] & 0b111
+    zpadded_val = bytearray(8)
+    zpadded_val[:num_bytes] = u.read()[:num_bytes]
+    u.advance(num_bytes)
+    raw_unpacked: int = struct.unpack('<Q', zpadded_val)[0]
+    return raw_unpacked >> 3
 
 
 def unpack_bytes(u: UnpackWrapper) -> bytes:
-    size = unpack_unsigned(u)
+    size = unpack_u8(u)
     return unpack_fixed(u, size)
 
 

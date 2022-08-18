@@ -71,16 +71,16 @@ class ResolveReq(bincode.Packable):
     subname: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.mode, b)
-        bincode.pack_unsigned_into(self.parent_id, b)
-        bincode.pack_unsigned_into(self.creation_ts, b)
+        bincode.pack_u8_into(self.mode, b)
+        bincode.pack_u64_into(self.parent_id, b)
+        bincode.pack_u64_into(self.creation_ts, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolveReq':
-        mode = ResolveMode(bincode.unpack_unsigned(u))
-        parent_id = bincode.unpack_unsigned(u)
-        creation_ts = bincode.unpack_unsigned(u)
+        mode = ResolveMode(bincode.unpack_u8(u))
+        parent_id = bincode.unpack_u64(u)
+        creation_ts = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         return ResolveReq(mode, parent_id, creation_ts, subname)
 
@@ -91,11 +91,11 @@ class StatReq(bincode.Packable):
     inode_id: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode_id, b)
+        bincode.pack_u64_into(self.inode_id, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatReq':
-        return StatReq(bincode.unpack_unsigned(u))
+        return StatReq(bincode.unpack_u64(u))
 
 
 class LsFlags(enum.IntFlag):
@@ -113,17 +113,17 @@ class LsDirReq(bincode.Packable):
     flags: LsFlags
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
         bincode.pack_u64_into(self.as_of, b)
-        bincode.pack_unsigned_into(self.continuation_key, b)
-        bincode.pack_unsigned_into(self.flags, b)
+        bincode.pack_u64_into(self.continuation_key, b)
+        bincode.pack_u8_into(self.flags, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsDirReq':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         as_of = bincode.unpack_u64(u)
-        continuation_key = bincode.unpack_unsigned(u)
-        flags = LsFlags(bincode.unpack_unsigned(u))
+        continuation_key = bincode.unpack_u64(u)
+        flags = LsFlags(bincode.unpack_u8(u))
         return LsDirReq(inode, as_of, continuation_key, flags)
 
 
@@ -147,14 +147,13 @@ class NewBlockInfo(bincode.Packable):
     size: int
 
     def pack_into(self, b: bytearray) -> None:
-        assert len(self.crc32) == 4
-        bincode.pack_fixed_into(self.crc32, b)
-        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_fixed_into(self.crc32, 4, b)
+        bincode.pack_v61_into(self.size, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'NewBlockInfo':
         crc32 = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_unsigned(u)
+        size = bincode.unpack_v61(u)
         return NewBlockInfo(crc32, size)
 
 
@@ -176,18 +175,16 @@ class AddEdenSpanReq(bincode.Packable):
 
     def pack_into(self, b: bytearray) -> None:
         assert (self.parity_mode == 0) == isinstance(self.payload, bytes)
-        assert len(self.crc32) == 4
         bincode.pack_u8_into(self.storage_class, b)
         bincode.pack_u8_into(self.parity_mode, b)
-        bincode.pack_fixed_into(self.crc32, b)
-        bincode.pack_unsigned_into(self.size, b)
-        bincode.pack_unsigned_into(self.byte_offset, b)
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_fixed_into(self.crc32, 4, b)
+        bincode.pack_v61_into(self.size, b)
+        bincode.pack_v61_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.inode, b)
         bincode.pack_u64_into(self.cookie, b)
         if self.storage_class == INLINE_STORAGE:
             assert isinstance(self.payload, bytes)
-            assert len(self.payload) == self.size
-            bincode.pack_fixed_into(self.payload, b)
+            bincode.pack_fixed_into(self.payload, self.size, b)
         elif isinstance(self.payload, list):
             assert metadata_utils.total_blocks(self.parity_mode) == len(self.payload)
             for info in self.payload:
@@ -198,9 +195,9 @@ class AddEdenSpanReq(bincode.Packable):
         storage_class = bincode.unpack_u8(u)
         parity_mode = bincode.unpack_u8(u)
         crc32 = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_unsigned(u)
-        byte_offset = bincode.unpack_unsigned(u)
-        inode = bincode.unpack_unsigned(u)
+        size = bincode.unpack_v61(u)
+        byte_offset = bincode.unpack_v61(u)
+        inode = bincode.unpack_u64(u)
         cookie = bincode.unpack_u64(u)
         payload: Union[bytes, List[NewBlockInfo]]
         if storage_class == INLINE_STORAGE:
@@ -225,20 +222,19 @@ class CertifyEdenSpanReq(bincode.Packable):
     proofs: List[bytes]
 
     def pack_into(self, b: bytearray) -> None:
-        assert all(len(proof) == 8 for proof in self.proofs)
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_v61_into(self.byte_offset, b)
         bincode.pack_u64_into(self.cookie, b)
-        bincode.pack_unsigned_into(len(self.proofs), b)
+        bincode.pack_u16_into(len(self.proofs), b)
         for proof in self.proofs:
-            bincode.pack_fixed_into(proof, b)
+            bincode.pack_fixed_into(proof, 8, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyEdenSpanReq':
-        inode = bincode.unpack_unsigned(u)
-        byte_offset = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        byte_offset = bincode.unpack_v61(u)
         cookie = bincode.unpack_u64(u)
-        num_proofs = bincode.unpack_unsigned(u)
+        num_proofs = bincode.unpack_u16(u)
         proofs = [bincode.unpack_fixed(u, 8) for _ in range(num_proofs)]
         return CertifyEdenSpanReq(inode, byte_offset, cookie, proofs)
 
@@ -252,16 +248,16 @@ class LinkEdenFileReq(bincode.Packable):
     new_name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.eden_inode, b)
+        bincode.pack_u64_into(self.eden_inode, b)
         bincode.pack_u64_into(self.cookie, b)
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.new_name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LinkEdenFileReq':
-        eden_inode = bincode.unpack_unsigned(u)
+        eden_inode = bincode.unpack_u64(u)
         cookie = bincode.unpack_u64(u)
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         new_name = bincode.unpack_bytes(u).decode()
         return LinkEdenFileReq(eden_inode, cookie, parent_inode, new_name)
 
@@ -278,23 +274,23 @@ class RepairSpansReq(bincode.Packable):
     byte_offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.source_inode, b)
+        bincode.pack_u64_into(self.source_inode, b)
         bincode.pack_u64_into(self.source_cookie, b)
-        bincode.pack_unsigned_into(self.sink_inode, b)
+        bincode.pack_u64_into(self.sink_inode, b)
         bincode.pack_u64_into(self.sink_cookie, b)
-        bincode.pack_unsigned_into(self.target_inode, b)
+        bincode.pack_u64_into(self.target_inode, b)
         bincode.pack_u64_into(self.target_cookie, b)
-        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.byte_offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'RepairSpansReq':
-        source_inode = bincode.unpack_unsigned(u)
+        source_inode = bincode.unpack_u64(u)
         source_cookie = bincode.unpack_u64(u)
-        sink_inode = bincode.unpack_unsigned(u)
+        sink_inode = bincode.unpack_u64(u)
         sink_cookie = bincode.unpack_u64(u)
-        target_inode = bincode.unpack_unsigned(u)
+        target_inode = bincode.unpack_u64(u)
         target_cookie = bincode.unpack_u64(u)
-        byte_offset = bincode.unpack_unsigned(u)
+        byte_offset = bincode.unpack_u64(u)
         return RepairSpansReq(source_inode, source_cookie, sink_inode,
             sink_cookie, target_inode, target_cookie, byte_offset)
 
@@ -305,11 +301,11 @@ class ExpungeEdenSpanReq(bincode.Packable):
     inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanReq':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         return ExpungeEdenSpanReq(inode)
 
 
@@ -321,19 +317,18 @@ class CertifyExpungeReq(bincode.Packable):
     proofs: List[Tuple[int, bytes]]
 
     def pack_into(self, b: bytearray) -> None:
-        assert all(len(proof) == 8 for _, proof in self.proofs)
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.offset, b)
-        bincode.pack_unsigned_into(len(self.proofs), b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_v61_into(self.offset, b)
+        bincode.pack_u16_into(len(self.proofs), b)
         for block_id, proof in self.proofs:
             bincode.pack_u64_into(block_id, b)
-            bincode.pack_fixed_into(proof, b)
+            bincode.pack_fixed_into(proof, 8, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeReq':
-        inode = bincode.unpack_unsigned(u)
-        offset = bincode.unpack_unsigned(u)
-        num_proofs = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        offset = bincode.unpack_v61(u)
+        num_proofs = bincode.unpack_u16(u)
         proofs = [
             (bincode.unpack_u64(u), bincode.unpack_fixed(u, 8))
             for _ in range(num_proofs)
@@ -347,11 +342,11 @@ class ExpungeEdenFileReq(bincode.Packable):
     inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenFileReq':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         return ExpungeEdenFileReq(inode)
 
 
@@ -362,12 +357,12 @@ class DeleteFileReq(bincode.Packable):
     name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'DeleteFileReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         return DeleteFileReq(parent_inode, name)
 
@@ -379,13 +374,13 @@ class FetchSpansReq(bincode.Packable):
     offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.offset, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_v61_into(self.offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'FetchSpansReq':
-        inode = bincode.unpack_unsigned(u)
-        offset = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        offset = bincode.unpack_v61(u)
         return FetchSpansReq(inode, offset)
 
 
@@ -397,13 +392,13 @@ class SameDirRenameReq(bincode.Packable):
     new_name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.old_name.encode(), b)
         bincode.pack_bytes_into(self.new_name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'SameDirRenameReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         old_name = bincode.unpack_bytes(u).decode()
         new_name = bincode.unpack_bytes(u).decode()
         return SameDirRenameReq(parent_inode, old_name, new_name)
@@ -417,13 +412,13 @@ class PurgeDirentReq(bincode.Packable):
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u64_into(self.creation_time, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeDirentReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         creation_time = bincode.unpack_u64(u)
         return PurgeDirentReq(parent_inode, name, creation_time)
@@ -464,8 +459,7 @@ class ReverseBlockQueryReq(bincode.Packable):
     from_block_id: int
 
     def pack_into(self, b: bytearray) -> None:
-        assert len(self.bserver_secret) == 16
-        bincode.pack_fixed_into(self.bserver_secret, b)
+        bincode.pack_fixed_into(self.bserver_secret, 16, b)
         bincode.pack_u64_into(self.from_block_id, b)
 
     @staticmethod
@@ -482,13 +476,13 @@ class SetParentReq(bincode.Packable):
     new_parent: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.new_parent, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_u64_into(self.new_parent, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'SetParentReq':
-        inode = bincode.unpack_unsigned(u)
-        new_parent = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        new_parent = bincode.unpack_u64(u)
         return SetParentReq(inode, new_parent)
 
 
@@ -500,14 +494,14 @@ class CreateDirReq(bincode.Packable):
     opaque: bytes
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.token_inode, b)
-        bincode.pack_unsigned_into(self.new_parent, b)
+        bincode.pack_u64_into(self.token_inode, b)
+        bincode.pack_u64_into(self.new_parent, b)
         bincode.pack_bytes_into(self.opaque, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CreateDirReq':
-        token_inode = bincode.unpack_unsigned(u)
-        new_parent = bincode.unpack_unsigned(u)
+        token_inode = bincode.unpack_u64(u)
+        new_parent = bincode.unpack_u64(u)
         opaque = bincode.unpack_bytes(u)
         return CreateDirReq(token_inode, new_parent, opaque)
 
@@ -523,20 +517,20 @@ class InjectDirentReq(bincode.Packable):
     dry: bool
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
-        bincode.pack_unsigned_into(self.child_inode, b)
+        bincode.pack_u64_into(self.child_inode, b)
         bincode.pack_u8_into(self.child_type, b)
-        bincode.pack_unsigned_into(self.creation_ts, b)
+        bincode.pack_u64_into(self.creation_ts, b)
         bincode.pack_u8_into(self.dry, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'InjectDirentReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
-        child_inode = bincode.unpack_unsigned(u)
+        child_inode = bincode.unpack_u64(u)
         child_type = InodeType(bincode.unpack_u8(u))
-        creation_ts = bincode.unpack_unsigned(u)
+        creation_ts = bincode.unpack_u64(u)
         dry = bool(bincode.unpack_u8(u))
         return InjectDirentReq(parent_inode, subname, child_inode, child_type,
             creation_ts, dry)
@@ -550,13 +544,13 @@ class AcquireDirentReq(bincode.Packable):
     acceptable_types: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
         bincode.pack_u8_into(self.acceptable_types, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         acceptable_types = bincode.unpack_u8(u)
         return AcquireDirentReq(parent_inode, subname, acceptable_types)
@@ -570,13 +564,13 @@ class ReleaseDirentReq(bincode.Packable):
     kill: bool
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
         bincode.pack_u8_into(self.kill, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ReleaseDirentReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         kill = bool(bincode.unpack_u8(u))
         return ReleaseDirentReq(parent_inode, subname, kill)
@@ -590,13 +584,13 @@ class PurgeRemoteOwningDirentReq(bincode.Packable):
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u64_into(self.creation_time, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteOwningDirentReq':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         creation_time = bincode.unpack_u64(u)
         return PurgeRemoteOwningDirentReq(parent_inode, name, creation_time)
@@ -608,11 +602,11 @@ class MoveFileToEdenReq(bincode.Packable):
     inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MoveFileToEdenReq':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         return MoveFileToEdenReq(inode)
 
 
@@ -633,14 +627,14 @@ class MetadataRequest(bincode.Packable):
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u8_into(self.body.kind, b)
-        bincode.pack_unsigned_into(self.ver, b)
+        bincode.pack_u8_into(self.ver, b)
         bincode.pack_u64_into(self.request_id, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MetadataRequest':
         kind = RequestKind(bincode.unpack_u8(u))
-        ver = bincode.unpack_unsigned(u)
+        ver = bincode.unpack_u8(u)
         request_id = bincode.unpack_u64(u)
         body_type = REQUESTS[kind][0]
         body = body_type.unpack(u)
@@ -673,12 +667,12 @@ class MetadataError(bincode.Packable):
     text: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.error_kind, b)
+        bincode.pack_u8_into(self.error_kind, b)
         bincode.pack_bytes_into(self.text.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MetadataError':
-        error_kind = MetadataErrorKind(bincode.unpack_unsigned(u))
+        error_kind = MetadataErrorKind(bincode.unpack_u8(u))
         text = bincode.unpack_bytes(u).decode()
         return MetadataError(error_kind, text)
 
@@ -691,17 +685,17 @@ class ResolvedInode(bincode.Packable):
     is_owning: bool
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.id, b)
+        bincode.pack_u64_into(self.id, b)
         bincode.pack_u8_into(self.inode_type, b)
-        bincode.pack_unsigned_into(self.creation_ts, b)
-        bincode.pack_unsigned_into(self.is_owning, b)
+        bincode.pack_u64_into(self.creation_ts, b)
+        bincode.pack_u8_into(self.is_owning, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolvedInode':
-        id = bincode.unpack_unsigned(u)
+        id = bincode.unpack_u64(u)
         inode_type = InodeType(bincode.unpack_u8(u))
-        creation_ts = bincode.unpack_unsigned(u)
-        is_owning = bool(bincode.unpack_unsigned(u))
+        creation_ts = bincode.unpack_u64(u)
+        is_owning = bool(bincode.unpack_u8(u))
         return ResolvedInode(id, inode_type, creation_ts, is_owning)
 
 
@@ -712,14 +706,14 @@ class ResolveResp(bincode.Packable):
 
     def pack_into(self, b: bytearray) -> None:
         if self.f is None:
-            bincode.pack_unsigned_into(0, b)
+            bincode.pack_u8_into(0, b)
         else:
-            bincode.pack_unsigned_into(1, b)
+            bincode.pack_u8_into(1, b)
             self.f.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolveResp':
-        option_kind = bincode.unpack_unsigned(u)
+        option_kind = bincode.unpack_u8(u)
         return ResolveResp(ResolvedInode.unpack(u) if option_kind else None)
 
 
@@ -729,13 +723,13 @@ class StatFilePayload(bincode.Packable):
     size: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.mtime, b)
-        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_u64_into(self.mtime, b)
+        bincode.pack_u64_into(self.size, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatFilePayload':
-        mtime = bincode.unpack_unsigned(u)
-        size = bincode.unpack_unsigned(u)
+        mtime = bincode.unpack_u64(u)
+        size = bincode.unpack_u64(u)
         return StatFilePayload(mtime, size)
 
 
@@ -746,14 +740,14 @@ class StatDirPayload(bincode.Packable):
     opaque: bytes
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.mtime, b)
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.mtime, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.opaque, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatDirPayload':
-        mtime = bincode.unpack_unsigned(u)
-        parent_inode = bincode.unpack_unsigned(u)
+        mtime = bincode.unpack_u64(u)
+        parent_inode = bincode.unpack_u64(u)
         opaque = bincode.unpack_bytes(u)
         return StatDirPayload(mtime, parent_inode, opaque)
 
@@ -790,21 +784,19 @@ class LsPayload(bincode.Packable):
     inode_type: InodeType
 
     def calc_packed_size(self) -> int:
-        ret = 8 + 1 # sizeof(inode) + sizeof(len(name))
-        ret += bincode.varint_packed_size(self.inode)
-        ret += len(self.name.encode())
-        ret += bincode.varint_packed_size(self.inode_type)
+        ret = 8 + 8 + 1 # inode + hash_of_name + inode_type
+        ret += bincode.bytes_packed_size(self.name.encode())
         return ret
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
         bincode.pack_u64_into(self.hash_of_name, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u8_into(self.inode_type, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsPayload':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         hash_of_name = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         inode_type = InodeType(bincode.unpack_u8(u))
@@ -814,20 +806,20 @@ class LsPayload(bincode.Packable):
 @dataclass
 class LsDirResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.LS_DIR
-    SIZE: ClassVar[int] = 8 + 1
+    SIZE: ClassVar[int] = 8 + 2
     continuation_key: int # UINT64_MAX => no more results
     results: List[LsPayload]
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.continuation_key, b)
-        bincode.pack_unsigned_into(len(self.results), b)
+        bincode.pack_u16_into(len(self.results), b)
         for r in self.results:
             r.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsDirResp':
         continuation_key = bincode.unpack_u64(u)
-        count = bincode.unpack_unsigned(u)
+        count = bincode.unpack_u16(u)
         results = [LsPayload.unpack(u) for _ in range(count)]
         return LsDirResp(continuation_key, results)
 
@@ -839,12 +831,12 @@ class CreateEdenFileResp(bincode.Packable):
     cookie: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
         bincode.pack_u64_into(self.cookie, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CreateEdenFileResp':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         cookie = bincode.unpack_u64(u)
         return CreateEdenFileResp(inode, cookie)
 
@@ -858,18 +850,16 @@ class BlockInfo(bincode.Packable):
     certificate: bytes
 
     def pack_into(self, b: bytearray) -> None:
-        assert len(self.ip) == 4
-        assert len(self.certificate) == 8, self.certificate
-        bincode.pack_fixed_into(self.ip, b)
+        bincode.pack_fixed_into(self.ip, 4, b)
         bincode.pack_u16_into(self.port, b)
-        bincode.pack_unsigned_into(self.block_id, b)
-        bincode.pack_fixed_into(self.certificate, b)
+        bincode.pack_u64_into(self.block_id, b)
+        bincode.pack_fixed_into(self.certificate, 8, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockInfo':
         ip = bincode.unpack_fixed(u, 4)
         port = bincode.unpack_u16(u)
-        block_id = bincode.unpack_unsigned(u)
+        block_id = bincode.unpack_u64(u)
         certificate = bincode.unpack_fixed(u, 8)
         return BlockInfo(ip, port, block_id, certificate)
 
@@ -880,13 +870,13 @@ class AddEdenSpanResp(bincode.Packable):
     span: List[BlockInfo]
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(len(self.span), b)
+        bincode.pack_u8_into(len(self.span), b)
         for block in self.span:
             block.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'AddEdenSpanResp':
-        size = bincode.unpack_unsigned(u)
+        size = bincode.unpack_u8(u)
         span = [BlockInfo.unpack(u) for _ in range(size)]
         return AddEdenSpanResp(span)
 
@@ -899,13 +889,13 @@ class CertifyEdenSpanResp(bincode.Packable):
     byte_offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_u64_into(self.byte_offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyEdenSpanResp':
-        inode = bincode.unpack_unsigned(u)
-        byte_offset = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        byte_offset = bincode.unpack_u64(u)
         return CertifyEdenSpanResp(inode, byte_offset)
 
 
@@ -928,13 +918,13 @@ class CreateDirResp(bincode.Packable):
     mtime: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.mtime, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_u64_into(self.mtime, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CreateDirResp':
-        inode = bincode.unpack_unsigned(u)
-        creation_ts = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        creation_ts = bincode.unpack_u64(u)
         return CreateDirResp(inode, creation_ts)
 
 
@@ -959,12 +949,12 @@ class AcquireDirentResp(bincode.Packable):
     inode_type: InodeType
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
         bincode.pack_u8_into(self.inode_type, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentResp':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         inode_type = InodeType(bincode.unpack_u8(u))
         return AcquireDirentResp(inode, inode_type)
 
@@ -1015,17 +1005,17 @@ class ExpungeEdenSpanResp(bincode.Packable):
     span: List[BlockInfo] # empty => blockless, no certification required
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.offset, b)
-        bincode.pack_unsigned_into(len(self.span), b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_v61_into(self.offset, b)
+        bincode.pack_u8_into(len(self.span), b)
         for block in self.span:
             block.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanResp':
-        inode = bincode.unpack_unsigned(u)
-        offset = bincode.unpack_unsigned(u)
-        size = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        offset = bincode.unpack_v61(u)
+        size = bincode.unpack_u8(u)
         span = [BlockInfo.unpack(u) for _ in range(size)]
         return ExpungeEdenSpanResp(inode, offset, span)
 
@@ -1037,13 +1027,13 @@ class CertifyExpungeResp(bincode.Packable):
     offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
-        bincode.pack_unsigned_into(self.offset, b)
+        bincode.pack_u64_into(self.inode, b)
+        bincode.pack_v61_into(self.offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeResp':
-        inode = bincode.unpack_unsigned(u)
-        offset = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
+        offset = bincode.unpack_v61(u)
         return CertifyExpungeResp(inode, offset)
 
 
@@ -1053,11 +1043,11 @@ class ExpungeEdenFileResp(bincode.Packable):
     inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenFileResp':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         return ExpungeEdenFileResp(inode)
 
 
@@ -1068,12 +1058,12 @@ class DeleteFileResp(bincode.Packable):
     name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'DeleteFileResp':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         return DeleteFileResp(parent_inode, name)
 
@@ -1093,16 +1083,14 @@ class FetchedBlock(bincode.Packable):
     flags: BlockFlags
 
     def calc_packed_size(self) -> int:
-        return 4 + 2 + 8 + 4 + bincode.varint_packed_size(self.size) + 1
+        return 4 + 2 + 8 + 4 + bincode.v61_packed_size(self.size) + 1
 
     def pack_into(self, b: bytearray) -> None:
-        assert len(self.ip) == 4
-        assert len(self.crc) == 4
-        bincode.pack_fixed_into(self.ip, b)
+        bincode.pack_fixed_into(self.ip, 4, b)
         bincode.pack_u16_into(self.port, b)
         bincode.pack_u64_into(self.block_id, b)
-        bincode.pack_fixed_into(self.crc, b)
-        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_fixed_into(self.crc, 4, b)
+        bincode.pack_v61_into(self.size, b)
         bincode.pack_u8_into(self.flags, b)
 
     @staticmethod
@@ -1111,7 +1099,7 @@ class FetchedBlock(bincode.Packable):
         port = bincode.unpack_u16(u)
         block_id = bincode.unpack_u64(u)
         crc = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_unsigned(u)
+        size = bincode.unpack_v61(u)
         flags = BlockFlags(bincode.unpack_u8(u))
         return FetchedBlock(ip, port, block_id, crc, size, flags)
 
@@ -1127,25 +1115,23 @@ class FetchedSpan(bincode.Packable):
 
     def calc_packed_size(self) -> int:
         ret = 1 + 1 + 4 # partity + storage_class
-        ret += bincode.varint_packed_size(self.file_offset)
-        ret += bincode.varint_packed_size(self.size)
+        ret += bincode.v61_packed_size(self.file_offset)
+        ret += bincode.v61_packed_size(self.size)
         if isinstance(self.payload, bytes):
-            ret += bincode.varbytes_packed_size(self.payload)
+            ret += len(self.payload)
         else:
             ret += sum(block.calc_packed_size() for block in self.payload)
         return ret
 
     def pack_into(self, b: bytearray) -> None:
-        assert len(self.crc) == 4
-        bincode.pack_unsigned_into(self.file_offset, b)
+        bincode.pack_v61_into(self.file_offset, b)
         bincode.pack_u8_into(self.parity, b)
         bincode.pack_u8_into(self.storage_class, b)
-        bincode.pack_fixed_into(self.crc, b)
-        bincode.pack_unsigned_into(self.size, b)
+        bincode.pack_fixed_into(self.crc, 4, b)
+        bincode.pack_v61_into(self.size, b)
         if self.storage_class == INLINE_STORAGE:
             assert isinstance(self.payload, bytes)
-            assert self.size == len(self.payload)
-            bincode.pack_fixed_into(self.payload, b)
+            bincode.pack_fixed_into(self.payload, self.size, b)
         elif self.storage_class == ZERO_FILL_STORAGE:
             assert self.payload == b''
         else:
@@ -1156,11 +1142,11 @@ class FetchedSpan(bincode.Packable):
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'FetchedSpan':
-        file_offset = bincode.unpack_unsigned(u)
+        file_offset = bincode.unpack_v61(u)
         parity = bincode.unpack_u8(u)
         storage_class = bincode.unpack_u8(u)
         crc = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_unsigned(u)
+        size = bincode.unpack_v61(u)
         payload: Union[bytes, List[FetchedBlock]]
         if storage_class == INLINE_STORAGE:
             payload = bincode.unpack_fixed(u, size)
@@ -1170,27 +1156,28 @@ class FetchedSpan(bincode.Packable):
             num_blocks = metadata_utils.total_blocks(parity)
             assert num_blocks
             payload = [FetchedBlock.unpack(u) for _ in range(num_blocks)]
-        return FetchedSpan(file_offset, parity, storage_class, crc, size, payload)
+        return FetchedSpan(file_offset, parity, storage_class, crc, size,
+            payload)
 
 
 @dataclass
 class FetchSpansResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.FETCH_SPANS
-    SIZE_UPPER_BOUND: ClassVar[int] = 9 + 3
+    SIZE_UPPER_BOUND: ClassVar[int] = 8 + 2
     next_offset: int # 0 => no more spans (0 more efficient than UINT64_MAX)
     spans: List[FetchedSpan]
 
     def pack_into(self, b: bytearray) -> None:
         assert len(self.spans) < 2**16
-        bincode.pack_unsigned_into(self.next_offset, b)
-        bincode.pack_unsigned_into(len(self.spans), b)
+        bincode.pack_v61_into(self.next_offset, b)
+        bincode.pack_u16_into(len(self.spans), b)
         for span in self.spans:
             span.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'FetchSpansResp':
-        next_offset = bincode.unpack_unsigned(u)
-        num_spans = bincode.unpack_unsigned(u)
+        next_offset = bincode.unpack_v61(u)
+        num_spans = bincode.unpack_u16(u)
         spans = [FetchedSpan.unpack(u) for _ in range(num_spans)]
         return FetchSpansResp(next_offset, spans)
 
@@ -1215,13 +1202,13 @@ class PurgeDirentResp(bincode.Packable):
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u64_into(self.creation_time, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeDirentResp':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         creation_time = bincode.unpack_u64(u)
         return PurgeDirentResp(parent_inode, name, creation_time)
@@ -1287,18 +1274,18 @@ class QueriedBlock(bincode.Packable):
     byte_offset: int
 
     def calc_packed_size(self) -> int:
-        return 16 + bincode.varint_packed_size(self.byte_offset)
+        return 16 + bincode.v61_packed_size(self.byte_offset)
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.block_id, b)
         bincode.pack_u64_into(self.file_inode, b)
-        bincode.pack_unsigned_into(self.byte_offset, b)
+        bincode.pack_v61_into(self.byte_offset, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'QueriedBlock':
         block_id = bincode.unpack_u64(u)
         file_inode = bincode.unpack_u64(u)
-        byte_offset = bincode.unpack_unsigned(u)
+        byte_offset = bincode.unpack_v61(u)
         return QueriedBlock(block_id, file_inode, byte_offset)
 
 
@@ -1334,13 +1321,13 @@ class PurgeRemoteOwningDirentResp(bincode.Packable):
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.parent_inode, b)
+        bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.name.encode(), b)
         bincode.pack_u64_into(self.creation_time, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteOwningDirentResp':
-        parent_inode = bincode.unpack_unsigned(u)
+        parent_inode = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
         creation_time = bincode.unpack_u64(u)
         return PurgeRemoteOwningDirentResp(parent_inode, name, creation_time)
@@ -1352,11 +1339,11 @@ class MoveFileToEdenResp(bincode.Packable):
     inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_unsigned_into(self.inode, b)
+        bincode.pack_u64_into(self.inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MoveFileToEdenResp':
-        inode = bincode.unpack_unsigned(u)
+        inode = bincode.unpack_u64(u)
         return MoveFileToEdenResp(inode)
 
 

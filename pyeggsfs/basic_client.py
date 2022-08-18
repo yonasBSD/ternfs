@@ -565,6 +565,36 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
+def do_visit_inodes(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    continuation_key = int(arg2)
+    shard = metadata_utils.shard_from_inode(continuation_key)
+    ret = []
+    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+        resp = send_request(
+            metadata_msgs.VisitInodesReq(continuation_key),
+            shard
+        )
+        assert isinstance(resp, metadata_msgs.VisitInodesResp)
+        ret.extend(resp.inodes)
+        continuation_key = resp.continuation_key
+    pprint.pprint(ret)
+
+
+def do_visit_eden(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    continuation_key = int(arg2)
+    shard = metadata_utils.shard_from_inode(continuation_key)
+    ret = []
+    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+        resp = send_request(
+            metadata_msgs.VisitEdenReq(continuation_key),
+            shard
+        )
+        assert isinstance(resp, metadata_msgs.VisitEdenResp)
+        ret.extend(resp.eden_vals)
+        continuation_key = resp.continuation_key
+    pprint.pprint(ret)
+
+
 def do_playground(parent_inode: ResolvedInode, name: str,
     arg2: str) -> None:
     # source = (1537, 6600462696362219263)
@@ -628,6 +658,8 @@ requests: Dict[str, Callable[[ResolvedInode, str, str], None]] = {
     'expunge_span': do_expunge_span,
     'expunge_file': do_expunge_file,
     'create_test_file': do_create_test_file,
+    'visit_inodes': do_visit_inodes,
+    'visit_eden': do_visit_eden,
     'playground': do_playground,
 }
 

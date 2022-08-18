@@ -37,6 +37,8 @@ class RequestKind(enum.IntEnum):
     FETCH_SPANS = 0x0D
     SAME_DIR_RENAME = 0x0E
     PURGE_DIRENT = 0x0F # won't work for remote owning dirents
+    VISIT_INODES = 0x10
+    VISIT_EDEN = 0x11
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -427,6 +429,34 @@ class PurgeDirentReq(bincode.Packable):
 
 
 @dataclass
+class VisitInodesReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.VISIT_INODES
+    begin_inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.begin_inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitInodesReq':
+        begin_inode = bincode.unpack_u64(u)
+        return VisitInodesReq(begin_inode)
+
+
+@dataclass
+class VisitEdenReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.VISIT_EDEN
+    begin_inode: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.begin_inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitEdenReq':
+        begin_inode = bincode.unpack_u64(u)
+        return VisitEdenReq(begin_inode)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -570,9 +600,9 @@ class MoveFileToEdenReq(bincode.Packable):
 ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
-    FetchSpansReq, SameDirRenameReq, PurgeDirentReq, SetParentReq,
-    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq,
-    PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
+    FetchSpansReq, SameDirRenameReq, PurgeDirentReq, VisitInodesReq,
+    VisitEdenReq, SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
+    ReleaseDirentReq, PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
 
 
 @dataclass
@@ -1178,6 +1208,59 @@ class PurgeDirentResp(bincode.Packable):
 
 
 @dataclass
+class VisitInodesResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.VISIT_INODES
+    SIZE: ClassVar[int] = 8
+    continuation_key: int
+    inodes: List[int]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert (MetadataResponse.SIZE + VisitInodesResp.SIZE
+            + 8 * len(self.inodes)) <= metadata_utils.UDP_MTU
+        bincode.pack_u64_into(self.continuation_key, b)
+        for inode in self.inodes:
+            bincode.pack_u64_into(inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitInodesResp':
+        continuation_key = bincode.unpack_u64(u)
+        num_inodes = u.bytes_remaining() // 8
+        inodes = [bincode.unpack_u64(u) for _ in range(num_inodes)]
+        return VisitInodesResp(continuation_key, inodes)
+
+
+class EdenVal(NamedTuple):
+    inode: int
+    deadline_time: int
+
+
+@dataclass
+class VisitEdenResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.VISIT_EDEN
+    SIZE: ClassVar[int] = 8
+    continuation_key: int
+    eden_vals: List[EdenVal]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert (MetadataResponse.SIZE + VisitEdenResp.SIZE
+            + 16 * len(self.eden_vals)) <= metadata_utils.UDP_MTU
+        bincode.pack_u64_into(self.continuation_key, b)
+        for eden_val in self.eden_vals:
+            bincode.pack_u64_into(eden_val.inode, b)
+            bincode.pack_u64_into(eden_val.deadline_time, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitEdenResp':
+        continuation_key = bincode.unpack_u64(u)
+        num_eden_vals = u.bytes_remaining() // 16
+        eden_vals = [
+            EdenVal(bincode.unpack_u64(u), bincode.unpack_u64(u))
+            for _ in range(num_eden_vals)
+        ]
+        return VisitEdenResp(continuation_key, eden_vals)
+
+
+@dataclass
 class PurgeRemoteOwningDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
     parent_inode: int
@@ -1215,9 +1298,9 @@ RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     CreateEdenFileResp, AddEdenSpanResp, CertifyEdenSpanResp, LinkEdenFileResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
     ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
-    SameDirRenameResp, PurgeDirentResp, SetParentResp, CreateDirResp,
-    InjectDirentResp, AcquireDirentResp, ReleaseDirentResp,
-    PurgeRemoteOwningDirentResp, MoveFileToEdenResp]
+    SameDirRenameResp, PurgeDirentResp, VisitInodesResp, VisitEdenResp,
+    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
+    ReleaseDirentResp, PurgeRemoteOwningDirentResp, MoveFileToEdenResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -1236,6 +1319,8 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.FETCH_SPANS: (FetchSpansReq, FetchSpansResp),
     RequestKind.SAME_DIR_RENAME: (SameDirRenameReq, SameDirRenameResp),
     RequestKind.PURGE_DIRENT: (PurgeDirentReq, PurgeDirentResp),
+    RequestKind.VISIT_INODES: (VisitInodesReq, VisitInodesResp),
+    RequestKind.VISIT_EDEN: (VisitEdenReq, VisitEdenResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

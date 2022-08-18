@@ -1317,6 +1317,32 @@ class MetadataShard:
             del self.inodes[r.parent_inode]
         return PurgeDirentResp(r.parent_inode, r.name, r.creation_time)
 
+    def do_visit_inodes(self, r: VisitInodesReq) -> RespBodyTy:
+        budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - VisitInodesResp.SIZE
+        num_inodes_to_fetch = (budget // 8) + 1 # include continuation key
+        inode_range = self.inodes.irange(r.begin_inode)
+        inodes = list(itertools.islice(inode_range, num_inodes_to_fetch))
+        continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+        if len(inodes) == num_inodes_to_fetch:
+            continuation_key = inodes[-1]
+            inodes = inodes[:-1]
+        return VisitInodesResp(continuation_key, inodes)
+
+    def do_visit_eden(self, r: VisitEdenReq) -> RespBodyTy:
+        budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - VisitEdenResp.SIZE
+        num_files_to_fetch = (budget // 16) + 1 # include continuation key
+        begin_idx = self.eden.bisect_left(r.begin_inode)
+        end_idx = begin_idx + num_files_to_fetch
+        eden_vals = [
+            EdenVal(inode, eden_file.deadline_time)
+            for inode, eden_file in self.eden.items()[begin_idx:end_idx]
+        ]
+        continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+        if len(eden_vals) == num_files_to_fetch:
+            continuation_key = eden_vals[-1].inode
+            eden_vals = eden_vals[:-1]
+        return VisitEdenResp(continuation_key, eden_vals)
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -1630,6 +1656,10 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                 elif isinstance(request.body, PurgeDirentReq):
                     resp_body = shard.do_purge_dirent(request.body)
                     dirty = True
+                elif isinstance(request.body, VisitInodesReq):
+                    resp_body = shard.do_visit_inodes(request.body)
+                elif isinstance(request.body, VisitEdenReq):
+                    resp_body = shard.do_visit_eden(request.body)
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True

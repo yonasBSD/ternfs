@@ -39,6 +39,7 @@ class RequestKind(enum.IntEnum):
     PURGE_DIRENT = 0x0F # won't work for remote owning dirents
     VISIT_INODES = 0x10
     VISIT_EDEN = 0x11
+    REVERSE_BLOCK_QUERY = 0x12
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -320,12 +321,12 @@ class CertifyExpungeReq(bincode.Packable):
     proofs: List[Tuple[int, bytes]]
 
     def pack_into(self, b: bytearray) -> None:
-        assert all(len(proof) == 8 for proof in self.proofs)
+        assert all(len(proof) == 8 for _, proof in self.proofs)
         bincode.pack_unsigned_into(self.inode, b)
         bincode.pack_unsigned_into(self.offset, b)
         bincode.pack_unsigned_into(len(self.proofs), b)
         for block_id, proof in self.proofs:
-            bincode.pack_u32_into(block_id, b)
+            bincode.pack_u64_into(block_id, b)
             bincode.pack_fixed_into(proof, b)
 
     @staticmethod
@@ -334,7 +335,7 @@ class CertifyExpungeReq(bincode.Packable):
         offset = bincode.unpack_unsigned(u)
         num_proofs = bincode.unpack_unsigned(u)
         proofs = [
-            (bincode.unpack_u32(u), bincode.unpack_fixed(u, 8))
+            (bincode.unpack_u64(u), bincode.unpack_fixed(u, 8))
             for _ in range(num_proofs)
         ]
         return CertifyExpungeReq(inode, offset, proofs)
@@ -454,6 +455,24 @@ class VisitEdenReq(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'VisitEdenReq':
         begin_inode = bincode.unpack_u64(u)
         return VisitEdenReq(begin_inode)
+
+
+@dataclass
+class ReverseBlockQueryReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.REVERSE_BLOCK_QUERY
+    bserver_secret: bytes
+    from_block_id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        assert len(self.bserver_secret) == 16
+        bincode.pack_fixed_into(self.bserver_secret, b)
+        bincode.pack_u64_into(self.from_block_id, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ReverseBlockQueryReq':
+        bserver_secret = bincode.unpack_fixed(u, 16)
+        from_block_id = bincode.unpack_u64(u)
+        return ReverseBlockQueryReq(bserver_secret, from_block_id)
 
 
 @dataclass
@@ -601,8 +620,9 @@ ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
     FetchSpansReq, SameDirRenameReq, PurgeDirentReq, VisitInodesReq,
-    VisitEdenReq, SetParentReq, CreateDirReq, InjectDirentReq, AcquireDirentReq,
-    ReleaseDirentReq, PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
+    VisitEdenReq, ReverseBlockQueryReq, SetParentReq, CreateDirReq,
+    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq,
+    PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
 
 
 @dataclass
@@ -1261,6 +1281,52 @@ class VisitEdenResp(bincode.Packable):
 
 
 @dataclass
+class QueriedBlock(bincode.Packable):
+    block_id: int
+    file_inode: int
+    byte_offset: int
+
+    def calc_packed_size(self) -> int:
+        return 16 + bincode.varint_packed_size(self.byte_offset)
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.block_id, b)
+        bincode.pack_u64_into(self.file_inode, b)
+        bincode.pack_unsigned_into(self.byte_offset, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'QueriedBlock':
+        block_id = bincode.unpack_u64(u)
+        file_inode = bincode.unpack_u64(u)
+        byte_offset = bincode.unpack_unsigned(u)
+        return QueriedBlock(block_id, file_inode, byte_offset)
+
+
+@dataclass
+class ReverseBlockQueryResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.REVERSE_BLOCK_QUERY
+    SIZE: ClassVar[int] = 8 + 2
+    continuation_key: int
+    blocks: List[QueriedBlock]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.continuation_key, b)
+        bincode.pack_u16_into(len(self.blocks), b)
+        for block in self.blocks:
+            block.pack_into(b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ReverseBlockQueryResp':
+        continuation_key = bincode.unpack_u64(u)
+        num_blocks = bincode.unpack_u16(u)
+        blocks = [
+            QueriedBlock.unpack(u)
+            for _ in range(num_blocks)
+        ]
+        return ReverseBlockQueryResp(continuation_key, blocks)
+
+
+@dataclass
 class PurgeRemoteOwningDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
     parent_inode: int
@@ -1299,8 +1365,9 @@ RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
     ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
     SameDirRenameResp, PurgeDirentResp, VisitInodesResp, VisitEdenResp,
-    SetParentResp, CreateDirResp, InjectDirentResp, AcquireDirentResp,
-    ReleaseDirentResp, PurgeRemoteOwningDirentResp, MoveFileToEdenResp]
+    ReverseBlockQueryResp, SetParentResp, CreateDirResp, InjectDirentResp,
+    AcquireDirentResp, ReleaseDirentResp, PurgeRemoteOwningDirentResp,
+    MoveFileToEdenResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -1321,6 +1388,8 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.PURGE_DIRENT: (PurgeDirentReq, PurgeDirentResp),
     RequestKind.VISIT_INODES: (VisitInodesReq, VisitInodesResp),
     RequestKind.VISIT_EDEN: (VisitEdenReq, VisitEdenResp),
+    RequestKind.REVERSE_BLOCK_QUERY: (ReverseBlockQueryReq,
+        ReverseBlockQueryResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

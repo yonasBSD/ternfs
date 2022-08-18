@@ -95,7 +95,6 @@ class Block:
     block_id: int
     crc32: bytes
     size: int
-    block_idx: int #FIXME: this should be implicit
 
     def calc_create_cert(self, key: crypto.ExpandedKey) -> bytes:
         b = bytearray(32)
@@ -329,6 +328,16 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
     return None
 
 
+class BlockIndexKey(NamedTuple):
+    bserver_id: int
+    block_id: int
+
+
+class SpanId(NamedTuple):
+    file_inode: int
+    byte_offset: int
+
+
 class MetadataShard:
     def __init__(self, shard: int):
         assert 0 <= shard <= 255
@@ -350,8 +359,12 @@ class MetadataShard:
                 opaque=b'', #FIXME: what should opaque be for root?
             )
         self.bserver_secret_to_id: DefaultDict[bytes, int] = (
-            collections.defaultdict(self._dispense_bserver_id))
+            collections.defaultdict(self._dispense_bserver_id)
+        )
         self.terminal_bservers: Set[int] = set()
+        self.reverse_block_index: SortedDict[BlockIndexKey, SpanId] = (
+            SortedDict()
+        )
 
     def register_bserver(self, secret: bytes) -> int:
         return self.bserver_secret_to_id[secret]
@@ -618,17 +631,18 @@ class MetadataShard:
                     )
 
                 assert len(target_block_servers) == len(r.payload)
-                new_blocks = [
-                    Block(
+                new_blocks = []
+                span_id = SpanId(r.inode, r.byte_offset)
+                for binfo, bserver in zip(r.payload, target_block_servers):
+                    block_id = self._dispense_block_id(now)
+                    new_blocks.append(Block(
                         bserver.id,
-                        self._dispense_block_id(now),
+                        block_id,
                         binfo.crc32,
                         binfo.size,
-                        idx
-                    )
-                    for idx, (binfo, bserver)
-                    in enumerate(zip(r.payload, target_block_servers))
-                ]
+                    ))
+                    index_key = BlockIndexKey(bserver.id, block_id)
+                    self.reverse_block_index[index_key] = span_id
                 new_span = Span(
                     r.parity_mode,
                     r.storage_class,
@@ -673,18 +687,18 @@ class MetadataShard:
                 assert s is not None
                 assert isinstance(existing_span.payload, list)
                 for b in existing_span.payload:
-                    bserver = s.lookup(b.bserver_id)
-                    if bserver is None:
+                    maybe_bserver = s.lookup(b.bserver_id)
+                    if maybe_bserver is None:
                         return MetadataError(
                             MetadataErrorKind.SHUCKLE_ERROR,
                             f'Previously allocated storage node not found'
                         )
                     resp_payload.append(
                         BlockInfo(
-                            bserver.ip,
-                            bserver.port,
+                            maybe_bserver.ip,
+                            maybe_bserver.port,
                             b.block_id,
-                            b.calc_create_cert(bserver.secret_key)
+                            b.calc_create_cert(maybe_bserver.secret_key)
                         )
                     )
 
@@ -1075,18 +1089,17 @@ class MetadataShard:
         blocks_to_cert = {
             block.block_id: block
             for block in last_span.payload
-            if not self.is_bserver_terminal(block.bserver_id)
         }
 
         for block_id, proof in r.proofs:
             block = blocks_to_cert.get(block_id)
             if block is None:
                 continue
-            bserver = s.lookup(block_id)
+            bserver = s.lookup(block.bserver_id)
             if bserver is None:
                 return MetadataError(
                     MetadataErrorKind.SHUCKLE_ERROR,
-                    f'Storage node for {block.block_id} not found'
+                    f'Storage node for {block_id} not found'
                 )
             if proof != block.calc_delete_proof(bserver.secret_key):
                 return MetadataError(
@@ -1103,6 +1116,10 @@ class MetadataShard:
             )
 
         # all checks passed, we can now do the thing
+        for block in last_span.payload:
+            del self.reverse_block_index[
+                BlockIndexKey(block.bserver_id, block.block_id)
+            ]
         del eden_file.f.spans[last_offset]
         eden_file.f.size = last_offset
         eden_file.last_span_state = SpanState.CLEAN
@@ -1342,6 +1359,32 @@ class MetadataShard:
             continuation_key = eden_vals[-1].inode
             eden_vals = eden_vals[:-1]
         return VisitEdenResp(continuation_key, eden_vals)
+
+    def do_reverse_block_query(self, r: ReverseBlockQueryReq) -> RespBodyTy:
+        bserver = self.bserver_secret_to_id.get(r.bserver_secret)
+        if bserver is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Could not locate given bserver'
+            )
+        budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - ReverseBlockQueryResp.SIZE
+        begin = BlockIndexKey(bserver, r.from_block_id)
+        end = BlockIndexKey(bserver + 1, 0)
+        blocks = []
+        for key in self.reverse_block_index.irange(begin, end, inclusive=(True, False)):
+            span = self.reverse_block_index[key]
+            continuation_key = key.block_id
+            queried_block = QueriedBlock(
+                key.block_id, span.file_inode, span.byte_offset
+            )
+            size = queried_block.calc_packed_size()
+            if budget < size:
+                break
+            budget -= size
+            blocks.append(queried_block)
+        else:
+            continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+        return ReverseBlockQueryResp(continuation_key, blocks)
 
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
@@ -1660,6 +1703,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_visit_inodes(request.body)
                 elif isinstance(request.body, VisitEdenReq):
                     resp_body = shard.do_visit_eden(request.body)
+                elif isinstance(request.body, ReverseBlockQueryReq):
+                    resp_body = shard.do_reverse_block_query(request.body)
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True

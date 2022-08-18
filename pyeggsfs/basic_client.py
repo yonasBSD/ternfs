@@ -595,6 +595,22 @@ def do_visit_eden(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     pprint.pprint(ret)
 
 
+def do_reverse_block_query(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+    bserver = bytes.fromhex(arg2)
+    ret = []
+    for shard in range(2):#256):
+        continuation_key = 0
+        while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+            resp = send_request(
+                metadata_msgs.ReverseBlockQueryReq(bserver, continuation_key),
+                shard
+            )
+            assert isinstance(resp, metadata_msgs.ReverseBlockQueryResp)
+            ret.extend(resp.blocks)
+            continuation_key = resp.continuation_key
+    pprint.pprint(ret)
+
+
 def do_playground(parent_inode: ResolvedInode, name: str,
     arg2: str) -> None:
     # source = (1537, 6600462696362219263)
@@ -615,8 +631,8 @@ def do_playground(parent_inode: ResolvedInode, name: str,
     resp = send_request(
         metadata_msgs.PurgeDirentReq(
             1,
-            'test.txt',
-            82912919704299850,
+            'a',
+            82998250604871378,
         ),
         1
     )
@@ -660,6 +676,7 @@ requests: Dict[str, Callable[[ResolvedInode, str, str], None]] = {
     'create_test_file': do_create_test_file,
     'visit_inodes': do_visit_inodes,
     'visit_eden': do_visit_eden,
+    'reverse_block_query': do_reverse_block_query,
     'playground': do_playground,
 }
 

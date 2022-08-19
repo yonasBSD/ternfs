@@ -481,6 +481,10 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
             storage_class = metadata_msgs.ZERO_FILL_STORAGE
             parity_mode = 0
             payload = b''
+        elif mode == 'SINGLE':
+            storage_class = second_block_sc
+            parity_mode = metadata_utils.create_parity_mode(1, 0)
+            payload = [metadata_msgs.NewBlockInfo(crc, len(data))]
         elif mode == 'MIRRORING':
             storage_class = second_block_sc
             parity_mode = metadata_utils.create_parity_mode(1, 2)
@@ -524,12 +528,13 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
     cur_offset = 0
     for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
+    # for data, mode in [(b' world', 'SINGLE')]:
         crc = crypto.crc32c(data)
         resp = add_span(data, crc, cur_offset, mode)
         if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
             raise RuntimeError(f'{resp}')
         write_proofs = []
-        if mode == 'MIRRORING':
+        if mode in ('SINGLE', 'MIRRORING'):
             write_proofs = [
                 write_block(data, (socket.inet_ntoa(binfo.ip), binfo.port),
                     binfo.block_id, crc, binfo.certificate)
@@ -553,8 +558,8 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
         cur_offset += len(data)
 
-    # a beautiful file with all the required bytes is in eden
-    # now just need to link it
+    a beautiful file with all the required bytes is in eden
+    now just need to link it
     resp = send_request(
         metadata_msgs.LinkEdenFileReq(
             new_inode_id,
@@ -630,14 +635,14 @@ def do_playground(parent_inode: ResolvedInode, name: str,
     #     ),
     #     1
     # )
-    resp = send_request(
-        metadata_msgs.PurgeDirentReq(
-            1,
-            'a',
-            82998250604871378,
-        ),
-        1
-    )
+    # resp = send_request(
+    #     metadata_msgs.PurgeDirentReq(
+    #         1,
+    #         'a',
+    #         82998250604871378,
+    #     ),
+    #     1
+    # )
     # resp = cross_dir_request(
     #     cross_dir_msgs.PurgeRemoteFileReq(
     #         1,
@@ -645,6 +650,17 @@ def do_playground(parent_inode: ResolvedInode, name: str,
     #         82912756340648967,
     #     ),
     # )
+    resp = send_request(
+        metadata_msgs.RepairBlockReq(
+            5633,
+            18018732710616102787,
+            5121,
+            0,
+            6,
+            83065400081668609,
+        ),
+        metadata_utils.shard_from_inode(5633)
+    )
     print(resp)
 
 

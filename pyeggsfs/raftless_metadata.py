@@ -885,7 +885,7 @@ class MetadataShard:
             return MetadataError(
                 MetadataErrorKind.BAD_REQUEST,
                 'Source and target have inconsistent end span states'
-                f' source={eden_file.last_span_state};'
+                f' source={source.last_span_state};'
                 f' target={end_span_state}'
             )
         if sink.last_span_state != SpanState.CLEAN:
@@ -1404,6 +1404,115 @@ class MetadataShard:
             continuation_key = 0xFFFF_FFFF_FFFF_FFFF
         return ReverseBlockQueryResp(continuation_key, blocks)
 
+    def do_repair_block(self, r: RepairBlockReq) -> RespBodyTy:
+        if r.source_inode == r.target_inode:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source and target must be distinct'
+            )
+        source = self.eden.get(r.source_inode)
+        if source is None:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Source inode not found in eden'
+            )
+        eden_files = [('source', source)]
+        inode_cookie_pairs = [(r.source_inode, r.source_cookie)]
+        target_span_state = SpanState.CLEAN
+        if r.target_cookie:
+            eden_target = self.eden.get(r.target_inode)
+            if eden_target is None:
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'Target inode not found in eden'
+                )
+            eden_files.append(('target', eden_target))
+            inode_cookie_pairs.append((r.target_inode, r.target_cookie))
+            target = eden_target.f
+            if target.spans.bisect_right(r.byte_offset) == len(target.spans):
+                # client wants to exchange block in final span
+                target_span_state = eden_target.last_span_state
+        else:
+            maybe_target = self.inodes.get(r.target_inode)
+            if maybe_target is None:
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'Target inode not found'
+                )
+            if not isinstance(maybe_target, File):
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Target not a file'
+                )
+            target = maybe_target
+        if source.last_span_state != target_span_state:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source and target have inconsistent end span states'
+                f' source={source.last_span_state};'
+                f' target={target_span_state}'
+            )
+        for id, cookie in inode_cookie_pairs:
+            if self._calc_cookie(id) != cookie:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    f'Wrong cookie for {id}'
+                )
+        if len(source.f.spans) != 1:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source has more than one span'
+            )
+        source_span = source.f.spans[0]
+        if (not isinstance(source_span.payload, list)
+            or len(source_span.payload) != 1):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Source must have only one block'
+            )
+        source_block = source_span.payload[0]
+        now = metadata_utils.now()
+        for name, eden_file in eden_files:
+            if now > eden_file.deadline_time:
+                return MetadataError(
+                    MetadataErrorKind.EDEN_DEADLINE,
+                    f'{name} has expired deadline time'
+                )
+        target_span = target.spans.get(r.byte_offset)
+        if target_span is None:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Offset not found in target'
+            )
+        if not isinstance(target_span.payload, list):
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'Target span is blockless'
+            )
+
+        for idx, target_block in enumerate(target_span.payload):
+            if target_block.block_id == r.faulty_block_id:
+                break
+        else:
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Fault block not found in target'
+            )
+
+        if source_block.crc32 != target_block.crc32:
+            return MetadataError(
+                MetadataErrorKind.BAD_REQUEST,
+                'CRCs do not match'
+            )
+
+        # passed all our checks... we can do the swap
+        source_span.payload[0] = target_block
+        target_span.payload[idx] = source_block
+        for _, eden_file in eden_files:
+            eden_file.deadline_time = now + DEADLINE_DURATION_NS
+
+        return RepairBlockResp()
+
     def do_set_parent(self, r: SetParentReq) -> RespBodyTy:
         affected_inode = self.inodes.get(r.inode)
         if affected_inode is None:
@@ -1723,6 +1832,9 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_visit_eden(request.body)
                 elif isinstance(request.body, ReverseBlockQueryReq):
                     resp_body = shard.do_reverse_block_query(request.body)
+                elif isinstance(request.body, RepairBlockReq):
+                    resp_body = shard.do_repair_block(request.body)
+                    dirty = True
                 elif isinstance(request.body, SetParentReq):
                     resp_body = shard.do_set_parent(request.body)
                     dirty = True

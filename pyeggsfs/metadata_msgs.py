@@ -40,6 +40,7 @@ class RequestKind(enum.IntEnum):
     VISIT_INODES = 0x10
     VISIT_EDEN = 0x11
     REVERSE_BLOCK_QUERY = 0x12
+    REPAIR_BLOCK = 0x13
 
     # privilaged (needs MAC)
     SET_PARENT = 0x81
@@ -470,6 +471,36 @@ class ReverseBlockQueryReq(bincode.Packable):
 
 
 @dataclass
+class RepairBlockReq(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.REPAIR_BLOCK
+    source_inode: int
+    source_cookie: int
+    target_inode: int
+    target_cookie: int # 0 implies target is not in eden
+    byte_offset: int
+    faulty_block_id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.source_inode, b)
+        bincode.pack_u64_into(self.source_cookie, b)
+        bincode.pack_u64_into(self.target_inode, b)
+        bincode.pack_u64_into(self.target_cookie, b)
+        bincode.pack_v61_into(self.byte_offset, b)
+        bincode.pack_u64_into(self.faulty_block_id, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RepairBlockReq':
+        source_inode = bincode.unpack_u64(u)
+        source_cookie = bincode.unpack_u64(u)
+        target_inode = bincode.unpack_u64(u)
+        target_cookie = bincode.unpack_u64(u)
+        byte_offset = bincode.unpack_v61(u)
+        faulty_block_id = bincode.unpack_u64(u)
+        return RepairBlockReq(source_inode, source_cookie, target_inode,
+            target_cookie, byte_offset, faulty_block_id)
+
+
+@dataclass
 class SetParentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.SET_PARENT
     inode: int
@@ -614,8 +645,8 @@ ReqBodyTy = Union[ResolveReq, StatReq, LsDirReq, CreateEdenFileReq,
     AddEdenSpanReq, CertifyEdenSpanReq, LinkEdenFileReq, RepairSpansReq,
     ExpungeEdenSpanReq, CertifyExpungeReq, ExpungeEdenFileReq, DeleteFileReq,
     FetchSpansReq, SameDirRenameReq, PurgeDirentReq, VisitInodesReq,
-    VisitEdenReq, ReverseBlockQueryReq, SetParentReq, CreateDirReq,
-    InjectDirentReq, AcquireDirentReq, ReleaseDirentReq,
+    VisitEdenReq, ReverseBlockQueryReq, RepairBlockReq, SetParentReq,
+    CreateDirReq, InjectDirentReq, AcquireDirentReq, ReleaseDirentReq,
     PurgeRemoteOwningDirentReq, MoveFileToEdenReq]
 
 
@@ -1314,6 +1345,18 @@ class ReverseBlockQueryResp(bincode.Packable):
 
 
 @dataclass
+class RepairBlockResp(bincode.Packable):
+    kind: ClassVar[RequestKind] = RequestKind.REPAIR_BLOCK
+
+    def pack_into(self, b: bytearray) -> None:
+        pass
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RepairBlockResp':
+        return RepairBlockResp()
+
+
+@dataclass
 class PurgeRemoteOwningDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
     parent_inode: int
@@ -1352,9 +1395,9 @@ RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,
     RepairSpansResp, ExpungeEdenSpanResp, CertifyExpungeResp,
     ExpungeEdenFileResp, DeleteFileResp, DeleteFileReq, FetchSpansResp,
     SameDirRenameResp, PurgeDirentResp, VisitInodesResp, VisitEdenResp,
-    ReverseBlockQueryResp, SetParentResp, CreateDirResp, InjectDirentResp,
-    AcquireDirentResp, ReleaseDirentResp, PurgeRemoteOwningDirentResp,
-    MoveFileToEdenResp]
+    ReverseBlockQueryResp, RepairBlockResp, SetParentResp, CreateDirResp,
+    InjectDirentResp, AcquireDirentResp, ReleaseDirentResp,
+    PurgeRemoteOwningDirentResp, MoveFileToEdenResp]
 
 
 REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
@@ -1377,6 +1420,7 @@ REQUESTS: Dict[RequestKind, Tuple[Type[ReqBodyTy], Type[RespBodyTy]]] = {
     RequestKind.VISIT_EDEN: (VisitEdenReq, VisitEdenResp),
     RequestKind.REVERSE_BLOCK_QUERY: (ReverseBlockQueryReq,
         ReverseBlockQueryResp),
+    RequestKind.REPAIR_BLOCK: (RepairBlockReq, RepairBlockResp),
     RequestKind.SET_PARENT: (SetParentReq, SetParentResp),
     RequestKind.CREATE_UNLINKED_DIR: (CreateDirReq, CreateDirResp),
     RequestKind.INJECT_DIRENT: (InjectDirentReq, InjectDirentResp),

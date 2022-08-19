@@ -14,8 +14,9 @@ import bincode
 import crypto
 import cross_dir_msgs
 import metadata_msgs
-from metadata_msgs import ResolvedInode, ResolveMode
+from metadata_msgs import ResolveMode
 import metadata_utils
+from metadata_utils import InodeType
 
 
 LOCAL_HOST = '127.0.0.1'
@@ -78,7 +79,7 @@ def cross_dir_request(req_body: cross_dir_msgs.ReqBodyTy
 
 
 def resolve(parent_id: int, subname: str, creation_ts: int = 0,
-    mode: ResolveMode = ResolveMode.ALIVE) -> Optional[ResolvedInode]:
+    mode: ResolveMode = ResolveMode.ALIVE) -> Optional[int]:
 
     req_body = metadata_msgs.ResolveReq(
         mode=mode,
@@ -88,9 +89,12 @@ def resolve(parent_id: int, subname: str, creation_ts: int = 0,
     )
     resp_body = send_request(req_body, metadata_utils.shard_from_inode(parent_id))
     if not isinstance(resp_body, metadata_msgs.ResolveResp):
+        assert isinstance(resp_body, metadata_msgs.MetadataError)
+        if resp_body.error_kind == metadata_msgs.MetadataErrorKind.NOT_FOUND:
+            return None
         raise Exception(f'Bad response from server:'
             f' expected ResolveResp got {resp_body}')
-    return resp_body.f
+    return metadata_utils.strip_ownership_bit(resp_body.inode_with_ownership)
 
 
 def stat(inode: int) -> Optional[metadata_msgs.StatResp]:
@@ -106,29 +110,24 @@ def stat(inode: int) -> Optional[metadata_msgs.StatResp]:
     return resp_body
 
 
-def resolve_abs_path(path: str) -> ResolvedInode:
+def resolve_abs_path(path: str) -> int:
 
     bits = path.split('/')
     if bits[0] != "":
         raise ValueError('Path must start with /')
 
     # start at root
-    cur_inode = ResolvedInode(
-        id=metadata_utils.ROOT_INODE,
-        inode_type=metadata_msgs.InodeType.DIRECTORY,
-        creation_ts=0,
-        is_owning=True,
-    )
+    cur_inode = metadata_utils.ROOT_INODE
 
     if path == '/':
         return cur_inode
 
     for i, bit in enumerate(bits[1:]):
-        if cur_inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+        if metadata_utils.type_from_inode(cur_inode) != InodeType.DIRECTORY:
             filename = '/'.join(bits[:i+1])
             raise ValueError(f"'{filename}' is not a directory")
 
-        next_inode = resolve(cur_inode.id, bit)
+        next_inode = resolve(cur_inode, bit)
 
         if next_inode is None:
             subdirname = '/'.join(bits[:i+2])
@@ -139,21 +138,21 @@ def resolve_abs_path(path: str) -> ResolvedInode:
     return cur_inode
 
 
-def do_resolve(mode: metadata_msgs.ResolveMode, parent_inode: ResolvedInode,
+def do_resolve(mode: metadata_msgs.ResolveMode, parent_inode: int,
     name: str, arg2: str) -> None:
     creation_ts = int(arg2 or '0')
-    inode: Optional[ResolvedInode]
+    inode: Optional[int]
     if name == '':
         if mode == metadata_msgs.ResolveMode.ALIVE:
             inode = parent_inode
         else:
             inode = None
     else:
-        inode = resolve(parent_inode.id, name, creation_ts, mode)
+        inode = resolve(parent_inode, name, creation_ts, mode)
     print(inode)
 
 
-def do_mkdir(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_mkdir(parent_inode: int, name: str, arg2: str) -> None:
     if arg2 != '':
         raise ValueError('No arg2 for mkdir')
 
@@ -161,62 +160,54 @@ def do_mkdir(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     # subdirectory already exists
     # this ensures we're not wasting the rename co-ordinator's time
 
-    inode = resolve(parent_inode.id, name)
+    inode = resolve(parent_inode, name)
     if inode is not None:
         # if this inode is a directory, return success (ensures idempotency)
-        if inode.inode_type == metadata_msgs.InodeType.DIRECTORY:
+        if metadata_utils.type_from_inode(inode) == InodeType.DIRECTORY:
             print(f'Created successfully: {inode}')
             return
         raise Exception(f'Target is not a directory: {inode}')
 
-    body = cross_dir_msgs.MkDirReq(parent_inode.id, name)
+    body = cross_dir_msgs.MkDirReq(parent_inode, name)
     response = cross_dir_request(body)
     print(response)
 
 
-def do_rmdir(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_rmdir(parent_inode: int, name: str, arg2: str) -> None:
     if arg2 != '':
         raise ValueError('No arg2 for rmdir')
 
-    body = cross_dir_msgs.RmDirReq(parent_inode.id, name)
+    body = cross_dir_msgs.RmDirReq(parent_inode, name)
     response = cross_dir_request(body)
     print(response)
 
 
-def do_stat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_stat(parent_inode: int, name: str, arg2: str) -> None:
     if arg2 != '':
         raise ValueError('No arg2 for stat')
 
-    inode: Optional[ResolvedInode]
-    if parent_inode.id == metadata_utils.ROOT_INODE and name == '':
-        inode = ResolvedInode(
-            id=metadata_utils.ROOT_INODE,
-            inode_type=metadata_msgs.InodeType.DIRECTORY,
-            creation_ts=0,
-            is_owning=True)
+    inode: Optional[int]
+    if parent_inode == metadata_utils.ROOT_INODE and name == '':
+        inode = metadata_utils.ROOT_INODE
     else:
-        inode = resolve(parent_inode.id, name)
+        inode = resolve(parent_inode, name)
     if inode is None:
-        raise Exception(f'resolve ({parent_inode.id}, "{name}") returned None')
+        raise Exception(f'resolve ({parent_inode}, "{name}") returned None')
 
-    resp = stat(inode.id)
-    if resp is not None and resp.inode_type != inode.inode_type:
-        raise Exception('Bad inode type:'
-            f' expected {inode.inode_type} got {resp.inode_type}')
-
+    resp = stat(inode)
     print(resp)
 
 
-def do_rm(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_rm(parent_inode: int, name: str, arg2: str) -> None:
     if arg2 != '':
         raise ValueError('No arg2 for rm')
 
     resp = send_request(
         metadata_msgs.DeleteFileReq(
-            parent_inode.id,
+            parent_inode,
             name
         ),
-        metadata_utils.shard_from_inode(parent_inode.id)
+        metadata_utils.shard_from_inode(parent_inode)
     )
     print(resp)
 
@@ -237,7 +228,7 @@ def cross_dir_mv(old_parent: int, new_parent: int, old_name: str, new_name: str
     if resolved is None:
         raise Exception(f'Failed to resolve ({old_parent}, {old_name})')
 
-    if resolved.inode_type == metadata_msgs.InodeType.DIRECTORY:
+    if metadata_utils.type_from_inode(resolved) == InodeType.DIRECTORY:
         resp = cross_dir_request(
             cross_dir_msgs.MvDirReq(old_parent, new_parent, old_name, new_name)
         )
@@ -247,41 +238,41 @@ def cross_dir_mv(old_parent: int, new_parent: int, old_name: str, new_name: str
         )
     print(resp)
 
-def do_mv(old_parent_inode: ResolvedInode, old_name: str, arg2: str) -> None:
+def do_mv(old_parent_inode: int, old_name: str, arg2: str) -> None:
     if not posixpath.isabs(arg2):
         raise ValueError('Only abs paths supported')
     new_parent_path = posixpath.dirname(arg2)
     new_name = posixpath.basename(arg2)
 
     new_parent_inode = resolve_abs_path(new_parent_path)
-    if old_parent_inode.id == new_parent_inode.id:
-        same_dir_mv(old_parent_inode.id, old_name, new_name)
+    if old_parent_inode == new_parent_inode:
+        same_dir_mv(old_parent_inode, old_name, new_name)
     else:
-        cross_dir_mv(old_parent_inode.id, new_parent_inode.id, old_name,
+        cross_dir_mv(old_parent_inode, new_parent_inode, old_name,
             new_name)
 
-def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
+def do_ls(flags: metadata_msgs.LsFlags, parent_inode: int, name: str,
     arg2: str) -> None:
     creation_ts = int(arg2 or '0')
 
     if name == '':
         inode = parent_inode
     else:
-        maybe_inode = resolve(parent_inode.id, name)
+        maybe_inode = resolve(parent_inode, name)
         if maybe_inode is None:
             raise Exception('Target not found')
         inode = maybe_inode
 
-    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+    if metadata_utils.type_from_inode(inode) != InodeType.DIRECTORY:
         raise Exception('Target not a directory')
 
     continuation_key = 0
-    shard = metadata_utils.shard_from_inode(inode.id)
+    shard = metadata_utils.shard_from_inode(inode)
     all_results: List[str] = []
     while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
         resp = send_request(
             metadata_msgs.LsDirReq(
-                inode.id,
+                inode,
                 creation_ts,
                 continuation_key,
                 flags,
@@ -299,23 +290,23 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: ResolvedInode, name: str,
     pprint.pprint(all_results)
 
 
-def do_cat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_cat(parent_inode: int, name: str, arg2: str) -> None:
     if name == '':
         inode = parent_inode
     else:
-        maybe_inode = resolve(parent_inode.id, name)
+        maybe_inode = resolve(parent_inode, name)
         if maybe_inode is None:
             raise Exception('Target not found')
         inode = maybe_inode
 
-    if inode.inode_type == metadata_msgs.InodeType.DIRECTORY:
+    if metadata_utils.type_from_inode(inode) == InodeType.DIRECTORY:
         raise Exception('Target is a directory')
 
-    shard = metadata_utils.shard_from_inode(inode.id)
+    shard = metadata_utils.shard_from_inode(inode)
     next_offset = 0
     while True:
         resp = send_request(
-            metadata_msgs.FetchSpansReq(inode.id, next_offset), shard)
+            metadata_msgs.FetchSpansReq(inode, next_offset), shard)
         if not isinstance(resp, metadata_msgs.FetchSpansResp):
             raise Exception(str(resp))
         next_offset = resp.next_offset
@@ -358,7 +349,7 @@ def do_cat(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
         if next_offset == 0: # python lacks do..while loops
             break
 
-def do_create_eden_file(parent_inode: ResolvedInode, name: str,
+def do_create_eden_file(parent_inode: int, name: str,
     arg2: str) -> None:
 
     if arg2 != '':
@@ -367,17 +358,17 @@ def do_create_eden_file(parent_inode: ResolvedInode, name: str,
     if name == '':
         inode = parent_inode
     else:
-        maybe_inode = resolve(parent_inode.id, name)
+        maybe_inode = resolve(parent_inode, name)
         if maybe_inode is None:
             raise Exception('Target not found')
         inode = maybe_inode
 
-    if inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
+    if metadata_utils.type_from_inode(inode) != InodeType.DIRECTORY:
         raise Exception('Target not a directory')
 
     resp = send_request(
-        metadata_msgs.CreateEdenFileReq(metadata_msgs.InodeType.FILE),
-        metadata_utils.shard_from_inode(inode.id)
+        metadata_msgs.CreateEdenFileReq(InodeType.FILE),
+        metadata_utils.shard_from_inode(inode)
     )
     print(resp)
 
@@ -423,13 +414,13 @@ def expunge_one_span(eden_inode: int) -> int:
     return offset
 
 
-def do_expunge_span(parent_inode: ResolvedInode, name: str,
+def do_expunge_span(parent_inode: int, name: str,
     arg2: str) -> None:
     eden_inode = int(arg2)
     print(expunge_one_span(eden_inode))
 
 
-def do_expunge_file(parent_inode: ResolvedInode, name: str,
+def do_expunge_file(parent_inode: int, name: str,
     arg2: str) -> None:
     eden_inode = int(arg2)
     offset = expunge_one_span(eden_inode)
@@ -442,7 +433,7 @@ def do_expunge_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
-def do_create_test_file(parent_inode: ResolvedInode, name: str,
+def do_create_test_file(parent_inode: int, name: str,
     arg2: str) -> None:
 
     second_block_sc = 2
@@ -453,13 +444,10 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     if name == '':
         raise ValueError('Cannot use empty name')
 
-    if parent_inode.inode_type != metadata_msgs.InodeType.DIRECTORY:
-        raise Exception('Target not a directory')
-
-    shard = metadata_utils.shard_from_inode(parent_inode.id)
+    shard = metadata_utils.shard_from_inode(parent_inode)
 
     resp = send_request(
-        metadata_msgs.CreateEdenFileReq(metadata_msgs.InodeType.FILE),
+        metadata_msgs.CreateEdenFileReq(InodeType.FILE),
         shard
     )
 
@@ -564,7 +552,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
         metadata_msgs.LinkEdenFileReq(
             new_inode_id,
             cookie,
-            parent_inode.id,
+            parent_inode,
             name
         ),
         shard
@@ -572,7 +560,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
-def do_visit_inodes(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_visit_inodes(parent_inode: int, name: str, arg2: str) -> None:
     continuation_key = int(arg2)
     shard = metadata_utils.shard_from_inode(continuation_key)
     ret = []
@@ -587,7 +575,7 @@ def do_visit_inodes(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     pprint.pprint(ret)
 
 
-def do_visit_eden(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_visit_eden(parent_inode: int, name: str, arg2: str) -> None:
     continuation_key = int(arg2)
     shard = metadata_utils.shard_from_inode(continuation_key)
     ret = []
@@ -602,7 +590,7 @@ def do_visit_eden(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
     pprint.pprint(ret)
 
 
-def do_reverse_block_query(parent_inode: ResolvedInode, name: str, arg2: str) -> None:
+def do_reverse_block_query(parent_inode: int, name: str, arg2: str) -> None:
     bserver = bytes.fromhex(arg2)
     ret = []
     for shard in range(2):#256):
@@ -618,7 +606,7 @@ def do_reverse_block_query(parent_inode: ResolvedInode, name: str, arg2: str) ->
     pprint.pprint(ret)
 
 
-def do_playground(parent_inode: ResolvedInode, name: str,
+def do_playground(parent_inode: int, name: str,
     arg2: str) -> None:
     # source = (1537, 6600462696362219263)
     # sink = (1025, 16789667482989277050)
@@ -664,7 +652,7 @@ def do_playground(parent_inode: ResolvedInode, name: str,
     print(resp)
 
 
-requests: Dict[str, Callable[[ResolvedInode, str, str], None]] = {
+requests: Dict[str, Callable[[int, str, str], None]] = {
     'resolve': functools.partial(do_resolve, metadata_msgs.ResolveMode.ALIVE),
     'resolve_dead_le': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_LE),
     'resolve_dead_ge': functools.partial(do_resolve, metadata_msgs.ResolveMode.DEAD_GE),

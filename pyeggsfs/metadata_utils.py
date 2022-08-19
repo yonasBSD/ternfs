@@ -1,12 +1,10 @@
 
+import enum
 import os
 import pickle
 import sys
 import time
-from typing import Any, NewType, Optional
-
-NULL_INODE = 0 # used for parent_inode to indicate no parent
-ROOT_INODE = 1
+from typing import Any, Optional
 
 
 # DON'T assume jumbo frames are enabled
@@ -14,8 +12,54 @@ ROOT_INODE = 1
 UDP_MTU = 1472
 
 
-def shard_from_inode(inode_number: int) -> int:
-    return inode_number & 0xFF
+
+# 64 bit inode:
+# OTTSSSSSSSSIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+#
+# O = u1  (in some contexts) is-owning bit
+# T = u2  inode type
+# S = u8  shard id
+# I = u53 inode id
+
+
+class InodeType(enum.IntEnum):
+    DIRECTORY = 0
+    FILE = 1
+    SYMLINK = 2
+
+
+def is_owning_from_inode(inode_with_ownership: int) -> bool:
+    return bool(inode_with_ownership >> 63)
+
+
+def strip_ownership_bit(inode_with_ownership: int) -> int:
+    return inode_with_ownership & 0x7FFF_FFFF_FFFF_FFFF
+
+
+def type_from_inode(inode: int) -> InodeType:
+    return InodeType((inode >> 61) & 0x03)
+
+
+def shard_from_inode(inode: int) -> int:
+    return (inode >> 53) & 0xFF
+
+
+def make_owning(inode: int) -> int:
+    return inode | (1 << 63)
+
+
+def make_non_owning(inode_with_ownership: int) -> int:
+    return inode_with_ownership & ~(1 << 63)
+
+
+def assemble_inode(is_owning: bool, type: InodeType, shard: int, id: int) -> int:
+    assert shard < 256
+    assert id < 2**52
+    return (is_owning << 63) | (type << 61) | (shard << 53) | id
+
+
+NULL_INODE = 0 # used for parent_inode to indicate no parent
+ROOT_INODE = assemble_inode(False, InodeType.DIRECTORY, 1, 0)
 
 
 def shard_to_port(shard: int) -> int:

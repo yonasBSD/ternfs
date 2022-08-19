@@ -8,13 +8,18 @@ from typing import (ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type,
 
 import bincode
 import metadata_utils
+from metadata_utils import InodeType
 
 
 # one-hot encoding to allow "acceptable-types" bitset
-class InodeType(enum.IntEnum):
+class InodeFlags(enum.IntFlag):
     DIRECTORY = 1
     FILE = 2
     SYMLINK = 4
+
+
+def inode_type_to_flag(type: InodeType) -> InodeFlags:
+    return InodeFlags(1 << type)
 
 
 # u8 where MSb states whether this request is privilaged
@@ -543,7 +548,6 @@ class InjectDirentReq(bincode.Packable):
     parent_inode: int
     subname: str
     child_inode: int
-    child_type: InodeType
     creation_ts: int
     dry: bool
 
@@ -551,7 +555,6 @@ class InjectDirentReq(bincode.Packable):
         bincode.pack_u64_into(self.parent_inode, b)
         bincode.pack_bytes_into(self.subname.encode(), b)
         bincode.pack_u64_into(self.child_inode, b)
-        bincode.pack_u8_into(self.child_type, b)
         bincode.pack_u64_into(self.creation_ts, b)
         bincode.pack_u8_into(self.dry, b)
 
@@ -560,11 +563,10 @@ class InjectDirentReq(bincode.Packable):
         parent_inode = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
         child_inode = bincode.unpack_u64(u)
-        child_type = InodeType(bincode.unpack_u8(u))
         creation_ts = bincode.unpack_u64(u)
         dry = bool(bincode.unpack_u8(u))
-        return InjectDirentReq(parent_inode, subname, child_inode, child_type,
-            creation_ts, dry)
+        return InjectDirentReq(parent_inode, subname, child_inode, creation_ts,
+            dry)
 
 
 @dataclass
@@ -572,7 +574,7 @@ class AcquireDirentReq(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.ACQUIRE_DIRENT
     parent_inode: int
     subname: str
-    acceptable_types: int
+    acceptable_types: InodeFlags
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.parent_inode, b)
@@ -583,7 +585,7 @@ class AcquireDirentReq(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentReq':
         parent_inode = bincode.unpack_u64(u)
         subname = bincode.unpack_bytes(u).decode()
-        acceptable_types = bincode.unpack_u8(u)
+        acceptable_types = InodeFlags(bincode.unpack_u8(u))
         return AcquireDirentReq(parent_inode, subname, acceptable_types)
 
 
@@ -709,43 +711,20 @@ class MetadataError(bincode.Packable):
 
 
 @dataclass
-class ResolvedInode(bincode.Packable):
-    id: int
-    inode_type: InodeType
-    creation_ts: int
-    is_owning: bool
-
-    def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.id, b)
-        bincode.pack_u8_into(self.inode_type, b)
-        bincode.pack_u64_into(self.creation_ts, b)
-        bincode.pack_u8_into(self.is_owning, b)
-
-    @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'ResolvedInode':
-        id = bincode.unpack_u64(u)
-        inode_type = InodeType(bincode.unpack_u8(u))
-        creation_ts = bincode.unpack_u64(u)
-        is_owning = bool(bincode.unpack_u8(u))
-        return ResolvedInode(id, inode_type, creation_ts, is_owning)
-
-
-@dataclass
 class ResolveResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.RESOLVE
-    f: Optional[ResolvedInode]
+    inode_with_ownership: int
+    creation_ts: int
 
     def pack_into(self, b: bytearray) -> None:
-        if self.f is None:
-            bincode.pack_u8_into(0, b)
-        else:
-            bincode.pack_u8_into(1, b)
-            self.f.pack_into(b)
+        bincode.pack_u64_into(self.inode_with_ownership, b)
+        bincode.pack_u64_into(self.creation_ts, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ResolveResp':
-        option_kind = bincode.unpack_u8(u)
-        return ResolveResp(ResolvedInode.unpack(u) if option_kind else None)
+        inode_with_ownership = bincode.unpack_u64(u)
+        creation_ts = bincode.unpack_u64(u)
+        return ResolveResp(inode_with_ownership, creation_ts)
 
 
 @dataclass
@@ -789,22 +768,22 @@ StatPayloadTy = Union[StatFilePayload, StatDirPayload]
 @dataclass
 class StatResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.STAT
-    inode_type: InodeType
-    payload: StatPayloadTy
+    mtime: int
+    size_or_parent: int # files => size, dirs => parent
+    opaque: bytes # always empty for files
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u8_into(self.inode_type, b)
-        self.payload.pack_into(b)
+        bincode.pack_u64_into(self.mtime, b)
+        bincode.pack_u64_into(self.size_or_parent, b)
+        bincode.pack_fixed_into(self.opaque, len(self.opaque), b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatResp':
-        file_type = InodeType(bincode.unpack_u8(u))
-        payload: StatPayloadTy
-        if file_type == InodeType.DIRECTORY:
-            payload = StatDirPayload.unpack(u)
-        else:
-            payload = StatFilePayload.unpack(u)
-        return StatResp(file_type, payload)
+        mtime = bincode.unpack_u64(u)
+        size_or_parent = bincode.unpack_u64(u)
+        opaque_len = u.bytes_remaining()
+        opaque = bincode.unpack_fixed(u, opaque_len)
+        return StatResp(mtime, size_or_parent, opaque)
 
 
 @dataclass
@@ -812,10 +791,9 @@ class LsPayload(bincode.Packable):
     inode: int # NULL_INODE => a "nothing" entry
     hash_of_name: int
     name: str
-    inode_type: InodeType
 
     def calc_packed_size(self) -> int:
-        ret = 8 + 8 + 1 # inode + hash_of_name + inode_type
+        ret = 8 + 8 # inode + hash_of_name
         ret += bincode.bytes_packed_size(self.name.encode())
         return ret
 
@@ -823,15 +801,13 @@ class LsPayload(bincode.Packable):
         bincode.pack_u64_into(self.inode, b)
         bincode.pack_u64_into(self.hash_of_name, b)
         bincode.pack_bytes_into(self.name.encode(), b)
-        bincode.pack_u8_into(self.inode_type, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LsPayload':
         inode = bincode.unpack_u64(u)
         hash_of_name = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u).decode()
-        inode_type = InodeType(bincode.unpack_u8(u))
-        return LsPayload(inode, hash_of_name, name, inode_type)
+        return LsPayload(inode, hash_of_name, name)
 
 
 @dataclass
@@ -971,17 +947,14 @@ class InjectDirentResp(bincode.Packable):
 class AcquireDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.ACQUIRE_DIRENT
     inode: int
-    inode_type: InodeType
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.inode, b)
-        bincode.pack_u8_into(self.inode_type, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'AcquireDirentResp':
         inode = bincode.unpack_u64(u)
-        inode_type = InodeType(bincode.unpack_u8(u))
-        return AcquireDirentResp(inode, inode_type)
+        return AcquireDirentResp(inode)
 
 
 @dataclass
@@ -1435,9 +1408,8 @@ def __tests() -> None:
 
     original2 = MetadataResponse(
         request_id=456,
-        body=ResolveResp(f=ResolvedInode(
-            id=9001, inode_type=InodeType.FILE, creation_ts=1657216525,
-            is_owning=True)))
+        body=ResolveResp(inode_with_ownership=9001, creation_ts=1657216525)
+    )
 
     packed2 = bincode.pack(original2)
 

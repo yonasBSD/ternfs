@@ -2,21 +2,18 @@
 
 import abc
 import os
-import random
 import socket
 import sys
-import time
-from typing import (Any, Callable, ClassVar, Dict, NamedTuple, NewType,
-    Optional, Set, Tuple, Type, Union)
+from typing import (Any, Callable, ClassVar, Dict, Optional, Tuple, Type)
 
 import basic_client
 import bincode
 import cross_dir_key
 from cross_dir_msgs import *
 import metadata_msgs
-from metadata_msgs import InodeType, MetadataErrorKind
+from metadata_msgs import InodeFlags, MetadataErrorKind
 import metadata_utils
-from metadata_utils import NULL_INODE
+from metadata_utils import InodeType
 
 
 PROTOCOL_VERSION = 0
@@ -103,7 +100,6 @@ class MkDir(StateMachineBase):
             self.parent_id,
             self.subname,
             self.new_inode,
-            InodeType.DIRECTORY,
             self.new_creation_ts,
             dry=False
         )
@@ -168,7 +164,6 @@ class MvFile(StateMachineBase):
         self.source_name = req.source_name
         self.target_name = req.target_name
         self.target_child_inode: Optional[int] = None
-        self.target_type: Optional[InodeType] = None
         self.new_creation_ts = metadata_utils.now()
         self.fail_reason = ResponseStatus.GENERAL_ERROR
 
@@ -182,7 +177,7 @@ class MvFile(StateMachineBase):
             metadata_msgs.AcquireDirentReq(
                 self.source_parent_inode,
                 self.source_name,
-                InodeType.FILE | InodeType.SYMLINK
+                InodeFlags.FILE | InodeFlags.SYMLINK
             ),
             metadata_utils.shard_from_inode(self.source_parent_inode),
             cross_dir_key.CROSS_DIR_KEY
@@ -208,19 +203,16 @@ class MvFile(StateMachineBase):
 
         assert isinstance(resp, metadata_msgs.AcquireDirentResp)
         self.target_child_inode = resp.inode
-        self.target_type = resp.inode_type
         return 'inject_target'
 
     @state_func
     def inject_target(self, c: 'CrossDirCoordinator') -> Optional[str]:
         assert self.target_child_inode is not None
-        assert self.target_type is not None
         resp = basic_client.send_request(
             metadata_msgs.InjectDirentReq(
                 self.target_parent_inode,
                 self.target_name,
                 self.target_child_inode,
-                self.target_type,
                 self.new_creation_ts,
                 dry=False,
             ),
@@ -333,7 +325,6 @@ class MvDir(StateMachineBase):
                 self.target_parent_inode,
                 self.target_name,
                 metadata_utils.NULL_INODE, # dummy value
-                InodeType.DIRECTORY,
                 self.new_creation_ts,
                 dry=True,
             ),
@@ -360,7 +351,7 @@ class MvDir(StateMachineBase):
             metadata_msgs.AcquireDirentReq(
                 self.source_parent_inode,
                 self.source_name,
-                InodeType.DIRECTORY,
+                InodeFlags.DIRECTORY,
             ),
             metadata_utils.shard_from_inode(self.source_parent_inode),
             cross_dir_key.CROSS_DIR_KEY,
@@ -386,7 +377,7 @@ class MvDir(StateMachineBase):
 
         assert isinstance(resp, metadata_msgs.AcquireDirentResp)
         self.child_inode = resp.inode
-        assert resp.inode_type == InodeType.DIRECTORY
+        assert metadata_utils.type_from_inode(resp.inode) == InodeType.DIRECTORY
         return 'loop_check'
 
     @state_func
@@ -415,13 +406,12 @@ class MvDir(StateMachineBase):
                 # getting here means something has gone seriously wrong
                 assert False, f'{resp}'
             assert isinstance(resp, metadata_msgs.StatResp)
-            assert isinstance(resp.payload, metadata_msgs.StatDirPayload)
-            c.parent_inode_cache[cur] = resp.payload.parent_inode
+            c.parent_inode_cache[cur] = resp.size_or_parent
             visted.add(cur)
             # here is where we would need ot adjust for concurrent version
             # need to add current parent to a stack along with possible
             # future parent (if there is in-flight renames)
-            cur = resp.payload.parent_inode
+            cur = resp.size_or_parent
         # no loops detected, we can proceed
         return 'inject_target'
 
@@ -433,7 +423,6 @@ class MvDir(StateMachineBase):
                 self.target_parent_inode,
                 self.target_name,
                 self.child_inode,
-                InodeType.DIRECTORY,
                 self.new_creation_ts,
                 dry=False,
             ),
@@ -546,6 +535,10 @@ class RmDir(StateMachineBase):
 
     @state_func
     def initial(self, c: 'CrossDirCoordinator') -> Optional[str]:
+        if metadata_utils.type_from_inode(self.parent_id) != InodeType.DIRECTORY:
+            c.send_reply(ResponseStatus.BAD_INODE_TYPE, None,
+                'Parent not a directory')
+            return None
         resp = basic_client.send_request(
             metadata_msgs.ResolveReq(
                 metadata_msgs.ResolveMode.ALIVE,
@@ -556,22 +549,22 @@ class RmDir(StateMachineBase):
             metadata_utils.shard_from_inode(self.parent_id)
         )
         if not isinstance(resp, metadata_msgs.ResolveResp):
-            c.send_reply(ResponseStatus.GENERAL_ERROR, None, str(resp))
+            assert isinstance(resp, metadata_msgs.MetadataError)
+            status = ResponseStatus.GENERAL_ERROR
+            if resp.error_kind == MetadataErrorKind.NOT_FOUND:
+                status = ResponseStatus.NOT_FOUND
+            c.send_reply(status, None, str(resp))
             return None
-        if resp.f is None:
-            c.send_reply(ResponseStatus.NOT_FOUND, None,
-                f'No result for resolve({self.parent_id}, {self.subname})')
-            return None
-        if resp.f.inode_type != InodeType.DIRECTORY:
+        if metadata_utils.type_from_inode(resp.inode_with_ownership) != InodeType.DIRECTORY:
             c.send_reply(ResponseStatus.BAD_INODE_TYPE, None,
-                f'{self.parent_id} has type {resp.f.inode_type}')
+                'Target not a directory')
             return None
-        if not resp.f.is_owning:
+        if not metadata_utils.is_owning_from_inode(resp.inode_with_ownership):
             # theoretically impossible?
             c.send_reply(ResponseStatus.PARENT_INVALID, None,
                 f'{self.parent_id} is non-owning')
             return None
-        self.child_id = resp.f.id
+        self.child_id = metadata_utils.strip_ownership_bit(resp.inode_with_ownership)
         return 'acquire_dirent'
 
     @state_func
@@ -580,7 +573,7 @@ class RmDir(StateMachineBase):
             metadata_msgs.AcquireDirentReq(
                 self.parent_id,
                 self.subname,
-                InodeType.DIRECTORY
+                InodeFlags.DIRECTORY,
             ),
             metadata_utils.shard_from_inode(self.parent_id),
             cross_dir_key.CROSS_DIR_KEY
@@ -692,25 +685,27 @@ class PurgeRemoteFile(StateMachineBase):
             metadata_utils.shard_from_inode(self.parent_id)
         )
         if isinstance(resp, metadata_msgs.MetadataError):
-            c.send_reply(ResponseStatus.GENERAL_ERROR, None, str(resp))
+            status = ResponseStatus.GENERAL_ERROR
+            if resp.error_kind == MetadataErrorKind.NOT_FOUND:
+                status = ResponseStatus.NOT_FOUND
+            c.send_reply(status, None, str(resp))
             return None
         assert isinstance(resp, metadata_msgs.ResolveResp)
-        if resp.f is None:
-            c.send_reply(ResponseStatus.NOT_FOUND, None, 'Target not found')
-            return None
-        if resp.f.creation_ts != self.creation_time:
+        if resp.creation_ts != self.creation_time:
             c.send_reply(ResponseStatus.NOT_FOUND, None,
                 f'Expected creation_time {self.creation_time},'
-                f' got {resp.f.creation_ts}')
+                f' got {resp.creation_ts}')
             return None
-        if not resp.f.is_owning:
+        if not metadata_utils.is_owning_from_inode(resp.inode_with_ownership):
             c.send_reply(ResponseStatus.BAD_REQUEST, None, 'Target not owning')
             return None
-        if parent_shard == metadata_utils.shard_from_inode(resp.f.id):
+        if parent_shard == metadata_utils.shard_from_inode(
+            resp.inode_with_ownership):
             c.send_reply(ResponseStatus.BAD_REQUEST, None,
                 'Target is shard local - no need to use coordinator')
             return None
-        self.child_inode = resp.f.id
+        self.child_inode = metadata_utils.strip_ownership_bit(
+            resp.inode_with_ownership)
         return 'purge_dirent'
 
     @state_func

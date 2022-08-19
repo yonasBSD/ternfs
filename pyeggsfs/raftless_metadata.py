@@ -26,6 +26,7 @@ import cross_dir_key
 import crypto
 from metadata_msgs import *
 import metadata_utils
+from metadata_utils import InodeType
 
 
 PROTOCOL_VERSION = 0
@@ -47,9 +48,28 @@ class LivingKey(NamedTuple):
 @dataclass
 class LivingValue:
     creation_time: int
-    inode_id: int
-    type: InodeType
-    is_owning: bool
+    inode_with_ownership: int
+
+    @property
+    def is_owning(self) -> bool:
+        return metadata_utils.is_owning_from_inode(self.inode_with_ownership)
+
+    @is_owning.setter
+    def is_owning(self, value: bool) -> None:
+        if value:
+            self.inode_with_ownership = metadata_utils.make_owning(
+                self.inode_with_ownership)
+        else:
+            self.inode_with_ownership = metadata_utils.make_non_owning(
+                self.inode_with_ownership)
+
+    @property
+    def type(self) -> InodeType:
+        return metadata_utils.type_from_inode(self.inode_with_ownership)
+
+    @property
+    def raw_inode(self) -> int:
+        return metadata_utils.strip_ownership_bit(self.inode_with_ownership)
 
 
 class DeadKey(NamedTuple):
@@ -60,9 +80,19 @@ class DeadKey(NamedTuple):
 
 @dataclass
 class DeadValue:
-    inode_id: int
-    type: InodeType
-    is_owning: bool # always false?
+    inode_with_ownership: int
+
+    @property
+    def is_owning(self) -> bool:
+        return metadata_utils.is_owning_from_inode(self.inode_with_ownership)
+
+    @property
+    def type(self) -> InodeType:
+        return metadata_utils.type_from_inode(self.inode_with_ownership)
+
+    @property
+    def raw_inode(self) -> int:
+        return metadata_utils.strip_ownership_bit(self.inode_with_ownership)
 
 
 class HashMode(enum.IntEnum):
@@ -317,7 +347,7 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
         res = parent.living_items.get(new_key, new_val)
     else:
         res = parent.living_items.setdefault(new_key, new_val)
-    if res.inode_id != new_val.inode_id:
+    if res.inode_with_ownership != new_val.inode_with_ownership:
         # not inserted, check if we can overwrite
         if res.type == InodeType.DIRECTORY:
             return MetadataError(
@@ -333,15 +363,11 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
             # add old file into dead map
             dead_key = DeadKey(new_key.hash_name, new_key.name, now)
             parent.dead_items[dead_key] = DeadValue(
-                res.inode_id,
-                res.type,
-                res.is_owning
+                res.inode_with_ownership,
             )
             # can reuse the old value object
             res.creation_time = new_val.creation_time
-            res.inode_id = new_val.inode_id
-            res.type = new_val.type
-            res.is_owning = new_val.is_owning
+            res.inode_with_ownership = new_val.inode_with_ownership
     if not dry:
         parent.mtime = now
     return None
@@ -361,7 +387,13 @@ class MetadataShard:
     def __init__(self, shard: int):
         assert 0 <= shard <= 255
         self.shard_id = shard
-        self.next_inode_id = shard | 0x100 # 00-FF is reserved
+        # id == 0 is reserved, start at 1
+        self.next_directory_inode = metadata_utils.assemble_inode(
+            False, InodeType.DIRECTORY, shard, 1)
+        self.next_file_inode = metadata_utils.assemble_inode(
+            False, InodeType.FILE, shard, 1)
+        self.next_symlink_inode = metadata_utils.assemble_inode(
+            False, InodeType.SYMLINK, shard, 1)
         self.last_block_id = shard | 0x100
         self.next_bserver_id = 0
         self.inodes: SortedDict[int, InodePayload] = SortedDict()
@@ -394,21 +426,25 @@ class MetadataShard:
     def is_bserver_terminal(self, bserver_id: int) -> bool:
         return bserver_id in self.terminal_bservers
 
-    def resolve(self, r: ResolveReq) -> Optional[ResolvedInode]:
+    def do_resolve(self, r: ResolveReq) -> RespBodyTy:
         parent = self.inodes.get(r.parent_id)
         if parent is None or not isinstance(parent, Directory):
-            return None
+            return MetadataError(
+                MetadataErrorKind.NOT_FOUND,
+                'Parent not found'
+            )
         hashed_name = parent.hash_name(r.subname)
         if r.mode == ResolveMode.ALIVE:
             res = parent.living_items.get(LivingKey(hashed_name, r.subname))
             if res is None:
-                return None
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'No such living inode'
+                )
             else:
-                return ResolvedInode(
-                    id=res.inode_id,
-                    inode_type=res.type,
-                    creation_ts=res.creation_time,
-                    is_owning=True,
+                return ResolveResp(
+                    res.inode_with_ownership,
+                    res.creation_time,
                 )
         else:
             assert r.mode in (ResolveMode.DEAD_LE, ResolveMode.DEAD_GE)
@@ -426,23 +462,30 @@ class MetadataShard:
                 idxes_to_check = [result_idx, result_idx + 1]
             for idx in idxes_to_check:
                 if idx < 0 or idx >= len(parent.dead_items):
-                    return None
+                    return MetadataError(
+                        MetadataErrorKind.NOT_FOUND,
+                        'No such dead inode'
+                    )
                 result_key = parent.dead_items.keys()[idx]
                 if result_key.name != r.subname:
-                    return None
+                    return MetadataError(
+                        MetadataErrorKind.NOT_FOUND,
+                        'No such dead inode'
+                    )
                 result_value = parent.dead_items[result_key]
                 if result_value is not None:
                     # found a good result
                     break
             else:
-                return None
+                return MetadataError(
+                    MetadataErrorKind.NOT_FOUND,
+                    'No such dead inode'
+                )
 
             assert result_value is not None
-            return ResolvedInode(
-                id=result_value.inode_id,
-                inode_type=result_value.type,
-                creation_ts=result_key.creation_time,
-                is_owning=result_value.is_owning,
+            return ResolveResp(
+                result_value.inode_with_ownership,
+                result_key.creation_time,
             )
 
     def do_stat(self, r: StatReq) -> RespBodyTy:
@@ -452,18 +495,11 @@ class MetadataShard:
                 MetadataErrorKind.NOT_FOUND,
                 f'No entry for {r.inode_id}',
             )
-        payload: StatPayloadTy
         if isinstance(res, Directory):
-            inode_type = InodeType.DIRECTORY
-            payload = StatDirPayload(
-                res.mtime, res.parent_inode, res.opaque,
-            )
+            return StatResp(res.mtime, res.parent_inode, res.opaque)
         else:
-            inode_type = res.type
-            payload = StatFilePayload(
-                res.mtime, res.size,
-            )
-        return StatResp(inode_type, payload)
+            return StatResp(res.mtime, res.size, b'')
+
 
     def do_ls_dir(self, r: LsDirReq) -> RespBodyTy:
         dir = self.inodes.get(r.inode)
@@ -484,7 +520,7 @@ class MetadataShard:
             key_range = dir.living_items.irange(lower_bound)
             for k in key_range:
                 v = dir.living_items[k]
-                yield LsPayload(v.inode_id, k.hash_name, k.name, v.type)
+                yield LsPayload(v.raw_inode, k.hash_name, k.name)
 
         def dead_iter() -> Iterator[LsPayload]:
             assert isinstance(dir, Directory)
@@ -528,7 +564,6 @@ class MetadataShard:
                     metadata_utils.NULL_INODE,
                     locator_key.hash_name,
                     locator_key.name,
-                    InodeType.SYMLINK, # arbitrary
                 )
                 if res_idx < 0 or res_idx >= len(dir.dead_items):
                     yield nothing_result
@@ -542,8 +577,7 @@ class MetadataShard:
                     yield nothing_result
                     continue
 
-                yield LsPayload(res_v.inode_id, res_k.hash_name, res_k.name,
-                    res_v.type)
+                yield LsPayload(res_v.raw_inode, res_k.hash_name, res_k.name)
 
         i = dead_iter() if r.flags & LsFlags.USE_DEAD_MAP else living_iter()
         include_nothing_results = r.flags & LsFlags.INCLUDE_NOTHING_ENTRIES
@@ -574,7 +608,7 @@ class MetadataShard:
                 'Cannot create an eden directory'
             )
         now = metadata_utils.now()
-        new_inode = self._dispense_inode()
+        new_inode = self._dispense_inode(r.type)
         self.eden[new_inode] = EdenFile(
             File(now, 0, r.type),
             now + DEADLINE_DURATION_NS,
@@ -823,7 +857,8 @@ class MetadataShard:
             )
 
         new_key = LivingKey(parent.hash_name(r.new_name), r.new_name)
-        new_val = LivingValue(now, r.eden_inode, eden_file.f.type, True)
+        inode_with_ownership = metadata_utils.make_owning(r.eden_inode)
+        new_val = LivingValue(now, inode_with_ownership)
         error = _try_link(parent, new_key, new_val, now)
         if error is not None:
             return error
@@ -1059,9 +1094,7 @@ class MetadataShard:
         now = metadata_utils.now()
         parent.mtime = now
         parent.dead_items[DeadKey(hashed_name, r.name, target.creation_time)] = DeadValue(
-            target.inode_id,
-            target.type,
-            target.is_owning
+            target.inode_with_ownership,
         )
         parent.dead_items[DeadKey(hashed_name, r.name, now)] = None
         del parent.living_items[living_key]
@@ -1288,9 +1321,8 @@ class MetadataShard:
         new_dead_key = DeadKey(hash_old_name, r.old_name,
             old_living_val.creation_time)
         new_dead_val = DeadValue(
-            old_living_val.inode_id,
-            old_living_val.type,
-            False,
+            metadata_utils.make_non_owning(
+                old_living_val.inode_with_ownership),
         )
         new_placeholder = DeadKey(hash_old_name, r.old_name, now)
         parent.dead_items.update([
@@ -1325,7 +1357,7 @@ class MetadataShard:
                 MetadataErrorKind.NOT_FOUND,
                 "Target not found in parent's dead map"
             )
-        if (self.shard_id != metadata_utils.shard_from_inode(target.inode_id)
+        if (self.shard_id != metadata_utils.shard_from_inode(target.inode_with_ownership)
             and target.is_owning):
             return MetadataError(
                 MetadataErrorKind.NOT_AUTHORISED,
@@ -1336,9 +1368,9 @@ class MetadataShard:
             # the target is an owning link to a shard-local file
             # before purging the target, need to transfer the file to eden
             # and then eden cleanup will expunge it later
-            file = self.inodes.pop(target.inode_id)
+            file = self.inodes.pop(target.raw_inode)
             assert isinstance(file, File)
-            self.eden[target.inode_id] = EdenFile(
+            self.eden[target.raw_inode] = EdenFile(
                 f=file,
                 deadline_time=now,
                 last_span_state=SpanState.CLEAN,
@@ -1550,7 +1582,7 @@ class MetadataShard:
             or self.last_created_inode == metadata_utils.NULL_INODE):
             # implies the previous created dir succeeded, so we need to create
             # a "true" new directory (can't just reuse the existing one)
-            new_dir_inode = self._dispense_inode()
+            new_dir_inode = self._dispense_inode(InodeType.DIRECTORY)
             self.inodes[new_dir_inode] = Directory(
                 parent_inode=r.new_parent,
                 mtime=now,
@@ -1591,9 +1623,7 @@ class MetadataShard:
         hashed_name = parent.hash_name(r.subname)
         new_val = LivingValue(
             r.creation_ts,
-            r.child_inode,
-            r.child_type,
-            False,
+            r.child_inode, # non-owning
         )
         now = metadata_utils.now()
         error = _try_link(parent, LivingKey(hashed_name, r.subname), new_val,
@@ -1622,18 +1652,15 @@ class MetadataShard:
                 MetadataErrorKind.NOT_FOUND,
                 f'Inode {r.parent_inode} has no living element {r.subname}'
             )
-        if not (r.acceptable_types & res.type):
+        if not (r.acceptable_types & inode_type_to_flag(res.type)):
             return MetadataError(
                 MetadataErrorKind.BAD_INODE_TYPE,
-                f'Target inode {res.inode_id} as wrong type {res.type}'
+                f'Target inode {res.raw_inode} has wrong type {res.type}'
             )
 
         res.is_owning = False
 
-        return AcquireDirentResp(
-            res.inode_id,
-            res.type
-        )
+        return AcquireDirentResp(res.raw_inode)
 
     def do_release_dirent(self, r: ReleaseDirentReq) -> RespBodyTy:
         # this operation cannot fail, even if the target doesn't exist
@@ -1659,8 +1686,7 @@ class MetadataShard:
                     # given the release operation cannot fail
                     # (maybe it should emit a warning and then do nothing?)
                     assert not target.is_owning
-                    dead_value = DeadValue(target.inode_id, target.type,
-                        target.is_owning)
+                    dead_value = DeadValue(target.inode_with_ownership)
                     parent.dead_items[dead_key] = dead_value
                     placeholder_key = DeadKey(hashname, r.subname, now)
                     parent.dead_items[placeholder_key] = None
@@ -1692,7 +1718,8 @@ class MetadataShard:
                 MetadataErrorKind.NOT_FOUND,
                 "Target not found in parent's dead map"
             )
-        if (self.shard_id == metadata_utils.shard_from_inode(target.inode_id)
+        if (self.shard_id == metadata_utils.shard_from_inode(
+            target.inode_with_ownership)
             or not target.is_owning):
             return MetadataError(
                 MetadataErrorKind.BAD_REQUEST,
@@ -1728,9 +1755,18 @@ class MetadataShard:
         del self.inodes[r.inode]
         return MoveFileToEdenResp()
 
-    def _dispense_inode(self) -> int:
-        ret = self.next_inode_id
-        self.next_inode_id += 0x100 # preserve LSB
+    def _dispense_inode(self, type: InodeType) -> int:
+        if type == InodeType.DIRECTORY:
+            ret = self.next_directory_inode
+            self.next_directory_inode += 1
+        elif type == InodeType.FILE:
+            ret = self.next_file_inode
+            self.next_file_inode += 1
+        elif type == InodeType.SYMLINK:
+            ret = self.next_symlink_inode
+            self.next_symlink_inode += 1
+        else:
+            assert False
         return ret
 
     def _dispense_block_id(self, now: int) -> int:
@@ -1788,8 +1824,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                         file=sys.stderr)
                     continue
                 if isinstance(request.body, ResolveReq):
-                    result = shard.resolve(request.body)
-                    resp_body = ResolveResp(result)
+                    resp_body = shard.do_resolve(request.body)
                 elif isinstance(request.body, StatReq):
                     resp_body = shard.do_stat(request.body)
                 elif isinstance(request.body, LsDirReq):

@@ -305,7 +305,7 @@ class MvDir(StateMachineBase):
     # 2)  Aquire Source        - success => goto 3;       fail => return error;
     # 3)  Loop Check           - success => goto 4;       fail => goto 6b;
     # 4)  Inject Target        - success => goto 5;       fail => goto 6b;
-    # 5)  Release Target       - success => goto 6a;      fail => goto 6b;
+    # 5)  Release Target       - success => goto 6a;      fail => retry;
     # 6a) Kill Source          - success => goto 7;       fail => retry;
     # 6b) Release Source       - success => return error; fail => retry;
     # 7)  Set Child Parent     - success => return ok;    fail => retry;

@@ -342,6 +342,8 @@ def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
             res.inode_id = new_val.inode_id
             res.type = new_val.type
             res.is_owning = new_val.is_owning
+    if not dry:
+        parent.mtime = now
     return None
 
 
@@ -1054,12 +1056,14 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 'Target is non-owning'
             )
+        now = metadata_utils.now()
+        parent.mtime = now
         parent.dead_items[DeadKey(hashed_name, r.name, target.creation_time)] = DeadValue(
             target.inode_id,
             target.type,
             target.is_owning
         )
-        parent.dead_items[DeadKey(hashed_name, r.name, metadata_utils.now())] = None
+        parent.dead_items[DeadKey(hashed_name, r.name, now)] = None
         del parent.living_items[living_key]
         return DeleteFileResp(r.parent_inode, r.name)
 
@@ -1591,8 +1595,9 @@ class MetadataShard:
             r.child_type,
             False,
         )
+        now = metadata_utils.now()
         error = _try_link(parent, LivingKey(hashed_name, r.subname), new_val,
-            metadata_utils.now(), dry=r.dry)
+            now, dry=r.dry)
         if error is not None:
             return error
         return InjectDirentResp(r.dry)
@@ -1660,6 +1665,8 @@ class MetadataShard:
                     placeholder_key = DeadKey(hashname, r.subname, now)
                     parent.dead_items[placeholder_key] = None
                     del parent.living_items[living_key]
+                    # kill is visible to clients so update mtime
+                    parent.mtime = now
                 else:
                     target.is_owning = True
         return ReleaseDirentResp(found)

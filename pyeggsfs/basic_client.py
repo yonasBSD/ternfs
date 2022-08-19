@@ -558,8 +558,8 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
 
         cur_offset += len(data)
 
-    a beautiful file with all the required bytes is in eden
-    now just need to link it
+    # a beautiful file with all the required bytes is in eden
+    # now just need to link it
     resp = send_request(
         metadata_msgs.LinkEdenFileReq(
             new_inode_id,

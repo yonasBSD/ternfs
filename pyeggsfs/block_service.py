@@ -204,9 +204,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 # initialization
 ###########################################
 
-async def periodically_register(key: bytes, port: int) -> None:
+async def periodically_register(key: bytes, port: int, storage_class: int) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    m = struct.pack('<16sH', key, port)
+    m = struct.pack('<16sHB', key, port, storage_class)
     shuckle = ('localhost', 5000)
     while True:
         sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
@@ -215,9 +215,11 @@ async def periodically_register(key: bytes, port: int) -> None:
 async def main() -> None:
     parser = argparse.ArgumentParser(description='Block service')
     parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
-    parser.add_argument('--storage_class', help='Storage class byte', type=int, default=1)
+    parser.add_argument('--storage_class', help='Storage class byte', type=int, default=2)
     parser.add_argument('--coordinator', help='Address and port of the block service coordinator')
     config = parser.parse_args()
+
+    assert (2 <= config.storage_class <= 255), f'Storage class {config.storage_class} out of range'
 
     # open the key file and ensure we are exclusive
     fp = open(config.path / 'secret.key', 'a+b')
@@ -249,7 +251,7 @@ async def main() -> None:
 
     # run forever
     await asyncio.gather(
-        periodically_register(key, port),
+        periodically_register(key, port, config.storage_class),
         server.serve_forever())
 
 if __name__ == '__main__':

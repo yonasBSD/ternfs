@@ -445,8 +445,10 @@ def do_expunge_file(parent_inode: ResolvedInode, name: str,
 def do_create_test_file(parent_inode: ResolvedInode, name: str,
     arg2: str) -> None:
 
+    second_block_sc = 2
     if arg2 != '':
-        raise ValueError('No arg2 for create eden')
+        second_block_sc = int(arg2)
+        assert 2 <= second_block_sc <= 255
 
     if name == '':
         raise ValueError('Cannot use empty name')
@@ -480,7 +482,7 @@ def do_create_test_file(parent_inode: ResolvedInode, name: str,
             parity_mode = 0
             payload = b''
         elif mode == 'MIRRORING':
-            storage_class = 2 # arbitrary, but not inline or zero-fill
+            storage_class = second_block_sc
             parity_mode = metadata_utils.create_parity_mode(1, 2)
             payload = [metadata_msgs.NewBlockInfo(crc, len(data))] * 3
         else:

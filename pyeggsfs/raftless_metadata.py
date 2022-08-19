@@ -8,6 +8,7 @@ import enum
 import hashlib
 import itertools
 import math
+import operator
 import os
 import random
 import requests
@@ -205,6 +206,7 @@ class BlockServerInfo(NamedTuple):
     id: int
     ip: bytes
     port: int
+    storage_class: int
     flags: BlockFlags
     write_weight: float
     secret_key: crypto.ExpandedKey
@@ -231,46 +233,61 @@ class BlockServerInfo(NamedTuple):
             id=id,
             ip=socket.inet_aton(json_obj['ip']),
             port=json_obj['port'],
+            storage_class=json_obj['storage_class'],
             flags=flags,
             write_weight=write_weight,
             secret_key=crypto.aes_expand_key(secret),
         )
 
 
+class WeightedBlockMeta(NamedTuple):
+    cum_weights: Optional[List[float]]
+    block_meta: List[BlockServerInfo]
+
+
+def compute_weights(meta: List[BlockServerInfo]) -> WeightedBlockMeta:
+    cum_weights = list(
+        itertools.accumulate(b.write_weight for b in meta)
+    )
+    if any(b.write_weight < 0.0 for b in meta):
+        raise ValueError('Negative weights not OK')
+    if math.isclose(cum_weights[-1], 0.0):
+        return WeightedBlockMeta(None, meta)
+    return WeightedBlockMeta(cum_weights, meta)
+
+
 class ShuckleData:
     # TODO: add support for storage classes
-    def __init__(self, block_meta: Sequence[BlockServerInfo]):
-        self.block_meta = block_meta
+    def __init__(self, block_meta: List[BlockServerInfo]):
+        key = operator.attrgetter('storage_class')
+        block_meta.sort(key=key)
 
-        if not block_meta:
-            self._cum_weights = None
-        else:
-            if any(b.write_weight < 0.0 for b in block_meta):
-                raise ValueError('Negative weights not OK')
-            cum_weights = list(
-                itertools.accumulate(b.write_weight for b in block_meta)
-            )
-            if math.isclose(cum_weights[-1], 0.0):
-                self._cum_weights = None
-            else:
-                self._cum_weights = cum_weights
-
-        self._block_index = {
-            bserver.id: idx
-            for idx, bserver in enumerate(block_meta)
+        self._storage_class_to_meta = {
+            sc: compute_weights(list(g))
+            for sc, g in itertools.groupby(block_meta, key)
         }
 
-    def try_pick_blocks(self, num: int) -> Optional[List[BlockServerInfo]]:
-        if self._cum_weights is None:
+        self._block_index: Dict[int, Tuple[int, int]] = {}
+        for sc, meta in self._storage_class_to_meta.items():
+            self._block_index.update(
+                (bserver.id, (sc, idx))
+                for idx, bserver in enumerate(meta.block_meta)
+            )
+
+    def try_pick_blocks(self, storage_class: int, num: int
+        ) -> Optional[List[BlockServerInfo]]:
+        meta_for_sc = self._storage_class_to_meta.get(storage_class,
+            WeightedBlockMeta(None, []))
+        if meta_for_sc.cum_weights is None:
             return None
-        return random.choices(self.block_meta, cum_weights=self._cum_weights,
-            k=num)
+        return random.choices(meta_for_sc.block_meta,
+            cum_weights=meta_for_sc.cum_weights, k=num)
 
     def lookup(self, dense_id: int) -> Optional[BlockServerInfo]:
-        maybe_idx = self._block_index.get(dense_id)
-        if maybe_idx is None:
+        sc, idx = self._block_index.get(dense_id, (None, 0))
+        if sc is None:
             return None
-        return self.block_meta[maybe_idx]
+        return self._storage_class_to_meta[sc].block_meta[idx]
 
 
 # returned in the order from shuckle
@@ -623,7 +640,8 @@ class MetadataShard:
             else:
                 assert s is not None
                 assert isinstance(r.payload, list)
-                target_block_servers = s.try_pick_blocks(num_blocks)
+                target_block_servers = s.try_pick_blocks(
+                    r.storage_class, num_blocks)
                 if target_block_servers is None:
                     return MetadataError(
                         MetadataErrorKind.SHUCKLE_ERROR,

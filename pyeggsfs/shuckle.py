@@ -23,7 +23,7 @@ app = Quart(__name__)
 # queue of keys that we should check and upsert in the db
 # push None to shutdown the cororoutine
 KEYS_TO_CHECK: Deque[bytes] = collections.deque()
-KEY_TO_IP_PORT: Dict[bytes, Tuple[str, int]] = {}
+KEY_TO_IP_PORT_SC: Dict[bytes, Tuple[str, int, int]] = {}
 
 DB = sqlite3.connect('database.db')
 DB.row_factory = sqlite3.Row
@@ -32,7 +32,7 @@ EPOCH = datetime.datetime(2020, 1, 1)
 MAX_STALE_SECS = 600
 
 # verify we can contact a device, if we can update the database
-async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
+async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> None:
     now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
 
     # connect to the device and fetch the stats
@@ -53,28 +53,28 @@ async def check_one_device(secret_key: bytes, ip: str, port: int) -> None:
     # put the information into the database
     # (either creating a new record or updating an old one
     DB.execute("""
-        insert into block_services (secret_key, ip_port, last_check, used_bytes, free_bytes, used_n, free_n)
-        values (?, ?, ?, ?, ?, ?, ?)
-        on conflict (secret_key) do update set ip_port=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
-    """, (secret_key.hex(), f'{ip}:{port}', now, used_bytes, free_bytes, used_n, free_n, f'{ip}:{port}', now, used_bytes, free_bytes, used_n, free_n))
+        insert into block_services (secret_key, ip_port, storage_class, last_check, used_bytes, free_bytes, used_n, free_n)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict (secret_key) do update set ip_port=?, storage_class=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
+    """, (secret_key.hex(), f'{ip}:{port}', sc, now, used_bytes, free_bytes, used_n, free_n, f'{ip}:{port}', sc, now, used_bytes, free_bytes, used_n, free_n))
     DB.commit()
 
     # given we have updated the database we should ensure this is getting covered by periodic checks
     # and that it's being checked with the right ip/port
-    if secret_key not in KEY_TO_IP_PORT:
+    if secret_key not in KEY_TO_IP_PORT_SC:
         KEYS_TO_CHECK.append(secret_key) # it's brand new
-    KEY_TO_IP_PORT[secret_key] = (ip, port)
+    KEY_TO_IP_PORT_SC[secret_key] = (ip, port, sc)
 
 
 async def check_devices_forever() -> None:
     # first fetch all existing devices from the database
-    c = DB.execute('select secret_key, ip_port from block_services')
-    for key, ip_port in c.fetchall():
+    c = DB.execute('select secret_key, ip_port, storage_class from block_services')
+    for key, ip_port, sc in c.fetchall():
         ip, port = ip_port.split(':')
         port = int(port)
         key = bytes.fromhex(key)
         KEYS_TO_CHECK.append(key)
-        KEY_TO_IP_PORT[key] = (ip, port)
+        KEY_TO_IP_PORT_SC[key] = (ip, port, sc)
     app.logger.info(f'Started periodic check routine, loaded {len(KEYS_TO_CHECK)} devices')
     # now repeatedly take a device from the front of the queue and check it
     while True:
@@ -82,10 +82,10 @@ async def check_devices_forever() -> None:
         if not KEYS_TO_CHECK: continue
         KEYS_TO_CHECK.rotate(-1)
         key = KEYS_TO_CHECK[-1]
-        ip, port = KEY_TO_IP_PORT[key]
+        ip, port, sc = KEY_TO_IP_PORT_SC[key]
         try:
             #app.logger.info(f'Running periodic check for {ip}:{port}')
-            await check_one_device(key, ip, port)
+            await check_one_device(key, ip, port, sc)
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -106,10 +106,10 @@ async def listen_for_registrations() -> None:
     while True:
         try:
             data, (ip, port) = await q.get()
-            key, tcp_port = struct.unpack('<16sH', data)
-            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT[key] != (ip, tcp_port):
+            key, tcp_port, sc = struct.unpack('<16sHB', data)
+            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc):
                 # it's new or changed ip - need to check it
-                await check_one_device(key, ip, tcp_port)
+                await check_one_device(key, ip, tcp_port, sc)
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -217,14 +217,15 @@ async def list_devices() -> Response:
         id_to_w = {}
 
     # build the response
-    c = DB.execute("select id, ip_port, last_check, status, secret_key from block_services")
+    c = DB.execute("select id, ip_port, storage_class, last_check, status, secret_key from block_services")
     ret = []
-    for id, ip_port, last_check, status, secret_key in c.fetchall():
+    for id, ip_port, storage_class, last_check, status, secret_key in c.fetchall():
         is_stale = last_check <= now - MAX_STALE_SECS
         if is_stale or status != 'ok': assert id not in id_to_w
         ret.append({
             'ip': ip_port.split(':')[0],
             'port': int(ip_port.split(':')[1]),
+            'storage_class': storage_class,
             'is_terminal': status == 'terminal',
             'is_stale': is_stale,
             'write_weight': id_to_w.get(id, 0.0),
@@ -246,6 +247,7 @@ def init_db() -> None:
             secret_key text unique not null,
             status integer not null default "ok",
             ip_port text,
+            storage_class integer not null,
             last_check integer not null,
             used_bytes integer not null,
             free_bytes integer not null,

@@ -37,13 +37,16 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> No
 
     # connect to the device and fetch the stats
     rk = crypto.aes_expand_key(secret_key)
+    token = secrets.token_bytes(8)
     try:
         reader, writer = await asyncio.open_connection(ip, port)
     except ConnectionRefusedError:
         return
-    token = secrets.token_bytes(8)
-    writer.write(b's' + token)
-    m = await reader.readexactly(49)
+    try:
+        writer.write(b's' + token)
+        m = await reader.readexactly(49)
+    finally:
+        writer.close()
     m2 = crypto.remove_mac(m, rk)
     assert m2 is not None, 'bad mac'
     kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m2)

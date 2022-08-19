@@ -915,19 +915,13 @@ class AddEdenSpanResp(bincode.Packable):
 @dataclass
 class CertifyEdenSpanResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EDEN_SPAN
-    # echoed back
-    inode: int
-    byte_offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.inode, b)
-        bincode.pack_u64_into(self.byte_offset, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyEdenSpanResp':
-        inode = bincode.unpack_u64(u)
-        byte_offset = bincode.unpack_u64(u)
-        return CertifyEdenSpanResp(inode, byte_offset)
+        return CertifyEdenSpanResp()
 
 
 @dataclass
@@ -962,7 +956,7 @@ class CreateDirResp(bincode.Packable):
 @dataclass
 class InjectDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.INJECT_DIRENT
-    dry: bool # echoed back (should we echo back more things?)
+    dry: bool # echoed back (for piece of mind)
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u8_into(self.dry, b)
@@ -1031,12 +1025,10 @@ class RepairSpansResp(bincode.Packable):
 @dataclass
 class ExpungeEdenSpanResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_SPAN
-    inode: int
     offset: int
     span: List[BlockInfo] # empty => blockless, no certification required
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.inode, b)
         bincode.pack_v61_into(self.offset, b)
         bincode.pack_u8_into(len(self.span), b)
         for block in self.span:
@@ -1044,59 +1036,46 @@ class ExpungeEdenSpanResp(bincode.Packable):
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenSpanResp':
-        inode = bincode.unpack_u64(u)
         offset = bincode.unpack_v61(u)
         size = bincode.unpack_u8(u)
         span = [BlockInfo.unpack(u) for _ in range(size)]
-        return ExpungeEdenSpanResp(inode, offset, span)
+        return ExpungeEdenSpanResp(offset, span)
 
 
 @dataclass
 class CertifyExpungeResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.CERTIFY_EXPUNGE
-    inode: int
-    offset: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.inode, b)
-        bincode.pack_v61_into(self.offset, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CertifyExpungeResp':
-        inode = bincode.unpack_u64(u)
-        offset = bincode.unpack_v61(u)
-        return CertifyExpungeResp(inode, offset)
+        return CertifyExpungeResp()
 
 
 @dataclass
 class ExpungeEdenFileResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.EXPUNGE_FILE
-    inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.inode, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ExpungeEdenFileResp':
-        inode = bincode.unpack_u64(u)
-        return ExpungeEdenFileResp(inode)
+        return ExpungeEdenFileResp()
 
 
 @dataclass
 class DeleteFileResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.DELETE_FILE
-    parent_inode: int
-    name: str
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.parent_inode, b)
-        bincode.pack_bytes_into(self.name.encode(), b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'DeleteFileResp':
-        parent_inode = bincode.unpack_u64(u)
-        name = bincode.unpack_bytes(u).decode()
-        return DeleteFileResp(parent_inode, name)
+        return DeleteFileResp()
 
 
 class BlockFlags(enum.IntFlag):
@@ -1228,21 +1207,13 @@ class SameDirRenameResp(bincode.Packable):
 @dataclass
 class PurgeDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.PURGE_DIRENT
-    parent_inode: int
-    name: str
-    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.parent_inode, b)
-        bincode.pack_bytes_into(self.name.encode(), b)
-        bincode.pack_u64_into(self.creation_time, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeDirentResp':
-        parent_inode = bincode.unpack_u64(u)
-        name = bincode.unpack_bytes(u).decode()
-        creation_time = bincode.unpack_u64(u)
-        return PurgeDirentResp(parent_inode, name, creation_time)
+        return PurgeDirentResp()
 
 
 @dataclass
@@ -1359,35 +1330,25 @@ class RepairBlockResp(bincode.Packable):
 @dataclass
 class PurgeRemoteOwningDirentResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.PURGE_REMOTE_OWNING_DIRENT
-    parent_inode: int
-    name: str
-    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.parent_inode, b)
-        bincode.pack_bytes_into(self.name.encode(), b)
-        bincode.pack_u64_into(self.creation_time, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'PurgeRemoteOwningDirentResp':
-        parent_inode = bincode.unpack_u64(u)
-        name = bincode.unpack_bytes(u).decode()
-        creation_time = bincode.unpack_u64(u)
-        return PurgeRemoteOwningDirentResp(parent_inode, name, creation_time)
+        return PurgeRemoteOwningDirentResp()
 
 
 @dataclass
 class MoveFileToEdenResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.MOVE_FILE_TO_EDEN
-    inode: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.inode, b)
+        pass
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MoveFileToEdenResp':
-        inode = bincode.unpack_u64(u)
-        return MoveFileToEdenResp(inode)
+        return MoveFileToEdenResp()
 
 
 RespBodyTy = Union[MetadataError, ResolveResp, StatResp, LsDirResp,

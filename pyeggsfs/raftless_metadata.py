@@ -787,7 +787,7 @@ class MetadataShard:
             eden_file.last_span_state = SpanState.CLEAN
             eden_file.f.mtime = now
 
-        return CertifyEdenSpanResp(r.inode, r.byte_offset)
+        return CertifyEdenSpanResp()
 
     def do_link_eden_file(self, r: LinkEdenFileReq) -> RespBodyTy:
         now = metadata_utils.now()
@@ -989,7 +989,7 @@ class MetadataShard:
             )
         if not eden_file.f.spans:
             # the expunger is free to expunge the file now
-            return ExpungeEdenSpanResp(r.inode, 0, [])
+            return ExpungeEdenSpanResp(0, [])
         last_offset, last_span = eden_file.f.spans.peekitem()
         block_infos: List[BlockInfo] = []
         if isinstance(last_span.payload, list):
@@ -1024,7 +1024,7 @@ class MetadataShard:
             # last span is blockless, delete immediately
             del eden_file.f.spans[last_offset]
             eden_file.f.size = last_offset
-        return ExpungeEdenSpanResp(r.inode, last_offset, block_infos)
+        return ExpungeEdenSpanResp(last_offset, block_infos)
 
     def do_delete_file(self, r: DeleteFileReq) -> RespBodyTy:
         parent = self.inodes.get(r.parent_inode)
@@ -1065,7 +1065,7 @@ class MetadataShard:
         )
         parent.dead_items[DeadKey(hashed_name, r.name, now)] = None
         del parent.living_items[living_key]
-        return DeleteFileResp(r.parent_inode, r.name)
+        return DeleteFileResp()
 
     def do_certify_expunge(self, r: CertifyExpungeReq,
         s: Optional[ShuckleData]) -> RespBodyTy:
@@ -1145,7 +1145,7 @@ class MetadataShard:
         del eden_file.f.spans[last_offset]
         eden_file.f.size = last_offset
         eden_file.last_span_state = SpanState.CLEAN
-        return CertifyExpungeResp(r.inode, r.offset)
+        return CertifyExpungeResp()
 
     def do_expunge_eden_file(self, r: ExpungeEdenFileReq) -> RespBodyTy:
         eden_file = self.eden.get(r.inode)
@@ -1166,7 +1166,7 @@ class MetadataShard:
                 'Eden file not empty'
             )
         del self.eden[r.inode]
-        return ExpungeEdenFileResp(r.inode)
+        return ExpungeEdenFileResp()
 
     def do_fetch_spans(self, r: FetchSpansReq, s: Optional[ShuckleData]
         ) -> RespBodyTy:
@@ -1354,7 +1354,7 @@ class MetadataShard:
             and len(parent.dead_items) == 0):
             print(f'PURGING INODE {r.parent_inode}; reason: last item purged;')
             del self.inodes[r.parent_inode]
-        return PurgeDirentResp(r.parent_inode, r.name, r.creation_time)
+        return PurgeDirentResp()
 
     def do_visit_inodes(self, r: VisitInodesReq) -> RespBodyTy:
         budget = metadata_utils.UDP_MTU - MetadataResponse.SIZE - VisitInodesResp.SIZE
@@ -1709,8 +1709,7 @@ class MetadataShard:
             and len(parent.dead_items) == 0):
             print(f'PURGING INODE {r.parent_inode}; reason: last item purged;')
             del self.inodes[r.parent_inode]
-        return PurgeRemoteOwningDirentResp(r.parent_inode, r.name,
-            r.creation_time)
+        return PurgeRemoteOwningDirentResp()
 
     def do_move_file_to_eden(self, r: MoveFileToEdenReq) -> RespBodyTy:
         target = self.inodes.get(r.inode)
@@ -1727,7 +1726,7 @@ class MetadataShard:
         self.eden[r.inode] = EdenFile(target, metadata_utils.now(),
             SpanState.CLEAN)
         del self.inodes[r.inode]
-        return MoveFileToEdenResp(r.inode)
+        return MoveFileToEdenResp()
 
     def _dispense_inode(self) -> int:
         ret = self.next_inode_id

@@ -287,7 +287,6 @@ def compute_weights(meta: List[BlockServerInfo]) -> WeightedBlockMeta:
 
 
 class ShuckleData:
-    # TODO: add support for storage classes
     def __init__(self, block_meta: List[BlockServerInfo]):
         key = operator.attrgetter('storage_class')
         block_meta.sort(key=key)

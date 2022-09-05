@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import abc
+import argparse
 import os
 import socket
 import sys
@@ -864,7 +865,13 @@ class CrossDirCoordinator:
 
 
 def main() -> None:
-    persist_fn = os.path.expanduser('~/playground/pyfs/cross_dir.pickle')
+    parser = argparse.ArgumentParser(
+        description='Runs the cross-directory coordinator')
+    parser.add_argument('db_path', help='Location to create or load db')
+    config = parser.parse_args(sys.argv[1:])
+
+    persist_fn = os.path.expanduser(os.path.join(config.db_path,
+        'cross_dir.pickle'))
     c = CrossDirCoordinator(persist_fn)
     c.run_forever()
 

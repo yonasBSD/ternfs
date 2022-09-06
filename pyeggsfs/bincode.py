@@ -165,11 +165,12 @@ def unpack(cls: Type[T], b: bytes) -> T:
 def __tests() -> None:
     b = bytearray()
     input = 2**60
-    pack_v61_into(2**60, b)
+    pack_v61_into(input, b)
     assert len(b) <= 8
     u = UnpackWrapper(b)
     output = unpack_v61(u)
     assert input == output
+    assert u.bytes_remaining() == 0
 
 
 

@@ -12,6 +12,7 @@ V61_MAX = 2**61 - 1
 # encoded using between 1 and 8 bytes
 # 3 bits of the first byte give the length bytes of the int, so that it
 # is more efficient to encode smaller numbers
+# (note that the u3 "num_bytes" is offset by 1 to represent [1,8] inclusive)
 
 def v61_packed_size(x: int) -> int:
     # in C++ this can be implemented efficiently using _BitScanReverse64
@@ -67,7 +68,7 @@ def pack_u64_into(x: int, b: bytearray) -> None:
 
 def pack_v61_into(x: int, b: bytearray) -> None:
     num_bytes = v61_packed_size(x)
-    with_length = (x << 3) | num_bytes
+    with_length = (x << 3) | (num_bytes - 1)
     packed = struct.pack('<Q', with_length)
     b.extend(packed[:num_bytes])
 
@@ -114,7 +115,7 @@ def unpack_u64(u: UnpackWrapper) -> int:
 
 
 def unpack_v61(u: UnpackWrapper) -> int:
-    num_bytes = u.read()[0] & 0b111
+    num_bytes = (u.read()[0] & 0b111) + 1
     zpadded_val = bytearray(8)
     zpadded_val[:num_bytes] = u.read()[:num_bytes]
     u.advance(num_bytes)
@@ -161,6 +162,16 @@ def unpack(cls: Type[T], b: bytes) -> T:
     return ret
 
 
+def __tests() -> None:
+    b = bytearray()
+    input = 2**60
+    pack_v61_into(2**60, b)
+    assert len(b) <= 8
+    u = UnpackWrapper(b)
+    output = unpack_v61(u)
+    assert input == output
+
+
+
 if __name__ == '__main__':
-    import doctest
-    doctest.testmod()
+    __tests()

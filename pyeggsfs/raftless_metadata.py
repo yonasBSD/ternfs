@@ -18,7 +18,7 @@ import socket
 from sortedcontainers import SortedDict
 import sys
 import time
-from typing import (Any, DefaultDict, Dict, Iterator, List, Mapping, NamedTuple,
+from typing import (Any, DefaultDict, Dict, Iterator, List, NamedTuple,
     Optional, Sequence, Set, Tuple, Union)
 
 import bincode

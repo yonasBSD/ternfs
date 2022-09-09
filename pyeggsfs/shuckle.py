@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 from quart import Quart, request, g, jsonify, render_template, Response
-from typing import Dict, Tuple, Deque, Optional
+from typing import cast, Dict, Tuple, Deque, Optional
 import asyncio
 import collections
 import crypto
@@ -125,7 +125,8 @@ async def listen_for_registrations() -> None:
 
 HOST_CACHE: Dict[str, str] = {}
 
-@app.template_filter('resolve')
+# mypy doesn't like applying this decorator to an async def
+@app.template_filter('resolve') # type: ignore[arg-type]
 async def resolve_host(ip_port: str) -> str:
     ip, port = ip_port.split(':')
     if ip not in HOST_CACHE:
@@ -174,7 +175,7 @@ async def change_status() -> Response:
         assert False
     return jsonify({})
 
-def calc_weights(used_bytes: np.array, total_bytes: np.array, simulate_add_frac: float = 0.2) -> np.array:
+def calc_weights(used_bytes: np.ndarray, total_bytes: np.ndarray, simulate_add_frac: float = 0.2) -> np.ndarray:
     # linear program
     #   variables: target_fill_ratio, bytes_added (for each device) [both >= 0]
     #   objective: minimize sum(bytes_added)
@@ -202,7 +203,7 @@ def calc_weights(used_bytes: np.array, total_bytes: np.array, simulate_add_frac:
     ret = scipy.optimize.linprog(c, A_ub, b_ub)
     assert ret.success
     bytes_to_add = ret.x[1:]
-    w = bytes_to_add * (1.0 / simulate_add_frac)
+    w = cast(np.ndarray, bytes_to_add * (1.0 / simulate_add_frac))
     return w
 
 @app.route('/show_me_what_you_got')

@@ -195,13 +195,16 @@ def do_stat(parent_inode: int, name: str, arg2: str) -> None:
         raise Exception(f'resolve ({parent_inode}, "{name}") returned None')
 
     resp = stat(inode)
+    if resp is None:
+        print('Not found')
+        return
     print(f'inode=0x{inode:016X}')
     type = metadata_utils.type_from_inode(inode)
     print(f'type={type.name}')
     print(f'mtime={resp.mtime}')
     if type == InodeType.DIRECTORY:
         print(f'parent=0x{resp.size_or_parent:016X}')
-        print(f'opaque={resp.opaque}')
+        print(f'opaque={resp.opaque!r}')
     else:
         print(f'size={resp.size_or_parent}')
 

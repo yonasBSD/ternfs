@@ -319,22 +319,6 @@ class ShuckleData:
         return self._storage_class_to_meta[sc].block_meta[idx]
 
 
-# returned in the order from shuckle
-# (which doesn't appear to be specifically ordered currently)
-def try_fetch_block_metadata(shard: 'MetadataShard') -> Optional[ShuckleData]:
-    try:
-        resp = requests.get('http://localhost:5000/show_me_what_you_got')
-        resp.raise_for_status()
-        block_meta = [
-            BlockServerInfo.from_shuckle(datum, shard)
-            for datum in resp.json()
-        ]
-        return ShuckleData(block_meta)
-    except Exception as e:
-        print('WARNING: failed to get shuckle data:', e)
-        return None
-
-
 def _try_link(parent: Directory, new_key: LivingKey, new_val: LivingValue,
     now: int, *, dry: bool = False) -> Optional[MetadataError]:
     # try inserting the new value
@@ -415,6 +399,7 @@ class MetadataShard:
         self.reverse_block_index: SortedDict[BlockIndexKey, SpanId] = (
             SortedDict()
         )
+        self.shuckle_data = ShuckleData([])
 
     def register_bserver(self, secret: bytes) -> int:
         return self.bserver_secret_to_id[secret]
@@ -615,8 +600,7 @@ class MetadataShard:
         )
         return CreateEdenFileResp(new_inode, self._calc_cookie(new_inode))
 
-    def do_add_eden_span(self, r: AddEdenSpanReq, s: Optional[ShuckleData]
-        ) -> RespBodyTy:
+    def do_add_eden_span(self, r: AddEdenSpanReq) -> RespBodyTy:
 
         now = metadata_utils.now()
         eden_file = self.eden.get(r.inode)
@@ -644,11 +628,6 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 'Inconsistent storage class/parity mode'
             )
-        if not blockless_req and s is None:
-            return MetadataError(
-                MetadataErrorKind.SHUCKLE_ERROR,
-                'No shuckle data'
-            )
 
         # left empty for a blockless request
         resp_payload: List[BlockInfo] = []
@@ -673,9 +652,8 @@ class MetadataShard:
                     r.payload
                 )
             else:
-                assert s is not None
                 assert isinstance(r.payload, list)
-                target_block_servers = s.try_pick_blocks(
+                target_block_servers = self.shuckle_data.try_pick_blocks(
                     r.storage_class, num_blocks)
                 if target_block_servers is None:
                     return MetadataError(
@@ -737,10 +715,9 @@ class MetadataShard:
                     'Not consistent with existing span'
                 )
             if not blockless_req:
-                assert s is not None
                 assert isinstance(existing_span.payload, list)
                 for b in existing_span.payload:
-                    maybe_bserver = s.lookup(b.bserver_id)
+                    maybe_bserver = self.shuckle_data.lookup(b.bserver_id)
                     if maybe_bserver is None:
                         return MetadataError(
                             MetadataErrorKind.SHUCKLE_ERROR,
@@ -757,8 +734,7 @@ class MetadataShard:
 
         return AddEdenSpanResp(resp_payload)
 
-    def do_certify_eden_span(self, r: CertifyEdenSpanReq,
-        s: Optional[ShuckleData]) -> RespBodyTy:
+    def do_certify_eden_span(self, r: CertifyEdenSpanReq) -> RespBodyTy:
 
         now = metadata_utils.now()
         eden_file = self.eden.get(r.inode)
@@ -793,14 +769,9 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 f'Expected {len(target_span.payload)} proofs, got {len(r.proofs)}'
             )
-        if s is None:
-            return MetadataError(
-                MetadataErrorKind.SHUCKLE_ERROR,
-                'No shuckle data'
-            )
 
         for block, proof in zip(target_span.payload, r.proofs):
-            bserver = s.lookup(block.bserver_id)
+            bserver = self.shuckle_data.lookup(block.bserver_id)
             if bserver is None:
                 return MetadataError(
                     MetadataErrorKind.SHUCKLE_ERROR,
@@ -1007,8 +978,7 @@ class MetadataShard:
 
         return RepairSpansResp()
 
-    def do_expunge_eden_span(self, r: ExpungeEdenSpanReq,
-        s: Optional[ShuckleData]) -> RespBodyTy:
+    def do_expunge_eden_span(self, r: ExpungeEdenSpanReq) -> RespBodyTy:
         eden_file = self.eden.get(r.inode)
         now = metadata_utils.now()
         if eden_file is None:
@@ -1027,11 +997,6 @@ class MetadataShard:
         last_offset, last_span = eden_file.f.spans.peekitem()
         block_infos: List[BlockInfo] = []
         if isinstance(last_span.payload, list):
-            if s is None:
-                return MetadataError(
-                    MetadataErrorKind.SHUCKLE_ERROR,
-                    'No shuckle data'
-                )
             for block in last_span.payload:
                 if self.is_bserver_terminal(block.bserver_id):
                     continue
@@ -1040,7 +1005,7 @@ class MetadataShard:
                         MetadataErrorKind.BAD_REQUEST,
                         f'Block {block.block_id} still inside creation window'
                     )
-                bserver = s.lookup(block.bserver_id)
+                bserver = self.shuckle_data.lookup(block.bserver_id)
                 if bserver is None:
                     return MetadataError(
                         MetadataErrorKind.SHUCKLE_ERROR,
@@ -1099,8 +1064,7 @@ class MetadataShard:
         del parent.living_items[living_key]
         return DeleteFileResp()
 
-    def do_certify_expunge(self, r: CertifyExpungeReq,
-        s: Optional[ShuckleData]) -> RespBodyTy:
+    def do_certify_expunge(self, r: CertifyExpungeReq) -> RespBodyTy:
         eden_file = self.eden.get(r.inode)
         if eden_file is None:
             return MetadataError(
@@ -1134,12 +1098,6 @@ class MetadataShard:
                 ''
             )
 
-        if s is None:
-            return MetadataError(
-                MetadataErrorKind.SHUCKLE_ERROR,
-                'No shuckle data'
-            )
-
         blocks_to_cert = {
             block.block_id: block
             for block in last_span.payload
@@ -1149,7 +1107,7 @@ class MetadataShard:
             block = blocks_to_cert.get(block_id)
             if block is None:
                 continue
-            bserver = s.lookup(block.bserver_id)
+            bserver = self.shuckle_data.lookup(block.bserver_id)
             if bserver is None:
                 return MetadataError(
                     MetadataErrorKind.SHUCKLE_ERROR,
@@ -1200,8 +1158,7 @@ class MetadataShard:
         del self.eden[r.inode]
         return ExpungeEdenFileResp()
 
-    def do_fetch_spans(self, r: FetchSpansReq, s: Optional[ShuckleData]
-        ) -> RespBodyTy:
+    def do_fetch_spans(self, r: FetchSpansReq) -> RespBodyTy:
 
         file = self.inodes.get(r.inode)
         if file is None:
@@ -1213,11 +1170,6 @@ class MetadataShard:
             return MetadataError(
                 MetadataErrorKind.BAD_INODE_TYPE,
                 'Not a file'
-            )
-        if s is None:
-            return MetadataError(
-                MetadataErrorKind.SHUCKLE_ERROR,
-                'No shuckle data'
             )
         budget = metadata_utils.UDP_MTU
         budget -= MetadataResponse.SIZE
@@ -1233,10 +1185,8 @@ class MetadataShard:
                 payload = span.payload
             else:
                 payload = []
-                # FIXME: needs to be changed when metadata server
-                # can self-identify terminal bservers
                 for block in span.payload:
-                    bserver = s.lookup(block.bserver_id)
+                    bserver = self.shuckle_data.lookup(block.bserver_id)
                     if bserver is None:
                         # don't fail just because we don't know where the
                         # bserver is, client may be able to continue using
@@ -1754,6 +1704,20 @@ class MetadataShard:
         del self.inodes[r.inode]
         return MoveFileToEdenResp()
 
+    def try_fetch_block_metadata(self) -> bool:
+        try:
+            resp = requests.get('http://localhost:5000/show_me_what_you_got')
+            resp.raise_for_status()
+        except Exception as e:
+            print('WARNING: failed to get shuckle data:', e)
+            return False
+        block_meta = [
+            BlockServerInfo.from_shuckle(datum, self)
+            for datum in resp.json()
+        ]
+        self.shuckle_data = ShuckleData(block_meta)
+        return True
+
     def _dispense_inode(self, type: InodeType) -> int:
         if type == InodeType.DIRECTORY:
             ret = self.next_directory_inode
@@ -1793,7 +1757,8 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
     port = metadata_utils.shard_to_port(shard.shard_id)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.bind(('', port))
-    shuckle_data = try_fetch_block_metadata(shard)
+    if shard.try_fetch_block_metadata():
+        metadata_utils.persist(shard, db_fn)
     last_shuckle_update = time.time()
     while True:
         authorised = False
@@ -1832,12 +1797,10 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_create_eden_file(request.body)
                     dirty = True
                 elif isinstance(request.body, AddEdenSpanReq):
-                    resp_body = shard.do_add_eden_span(request.body,
-                        shuckle_data)
+                    resp_body = shard.do_add_eden_span(request.body)
                     dirty = True
                 elif isinstance(request.body, CertifyEdenSpanReq):
-                    resp_body = shard.do_certify_eden_span(request.body,
-                        shuckle_data)
+                    resp_body = shard.do_certify_eden_span(request.body)
                     dirty = True
                 elif isinstance(request.body, LinkEdenFileReq):
                     resp_body = shard.do_link_eden_file(request.body)
@@ -1846,21 +1809,19 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
                     resp_body = shard.do_repair_spans(request.body)
                     dirty = True
                 elif isinstance(request.body, ExpungeEdenSpanReq):
-                    resp_body = shard.do_expunge_eden_span(request.body,
-                        shuckle_data)
+                    resp_body = shard.do_expunge_eden_span(request.body)
                     dirty = True
                 elif isinstance(request.body, DeleteFileReq):
                     resp_body = shard.do_delete_file(request.body)
                     dirty = True
                 elif isinstance(request.body, CertifyExpungeReq):
-                    resp_body = shard.do_certify_expunge(request.body,
-                        shuckle_data)
+                    resp_body = shard.do_certify_expunge(request.body)
                     dirty = True
                 elif isinstance(request.body, ExpungeEdenFileReq):
                     resp_body = shard.do_expunge_eden_file(request.body)
                     dirty = True
                 elif isinstance(request.body, FetchSpansReq):
-                    resp_body = shard.do_fetch_spans(request.body, shuckle_data)
+                    resp_body = shard.do_fetch_spans(request.body)
                 elif isinstance(request.body, SameDirRenameReq):
                     resp_body = shard.do_same_dir_rename(request.body)
                 elif isinstance(request.body, PurgeDirentReq):
@@ -1916,9 +1877,7 @@ def run_forever(shard: MetadataShard, db_fn: str) -> None:
             pass
 
         if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
-            maybe_shuckle_data = try_fetch_block_metadata(shard)
-            if maybe_shuckle_data is not None:
-                shuckle_data = maybe_shuckle_data
+            if shard.try_fetch_block_metadata():
                 metadata_utils.persist(shard, db_fn)
             last_shuckle_update = time.time()
 

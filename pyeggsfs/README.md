@@ -35,7 +35,7 @@ Replace the `0` with `random.randint(0, 255)` (or whatever) to activate more sha
 Runs the cross-directory coordinator. There can only be one.
 
 ```
-$ ./cross_dir_coord.py 0 /path/to/persist/folder/
+$ ./cross_dir_coord.py /path/to/persist/folder/
 ```
 
 ### block_service.py
@@ -51,7 +51,7 @@ $ ./block_service.py /path/to/block/folder/ --storage_class STORAGE_CLASS
 Runs shuckle (formerly known as block service coordinator).
 
 ```
-$ ./block_service.py /path/to/block/folder/ --storage_class STORAGE_CLASS
+$ ./shuckle.py
 ```
 
 With shuckle running, you can navigate to http://localhost:5000 to see a view of all block services.

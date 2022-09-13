@@ -14,12 +14,12 @@ UDP_MTU = 1472
 
 
 # 64 bit inode:
-# OTTSSSSSSSSIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+# OTTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIISSSSSSSS
 #
 # O = u1  (in some contexts) is-owning bit
 # T = u2  inode type
-# S = u8  shard id
 # I = u53 inode id
+# S = u8  shard id
 
 
 class InodeType(enum.IntEnum):
@@ -41,7 +41,7 @@ def type_from_inode(inode: int) -> InodeType:
 
 
 def shard_from_inode(inode: int) -> int:
-    return (inode >> 53) & 0xFF
+    return inode & 0xFF
 
 
 def make_owning(inode: int) -> int:
@@ -52,14 +52,14 @@ def make_non_owning(inode_with_ownership: int) -> int:
     return inode_with_ownership & ~(1 << 63)
 
 
-def assemble_inode(is_owning: bool, type: InodeType, shard: int, id: int) -> int:
+def assemble_inode(is_owning: bool, type: InodeType, id: int, shard: int) -> int:
     assert shard < 256
     assert id < 2**52
-    return (is_owning << 63) | (type << 61) | (shard << 53) | id
+    return (is_owning << 63) | (type << 61) | (id << 8) | shard
 
 
 NULL_INODE = 0 # used for parent_inode to indicate no parent
-ROOT_INODE = assemble_inode(False, InodeType.DIRECTORY, 1, 0)
+ROOT_INODE = assemble_inode(False, InodeType.DIRECTORY, 0, 1)
 
 
 def shard_to_port(shard: int) -> int:

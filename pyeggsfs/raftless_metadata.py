@@ -374,11 +374,11 @@ class MetadataShard:
         self.shard_id = shard
         # id == 0 is reserved, start at 1
         self.next_directory_inode = metadata_utils.assemble_inode(
-            False, InodeType.DIRECTORY, shard, 1)
+            False, InodeType.DIRECTORY, 1, shard)
         self.next_file_inode = metadata_utils.assemble_inode(
-            False, InodeType.FILE, shard, 1)
+            False, InodeType.FILE, 1, shard)
         self.next_symlink_inode = metadata_utils.assemble_inode(
-            False, InodeType.SYMLINK, shard, 1)
+            False, InodeType.SYMLINK, 1, shard)
         self.last_block_id = shard | 0x100
         self.next_bserver_id = 0
         self.inodes: SortedDict[int, InodePayload] = SortedDict()
@@ -1723,13 +1723,13 @@ class MetadataShard:
     def _dispense_inode(self, type: InodeType) -> int:
         if type == InodeType.DIRECTORY:
             ret = self.next_directory_inode
-            self.next_directory_inode += 1
+            self.next_directory_inode += 0x100
         elif type == InodeType.FILE:
             ret = self.next_file_inode
-            self.next_file_inode += 1
+            self.next_file_inode += 0x100
         elif type == InodeType.SYMLINK:
             ret = self.next_symlink_inode
-            self.next_symlink_inode += 1
+            self.next_symlink_inode += 0x100
         else:
             assert False
         return ret

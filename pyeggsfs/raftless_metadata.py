@@ -309,6 +309,8 @@ class ShuckleData:
             WeightedBlockMeta(None, []))
         if meta_for_sc.cum_weights is None:
             return None
+        # can't use random.choices in prod
+        # needs to select bservers on different "failure domains"
         return random.choices(meta_for_sc.block_meta,
             cum_weights=meta_for_sc.cum_weights, k=num)
 

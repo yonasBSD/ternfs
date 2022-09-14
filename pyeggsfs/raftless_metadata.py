@@ -620,6 +620,7 @@ class MetadataShard:
                 MetadataErrorKind.BAD_REQUEST,
                 'Wrong cookie'
             )
+
         # "blockless requests" use no blocks
         # we support two kinds, INLINE and ZERO_FILL
         blockless_req = (r.parity_mode == 0)
@@ -633,9 +634,19 @@ class MetadataShard:
         # left empty for a blockless request
         resp_payload: List[BlockInfo] = []
 
+        if r.size == 0:
+            if r.storage_class == ZERO_FILL_STORAGE:
+                # special case: add a zero-fill span of size zero does nothing
+                # except advancing the deadline_time
+                pass
+            else:
+                return MetadataError(
+                    MetadataErrorKind.BAD_REQUEST,
+                    'Zero-size spans are not supported'
+                )
         # if r.offset is end of file, create and append new span
         # otherwise, resynthesis previous response from existing span
-        if r.byte_offset == eden_file.f.size:
+        elif r.byte_offset == eden_file.f.size:
             if eden_file.last_span_state != SpanState.CLEAN:
                 return MetadataError(
                     MetadataErrorKind.BAD_REQUEST,
@@ -699,7 +710,6 @@ class MetadataShard:
             eden_file.f.size += new_span.size
             if new_span.parity:
                 eden_file.last_span_state = SpanState.DIRTY
-            eden_file.deadline_time = now + DEADLINE_DURATION_NS
         else:
             existing_span = eden_file.f.spans.get(r.byte_offset)
             if existing_span is None:
@@ -733,6 +743,9 @@ class MetadataShard:
                         )
                     )
 
+        # always advance deadline_time on succees
+        # even if we didn't actually add a span
+        eden_file.deadline_time = now + DEADLINE_DURATION_NS
         return AddEdenSpanResp(resp_payload)
 
     def do_certify_eden_span(self, r: CertifyEdenSpanReq) -> RespBodyTy:

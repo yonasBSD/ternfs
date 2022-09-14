@@ -362,8 +362,7 @@ def do_cat(parent_inode: int, name: str, arg2: str) -> None:
         if next_offset == 0:
             break
 
-def do_create_eden_file(parent_inode: int, name: str,
-    arg2: str) -> None:
+def do_create_eden_file(parent_inode: int, name: str, arg2: str) -> None:
 
     if arg2 != '':
         raise ValueError('No arg2 for create eden')
@@ -382,6 +381,22 @@ def do_create_eden_file(parent_inode: int, name: str,
     resp = send_request(
         metadata_msgs.CreateEdenFileReq(InodeType.FILE),
         metadata_utils.shard_from_inode(inode)
+    )
+    print(resp)
+
+
+def do_extend_eden_deadline(parent_inode: int, name: str, arg2: str) -> None:
+
+    if arg2 == '':
+        raise ValueError('Need arg2 (cookie) for extend_eden_deadline')
+
+    eden_inode = int(name)
+    cookie = int(arg2)
+
+    resp = send_request(
+        metadata_msgs.AddEdenSpanReq(metadata_msgs.ZERO_FILL_STORAGE, 0,
+            b'\x00' * 4, 0, 0, eden_inode, cookie, b''),
+        metadata_utils.shard_from_inode(eden_inode)
     )
     print(resp)
 
@@ -696,6 +711,7 @@ requests: Dict[str, Callable[[int, str, str], None]] = {
         | metadata_msgs.LsFlags.USE_DEAD_MAP),
     'cat': do_cat,
     'create_eden_file': do_create_eden_file,
+    'extend_eden_deadline': do_extend_eden_deadline,
     'expunge_span': do_expunge_span,
     'expunge_file': do_expunge_file,
     'create_test_file': do_create_test_file,

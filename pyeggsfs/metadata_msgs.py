@@ -814,7 +814,7 @@ class LsPayload(bincode.Packable):
 class LsDirResp(bincode.Packable):
     kind: ClassVar[RequestKind] = RequestKind.LS_DIR
     SIZE: ClassVar[int] = 8 + 2
-    continuation_key: int # UINT64_MAX => no more results
+    continuation_key: int # 0 => no more results
     results: List[LsPayload]
 
     def pack_into(self, b: bytearray) -> None:

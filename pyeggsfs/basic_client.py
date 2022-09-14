@@ -280,7 +280,7 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: int, name: str,
     continuation_key = 0
     shard = metadata_utils.shard_from_inode(inode)
     all_results: List[str] = []
-    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+    while True: # do..while(continuation_key != 0)
         resp = send_request(
             metadata_msgs.LsDirReq(
                 inode,
@@ -297,6 +297,8 @@ def do_ls(flags: metadata_msgs.LsFlags, parent_inode: int, name: str,
             for r in resp.results
         )
         continuation_key = resp.continuation_key
+        if continuation_key == 0:
+            break
     all_results.sort()
     pprint.pprint(all_results)
 
@@ -315,7 +317,7 @@ def do_cat(parent_inode: int, name: str, arg2: str) -> None:
 
     shard = metadata_utils.shard_from_inode(inode)
     next_offset = 0
-    while True:
+    while True: # do..while(next_offset != 0)
         resp = send_request(
             metadata_msgs.FetchSpansReq(inode, next_offset), shard)
         if not isinstance(resp, metadata_msgs.FetchSpansResp):
@@ -357,7 +359,7 @@ def do_cat(parent_inode: int, name: str, arg2: str) -> None:
                             data_idx += conn.recv_into(view[data_idx:], 0)
                         assert data_idx == next_block_idx
             print(data.decode(), end='')
-        if next_offset == 0: # python lacks do..while loops
+        if next_offset == 0:
             break
 
 def do_create_eden_file(parent_inode: int, name: str,
@@ -575,7 +577,7 @@ def do_visit_inodes(parent_inode: int, name: str, arg2: str) -> None:
     continuation_key = int(arg2)
     shard = metadata_utils.shard_from_inode(continuation_key)
     ret = []
-    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+    while True: # do..while(continuation_key != 0)
         resp = send_request(
             metadata_msgs.VisitInodesReq(continuation_key),
             shard
@@ -583,6 +585,8 @@ def do_visit_inodes(parent_inode: int, name: str, arg2: str) -> None:
         assert isinstance(resp, metadata_msgs.VisitInodesResp)
         ret.extend(resp.inodes)
         continuation_key = resp.continuation_key
+        if continuation_key == 0:
+            break
     pprint.pprint(ret)
 
 
@@ -590,7 +594,7 @@ def do_visit_eden(parent_inode: int, name: str, arg2: str) -> None:
     continuation_key = int(arg2)
     shard = metadata_utils.shard_from_inode(continuation_key)
     ret = []
-    while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+    while True: # do..while(continuation_key != 0)
         resp = send_request(
             metadata_msgs.VisitEdenReq(continuation_key),
             shard
@@ -598,6 +602,8 @@ def do_visit_eden(parent_inode: int, name: str, arg2: str) -> None:
         assert isinstance(resp, metadata_msgs.VisitEdenResp)
         ret.extend(resp.eden_vals)
         continuation_key = resp.continuation_key
+        if continuation_key == 0:
+            break
     pprint.pprint(ret)
 
 
@@ -606,7 +612,7 @@ def do_reverse_block_query(parent_inode: int, name: str, arg2: str) -> None:
     ret = []
     for shard in range(2):#256):
         continuation_key = 0
-        while continuation_key != 0xFFFF_FFFF_FFFF_FFFF:
+        while True: # do..while(continuation_key != 0)
             resp = send_request(
                 metadata_msgs.ReverseBlockQueryReq(bserver, continuation_key),
                 shard
@@ -614,6 +620,8 @@ def do_reverse_block_query(parent_inode: int, name: str, arg2: str) -> None:
             assert isinstance(resp, metadata_msgs.ReverseBlockQueryResp)
             ret.extend(resp.blocks)
             continuation_key = resp.continuation_key
+            if continuation_key == 0:
+                break
     pprint.pprint(ret)
 
 

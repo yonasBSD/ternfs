@@ -579,8 +579,7 @@ class MetadataShard:
                 or include_nothing_results):
                 results.append(result)
         else:
-            # FIXME: inefficient varint encoding
-            continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+            continuation_key = 0
 
         return LsDirResp(
             continuation_key,
@@ -1344,7 +1343,7 @@ class MetadataShard:
         num_inodes_to_fetch = (budget // 8) + 1 # include continuation key
         inode_range = self.inodes.irange(r.begin_inode)
         inodes = list(itertools.islice(inode_range, num_inodes_to_fetch))
-        continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+        continuation_key = 0
         if len(inodes) == num_inodes_to_fetch:
             continuation_key = inodes[-1]
             inodes = inodes[:-1]
@@ -1359,7 +1358,7 @@ class MetadataShard:
             EdenVal(inode, eden_file.deadline_time)
             for inode, eden_file in self.eden.items()[begin_idx:end_idx]
         ]
-        continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+        continuation_key = 0
         if len(eden_vals) == num_files_to_fetch:
             continuation_key = eden_vals[-1].inode
             eden_vals = eden_vals[:-1]
@@ -1388,7 +1387,7 @@ class MetadataShard:
             budget -= size
             blocks.append(queried_block)
         else:
-            continuation_key = 0xFFFF_FFFF_FFFF_FFFF
+            continuation_key = 0
         return ReverseBlockQueryResp(continuation_key, blocks)
 
     def do_repair_block(self, r: RepairBlockReq) -> RespBodyTy:

@@ -12,14 +12,14 @@ import secrets
 import socket
 import struct
 import sys
+import logging
 
-import metadata_utils
+import common
 
 def block_id_to_path(base_path: Path, block_id: int) -> Path:
     # 256 subdirectories
     hex_block_id = block_id.to_bytes(8, 'little').hex()
     subdir = hex_block_id[:2]
-    filename = f'{hex_block_id}.dat'
     return base_path / subdir / hex_block_id
 
 def fetch_block(base_path: Path, block_id: int) -> bytes:
@@ -53,7 +53,7 @@ def get_stats(base_path: Path) -> Tuple[int, int, int, int]:
     used_bytes = 0
     used_n = 0
     for i in range(256):
-        path = base_path / i.to_bytes(2, 'little').hex()
+        path = base_path / i.to_bytes(2, 'little').hex()[:2]
         if not path.exists():
             continue
         with os.scandir(path) as it:
@@ -166,9 +166,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 block_id, crc, size = deser_write_block(kind + (await reader.readexactly(24)), rk)
                 # check that block_id is inside expected range
                 # this ensures we don't have "reply attack"-esque issues
-                now = metadata_utils.now()
+                now = common.eggs_time()
                 if not (now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF):
-                    print(f'Block {block_id} in the past', file=sys.stderr)
+                    logging.error(f'Block {block_id} in the past')
                     return
                 assert size <= MAX_OBJECT_SIZE
                 data = await reader.readexactly(size)
@@ -213,24 +213,18 @@ async def periodically_register(key: bytes, port: int, storage_class: int) -> No
     shuckle = ('localhost', 5000)
     while True:
         sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
-        await asyncio.sleep(60)
+        await asyncio.sleep(1)
 
-async def main() -> None:
-    parser = argparse.ArgumentParser(description='Block service')
-    parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
-    parser.add_argument('--storage_class', help='Storage class byte', type=int, default=2)
-    parser.add_argument('--coordinator', help='Address and port of the block service coordinator')
-    config = parser.parse_args()
-
-    assert (2 <= config.storage_class <= 255), f'Storage class {config.storage_class} out of range'
+async def async_main(*, path: str, port: int, storage_class: int) -> None:
+    assert (2 <= storage_class <= 255), f'Storage class {storage_class} out of range'
 
     # open the key file and ensure we are exclusive
-    fp = open(config.path / 'secret.key', 'a+b')
+    fp = open(Path(path) / 'secret.key', 'a+b')
     fp.seek(0)
     try:
         fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as e:
-        print(f'Another block service is already bound to {config.path}', file=sys.stderr)
+        logging.error(f'Another block service is already bound to {path}')
         sys.exit(1)
 
     # fetch the secret key, creating it if needed
@@ -238,24 +232,34 @@ async def main() -> None:
     if len(key) == 0:
         key = secrets.token_bytes(16)
         fp.write(key)
+        fp.flush()
+        os.fsync(fp)
     else:
         assert len(key) == 16
-    print(f'Using secret key {key.hex()}', file=sys.stderr)
+    logging.info(f'Using secret key {key.hex()}')
     rk = crypto.aes_expand_key(key)
 
-    # create a TCP socket on an arbitrary port
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(('localhost', 0))
+    sock.bind(('localhost', port))
     _, port = sock.getsockname()
-    print(f'Bound to port {port}', file=sys.stderr)
+    logging.info(f'Block service {path} bound to port {port}')
 
     # create the server (starts listening for requests immediately)
-    server = await asyncio.start_server(lambda rs, ws: handle_client(rs, ws, rk, config.path), sock=sock)
+    server = await asyncio.start_server(lambda rs, ws: handle_client(rs, ws, rk, Path(path)), sock=sock)
 
     # run forever
     await asyncio.gather(
-        periodically_register(key, port, config.storage_class),
+        periodically_register(key, port, storage_class),
         server.serve_forever())
 
+def main(*, path: str, port: int, storage_class: int) -> None:
+    asyncio.run(async_main(path=path, port=port, storage_class=storage_class))
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description='Block service')
+    parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
+    parser.add_argument('--storage_class', help='Storage class byte', type=int, default=2)
+    config = parser.parse_args()
+
+    # Arbitrary port here
+    main(path=config.path, port=0, storage_class=config.storage_class)

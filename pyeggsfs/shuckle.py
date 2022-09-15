@@ -13,6 +13,10 @@ import secrets
 import socket
 import sqlite3
 import struct
+import argparse
+import sys
+import os
+import logging
 
 app = Quart(__name__)
 
@@ -25,14 +29,15 @@ app = Quart(__name__)
 KEYS_TO_CHECK: Deque[bytes] = collections.deque()
 KEY_TO_IP_PORT_SC: Dict[bytes, Tuple[str, int, int]] = {}
 
-DB = sqlite3.connect('database.db')
-DB.row_factory = sqlite3.Row
+DB: sqlite3.Connection
 
 EPOCH = datetime.datetime(2020, 1, 1)
 MAX_STALE_SECS = 600
 
 # verify we can contact a device, if we can update the database
 async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> None:
+    global DB
+
     now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
 
     # connect to the device and fetch the stats
@@ -70,30 +75,23 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> No
 
 
 async def check_devices_forever() -> None:
-    # first fetch all existing devices from the database
-    c = DB.execute('select secret_key, ip_port, storage_class from block_services')
-    for key, ip_port, sc in c.fetchall():
-        ip, port = ip_port.split(':')
-        port = int(port)
-        key = bytes.fromhex(key)
-        KEYS_TO_CHECK.append(key)
-        KEY_TO_IP_PORT_SC[key] = (ip, port, sc)
-    app.logger.info(f'Started periodic check routine, loaded {len(KEYS_TO_CHECK)} devices')
-    # now repeatedly take a device from the front of the queue and check it
+    global DB
+
     while True:
-        await asyncio.sleep(1)
-        if not KEYS_TO_CHECK: continue
-        KEYS_TO_CHECK.rotate(-1)
-        key = KEYS_TO_CHECK[-1]
-        ip, port, sc = KEY_TO_IP_PORT_SC[key]
-        try:
-            #app.logger.info(f'Running periodic check for {ip}:{port}')
-            await check_one_device(key, ip, port, sc)
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            #app.logger.error(f'Failed to check device at {ip}:{port}', exc_info=True)
-            pass
+        c = DB.execute('select secret_key, ip_port, storage_class from block_services').fetchall()
+        app.logger.info(f'Started periodic check routine, loaded {len(c)} devices')
+        for key, ip_port, sc in c:
+            ip, port = ip_port.split(':')
+            port = int(port)
+            key = bytes.fromhex(key)
+            try:
+                await check_one_device(key, ip, port, sc)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                app.logger.error(f'Failed to check device at {ip_port}', exc_info=True)
+                pass
+        await asyncio.sleep(60)
 
 async def listen_for_registrations() -> None:
     # open a udp socket and listen for registration messages
@@ -151,11 +149,13 @@ def is_stale(value: int) -> bool:
 
 @app.route('/')
 async def index() -> str:
+    global DB
     c = DB.execute('select * from block_services')
     return await render_template('index.html', devices=list(c.fetchall()))
 
 @app.route('/change_status', methods=['POST'])
 async def change_status() -> Response:
+    global DB
     body = await request.json
     action, id = body['action'], body['id']
     if action == 'drain':
@@ -208,6 +208,8 @@ def calc_weights(used_bytes: np.ndarray, total_bytes: np.ndarray, simulate_add_f
 
 @app.route('/show_me_what_you_got')
 async def list_devices() -> Response:
+    global DB
+
     now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
 
     # first let's compute the weights
@@ -242,15 +244,21 @@ async def list_devices() -> Response:
 # initialization
 ###########################################
 
-def init_db() -> None:
+def init_db(db_dir: str) -> None:
+    global DB
+
     #TODO: add storage_mode
-    db = sqlite3.connect('database.db')
-    db.execute("""
+    db_path = os.path.join(db_dir, f'shuckle.sqlite')
+    logging.info(f'Running shuckle with db {db_path}')
+    DB = sqlite3.connect(db_path)
+    DB.row_factory = sqlite3.Row
+
+    DB.execute("""
         create table if not exists block_services (
             id integer primary key,
             secret_key text unique not null,
             status integer not null default "ok",
-            ip_port text,
+            ip_port text unique not null,
             storage_class integer not null,
             last_check integer not null,
             used_bytes integer not null,
@@ -259,7 +267,7 @@ def init_db() -> None:
             free_n integer not null
         )
     """)
-    db.commit()
+    DB.commit()
 
 CHECK_DEVICES_FOREVER_TASK: Optional['asyncio.Task[None]'] = None
 LISTEN_FOR_REGISTRATIONS_TASK: Optional['asyncio.Task[None]'] = None
@@ -280,6 +288,13 @@ async def shutdown() -> None:
     CHECK_DEVICES_FOREVER_TASK.cancel()
     LISTEN_FOR_REGISTRATIONS_TASK.cancel()
 
+def main(db_path: str):
+    init_db(db_path)
+    logging.info(f'Running shuckle webapp at 0.0.0:5000')
+    app.run('0.0.0.0', 5000, debug=True, use_reloader=False)
+
 if __name__ == '__main__':
-    init_db()
-    app.run('0.0.0.0', 5000, debug=True)
+    parser = argparse.ArgumentParser(description='Runs shuckle')
+    parser.add_argument('db_dir', help='Directory to create or load db')
+    config = parser.parse_args(sys.argv[1:])
+    main(config.db_dir)

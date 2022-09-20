@@ -2,13 +2,15 @@
 
 import argparse
 import functools
+import itertools
+import math
 import posixpath
 import pprint
 import socket
 import struct
 import sys
 import time
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Collection, Dict, List, NamedTuple, Optional, Tuple
 
 import bincode
 import crypto
@@ -485,29 +487,75 @@ def do_create_test_file(parent_inode: int, name: str,
     new_inode_id = resp.inode
     cookie = resp.cookie
 
-    def add_span(data: bytes, crc: bytes, byte_offset: int, mode: str) -> metadata_msgs.RespBodyTy:
-        payload: Union[bytes, List[metadata_msgs.NewBlockInfo]]
+    class Block(NamedTuple):
+        data: bytes
+        crc: bytes
 
-        if mode == 'INLINE':
-            storage_class = metadata_msgs.INLINE_STORAGE
-            parity_mode = 0
-            payload = data
-        elif mode == 'ZERO_FILL':
-            assert all(b == 0 for b in data)
+    def convert_to_blocks(data: bytes, parity_mode: int) -> List[Block]:
+        data_blocks = metadata_utils.num_data_blocks(parity_mode)
+        parity_blocks = metadata_utils.num_parity_blocks(parity_mode)
+        total_blocks = data_blocks + parity_blocks
+        if data_blocks == 0:
+            raise Exception('Need at least one data block')
+
+        blocks = []
+        if data_blocks == 1: # 'MIRRORING'
+            blocks = [Block(data, crypto.crc32c(data))] * total_blocks
+        elif parity_blocks == 1: # 'RAID-5'
+            block_size = math.ceil(len(data) / data_blocks)
+            def xor_bytes(x: bytes, y: bytes) -> bytes:
+                return bytes(
+                    a ^ b for a, b in itertools.zip_longest(x, y, fillvalue=0)
+                )
+            parity = b''
+            for block_offset in range(0, len(data), block_size):
+                block_data = data[block_offset:block_offset+block_size]
+                parity = xor_bytes(parity, block_data)
+                zero_padding = block_size - len(block_data)
+                crc = crypto.crc32c(block_data + zero_padding * b'\0')
+                blocks.append(Block(block_data, crc))
+            assert len(parity) == block_size
+            blocks.append(Block(parity, crypto.crc32c(parity)))
+        else:
+            raise NotImplementedError(
+                f'Parity mode {data_blocks}+{parity_blocks} not implemented'
+            )
+
+        return blocks
+
+    def add_blockless_span(data: bytes, byte_offset: int
+        ) -> metadata_msgs.AddEdenSpanResp:
+        if all(x == 0 for x in data):
             storage_class = metadata_msgs.ZERO_FILL_STORAGE
             parity_mode = 0
             payload = b''
-        elif mode == 'SINGLE':
-            storage_class = second_block_sc
-            parity_mode = metadata_utils.create_parity_mode(1, 0)
-            payload = [metadata_msgs.NewBlockInfo(crc, len(data))]
-        elif mode == 'MIRRORING':
-            storage_class = second_block_sc
-            parity_mode = metadata_utils.create_parity_mode(1, 2)
-            payload = [metadata_msgs.NewBlockInfo(crc, len(data))] * 3
         else:
-            raise Exception(f'unknown mode {mode}')
+            storage_class = metadata_msgs.INLINE_STORAGE
+            parity_mode = 0
+            payload = data
+        ret = send_request(
+            metadata_msgs.AddEdenSpanReq(
+                storage_class,
+                parity_mode,
+                crypto.crc32c(data),
+                len(data),
+                byte_offset,
+                new_inode_id,
+                cookie,
+                payload
+            ),
+            shard
+        )
+        if not isinstance(ret, metadata_msgs.AddEdenSpanResp):
+            raise Exception(f'Bad response: {ret}')
+        return ret
 
+    def add_span(blocks: Collection[Block], crc: bytes, byte_offset: int,
+        storage_class: int, parity_mode: int) -> metadata_msgs.AddEdenSpanResp:
+        assert len(blocks) == metadata_utils.total_blocks(parity_mode)
+        payload = [
+            metadata_msgs.NewBlockInfo(b.crc, len(b.data)) for b in blocks
+        ]
         ret = send_request(
             metadata_msgs.AddEdenSpanReq(
                 storage_class,
@@ -521,16 +569,17 @@ def do_create_test_file(parent_inode: int, name: str,
             ),
             shard
         )
-
+        if not isinstance(ret, metadata_msgs.AddEdenSpanResp):
+            raise Exception(f'Bad response: {ret}')
         return ret
 
     # writes block, returns proof
-    def write_block(data: bytes, addr: Tuple[str, int], block_id: int,
-        crc: bytes, certificate: bytes) -> bytes:
-        header = struct.pack('<cQ4sI8s', b'w', block_id, crc, len(data),
+    def write_block(block: Block, addr: Tuple[str, int], block_id: int,
+        certificate: bytes) -> bytes:
+        header = struct.pack('<cQ4sI8s', b'w', block_id, block.crc, len(block.data),
             certificate)
         with socket.create_connection(addr) as conn:
-            conn.send(header + data)
+            conn.send(header + block.data)
             resp = conn.recv(1024)
         if len(resp) != 17:
             raise RuntimeError(f'Bad response len {resp!r}')
@@ -543,23 +592,20 @@ def do_create_test_file(parent_inode: int, name: str,
         return proof
 
     cur_offset = 0
-    for data, mode in [(b'hello,', 'INLINE'), (b' world', 'MIRRORING'), (b'\x00' * 10, 'ZERO_FILL')]:
-    # for data, mode in [(b' world', 'SINGLE')]:
-        crc = crypto.crc32c(data)
-        resp = add_span(data, crc, cur_offset, mode)
-        if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
-            raise RuntimeError(f'{resp}')
-        write_proofs = []
-        if mode in ('SINGLE', 'MIRRORING'):
-            write_proofs = [
-                write_block(data, (socket.inet_ntoa(binfo.ip), binfo.port),
-                    binfo.block_id, crc, binfo.certificate)
-                for binfo in resp.span
-            ]
+    for data, mode in [(b'hello,', 0), (b' world', metadata_utils.create_parity_mode(3, 1)), (b'\x00' * 10, 0)]:
+        if mode == 0:
+            resp = add_blockless_span(data, cur_offset)
+            if not isinstance(resp, metadata_msgs.AddEdenSpanResp):
+                raise RuntimeError(f'{resp}')
         else:
-            assert mode in ['INLINE', 'ZERO_FILL']
-
-        if write_proofs:
+            blocks = convert_to_blocks(data, mode)
+            crc = crypto.crc32c(data)
+            resp = add_span(blocks, crc, cur_offset, 2, mode)
+            write_proofs = [
+                write_block(block, (socket.inet_ntoa(binfo.ip), binfo.port),
+                    binfo.block_id, binfo.certificate)
+                for block, binfo in zip(blocks, resp.span)
+            ]
             resp = send_request(
                 metadata_msgs.CertifyEdenSpanReq(
                     new_inode_id,

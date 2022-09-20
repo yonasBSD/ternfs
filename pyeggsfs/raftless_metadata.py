@@ -5,6 +5,7 @@ import collections
 import dataclasses
 from dataclasses import dataclass, field
 import enum
+import functools
 import hashlib
 import itertools
 import math
@@ -179,6 +180,16 @@ class Span:
         if not isinstance(self.payload, list):
             return False
 
+        num_data_blocks = metadata_utils.num_data_blocks(self.parity)
+        num_parity_blocks = metadata_utils.num_parity_blocks(self.parity)
+        num_blocks = num_data_blocks + num_parity_blocks
+
+        if len(self.payload) != num_blocks:
+            return False
+
+        if num_data_blocks == 0 or num_blocks == 0:
+            return False
+
         # TODO: implement crc consistency check
         #
         # implementation strategy as per the doc:
@@ -192,10 +203,45 @@ class Span:
         # for the metadata server to validate).
 
         # also check size consistency
-        num_data_blocks = metadata_utils.num_data_blocks(self.parity)
+
         implied_size = sum(b.size for b in self.payload[:num_data_blocks])
         if self.size != implied_size:
             return False
+
+        block_size = max(span.size for span in self.payload)
+        runt_data_blocks = sum(span.size < block_size for span in self.payload[:num_data_blocks])
+        runt_parity_blocks = sum(span.size < block_size for span in self.payload[num_data_blocks:])
+        max_runt_data_blocks = 0 if num_data_blocks == 1 else 1
+        if runt_data_blocks > max_runt_data_blocks or runt_parity_blocks > 0:
+            return False
+
+        implied_crc = self.payload[0].crc32
+        for data_block in self.payload[1:num_data_blocks]:
+            implied_crc = crypto.crc32c_combine(implied_crc, data_block.crc32,
+                data_block.size)
+        if implied_crc != self.crc32:
+            return False
+
+        if num_data_blocks == 1:
+            # mirroring: the parity blocks must have same crc as data block
+            if not all(span.crc32 == self.crc32 for span in self.payload[num_data_blocks:]):
+                return False
+
+        if num_parity_blocks > 0:
+            # first block of parity is XOR of the data blocks
+            # because crc32c is affine we can XOR the CRCs
+            # (for even case needs a correction factor, crc32c of block_size zeroes)
+            xor_crc = functools.reduce(
+                operator.xor,
+                (int.from_bytes(span.crc32, 'little') for span in self.payload[:num_data_blocks])
+            )
+            if (num_data_blocks & 1) == 0:
+                correction_factor = crypto.mult_mod_p(
+                    crypto.x2n_mod_p(block_size, 3), 0xffffffff) ^ 0xffffffff
+                xor_crc ^= correction_factor
+
+            if xor_crc.to_bytes(4, 'little') != self.payload[num_data_blocks].crc32:
+                return False
 
         return True
 

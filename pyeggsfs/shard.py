@@ -47,6 +47,7 @@ class SpanState(enum.IntEnum):
     CONDEMNED = 2
 
 def init_db(shard: int, db: sqlite3.Connection):
+    # TODO go through indices/queries and make sure that the indices we have make sense, referring to the queries that need them
     assert 0 <= shard < 256
     cur = db.cursor()
     cur.execute('pragma foreign_keys = ON')

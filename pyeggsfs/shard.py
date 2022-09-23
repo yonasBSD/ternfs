@@ -317,8 +317,8 @@ class ShardInfo:
     
     def _update(self, cur: sqlite3.Cursor):
         cur.execute(
-            'update shard set next_file_id = :next_file_id, next_symlink_id = :next_symlink_id',
-            {'next_file_id': self._next_file_id, 'next_symlink_id': self._next_symlink_id}
+            'update shard set next_file_id = :next_file_id, next_symlink_id = :next_symlink_id, next_block_id = :next_block_id',
+            {'next_file_id': self._next_file_id, 'next_symlink_id': self._next_symlink_id, 'next_block_id': self._next_block_id}
         )
 
 CHECK_CONSTRAINTS = True
@@ -1547,7 +1547,8 @@ class ShardTests(unittest.TestCase):
             parity=create_parity_mode(3,1),
             body=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)), NewBlockInfo(b'1234', 100)]
         )
-        raid5_span_resp = self.shard.execute_ok(raid5_span_req)
+        raid5_span_resp = cast(AddSpanInitiateResp, self.shard.execute_ok(raid5_span_req))
+        assert len(set([b.block_id for b in raid5_span_resp.blocks])) == len(raid5_span_resp.blocks)
         # if we try to link now, we shouldn't be able to (file is dirty)
         link_req = LinkFileReq(
             file_id=transient_file.id,

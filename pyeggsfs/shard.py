@@ -534,6 +534,11 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
         # The window selects the current row, and the previous row chronologically, excluding
         # everything after as_of. We want the rows that are first, and that have non-null target
         # id.
+        #
+        # TODO this will always consider at least one edge per name (current or snapshot), which
+        # is not good if we create a million file and then remove them. We should
+        # * Just use the `current` column in the common case
+        # * Add a (dir_id, name_ash, creation_time) type index to make the other case faster too
         '''
             with results as (
                 select row_number() over this_and_successor as row, target_id, name_hash, name

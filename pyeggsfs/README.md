@@ -29,3 +29,11 @@ Once started, you can start poking at the filesystem using `basic_client.py`, e.
 The services can also be started separatedly with `./shard.py`, `./cdc.py`, `./block_service.py`, and `./shuckle.py`. They are all needed to operate a filesystem, and the shard _must_ be 256.
 
 With shuckle running, you can navigate to http://localhost:5000 to see a view of all block services.
+
+## Testing
+
+```
+./tests.py
+```
+
+We try to test all operations and all error conditions. The CDC test driver can inject shard failures to test cases where shard requests go wrong.

@@ -346,7 +346,6 @@ DisableLogging = _DisableLogging()
 def check_edge_constraints(cur: sqlite3.Cursor, dir_id: int) -> bool:
     if not CHECK_CONSTRAINTS: return True
     # No multiple current edges with same name
-    # TODO can't quickly filter based on count, but it would be a lot nicer/faster
     num_edges_per_name = cur.execute(
         'select name, count(*) as outgoing from edges where dir_id = :dir_id and current group by name having outgoing > 1', 
         {'dir_id': dir_id}

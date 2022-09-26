@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass
 import enum
-from typing import ClassVar, Dict, Optional, Tuple, Type, Union
+from typing import ClassVar, Dict, Optional, Tuple, Type, Union, Set
 
 import bincode
 from common import *
@@ -9,7 +9,7 @@ from common import *
 class CDCRequestKind(enum.IntEnum):
     ERROR = 0
 
-    MAKE_DIR = 1
+    MAKE_DIRECTORY = 1
     RENAME_FILE = 2
     RENAME_DIRECTORY = 3
     UNLINK_DIRECTORY = 4 # TODO in the kernel is rmdir, but we mean something more specific with "unlink"
@@ -18,9 +18,30 @@ class CDCRequestKind(enum.IntEnum):
     HARD_UNLINK_FILE = 5
 assert CDCRequestKind.ERROR == EggsError.kind
 
+CDC_ERRORS: Dict[CDCRequestKind, Set[ErrCode]] = {
+    CDCRequestKind.MAKE_DIRECTORY: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.CANNOT_OVERRIDE_NAME, ErrCode.NAME_IS_LOCKED,
+        ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
+    },
+    CDCRequestKind.RENAME_FILE: {
+        ErrCode.TYPE_IS_DIRECTORY, ErrCode.OLD_DIRECTORY_NOT_FOUND, ErrCode.OLD_NAME_IS_LOCKED,
+        ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
+        ErrCode.NEW_DIRECTORY_NOT_FOUND, ErrCode.NEW_NAME_IS_LOCKED,
+        ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
+    },
+    CDCRequestKind.RENAME_DIRECTORY: {
+        ErrCode.TYPE_IS_NOT_DIRECTORY, ErrCode.LOOP_IN_DIRECTORY_RENAME, ErrCode.OLD_DIRECTORY_NOT_FOUND,
+        ErrCode.OLD_NAME_IS_LOCKED, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NEW_DIRECTORY_NOT_FOUND,
+        ErrCode.NEW_NAME_IS_LOCKED, ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
+    },
+    CDCRequestKind.UNLINK_DIRECTORY: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
+        ErrCode.NAME_IS_LOCKED, ErrCode.TYPE_IS_NOT_DIRECTORY,
+    },
+}
 @dataclass
 class MakeDirReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIR
+    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
     owner_id: int
     name: bytes
 
@@ -35,7 +56,7 @@ class MakeDirReq(bincode.Packable):
         return MakeDirReq(parent_id, subname)
 @dataclass
 class MakeDirResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIR
+    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
     id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -152,7 +173,7 @@ CDCRequestBody = Union[MakeDirReq, RenameFileReq, UnlinkDirectoryReq, RenameDire
 CDCResponseBody = Union[EggsError, MakeDirResp, RenameFileResp, UnlinkDirectoryResp, RenameDirectoryResp]
 
 CDC_REQUESTS: Dict[CDCRequestKind, Tuple[Type[CDCRequestBody], Type[CDCResponseBody]]] = {
-    CDCRequestKind.MAKE_DIR: (MakeDirReq, MakeDirResp),
+    CDCRequestKind.MAKE_DIRECTORY: (MakeDirReq, MakeDirResp),
     CDCRequestKind.RENAME_FILE: (RenameFileReq, RenameFileResp),
     CDCRequestKind.UNLINK_DIRECTORY: (UnlinkDirectoryReq, UnlinkDirectoryResp),
     CDCRequestKind.RENAME_DIRECTORY: (RenameDirectoryReq, RenameDirectoryResp),

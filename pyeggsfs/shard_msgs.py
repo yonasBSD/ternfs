@@ -3,11 +3,10 @@
 from dataclasses import dataclass, field
 import enum
 import itertools
-from typing import (ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Union)
+from typing import ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Union, Set
 
 import bincode
 from common import *
-import crypto
 
 # one-hot encoding to allow "acceptable-types" bitset
 class InodeFlags(enum.IntFlag):
@@ -31,7 +30,9 @@ class ShardRequestKind(enum.IntEnum):
     LOOKUP = 0x01
     # given inode, returns size, type, last modified for files,
     # last modified and parent for directories.
+    # Errors: NOT_FOUND
     STAT = 0x02
+    # Errors: NOT_FOUND
     READ_DIR = 0x03
     # create a new transient file. takes in desired path of file
     # for debugging purposes
@@ -42,6 +43,7 @@ class ShardRequestKind(enum.IntEnum):
     ADD_SPAN_CERTIFY = 0x06
     # makes a transient file current. requires the inode, the
     # parent dir, and the filename.
+    # DIRECTORY_NOT_FOUND and FILE_NOT_FOUND
     LINK_FILE = 0x07
     # turns a current outgoing edge into a snapshot owning edge. requires parent directory
     # and file name
@@ -50,8 +52,6 @@ class ShardRequestKind(enum.IntEnum):
     FILE_SPANS = 0x0D
     # renames an object within a single directory.
     SAME_DIRECTORY_RENAME = 0x0E
-    # gets the complete file history for a file name in a dir
-    FILE_HISTORY = 0x0F
 
     # Private operations. These are safe operations, but we don't want the FS client itself
     # to perform them. TODO make privileged?
@@ -105,7 +105,54 @@ class ShardRequestKind(enum.IntEnum):
 
     def is_privileged(self) -> bool:
         return bool(self.value & 0x80)
+
 assert ShardRequestKind.ERROR == EggsError.kind
+
+# INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
+SHARD_ERRORS: Dict[ShardRequestKind, Set[ErrCode]] = {
+    ShardRequestKind.LOOKUP: {ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND},
+    ShardRequestKind.STAT: {ErrCode.DIRECTORY_NOT_FOUND, ErrCode.FILE_NOT_FOUND},
+    ShardRequestKind.READ_DIR: {ErrCode.DIRECTORY_NOT_FOUND},
+    ShardRequestKind.CONSTRUCT_FILE: {ErrCode.TYPE_IS_DIRECTORY},
+    ShardRequestKind.ADD_SPAN_INITIATE: {
+        ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.INCONSISTENT_STORAGE_CLASS_PARITY,
+        ErrCode.LAST_SPAN_STATE_NOT_CLEAN, ErrCode.COULD_NOT_PICK_BLOCK_SERVERS,
+        ErrCode.BAD_SPAN_BODY, ErrCode.SPAN_NOT_FOUND, ErrCode.BLOCK_SERVER_NOT_FOUND,
+    },
+    ShardRequestKind.ADD_SPAN_CERTIFY: {
+        ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN,
+        ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS, ErrCode.BLOCK_SERVER_NOT_FOUND, ErrCode.BAD_BLOCK_PROOF,
+    },
+    ShardRequestKind.LINK_FILE: {
+        ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.DIRECTORY_NOT_FOUND,
+        ErrCode.LAST_SPAN_STATE_NOT_CLEAN, ErrCode.CANNOT_OVERRIDE_NAME, ErrCode.NAME_IS_LOCKED,
+        # This should be incredibly rare barring bad snapshot edges
+        ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
+    },
+    ShardRequestKind.SOFT_UNLINK_FILE: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
+        ErrCode.NAME_IS_LOCKED, ErrCode.TYPE_IS_DIRECTORY,
+    },
+    ShardRequestKind.FILE_SPANS: {
+        ErrCode.FILE_NOT_FOUND, ErrCode.FILE_IS_TRANSIENT,
+    },
+    ShardRequestKind.SAME_DIRECTORY_RENAME: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
+        ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS, ErrCode.NAME_IS_LOCKED, ErrCode.CANNOT_OVERRIDE_NAME,
+    },
+    ShardRequestKind.CREATE_DIRECTORY_INODE: {
+        ErrCode.TYPE_IS_NOT_DIRECTORY, ErrCode.MISMATCHING_OWNER,
+    },
+    ShardRequestKind.SET_DIRECTORY_OWNER: {
+        ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_NOT_FOUND,
+    },
+    ShardRequestKind.CREATE_LOCKED_CURRENT_EDGE: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_IS_LOCKED, ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
+    },
+    ShardRequestKind.LOCK_CURRENT_EDGE: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NAME_NOT_FOUND,
+    }
+}
 
 @dataclass
 class CreateDirectoryINodeReq(bincode.Packable):

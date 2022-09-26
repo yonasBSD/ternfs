@@ -399,6 +399,8 @@ def check_spans_constraints(cur: sqlite3.Cursor, file_id: int) -> bool:
 
 # not read only
 def create_directory_inode(cur: sqlite3.Cursor, req: CreateDirectoryINodeReq) -> Union[EggsError, CreateDirectoryINodeResp]:
+    if inode_id_type(req.id) != InodeType.DIRECTORY:
+        return EggsError(ErrCode.TYPE_IS_NOT_DIRECTORY)
     now = eggs_time()
     existing = cur.execute('select * from directories where id = ?', (req.id,)).fetchone()
     if existing is None:
@@ -411,7 +413,7 @@ def create_directory_inode(cur: sqlite3.Cursor, req: CreateDirectoryINodeReq) ->
         # inode ids per transaction, so that you'll never get competing creates here, but
         # we still check that the parent makes sense.
         if req.owner_id != existing['owner_id']:
-            return EggsError(ErrCode.MISMATCHING_DIRECTORY_PARENT)
+            return EggsError(ErrCode.MISMATCHING_OWNER)
         cur.execute(
             'update directories set mtime = :mtime, opaque = :opaque where id = :id',
             {'mtime': now, 'opaque': req.opaque, 'id': req.id}
@@ -423,17 +425,17 @@ def set_directory_owner(cur: sqlite3.Cursor, req: SetDirectoryOwnerReq) -> Union
     if req.owner_id == NULL_INODE_ID:
         # if we have any outgoing current edges, we can't disown this
         num_current_edges = cur.execute(
-            'select count(*) from edges where dir_id = :dir_id and current', {'dir_id': req.dir_id}
-        ).fetchone()['count(*)']
+            'select count(*) as c from edges where dir_id = :dir_id and current', {'dir_id': req.dir_id}
+        ).fetchone()['c']
         if num_current_edges > 0:
-            return EggsError(ErrCode.CANNOT_DISOWN_DIRECTORY_WITH_CURRENT_EDGES)
+            return EggsError(ErrCode.DIRECTORY_NOT_EMPTY)
     # do the update
     cur.execute(
         'update directories set owner_id = :owner_id where id = :dir_id',
         {'owner_id': req.owner_id, 'dir_id': req.dir_id}
     )
     if cur.rowcount == 0:
-        return EggsError(ErrCode.NOT_FOUND)
+        return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
     return SetDirectoryOwnerResp()
 
 def valid_name(b: bytes) -> bool:
@@ -458,9 +460,13 @@ def hash_name(hash_mode: HashMode, n: bytes) -> int:
 
 # We cannot expose an API which allows us to create non-locked current edges, see comment for
 # CreateLockedCurrentEdgeReq.
-def create_current_edge_internal(cur: sqlite3.Cursor, req: CreateLockedCurrentEdgeReq, locked: bool) -> Union[EggsError, CreateLockedCurrentEdgeResp]:
+def create_current_edge_internal(
+    cur: sqlite3.Cursor,
+    req: CreateLockedCurrentEdgeReq,
+    locked: bool,
+) -> Union[EggsError, CreateLockedCurrentEdgeResp]:
     assert valid_name(req.name)
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, ErrCode.DIRECTORY_NOT_FOUND)
     if isinstance(dir, EggsError):
         return dir
     name_hash = hash_name(dir['hash_mode'], req.name)
@@ -478,7 +484,7 @@ def create_current_edge_internal(cur: sqlite3.Cursor, req: CreateLockedCurrentEd
     ).fetchall()
     # This means some non-current edge is newer. We can't let it happen.
     if any([not e['current'] for e in existing_current_edges]):
-        return EggsError(ErrCode.CANNOT_CREATE_CURRENT_EDGE_OLDER_THAN_SNAPSHOT_EDGE)
+        return EggsError(ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS)
     assert len(existing_current_edges) < 2
     existing_current_edge = existing_current_edges[0] if existing_current_edges else None
     def create():
@@ -492,13 +498,13 @@ def create_current_edge_internal(cur: sqlite3.Cursor, req: CreateLockedCurrentEd
     # We have an existing locked edge, we need to make sure that it's the one we expect for idempotency
     elif existing_current_edge['locked']:
         if not locked or ((req.target_id, req.creation_time) != (existing_current_edge['target_id'], existing_current_edge['creation_time'])):
-            return EggsError(ErrCode.CANNOT_OVERRIDE_CURRENT_LOCKED_EDGE)
+            return EggsError(ErrCode.NAME_IS_LOCKED)
     # We're kicking out a non-locked current edge. The only circumstance where we allow
     # this automatically is if a file is overriding another file, which is also how it
     # works in linux/poxis (see `man 2 rename`).
     else:
         if inode_id_type(req.target_id) == InodeType.DIRECTORY or inode_id_type(existing_current_edge['target_id']) == InodeType.DIRECTORY:
-            return EggsError(ErrCode.CANNOT_OVERRIDE_CURRENT_EDGE)
+            return EggsError(ErrCode.CANNOT_OVERRIDE_NAME)
         cur.execute(
             'update edges set current = FALSE, locked = NULL, owned = FALSE where dir_id = :dir_id and creation_time = :creation_time',
             {k: existing_current_edge[k] for k in ('dir_id', 'creation_time')},
@@ -515,20 +521,20 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
 # read only
 def stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
     if inode_id_type(req.id) == InodeType.DIRECTORY:
-        dir = get_directory(cur, req.id)
+        dir = get_directory(cur, req.id, ErrCode.DIRECTORY_NOT_FOUND)
         if isinstance(dir, EggsError):
             return dir
         return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], opaque=dir['opaque'])
     else:
         file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
         if file is None:
-            return EggsError(ErrCode.NOT_FOUND)
+            return EggsError(ErrCode.FILE_NOT_FOUND)
         return StatResp(mtime=file['mtime'], size_or_owner=file['size'], opaque=b'')
 
 
 # read only
 def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirResp]:
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, ErrCode.DIRECTORY_NOT_FOUND)
     if isinstance(dir, EggsError):
         return dir
     entries = cur.execute(
@@ -619,9 +625,9 @@ def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> V
 def get_transient_file(cur: sqlite3.Cursor, shard_info: ShardInfo, *, file_id: int, cookie: int, now: int):
     file = cur.execute('select * from files where id = :file_id and transient and deadline > :now', {'file_id': file_id, 'now': now}).fetchone()
     if file is None:
-        return EggsError(ErrCode.NOT_FOUND)
+        return EggsError(ErrCode.FILE_NOT_FOUND)
     if cookie != calc_cookie(shard_info.secret_key, file['id']):
-        return EggsError(ErrCode.WRONG_TRANSIENT_COOKIE)
+        return EggsError(ErrCode.BAD_COOKIE)
     return file
 
 def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Union[EggsError, AddSpanInitiateResp]:
@@ -642,7 +648,7 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
     # req.byte_offset is at the end of file: we actually need to create a span
     elif req.byte_offset == file['size']:
         if file['last_span_state'] != SpanState.CLEAN:
-            return EggsError(ErrCode.LAST_SPAN_STATE_NOT_CLEAN_WHEN_ADDING_SPAN)
+            return EggsError(ErrCode.LAST_SPAN_STATE_NOT_CLEAN)
         span: Dict[str, Any] = {
             'parity': req.parity,
             'storage_class': req.storage_class,
@@ -716,7 +722,7 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             for block in body:
                 bserver = lookup_block_server(cur, block['block_server_id'])
                 if bserver is None:
-                    return EggsError(ErrCode.COULD_NOT_FIND_BLOCK_SERVER)
+                    return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
                 resp_blocks.append(BlockInfo(
                     ip=socket.inet_aton(bserver['ip']),
                     port=bserver['port'],
@@ -757,7 +763,7 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
     for block, proof in zip(span_body, req.proofs):
         bserver = lookup_block_server(cur, block['block_server_id'])
         if bserver is None:
-            return EggsError(ErrCode.COULD_NOT_FIND_BLOCK_SERVER)
+            return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
         if proof != block_add_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
     # update everything in an idempotent fashion
@@ -790,13 +796,17 @@ def link_file_inner(cur: sqlite3.Cursor, req: LinkFileReq) -> Union[LinkFileResp
     if isinstance(file, EggsError):
         return file
     if file['last_span_state'] != SpanState.CLEAN:
-        return EggsError(ErrCode.CANNOT_LINK_DIRTY_FILE)
-    res = create_current_edge_internal(cur, locked=False, req=CreateLockedCurrentEdgeReq(
-        dir_id=req.owner_id,
-        name=req.name,
-        target_id=req.file_id,
-        creation_time=now,
-    ))
+        return EggsError(ErrCode.LAST_SPAN_STATE_NOT_CLEAN)
+    res = create_current_edge_internal(
+        cur,
+        locked=False,
+        req=CreateLockedCurrentEdgeReq(
+            dir_id=req.owner_id,
+            name=req.name,
+            target_id=req.file_id,
+            creation_time=now,
+        ),
+    )
     cur.execute(
         'update files set transient = false, mtime = :now, deadline = null, last_span_state = null where id = :file_id',
         {'now': now, 'file_id': req.file_id}
@@ -814,11 +824,13 @@ def link_file(cur: sqlite3.Cursor, req: LinkFileReq) -> Union[LinkFileResp, Eggs
 # read only
 def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, EggsError]:
     file = cur.execute(
-        'select id from files where id = :file_id and not transient',
+        'select id, transient from files where id = :file_id',
         {'file_id': req.file_id}
     ).fetchone()
     if file is None:
-        return EggsError(ErrCode.NOT_FOUND)
+        return EggsError(ErrCode.FILE_NOT_FOUND)
+    if file['transient']:
+        return EggsError(ErrCode.FILE_IS_TRANSIENT)
     spans = cur.execute(
         'select * from spans where file_id = :file_id and byte_offset >= :byte_offset',
         {'file_id': req.file_id, 'byte_offset': req.byte_offset}
@@ -866,26 +878,37 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         resp_spans.append(resp_span)
     return FileSpansResp(next_offset, resp_spans)
 
-def get_directory(cur: sqlite3.Cursor, id: int) -> Union[EggsError, Dict[str, Any]]:
+# TODO check if we ever have anything but DIRECTORY_INODE_NOT_FOUND
+def get_directory(cur: sqlite3.Cursor, id: int, not_found: ErrCode) -> Union[EggsError, Dict[str, Any]]:
     dir = cur.execute('select * from directories where id = :dir_id', {'dir_id': id}).fetchone()
     if dir is None:
-        return EggsError(ErrCode.NOT_FOUND)
+        return EggsError(not_found)
     return dir
 
-# not exposed to the api
-def soft_unlink_current_edge(cur, *, dir_id: int, now: int, name: bytes, target_id: int) -> Union[EggsError, None]:
-    dir = get_directory(cur, dir_id)
-    if isinstance(dir, EggsError):
-        return dir
-    # Fetch the current edge
+def get_current_edge(cur, *, dir_id: int, name: bytes, target_id: Union[int, None]) -> Union[Dict[str, Any], EggsError]:
     current_edge = cur.execute(
-        'select * from edges where dir_id = :dir_id and current and name = :name and target_id = :target_id',
+        'select * from edges where dir_id = :dir_id and current and name = :name',
         {'dir_id': dir_id, 'name': name, 'target_id': target_id}
     ).fetchone()
     if current_edge is None:
-        return EggsError(ErrCode.NOT_FOUND)
+        if cur.execute('select id from directories where id = ?', (dir_id,)).fetchone():
+            return EggsError(ErrCode.NAME_NOT_FOUND)
+        else:
+            return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
+    if target_id is not None and current_edge['target_id'] != target_id:
+        return EggsError(ErrCode.MISMATCHING_TARGET)
+    return current_edge
+
+# not exposed to the api
+def soft_unlink_current_edge(cur, *, dir_id: int, now: int, name: bytes, target_id: int) -> Union[EggsError, None]:
+    dir = get_directory(cur, dir_id, ErrCode.DIRECTORY_NOT_FOUND)
+    if isinstance(dir, EggsError):
+        return dir
+    current_edge = get_current_edge(cur, dir_id=dir_id, name=name, target_id=target_id)
+    if isinstance(current_edge, EggsError):
+        return current_edge
     if current_edge['locked']:
-        return EggsError(ErrCode.CANNOT_OVERRIDE_CURRENT_LOCKED_EDGE)
+        return EggsError(ErrCode.NAME_IS_LOCKED)
     # first turn the current into not current, and also create the nothing edge to signify deletion
     cur.execute(
         '''
@@ -930,7 +953,7 @@ def soft_unlink_file_inner(cur: sqlite3.Cursor, req: SoftUnlinkFileReq) -> Union
     now = eggs_time()
     # We cannot rename directories within the shard -- the CDC is needed
     if inode_id_type(req.file_id) == InodeType.DIRECTORY:
-        return EggsError(ErrCode.CANNOT_SOFT_UNLINK_DIRECTORY)
+        return EggsError(ErrCode.TYPE_IS_DIRECTORY)
     res = soft_unlink_current_edge(cur, dir_id=req.owner_id, now=now, name=req.name, target_id=req.file_id)
     if isinstance(res, EggsError):
         return res
@@ -966,14 +989,9 @@ def visit_inodes(cur: sqlite3.Cursor, req: VisitInodesReq) -> Union[EggsError, V
 
 # not read only
 def lock_current_edge_inner(cur: sqlite3.Cursor, req: LockCurrentEdgeReq) -> Union[EggsError, LockCurrentEdgeResp]:
-    current_edge = cur.execute(
-        'select * from edges where dir_id = :dir_id and name = :name and target_id = :target_id and current',
-        {'dir_id': req.dir_id, 'name': req.name, 'target_id': req.target_id}
-    ).fetchone()
-    if current_edge is None:
-        return EggsError(ErrCode.NOT_FOUND)
-    # TODO again, we must be idempotent here, but not sure that this is a great idea
-    # <https://eulergamma.slack.com/archives/C03PCJMGAAC/p1663718471819729>
+    current_edge = get_current_edge(cur, dir_id=req.dir_id, name=req.name, target_id=req.target_id)
+    if isinstance(current_edge, EggsError):
+        return current_edge
     if not current_edge['locked']:
         cur.execute(
             '''
@@ -990,16 +1008,9 @@ def lock_current_edge(cur: sqlite3.Cursor, req: LockCurrentEdgeReq) -> Union[Egg
 
 def unlock_current_edge_inner(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) -> Union[EggsError, UnlockCurrentEdgeResp]:
     now = eggs_time()
-    current_edge = cur.execute(
-        'select * from edges where dir_id = :dir_id and name = :name and target_id = :target_id and current',
-        {'dir_id': req.dir_id, 'name': req.name, 'target_id': req.target_id}
-    ).fetchone()
-    # TODO again, we must be idempotent here, but not sure that this is a great idea
-    # <https://eulergamma.slack.com/archives/C03PCJMGAAC/p1663718471819729>
-    # Also, there's other questions about idempotency, similar to renames -- how
-    # do we decide when the deletion has already happened (in the case of req.unlink)?
-    if current_edge is None:
-        return EggsError(ErrCode.NOT_FOUND)
+    current_edge = get_current_edge(cur, dir_id=req.dir_id, name=req.name, target_id=req.target_id)
+    if isinstance(current_edge, EggsError):
+        return current_edge
     if current_edge['locked']:
         cur.execute(
             '''
@@ -1035,13 +1046,10 @@ def unlock_current_edge(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) -> Union
     return res
 
 def lookup(cur: sqlite3.Cursor, req: LookupReq) -> Union[EggsError, LookupResp]:
-    edge = cur.execute(
-        'select target_id, creation_time from edges where dir_id = :dir_id and current and name = :name',
-        {'dir_id': req.dir_id, 'name': req.name},
-    ).fetchone()
-    if edge is None:
-        return EggsError(ErrCode.NOT_FOUND)
-    return LookupResp(target_id=edge['target_id'], creation_time=edge['creation_time'])
+    current_edge = get_current_edge(cur, dir_id=req.dir_id, name=req.name, target_id=None)
+    if isinstance(current_edge, EggsError):
+        return current_edge
+    return LookupResp(target_id=current_edge['target_id'], creation_time=current_edge['creation_time'])
 
 class BlockServerInfo(TypedDict):
     ip: str
@@ -1203,6 +1211,8 @@ class TestDriver:
     def execute_err(self, req: ShardRequestBody, kind: Union[ErrCode, None] = None):
         resp = self.execute(ShardRequest(version=PROTOCOL_VERSION, request_id=eggs_time(), body=req))
         assert isinstance(resp.body, EggsError), f'Expected error, got response {resp.body}'
+        acceptable_errors = SHARD_ERRORS[req.kind]
+        assert resp.body.error_code in acceptable_errors, f'Expected error to be one of {acceptable_errors}, but got {resp.body.error_code}'
         if kind is not None:
             assert resp.body.error_code == kind, f'Expected error {repr(kind)}, got {repr(resp.body.error_code)}'
         return resp.body
@@ -1385,7 +1395,7 @@ class ShardTests(unittest.TestCase):
         assert stat_1.size_or_owner == ROOT_DIR_INODE_ID
         assert stat_1.opaque == b'first'
         # can't change owner
-        self.shard.execute_err(replace(create_dir_req, owner_id=NULL_INODE_ID))
+        self.shard.execute_err(replace(create_dir_req, owner_id=NULL_INODE_ID), kind=ErrCode.MISMATCHING_OWNER)
         # we can change the opaque stuff though TODO is this correct behavior? probably doesn't matter
         self.shard.execute_ok(replace(create_dir_req, opaque=b'second'))
         stat_2 = self.shard.execute_ok(StatReq(dir_id))
@@ -1521,7 +1531,7 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(mirrored_span_req, ErrCode.SPAN_NOT_FOUND)
         mirrored_span_req = replace(mirrored_span_req, byte_offset=byte_offset)
         # this fails, because we haven't certified the previous block
-        self.shard.execute_err(mirrored_span_req, ErrCode.LAST_SPAN_STATE_NOT_CLEAN_WHEN_ADDING_SPAN)
+        self.shard.execute_err(mirrored_span_req, ErrCode.LAST_SPAN_STATE_NOT_CLEAN)
         # certifying with bad proof
         certify_req = AddSpanCertifyReq(
             file_id=transient_file.id,
@@ -1561,7 +1571,7 @@ class ShardTests(unittest.TestCase):
             owner_id=ROOT_DIR_INODE_ID, # this works only because we're on shard 0
             name=b'test-file'
         )
-        self.shard.execute_err(link_req, ErrCode.CANNOT_LINK_DIRTY_FILE)
+        self.shard.execute_err(link_req, ErrCode.LAST_SPAN_STATE_NOT_CLEAN)
         # certify, again
         self.shard.execute_ok(replace(
             certify_req, byte_offset=raid5_span_req.byte_offset,
@@ -1593,7 +1603,7 @@ class ShardTests(unittest.TestCase):
         transient_file_old = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
         self.shard.execute_ok(LinkFileReq(file_id=transient_file_old.id, cookie=transient_file_old.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'1'))
         assert self.shard.execute_ok(LookupReq(dir_id=ROOT_DIR_INODE_ID, name=b'1')).target_id == transient_file_old.id
-        self.shard.execute_err(LookupReq(dir_id=ROOT_DIR_INODE_ID, name=b'2'), ErrCode.NOT_FOUND)
+        self.shard.execute_err(LookupReq(dir_id=ROOT_DIR_INODE_ID, name=b'2'), ErrCode.NAME_NOT_FOUND)
         transient_file_other = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
         self.shard.execute_ok(LinkFileReq(file_id=transient_file_other.id, cookie=transient_file_other.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'other'))
         t_before_creation = eggs_time()
@@ -1602,12 +1612,12 @@ class ShardTests(unittest.TestCase):
         t_before_first_move = eggs_time()
         file_id = transient_file.id
         # Getting the name or the inode wrong won't work
-        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=1234, old_name=b'1', new_name=b'2'), ErrCode.NOT_FOUND)
-        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'2', new_name=b'3'), ErrCode.NOT_FOUND)
+        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=1234, old_name=b'1', new_name=b'2'), ErrCode.MISMATCHING_TARGET)
+        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'2', new_name=b'3'), ErrCode.NAME_NOT_FOUND)
         # now let's do it right
         # can't check idempotency for directory renames -- the client is supposed to resolve these
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'))
-        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'), ErrCode.NOT_FOUND)
+        self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'), ErrCode.NAME_NOT_FOUND)
         files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, continuation_key=0)))
         def read_dir_names(files):
             return set([r.name for r in files.results])
@@ -1629,11 +1639,11 @@ class ShardTests(unittest.TestCase):
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
         # now delete the files
         t_before_first_deletion = eggs_time()
-        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file_other.id, name=b'wrong-other'), ErrCode.NOT_FOUND)
-        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'other'), ErrCode.NOT_FOUND)
+        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file_other.id, name=b'wrong-other'), ErrCode.NAME_NOT_FOUND)
+        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'other'), ErrCode.MISMATCHING_TARGET)
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file_other.id, name=b'other'))
         t_before_second_deletion = eggs_time()
-        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'1'), ErrCode.NOT_FOUND)
+        self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'1'), ErrCode.NAME_NOT_FOUND)
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'3'))
         # now get the files, again in order
         files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_deletion, continuation_key=0)))
@@ -1645,7 +1655,7 @@ class ShardTests(unittest.TestCase):
         # as a bonus, try and fail to create a current edge older than the dead edge
         self.shard.execute_err(
             CreateLockedCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'1', target_id=transient_file.id, creation_time=0),
-            ErrCode.CANNOT_CREATE_CURRENT_EDGE_OLDER_THAN_SNAPSHOT_EDGE,
+            ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
         )        
 
 

@@ -200,6 +200,12 @@ class Operations(pyfuse3.Operations):
         if isinstance(resp, EggsError):
             raise pyfuse3.FUSEError(err_code_to_errno[resp.error_code])
         return resp
+    
+    async def _send_cdc_req(self, req: CDCRequestBody) -> CDCResponseBody:
+        resp = await send_cdc_request(req)
+        if isinstance(resp, EggsError):
+            raise pyfuse3.FUSEError(err_code_to_errno[resp.error_code])
+        return resp
 
     async def getattr(self, inode_id, ctx=None):
         inode_id = fuse_id_to_eggs_id(inode_id)
@@ -328,7 +334,17 @@ class Operations(pyfuse3.Operations):
         )
 
     async def release(self, file_id):
-        pass        
+        pass
+
+    async def mkdir(self, owner_id, name, mode, ctx=None):
+        owner_id = fuse_id_to_eggs_id(owner_id)
+        # TODO do something with the noode?
+        resp = cast(MakeDirResp, await self._send_cdc_req(MakeDirReq(owner_id, name)))
+        return entry_attribute(resp.id, size=0, mtime=0)
+    
+    async def setattr(self, inode_id, attr, fields, fh, ctx=None):
+        inode_id = fuse_id_to_eggs_id(inode_id)
+        return entry_attribute(inode_id, size=0, mtime=0)
 
 def init_logging(debug=False):
     formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(threadName)s: [%(name)s] %(message)s', datefmt="%Y-%m-%d %H:%M:%S")

@@ -814,7 +814,7 @@ class CDCTests(unittest.TestCase):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
             return set([r.target_id for r in files.results])
-        dirs = self.cdc.shards[0].execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0))
+        dirs = self.cdc.shards[0].execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0))
         assert read_dir_names(dirs) == {b'test-1', b'test-2'} and read_dir_targets(dirs) == {dir_1, dir_2}
     
     def _only_root_dir_and_orphans(self, ids: Generator[int, None, None]):

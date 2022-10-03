@@ -550,13 +550,13 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
             with results as (
                 select row_number() over this_and_successor as row, target_id, name_hash, name
                     from edges
-                    where dir_id = :dir_id and name_hash >= :continuation_key and creation_time <= :as_of
+                    where dir_id = :dir_id and name_hash >= :next_hash and creation_time <= :as_of
                     window this_and_successor as (partition by name_hash, name order by creation_time desc range between 1 preceding and current row)
             ) select target_id, name_hash, name from results where row = 1 and target_id != :null;
         ''',
         {
             'dir_id': req.dir_id,
-            'continuation_key': req.continuation_key,
+            'next_hash': req.start_hash,
             # usual sqlite problem that it cannot work with 64bit unsigned int
             'as_of': req.as_of_time & 0x7FFFFFFFFFFFFFFF,
             'null': NULL_INODE_ID,
@@ -564,8 +564,8 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
     )
     payloads: List[ReadDirPayload] = []
     curr_size = ReadDirResp.SIZE
-    continuation_key = 0
-    # Note that this is assuming that we can always clear one continuation key in one UDP_MTU
+    next_hash = 0
+    # Note that this is assuming that we can always clear one next hash in one UDP_MTU
     # to make progress.
     for entry in entries:
         payload = ReadDirPayload(
@@ -574,15 +574,15 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
             name=entry['name'],
         )
         if curr_size + payload.calc_packed_size() > UDP_MTU:
-            continuation_key = entry['name_hash']
+            next_hash = entry['name_hash']
             # Do not straddle with same hash -- we don't want repeated entries
-            while payloads[-1].name_hash == continuation_key:
+            while payloads[-1].name_hash == next_hash:
                 payloads.pop()
             break
         payloads.append(payload)
         curr_size += payload.calc_packed_size()
     return ReadDirResp(
-        continuation_key=continuation_key,
+        next_hash=next_hash,
         results=payloads,
     )
 
@@ -1408,10 +1408,10 @@ class ShardTests(unittest.TestCase):
         create_locked_edge_req = CreateLockedCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, creation_time=t_create)
         self.shard.execute_ok(create_locked_edge_req)
         # check that the edge is there
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 1
         assert read_dir.results[0].name == b'test' and read_dir.results[0].target_id == dummy_target_2
-        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0, as_of_time=t_create-1)).results 
+        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_create-1)).results 
         # idempotence
         self.shard.execute_ok(create_locked_edge_req)
         # switching the id or the time should fail
@@ -1424,12 +1424,12 @@ class ShardTests(unittest.TestCase):
         # now we unlock and move
         t_before_move = eggs_time()
         self.shard.execute_ok(UnlockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, was_moved=True), repeats=1)
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 0
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0, as_of_time=t_before_move)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_before_move)))
         assert len(read_dir.results) == 1
         assert read_dir.results[0].name == b'test' and read_dir.results[0].target_id == dummy_target_2
-        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, continuation_key=0, as_of_time=t_create-1)).results
+        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_create-1)).results
     
     def test_construct_file_1(self):
         # we don't check for idempotency because later we inspect those files
@@ -1580,7 +1580,7 @@ class ShardTests(unittest.TestCase):
         # and now linking should go through
         self.shard.execute_ok(link_req)
         # check that we get it in the directory
-        root_dir_files = self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, continuation_key=0))
+        root_dir_files = self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0))
         assert root_dir_files.results[0].name == b'test-file'
         # check that the file is as big as we expect
         file_stat = cast(StatResp, self.shard.execute_ok(StatReq(root_dir_files.results[0].target_id)))
@@ -1618,7 +1618,7 @@ class ShardTests(unittest.TestCase):
         # can't check idempotency for directory renames -- the client is supposed to resolve these
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'))
         self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'), ErrCode.NAME_NOT_FOUND)
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
         def read_dir_names(files):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
@@ -1628,14 +1628,14 @@ class ShardTests(unittest.TestCase):
         t_before_second_move = eggs_time()
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'2', new_name=b'3'))
         # verify that we get the right result with the as of time
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_creation, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_creation, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_old.id, transient_file_other.id} and read_dir_names(files) == {b'1', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_move, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_move, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'1', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_move, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_move, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'2', b'other'}
         # finally, the current one
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
         # now delete the files
         t_before_first_deletion = eggs_time()
@@ -1646,11 +1646,11 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'1'), ErrCode.NAME_NOT_FOUND)
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'3'))
         # now get the files, again in order
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_deletion, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_deletion, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_deletion, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_deletion, start_hash=0)))
         assert read_dir_targets(files) == {transient_file.id} and read_dir_names(files) == {b'3'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, continuation_key=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
         assert not read_dir_targets(files)
         # as a bonus, try and fail to create a current edge older than the dead edge
         self.shard.execute_err(

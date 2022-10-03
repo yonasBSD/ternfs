@@ -28,7 +28,7 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
     port = shard_to_port(shard)
     ver = PROTOCOL_VERSION
     request_id = eggs_time()
-    target = target = (LOCAL_HOST, port)
+    target = (LOCAL_HOST, port)
     req = ShardRequest(ver, request_id, req_body)
     packed_req = bincode.pack(req)
     if key is not None:
@@ -45,29 +45,41 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
     assert request_id == response.request_id
     logging.debug(f'Sent shard request {req}')
     logging.debug(f'Got shard response {response}')
-    if isinstance(response.body, EggsError):
-        raise response.body
     return response.body
 
-def send_cdc_request(req_body: CDCRequestBody) -> CDCResponseBody:
+def send_shard_request_or_raise(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> ShardResponseBody:
+    resp = send_shard_request(shard, req_body, key, timeout_secs)
+    if isinstance(resp, EggsError):
+        raise resp
+    return resp
+
+def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> CDCResponseBody:
     request_id = eggs_time()
-    target = target = (LOCAL_HOST, CDC_PORT)
+    target = (LOCAL_HOST, CDC_PORT)
     req = CDCRequest(PROTOCOL_VERSION, request_id, req_body)
     packed_req = bincode.pack(req)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         sock.bind(('', 0))
         sock.sendto(packed_req, target)
-        sock.settimeout(2.0)
-        packed_resp = sock.recv(UDP_MTU)
+        sock.settimeout(timeout_secs)
+        try:
+            packed_resp = sock.recv(UDP_MTU)
+        except socket.timeout:
+            return EggsError(ErrCode.TIMEOUT)
     response = bincode.unpack(CDCResponse, packed_resp)
     assert request_id == response.request_id
     if isinstance(response.body, EggsError):
         print(f'Got error {response.body} for req {req_body}')
-        raise response.body
     return response.body
 
+def send_cdc_request_or_raise(req_body: CDCRequestBody) -> CDCResponseBody:
+    resp = send_cdc_request(req_body)
+    if isinstance(resp, EggsError):
+        raise resp
+    return resp
+
 def lookup_internal(dir_id: int, name: str) -> int:
-    resp = send_shard_request(inode_id_shard(dir_id), LookupReq(dir_id=dir_id, name=name.encode('ascii')))
+    resp = send_shard_request_or_raise(inode_id_shard(dir_id), LookupReq(dir_id=dir_id, name=name.encode('ascii')))
     assert isinstance(resp, LookupResp)
     return resp.target_id
 
@@ -78,7 +90,7 @@ def lookup_raw(dir_id: int, name: str):
     print(f'shard:       {inode_id_shard(inode)}')
 
 def stat_raw(id: int):
-    resp = send_shard_request(inode_id_shard(id), StatReq(id))
+    resp = send_shard_request_or_raise(inode_id_shard(id), StatReq(id))
     assert isinstance(resp, StatResp)
     print(f'mtime:       {eggs_time_str(resp.mtime)}')
     if inode_id_type(id) == InodeType.DIRECTORY:
@@ -105,7 +117,7 @@ def lookup(path: Path) -> int:
     return inode
 
 def mkdir_raw(owner_id: int, name: str) -> None:
-    send_cdc_request(MakeDirReq(owner_id=owner_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(MakeDirReq(owner_id=owner_id, name=name.encode('ascii')))
 
 def mkdir(path: Path) -> None:
     owner_id = lookup_abs_path(path.parent)
@@ -121,7 +133,7 @@ def mkdir(path: Path) -> None:
     return mkdir_raw(owner_id, path.name)
 
 def rm_file_raw(owner_id: int, file_id: int, name: str) -> None:
-    send_shard_request(inode_id_shard(owner_id), SoftUnlinkFileReq(owner_id, file_id, name.encode('ascii')))
+    send_shard_request_or_raise(inode_id_shard(owner_id), SoftUnlinkFileReq(owner_id, file_id, name.encode('ascii')))
 
 def rm_file(path: Path) -> None:
     dir_id = lookup_abs_path(path.parent)
@@ -129,7 +141,7 @@ def rm_file(path: Path) -> None:
     rm_file_raw(dir_id, file_id, path.name)
 
 def rm_dir_raw(owner_id: int, dir_id: int, name: str) -> None:
-    send_cdc_request(UnlinkDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(UnlinkDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
 
 def rm_dir(path: Path) -> None:
     owner_id = lookup_abs_path(path.parent)
@@ -137,13 +149,13 @@ def rm_dir(path: Path) -> None:
     rm_dir_raw(owner_id, dir_id, path.name)
 
 def same_dir_mv(target_id: int, dir_id: int, old: str, new: str) -> None:
-    send_shard_request(inode_id_shard(dir_id), SameDirectoryRenameReq(dir_id=dir_id, target_id=target_id, old_name=old.encode('ascii'), new_name=new.encode('ascii')))
+    send_shard_request_or_raise(inode_id_shard(dir_id), SameDirectoryRenameReq(dir_id=dir_id, target_id=target_id, old_name=old.encode('ascii'), new_name=new.encode('ascii')))
 
 def mv_raw(target_id: int, old_owner_id: int, old_name: str, new_owner_id: int, new_name: str):
     if inode_id_type(target_id) == InodeType.FILE:
-        send_cdc_request(RenameFileReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
+        send_cdc_request_or_raise(RenameFileReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
     else:
-        send_cdc_request(RenameDirectoryReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
+        send_cdc_request_or_raise(RenameDirectoryReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
 
 def mv(a: Path, b: Path) -> None:
     owner_a = lookup_abs_path(a.parent)
@@ -152,19 +164,19 @@ def mv(a: Path, b: Path) -> None:
     if owner_a == owner_b:
         same_dir_mv(dir_id=owner_a, target_id=a_id, old=a.name, new=b.name)
     elif inode_id_type(a_id) == InodeType.FILE:
-        send_cdc_request(RenameFileReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
+        send_cdc_request_or_raise(RenameFileReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
     else:
-        send_cdc_request(RenameDirectoryReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
+        send_cdc_request_or_raise(RenameDirectoryReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
 
 def readdir(id: int):
     continuation_key = 0
     while True:
-        resp = send_shard_request(inode_id_shard(id), ReadDirReq(id, continuation_key))
+        resp = send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, continuation_key))
         assert isinstance(resp, ReadDirResp)
         for result in resp.results:
             s = result.name.decode("ascii") + ("/" if inode_id_type(result.target_id) == InodeType.DIRECTORY else "")
             print(f'{s: <20} 0x{result.target_id:016X}')
-        continuation_key = resp.continuation_key
+        continuation_key = resp.next_hash
         if continuation_key == 0:
             break
 
@@ -213,7 +225,7 @@ STORAGE_CLASS = 2
 def create_file(name: Path, blob: bytes):
     dir_id = lookup_abs_path(name.parent)
     shard = inode_id_shard(dir_id)
-    transient_file = send_shard_request(shard, ConstructFileReq(InodeType.FILE))
+    transient_file = send_shard_request_or_raise(shard, ConstructFileReq(InodeType.FILE))
     assert isinstance(transient_file, ConstructFileResp)
     file_id = transient_file.id
     cookie = transient_file.cookie
@@ -221,7 +233,7 @@ def create_file(name: Path, blob: bytes):
         data = blob[ix:ix+(1<<12)]
         crc32 = crypto.crc32c(data)
         size = len(data)
-        span = send_shard_request(
+        span = send_shard_request_or_raise(
             shard,
             AddSpanInitiateReq(
                 file_id=file_id,
@@ -238,7 +250,7 @@ def create_file(name: Path, blob: bytes):
         assert len(span.blocks) == 1
         block = span.blocks[0]
         block_proof = write_block(block=block, data=data, crc32=crc32)
-        send_shard_request(
+        send_shard_request_or_raise(
             shard,
             AddSpanCertifyReq(
                 file_id=file_id,
@@ -247,7 +259,7 @@ def create_file(name: Path, blob: bytes):
                 proofs=[block_proof],
             )
         )
-    send_shard_request(shard, LinkFileReq(file_id, cookie, dir_id, name.name.encode('ascii')))
+    send_shard_request_or_raise(shard, LinkFileReq(file_id, cookie, dir_id, name.name.encode('ascii')))
 
 
 def create_file_from_str(name: Path, str: str):
@@ -261,7 +273,7 @@ def cat(name: Path):
     file_id = lookup_abs_path(name)
     byte_offset = 0
     while True:
-        resp = send_shard_request(inode_id_shard(file_id), FileSpansReq(file_id=file_id, byte_offset=byte_offset))
+        resp = send_shard_request_or_raise(inode_id_shard(file_id), FileSpansReq(file_id=file_id, byte_offset=byte_offset))
         assert isinstance(resp, FileSpansResp)
         for span in resp.spans:
             assert span.parity == PARITY
@@ -279,7 +291,7 @@ def transient_files():
     for shard in range(256):
         begin_id = 0
         while True:
-            resp = send_shard_request(shard, VisitTransientFilesReq(begin_id))
+            resp = send_shard_request_or_raise(shard, VisitTransientFilesReq(begin_id))
             assert isinstance(resp, VisitTransientFilesResp)
             for f in resp.files:
                 print(f'inode id:    0x{f.id:016X}')

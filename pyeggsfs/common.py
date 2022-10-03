@@ -1,9 +1,11 @@
 import enum
 import time
-from typing import Any, Optional, ClassVar
+from typing import Any, Optional, ClassVar, Dict
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+import errno
+import stat
 
 import bincode
 
@@ -134,7 +136,6 @@ class ErrCode(enum.IntEnum):
     OLD_DIRECTORY_NOT_FOUND = 29
     NEW_DIRECTORY_NOT_FOUND = 30
     LOOP_IN_DIRECTORY_RENAME = 31
-
 
 @dataclass
 class EggsError(bincode.Packable, Exception):

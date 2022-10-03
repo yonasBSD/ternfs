@@ -255,7 +255,7 @@ class CreateLockedCurrentEdgeResp(bincode.Packable):
 class ReadDirReq(bincode.Packable):
     kind: ClassVar[ShardRequestKind] = ShardRequestKind.READ_DIR
     dir_id: int
-    continuation_key: int
+    start_hash: int
     # * all the times leading up to the creation of the directory will return an empty directory listing.
     # * all the times after the last modification will return the current directory listing (use
     #      0xFFFFFFFFFFFFFFFF to just get the current directory listing)
@@ -264,14 +264,14 @@ class ReadDirReq(bincode.Packable):
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.dir_id, b)
         bincode.pack_u64_into(self.as_of_time, b)
-        bincode.pack_u64_into(self.continuation_key, b)
+        bincode.pack_u64_into(self.start_hash, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ReadDirReq':
         inode = bincode.unpack_u64(u)
         as_of = bincode.unpack_u64(u)
         continuation_key = bincode.unpack_u64(u)
-        return ReadDirReq(inode, as_of_time=as_of, continuation_key=continuation_key)
+        return ReadDirReq(inode, as_of_time=as_of, start_hash=continuation_key)
 
 @dataclass
 class ReadDirPayload(bincode.Packable):
@@ -299,11 +299,11 @@ class ReadDirPayload(bincode.Packable):
 class ReadDirResp(bincode.Packable):
     kind: ClassVar[ShardRequestKind] = ShardRequestKind.READ_DIR
     SIZE: ClassVar[int] = 8 + 2 # key + len of results
-    continuation_key: int # 0 => no more results
+    next_hash: int # 0 => no more results
     results: List[ReadDirPayload]
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.continuation_key, b)
+        bincode.pack_u64_into(self.next_hash, b)
         bincode.pack_u16_into(len(self.results), b)
         for r in self.results:
             r.pack_into(b)

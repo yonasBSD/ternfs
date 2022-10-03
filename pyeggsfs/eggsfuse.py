@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import trio
 import pyfuse3
 import socket
@@ -279,7 +281,8 @@ class Operations(pyfuse3.Operations):
     async def write(self, file_id, offset, buf):
         under_construction = self._files_under_construction.get(file_id)
         if under_construction is None:
-            raise pyfuse3.FUSEError(errno.EBUSY) # TODO Reasonable?
+            # This is when we try to open an existing file for writing
+            raise pyfuse3.FUSEError(errno.EEXIST)
         # Split in 4k chunks
         for ix in range(0, len(buf), 1<<12):
             data = buf[ix:ix+(1<<12)]
@@ -310,9 +313,6 @@ class Operations(pyfuse3.Operations):
         return len(buf)
 
     async def flush(self, file_id):
-        pass
-
-    async def release(self, file_id):
         under_construction = self._files_under_construction.get(file_id)
         if under_construction is None:
             return
@@ -326,7 +326,9 @@ class Operations(pyfuse3.Operations):
                 name=under_construction.name
             )
         )
-        
+
+    async def release(self, file_id):
+        pass        
 
 def init_logging(debug=False):
     formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(threadName)s: [%(name)s] %(message)s', datefmt="%Y-%m-%d %H:%M:%S")

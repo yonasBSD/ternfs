@@ -115,7 +115,7 @@ class Transaction:
     def __init__(self, state: Optional[Any] = None):
         pass
 
-def map_err_code(map: Dict[ErrCode, ErrCode], resp: Union[EggsError, T]):
+def map_err_code(map: Dict[ErrCode, ErrCode], resp: Union[EggsError, Any]):
     if isinstance(resp, EggsError):
         resp.error_code = map.get(resp.error_code, resp.error_code)
 

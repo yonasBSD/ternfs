@@ -40,7 +40,7 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
         try:
             packed_resp = sock.recv(UDP_MTU)
         except socket.timeout:
-            return EggsError(ErrCode.TIMED_OUT)
+            return EggsError(ErrCode.TIMEOUT)
     response = bincode.unpack(ShardResponse, packed_resp)
     assert request_id == response.request_id
     logging.debug(f'Sent shard request {req}')
@@ -48,14 +48,6 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
     if isinstance(response.body, EggsError):
         raise response.body
     return response.body
-
-def not_found_or_raise(resp: ShardResponseBody) -> bool:
-    if isinstance(resp, EggsError):
-        if resp.kind == ErrCode.NOT_FOUND:
-            return True
-        else:
-            raise resp
-    return False
 
 def send_cdc_request(req_body: CDCRequestBody) -> CDCResponseBody:
     request_id = eggs_time()
@@ -122,9 +114,9 @@ def mkdir(path: Path) -> None:
     # this ensures we're not wasting the rename co-ordinator's time
     try:
         lookup_internal(owner_id, path.name)
-        raise EggsError(ErrCode.ALREADY_EXISTS)
+        raise EggsError(ErrCode.CANNOT_OVERRIDE_NAME)
     except EggsError as err:
-        if err.error_code != ErrCode.NOT_FOUND:
+        if err.error_code != ErrCode.DIRECTORY_NOT_FOUND:
             raise err
     return mkdir_raw(owner_id, path.name)
 

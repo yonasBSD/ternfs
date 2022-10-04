@@ -295,14 +295,13 @@ class Operations(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EROFS)
         # Split in 4k chunks
         for ix in range(0, len(buf), 1<<12):
-            offset += ix
             data = buf[ix:ix+(1<<12)]
             crc32 = crypto.crc32c(data)
             size = len(data)
             span = cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
                 file_id=file_id,
                 cookie=under_construction.cookie,
-                byte_offset=offset,
+                byte_offset=offset+ix,
                 storage_class=STORAGE_CLASS,
                 parity=PARITY,
                 crc32=crc32,
@@ -317,7 +316,7 @@ class Operations(pyfuse3.Operations):
                 AddSpanCertifyReq(
                     file_id=file_id,
                     cookie=under_construction.cookie,
-                    byte_offset=offset,
+                    byte_offset=offset+ix,
                     proofs=[block_proof],
                 )
             )

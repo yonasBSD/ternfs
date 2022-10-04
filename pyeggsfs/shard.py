@@ -1229,7 +1229,7 @@ class TestDriver:
         resp = execute_internal(self.db, req)
         assert isinstance(resp, EggsError), resp 
         return resp
-
+    
 class ShardTests(unittest.TestCase):
     def setUp(self):
         db_dir = tempfile.mkdtemp(prefix='eggs_')

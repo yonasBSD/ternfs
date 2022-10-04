@@ -141,7 +141,7 @@ def rm_file(path: Path) -> None:
     rm_file_raw(dir_id, file_id, path.name)
 
 def rm_dir_raw(owner_id: int, dir_id: int, name: str) -> None:
-    send_cdc_request_or_raise(UnlinkDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(RemoveDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
 
 def rm_dir(path: Path) -> None:
     owner_id = lookup_abs_path(path.parent)

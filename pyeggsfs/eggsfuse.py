@@ -275,29 +275,34 @@ class Operations(pyfuse3.Operations):
         file_id = fuse_id_to_eggs_id(file_id)
         return file_info(file_id)
 
-    async def create(self, dir_id, name, mode, flags, ctx=None):
-        dir_id = fuse_id_to_eggs_id(dir_id)
-
-        assert (flags & os.O_CREAT)
-        resp = cast(ConstructFileResp, await self._send_shard_req(inode_id_shard(dir_id), ConstructFileReq(InodeType.FILE)))
+    async def _create(self, dir_id: int, type: InodeType, name: bytes):
+        assert type in (InodeType.FILE, InodeType.SYMLINK)
+        resp = cast(ConstructFileResp, await self._send_shard_req(inode_id_shard(dir_id), ConstructFileReq(type)))
         self._files_under_construction[resp.id] = FileUnderConstruction(dir_id=dir_id, name=name, cookie=resp.cookie)
+        return resp.id
 
-        return (file_info(resp.id), entry_attribute(resp.id, size=0, mtime=0))
+    async def create(self, dir_id, name, mode, flags, ctx=None):
+        # TODO do something with mode?
+        dir_id = fuse_id_to_eggs_id(dir_id)
+        assert (flags & os.O_CREAT)
+        file_id = await self._create(dir_id, InodeType.FILE, name)
+        return (file_info(file_id), entry_attribute(file_id, size=0, mtime=0))
     
     async def write(self, file_id, offset, buf):
         under_construction = self._files_under_construction.get(file_id)
         if under_construction is None:
             # This is when we try to open an existing file for writing
-            raise pyfuse3.FUSEError(errno.EEXIST)
+            raise pyfuse3.FUSEError(errno.EROFS)
         # Split in 4k chunks
         for ix in range(0, len(buf), 1<<12):
+            offset += ix
             data = buf[ix:ix+(1<<12)]
             crc32 = crypto.crc32c(data)
             size = len(data)
             span = cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
                 file_id=file_id,
                 cookie=under_construction.cookie,
-                byte_offset=ix,
+                byte_offset=offset,
                 storage_class=STORAGE_CLASS,
                 parity=PARITY,
                 crc32=crc32,
@@ -312,7 +317,7 @@ class Operations(pyfuse3.Operations):
                 AddSpanCertifyReq(
                     file_id=file_id,
                     cookie=under_construction.cookie,
-                    byte_offset=ix,
+                    byte_offset=offset,
                     proofs=[block_proof],
                 )
             )
@@ -345,6 +350,44 @@ class Operations(pyfuse3.Operations):
     async def setattr(self, inode_id, attr, fields, fh, ctx=None):
         inode_id = fuse_id_to_eggs_id(inode_id)
         return entry_attribute(inode_id, size=0, mtime=0)
+
+    async def rename(self, parent_inode_old, name_old, parent_inode_new, name_new, flags, ctx=None):
+        assert not (flags & (pyfuse3.RENAME_EXCHANGE | pyfuse3.RENAME_NOREPLACE))
+        parent_inode_old = fuse_id_to_eggs_id(parent_inode_old)
+        parent_inode_new = fuse_id_to_eggs_id(parent_inode_new)
+        target_id = cast(LookupResp, await self._send_shard_req(inode_id_shard(parent_inode_old), LookupReq(parent_inode_old, name_old))).target_id
+        if parent_inode_old == parent_inode_new:
+            await self._send_shard_req(inode_id_shard(parent_inode_old), SameDirectoryRenameReq(target_id, parent_inode_old, name_old, name_new))
+        elif inode_id_type(target_id) == InodeType.DIRECTORY:
+            await self._send_cdc_req(RenameDirectoryReq(target_id, parent_inode_old, name_old, parent_inode_new, name_new))
+        else:
+            await self._send_cdc_req(RenameFileReq(target_id, parent_inode_old, name_old, parent_inode_new, name_new))
+        
+    async def unlink(self, parent_inode, name, ctx=None):
+        parent_inode = fuse_id_to_eggs_id(parent_inode)
+        target_id = cast(LookupResp, await self._send_shard_req(inode_id_shard(parent_inode), LookupReq(parent_inode, name))).target_id
+        await self._send_shard_req(inode_id_shard(parent_inode), SoftUnlinkFileReq(parent_inode, target_id, name))
+    
+    async def rmdir(self, parent_inode, name, ctx=None):
+        parent_inode = fuse_id_to_eggs_id(parent_inode)
+        target_id = cast(LookupResp, await self._send_shard_req(inode_id_shard(parent_inode), LookupReq(parent_inode, name))).target_id
+        await self._send_cdc_req(RemoveDirectoryReq(parent_inode, target_id, name))
+    
+    async def symlink(self, parent_inode, name, target, ctx=None):
+        parent_inode = fuse_id_to_eggs_id(parent_inode)
+        file_id = await self._create(parent_inode, InodeType.SYMLINK, name)
+        await self.write(file_id, 0, target)
+        await self.flush(file_id)
+        return entry_attribute(file_id, size=0, mtime=0)        
+    
+    async def readlink(self, file_id, ctx=None):
+        file_id = fuse_id_to_eggs_id(file_id)
+        assert inode_id_type(file_id) == InodeType.SYMLINK
+        size = cast(StatResp, await self._send_shard_req(inode_id_shard(file_id), StatReq(file_id))).size_or_owner
+        data = b''
+        while len(data) < size:
+            data += await self.read(file_id, len(data), size - len(data))
+        return data
 
 def init_logging(debug=False):
     formatter = logging.Formatter('%(asctime)s.%(msecs)03d %(threadName)s: [%(name)s] %(message)s', datefmt="%Y-%m-%d %H:%M:%S")

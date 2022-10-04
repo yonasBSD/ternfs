@@ -313,17 +313,17 @@ class RenameFile(Transaction):
 # 3. Unlock edge going into the directory, making it snapshot.
 #
 # If 2 fails, we need to roll back the locking, without making the edge snapshot.
-class UnlinkDirectory(Transaction):
-    class UnlinkDirectoryState(TypedDict):
+class RemoveDirectory(Transaction):
+    class RemoveDirectoryState(TypedDict):
         exit_error: Optional[ErrCode] # after we roll back, we return this error to the user
-    state: UnlinkDirectoryState
+    state: RemoveDirectoryState
 
-    def __init__(self, state: Optional[UnlinkDirectoryState] = None):
+    def __init__(self, state: Optional[RemoveDirectoryState] = None):
         self.state = state or {
             'exit_error': None,
         }
 
-    def begin(self, cur: sqlite3.Cursor, req: UnlinkDirectoryReq) -> CDCStepInternal:
+    def begin(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq) -> CDCStepInternal:
         if inode_id_type(req.target_id) != InodeType.DIRECTORY:
             return EggsError(ErrCode.TYPE_IS_NOT_DIRECTORY)
         return CDCNeedsShard(
@@ -332,7 +332,7 @@ class UnlinkDirectory(Transaction):
             request=LockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=req.target_id),
         )
 
-    def lock_resp(self, cur: sqlite3.Cursor, req: UnlinkDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
+    def lock_resp(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return resp # Nothing to rollback
         return CDCNeedsShard(
@@ -341,7 +341,7 @@ class UnlinkDirectory(Transaction):
             request=SetDirectoryOwnerReq(dir_id=req.target_id, owner_id=NULL_INODE_ID),
         )
     
-    def remove_owner_resp(self, cur: sqlite3.Cursor, req: UnlinkDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
+    def remove_owner_resp(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return self._init_rollback(req, resp.error_code) # we need to unlock what we locked
         return CDCNeedsShard(
@@ -354,9 +354,9 @@ class UnlinkDirectory(Transaction):
         if isinstance(resp, EggsError):        
             logging.error(f"We couldn't unlock old edge in {req} (error {resp.error_code}), this is bad!")
             return EggsError(ErrCode.FATAL_ERROR)
-        return UnlinkDirectoryResp()
+        return RemoveDirectoryResp()
     
-    def _init_rollback(self, req: UnlinkDirectoryReq, err: ErrCode) -> CDCStepInternal:
+    def _init_rollback(self, req: RemoveDirectoryReq, err: ErrCode) -> CDCStepInternal:
         self.state['exit_error'] = err
         return CDCNeedsShard(
             next_step='rollback_resp',
@@ -509,7 +509,7 @@ class RenameDirectory(Transaction):
 TRANSACTIONS: Dict[CDCRequestKind, Type[Transaction]] = {
     CDCRequestKind.MAKE_DIRECTORY: MakeDir,
     CDCRequestKind.RENAME_FILE: RenameFile,
-    CDCRequestKind.UNLINK_DIRECTORY: UnlinkDirectory,
+    CDCRequestKind.REMOVE_DIRECTORY: RemoveDirectory,
     CDCRequestKind.RENAME_DIRECTORY: RenameDirectory,
 }
 
@@ -908,7 +908,7 @@ class CDCTests(unittest.TestCase):
     def test_unlink_dir(self):
         dir = cast(MakeDirResp, self.cdc.execute_ok(MakeDirReq(ROOT_DIR_INODE_ID, b'test-dir'))).id
         # We can unlink an empty dir
-        self.cdc.execute_ok(UnlinkDirectoryReq(owner_id=ROOT_DIR_INODE_ID, target_id=dir, name=b'test-dir'))
+        self.cdc.execute_ok(RemoveDirectoryReq(owner_id=ROOT_DIR_INODE_ID, target_id=dir, name=b'test-dir'))
     
     def test_move_dir(self):
         dir_1 = cast(MakeDirResp, self.cdc.execute_ok(MakeDirReq(ROOT_DIR_INODE_ID, b'1'))).id

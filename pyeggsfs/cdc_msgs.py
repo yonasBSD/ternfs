@@ -12,7 +12,7 @@ class CDCRequestKind(enum.IntEnum):
     MAKE_DIRECTORY = 1
     RENAME_FILE = 2
     RENAME_DIRECTORY = 3
-    UNLINK_DIRECTORY = 4 # TODO in the kernel is rmdir, but we mean something more specific with "unlink"
+    REMOVE_DIRECTORY = 4 # We mean something special with "unlink", which probably would be appropriate here, but let's go along with the kernel
 
     # This should be privileged, needed for GC
     HARD_UNLINK_FILE = 5
@@ -34,7 +34,7 @@ CDC_ERRORS: Dict[CDCRequestKind, Set[ErrCode]] = {
         ErrCode.OLD_NAME_IS_LOCKED, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NEW_DIRECTORY_NOT_FOUND,
         ErrCode.NEW_NAME_IS_LOCKED, ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
     },
-    CDCRequestKind.UNLINK_DIRECTORY: {
+    CDCRequestKind.REMOVE_DIRECTORY: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
         ErrCode.NAME_IS_LOCKED, ErrCode.TYPE_IS_NOT_DIRECTORY,
     },
@@ -104,8 +104,8 @@ class RenameFileResp(bincode.Packable):
         return RenameFileResp()
 
 @dataclass
-class UnlinkDirectoryReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.UNLINK_DIRECTORY
+class RemoveDirectoryReq(bincode.Packable):
+    kind: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
     owner_id: int
     target_id: int
     name: bytes
@@ -116,22 +116,22 @@ class UnlinkDirectoryReq(bincode.Packable):
         bincode.pack_bytes_into(self.name, b)
     
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'UnlinkDirectoryReq':
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveDirectoryReq':
         owner_id = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
-        return UnlinkDirectoryReq(owner_id, target_id, name)
+        return RemoveDirectoryReq(owner_id, target_id, name)
 
 @dataclass
-class UnlinkDirectoryResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.UNLINK_DIRECTORY
+class RemoveDirectoryResp(bincode.Packable):
+    kind: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
 
     def pack_into(self, b: bytearray) -> None:
         pass
     
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'UnlinkDirectoryResp':
-        return UnlinkDirectoryResp()
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveDirectoryResp':
+        return RemoveDirectoryResp()
 
 @dataclass
 class RenameDirectoryReq(bincode.Packable):
@@ -169,13 +169,13 @@ class RenameDirectoryResp(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'RenameDirectoryResp':
         return RenameDirectoryResp()
 
-CDCRequestBody = Union[MakeDirReq, RenameFileReq, UnlinkDirectoryReq, RenameDirectoryReq]
-CDCResponseBody = Union[EggsError, MakeDirResp, RenameFileResp, UnlinkDirectoryResp, RenameDirectoryResp]
+CDCRequestBody = Union[MakeDirReq, RenameFileReq, RemoveDirectoryReq, RenameDirectoryReq]
+CDCResponseBody = Union[EggsError, MakeDirResp, RenameFileResp, RemoveDirectoryResp, RenameDirectoryResp]
 
 CDC_REQUESTS: Dict[CDCRequestKind, Tuple[Type[CDCRequestBody], Type[CDCResponseBody]]] = {
     CDCRequestKind.MAKE_DIRECTORY: (MakeDirReq, MakeDirResp),
     CDCRequestKind.RENAME_FILE: (RenameFileReq, RenameFileResp),
-    CDCRequestKind.UNLINK_DIRECTORY: (UnlinkDirectoryReq, UnlinkDirectoryResp),
+    CDCRequestKind.REMOVE_DIRECTORY: (RemoveDirectoryReq, RemoveDirectoryResp),
     CDCRequestKind.RENAME_DIRECTORY: (RenameDirectoryReq, RenameDirectoryResp),
 }
 

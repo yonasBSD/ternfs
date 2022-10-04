@@ -168,6 +168,9 @@ def mv(a: Path, b: Path) -> None:
     else:
         send_cdc_request_or_raise(RenameDirectoryReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
 
+def readdir_single(id: int, start_hash: int):
+    print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, start_hash)))
+
 def readdir(id: int):
     continuation_key = 0
     while True:
@@ -321,6 +324,7 @@ RAW_COMMANDS: Dict[str, Tuple[Callable, List[Type]]] = {
     'mkdir': (mkdir_raw, [int, str]),
     'stat': (stat_raw, [int]),
     'readdir': (readdir, [int]),
+    'readdir_single': (readdir_single, [int, int]),
     'transient_files': (transient_files, []),
     'rm_file': (rm_file_raw, [int, int, str]),
     'rm_dir': (rm_dir_raw, [int, int, str]),

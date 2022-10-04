@@ -15,15 +15,6 @@ import shuckle
 import block_service
 import cdc
 
-logging.config.dictConfig({
-    'version': 1,
-    'loggers': {
-        'quart.app': {'level': 'WARNING'},
-        'quart.serving': {'level': 'WARNING'},
-        'root': {'level': 'WARNING'},
-    },
-})
-
 class Daemon(Process):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(daemon=True, *args, **kwargs)
@@ -40,7 +31,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Runs every component of EggsFS')
     parser.add_argument('path', help='Location to store DBs and blocks')
     parser.add_argument('--block_services', help='Number of block services', type=int, default=10)
+    parser.add_argument('-v', '--verbose', action='store_true')
     config = parser.parse_args(sys.argv[1:])
+
+    logging.config.dictConfig({
+        'version': 1,
+        'loggers': {
+            'quart.app': {'level': 'WARNING'},
+            'quart.serving': {'level': 'WARNING'},
+            'root': {'level': 'DEBUG' if config.verbose else 'WARNING'},
+        },
+    })
 
     parent = os.getpid()
 

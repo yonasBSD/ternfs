@@ -38,8 +38,8 @@ async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_sec
             timed_out = False
         if timed_out:
             return EggsError(ErrCode.TIMEOUT)
-    response = bincode.unpack(ShardResponse, packed_resp)
     logging.debug(f'Sent shard request {req}')
+    response = bincode.unpack(ShardResponse, packed_resp)
     logging.debug(f'Got shard response {response}')
     assert request_id == response.request_id
     return response.body

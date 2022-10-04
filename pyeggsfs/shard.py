@@ -563,7 +563,7 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
         }
     )
     payloads: List[ReadDirPayload] = []
-    curr_size = ReadDirResp.SIZE
+    curr_size = ShardResponse.SIZE + ReadDirResp.SIZE
     next_hash = 0
     # Note that this is assuming that we can always clear one next hash in one UDP_MTU
     # to make progress.
@@ -1738,6 +1738,9 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                     resp_body = execute(db, request).body
                 resp = ShardResponse(request_id=request.request_id, body=resp_body)
                 packed = bincode.pack(resp)
+                if len(packed) > UDP_MTU:
+                    logging.error(f'Packed size for response {type(resp.body)} exceeds {UDP_MTU}: {len(packed)}')
+                    packed = bincode.pack(ShardResponse(request_id=request.request_id, body=EggsError(ErrCode.INTERNAL_ERROR)))
                 sock.sendto(packed, addr)
             except socket.timeout:
                 pass

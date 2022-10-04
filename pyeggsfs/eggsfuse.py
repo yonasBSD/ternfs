@@ -64,7 +64,6 @@ async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) 
 
 async def read_block(block: FetchedBlock) -> bytes:
     ip = socket.inet_ntoa(block.ip)
-    print('XXX reading', ip)
     msg = struct.pack('<cQ', b'f', block.block_id)
     conn = await trio.open_tcp_stream(ip, block.port) # TODO how promptly is this closed?
     await conn.send_all(msg)
@@ -159,7 +158,7 @@ def entry_attribute(inode_id: int, size: int, mtime: int) -> pyfuse3.EntryAttrib
     entry.st_uid = 0
     entry.st_gid = 0
     entry.st_rdev = 0
-    entry.st_size = (type != InodeType.DIRECTORY) & size
+    entry.st_size = (type != InodeType.DIRECTORY) and size
 
     entry.st_blksize = 512
     entry.st_blocks = 1 # TODO can we return something reasonable here?

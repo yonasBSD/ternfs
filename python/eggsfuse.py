@@ -13,7 +13,7 @@ import struct
 from common import *
 from shard_msgs import *
 from cdc_msgs import *
-import crypto
+import crypto as crypto
 
 
 LOCAL_HOST = '127.0.0.1'

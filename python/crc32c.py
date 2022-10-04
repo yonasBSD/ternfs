@@ -178,7 +178,7 @@ ffibuilder.set_source("_crc32c",
         return crc;
     }
     ''',
-    extra_compile_args=['-march=skylake']
+    extra_compile_args=['-march=skylake', '-O3']
 )
 
 def compile(verbose=False):

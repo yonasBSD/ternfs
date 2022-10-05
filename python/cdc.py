@@ -920,8 +920,8 @@ class CDCTests(unittest.TestCase):
         dir_1_3_5 = cast(MakeDirResp, self.cdc.execute_ok(MakeDirReq(dir_1, b'5'))).id
         # not found failures
         self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'2', dir_2, b'bad'), ErrCode.MISMATCHING_TARGET)
-        self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'1', assemble_inode_id(InodeType.DIRECTORY, 4, 123), b'blah'), ErrCode.NEW_DIRECTORY_NOT_FOUND)
-        self.cdc.execute_err(RenameDirectoryReq(assemble_inode_id(InodeType.DIRECTORY, 4, 123), ROOT_DIR_INODE_ID, b'1', dir_2, b'blah'), ErrCode.MISMATCHING_TARGET)
+        self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'1', make_inode_id(InodeType.DIRECTORY, 4, 123), b'blah'), ErrCode.NEW_DIRECTORY_NOT_FOUND)
+        self.cdc.execute_err(RenameDirectoryReq(make_inode_id(InodeType.DIRECTORY, 4, 123), ROOT_DIR_INODE_ID, b'1', dir_2, b'blah'), ErrCode.MISMATCHING_TARGET)
         # loop failures
         self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'1', dir_1, b'11'), ErrCode.LOOP_IN_DIRECTORY_RENAME)
         self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'1', dir_1_3, b'1'), ErrCode.LOOP_IN_DIRECTORY_RENAME)

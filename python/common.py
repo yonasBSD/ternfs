@@ -53,13 +53,13 @@ def inode_id_set_extra(inode: int, extra: bool) -> int:
     else:
         return inode & ~(1 << 63)
 
-def assemble_inode_id(type: InodeType, shard: int, id: int) -> int:
+def make_inode_id(type: InodeType, shard: int, id: int) -> int:
     assert shard >= 0 and shard < 256
     assert id >= 0 and id < 2**52
     return (type << 61) | (id << 8) | shard
 
 NULL_INODE_ID = 0 # used to indicate "no inode id" in various circumstances (dir owner, removal snapshot edges)
-ROOT_DIR_INODE_ID = assemble_inode_id(type=InodeType.DIRECTORY, shard=0, id=0)
+ROOT_DIR_INODE_ID = make_inode_id(type=InodeType.DIRECTORY, shard=0, id=0)
 
 PROTOCOL_VERSION = 0
 

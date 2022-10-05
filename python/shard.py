@@ -300,12 +300,12 @@ class ShardInfo:
             id = self._next_file_id
             self._next_file_id += 0x100
             self._update(cur)
-            return assemble_inode_id(type, self.shard, id)
+            return make_inode_id(type, self.shard, id)
         elif type == InodeType.SYMLINK:
             id = self._next_symlink_id
             self._next_symlink_id += 0x100
             self._update(cur)
-            return assemble_inode_id(type, self.shard, id)
+            return make_inode_id(type, self.shard, id)
         else:
             assert False, f'Bad inode type {type}'
     
@@ -1168,7 +1168,7 @@ class TestDriver:
 
     def fresh_inode_id(self, type: InodeType, shard: int):
         self.inode_id_counter += 1
-        return assemble_inode_id(type, shard, self.inode_id_counter)
+        return make_inode_id(type, shard, self.inode_id_counter)
     
     def sql_dry(self, sql: str, parameters: Any):
         self.db.execute(sql, parameters)

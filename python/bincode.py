@@ -86,10 +86,6 @@ class UnpackWrapper:
             raise ValueError('Attempt to advance past end')
         self.idx += i
 
-    def bytes_remaining(self) -> int:
-        return len(self.data) - self.idx
-
-
 def unpack_u8(u: UnpackWrapper) -> int:
     ret = u.read()[0]
     u.advance(1)
@@ -170,7 +166,7 @@ def __tests() -> None:
     u = UnpackWrapper(b)
     output = unpack_v61(u)
     assert input == output
-    assert u.bytes_remaining() == 0
+    assert u.idx == len(b)
 
 
 

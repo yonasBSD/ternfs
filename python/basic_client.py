@@ -327,8 +327,8 @@ def create_file_from_str(name: Path, str: str):
 
 @human_command('copy_into')
 def create_file_from_file(dest_path: Path, source_file: Path):
-    with open(file, mode='rb') as f:
-        return create_file(name, f.read())
+    with open(source_file, mode='rb') as f:
+        return create_file(dest_path, f.read())
 
 @human_command('cat')
 def cat(name: Path):

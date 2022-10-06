@@ -206,14 +206,13 @@ class StatResp(bincode.Packable):
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.mtime, b)
         bincode.pack_u64_into(self.size_or_owner, b)
-        bincode.pack_fixed_into(self.opaque, len(self.opaque), b)
+        bincode.pack_bytes_into(self.opaque, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatResp':
         mtime = bincode.unpack_u64(u)
         size_or_owner = bincode.unpack_u64(u)
-        opaque_len = u.bytes_remaining()
-        opaque = bincode.unpack_fixed(u, opaque_len)
+        opaque = bincode.unpack_bytes(u)
         return StatResp(mtime, size_or_owner, opaque)
 
 @dataclass
@@ -363,13 +362,14 @@ class TransientFile:
 @dataclass
 class VisitTransientFilesResp(bincode.Packable):
     kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_TRANSIENT_FILES
-    SIZE: ClassVar[int] = 8
+    SIZE: ClassVar[int] = 8 + 2 # 2 for the files length
     next_id: int
     files: List[TransientFile]
 
     def pack_into(self, b: bytearray) -> None:
         assert (ShardResponse.SIZE + VisitTransientFilesResp.SIZE + TransientFile.SIZE * len(self.files)) <= UDP_MTU
         bincode.pack_u64_into(self.next_id, b)
+        bincode.pack_u16_into(len(self.files), b)
         for file in self.files:
             bincode.pack_u64_into(file.id, b)
             bincode.pack_u64_into(file.deadline_time, b)
@@ -377,10 +377,10 @@ class VisitTransientFilesResp(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'VisitTransientFilesResp':
         continuation_key = bincode.unpack_u64(u)
-        num_eden_vals = u.bytes_remaining() // TransientFile.SIZE
+        num_files = bincode.unpack_u16(u)
         eden_vals = [
             TransientFile(bincode.unpack_u64(u), bincode.unpack_u64(u))
-            for _ in range(num_eden_vals)
+            for _ in range(num_files)
         ]
         return VisitTransientFilesResp(continuation_key, eden_vals)
 
@@ -796,20 +796,21 @@ class VisitInodesReq(bincode.Packable):
 @dataclass
 class VisitInodesResp(bincode.Packable):
     kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_INODES
-    SIZE: ClassVar[int] = 8
+    SIZE: ClassVar[int] = 8 + 2 # 2 for the ids length
     next_id: int
     ids: List[int]
 
     def pack_into(self, b: bytearray) -> None:
         assert (ShardResponse.SIZE + VisitInodesResp.SIZE + 8 * len(self.ids)) <= UDP_MTU
         bincode.pack_u64_into(self.next_id, b)
+        bincode.pack_u16_into(len(self.ids), b)
         for inode in self.ids:
             bincode.pack_u64_into(inode, b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'VisitInodesResp':
         continuation_key = bincode.unpack_u64(u)
-        num_inodes = u.bytes_remaining() // 8
+        num_inodes = bincode.unpack_u16(u)
         inodes = [bincode.unpack_u64(u) for _ in range(num_inodes)]
         return VisitInodesResp(continuation_key, inodes)
 

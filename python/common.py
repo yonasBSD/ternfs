@@ -55,7 +55,7 @@ def inode_id_set_extra(inode: int, extra: bool) -> int:
 
 def make_inode_id(type: InodeType, shard: int, id: int) -> int:
     assert shard >= 0 and shard < 256
-    assert id >= 0 and id < 2**52
+    assert id >= 0 and id < (1<<53)-1
     return (type << 61) | (id << 8) | shard
 
 NULL_INODE_ID = 0 # used to indicate "no inode id" in various circumstances (dir owner, removal snapshot edges)

@@ -6,6 +6,8 @@ from typing import ClassVar, Dict, Optional, Tuple, Type, Union, Set
 import bincode
 from common import *
 
+CDC_PROTOCOL_VERSION = b'CDC\0'
+
 class CDCRequestKind(enum.IntEnum):
     ERROR = 0
 
@@ -181,24 +183,24 @@ CDC_REQUESTS: Dict[CDCRequestKind, Tuple[Type[CDCRequestBody], Type[CDCResponseB
 
 @dataclass
 class CDCRequest(bincode.Packable):
-    version: int
     request_id: int
     body: CDCRequestBody
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u8_into(self.version, b)
+        bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CDCRequest':
-        ver = bincode.unpack_u8(u)
+        ver = bincode.unpack_fixed(u, len(CDC_PROTOCOL_VERSION))
+        assert ver == CDC_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         body_kind = CDCRequestKind(bincode.unpack_u8(u))
         body_type = CDC_REQUESTS[body_kind][0]
         body = body_type.unpack(u)
-        return CDCRequest(ver, request_id, body)
+        return CDCRequest(request_id=request_id, body=body)
 
 @dataclass
 class CDCResponse(bincode.Packable):
@@ -208,12 +210,15 @@ class CDCResponse(bincode.Packable):
     body: CDCResponseBody
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CDCResponse':
+        ver = bincode.unpack_fixed(u, len(CDC_PROTOCOL_VERSION))
+        assert ver == CDC_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         resp_kind = CDCRequestKind(bincode.unpack_u8(u))
         body: CDCResponseBody
@@ -221,4 +226,4 @@ class CDCResponse(bincode.Packable):
             body = EggsError.unpack(u)
         else:
             body = CDC_REQUESTS[resp_kind][1].unpack(u)
-        return CDCResponse(request_id, body)
+        return CDCResponse(request_id=request_id, body=body)

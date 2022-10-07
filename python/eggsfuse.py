@@ -24,10 +24,9 @@ STORAGE_CLASS = 2
 
 async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_secs: float = 2.0) -> ShardResponseBody:
     port = shard_to_port(shard)
-    ver = PROTOCOL_VERSION
     request_id = eggs_time()
     target = (LOCAL_HOST, port)
-    req = ShardRequest(ver, request_id, req_body)
+    req = ShardRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
     with trio.socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         await sock.bind(('', 0))
@@ -47,7 +46,7 @@ async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_sec
 async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> CDCResponseBody:
     request_id = eggs_time()
     target = (LOCAL_HOST, CDC_PORT)
-    req = CDCRequest(PROTOCOL_VERSION, request_id, req_body)
+    req = CDCRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
     with trio.socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         await sock.bind(('', 0))

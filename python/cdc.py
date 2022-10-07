@@ -642,7 +642,7 @@ def abort_current_transaction(cur: sqlite3.Cursor) -> Optional[CDCResponse]:
         resp=EggsError(ErrCode.INTERNAL_ERROR),
     )
     print(f'Current transaction of type {current_tx["kind"]} was aborted')
-    return CDCResponse(current_tx['id'], EggsError(ErrCode.INTERNAL_ERROR))
+    return CDCResponse(request_id=current_tx['id'], body=EggsError(ErrCode.INTERNAL_ERROR))
 
 def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]:
     current_tx = get_current_transaction(cur)
@@ -676,10 +676,10 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
                 'body': bincode.pack(resp_internal.request),
             }
         )
-        resp = CDCShardRequest(shard=resp_internal.shard, request=ShardRequest(version=PROTOCOL_VERSION, request_id=req_id, body=resp_internal.request))
+        resp = CDCShardRequest(shard=resp_internal.shard, request=ShardRequest(request_id=req_id, body=resp_internal.request))
     else:
         mark_transaction_as_done(cur, ix=current_tx['ix'], now=now, resp=resp_internal)
-        resp = CDCResponse(current_tx['id'], resp_internal)
+        resp = CDCResponse(request_id=current_tx['id'], body=resp_internal)
     return resp
 
 def open_db(db_dir: str) -> sqlite3.Connection:
@@ -722,11 +722,11 @@ def execute(
             # If required, inject a response, avoiding calling
             # the shard at all.
             if seen_kinds[shard_req_kind] in replacements[shard_req_kind]:
-                msg = ShardResponse(shard_request.request.request_id, replacements[shard_req_kind][seen_kinds[shard_req_kind]])
+                msg = ShardResponse(request_id=shard_request.request.request_id, body=replacements[shard_req_kind][seen_kinds[shard_req_kind]])
                 del replacements[shard_req_kind][seen_kinds[shard_req_kind]]
             else:
                 shard_resp = execute_shard_request(shard_request)
-                msg = ShardResponse(shard_resp.request_id, shard_resp.body)
+                msg = ShardResponse(request_id=shard_resp.request_id, body=shard_resp.body)
             seen_kinds[shard_req_kind] += 1
     # Check that all replacements have fired
     for m in replacements.values():
@@ -760,12 +760,12 @@ class TestDriver:
         return full_resp
 
     def execute_ok(self, req: CDCRequestBody, replacements: ShardRequestsReplacements = {}):
-        resp = self.execute(CDCRequest(version=PROTOCOL_VERSION, request_id=eggs_time(), body=req), replacements)
+        resp = self.execute(CDCRequest(request_id=eggs_time(), body=req), replacements)
         assert not isinstance(resp.body, EggsError), f'Got error for req {req}: {resp}'
         return resp.body
 
     def execute_err(self, req: CDCRequestBody, kind: Optional[ErrCode] = None, replacements: ShardRequestsReplacements = {}):
-        resp = self.execute(CDCRequest(version=PROTOCOL_VERSION, request_id=eggs_time(), body=req), replacements)
+        resp = self.execute(CDCRequest(request_id=eggs_time(), body=req), replacements)
         assert isinstance(resp.body, EggsError), f'Expected error, got response {resp.body}'
         if kind is not None:
             assert resp.body.error_code == kind, f'Expected error {repr(kind)}, got {repr(ErrCode(resp.body.error_code))}'
@@ -957,7 +957,7 @@ def run_forever(db: sqlite3.Connection):
             packed_resp = shard_sock.recv(UDP_MTU)
             resp = bincode.unpack(ShardResponse, packed_resp)
         except socket.timeout:
-            resp = ShardResponse(req.request.request_id, EggsError(ErrCode.TIMEOUT))
+            resp = ShardResponse(request_id=req.request.request_id, body=EggsError(ErrCode.TIMEOUT))
         assert req.request.request_id == resp.request_id
         return resp
     while True:

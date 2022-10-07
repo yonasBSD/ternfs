@@ -8,6 +8,8 @@ from typing import ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Unio
 import bincode
 from common import *
 
+SHARD_PROTOCOL_VERSION = b'SHA\0'
+
 # one-hot encoding to allow "acceptable-types" bitset
 class InodeFlags(enum.IntFlag):
     DIRECTORY = 1
@@ -946,24 +948,24 @@ SHARD_REQUESTS: Dict[ShardRequestKind, Tuple[Type[ShardRequestBody], Type[ShardR
 
 @dataclass
 class ShardRequest(bincode.Packable):
-    version: int
     request_id: int
     body: ShardRequestBody
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u8_into(self.body.kind, b)
-        bincode.pack_u8_into(self.version, b)
+        bincode.pack_fixed_into(SHARD_PROTOCOL_VERSION, len(SHARD_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
+        bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ShardRequest':
-        kind = ShardRequestKind(bincode.unpack_u8(u))
-        ver = bincode.unpack_u8(u)
+        ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
+        assert ver == SHARD_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
+        kind = ShardRequestKind(bincode.unpack_u8(u))
         body_type = SHARD_REQUESTS[kind][0]
         body = body_type.unpack(u)
-        return ShardRequest(ver, request_id, body)
+        return ShardRequest(request_id=request_id, body=body)
 
 @dataclass
 class ShardResponse(bincode.Packable):
@@ -973,14 +975,17 @@ class ShardResponse(bincode.Packable):
     body: ShardResponseBody
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.kind, b)
+        bincode.pack_u8_into(PROTOCOL_VERSION, b)
+        bincode.pack_u64_into(self.request_id, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ShardResponse':
-        request_id = bincode.unpack_u64(u)
         resp_kind = ShardRequestKind(bincode.unpack_u8(u))
+        version = bincode.unpack_u8(u)
+        assert version == PROTOCOL_VERSION
+        request_id = bincode.unpack_u64(u)
         body: ShardResponseBody
         if resp_kind == ShardRequestKind.ERROR:
             body = EggsError.unpack(u)

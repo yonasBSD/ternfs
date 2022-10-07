@@ -1146,7 +1146,7 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
     return cast(ShardResponseBody, resp_body)
 
 def execute(db: sqlite3.Connection, req: ShardRequest) -> ShardResponse:
-    return ShardResponse(req.request_id, execute_internal(db, req.body))
+    return ShardResponse(request_id=req.request_id, body=execute_internal(db, req.body))
 
 def open_db(db_path: str, shard: int) -> sqlite3.Connection:
     assert 0 <= shard <= 255, f'{shard} is out of range'
@@ -1204,12 +1204,12 @@ class TestDriver:
             repeats = 1
         resp: Any = None
         for i in range(repeats):
-            resp = self.execute(ShardRequest(version=PROTOCOL_VERSION, request_id=eggs_time(), body=req))
+            resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
             assert not isinstance(resp.body, EggsError), f'Got error at round {i}: {resp}'
         return resp.body
 
     def execute_err(self, req: ShardRequestBody, kind: Union[ErrCode, None] = None):
-        resp = self.execute(ShardRequest(version=PROTOCOL_VERSION, request_id=eggs_time(), body=req))
+        resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
         assert isinstance(resp.body, EggsError), f'Expected error, got response {resp.body}'
         acceptable_errors = SHARD_ERRORS[req.kind]
         assert resp.body.error_code in acceptable_errors, f'Expected error to be one of {acceptable_errors}, but got {resp.body.error_code}'
@@ -1732,15 +1732,12 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 if not authorised:
                     resp_body = EggsError(ErrCode.NOT_AUTHORISED)
                 else:
-                    if request.version != PROTOCOL_VERSION:
-                        logging.warning(f'Ignoring request, unsupported version {request.version}')
-                        continue
                     resp_body = execute(db, request).body
                 resp = ShardResponse(request_id=request.request_id, body=resp_body)
                 packed = bincode.pack(resp)
                 if len(packed) > UDP_MTU:
                     logging.error(f'Packed size for response {type(resp.body)} exceeds {UDP_MTU}: {len(packed)}')
-                    packed = bincode.pack(ShardResponse(request_id=request.request_id, body=EggsError(ErrCode.INTERNAL_ERROR)))
+                    packed = bincode.pack(replace(resp, body=EggsError(ErrCode.INTERNAL_ERROR)))
                 sock.sendto(packed, addr)
             except socket.timeout:
                 pass
@@ -1749,6 +1746,7 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 update_block_servers(db, swallow_errors=False)
                 last_shuckle_update = time.time()
         except Exception as err:
+            traceback.print_exc()
             logging.error(f'Got exception {err} in main loop!')
 
 def main(*, db_dir: str, shard: int, wait_for_shuckle: bool) -> None:

@@ -1190,9 +1190,8 @@ class TestDriver:
         # test encoding roundtrip
         full_req_bytes = full_req.pack(cdc_key.CDC_KEY)
         assert len(full_req_bytes) < UDP_MTU
-        auth_req = AuthenticatedShardRequest.unpack(full_req_bytes, cdc_key.CDC_KEY)
-        assert auth_req.authenticated
-        assert full_req == auth_req.request
+        unpacked_req = UnpackedShardRequest.unpack(full_req_bytes, cdc_key.CDC_KEY)
+        assert full_req == unpacked_req.request
         full_resp = execute(self.db, full_req)
         full_resp_bytes = bincode.pack(full_resp)
         assert len(full_resp_bytes) < UDP_MTU
@@ -1721,16 +1720,12 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 sock.settimeout(next_timeout)
                 data, addr = sock.recvfrom(UDP_MTU)
                 resp_body: Optional[ShardResponseBody] = None
-                try:
-                    auth_req = AuthenticatedShardRequest.unpack(data, cdc_key.CDC_KEY)
-                except Exception as e:
-                    logging.warning(f'Could not decode request: {e}')
-                    resp_body = EggsError(ErrCode.MALFORMED_REQUEST)
-                if not auth_req.authenticated:
-                    resp_body = EggsError(ErrCode.NOT_AUTHORISED)
+                unpacked_req = UnpackedShardRequest.unpack(data, cdc_key.CDC_KEY)
+                if isinstance(unpacked_req.request, EggsError):
+                    resp_body = unpacked_req.request
                 else:
-                    resp_body = execute(db, auth_req.request).body
-                resp = ShardResponse(request_id=auth_req.request.request_id, body=resp_body)
+                    resp_body = execute(db, unpacked_req.request).body
+                resp = ShardResponse(request_id=unpacked_req.request_id, body=resp_body)
                 packed = bincode.pack(resp)
                 if len(packed) > UDP_MTU:
                     logging.error(f'Packed size for response {type(resp.body)} exceeds {UDP_MTU}: {len(packed)}')

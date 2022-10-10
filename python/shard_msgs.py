@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import enum
 import itertools
 from typing import ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Union, Set
@@ -953,26 +953,43 @@ class ShardRequest:
         return bytes(b)
 
 @dataclass
-class AuthenticatedShardRequest:
-    authenticated: bool
-    request: ShardRequest
+class UnpackedShardRequest:
+    # this one is copied here so that if we cannot decode the rest
+    # we can still reply.
+    request_id: int
+    # If something went wrong while decoding past the req id, you'll get an
+    # error instead.
+    request: Union[EggsError, ShardRequest]
 
     @staticmethod
-    def unpack(bs: bytes, cdc_key: Optional[crypto.ExpandedKey] = None) -> 'AuthenticatedShardRequest':
+    def unpack(bs: bytes, cdc_key: Optional[crypto.ExpandedKey] = None) -> 'UnpackedShardRequest':
         u = bincode.UnpackWrapper(bs)
         ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
         assert ver == SHARD_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
-        kind = ShardRequestKind(bincode.unpack_u8(u))
-        body_type = SHARD_REQUESTS[kind][0]
-        body = body_type.unpack(u)
-        authenticated = True
+        # We've made it so far, now we can at least
+        # return something
+        resp = UnpackedShardRequest(
+            request_id=request_id,
+            request=None,
+        )
+        try:
+            kind = ShardRequestKind(bincode.unpack_u8(u))
+            body_type = SHARD_REQUESTS[kind][0]
+            body = body_type.unpack(u)
+        except Exception:
+            # TODO it would be good to distinguish between actual
+            # decode errors and internal exceptions here.
+            return replace(resp, request=EggsError(ErrCode.MALFORMED_REQUEST))
         if kind.is_privileged():
             assert cdc_key
             req_bytes = u.data[:u.idx]
             mac = bincode.unpack_fixed(u, 8)
-            authenticated = crypto.compute_mac(req_bytes, cdc_key) == mac
-        return AuthenticatedShardRequest(request=ShardRequest(request_id=request_id, body=body), authenticated=authenticated)
+            if crypto.compute_mac(req_bytes, cdc_key) != mac:
+                return replace(resp, request=EggsError(ErrCode.NOT_AUTHORISED))
+        if u.idx != len(bs):
+            return replace(resp, request=EggsError(ErrCode.MALFORMED_REQUEST))
+        return replace(resp, request=ShardRequest(request_id=request_id, body=body))
 
 @dataclass
 class ShardResponse(bincode.Packable):

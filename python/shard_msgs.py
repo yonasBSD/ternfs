@@ -7,6 +7,7 @@ from typing import ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Unio
 
 import bincode
 from common import *
+import crypto
 
 SHARD_PROTOCOL_VERSION = b'SHA\0'
 
@@ -947,25 +948,42 @@ SHARD_REQUESTS: Dict[ShardRequestKind, Tuple[Type[ShardRequestBody], Type[ShardR
 }
 
 @dataclass
-class ShardRequest(bincode.Packable):
+class ShardRequest:
     request_id: int
     body: ShardRequestBody
 
-    def pack_into(self, b: bytearray) -> None:
+    def pack(self, cdc_key: Optional[crypto.ExpandedKey] = None) -> bytes:
+        b = bytearray()
         bincode.pack_fixed_into(SHARD_PROTOCOL_VERSION, len(SHARD_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
+        if self.body.kind.is_privileged():
+            assert cdc_key
+            bincode.pack_fixed_into(crypto.compute_mac(bytes(b), cdc_key), 8, b)
+        return bytes(b)
+
+@dataclass
+class AuthenticatedShardRequest:
+    authenticated: bool
+    request: ShardRequest
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'ShardRequest':
+    def unpack(bs: bytes, cdc_key: Optional[crypto.ExpandedKey] = None) -> 'AuthenticatedShardRequest':
+        u = bincode.UnpackWrapper(bs)
         ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
         assert ver == SHARD_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         kind = ShardRequestKind(bincode.unpack_u8(u))
         body_type = SHARD_REQUESTS[kind][0]
         body = body_type.unpack(u)
-        return ShardRequest(request_id=request_id, body=body)
+        authenticated = True
+        if kind.is_privileged():
+            assert cdc_key
+            req_bytes = u.data[:u.idx]
+            mac = bincode.unpack_fixed(u, 8)
+            authenticated = crypto.compute_mac(req_bytes, cdc_key) == mac
+        return AuthenticatedShardRequest(request=ShardRequest(request_id=request_id, body=body), authenticated=authenticated)
 
 @dataclass
 class ShardResponse(bincode.Packable):
@@ -975,18 +993,17 @@ class ShardResponse(bincode.Packable):
     body: ShardResponseBody
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u8_into(self.body.kind, b)
-        bincode.pack_u8_into(PROTOCOL_VERSION, b)
+        bincode.pack_fixed_into(SHARD_PROTOCOL_VERSION, len(SHARD_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
+        bincode.pack_u8_into(self.body.kind, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ShardResponse':
-        resp_kind = ShardRequestKind(bincode.unpack_u8(u))
-        version = bincode.unpack_u8(u)
-        assert version == PROTOCOL_VERSION
+        ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
+        assert ver == SHARD_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
-        body: ShardResponseBody
+        resp_kind = ShardRequestKind(bincode.unpack_u8(u))
         if resp_kind == ShardRequestKind.ERROR:
             body = EggsError.unpack(u)
         else:

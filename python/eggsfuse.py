@@ -27,7 +27,7 @@ async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_sec
     request_id = eggs_time()
     target = (LOCAL_HOST, port)
     req = ShardRequest(request_id=request_id, body=req_body)
-    packed_req = bincode.pack(req)
+    packed_req = req.pack()
     with trio.socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         await sock.bind(('', 0))
         await sock.sendto(packed_req, target)

@@ -948,9 +948,7 @@ def run_forever(db: sqlite3.Connection):
     shard_sock.bind(('', 0))
     shard_sock.settimeout(2.0)
     def execute_shard_req(req: CDCShardRequest) -> ShardResponse:
-        packed_req = bincode.pack(req.request)
-        if req.request.body.kind.is_privileged():
-            packed_req = crypto.add_mac(packed_req, CDC_KEY)
+        packed_req = req.request.pack(CDC_KEY)
         shard_sock.sendto(packed_req, ('127.0.0.1', shard_to_port(req.shard)))
         resp: ShardResponse
         try:

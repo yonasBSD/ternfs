@@ -115,13 +115,16 @@ def _zero_pad(buf: bytes) -> bytes:
     n = (len(buf) + 15) // 16
     return buf + b'\x00'*(n * 16 - len(buf))
 
-def add_mac(buf: bytes, rk: ExpandedKey) -> bytes:
+def compute_mac(buf: bytes, rk: ExpandedKey) -> bytes:
     mac = cbc_mac_impl(_zero_pad(buf), rk)
-    return buf + mac[:8]
+    return mac[:8]
+
+def add_mac(buf: bytes, rk: ExpandedKey) -> bytes:
+    return buf + compute_mac(buf, rk)
 
 def remove_mac(buf: bytes, rk: ExpandedKey) -> Optional[bytes]:
     m = buf[:-8]
-    if cbc_mac_impl(_zero_pad(m), rk)[:8] != buf[-8:]:
+    if compute_mac(m, rk) != buf[-8:]:
         return None
     return m
 

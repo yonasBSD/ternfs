@@ -61,8 +61,6 @@ def make_inode_id(type: InodeType, shard: int, id: int) -> int:
 NULL_INODE_ID = 0 # used to indicate "no inode id" in various circumstances (dir owner, removal snapshot edges)
 ROOT_DIR_INODE_ID = make_inode_id(type=InodeType.DIRECTORY, shard=0, id=0)
 
-PROTOCOL_VERSION = 0
-
 def shard_to_port(shard: int) -> int:
     return 22272 + shard
 

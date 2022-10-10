@@ -1188,9 +1188,11 @@ class TestDriver:
 
     def execute(self, full_req: ShardRequest):
         # test encoding roundtrip
-        full_req_bytes = bincode.pack(full_req)
+        full_req_bytes = full_req.pack(cdc_key.CDC_KEY)
         assert len(full_req_bytes) < UDP_MTU
-        assert full_req == bincode.unpack(ShardRequest, full_req_bytes)
+        auth_req = AuthenticatedShardRequest.unpack(full_req_bytes, cdc_key.CDC_KEY)
+        assert auth_req.authenticated
+        assert full_req == auth_req.request
         full_resp = execute(self.db, full_req)
         full_resp_bytes = bincode.pack(full_resp)
         assert len(full_resp_bytes) < UDP_MTU
@@ -1714,26 +1716,21 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
     last_shuckle_update = time.time()
     while True:
         try:
-            authorised = False
             try:
                 next_timeout = max(0.0, (last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC) - time.time())
                 sock.settimeout(next_timeout)
                 data, addr = sock.recvfrom(UDP_MTU)
-                if data[0] & 0x80:
-                    # this is a privileged command
-                    maybe_data = crypto.remove_mac(data, cdc_key.CDC_KEY)
-                    if maybe_data is not None:
-                        authorised = True
-                        data = maybe_data
-                else:
-                    authorised = True
-                request = bincode.unpack(ShardRequest, data)
-                resp_body: ShardResponseBody
-                if not authorised:
+                resp_body: Optional[ShardResponseBody] = None
+                try:
+                    auth_req = AuthenticatedShardRequest.unpack(data, cdc_key.CDC_KEY)
+                except Exception as e:
+                    logging.warning(f'Could not decode request: {e}')
+                    resp_body = EggsError(ErrCode.MALFORMED_REQUEST)
+                if not auth_req.authenticated:
                     resp_body = EggsError(ErrCode.NOT_AUTHORISED)
                 else:
-                    resp_body = execute(db, request).body
-                resp = ShardResponse(request_id=request.request_id, body=resp_body)
+                    resp_body = execute(db, auth_req.request).body
+                resp = ShardResponse(request_id=auth_req.request.request_id, body=resp_body)
                 packed = bincode.pack(resp)
                 if len(packed) > UDP_MTU:
                     logging.error(f'Packed size for response {type(resp.body)} exceeds {UDP_MTU}: {len(packed)}')
@@ -1741,10 +1738,12 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 sock.sendto(packed, addr)
             except socket.timeout:
                 pass
-
+            # get shuckle update if we should
             if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
                 update_block_servers(db, swallow_errors=False)
                 last_shuckle_update = time.time()
+        # catch all exceptions in main loop -- i.e., never die apart from when
+        # asked to
         except Exception as err:
             traceback.print_exc()
             logging.error(f'Got exception {err} in main loop!')

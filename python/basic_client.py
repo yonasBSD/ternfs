@@ -68,10 +68,9 @@ LOCAL_HOST = '127.0.0.1'
 def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> ShardResponseBody:
     assert (key is not None) == req_body.kind.is_privileged()
     port = shard_to_port(shard)
-    ver = PROTOCOL_VERSION
     request_id = eggs_time()
     target = (LOCAL_HOST, port)
-    req = ShardRequest(ver, request_id, req_body)
+    req = ShardRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
     if key is not None:
         packed_req = crypto.add_mac(packed_req, key)
@@ -98,7 +97,7 @@ def send_shard_request_or_raise(shard: int, req_body: ShardRequestBody, key: Opt
 def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> CDCResponseBody:
     request_id = eggs_time()
     target = (LOCAL_HOST, CDC_PORT)
-    req = CDCRequest(PROTOCOL_VERSION, request_id, req_body)
+    req = CDCRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         sock.bind(('', 0))

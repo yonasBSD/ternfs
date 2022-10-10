@@ -349,7 +349,8 @@ class Operations(pyfuse3.Operations):
         return entry_attribute(inode_id, size=0, mtime=0)
 
     async def rename(self, parent_inode_old, name_old, parent_inode_new, name_new, flags, ctx=None):
-        assert not (flags & (pyfuse3.RENAME_EXCHANGE | pyfuse3.RENAME_NOREPLACE))
+        if flags & (pyfuse3.RENAME_EXCHANGE | pyfuse3.RENAME_NOREPLACE):
+            raise pyfuse3.FUSEError(errno.EINVAL)
         parent_inode_old = fuse_id_to_eggs_id(parent_inode_old)
         parent_inode_new = fuse_id_to_eggs_id(parent_inode_new)
         target_id = cast(LookupResp, await self._send_shard_req(inode_id_shard(parent_inode_old), LookupReq(parent_inode_old, name_old))).target_id

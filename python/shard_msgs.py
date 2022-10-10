@@ -11,17 +11,6 @@ import crypto
 
 SHARD_PROTOCOL_VERSION = b'SHA\0'
 
-# one-hot encoding to allow "acceptable-types" bitset
-class InodeFlags(enum.IntFlag):
-    DIRECTORY = 1
-    FILE = 2
-    SYMLINK = 4
-
-
-def inode_type_to_flag(type: InodeType) -> InodeFlags:
-    return InodeFlags(1 << type)
-
-
 # u8 where MSb states whether this request is privileged
 class ShardRequestKind(enum.IntEnum):
     ERROR = 0

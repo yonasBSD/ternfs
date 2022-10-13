@@ -1,94 +1,196 @@
 package bincode
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
+	"math"
 	"math/bits"
 )
 
-func PackFixed[V uint8 | uint16 | uint32 | uint64](x V, w io.Writer) error {
-	return binary.Write(w, binary.LittleEndian, x)
+type Buf []byte
+
+type Packable interface {
+	Pack(buf *Buf)
 }
 
-func UnpackFixed[V uint8 | uint16 | uint32 | uint64](x *V, r io.Reader) error {
-	return binary.Read(r, binary.LittleEndian, x)
+func (buf *Buf) PackU8(x uint8) {
+	(*buf)[0] = x
+	*buf = (*buf)[1:]
+}
+func (buf *Buf) PackU16(x uint16) {
+	binary.LittleEndian.PutUint16(*buf, x)
+	*buf = (*buf)[2:]
+}
+func (buf *Buf) PackU32(x uint32) {
+	binary.LittleEndian.PutUint32(*buf, x)
+	*buf = (*buf)[4:]
+}
+func (buf *Buf) PackU64(x uint64) {
+	binary.LittleEndian.PutUint64(*buf, x)
+	*buf = (*buf)[8:]
 }
 
-func PackU61Var(x uint64, w io.Writer) error {
+func (buf *Buf) PackVarU61(x uint64) {
 	bits := 64 - bits.LeadingZeros64(x)
 	if bits > 61 {
-		return fmt.Errorf("uint64 too large for PackU61Var: %v", x)
+		panic(fmt.Sprintf("uint64 too large for PackU61Var: %v", x))
 	}
 	neededBytes := ((bits + 3) + 8 - 1) / 8
 	x = (x << 3) | uint64(neededBytes-1)
-	bs := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bs, x)
-	_, err := w.Write(bs[:neededBytes])
-	return err
+	for x > 0 {
+		(*buf)[0] = byte(x)
+		x = x >> 8
+		(*buf) = (*buf)[1:]
+	}
 }
 
-func UnpackU61Var(x *uint64, r io.Reader) error {
-	bs := make([]byte, 8)
-	_, err := io.ReadAtLeast(r, bs[:1], 1)
-	if err != nil {
+func (buf *Buf) PackBytes(bs []byte) {
+	if len(bs) > 255 {
+		panic(fmt.Sprintf("bytes length exceed 255: %v", len(bs)))
+	}
+	buf.PackU8(uint8(len(bs)))
+	if copy(*buf, bs) != len(bs) {
+		panic("not enough space for bytes")
+	}
+	*buf = (*buf)[len(bs):]
+}
+
+func (buf *Buf) PackFixedBytes(l int, bs []byte) {
+	if len(bs) != l {
+		panic(fmt.Sprintf("expecting fixed bytes of len %v, got %v instead", l, len(bs)))
+	}
+	if copy(*buf, bs) != l {
+		panic("not enough space for fixed bytes")
+	}
+	*buf = (*buf)[l:]
+}
+
+func (buf *Buf) PackLength(l int) {
+	if l > math.MaxUint16 {
+		panic(fmt.Sprintf("len %d exceeds max length %d", l, math.MaxUint16))
+	}
+	buf.PackU16(uint16(l))
+}
+
+// Writes into `out`. Returns a new slice sized to the message.
+//
+// Will panic if `out` is not big enough.
+func PackToBytes(out []byte, v Packable) []byte {
+	buf := Buf(out)
+	v.Pack(&buf)
+	return out[:len(out)-len(buf)]
+}
+
+func (buf *Buf) hasBytes(x int) error {
+	if len(*buf) < x {
+		return fmt.Errorf("ran out of space (needed %v, got %v)", x, len(*buf))
+	}
+	return nil
+}
+
+func (buf *Buf) UnpackU8(x *uint8) error {
+	if err := buf.hasBytes(1); err != nil {
 		return err
 	}
-	remaining := bs[0] & (8 - 1)
-	bs[0] = bs[0] & ^uint8(8-1)
-	_, err = io.ReadAtLeast(r, bs[1:], int(remaining))
-	if err != nil {
+	*x = (*buf)[0]
+	(*buf) = (*buf)[1:]
+	return nil
+}
+func (buf *Buf) UnpackU16(x *uint16) error {
+	if err := buf.hasBytes(2); err != nil {
 		return err
 	}
-	err = binary.Read(bytes.NewReader(bs), binary.LittleEndian, x)
-	if err != nil {
+	*x = binary.LittleEndian.Uint16(*buf)
+	(*buf) = (*buf)[2:]
+	return nil
+}
+func (buf *Buf) UnpackU32(x *uint32) error {
+	if err := buf.hasBytes(4); err != nil {
 		return err
+	}
+	*x = binary.LittleEndian.Uint32(*buf)
+	(*buf) = (*buf)[4:]
+	return nil
+}
+func (buf *Buf) UnpackU64(x *uint64) error {
+	if err := buf.hasBytes(8); err != nil {
+		return err
+	}
+	*x = binary.LittleEndian.Uint64(*buf)
+	(*buf) = (*buf)[8:]
+	return nil
+}
+
+func (buf *Buf) UnpackVarU61(x *uint64) error {
+	var b uint8
+	if err := buf.UnpackU8(&b); err != nil {
+		return err
+	}
+	remaining := b & (8 - 1)
+	if err := buf.hasBytes(int(remaining)); err != nil {
+		return err
+	}
+	*x = uint64(b)
+	for i := 1; i <= int(remaining); i++ {
+		if err := buf.UnpackU8(&b); err != nil {
+			return err
+		}
+		*x = *x | (uint64(b) << (i * 8))
 	}
 	*x = *x >> 3
 	return nil
 }
 
-func PackBytes(bs []byte, w io.Writer) error {
-	if len(bs) > 255 {
-		return fmt.Errorf("Bytes exceed maximum length of 255 (%v)", len(bs))
-	}
-	_, err := w.Write([]byte{uint8(len(bs))})
-	if err != nil {
+func (buf *Buf) UnpackBytes(data *[]byte) error {
+	var l uint8
+	if err := buf.UnpackU8(&l); err != nil {
 		return err
 	}
-	_, err = w.Write(bs)
-	return err
+	if err := buf.hasBytes(int(l)); err != nil {
+		return err
+	}
+	*data = make([]byte, l)
+	copy(*data, *buf)
+	*buf = (*buf)[l:]
+	return nil
 }
 
-func UnpackBytes(bs *[]byte, r io.Reader) error {
-	var l uint8
-	err := UnpackFixed(&l, r)
-	if err != nil {
+func (buf *Buf) UnpackFixedBytes(l int, data *[]byte) error {
+	if err := buf.hasBytes(l); err != nil {
 		return err
 	}
-	*bs = make([]byte, l)
-	_, err = io.ReadAtLeast(r, *bs, int(l))
-	return err
+	*data = make([]byte, l)
+	copy(*data, *buf)
+	*buf = (*buf)[l:]
+	return nil
+}
+
+func (buf *Buf) UnpackLength(l *int) error {
+	var l16 uint16
+	if err := buf.UnpackU16(&l16); err != nil {
+		return err
+	}
+	*l = int(l16)
+	return nil
 }
 
 type Unpackable interface {
-	Unpack(io.Reader) error
+	Unpack(buf *Buf) error
 }
 
-type Packable interface {
-	Pack(io.Writer) error
-}
-
-func PackToBytes(v Packable) ([]byte, error) {
-	var buf bytes.Buffer
-	err := v.Pack(&buf)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
+// Note that this function errors if we don't consume all the input.
 func UnpackFromBytes(v Unpackable, data []byte) error {
-	return v.Unpack(bytes.NewReader(data))
+	buf := Buf(data)
+	if err := v.Unpack(&buf); err != nil {
+		return err
+	}
+	if len(buf) != 0 {
+		return fmt.Errorf("%v leftover bytes remaining after unpacking", len(buf))
+	}
+	return nil
+}
+
+type Bincodable interface {
+	Packable
+	Unpackable
 }

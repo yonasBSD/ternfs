@@ -14,11 +14,6 @@ import (
 	"xtx/eggsfs/request"
 )
 
-type shardError struct {
-	shard common.ShardId
-	err   interface{}
-}
-
 type destructor struct {
 	logger *log.Logger
 	shid   common.ShardId

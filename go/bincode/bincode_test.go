@@ -35,7 +35,7 @@ func (s *simpleStruct) Unpack(buf *Buf) error {
 func TestSimpleStruct(t *testing.T) {
 	ss1 := simpleStruct{x: 32, y: 10, bs: []byte("Hello")}
 	bytes := make([]byte, 100)
-	bytes = PackToBytes(bytes, &ss1)
+	PackIntoBytes(&bytes, &ss1)
 	var ss2 simpleStruct
 	assert.Nil(t, UnpackFromBytes(&ss2, bytes))
 	assert.Equal(t, ss2, ss1)

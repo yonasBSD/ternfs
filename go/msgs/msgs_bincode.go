@@ -32,6 +32,7 @@ func (v *VisitInodesResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackLength(&len1); err != nil {
 		return err
 	}
+	v.Ids = make([]uint64, len1)
 	for i := 0; i < len1; i++ {
 		if err := buf.UnpackU64(&v.Ids[i]); err != nil {
 			return err
@@ -83,6 +84,7 @@ func (v *VisitTransientFilesResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackLength(&len1); err != nil {
 		return err
 	}
+	v.Files = make([]TransientFile, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.Files[i].Unpack(buf); err != nil {
 			return err
@@ -181,6 +183,7 @@ func (v *FileSpansResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackLength(&len1); err != nil {
 		return err
 	}
+	v.Spans = make([]FetchedSpan, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.Spans[i].Unpack(buf); err != nil {
 			return err

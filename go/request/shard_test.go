@@ -1,0 +1,82 @@
+package request
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"testing"
+	"time"
+	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/common"
+	"xtx/eggsfs/msgs"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type mockResponses [][]byte
+
+func (responses *mockResponses) Read(p []byte) (n int, err error) {
+	if len(*responses) == 0 {
+		return 0, io.EOF
+	}
+	written := copy(p, (*responses)[0])
+	if written < len((*responses)[0]) {
+		panic("not enough space")
+	}
+	*responses = (*responses)[1:]
+	return written, nil
+}
+
+type mockAlerter []error
+
+func (alerter *mockAlerter) RaiseAlert(err error) {
+	*alerter = append(*alerter, err)
+}
+
+func TestReqOK(t *testing.T) {
+	request := msgs.VisitInodesReq{
+		BeginId: 0,
+	}
+	responses := mockResponses(make([][]byte, 3))
+	for i := range responses {
+		responses[i] = make([]byte, common.UDP_MTU)
+	}
+	// First response: bad req id
+	bincode.PackIntoBytes(
+		&responses[0],
+		&ShardResponse{
+			RequestId: 42,
+			Body:      &msgs.VisitInodesResp{},
+		},
+	)
+	// Second response: bad magic number
+	responses[1][0] = 'Z'
+	// Last response: a good one
+	expectedResponse := msgs.VisitInodesResp{
+		NextId: 42,
+		Ids:    []uint64{1, 2, 3},
+	}
+	requestId := common.EggsTime()
+	bincode.PackIntoBytes(
+		&responses[len(responses)-1],
+		&ShardResponse{
+			RequestId: requestId,
+			Body:      &expectedResponse,
+		},
+	)
+	// Go for it
+	alerter := mockAlerter{}
+	response := msgs.VisitInodesResp{}
+	err := ShardRequest(
+		&alerter, new(bytes.Buffer), &responses, make([]byte, common.UDP_MTU), 2*time.Second, requestId, &request, &response,
+	)
+	for _, err := range alerter {
+		fmt.Printf("err: %v\n", err)
+	}
+	assert.Nil(t, err)
+	assert.Equal(t, expectedResponse, response)
+	// Verify errors
+	assert.Equal(t, 2, len(alerter))
+	assert.Contains(t, alerter[0].Error(), "expected request id")
+	assert.Contains(t, alerter[1].Error(), "expected protocol")
+}

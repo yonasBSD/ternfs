@@ -125,6 +125,7 @@ func (cg *codegen) gen(expr *subexpr) {
 			cg.uline(fmt.Sprintf("var %s int", lenVar))
 			cg.ustep(fmt.Sprintf("buf.UnpackLength(&%s)", lenVar))
 			// handle body
+			cg.uline(fmt.Sprintf("%s = make([]%v, %s)", expr.expr, elem.Name(), lenVar))
 			loop := fmt.Sprintf("for i := 0; i < %s; i++ {", lenVar)
 			cg.pline(loop)
 			cg.uline(loop)

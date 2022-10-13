@@ -72,13 +72,20 @@ func (buf *Buf) PackLength(l int) {
 	buf.PackU16(uint16(l))
 }
 
-// Writes into `out`. Returns a new slice sized to the message.
+// Writes into `out`. Returns how much was written.
 //
 // Will panic if `out` is not big enough.
-func PackToBytes(out []byte, v Packable) []byte {
+func PackToBytes(out []byte, v Packable) int {
 	buf := Buf(out)
 	v.Pack(&buf)
-	return out[:len(out)-len(buf)]
+	return len(out) - len(buf)
+}
+
+// A variant of `PackToBytes` which automatically updates the pointer
+// to the appropriately sized slice
+func PackIntoBytes(out *[]byte, v Packable) {
+	written := PackToBytes(*out, v)
+	*out = (*out)[:written]
 }
 
 func (buf *Buf) hasBytes(x int) error {

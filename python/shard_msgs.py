@@ -965,7 +965,7 @@ class UnpackedShardRequest:
     def unpack(bs: bytes, cdc_key: Optional[crypto.ExpandedKey] = None) -> 'UnpackedShardRequest':
         u = bincode.UnpackWrapper(bs)
         ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
-        assert ver == SHARD_PROTOCOL_VERSION
+        assert ver == SHARD_PROTOCOL_VERSION, f'Expected shard protocol version {repr(SHARD_PROTOCOL_VERSION)}, but got {repr(ver)} instead.'
         request_id = bincode.unpack_u64(u)
         # We've made it so far, now we can at least
         # return something

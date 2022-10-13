@@ -5,6 +5,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"xtx/eggsfs/common"
@@ -71,10 +73,15 @@ func (destructor *destructor) singleIteration() (destructionStats, error) {
 	return stats, nil
 }
 
-func (destructor *destructor) run(errChan chan error) {
+func (destructor *destructor) run(panicChan chan error) {
 	defer func() {
 		if err := recover(); err != nil {
-			errChan <- fmt.Errorf("destructor[%v]: PANIC %v", destructor.shid, err)
+			destructor.RaiseAlert(fmt.Errorf("PANIC %v", err))
+			destructor.log(fmt.Sprintf("PANIC %v. Stacktrace:", err))
+			for _, line := range strings.Split(string(debug.Stack()), "\n") {
+				destructor.log(line)
+			}
+			panicChan <- fmt.Errorf("destructor[%v]: PANIC %v", destructor.shid, err)
 		}
 	}()
 	sleepDuration := time.Minute
@@ -91,14 +98,14 @@ func (destructor *destructor) run(errChan chan error) {
 
 func main() {
 	logger := log.New(os.Stderr, "", log.Lshortfile)
-	errChan := make(chan error)
+	panicChan := make(chan error, 1)
 	for shid := 0; shid < 1; shid++ {
 		destructor := destructor{
 			shid:   common.ShardId(shid),
 			logger: logger,
 		}
-		destructor.run(errChan)
+		destructor.run(panicChan)
 	}
-	err := <-errChan
-	log.Fatal(err)
+	err := <-panicChan
+	logger.Fatal(fmt.Errorf("got fatal error, tearing down: %w", err))
 }

@@ -122,10 +122,6 @@ func ShardRequest(
 	// Will be used for writing and decoding the request. This function will panic if
 	// it is not enough to write the request into.
 	buffer []byte,
-	// Will keep listening forever if 0. This is especially dangerous here, since decode
-	// errors will just result in dropped packets, so if the server sends something bad,
-	//
-	timeout time.Duration,
 	requestId uint64,
 	reqBody bincode.Packable,
 	// Result will be written in here. If an error is returned, no guarantees
@@ -145,53 +141,39 @@ func ShardRequest(
 	if written < len(reqBytes) {
 		panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
 	}
-	// Race reading the response and a timeout
-	failed := make(chan error)
-	// Timeout
-	if timeout > time.Duration(0) {
-		go func() {
-			time.Sleep(timeout)
-			failed <- common.TIMEOUT
-		}()
-	}
-	// Actual request
-	go func() {
-		respBytes := buffer
-		// Keep going until we found the right request id --
-		// we can't assume that what we get isn't some other
-		// request we thought was timed out.
-		for {
-			respBytes = respBytes[:cap(respBytes)]
-			read, err := reader.Read(respBytes)
-			respBytes = respBytes[:read]
-			if err != nil {
-				// pipe is broken, terminate with this err
-				failed <- err
-				break
-			}
-			resp := UnpackedShardResponse{
-				Body: respBody,
-			}
-			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-				alerter.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.RequestId, err))
-				continue
-			}
-			if resp.RequestId != req.RequestId {
-				alerter.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.RequestId, resp.Body, resp.Error))
-				continue
-			}
-			// we managed to decode, we just need to check that it's not an error
-			if resp.Error != nil {
-				failed <- resp.Error
-			} else {
-				failed <- nil
-			}
-			break
+	respBytes := buffer
+	// Keep going until we found the right request id --
+	// we can't assume that what we get isn't some other
+	// request we thought was timed out.
+	for {
+		respBytes = respBytes[:cap(respBytes)]
+		read, err := reader.Read(respBytes)
+		respBytes = respBytes[:read]
+		if err != nil {
+			// pipe is broken, terminate with this err
+			return err
 		}
-	}()
-	return <-failed
+		resp := UnpackedShardResponse{
+			Body: respBody,
+		}
+		if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
+			alerter.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.RequestId, err))
+			continue
+		}
+		if resp.RequestId != req.RequestId {
+			alerter.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.RequestId, resp.Body, resp.Error))
+			continue
+		}
+		// we managed to decode, we just need to check that it's not an error
+		if resp.Error != nil {
+			return resp.Error
+		}
+		return nil
+	}
 }
 
+// This function will set the deadline for the socket.
+// TODO does the deadline persist -- i.e. are we permanently modifying this socket.
 func ShardRequestSocket(
 	alerter common.Alerter,
 	sock *net.UDPConn,
@@ -200,7 +182,6 @@ func ShardRequestSocket(
 	reqBody bincode.Packable,
 	respBody bincode.Unpackable,
 ) error {
-	return ShardRequest(
-		alerter, sock, sock, buffer, timeout, common.EggsTime(), reqBody, respBody,
-	)
+	sock.SetReadDeadline(time.Now().Add(timeout))
+	return ShardRequest(alerter, sock, sock, buffer, common.EggsTime(), reqBody, respBody)
 }

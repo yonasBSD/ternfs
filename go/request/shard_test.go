@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"testing"
 	"time"
 	"xtx/eggsfs/bincode"
@@ -68,7 +69,7 @@ func TestReqOK(t *testing.T) {
 	alerter := mockAlerter{}
 	response := msgs.VisitInodesResp{}
 	err := ShardRequest(
-		&alerter, new(bytes.Buffer), &responses, make([]byte, common.UDP_MTU), 2*time.Second, requestId, &request, &response,
+		&alerter, new(bytes.Buffer), &responses, make([]byte, common.UDP_MTU), requestId, &request, &response,
 	)
 	for _, err := range alerter {
 		fmt.Printf("err: %v\n", err)
@@ -79,4 +80,18 @@ func TestReqOK(t *testing.T) {
 	assert.Equal(t, 2, len(alerter))
 	assert.Contains(t, alerter[0].Error(), "expected request id")
 	assert.Contains(t, alerter[1].Error(), "expected protocol")
+}
+
+func TestReqTimeout(t *testing.T) {
+	mockSock, err := net.ListenUDP("udp4", nil)
+	assert.Nil(t, err)
+	defer mockSock.Close()
+	sock, err := net.DialUDP("udp4", nil, mockSock.LocalAddr().(*net.UDPAddr))
+	assert.Nil(t, err)
+	defer sock.Close()
+	buffer := make([]byte, common.UDP_MTU)
+	err = ShardRequestSocket(
+		&mockAlerter{}, sock, buffer, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
+	)
+	assert.NotNil(t, err)
 }

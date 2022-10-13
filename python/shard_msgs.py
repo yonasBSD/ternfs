@@ -969,7 +969,7 @@ class UnpackedShardRequest:
         request_id = bincode.unpack_u64(u)
         # We've made it so far, now we can at least
         # return something
-        resp = UnpackedShardRequest(
+        req = UnpackedShardRequest(
             request_id=request_id,
             request=None,
         )
@@ -980,16 +980,16 @@ class UnpackedShardRequest:
         except Exception:
             # TODO it would be good to distinguish between actual
             # decode errors and internal exceptions here.
-            return replace(resp, request=EggsError(ErrCode.MALFORMED_REQUEST))
+            return replace(req, request=EggsError(ErrCode.MALFORMED_REQUEST))
         if kind.is_privileged():
             assert cdc_key
             req_bytes = u.data[:u.idx]
             mac = bincode.unpack_fixed(u, 8)
             if crypto.compute_mac(req_bytes, cdc_key) != mac:
-                return replace(resp, request=EggsError(ErrCode.NOT_AUTHORISED))
+                return replace(req, request=EggsError(ErrCode.NOT_AUTHORISED))
         if u.idx != len(bs):
-            return replace(resp, request=EggsError(ErrCode.MALFORMED_REQUEST))
-        return replace(resp, request=ShardRequest(request_id=request_id, body=body))
+            return replace(req, request=EggsError(ErrCode.MALFORMED_REQUEST))
+        return replace(req, request=ShardRequest(request_id=request_id, body=body))
 
 @dataclass
 class ShardResponse(bincode.Packable):

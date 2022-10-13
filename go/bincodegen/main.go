@@ -219,7 +219,8 @@ func main() {
 		reflect.TypeOf(msgs.FileSpansResp{}),
 	}
 
-	fmt.Fprintln(outFile, "// Automatically generated with go run bincodegen. Do not edit, rerun/fix that file instead.")
+	fmt.Fprintln(outFile, "// Automatically generated with go run bincodegen.")
+	fmt.Fprintln(outFile, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(outFile, `package msgs`)
 	fmt.Fprintln(outFile)
 

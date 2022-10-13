@@ -1,4 +1,5 @@
-// Automatically generated with go run bincodegen. Do not edit, rerun/fix that file instead.
+// Automatically generated with go run bincodegen.
+// Run `go generate ./...` from the go/ directory to regenerate it.
 package msgs
 
 import "xtx/eggsfs/bincode"

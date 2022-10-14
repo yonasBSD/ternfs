@@ -846,7 +846,7 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
     spans = cur.execute(
         'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc',
         query_params
-    )
+    ) # no fetchall -- we don't know how many we're going to fit, so fetch lazily.
     budget = UDP_MTU - ShardResponse.SIZE - FileSpansResp.SIZE_UPPER_BOUND
     resp_spans: List[FetchedSpan] = []
     next_offset = 0

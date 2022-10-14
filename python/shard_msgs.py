@@ -62,6 +62,7 @@ class ShardRequestKind(enum.IntEnum):
     # the file transient.
     HARD_UNLINK_FILE_WITHIN_SHARD = 0x14
     VISIT_DIRECTORIES = 0x15
+    VISIT_FILES = 0x20 # this is used solely for debugging
     VISIT_TRANSIENT_FILES = 0x16
     REVERSE_BLOCK_QUERY = 0x17
     REPAIR_BLOCK = 0x18
@@ -806,6 +807,40 @@ class VisitDirectoriesResp(bincode.Packable):
         inodes = [bincode.unpack_u64(u) for _ in range(num_inodes)]
         return VisitDirectoriesResp(continuation_key, inodes)
 
+@dataclass
+class VisitFilesReq(bincode.Packable):
+    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_FILES
+    begin_id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.begin_id, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitFilesReq':
+        begin_inode = bincode.unpack_u64(u)
+        return VisitFilesReq(begin_inode)
+
+@dataclass
+class VisitFilesResp(bincode.Packable):
+    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_FILES
+    SIZE: ClassVar[int] = 8 + 2 # 2 for the ids length
+    next_id: int
+    ids: List[int]
+
+    def pack_into(self, b: bytearray) -> None:
+        assert (ShardResponse.SIZE + VisitFilesResp.SIZE + 8 * len(self.ids)) <= UDP_MTU
+        bincode.pack_u64_into(self.next_id, b)
+        bincode.pack_u16_into(len(self.ids), b)
+        for inode in self.ids:
+            bincode.pack_u64_into(inode, b)
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitFilesResp':
+        continuation_key = bincode.unpack_u64(u)
+        num_inodes = bincode.unpack_u16(u)
+        inodes = [bincode.unpack_u64(u) for _ in range(num_inodes)]
+        return VisitFilesResp(continuation_key, inodes)
+
 
 @dataclass
 class LockCurrentEdgeReq(bincode.Packable):
@@ -931,6 +966,7 @@ SHARD_REQUESTS: Dict[ShardRequestKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardRequestKind.SOFT_UNLINK_FILE: (SoftUnlinkFileReq, SoftUnlinkFileResp),
     ShardRequestKind.SET_DIRECTORY_OWNER: (SetDirectoryOwnerReq, SetDirectoryOwnerResp),
     ShardRequestKind.VISIT_DIRECTORIES: (VisitDirectoriesReq, VisitDirectoriesResp),
+    ShardRequestKind.VISIT_FILES: (VisitFilesReq, VisitFilesResp),
     ShardRequestKind.LOCK_CURRENT_EDGE: (LockCurrentEdgeReq, LockCurrentEdgeResp),
     ShardRequestKind.UNLOCK_CURRENT_EDGE: (UnlockCurrentEdgeReq, UnlockCurrentEdgeResp),
     ShardRequestKind.LOOKUP: (LookupReq, LookupResp),

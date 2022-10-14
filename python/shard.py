@@ -983,15 +983,13 @@ def soft_unlink_file(cur: sqlite3.Cursor, req: SoftUnlinkFileReq) -> Union[EggsE
     assert check_edge_constraints(cur, req.owner_id)
     return res
 
-# read only
-def visit_directories(cur: sqlite3.Cursor, req: VisitDirectoriesReq) -> Union[EggsError, VisitDirectoriesResp]:
+def visit_inodes(cur: sqlite3.Cursor, table: str, begin_id: int) -> Tuple[int, List[int]]:
     budget = UDP_MTU - ShardResponse.SIZE - VisitDirectoriesResp.SIZE
-    begin_id = req.begin_id
     max_ids = (budget//8) + 1 # include next inode
     ids = list(map(
         lambda x: x['id'],
         cur.execute(
-            'select id from directories where id >= :id order by id asc limit :max_ids',
+            f'select id from {table} where id >= :id order by id asc limit :max_ids',
             {'id': begin_id, 'max_ids': max_ids}
         ).fetchall()
     ))
@@ -999,7 +997,17 @@ def visit_directories(cur: sqlite3.Cursor, req: VisitDirectoriesReq) -> Union[Eg
     if len(ids) == max_ids:
         next_id = ids[-1]
         ids = ids[:-1]
+    return (next_id, ids)
+
+# read only
+def visit_directories(cur: sqlite3.Cursor, req: VisitDirectoriesReq) -> Union[EggsError, VisitDirectoriesResp]:
+    next_id, ids = visit_inodes(cur, 'directories', req.begin_id)
     return VisitDirectoriesResp(next_id=next_id, ids=ids)
+
+# read only
+def visit_files(cur: sqlite3.Cursor, req: VisitFilesReq) -> Union[EggsError, VisitFilesResp]:
+    next_id, ids = visit_inodes(cur, 'files', req.begin_id)
+    return VisitFilesResp(next_id=next_id, ids=ids)
 
 # not read only
 def lock_current_edge_inner(cur: sqlite3.Cursor, req: LockCurrentEdgeReq) -> Union[EggsError, LockCurrentEdgeResp]:
@@ -1138,6 +1146,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = set_directory_owner(cur, req_body)
         elif isinstance(req_body, VisitDirectoriesReq):
             resp_body = visit_directories(cur, req_body)
+        elif isinstance(req_body, VisitFilesReq):
+            resp_body = visit_files(cur, req_body)
         elif isinstance(req_body, LockCurrentEdgeReq):
             resp_body = lock_current_edge(cur, req_body)
         elif isinstance(req_body, UnlockCurrentEdgeReq):

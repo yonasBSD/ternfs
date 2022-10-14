@@ -778,15 +778,16 @@ class CDCTests(unittest.TestCase):
         self.cdc = TestDriver(db_dir)
 
     def _collect_all_inodes(self) -> Generator[int, None, None]:
-        for shard_id in range(256):
-            current_id = 0
-            while True:
-                results = cast(VisitDirectoriesResp, self.cdc.shards[shard_id].execute_ok(VisitDirectoriesReq(begin_id=current_id)))
-                for id in results.ids:
-                    yield id
-                current_id = results.next_id
-                if current_id == 0:
-                    break
+        for req in (VisitDirectoriesReq, VisitFilesReq):
+            for shard_id in range(256):
+                current_id = 0
+                while True:
+                    results = self.cdc.shards[shard_id].execute_ok(req(begin_id=current_id)) # type: ignore
+                    for id in results.ids:
+                        yield id
+                    current_id = results.next_id
+                    if current_id == 0:
+                        break
     
     def test_visit_inodes(self):
         entries_per_packet = UDP_MTU//8

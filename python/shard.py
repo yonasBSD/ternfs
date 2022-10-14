@@ -9,7 +9,7 @@ import sqlite3
 import sys
 import os
 import tempfile
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, cast, Iterable
 from dataclasses import replace
 import hashlib
 import secrets
@@ -22,7 +22,7 @@ import json
 import unittest
 import logging
 import requests
-from multiprocessing import Process
+import itertools
 
 import crypto
 from common import *
@@ -835,6 +835,14 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         'select * from spans where file_id = :file_id and byte_offset >= :byte_offset',
         {'file_id': req.file_id, 'byte_offset': req.byte_offset}
     ).fetchall() # eager fetch because we interact with the db later to lookup the blocks
+    # if the offset was in the middle, fetch the span before the start
+    if len(spans) > 0 and spans[0]['byte_offset'] > req.byte_offset:
+        span = cur.execute(
+            'select * from spans where file_id = :file_id and byte_offset < :byte_offset',
+            {'file_id': req.file_id, 'byte_offset': req.byte_offset}
+        ).fetchone()
+        assert span
+        spans = itertools.chain((span,), spans)
     budget = UDP_MTU - ShardResponse.SIZE - FileSpansResp.SIZE_UPPER_BOUND
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
@@ -1592,6 +1600,9 @@ class ShardTests(unittest.TestCase):
         assert len(spans.spans[2].body) == 1
         assert len(spans.spans[3].body) == 2
         assert len(spans.spans[4].body) == 4
+        # check that starting in the middle of a span returns the same
+        spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 1)))
+        assert spans == spans_2
 
     def test_same_dir_renames(self):
         # overwrite a file, and store another to keep alongside

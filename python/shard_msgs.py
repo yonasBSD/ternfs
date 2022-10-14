@@ -1029,8 +1029,7 @@ class UnpackedShardRequest:
 
 @dataclass
 class ShardResponse(bincode.Packable):
-    # Second byte for the kind
-    SIZE: ClassVar[int] = 8 + 1
+    SIZE: ClassVar[int] = len(SHARD_PROTOCOL_VERSION) + 8 + 1
     request_id: int
     body: ShardResponseBody
 

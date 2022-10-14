@@ -204,8 +204,7 @@ class CDCRequest(bincode.Packable):
 
 @dataclass
 class CDCResponse(bincode.Packable):
-    # Second byte for the kind
-    SIZE: ClassVar[int] = 8 + 1
+    SIZE: ClassVar[int] = len(CDC_PROTOCOL_VERSION) + 8 + 1
     request_id: int
     body: CDCResponseBody
 

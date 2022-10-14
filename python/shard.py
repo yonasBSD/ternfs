@@ -838,7 +838,7 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
     # if the offset was in the middle, fetch the span before the start
     if len(spans) > 0 and spans[0]['byte_offset'] > req.byte_offset:
         span = cur.execute(
-            'select * from spans where file_id = :file_id and byte_offset < :byte_offset',
+            'select * from spans where file_id = :file_id and byte_offset < :byte_offset order by byte_offset desc',
             {'file_id': req.file_id, 'byte_offset': req.byte_offset}
         ).fetchone()
         assert span
@@ -1603,6 +1603,8 @@ class ShardTests(unittest.TestCase):
         # check that starting in the middle of a span returns the same
         spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 1)))
         assert spans == spans_2
+        spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, spans.spans[0].size + 1)))
+        assert spans.spans[1:] == spans_2.spans
 
     def test_same_dir_renames(self):
         # overwrite a file, and store another to keep alongside

@@ -260,6 +260,8 @@ class Operations(pyfuse3.Operations):
                 else:
                     assert isinstance(span.body, list)
                     assert len(span.body) == 1
+                    if span.body[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
+                        raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
                     data += await read_block(span.body[0])
             offset = spans.next_offset
             if offset == 0:

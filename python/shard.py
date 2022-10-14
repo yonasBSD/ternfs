@@ -964,28 +964,22 @@ def soft_unlink_file(cur: sqlite3.Cursor, req: SoftUnlinkFileReq) -> Union[EggsE
     return res
 
 # read only
-def visit_inodes(cur: sqlite3.Cursor, req: VisitInodesReq) -> Union[EggsError, VisitInodesResp]:
-    budget = UDP_MTU - ShardResponse.SIZE - VisitInodesResp.SIZE
-    assert InodeType.DIRECTORY < InodeType.FILE < InodeType.SYMLINK
+def visit_directories(cur: sqlite3.Cursor, req: VisitDirectoriesReq) -> Union[EggsError, VisitDirectoriesResp]:
+    budget = UDP_MTU - ShardResponse.SIZE - VisitDirectoriesResp.SIZE
     begin_id = req.begin_id
-    def q(table: str) -> List[int]:
-        return list(map(
-            lambda e: e['id'],
-            cur.execute(
-                f'select id from {table} where id >= :id order by id asc limit :num_inodes',
-                {'id': begin_id, 'num_inodes': remaining_ids}
-            ).fetchall()
-        ))
-    expected_ids = (budget//8) + 1 # include next inode
-    remaining_ids = expected_ids
-    ids = q('directories')
-    remaining_ids -= len(ids)
-    ids.extend(q('files'))
+    max_ids = (budget//8) + 1 # include next inode
+    ids = list(map(
+        lambda x: x['id'],
+        cur.execute(
+            'select id from directories where id >= :id order by id asc limit :max_ids',
+            {'id': begin_id, 'max_ids': max_ids}
+        ).fetchall()
+    ))
     next_id = 0
-    if len(ids) == expected_ids:
+    if len(ids) == max_ids:
         next_id = ids[-1]
         ids = ids[:-1]
-    return VisitInodesResp(next_id=next_id, ids=ids)
+    return VisitDirectoriesResp(next_id=next_id, ids=ids)
 
 # not read only
 def lock_current_edge_inner(cur: sqlite3.Cursor, req: LockCurrentEdgeReq) -> Union[EggsError, LockCurrentEdgeResp]:
@@ -1122,8 +1116,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = soft_unlink_file(cur, req_body)
         elif isinstance(req_body, SetDirectoryOwnerReq):
             resp_body = set_directory_owner(cur, req_body)
-        elif isinstance(req_body, VisitInodesReq):
-            resp_body = visit_inodes(cur, req_body)
+        elif isinstance(req_body, VisitDirectoriesReq):
+            resp_body = visit_directories(cur, req_body)
         elif isinstance(req_body, LockCurrentEdgeReq):
             resp_body = lock_current_edge(cur, req_body)
         elif isinstance(req_body, UnlockCurrentEdgeReq):

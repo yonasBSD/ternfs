@@ -781,7 +781,7 @@ class CDCTests(unittest.TestCase):
         for shard_id in range(256):
             current_id = 0
             while True:
-                results = cast(VisitInodesResp, self.cdc.shards[shard_id].execute_ok(VisitInodesReq(begin_id=current_id)))
+                results = cast(VisitDirectoriesResp, self.cdc.shards[shard_id].execute_ok(VisitDirectoriesReq(begin_id=current_id)))
                 for id in results.ids:
                     yield id
                 current_id = results.next_id

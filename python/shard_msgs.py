@@ -61,7 +61,7 @@ class ShardRequestKind(enum.IntEnum):
     # is intra-shard. In this case we can atomically remove it and make
     # the file transient.
     HARD_UNLINK_FILE_WITHIN_SHARD = 0x14
-    VISIT_INODES = 0x15
+    VISIT_DIRECTORIES = 0x15
     VISIT_TRANSIENT_FILES = 0x16
     REVERSE_BLOCK_QUERY = 0x17
     REPAIR_BLOCK = 0x18
@@ -773,38 +773,38 @@ class SetDirectoryOwnerResp(bincode.Packable):
         return SetDirectoryOwnerResp()
 
 @dataclass
-class VisitInodesReq(bincode.Packable):
-    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_INODES
+class VisitDirectoriesReq(bincode.Packable):
+    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_DIRECTORIES
     begin_id: int
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.begin_id, b)
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'VisitInodesReq':
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitDirectoriesReq':
         begin_inode = bincode.unpack_u64(u)
-        return VisitInodesReq(begin_inode)
+        return VisitDirectoriesReq(begin_inode)
 
 @dataclass
-class VisitInodesResp(bincode.Packable):
-    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_INODES
+class VisitDirectoriesResp(bincode.Packable):
+    kind: ClassVar[ShardRequestKind] = ShardRequestKind.VISIT_DIRECTORIES
     SIZE: ClassVar[int] = 8 + 2 # 2 for the ids length
     next_id: int
     ids: List[int]
 
     def pack_into(self, b: bytearray) -> None:
-        assert (ShardResponse.SIZE + VisitInodesResp.SIZE + 8 * len(self.ids)) <= UDP_MTU
+        assert (ShardResponse.SIZE + VisitDirectoriesResp.SIZE + 8 * len(self.ids)) <= UDP_MTU
         bincode.pack_u64_into(self.next_id, b)
         bincode.pack_u16_into(len(self.ids), b)
         for inode in self.ids:
             bincode.pack_u64_into(inode, b)
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'VisitInodesResp':
+    def unpack(u: bincode.UnpackWrapper) -> 'VisitDirectoriesResp':
         continuation_key = bincode.unpack_u64(u)
         num_inodes = bincode.unpack_u16(u)
         inodes = [bincode.unpack_u64(u) for _ in range(num_inodes)]
-        return VisitInodesResp(continuation_key, inodes)
+        return VisitDirectoriesResp(continuation_key, inodes)
 
 
 @dataclass
@@ -907,13 +907,13 @@ class LookupResp(bincode.Packable):
 ShardRequestBody = Union[
     CreateDirectoryINodeReq, StatReq, CreateLockedCurrentEdgeReq, ReadDirReq, ConstructFileReq, VisitTransientFilesReq, AddSpanInitiateReq,
     LinkFileReq, AddSpanCertifyReq, FileSpansReq, SameDirectoryRenameReq, SoftUnlinkFileReq, SetDirectoryOwnerReq,
-    VisitInodesReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, LookupReq,
+    VisitDirectoriesReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, LookupReq,
 ]
 ShardResponseBody = Union[
     EggsError,
     CreateDirectoryINodeResp, StatResp, CreateLockedCurrentEdgeResp, ReadDirResp, ConstructFileResp,
     VisitTransientFilesResp, AddSpanInitiateResp, LinkFileResp, AddSpanCertifyResp, FileSpansResp, SameDirectoryRenameResp,
-    SoftUnlinkFileResp, SetDirectoryOwnerResp, VisitInodesResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, LookupResp,
+    SoftUnlinkFileResp, SetDirectoryOwnerResp, VisitDirectoriesResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, LookupResp,
 ]
 
 SHARD_REQUESTS: Dict[ShardRequestKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {
@@ -930,7 +930,7 @@ SHARD_REQUESTS: Dict[ShardRequestKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardRequestKind.SAME_DIRECTORY_RENAME: (SameDirectoryRenameReq, SameDirectoryRenameResp),
     ShardRequestKind.SOFT_UNLINK_FILE: (SoftUnlinkFileReq, SoftUnlinkFileResp),
     ShardRequestKind.SET_DIRECTORY_OWNER: (SetDirectoryOwnerReq, SetDirectoryOwnerResp),
-    ShardRequestKind.VISIT_INODES: (VisitInodesReq, VisitInodesResp),
+    ShardRequestKind.VISIT_DIRECTORIES: (VisitDirectoriesReq, VisitDirectoriesResp),
     ShardRequestKind.LOCK_CURRENT_EDGE: (LockCurrentEdgeReq, LockCurrentEdgeResp),
     ShardRequestKind.UNLOCK_CURRENT_EDGE: (UnlockCurrentEdgeReq, UnlockCurrentEdgeResp),
     ShardRequestKind.LOOKUP: (LookupReq, LookupResp),

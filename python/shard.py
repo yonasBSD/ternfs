@@ -851,7 +851,8 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
     needed_block_servers: Set[int] = set()
-    for span in itertools.chain((first_span,), spans):
+    block_id_to_block_server: Dict[int, int] = {}
+    for span in (spans if first_span is None else itertools.chain((first_span,), spans)):
         resp_body: Union[bytes, List[FetchedBlock]]
         if span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE):
             assert isinstance(span['body'], bytes)
@@ -865,7 +866,8 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
                 resp_body.append(FetchedBlock(
                     ip=None, port=None, block_id=block['block_id'], crc32=crc32_from_int(block['crc32']), size=block['size'], flags=None # type: ignore
                 ))
-                needed_block_servers.add(block['block_id'])
+                needed_block_servers.add(block['block_server_id'])
+                block_id_to_block_server[block['block_id']] = block['block_server_id']
         resp_span = FetchedSpan(
             byte_offset=span['byte_offset'],
             parity=span['parity'],
@@ -885,7 +887,7 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         if not isinstance(span.body, list):
             continue
         for fetched_block in span.body:
-            bserver = bservers.get(fetched_block.block_id)
+            bserver = bservers.get(block_id_to_block_server[fetched_block.block_id])
             if bserver is None:
                 # don't fail just because we don't know where the bserver is, client may be able to continue using
                 # parity data
@@ -1622,6 +1624,11 @@ class ShardTests(unittest.TestCase):
         assert len(spans.spans[2].body) == 1
         assert len(spans.spans[3].body) == 2
         assert len(spans.spans[4].body) == 4
+        # check that all the blocks could be found
+        for span in spans.spans:
+            if isinstance(span.body, list):
+                for block in span.body:
+                    assert not (block.flags & BlockFlags.STALE)
         # check that starting in the middle of a span returns the same
         spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 1)))
         assert spans == spans_2

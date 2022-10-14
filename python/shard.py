@@ -275,8 +275,12 @@ def pick_block_servers(cur: sqlite3.Cursor, storage_class: int, num: int) -> Opt
     # needs to select bservers on different "failure domains"
     return random.choices(servers, cum_weights=[s['cum_weight'] for s in servers], k=num)
 
-def lookup_block_server(cur: sqlite3.Cursor, id: int) -> Optional[Dict[str, Any]]:
-    return cur.execute('select ip, port, terminal, stale, secret_key from block_servers where id = :id', {'id': id}).fetchone()
+def lookup_block_servers(cur: sqlite3.Cursor, ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
+    servers = {}
+    unique_ids = list(set(ids))
+    for block in cur.execute(f'select id, ip, port, terminal, stale, secret_key from block_servers where id in ({",".join("?"*len(unique_ids))})', unique_ids):
+        servers[block['id']] = block
+    return servers
 
 class ShardInfo:
     def __init__(self, cur: sqlite3.Cursor):
@@ -519,7 +523,7 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
     return res
 
 # read only
-def stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
+def do_stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
     if inode_id_type(req.id) == InodeType.DIRECTORY:
         dir = get_directory(cur, req.id, ErrCode.DIRECTORY_NOT_FOUND)
         if isinstance(dir, EggsError):
@@ -720,7 +724,8 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             body = json.loads(existing_span['body'])
             assert isinstance(body, list)
             for block in body:
-                bserver = lookup_block_server(cur, block['block_server_id'])
+                bserver_id = block['block_server_id']
+                bserver = lookup_block_servers(cur, (bserver_id,)).get(bserver_id)
                 if bserver is None:
                     return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
                 resp_blocks.append(BlockInfo(
@@ -760,8 +765,9 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
     span_body = cast(List[Block], json.loads(span['body']))
     if len(span_body) != len(req.proofs):
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
+    bservers = lookup_block_servers(cur, map(lambda block: block['block_server_id'], span_body))
     for block, proof in zip(span_body, req.proofs):
-        bserver = lookup_block_server(cur, block['block_server_id'])
+        bserver = bservers.get(block['block_server_id'])
         if bserver is None:
             return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
         if proof != block_add_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
@@ -831,22 +837,21 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         return EggsError(ErrCode.FILE_NOT_FOUND)
     if file['transient']:
         return EggsError(ErrCode.FILE_IS_TRANSIENT)
+    query_params = {'file_id': req.file_id, 'byte_offset': req.byte_offset}
+    # Make sure that we get the span containing the offset
+    first_span = cur.execute(
+        'select * from spans where file_id = :file_id and byte_offset <= :byte_offset order by byte_offset desc limit 1',
+        query_params
+    ).fetchone()
     spans = cur.execute(
-        'select * from spans where file_id = :file_id and byte_offset >= :byte_offset',
-        {'file_id': req.file_id, 'byte_offset': req.byte_offset}
-    ).fetchall() # eager fetch because we interact with the db later to lookup the blocks
-    # if the offset was in the middle, fetch the span before the start
-    if len(spans) > 0 and spans[0]['byte_offset'] > req.byte_offset:
-        span = cur.execute(
-            'select * from spans where file_id = :file_id and byte_offset < :byte_offset order by byte_offset desc',
-            {'file_id': req.file_id, 'byte_offset': req.byte_offset}
-        ).fetchone()
-        assert span
-        spans = itertools.chain((span,), spans)
+        'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc',
+        query_params
+    )
     budget = UDP_MTU - ShardResponse.SIZE - FileSpansResp.SIZE_UPPER_BOUND
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
-    for span in spans:
+    needed_block_servers: Set[int] = set()
+    for span in itertools.chain((first_span,), spans):
         resp_body: Union[bytes, List[FetchedBlock]]
         if span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE):
             assert isinstance(span['body'], bytes)
@@ -856,20 +861,11 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
             blocks = cast(List[Block], json.loads(span['body']))
             resp_body = []
             for block in blocks:
-                bserver = lookup_block_server(cur, block['block_server_id'])
-                if bserver is None:
-                    # don't fail just because we don't know where the bserver is, client may be able to continue using
-                    # parity data
-                    ip = b'\xff\xff\xff\xff'
-                    port = 65535
-                    flags = BlockFlags.STALE
-                else:
-                    ip = socket.inet_aton(bserver['ip'])
-                    port = bserver['port']
-                    flags = (bserver['terminal'] & BlockFlags.TERMINAL) | (bserver['stale'] & BlockFlags.STALE)
+                # We'll fill in the block server later -- we're in the middle of a query now.
                 resp_body.append(FetchedBlock(
-                    ip=ip, port=port, block_id=block['block_id'], crc32=crc32_from_int(block['crc32']), size=block['size'], flags=flags
+                    ip=None, port=None, block_id=block['block_id'], crc32=crc32_from_int(block['crc32']), size=block['size'], flags=None # type: ignore
                 ))
+                needed_block_servers.add(block['block_id'])
         resp_span = FetchedSpan(
             byte_offset=span['byte_offset'],
             parity=span['parity'],
@@ -884,6 +880,22 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
             break
         budget -= size
         resp_spans.append(resp_span)
+    bservers = lookup_block_servers(cur, needed_block_servers)
+    for span in resp_spans:
+        if not isinstance(span.body, list):
+            continue
+        for fetched_block in span.body:
+            bserver = bservers.get(fetched_block.block_id)
+            if bserver is None:
+                # don't fail just because we don't know where the bserver is, client may be able to continue using
+                # parity data
+                fetched_block.ip = b'\xff\xff\xff\xff'
+                fetched_block.port = 65535
+                fetched_block.flags = BlockFlags.STALE
+            else:
+                fetched_block.ip = socket.inet_aton(bserver['ip'])
+                fetched_block.port = bserver['port']
+                fetched_block.flags = (bserver['terminal'] & BlockFlags.TERMINAL) | (bserver['stale'] & BlockFlags.STALE)
     return FileSpansResp(next_offset, resp_spans)
 
 # TODO check if we ever have anything but DIRECTORY_INODE_NOT_FOUND
@@ -1099,7 +1111,7 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
         if isinstance(req_body, CreateDirectoryINodeReq):
             resp_body = create_directory_inode(cur, req_body)
         elif isinstance(req_body, StatReq):
-            resp_body = stat(cur, req_body)
+            resp_body = do_stat(cur, req_body)
         elif isinstance(req_body, CreateLockedCurrentEdgeReq):
             resp_body = create_locked_current_edge(cur, req_body)
         elif isinstance(req_body, ReadDirReq):

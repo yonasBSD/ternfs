@@ -147,6 +147,10 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 # erase block
                 # (block_id, mac) -> data
                 block_id = deser_erase_block(kind + (await reader.readexactly(16)), rk)
+                now = common.eggs_time()
+                if block_id <= (now + FUTURE_CUTOFF):
+                    logging.error(f'Block {block_id} is too recent to be deleted.')
+                    return
                 erase_block(base_path, block_id) # can never fail
                 m = ser_erase_cert(block_id, rk)
                 writer.write(m)

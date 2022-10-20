@@ -104,6 +104,8 @@ func (errCode *ErrCode) Unpack(buf *bincode.Buf) error {
 
 type ShardMessageKind uint8
 
+type CDCMessageKind uint8
+
 const ERROR uint8 = 0
 
 const (
@@ -366,3 +368,40 @@ type RemoveNonOwnedEdgeReq struct {
 }
 
 type RemoveNonOwnedEdgeResp struct{}
+
+type MakeDirectoryReq struct {
+	OwnerId InodeId
+	Name    []byte
+}
+
+type MakeDirectoryResp struct {
+	Id InodeId
+}
+
+type RenameFileReq struct {
+	TargetId   InodeId
+	OldOwnerId InodeId
+	OldName    []byte
+	NewOwnerId InodeId
+	NewName    []byte
+}
+
+type RenameFileResp struct{}
+
+type RemoveDirectoryReq struct {
+	OwnerId  InodeId
+	TargetId InodeId
+	Name     []byte
+}
+
+type RemoveDirectoryResp struct{}
+
+type RenameDirectoryReq struct {
+	TargetId   InodeId
+	OldOwnerId InodeId
+	OldName    []byte
+	NewOwnerId InodeId
+	NewName    []byte
+}
+
+type RenameDirectoryResp struct{}

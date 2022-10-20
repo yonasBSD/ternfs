@@ -66,6 +66,12 @@ class ShardMessageKind(enum.IntEnum):
     LOCK_CURRENT_EDGE = 0x83
     UNLOCK_CURRENT_EDGE = 0x84
 
+class CDCMessageKind(enum.IntEnum):
+    MAKE_DIRECTORY = 0x1
+    RENAME_FILE = 0x2
+    REMOVE_DIRECTORY = 0x3
+    RENAME_DIRECTORY = 0x4
+
 @dataclass
 class TransientFile(bincode.Packable):
     STATIC_SIZE: ClassVar[int] = 8 + 8
@@ -1276,6 +1282,198 @@ class UnlockCurrentEdgeResp(bincode.Packable):
         _size = 0
         return _size
 
+@dataclass
+class MakeDirectoryReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 8 + 1
+    owner_id: int
+    name: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.owner_id, b)
+        bincode.pack_bytes_into(self.name, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MakeDirectoryReq':
+        owner_id = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        return MakeDirectoryReq(owner_id, name)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # owner_id
+        _size += 1 # len(name)
+        return _size
+
+@dataclass
+class MakeDirectoryResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 8
+    id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.id, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MakeDirectoryResp':
+        id = bincode.unpack_u64(u)
+        return MakeDirectoryResp(id)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # id
+        return _size
+
+@dataclass
+class RenameFileReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1
+    target_id: int
+    old_owner_id: int
+    old_name: bytes
+    new_owner_id: int
+    new_name: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_u64_into(self.old_owner_id, b)
+        bincode.pack_bytes_into(self.old_name, b)
+        bincode.pack_u64_into(self.new_owner_id, b)
+        bincode.pack_bytes_into(self.new_name, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RenameFileReq':
+        target_id = bincode.unpack_u64(u)
+        old_owner_id = bincode.unpack_u64(u)
+        old_name = bincode.unpack_bytes(u)
+        new_owner_id = bincode.unpack_u64(u)
+        new_name = bincode.unpack_bytes(u)
+        return RenameFileReq(target_id, old_owner_id, old_name, new_owner_id, new_name)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # target_id
+        _size += 8 # old_owner_id
+        _size += 1 # len(old_name)
+        _size += 8 # new_owner_id
+        _size += 1 # len(new_name)
+        return _size
+
+@dataclass
+class RenameFileResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
+    STATIC_SIZE: ClassVar[int] = 0
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RenameFileResp':
+        return RenameFileResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+@dataclass
+class RemoveDirectoryReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.REMOVE_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1
+    owner_id: int
+    target_id: int
+    name: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.owner_id, b)
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_bytes_into(self.name, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveDirectoryReq':
+        owner_id = bincode.unpack_u64(u)
+        target_id = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        return RemoveDirectoryReq(owner_id, target_id, name)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # owner_id
+        _size += 8 # target_id
+        _size += 1 # len(name)
+        return _size
+
+@dataclass
+class RemoveDirectoryResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.REMOVE_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 0
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveDirectoryResp':
+        return RemoveDirectoryResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+@dataclass
+class RenameDirectoryReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1
+    target_id: int
+    old_owner_id: int
+    old_name: bytes
+    new_owner_id: int
+    new_name: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_u64_into(self.old_owner_id, b)
+        bincode.pack_bytes_into(self.old_name, b)
+        bincode.pack_u64_into(self.new_owner_id, b)
+        bincode.pack_bytes_into(self.new_name, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RenameDirectoryReq':
+        target_id = bincode.unpack_u64(u)
+        old_owner_id = bincode.unpack_u64(u)
+        old_name = bincode.unpack_bytes(u)
+        new_owner_id = bincode.unpack_u64(u)
+        new_name = bincode.unpack_bytes(u)
+        return RenameDirectoryReq(target_id, old_owner_id, old_name, new_owner_id, new_name)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # target_id
+        _size += 8 # old_owner_id
+        _size += 1 # len(old_name)
+        _size += 8 # new_owner_id
+        _size += 1 # len(new_name)
+        return _size
+
+@dataclass
+class RenameDirectoryResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
+    STATIC_SIZE: ClassVar[int] = 0
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RenameDirectoryResp':
+        return RenameDirectoryResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
 ShardRequestBody = Union[LookupReq, StatReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, CreateDirectoryINodeReq, SetDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq]
 ShardResponseBody = Union[LookupResp, StatResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, CreateDirectoryINodeResp, SetDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp]
 
@@ -1300,5 +1498,15 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: (CreateLockedCurrentEdgeReq, CreateLockedCurrentEdgeResp),
     ShardMessageKind.LOCK_CURRENT_EDGE: (LockCurrentEdgeReq, LockCurrentEdgeResp),
     ShardMessageKind.UNLOCK_CURRENT_EDGE: (UnlockCurrentEdgeReq, UnlockCurrentEdgeResp),
+}
+
+CDCRequestBody = Union[MakeDirectoryReq, RenameFileReq, RemoveDirectoryReq, RenameDirectoryReq]
+CDCResponseBody = Union[MakeDirectoryResp, RenameFileResp, RemoveDirectoryResp, RenameDirectoryResp]
+
+CDC_REQUESTS: Dict[CDCMessageKind, Tuple[Type[CDCRequestBody], Type[CDCResponseBody]]] = {
+    CDCMessageKind.MAKE_DIRECTORY: (MakeDirectoryReq, MakeDirectoryResp),
+    CDCMessageKind.RENAME_FILE: (RenameFileReq, RenameFileResp),
+    CDCMessageKind.REMOVE_DIRECTORY: (RemoveDirectoryReq, RemoveDirectoryResp),
+    CDCMessageKind.RENAME_DIRECTORY: (RenameDirectoryReq, RenameDirectoryResp),
 }
 

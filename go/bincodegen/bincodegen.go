@@ -213,12 +213,12 @@ func reqRespEnum(rr reqRespType) string {
 	return reqEnum
 }
 
-func generateGoShardMsgKind(out io.Writer, shardReqResps []reqRespType) {
-	fmt.Fprintf(out, "func shardMsgKind(body any) ShardMessageKind {\n")
+func generateGoMsgKind(out io.Writer, typeName string, funName string, reqResps []reqRespType) {
+	fmt.Fprintf(out, "func %s(body any) %s {\n", funName, typeName)
 	fmt.Fprintf(out, "\tswitch body.(type) {\n")
 	fmt.Fprintf(out, "\tcase ErrCode:\n")
 	fmt.Fprintf(out, "\t\treturn 0\n")
-	for _, reqResp := range shardReqResps {
+	for _, reqResp := range reqResps {
 		reqName := reqResp.req.Name()
 		respName := reqResp.resp.Name()
 		kindName := reqRespEnum(reqResp)
@@ -233,8 +233,8 @@ func generateGoShardMsgKind(out io.Writer, shardReqResps []reqRespType) {
 	fmt.Fprintf(out, "\n")
 
 	fmt.Fprintf(out, "const (\n")
-	for _, reqResp := range shardReqResps {
-		fmt.Fprintf(out, "\t%s ShardMessageKind = 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "\t%s %s = 0x%X\n", reqRespEnum(reqResp), typeName, reqResp.kind)
 	}
 	fmt.Fprintf(out, ")\n\n")
 }
@@ -268,7 +268,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "}\n\n")
 }
 
-func generateGo(errors []string, shardReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	fmt.Fprintln(out, "// Automatically generated with go run bincodegen.")
@@ -282,9 +282,14 @@ func generateGo(errors []string, shardReqResps []reqRespType, extras []reflect.T
 
 	generateGoErrorCodes(out, errors)
 
-	generateGoShardMsgKind(out, shardReqResps)
+	generateGoMsgKind(out, "ShardMessageKind", "shardMessageKind", shardReqResps)
+	generateGoMsgKind(out, "CDCMessageKind", "cdcMessageKind", cdcReqResps)
 
 	for _, reqResp := range shardReqResps {
+		generateGoSingle(out, reqResp.req)
+		generateGoSingle(out, reqResp.resp)
+	}
+	for _, reqResp := range cdcReqResps {
 		generateGoSingle(out, reqResp.req)
 		generateGoSingle(out, reqResp.resp)
 	}
@@ -447,7 +452,7 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 	}
 }
 
-func generatePythonSingle(w io.Writer, t reflect.Type, isReqResp bool) {
+func generatePythonSingle(w io.Writer, t reflect.Type, which string) {
 	if t.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("type %v is not a struct", t))
 	}
@@ -478,8 +483,8 @@ func generatePythonSingle(w io.Writer, t reflect.Type, isReqResp bool) {
 
 	fmt.Fprintf(w, "@dataclass\n")
 	fmt.Fprintf(w, "class %s(bincode.Packable):\n", t.Name())
-	if isReqResp {
-		fmt.Fprintf(w, "    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.%s\n", enumName(t))
+	if which != "" {
+		fmt.Fprintf(w, "    KIND: ClassVar[%sMessageKind] = %sMessageKind.%s\n", which, which, enumName(t))
 	}
 	if len(cg.staticSize) == 0 {
 		cg.staticSize = append(cg.staticSize, "0")
@@ -514,7 +519,38 @@ func generatePythonErrorCodes(w io.Writer, errors []string) {
 	fmt.Fprintf(w, "\n")
 }
 
-func generatePython(errors []string, shardReqResps []reqRespType, extras []reflect.Type) []byte {
+func generatePythonMsgKind(out io.Writer, which string, reqResps []reqRespType) {
+	fmt.Fprintf(out, "class %sMessageKind(enum.IntEnum):\n", which)
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "    %s = 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
+	}
+	fmt.Fprintf(out, "\n")
+}
+
+func generatePythonReqRespUnion(out io.Writer, which string, reqResps []reqRespType) {
+	// generate union types
+	reqTypes := make([]string, len(reqResps))
+	respTypes := make([]string, len(reqResps))
+	for i, reqResp := range reqResps {
+		reqTypes[i] = reqResp.req.Name()
+		respTypes[i] = reqResp.resp.Name()
+	}
+	fmt.Fprintf(out, "%sRequestBody = Union[%s]\n", which, strings.Join(reqTypes, ", "))
+	fmt.Fprintf(out, "%sResponseBody = Union[%s]\n", which, strings.Join(respTypes, ", "))
+	fmt.Fprintf(out, "\n")
+}
+
+func generatePythonKindToReqResp(out io.Writer, which string, reqResps []reqRespType) {
+	// generate mapping from kinds to types
+	fmt.Fprintf(out, "%s_REQUESTS: Dict[%sMessageKind, Tuple[Type[%sRequestBody], Type[%sResponseBody]]] = {\n", strings.ToUpper(which), which, which, which)
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "    %sMessageKind.%s: (%s, %s),\n", which, reqRespEnum(reqResp), reqResp.req.Name(), reqResp.resp.Name())
+	}
+	fmt.Fprintf(out, "}\n")
+	fmt.Fprintf(out, "\n")
+}
+
+func generatePython(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	fmt.Fprintln(out, "# Automatically generated with go run bincodegen.")
@@ -531,44 +567,31 @@ func generatePython(errors []string, shardReqResps []reqRespType, extras []refle
 
 	generatePythonErrorCodes(out, errors)
 
-	fmt.Fprintf(out, "class ShardMessageKind(enum.IntEnum):\n")
-	for _, reqResp := range shardReqResps {
-		fmt.Fprintf(out, "    %s = 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
-	}
-
-	fmt.Fprintf(out, "\n")
+	generatePythonMsgKind(out, "Shard", shardReqResps)
+	generatePythonMsgKind(out, "CDC", cdcReqResps)
 
 	for _, typ := range extras {
-		generatePythonSingle(out, typ, false)
+		generatePythonSingle(out, typ, "")
 	}
 	for _, reqResp := range shardReqResps {
-		generatePythonSingle(out, reqResp.req, true)
-		generatePythonSingle(out, reqResp.resp, true)
+		generatePythonSingle(out, reqResp.req, "Shard")
+		generatePythonSingle(out, reqResp.resp, "Shard")
+	}
+	for _, reqResp := range cdcReqResps {
+		generatePythonSingle(out, reqResp.req, "CDC")
+		generatePythonSingle(out, reqResp.resp, "CDC")
 	}
 
-	// generate union types
-	reqTypes := make([]string, len(shardReqResps))
-	respTypes := make([]string, len(shardReqResps))
-	for i, reqResp := range shardReqResps {
-		reqTypes[i] = reqResp.req.Name()
-		respTypes[i] = reqResp.resp.Name()
-	}
-	fmt.Fprintf(out, "ShardRequestBody = Union[%s]\n", strings.Join(reqTypes, ", "))
-	fmt.Fprintf(out, "ShardResponseBody = Union[%s]\n", strings.Join(respTypes, ", "))
-	fmt.Fprintf(out, "\n")
+	generatePythonReqRespUnion(out, "Shard", shardReqResps)
+	generatePythonKindToReqResp(out, "Shard", shardReqResps)
 
-	// generate mapping from kinds to types
-	fmt.Fprintf(out, "SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {\n")
-	for _, reqResp := range shardReqResps {
-		fmt.Fprintf(out, "    ShardMessageKind.%s: (%s, %s),\n", reqRespEnum(reqResp), reqResp.req.Name(), reqResp.resp.Name())
-	}
-	fmt.Fprintf(out, "}\n")
-	fmt.Fprintf(out, "\n")
+	generatePythonReqRespUnion(out, "CDC", cdcReqResps)
+	generatePythonKindToReqResp(out, "CDC", cdcReqResps)
 
 	return out.Bytes()
 }
 
-func generateCpp(errors []string, shardReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	fmt.Fprintln(out, "// Automatically generated with go run bincodegen.")
@@ -577,12 +600,17 @@ func generateCpp(errors []string, shardReqResps []reqRespType, extras []reflect.
 	for i, err := range errors {
 		fmt.Fprintf(out, "#define EGGSFS_ERR_%s %d\n", err, errCodeOffset+i)
 	}
-
 	fmt.Fprintf(out, "\n")
 
 	for _, reqResp := range shardReqResps {
 		fmt.Fprintf(out, "#define EGGSFS_META_%s 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
 	}
+	fmt.Fprintf(out, "\n")
+
+	for _, reqResp := range cdcReqResps {
+		fmt.Fprintf(out, "#define EGGSFS_CDC_%s 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
+	}
+	fmt.Fprintf(out, "\n")
 
 	return out.Bytes()
 }
@@ -763,6 +791,29 @@ func main() {
 		},
 	}
 
+	cdcReqResps := []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.MakeDirectoryReq{}),
+			reflect.TypeOf(msgs.MakeDirectoryResp{}),
+		},
+		{
+			0x02,
+			reflect.TypeOf(msgs.RenameFileReq{}),
+			reflect.TypeOf(msgs.RenameFileResp{}),
+		},
+		{
+			0x03,
+			reflect.TypeOf(msgs.RemoveDirectoryReq{}),
+			reflect.TypeOf(msgs.RemoveDirectoryResp{}),
+		},
+		{
+			0x04,
+			reflect.TypeOf(msgs.RenameDirectoryReq{}),
+			reflect.TypeOf(msgs.RenameDirectoryResp{}),
+		},
+	}
+
 	extras := []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.FetchedBlock{}),
@@ -772,7 +823,7 @@ func main() {
 		reflect.TypeOf(msgs.NewBlockInfo{}),
 	}
 
-	goCode := generateGo(errors, shardReqResps, extras)
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	goOutFile, err := os.Create(goOutFileName)
 	if err != nil {
@@ -787,7 +838,7 @@ func main() {
 		panic(err)
 	}
 	defer pythonOutFile.Close()
-	pythonOutFile.Write(generatePython(errors, shardReqResps, extras))
+	pythonOutFile.Write(generatePython(errors, shardReqResps, cdcReqResps, extras))
 
 	cppOutFilename := fmt.Sprintf("%s/../../cpp/eggs_msgs.h", cwd)
 	cppOutFile, err := os.Create(cppOutFilename)
@@ -795,6 +846,6 @@ func main() {
 		panic(err)
 	}
 	defer cppOutFile.Close()
-	cppOutFile.Write(generateCpp(errors, shardReqResps, extras))
+	cppOutFile.Write(generateCpp(errors, shardReqResps, cdcReqResps, extras))
 
 }

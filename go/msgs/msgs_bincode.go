@@ -120,7 +120,7 @@ func (err ErrCode) String() string {
 	}
 }
 
-func shardMsgKind(body any) ShardMessageKind {
+func shardMessageKind(body any) ShardMessageKind {
 	switch body.(type) {
 	case ErrCode:
 		return 0
@@ -191,6 +191,31 @@ const (
 	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
 	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
 	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
+)
+
+func cdcMessageKind(body any) CDCMessageKind {
+	switch body.(type) {
+	case ErrCode:
+		return 0
+	case *MakeDirectoryReq, *MakeDirectoryResp:
+		return MAKE_DIRECTORY
+	case *RenameFileReq, *RenameFileResp:
+		return RENAME_FILE
+	case *RemoveDirectoryReq, *RemoveDirectoryResp:
+		return REMOVE_DIRECTORY
+	case *RenameDirectoryReq, *RenameDirectoryResp:
+		return RENAME_DIRECTORY
+	default:
+		panic(fmt.Sprintf("bad shard req/resp body %T", body))
+	}
+}
+
+
+const (
+	MAKE_DIRECTORY CDCMessageKind = 0x1
+	RENAME_FILE CDCMessageKind = 0x2
+	REMOVE_DIRECTORY CDCMessageKind = 0x3
+	RENAME_DIRECTORY CDCMessageKind = 0x4
 )
 
 func (v *LookupReq) Pack(buf *bincode.Buf) {
@@ -889,6 +914,126 @@ func (v *UnlockCurrentEdgeResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *UnlockCurrentEdgeResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *MakeDirectoryReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.OwnerId))
+	buf.PackBytes([]byte(v.Name))
+}
+
+func (v *MakeDirectoryReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MakeDirectoryResp) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *MakeDirectoryResp) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RenameFileReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.TargetId))
+	buf.PackU64(uint64(v.OldOwnerId))
+	buf.PackBytes([]byte(v.OldName))
+	buf.PackU64(uint64(v.NewOwnerId))
+	buf.PackBytes([]byte(v.NewName))
+}
+
+func (v *RenameFileReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.OldOwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.OldName)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.NewOwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.NewName)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RenameFileResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RenameFileResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *RemoveDirectoryReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.OwnerId))
+	buf.PackU64(uint64(v.TargetId))
+	buf.PackBytes([]byte(v.Name))
+}
+
+func (v *RemoveDirectoryReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveDirectoryResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RemoveDirectoryResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *RenameDirectoryReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.TargetId))
+	buf.PackU64(uint64(v.OldOwnerId))
+	buf.PackBytes([]byte(v.OldName))
+	buf.PackU64(uint64(v.NewOwnerId))
+	buf.PackBytes([]byte(v.NewName))
+}
+
+func (v *RenameDirectoryReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.OldOwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.OldName)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.NewOwnerId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.NewName)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RenameDirectoryResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RenameDirectoryResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 

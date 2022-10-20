@@ -74,7 +74,7 @@ class CDCMessageKind(enum.IntEnum):
 
 @dataclass
 class TransientFile(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # id + deadline_time
     id: int
     deadline_time: int
 
@@ -97,7 +97,7 @@ class TransientFile(bincode.Packable):
 
 @dataclass
 class FetchedBlock(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 4 + 1
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 4 + 1 # ip + port + block_id + crc32 + flags
     ip: bytes
     port: int
     block_id: int
@@ -136,7 +136,7 @@ class FetchedBlock(bincode.Packable):
 
 @dataclass
 class Edge(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # target_id + name_hash + len(name) + creation_time
     target_id: InodeIdWithExtra
     name_hash: int
     name: bytes
@@ -167,7 +167,7 @@ class Edge(bincode.Packable):
 
 @dataclass
 class FetchedSpan(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 1 + 1 + 4 + 1 + 2
+    STATIC_SIZE: ClassVar[int] = 1 + 1 + 4 + 1 + 2 # parity + storage_class + crc32 + len(body_bytes) + len(body_blocks)
     byte_offset: int
     parity: int
     storage_class: int
@@ -216,7 +216,7 @@ class FetchedSpan(bincode.Packable):
 
 @dataclass
 class BlockInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 8
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 8 # ip + port + block_id + certificate
     ip: bytes
     port: int
     block_id: int
@@ -247,7 +247,7 @@ class BlockInfo(bincode.Packable):
 
 @dataclass
 class NewBlockInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4
+    STATIC_SIZE: ClassVar[int] = 4 # crc32
     crc32: bytes
     size: int
 
@@ -271,7 +271,7 @@ class NewBlockInfo(bincode.Packable):
 @dataclass
 class LookupReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOOKUP
-    STATIC_SIZE: ClassVar[int] = 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 1 # dir_id + len(name)
     dir_id: int
     name: bytes
 
@@ -295,7 +295,7 @@ class LookupReq(bincode.Packable):
 @dataclass
 class LookupResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOOKUP
-    STATIC_SIZE: ClassVar[int] = 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # target_id + creation_time
     target_id: int
     creation_time: int
 
@@ -319,7 +319,7 @@ class LookupResp(bincode.Packable):
 @dataclass
 class StatReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.STAT
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # id
     id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -339,7 +339,7 @@ class StatReq(bincode.Packable):
 @dataclass
 class StatResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.STAT
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # mtime + size_or_owner + len(opaque)
     mtime: int
     size_or_owner: int
     opaque: bytes
@@ -367,7 +367,7 @@ class StatResp(bincode.Packable):
 @dataclass
 class ReadDirReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.READ_DIR
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 # dir_id + start_hash + as_of_time
     dir_id: int
     start_hash: int
     as_of_time: int
@@ -395,7 +395,7 @@ class ReadDirReq(bincode.Packable):
 @dataclass
 class ReadDirResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.READ_DIR
-    STATIC_SIZE: ClassVar[int] = 8 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 2 # next_hash + len(results)
     next_hash: int
     results: List[Edge]
 
@@ -425,7 +425,7 @@ class ReadDirResp(bincode.Packable):
 @dataclass
 class ConstructFileReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CONSTRUCT_FILE
-    STATIC_SIZE: ClassVar[int] = 1
+    STATIC_SIZE: ClassVar[int] = 1 # type
     type: InodeType
 
     def pack_into(self, b: bytearray) -> None:
@@ -445,7 +445,7 @@ class ConstructFileReq(bincode.Packable):
 @dataclass
 class ConstructFileResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CONSTRUCT_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # id + cookie
     id: int
     cookie: int
 
@@ -469,7 +469,7 @@ class ConstructFileResp(bincode.Packable):
 @dataclass
 class AddSpanInitiateReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.ADD_SPAN_INITIATE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 + 4 + 1 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 + 4 + 1 + 2 # file_id + cookie + storage_class + parity + crc32 + len(body_bytes) + len(body_blocks)
     file_id: int
     cookie: int
     byte_offset: int
@@ -527,7 +527,7 @@ class AddSpanInitiateReq(bincode.Packable):
 @dataclass
 class AddSpanInitiateResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.ADD_SPAN_INITIATE
-    STATIC_SIZE: ClassVar[int] = 2
+    STATIC_SIZE: ClassVar[int] = 2 # len(blocks)
     blocks: List[BlockInfo]
 
     def pack_into(self, b: bytearray) -> None:
@@ -553,7 +553,7 @@ class AddSpanInitiateResp(bincode.Packable):
 @dataclass
 class AddSpanCertifyReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.ADD_SPAN_CERTIFY
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 2 # file_id + cookie + len(proofs)
     file_id: int
     cookie: int
     byte_offset: int
@@ -591,7 +591,7 @@ class AddSpanCertifyReq(bincode.Packable):
 @dataclass
 class AddSpanCertifyResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.ADD_SPAN_CERTIFY
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -607,7 +607,7 @@ class AddSpanCertifyResp(bincode.Packable):
 @dataclass
 class LinkFileReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LINK_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 1 # file_id + cookie + owner_id + len(name)
     file_id: int
     cookie: int
     owner_id: int
@@ -639,7 +639,7 @@ class LinkFileReq(bincode.Packable):
 @dataclass
 class LinkFileResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LINK_FILE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -655,7 +655,7 @@ class LinkFileResp(bincode.Packable):
 @dataclass
 class SoftUnlinkFileReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SOFT_UNLINK_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # owner_id + file_id + len(name)
     owner_id: int
     file_id: int
     name: bytes
@@ -683,7 +683,7 @@ class SoftUnlinkFileReq(bincode.Packable):
 @dataclass
 class SoftUnlinkFileResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SOFT_UNLINK_FILE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -699,7 +699,7 @@ class SoftUnlinkFileResp(bincode.Packable):
 @dataclass
 class FileSpansReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.FILE_SPANS
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # file_id
     file_id: int
     byte_offset: int
 
@@ -723,7 +723,7 @@ class FileSpansReq(bincode.Packable):
 @dataclass
 class FileSpansResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.FILE_SPANS
-    STATIC_SIZE: ClassVar[int] = 2
+    STATIC_SIZE: ClassVar[int] = 2 # len(spans)
     next_offset: int
     spans: List[FetchedSpan]
 
@@ -753,7 +753,7 @@ class FileSpansResp(bincode.Packable):
 @dataclass
 class SameDirectoryRenameReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_DIRECTORY_RENAME
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 # target_id + dir_id + len(old_name) + len(new_name)
     target_id: int
     dir_id: int
     old_name: bytes
@@ -785,7 +785,7 @@ class SameDirectoryRenameReq(bincode.Packable):
 @dataclass
 class SameDirectoryRenameResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_DIRECTORY_RENAME
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -801,7 +801,7 @@ class SameDirectoryRenameResp(bincode.Packable):
 @dataclass
 class VisitDirectoriesReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_DIRECTORIES
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # begin_id
     begin_id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -821,7 +821,7 @@ class VisitDirectoriesReq(bincode.Packable):
 @dataclass
 class VisitDirectoriesResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_DIRECTORIES
-    STATIC_SIZE: ClassVar[int] = 8 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 2 # next_id + len(ids)
     next_id: int
     ids: List[int]
 
@@ -851,7 +851,7 @@ class VisitDirectoriesResp(bincode.Packable):
 @dataclass
 class VisitFilesReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_FILES
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # begin_id
     begin_id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -871,7 +871,7 @@ class VisitFilesReq(bincode.Packable):
 @dataclass
 class VisitFilesResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_FILES
-    STATIC_SIZE: ClassVar[int] = 8 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 2 # next_id + len(ids)
     next_id: int
     ids: List[int]
 
@@ -901,7 +901,7 @@ class VisitFilesResp(bincode.Packable):
 @dataclass
 class VisitTransientFilesReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_TRANSIENT_FILES
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # begin_id
     begin_id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -921,7 +921,7 @@ class VisitTransientFilesReq(bincode.Packable):
 @dataclass
 class VisitTransientFilesResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_TRANSIENT_FILES
-    STATIC_SIZE: ClassVar[int] = 8 + 2
+    STATIC_SIZE: ClassVar[int] = 8 + 2 # next_id + len(files)
     next_id: int
     files: List[TransientFile]
 
@@ -951,7 +951,7 @@ class VisitTransientFilesResp(bincode.Packable):
 @dataclass
 class FullReadDirReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.FULL_READ_DIR
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # dir_id + start_hash + len(start_name) + start_time
     dir_id: int
     start_hash: int
     start_name: bytes
@@ -983,7 +983,7 @@ class FullReadDirReq(bincode.Packable):
 @dataclass
 class FullReadDirResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.FULL_READ_DIR
-    STATIC_SIZE: ClassVar[int] = 1 + 2
+    STATIC_SIZE: ClassVar[int] = 1 + 2 # finished + len(results)
     finished: bool
     results: List[Edge]
 
@@ -1013,7 +1013,7 @@ class FullReadDirResp(bincode.Packable):
 @dataclass
 class RemoveNonOwnedEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_NON_OWNED_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 # dir_id + len(name) + creation_time
     dir_id: int
     name: bytes
     creation_time: int
@@ -1041,7 +1041,7 @@ class RemoveNonOwnedEdgeReq(bincode.Packable):
 @dataclass
 class RemoveNonOwnedEdgeResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_NON_OWNED_EDGE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1057,7 +1057,7 @@ class RemoveNonOwnedEdgeResp(bincode.Packable):
 @dataclass
 class CreateDirectoryINodeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_DIRECTORY_INODE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # id + owner_id + len(opaque)
     id: int
     owner_id: int
     opaque: bytes
@@ -1085,7 +1085,7 @@ class CreateDirectoryINodeReq(bincode.Packable):
 @dataclass
 class CreateDirectoryINodeResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_DIRECTORY_INODE
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # mtime
     mtime: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -1105,7 +1105,7 @@ class CreateDirectoryINodeResp(bincode.Packable):
 @dataclass
 class SetDirectoryOwnerReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SET_DIRECTORY_OWNER
-    STATIC_SIZE: ClassVar[int] = 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # dir_id + owner_id
     dir_id: int
     owner_id: int
 
@@ -1129,7 +1129,7 @@ class SetDirectoryOwnerReq(bincode.Packable):
 @dataclass
 class SetDirectoryOwnerResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SET_DIRECTORY_OWNER
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1145,7 +1145,7 @@ class SetDirectoryOwnerResp(bincode.Packable):
 @dataclass
 class CreateLockedCurrentEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 8 # dir_id + len(name) + target_id + creation_time
     dir_id: int
     name: bytes
     target_id: int
@@ -1177,7 +1177,7 @@ class CreateLockedCurrentEdgeReq(bincode.Packable):
 @dataclass
 class CreateLockedCurrentEdgeResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1193,7 +1193,7 @@ class CreateLockedCurrentEdgeResp(bincode.Packable):
 @dataclass
 class LockCurrentEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOCK_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 # dir_id + len(name) + target_id
     dir_id: int
     name: bytes
     target_id: int
@@ -1221,7 +1221,7 @@ class LockCurrentEdgeReq(bincode.Packable):
 @dataclass
 class LockCurrentEdgeResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOCK_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1237,7 +1237,7 @@ class LockCurrentEdgeResp(bincode.Packable):
 @dataclass
 class UnlockCurrentEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.UNLOCK_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 1 # dir_id + len(name) + target_id + was_moved
     dir_id: int
     name: bytes
     target_id: int
@@ -1269,7 +1269,7 @@ class UnlockCurrentEdgeReq(bincode.Packable):
 @dataclass
 class UnlockCurrentEdgeResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.UNLOCK_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1285,7 +1285,7 @@ class UnlockCurrentEdgeResp(bincode.Packable):
 @dataclass
 class MakeDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 1 # owner_id + len(name)
     owner_id: int
     name: bytes
 
@@ -1309,7 +1309,7 @@ class MakeDirectoryReq(bincode.Packable):
 @dataclass
 class MakeDirectoryResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8
+    STATIC_SIZE: ClassVar[int] = 8 # id
     id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -1329,7 +1329,7 @@ class MakeDirectoryResp(bincode.Packable):
 @dataclass
 class RenameFileReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1 # target_id + old_owner_id + len(old_name) + new_owner_id + len(new_name)
     target_id: int
     old_owner_id: int
     old_name: bytes
@@ -1365,7 +1365,7 @@ class RenameFileReq(bincode.Packable):
 @dataclass
 class RenameFileResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1381,7 +1381,7 @@ class RenameFileResp(bincode.Packable):
 @dataclass
 class RemoveDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.REMOVE_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # owner_id + target_id + len(name)
     owner_id: int
     target_id: int
     name: bytes
@@ -1409,7 +1409,7 @@ class RemoveDirectoryReq(bincode.Packable):
 @dataclass
 class RemoveDirectoryResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.REMOVE_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
@@ -1425,7 +1425,7 @@ class RemoveDirectoryResp(bincode.Packable):
 @dataclass
 class RenameDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1 # target_id + old_owner_id + len(old_name) + new_owner_id + len(new_name)
     target_id: int
     old_owner_id: int
     old_name: bytes
@@ -1461,7 +1461,7 @@ class RenameDirectoryReq(bincode.Packable):
 @dataclass
 class RenameDirectoryResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 0
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None

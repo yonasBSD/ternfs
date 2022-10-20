@@ -301,12 +301,13 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 }
 
 type pythonCodegen struct {
-	pack       *bytes.Buffer
-	unpack     *bytes.Buffer
-	staticSize []string
-	inSlice    bool
-	spaces     []byte
-	size       *bytes.Buffer
+	pack           *bytes.Buffer
+	unpack         *bytes.Buffer
+	staticSize     []string
+	staticSizeInfo []string
+	inSlice        bool
+	spaces         []byte
+	size           *bytes.Buffer
 }
 
 func pythonType(t reflect.Type) string {
@@ -359,6 +360,7 @@ func (gc *pythonCodegen) sline(s string) {
 func (gc *pythonCodegen) addStaticSize(what string, s string, sameAsSize bool) {
 	if !gc.inSlice {
 		gc.staticSize = append(gc.staticSize, s)
+		gc.staticSizeInfo = append(gc.staticSizeInfo, what)
 	}
 	if sameAsSize {
 		gc.sadd(what, s)
@@ -489,7 +491,7 @@ func generatePythonSingle(w io.Writer, t reflect.Type, which string) {
 	if len(cg.staticSize) == 0 {
 		cg.staticSize = append(cg.staticSize, "0")
 	}
-	fmt.Fprintf(w, "    STATIC_SIZE: ClassVar[int] = %s\n", strings.Join(cg.staticSize, " + "))
+	fmt.Fprintf(w, "    STATIC_SIZE: ClassVar[int] = %s # %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		fmt.Fprintf(w, "    %s: %s\n", upperCamelToSnake(fld.Name), pythonType(fld.Type))

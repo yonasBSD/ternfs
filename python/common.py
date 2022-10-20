@@ -1,6 +1,6 @@
 import enum
 import time
-from typing import Any, Optional, ClassVar, Dict
+from typing import Any, Optional, ClassVar, Dict, NewType
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,20 +38,26 @@ class InodeType(enum.IntEnum):
     FILE = 2
     SYMLINK = 3
 
-def inode_id_extra(inode_with_extra: int) -> bool:
-    return bool(inode_with_extra >> 63)
-
 def inode_id_type(inode: int) -> InodeType:
     return InodeType((inode >> 61) & 0x03)
 
 def inode_id_shard(inode: int) -> int:
     return inode & 0xFF
 
-def inode_id_set_extra(inode: int, extra: bool) -> int:
+# Extremely easy to confuse these two, so let's newtype
+InodeIdWithExtra = NewType('InodeIdWithExtra', int)
+
+def inode_id_set_extra(inode: int, extra: bool) -> InodeIdWithExtra:
     if extra:
-        return inode | (1 << 63)
+        return InodeIdWithExtra(inode | (1 << 63))
     else:
-        return inode & ~(1 << 63)
+        return InodeIdWithExtra(inode & ~(1 << 63))
+
+def inode_id_extra(inode_with_extra: InodeIdWithExtra) -> bool:
+    return bool(inode_with_extra >> 63)
+
+def inode_id_strip_extra(inode_with_extra: InodeIdWithExtra) -> int:
+    return inode_id_set_extra(inode_with_extra, False)
 
 def make_inode_id(type: InodeType, shard: int, id: int) -> int:
     assert shard >= 0 and shard < 256
@@ -100,55 +106,3 @@ def sql_insert_args(table: str, **kwargs):
 def sql_insert(cur: sqlite3.Cursor, table: str, **kwargs):
     return cur.execute(*sql_insert_args(table, **kwargs))
 
-# TODO sequential IDs
-class ErrCode(enum.IntEnum):
-    INTERNAL_ERROR = 0
-    FATAL_ERROR = 1
-    TIMEOUT = 2
-    MALFORMED_REQUEST = 32
-    NOT_AUTHORISED = 3
-    UNRECOGNIZED_REQUEST = 4
-    FILE_NOT_FOUND = 5
-    DIRECTORY_NOT_FOUND = 6
-    NAME_NOT_FOUND = 7
-    TYPE_IS_DIRECTORY = 8
-    TYPE_IS_NOT_DIRECTORY = 9
-    BAD_COOKIE = 10
-    INCONSISTENT_STORAGE_CLASS_PARITY = 11
-    LAST_SPAN_STATE_NOT_CLEAN = 12
-    COULD_NOT_PICK_BLOCK_SERVERS = 13
-    BAD_SPAN_BODY = 14
-    SPAN_NOT_FOUND = 15
-    BLOCK_SERVER_NOT_FOUND = 16
-    CANNOT_CERTIFY_BLOCKLESS_SPAN = 17
-    BAD_NUMBER_OF_BLOCKS_PROOFS = 18
-    BAD_BLOCK_PROOF = 19
-    CANNOT_OVERRIDE_NAME = 20
-    NAME_IS_LOCKED = 21
-    OLD_NAME_IS_LOCKED = 22
-    NEW_NAME_IS_LOCKED = 23
-    MORE_RECENT_SNAPSHOT_ALREADY_EXISTS = 24
-    MISMATCHING_TARGET = 25
-    MISMATCHING_OWNER = 26
-    DIRECTORY_NOT_EMPTY = 27
-    FILE_IS_TRANSIENT = 28
-    OLD_DIRECTORY_NOT_FOUND = 29
-    NEW_DIRECTORY_NOT_FOUND = 30
-    LOOP_IN_DIRECTORY_RENAME = 31
-
-@dataclass
-class EggsError(bincode.Packable, Exception):
-    kind: ClassVar[int] = 0
-    error_code: ErrCode
-    # info: bytes
-
-    def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u16_into(self.error_code, b)
-        # bincode.pack_bytes_into(self.info, b)
-
-    @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'EggsError':
-        error_kind = ErrCode(bincode.unpack_u16(u))
-        # info = bincode.unpack_bytes(u)
-        # return EggsError(error_kind, info)
-        return EggsError(error_kind)

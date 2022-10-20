@@ -17,6 +17,14 @@ func (buf *Buf) PackU8(x uint8) {
 	(*buf)[0] = x
 	*buf = (*buf)[1:]
 }
+func (buf *Buf) PackBool(x bool) {
+	if x {
+		(*buf)[0] = 1
+	} else {
+		(*buf)[0] = 0
+	}
+	*buf = (*buf)[1:]
+}
 func (buf *Buf) PackU16(x uint16) {
 	binary.LittleEndian.PutUint16(*buf, x)
 	*buf = (*buf)[2:]
@@ -103,6 +111,21 @@ func (buf *Buf) UnpackU8(x *uint8) error {
 	(*buf) = (*buf)[1:]
 	return nil
 }
+func (buf *Buf) UnpackBool(x *bool) error {
+	var y uint8
+	if err := buf.UnpackU8(&y); err != nil {
+		return err
+	}
+	if y != 0 && y != 1 {
+		return fmt.Errorf("expected 0 and 1 for bool, got %d", y)
+	}
+	if y == 0 {
+		*x = false
+	} else {
+		*x = true
+	}
+	return nil
+}
 func (buf *Buf) UnpackU16(x *uint16) error {
 	if err := buf.hasBytes(2); err != nil {
 		return err
@@ -179,6 +202,17 @@ func (buf *Buf) UnpackLength(l *int) error {
 	}
 	*l = int(l16)
 	return nil
+}
+
+// Useful in codegen, weirdly go does not include something like vector::resize.
+// This does not resize exponentially, which is annoying, but better than allocating
+// every time.
+func EnsureLength[T any](xs *[]T, l int) {
+	if *xs == nil || cap(*xs) < l {
+		*xs = make([]T, l)
+	} else {
+		*xs = (*xs)[:l]
+	}
 }
 
 type Unpackable interface {

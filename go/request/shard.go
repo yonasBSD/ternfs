@@ -5,15 +5,16 @@ import (
 	"io"
 	"net"
 	"time"
+	"xtx/eggsfs/alerts"
 	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/common"
 	"xtx/eggsfs/msgs"
 )
 
 const (
 	ERROR                 uint8 = 0x0
-	VISIT_INODES          uint8 = 0x15
+	VISIT_DIRECTORIES     uint8 = 0x15
 	VISIT_TRANSIENT_FILES uint8 = 0x16
+	HISTORICAL_READ_DIR   uint8 = 0x21
 )
 
 // >>> format(struct.unpack('<I', b'SHA\0')[0], 'x')
@@ -22,14 +23,16 @@ const SHARD_PROTOCOL_VERSION uint32 = 0x414853
 
 func msgKind(body any) uint8 {
 	switch body.(type) {
-	case common.ErrCode:
+	case msgs.ErrCode:
 		return ERROR
-	case *msgs.VisitInodesReq, *msgs.VisitInodesResp:
-		return VISIT_INODES
+	case *msgs.VisitDirectoriesReq, *msgs.VisitDirectoriesResp:
+		return VISIT_DIRECTORIES
 	case *msgs.VisitTransientFilesReq, *msgs.VisitTransientFilesResp:
 		return VISIT_TRANSIENT_FILES
+	case *msgs.FullReadDirReq, *msgs.FullReadDirResp:
+		return HISTORICAL_READ_DIR
 	default:
-		panic(fmt.Sprintf("bad shard req/resp body %#v", body))
+		panic(fmt.Sprintf("bad shard req/resp body %T", body))
 	}
 }
 
@@ -94,7 +97,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 		return nil
 	}
 	if kind == ERROR {
-		var errCode common.ErrCode
+		var errCode msgs.ErrCode
 		if err := errCode.Unpack(buf); err != nil {
 			resp.Error = fmt.Errorf("could not decode error body: %w", err)
 			return nil
@@ -116,7 +119,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 }
 
 func ShardRequest(
-	alerter common.Alerter,
+	alerter alerts.Alerter,
 	writer io.Writer,
 	reader io.Reader,
 	// Will be used for writing and decoding the request. This function will panic if
@@ -175,7 +178,7 @@ func ShardRequest(
 // This function will set the deadline for the socket.
 // TODO does the deadline persist -- i.e. are we permanently modifying this socket.
 func ShardRequestSocket(
-	alerter common.Alerter,
+	alerter alerts.Alerter,
 	sock *net.UDPConn,
 	buffer []byte,
 	timeout time.Duration,
@@ -183,5 +186,5 @@ func ShardRequestSocket(
 	respBody bincode.Unpackable,
 ) error {
 	sock.SetReadDeadline(time.Now().Add(timeout))
-	return ShardRequest(alerter, sock, sock, buffer, common.EggsTime(), reqBody, respBody)
+	return ShardRequest(alerter, sock, sock, buffer, uint64(msgs.Now()), reqBody, respBody)
 }

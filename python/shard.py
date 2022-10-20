@@ -26,7 +26,9 @@ import itertools
 
 import crypto
 from common import *
+from msgs import *
 from shard_msgs import *
+from error import *
 import cdc_key
 
 # TODO add an execute_many that does everything in a single transaction, for test speed (e.g. the one that creates a ton of files is slow)
@@ -474,7 +476,6 @@ def create_current_edge_internal(
     if isinstance(dir, EggsError):
         return dir
     name_hash = hash_name(dir['hash_mode'], req.name)
-    # This fetches
     existing_current_edges = cur.execute(
         # This fetches the current edge (which we know to be the most recent one), and
         # at most another edge with creation time geq than what we want to create.
@@ -547,16 +548,16 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
         # id.
         #
         # TODO this will always consider at least one edge per name (current or snapshot), which
-        # is not good if we create a million file and then remove them. We should
-        # * Just use the `current` column in the common case
-        # * Add a (dir_id, name_ash, creation_time) type index to make the other case faster too
+        # is not good if we create a million files and then remove them. We should
+        # * Just use the `current` column in the common case.
+        # * Add a (dir_id, name_hash, creation_time) type index to make the other case faster too.
         '''
             with results as (
-                select row_number() over this_and_successor as row, target_id, name_hash, name
+                select row_number() over this_and_successor as row, target_id, owned, name_hash, name, creation_time
                     from edges
                     where dir_id = :dir_id and name_hash >= :next_hash and creation_time <= :as_of
                     window this_and_successor as (partition by name_hash, name order by creation_time desc range between 1 preceding and current row)
-            ) select target_id, name_hash, name from results where row = 1 and target_id != :null;
+            ) select target_id, owned, name_hash, name, creation_time from results where row = 1 and target_id != :null;
         ''',
         {
             'dir_id': req.dir_id,
@@ -566,16 +567,17 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
             'null': NULL_INODE_ID,
         }
     )
-    payloads: List[ReadDirPayload] = []
-    curr_size = ShardResponse.SIZE + ReadDirResp.SIZE
+    payloads: List[Edge] = []
+    curr_size = ShardResponse.STATIC_SIZE + ReadDirResp.STATIC_SIZE
     next_hash = 0
     # Note that this is assuming that we can always clear one next hash in one UDP_MTU
     # to make progress.
     for entry in entries:
-        payload = ReadDirPayload(
-            target_id=entry['target_id'],
+        payload = Edge(
+            target_id=inode_id_set_extra(entry['target_id'], not (not entry['owned'])),
             name_hash=entry['name_hash'],
             name=entry['name'],
+            creation_time=entry['creation_time'],
         )
         if curr_size + payload.calc_packed_size() > UDP_MTU:
             next_hash = entry['name_hash']
@@ -587,6 +589,49 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
         curr_size += payload.calc_packed_size()
     return ReadDirResp(
         next_hash=next_hash,
+        results=payloads,
+    )
+
+# TODO as an optimization, we might want to omit edges for files which are only
+# current. This is likely to be a common case.
+def full_read_dir(cur: sqlite3.Cursor, req: FullReadDirReq) -> Union[EggsError, FullReadDirResp]:
+    dir = get_directory(cur, req.dir_id, ErrCode.DIRECTORY_NOT_FOUND)
+    if isinstance(dir, EggsError):
+        return dir
+    entries = cur.execute(
+        '''
+            select target_id, name_hash, name, creation_time, owned
+                from edges
+                where dir_id = :dir_id and (
+                    (name_hash = :start_hash and name = :start_name and creation_time >= :start_time) or
+                    (name_hash = :start_hash and name > :start_name) or
+                    (name_hash > :start_hash)
+                )
+        ''',
+        {
+            'dir_id': req.dir_id,
+            'start_hash': req.start_hash,
+            'start_name': req.start_name,
+            'start_time': req.start_time,
+        }
+    )
+    payloads: List[Edge] = []
+    curr_size = ShardResponse.STATIC_SIZE + FullReadDirResp.STATIC_SIZE
+    finished = True
+    for entry in entries:
+        payload = Edge(
+            target_id=inode_id_set_extra(entry['target_id'], not (not entry['owned'])),
+            name_hash=entry['name_hash'],
+            name=entry['name'],
+            creation_time=entry['creation_time'],
+        )
+        if curr_size + payload.calc_packed_size() > UDP_MTU:
+            finished = False
+            break
+        payloads.append(payload)
+        curr_size += payload.calc_packed_size()
+    return FullReadDirResp(
+        finished=finished,
         results=payloads,
     )
 
@@ -616,7 +661,7 @@ def construct_file(cur: sqlite3.Cursor, req: ConstructFileReq) -> Union[EggsErro
 
 # read only
 def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> VisitTransientFilesResp:
-    num_entries = (UDP_MTU-ShardResponse.SIZE-VisitTransientFilesResp.SIZE)//TransientFile.SIZE
+    num_entries = (UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE)//TransientFile.STATIC_SIZE
     entries = cur.execute(
         'select * from files where transient and id >= :begin_id order by id asc limit :max_entries',
         {'begin_id': req.begin_id, 'max_entries': num_entries+1}
@@ -661,18 +706,21 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
         }
         if blockless:
             # nothing to do, just store the body, which won't be anything in zero-fill case
-            assert isinstance(req.body, bytes)
-            span['body'] = req.body
+            assert len(req.body_blocks) == 0
+            if req.storage_class == ZERO_FILL_STORAGE:
+                assert len(req.body_bytes) == 0
+            span['body'] = req.body_bytes
             span['state'] = SpanState.CLEAN
         else:
             # we need to actually store the span
             block_servers = pick_block_servers(cur, req.storage_class, num_total_blocks(req.parity))
             if block_servers is None:
                 return EggsError(ErrCode.COULD_NOT_PICK_BLOCK_SERVERS)
-            assert len(block_servers) == len(req.body)
+            assert len(block_servers) == len(req.body_blocks)
+            assert len(req.body_bytes) == 0
             span['state'] = SpanState.DIRTY
             span['body'] = [] # the blocks
-            for block_info, block_server in zip(cast(List[NewBlockInfo], req.body), block_servers):
+            for block_info, block_server in zip(cast(List[NewBlockInfo], req.body_blocks), block_servers):
                 block_id = shard_info.next_block_id(cur, now)
                 block: Block = {
                     'block_server_id': block_server['id'],
@@ -792,6 +840,11 @@ def add_span_certify(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union[EggsE
 def link_file_inner(cur: sqlite3.Cursor, req: LinkFileReq) -> Union[LinkFileResp, EggsError]:
     now = eggs_time()
     shard_info = ShardInfo(cur)
+    # make sure to do this now otherwise we won't even get to checking in get_transient_file
+    # if the call is done again with the same file id but different cookie. it wouldn't be
+    # dangerous but it's consuming.
+    if req.cookie != calc_cookie(shard_info.secret_key, req.file_id):
+        return EggsError(ErrCode.BAD_COOKIE)
     # First check if the file has been linked already
     not_transient = cur.execute('select not transient as not_transient from files where id = :file_id', {'file_id': req.file_id}).fetchone()
     if not_transient is not None and not_transient['not_transient']:
@@ -847,23 +900,24 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc',
         query_params
     ) # no fetchall -- we don't know how many we're going to fit, so fetch lazily.
-    budget = UDP_MTU - ShardResponse.SIZE - FileSpansResp.SIZE_UPPER_BOUND
+    budget = UDP_MTU - ShardResponse.STATIC_SIZE - FileSpansResp_SIZE_UPPER_BOUND
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
     needed_block_servers: Set[int] = set()
     block_id_to_block_server: Dict[int, int] = {}
     for span in (spans if first_span is None else itertools.chain((first_span,), spans)):
+        body_blocks: List[FetchedBlock] = []
+        body_bytes = b''
         resp_body: Union[bytes, List[FetchedBlock]]
         if span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE):
             assert isinstance(span['body'], bytes)
-            resp_body = span['body']
+            body_bytes = span['body']
         else:
             assert isinstance(span['body'], str)
             blocks = cast(List[Block], json.loads(span['body']))
-            resp_body = []
             for block in blocks:
                 # We'll fill in the block server later -- we're in the middle of a query now.
-                resp_body.append(FetchedBlock(
+                body_blocks.append(FetchedBlock(
                     ip=None, port=None, block_id=block['block_id'], crc32=crc32_from_int(block['crc32']), size=block['size'], flags=None # type: ignore
                 ))
                 needed_block_servers.add(block['block_server_id'])
@@ -874,7 +928,8 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
             storage_class=span['storage_class'],
             crc32=crc32_from_int(span['crc32']),
             size=span['size'],
-            body=resp_body,
+            body_blocks=body_blocks,
+            body_bytes=body_bytes,
         )
         size = resp_span.calc_packed_size()
         if size > budget:
@@ -884,9 +939,7 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         resp_spans.append(resp_span)
     bservers = lookup_block_servers(cur, needed_block_servers)
     for span in resp_spans:
-        if not isinstance(span.body, list):
-            continue
-        for fetched_block in span.body:
+        for fetched_block in span.body_blocks:
             bserver = bservers.get(block_id_to_block_server[fetched_block.block_id])
             if bserver is None:
                 # don't fail just because we don't know where the bserver is, client may be able to continue using
@@ -908,15 +961,15 @@ def get_directory(cur: sqlite3.Cursor, id: int, not_found: ErrCode) -> Union[Egg
     return dir
 
 def get_current_edge(cur, *, dir_id: int, name: bytes, target_id: Union[int, None]) -> Union[Dict[str, Any], EggsError]:
+    dir = get_directory(cur, dir_id, ErrCode.DIRECTORY_NOT_FOUND)
+    if isinstance(dir, EggsError):
+        return dir
     current_edge = cur.execute(
         'select * from edges where dir_id = :dir_id and current and name = :name',
-        {'dir_id': dir_id, 'name': name, 'target_id': target_id}
+        {'dir_id': dir_id, 'name': name, 'name_hash': hash_name(dir['hash_mode'], name), 'target_id': target_id}
     ).fetchone()
     if current_edge is None:
-        if cur.execute('select id from directories where id = ?', (dir_id,)).fetchone():
-            return EggsError(ErrCode.NAME_NOT_FOUND)
-        else:
-            return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
+        return EggsError(ErrCode.NAME_NOT_FOUND)
     if target_id is not None and current_edge['target_id'] != target_id:
         return EggsError(ErrCode.MISMATCHING_TARGET)
     return current_edge
@@ -986,7 +1039,7 @@ def soft_unlink_file(cur: sqlite3.Cursor, req: SoftUnlinkFileReq) -> Union[EggsE
     return res
 
 def visit_inodes(cur: sqlite3.Cursor, table: str, begin_id: int) -> Tuple[int, List[int]]:
-    budget = UDP_MTU - ShardResponse.SIZE - VisitDirectoriesResp.SIZE
+    budget = UDP_MTU - ShardResponse.STATIC_SIZE - VisitDirectoriesResp.STATIC_SIZE
     max_ids = (budget//8) + 1 # include next inode
     ids = list(map(
         lambda x: x['id'],
@@ -1069,11 +1122,30 @@ def unlock_current_edge(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) -> Union
     assert check_edge_constraints(cur, req.dir_id)
     return res
 
+# not read only
+def remove_non_owned_edge(cur: sqlite3.Cursor, req: RemoveNonOwnedEdgeReq) -> Union[EggsError, RemoveNonOwnedEdgeResp]:
+    dir = get_directory(cur, req.dir_id, ErrCode.DIRECTORY_NOT_FOUND)
+    if isinstance(dir, EggsError):
+        return dir
+    cur.execute(
+        '''
+            delete from edges
+                where dir_id = :dir_id and name_hash = :name_hash and name = :name and creation_time = :creation_time and owned = false
+        ''',
+        {'dir_id': req.dir_id, 'name_hash': hash_name(dir['hash_mode'], req.name), 'name': req.name, 'creation_time': req.creation_time},
+    )
+    if cur.rowcount == 0:
+        return EggsError(ErrCode.EDGE_NOT_FOUND)
+    return RemoveNonOwnedEdgeResp()
+    
+
+# read only
 def lookup(cur: sqlite3.Cursor, req: LookupReq) -> Union[EggsError, LookupResp]:
     current_edge = get_current_edge(cur, dir_id=req.dir_id, name=req.name, target_id=None)
     if isinstance(current_edge, EggsError):
         return current_edge
     return LookupResp(target_id=current_edge['target_id'], creation_time=current_edge['creation_time'])
+
 
 class BlockServerInfo(TypedDict):
     ip: str
@@ -1156,6 +1228,10 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = unlock_current_edge(cur, req_body)
         elif isinstance(req_body, LookupReq):
             resp_body = lookup(cur, req_body)
+        elif isinstance(req_body, FullReadDirReq):
+            resp_body = full_read_dir(cur, req_body)
+        elif isinstance(req_body, RemoveNonOwnedEdgeReq):
+            resp_body = remove_non_owned_edge(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:
@@ -1217,7 +1293,7 @@ class TestDriver:
         full_req_bytes = full_req.pack(cdc_key.CDC_KEY)
         assert len(full_req_bytes) < UDP_MTU
         unpacked_req = UnpackedShardRequest.unpack(full_req_bytes, cdc_key.CDC_KEY)
-        assert full_req == unpacked_req.request
+        assert full_req == unpacked_req.request, f'Expected {full_req}, got {unpacked_req.request}'
         full_resp = execute(self.db, full_req)
         full_resp_bytes = bincode.pack(full_resp)
         assert len(full_resp_bytes) < UDP_MTU
@@ -1227,7 +1303,7 @@ class TestDriver:
     # We repeat by default as a very rough test for idempotency, but with a
     # blacklist for things we know will fail.
     def execute_ok(self, req: ShardRequestBody, repeats: int = 2) -> Any:
-        if req.kind in (ShardRequestKind.SAME_DIRECTORY_RENAME, ShardRequestKind.SOFT_UNLINK_FILE):
+        if req.KIND in (ShardMessageKind.SAME_DIRECTORY_RENAME, ShardMessageKind.SOFT_UNLINK_FILE, ShardMessageKind.REMOVE_NON_OWNED_EDGE):
             repeats = 1
         resp: Any = None
         for i in range(repeats):
@@ -1238,7 +1314,7 @@ class TestDriver:
     def execute_err(self, req: ShardRequestBody, kind: Union[ErrCode, None] = None):
         resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
         assert isinstance(resp.body, EggsError), f'Expected error, got response {resp.body}'
-        acceptable_errors = SHARD_ERRORS[req.kind]
+        acceptable_errors = SHARD_ERRORS[req.KIND]
         assert resp.body.error_code in acceptable_errors, f'Expected error to be one of {acceptable_errors}, but got {resp.body.error_code}'
         if kind is not None:
             assert resp.body.error_code == kind, f'Expected error {repr(kind)}, got {repr(resp.body.error_code)}'
@@ -1435,7 +1511,7 @@ class ShardTests(unittest.TestCase):
         create_locked_edge_req = CreateLockedCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, creation_time=t_create)
         self.shard.execute_ok(create_locked_edge_req)
         # check that the edge is there
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 1
         assert read_dir.results[0].name == b'test' and read_dir.results[0].target_id == dummy_target_2
         assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_create-1)).results 
@@ -1451,7 +1527,7 @@ class ShardTests(unittest.TestCase):
         # now we unlock and move
         t_before_move = eggs_time()
         self.shard.execute_ok(UnlockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, was_moved=True), repeats=1)
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 0
         read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_before_move)))
         assert len(read_dir.results) == 1
@@ -1468,7 +1544,7 @@ class ShardTests(unittest.TestCase):
         assert inode_id_type(transient_files.files[1].id) == InodeType.SYMLINK
     
     def test_construct_file_2(self):
-        num_files = 3*(UDP_MTU//TransientFile.SIZE)
+        num_files = 3*(UDP_MTU//TransientFile.STATIC_SIZE)
         for _ in range(num_files):
             self.shard.execute_ok(ConstructFileReq(InodeType.FILE), repeats=1)
         read_files = 0
@@ -1486,7 +1562,7 @@ class ShardTests(unittest.TestCase):
         # TODO add check that the span file state is clean after adding INLINE/ZERO spans, dirty afterwards
         self.shard.execute_internal_ok(UpdateBlockServersInfoReq(self.test_block_servers))
         transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE), repeats=1))
-        add_span_req = AddSpanInitiateReq(file_id=transient_file.id, cookie=transient_file.cookie, byte_offset=0, storage_class=0, parity=0, crc32=b'0000', size=0, body=b'')
+        add_span_req = AddSpanInitiateReq(file_id=transient_file.id, cookie=transient_file.cookie, byte_offset=0, storage_class=0, parity=0, crc32=b'0000', size=0, body_bytes=b'', body_blocks=[])
         byte_offset = 0
         # Can't add a block ahead
         inline_span_req = replace(
@@ -1495,7 +1571,7 @@ class ShardTests(unittest.TestCase):
             storage_class=INLINE_STORAGE,
             parity=0,
             size=len(b'test-inline-block'),
-            body=b'test-inline-block',
+            body_bytes=b'test-inline-block',
             crc32=crypto.crc32c(b'test-inline-block'),
         )
         # can't add a block ahead
@@ -1503,10 +1579,10 @@ class ShardTests(unittest.TestCase):
         # can't have non-zero parity mode
         self.shard.execute_err(replace(inline_span_req, parity=create_parity_mode(4,2)))
         # can't have zero-sized inline span
-        self.shard.execute_err(replace(inline_span_req, size=0, body=b'', crc32=(b'\0'*4)), ErrCode.BAD_SPAN_BODY)
+        self.shard.execute_err(replace(inline_span_req, size=0, body_bytes=b'', crc32=(b'\0'*4)), ErrCode.BAD_SPAN_BODY)
         # can't have bad crc
         self.shard.execute_err(replace(inline_span_req, crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
-        self.shard.execute_err(replace(inline_span_req, size=100, storage_class=ZERO_FILL_STORAGE, body=b'', crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
+        self.shard.execute_err(replace(inline_span_req, size=100, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
         inline_span = self.shard.execute_ok(inline_span_req)
         byte_offset += inline_span_req.size
         transient_file_1 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
@@ -1517,9 +1593,9 @@ class ShardTests(unittest.TestCase):
         transient_file_2 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
         assert transient_file_2.deadline_time > transient_file_1.deadline_time
         # empty, only bumps the deadline
-        self.shard.execute_ok(replace(inline_span_req, size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body=b'', crc32=(b'\0\0\0\0')))
+        self.shard.execute_ok(replace(inline_span_req, size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=(b'\0\0\0\0')))
         # non-empty zero span
-        self.shard.execute_ok(replace(inline_span_req, size=100, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body=b'', crc32=crypto.crc32c(b'\0'*100)))
+        self.shard.execute_ok(replace(inline_span_req, size=100, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=crypto.crc32c(b'\0'*100)))
         byte_offset += 100
         # onto proper blocks
         data = random.randbytes(1000)
@@ -1531,10 +1607,11 @@ class ShardTests(unittest.TestCase):
             parity=create_parity_mode(1, 0),
             crc32=data_crc32,
             size=len(data),
-            body=[NewBlockInfo(data_crc32, len(data))],
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(data_crc32, len(data))],
         )
         # bad size/crc
-        self.shard.execute_err(replace(proper_span_req, body=[NewBlockInfo(data_crc32, len(data)-1)]))
+        self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(data_crc32, len(data)-1)]))
         data_1 = data[:100]
         data_1_crc32 = crypto.crc32c(data_1)
         data_2 = data[100:200]
@@ -1545,15 +1622,16 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(replace(
             proper_span_req,
             parity=create_parity_mode(3,1),
-            body=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)-1), NewBlockInfo(b'1234', 100)])
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)-1), NewBlockInfo(b'1234', 100)])
         )
-        self.shard.execute_err(replace(proper_span_req, body=[NewBlockInfo(b'4321', 10000)]))
-        self.shard.execute_err(replace(proper_span_req, parity=create_parity_mode(1,1), body=[NewBlockInfo(b'1234', 10000), NewBlockInfo(b'4321', 10000)]))
+        self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(b'4321', 10000)]))
+        self.shard.execute_err(replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(b'1234', 10000), NewBlockInfo(b'4321', 10000)]))
         # no mirroring
         proper_span_resp = self.shard.execute_ok(proper_span_req)
         byte_offset += proper_span_req.size
         # RAID1
-        mirrored_span_req = replace(proper_span_req, parity=create_parity_mode(1,1), body=[NewBlockInfo(data_crc32, len(data)), NewBlockInfo(data_crc32, len(data))])
+        mirrored_span_req = replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(data_crc32, len(data)), NewBlockInfo(data_crc32, len(data))])
         # can't insert at the same position with different parity
         self.shard.execute_err(mirrored_span_req, ErrCode.SPAN_NOT_FOUND)
         mirrored_span_req = replace(mirrored_span_req, byte_offset=byte_offset)
@@ -1587,7 +1665,8 @@ class ShardTests(unittest.TestCase):
             proper_span_req,
             byte_offset=byte_offset,
             parity=create_parity_mode(3,1),
-            body=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)), NewBlockInfo(b'1234', 100)]
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)), NewBlockInfo(b'1234', 100)]
         )
         raid5_span_resp = cast(AddSpanInitiateResp, self.shard.execute_ok(raid5_span_req))
         assert len(set([b.block_id for b in raid5_span_resp.blocks])) == len(raid5_span_resp.blocks)
@@ -1607,7 +1686,7 @@ class ShardTests(unittest.TestCase):
         # and now linking should go through
         self.shard.execute_ok(link_req)
         # check that we get it in the directory
-        root_dir_files = self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0))
+        root_dir_files = self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0))
         assert root_dir_files.results[0].name == b'test-file'
         # check that the file is as big as we expect
         file_stat = cast(StatResp, self.shard.execute_ok(StatReq(root_dir_files.results[0].target_id)))
@@ -1619,16 +1698,15 @@ class ShardTests(unittest.TestCase):
         assert file_stat.size_or_owner == (spans.spans[-1].byte_offset + spans.spans[-1].size)
         for i, span in enumerate(spans.spans[:-1]):
             assert span.byte_offset + span.size == spans.spans[i+1].byte_offset
-        assert spans.spans[0].body == b'test-inline-block'
-        assert spans.spans[1].body == b''
-        assert len(spans.spans[2].body) == 1
-        assert len(spans.spans[3].body) == 2
-        assert len(spans.spans[4].body) == 4
+        assert spans.spans[0].body_bytes == b'test-inline-block'
+        assert spans.spans[1].body_bytes == b''
+        assert len(spans.spans[2].body_blocks) == 1
+        assert len(spans.spans[3].body_blocks) == 2
+        assert len(spans.spans[4].body_blocks) == 4
         # check that all the blocks could be found
         for span in spans.spans:
-            if isinstance(span.body, list):
-                for block in span.body:
-                    assert not (block.flags & BlockFlags.STALE)
+            for block in span.body_blocks:
+                assert not (block.flags & BlockFlags.STALE)
         # check that starting in the middle of a span returns the same
         spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 1)))
         assert spans == spans_2
@@ -1655,11 +1733,11 @@ class ShardTests(unittest.TestCase):
         # can't check idempotency for directory renames -- the client is supposed to resolve these
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'))
         self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'), ErrCode.NAME_NOT_FOUND)
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
         def read_dir_names(files):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
-            return set([r.target_id for r in files.results])
+            return set([inode_id_strip_extra(r.target_id) for r in files.results])
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'2', b'other'}
         # move again
         t_before_second_move = eggs_time()
@@ -1672,7 +1750,7 @@ class ShardTests(unittest.TestCase):
         files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_move, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'2', b'other'}
         # finally, the current one
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
         # now delete the files
         t_before_first_deletion = eggs_time()
@@ -1687,13 +1765,19 @@ class ShardTests(unittest.TestCase):
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
         files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_deletion, start_hash=0)))
         assert read_dir_targets(files) == {transient_file.id} and read_dir_names(files) == {b'3'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
         assert not read_dir_targets(files)
         # as a bonus, try and fail to create a current edge older than the dead edge
         self.shard.execute_err(
             CreateLockedCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'1', target_id=transient_file.id, creation_time=0),
             ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
-        )        
+        )
+    
+    def test_bad_cookie(self):
+        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
+        transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.shard.execute_err(LinkFileReq(transient_file_1.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'), ErrCode.BAD_COOKIE)
 
 
 SHUCKLE_POLL_PERIOD_SEC = 60

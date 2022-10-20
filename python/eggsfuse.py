@@ -13,6 +13,8 @@ import struct
 from common import *
 from shard_msgs import *
 from cdc_msgs import *
+from msgs import *
+from error import *
 import crypto as crypto
 
 
@@ -106,41 +108,6 @@ def inode_type_to_mode(type: InodeType) -> int:
     mode |= stat.S_IROTH | stat.S_IXOTH
     return mode
 
-err_code_to_errno: Dict[ErrCode, int] = {
-    ErrCode.INTERNAL_ERROR: errno.EIO,
-    ErrCode.FATAL_ERROR: errno.EIO,
-    ErrCode.TIMEOUT: errno.EIO,
-    ErrCode.NOT_AUTHORISED: errno.EACCES,
-    ErrCode.UNRECOGNIZED_REQUEST: errno.EIO,
-    ErrCode.FILE_NOT_FOUND: errno.ENOENT,
-    ErrCode.DIRECTORY_NOT_FOUND: errno.ENOENT,
-    ErrCode.NAME_NOT_FOUND: errno.ENOENT,
-    ErrCode.TYPE_IS_DIRECTORY: errno.EISDIR,
-    ErrCode.TYPE_IS_NOT_DIRECTORY: errno.ENOTDIR,
-    ErrCode.BAD_COOKIE: errno.EACCES,
-    ErrCode.INCONSISTENT_STORAGE_CLASS_PARITY: errno.EINVAL,
-    ErrCode.LAST_SPAN_STATE_NOT_CLEAN: errno.EBUSY, # reasonable?
-    ErrCode.COULD_NOT_PICK_BLOCK_SERVERS: errno.EIO,
-    ErrCode.BAD_SPAN_BODY: errno.EINVAL,
-    ErrCode.SPAN_NOT_FOUND: errno.EINVAL,
-    ErrCode.BLOCK_SERVER_NOT_FOUND: errno.EIO,
-    ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN: errno.EINVAL,
-    ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS: errno.EINVAL,
-    ErrCode.BAD_BLOCK_PROOF: errno.EINVAL,
-    ErrCode.CANNOT_OVERRIDE_NAME: errno.EEXIST,
-    ErrCode.NAME_IS_LOCKED: errno.EEXIST,
-    ErrCode.OLD_NAME_IS_LOCKED: errno.EBUSY,
-    ErrCode.NEW_NAME_IS_LOCKED: errno.EBUSY,
-    ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS: errno.EBUSY, # reasonable?
-    ErrCode.MISMATCHING_TARGET: errno.EINVAL,
-    ErrCode.MISMATCHING_OWNER: errno.EINVAL,
-    ErrCode.DIRECTORY_NOT_EMPTY: errno.ENOTEMPTY,
-    ErrCode.FILE_IS_TRANSIENT: errno.EBUSY, # reasonable?
-    ErrCode.OLD_DIRECTORY_NOT_FOUND: errno.ENOENT,
-    ErrCode.NEW_DIRECTORY_NOT_FOUND: errno.ENOENT,
-    ErrCode.LOOP_IN_DIRECTORY_RENAME: errno.ELOOP,
-}
-
 TIMEOUT_SECS = 2.0
 
 def entry_attribute(inode_id: int, size: int, mtime: int) -> pyfuse3.EntryAttributes:
@@ -196,13 +163,13 @@ class Operations(pyfuse3.Operations):
     async def _send_shard_req(self, shard: int, req: ShardRequestBody) -> ShardResponseBody:
         resp = await send_shard_request(shard, req)
         if isinstance(resp, EggsError):
-            raise pyfuse3.FUSEError(err_code_to_errno[resp.error_code])
+            raise pyfuse3.FUSEError(ERR_CODE_TO_ERRNO[resp.error_code])
         return resp
     
     async def _send_cdc_req(self, req: CDCRequestBody) -> CDCResponseBody:
         resp = await send_cdc_request(req)
         if isinstance(resp, EggsError):
-            raise pyfuse3.FUSEError(err_code_to_errno[resp.error_code])
+            raise pyfuse3.FUSEError(ERR_CODE_TO_ERRNO[resp.error_code])
         return resp
 
     async def getattr(self, inode_id, ctx=None):
@@ -221,7 +188,7 @@ class Operations(pyfuse3.Operations):
     async def readdir(self, dir_id, continuation_key, token):
         assert inode_id_type(dir_id) == InodeType.DIRECTORY
         while True:
-            resp = cast(ReadDirResp, await self._send_shard_req(inode_id_shard(dir_id), ReadDirReq(dir_id, continuation_key)))
+            resp = cast(ReadDirResp, await self._send_shard_req(inode_id_shard(dir_id), ReadDirReqNow(dir_id, continuation_key)))
             for result in resp.results:
                 # FUSE (or at least pyfuse) expects the mtime/ctime here
                 entry = await self.getattr(result.target_id)
@@ -254,15 +221,18 @@ class Operations(pyfuse3.Operations):
             for span in spans.spans:
                 if len(data) >= size: break
                 if span.storage_class == ZERO_FILL_STORAGE:
+                    assert not span.body_bytes
+                    assert not span.body_blocks
                     data += b'\0' * span.size
                 elif span.storage_class == INLINE_STORAGE:
-                    data += cast(bytes, span.body)
+                    assert not span.body_blocks
+                    data += span.body_bytes
                 else:
-                    assert isinstance(span.body, list)
-                    assert len(span.body) == 1
-                    if span.body[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
+                    assert not span.body_bytes
+                    assert len(span.body_blocks) == 1
+                    if span.body_blocks[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
                         raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
-                    data += await read_block(span.body[0])
+                    data += await read_block(span.body_blocks[0])
             offset = spans.next_offset
             if offset == 0:
                 break
@@ -306,7 +276,8 @@ class Operations(pyfuse3.Operations):
                 parity=PARITY,
                 crc32=crc32,
                 size=size,
-                body=[NewBlockInfo(crc32, size)]
+                body_blocks=[NewBlockInfo(crc32, size)],
+                body_bytes=b'',
             )))
             assert len(span.blocks) == 1
             block = span.blocks[0]

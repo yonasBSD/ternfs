@@ -5,6 +5,7 @@ from typing import ClassVar, Dict, Optional, Tuple, Type, Union, Set
 
 import bincode
 from common import *
+from error import *
 
 CDC_PROTOCOL_VERSION = b'CDC\0'
 
@@ -18,7 +19,7 @@ class CDCRequestKind(enum.IntEnum):
 
     # This should be privileged, needed for GC
     HARD_UNLINK_FILE = 5
-assert CDCRequestKind.ERROR == EggsError.kind
+assert CDCRequestKind.ERROR == EggsError.KIND
 
 CDC_ERRORS: Dict[CDCRequestKind, Set[ErrCode]] = {
     CDCRequestKind.MAKE_DIRECTORY: {
@@ -43,7 +44,7 @@ CDC_ERRORS: Dict[CDCRequestKind, Set[ErrCode]] = {
 }
 @dataclass
 class MakeDirReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
     owner_id: int
     name: bytes
 
@@ -58,7 +59,7 @@ class MakeDirReq(bincode.Packable):
         return MakeDirReq(parent_id, subname)
 @dataclass
 class MakeDirResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.MAKE_DIRECTORY
     id: int
 
     def pack_into(self, b: bytearray) -> None:
@@ -71,7 +72,7 @@ class MakeDirResp(bincode.Packable):
 
 @dataclass
 class RenameFileReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_FILE
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_FILE
     target_id: int
     old_owner_id: int
     old_name: bytes
@@ -96,7 +97,7 @@ class RenameFileReq(bincode.Packable):
 
 @dataclass
 class RenameFileResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_FILE
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_FILE
 
     def pack_into(self, b: bytearray) -> None:
         pass
@@ -107,7 +108,7 @@ class RenameFileResp(bincode.Packable):
 
 @dataclass
 class RemoveDirectoryReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
     owner_id: int
     target_id: int
     name: bytes
@@ -126,7 +127,7 @@ class RemoveDirectoryReq(bincode.Packable):
 
 @dataclass
 class RemoveDirectoryResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.REMOVE_DIRECTORY
 
     def pack_into(self, b: bytearray) -> None:
         pass
@@ -137,7 +138,7 @@ class RemoveDirectoryResp(bincode.Packable):
 
 @dataclass
 class RenameDirectoryReq(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_DIRECTORY
     target_id: int
     old_owner_id: int
     old_name: bytes
@@ -162,7 +163,7 @@ class RenameDirectoryReq(bincode.Packable):
 
 @dataclass
 class RenameDirectoryResp(bincode.Packable):
-    kind: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_DIRECTORY
+    KIND: ClassVar[CDCRequestKind] = CDCRequestKind.RENAME_DIRECTORY
 
     def pack_into(self, b: bytearray) -> None:
         pass
@@ -189,7 +190,7 @@ class CDCRequest(bincode.Packable):
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
-        bincode.pack_u8_into(self.body.kind, b)
+        bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
 
     @staticmethod
@@ -204,14 +205,14 @@ class CDCRequest(bincode.Packable):
 
 @dataclass
 class CDCResponse(bincode.Packable):
-    SIZE: ClassVar[int] = len(CDC_PROTOCOL_VERSION) + 8 + 1
+    STATIC_SIZE: ClassVar[int] = len(CDC_PROTOCOL_VERSION) + 8 + 1
     request_id: int
     body: CDCResponseBody
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
-        bincode.pack_u8_into(self.body.kind, b)
+        bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
 
     @staticmethod

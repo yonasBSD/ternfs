@@ -18,6 +18,7 @@ import logging
 from cdc_msgs import *
 from cdc_key import *
 from common import *
+from msgs import *
 from shard_msgs import *
 import shard
 from shard import sql_insert, DisableLogging
@@ -536,7 +537,7 @@ def enqueue_transaction(cur: sqlite3.Cursor, req: CDCRequest) -> Optional[CDCSte
     sql_insert(
         cur, 'transactions',
         id=req.request_id,
-        kind=req.body.kind,
+        kind=req.body.KIND,
         body=bincode.pack(req.body),
         done=False,
         started=False,
@@ -558,7 +559,7 @@ def process_shard_response(cur: sqlite3.Cursor, resp: ShardResponse) -> Optional
     ):
         logging.debug(f'Dropping unexpected response to request {resp.request_id}')
         return None
-    assert resp.body.kind in (ShardRequestKind.ERROR, current_tx['shard_request_kind'])
+    assert resp.body.KIND in (EggsError.KIND, current_tx['shard_request_kind'])
     # Now we get the started transaction and advance it
     return advance_current_transaction(cur, resp.body)
 
@@ -623,7 +624,7 @@ def mark_transaction_as_done(cur, *, ix: int, now: int, resp: CDCResponseBody):
         {
             'ix': ix,
             'now': now,
-            'kind': resp.kind,
+            'kind': resp.KIND,
             'body': bincode.pack(resp),
         }
     )
@@ -672,7 +673,7 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
                 'now': now,
                 'req_id': req_id,
                 'shard': resp_internal.shard,
-                'kind': resp_internal.request.kind,
+                'kind': resp_internal.request.KIND,
                 'body': bincode.pack(resp_internal.request),
             }
         )
@@ -696,7 +697,7 @@ def open_db(db_dir: str) -> sqlite3.Connection:
 # The list maps from the nth time we encountered that kind
 # to the replacement
 ShardRequestsReplacements = Dict[
-    ShardRequestKind,
+    ShardMessageKind,
     Dict[int, ShardResponseBody]
 ]
 
@@ -710,7 +711,7 @@ def execute(
     replacements = collections.defaultdict(dict, replacements) # we'll destruct this
     msg: Union[CDCRequest, ShardResponse] = req
     response: Optional[CDCResponse] = None
-    seen_kinds: collections.defaultdict[ShardRequestKind, int] = collections.defaultdict(lambda: 0)
+    seen_kinds: collections.defaultdict[ShardMessageKind, int] = collections.defaultdict(lambda: 0)
     while response is None:
         step = advance(db, msg)
         assert step is not None
@@ -718,7 +719,7 @@ def execute(
             response = step
         else:
             shard_request = step
-            shard_req_kind = shard_request.request.body.kind
+            shard_req_kind = shard_request.request.body.KIND
             # If required, inject a response, avoiding calling
             # the shard at all.
             if seen_kinds[shard_req_kind] in replacements[shard_req_kind]:
@@ -815,7 +816,7 @@ class CDCTests(unittest.TestCase):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
             return set([r.target_id for r in files.results])
-        dirs = self.cdc.shards[0].execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0))
+        dirs = self.cdc.shards[0].execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0))
         assert read_dir_names(dirs) == {b'test-1', b'test-2'} and read_dir_targets(dirs) == {dir_1, dir_2}
     
     def _only_root_dir_and_orphans(self, ids: Generator[int, None, None]):
@@ -831,7 +832,7 @@ class CDCTests(unittest.TestCase):
         with DisableLogging:
             self.cdc.execute_err(
                 MakeDirReq(ROOT_DIR_INODE_ID, b'test'),
-                replacements={ShardRequestKind.CREATE_DIRECTORY_INODE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
+                replacements={ShardMessageKind.CREATE_DIRECTORY_INODE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
                 kind=ErrCode.INTERNAL_ERROR,
             )
         assert self._only_root_dir_and_orphans(self._collect_all_inodes())
@@ -839,7 +840,7 @@ class CDCTests(unittest.TestCase):
     def test_make_dir_error_2(self):
         self.cdc.execute_err(
             MakeDirReq(ROOT_DIR_INODE_ID, b'test'),
-            replacements={ShardRequestKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
+            replacements={ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
             kind=ErrCode.INTERNAL_ERROR,
         )
         assert self._only_root_dir_and_orphans(self._collect_all_inodes())
@@ -851,8 +852,8 @@ class CDCTests(unittest.TestCase):
             self.cdc.execute_err(
                 MakeDirReq(ROOT_DIR_INODE_ID, b'test'),
                 replacements={
-                    ShardRequestKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)},
-                    ShardRequestKind.SET_DIRECTORY_OWNER: {0: EggsError(ErrCode.INTERNAL_ERROR)},
+                    ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)},
+                    ShardMessageKind.SET_DIRECTORY_OWNER: {0: EggsError(ErrCode.INTERNAL_ERROR)},
                 },
                 kind=ErrCode.FATAL_ERROR,
             )
@@ -903,7 +904,7 @@ class CDCTests(unittest.TestCase):
                     new_name=b'test-file-3',
                 ),
                 kind=ErrCode.FATAL_ERROR,
-                replacements={ShardRequestKind.UNLOCK_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
+                replacements={ShardMessageKind.UNLOCK_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
             )
     
     def test_unlink_dir(self):
@@ -939,6 +940,17 @@ class CDCTests(unittest.TestCase):
     def test_bad_soft_unlink_dir(self):
         dir = cast(MakeDirResp, self.cdc.execute_ok(MakeDirReq(ROOT_DIR_INODE_ID, b'dir'))).id
         self.cdc.shards[0].execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, dir, b'dir'), ErrCode.TYPE_IS_DIRECTORY)
+
+    def test_file_cycle(self):
+        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
+        file_1 = cast(LookupResp, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
+        self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
+        transient_file_2 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_2.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'))
+        file_2 = cast(LookupReq, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
+        # Now we can remove the oldest edge
+        self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time))
 
 
 

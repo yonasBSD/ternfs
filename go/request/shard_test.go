@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/common"
 	"xtx/eggsfs/msgs"
 
 	"github.com/stretchr/testify/assert"
@@ -35,29 +34,29 @@ func (alerter *mockAlerter) RaiseAlert(err error) {
 }
 
 func TestReqOK(t *testing.T) {
-	request := msgs.VisitInodesReq{
+	request := msgs.VisitDirectoriesReq{
 		BeginId: 0,
 	}
 	responses := mockResponses(make([][]byte, 3))
 	for i := range responses {
-		responses[i] = make([]byte, common.UDP_MTU)
+		responses[i] = make([]byte, msgs.UDP_MTU)
 	}
 	// First response: bad req id
 	bincode.PackIntoBytes(
 		&responses[0],
 		&ShardResponse{
 			RequestId: 42,
-			Body:      &msgs.VisitInodesResp{},
+			Body:      &msgs.VisitDirectoriesResp{},
 		},
 	)
 	// Second response: bad magic number
 	responses[1][0] = 'Z'
 	// Last response: a good one
-	expectedResponse := msgs.VisitInodesResp{
+	expectedResponse := msgs.VisitDirectoriesResp{
 		NextId: 42,
-		Ids:    []uint64{1, 2, 3},
+		Ids:    []msgs.InodeId{1, 2, 3},
 	}
-	requestId := common.EggsTime()
+	requestId := uint64(msgs.Now())
 	bincode.PackIntoBytes(
 		&responses[len(responses)-1],
 		&ShardResponse{
@@ -67,9 +66,9 @@ func TestReqOK(t *testing.T) {
 	)
 	// Go for it
 	alerter := mockAlerter{}
-	response := msgs.VisitInodesResp{}
+	response := msgs.VisitDirectoriesResp{}
 	err := ShardRequest(
-		&alerter, new(bytes.Buffer), &responses, make([]byte, common.UDP_MTU), requestId, &request, &response,
+		&alerter, new(bytes.Buffer), &responses, make([]byte, msgs.UDP_MTU), requestId, &request, &response,
 	)
 	for _, err := range alerter {
 		fmt.Printf("err: %v\n", err)
@@ -89,7 +88,7 @@ func TestReqTimeout(t *testing.T) {
 	sock, err := net.DialUDP("udp4", nil, mockSock.LocalAddr().(*net.UDPAddr))
 	assert.Nil(t, err)
 	defer sock.Close()
-	buffer := make([]byte, common.UDP_MTU)
+	buffer := make([]byte, msgs.UDP_MTU)
 	err = ShardRequestSocket(
 		&mockAlerter{}, sock, buffer, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
 	)

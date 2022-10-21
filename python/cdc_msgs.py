@@ -10,6 +10,7 @@ from msgs import *
 
 CDC_PROTOCOL_VERSION = b'CDC\0'
 
+# INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
 CDC_ERRORS: Dict[CDCMessageKind, Set[ErrCode]] = {
     CDCMessageKind.MAKE_DIRECTORY: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.CANNOT_OVERRIDE_NAME, ErrCode.NAME_IS_LOCKED,

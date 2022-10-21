@@ -2,45 +2,47 @@
 // Run `go generate ./...` from the go/ directory to regenerate it.
 package msgs
 
-import "fmt"
-import "xtx/eggsfs/bincode"
+import (
+	"fmt"
+	"xtx/eggsfs/bincode"
+)
 
 const (
-	INTERNAL_ERROR ErrCode = 10
-	FATAL_ERROR ErrCode = 11
-	TIMEOUT ErrCode = 12
-	MALFORMED_REQUEST ErrCode = 13
-	MALFORMED_RESPONSE ErrCode = 14
-	NOT_AUTHORISED ErrCode = 15
-	UNRECOGNIZED_REQUEST ErrCode = 16
-	FILE_NOT_FOUND ErrCode = 17
-	DIRECTORY_NOT_FOUND ErrCode = 18
-	NAME_NOT_FOUND ErrCode = 19
-	TYPE_IS_DIRECTORY ErrCode = 20
-	TYPE_IS_NOT_DIRECTORY ErrCode = 21
-	BAD_COOKIE ErrCode = 22
-	INCONSISTENT_STORAGE_CLASS_PARITY ErrCode = 23
-	LAST_SPAN_STATE_NOT_CLEAN ErrCode = 24
-	COULD_NOT_PICK_BLOCK_SERVERS ErrCode = 25
-	BAD_SPAN_BODY ErrCode = 26
-	SPAN_NOT_FOUND ErrCode = 27
-	BLOCK_SERVER_NOT_FOUND ErrCode = 28
-	CANNOT_CERTIFY_BLOCKLESS_SPAN ErrCode = 29
-	BAD_NUMBER_OF_BLOCKS_PROOFS ErrCode = 30
-	BAD_BLOCK_PROOF ErrCode = 31
-	CANNOT_OVERRIDE_NAME ErrCode = 32
-	NAME_IS_LOCKED ErrCode = 33
-	OLD_NAME_IS_LOCKED ErrCode = 34
-	NEW_NAME_IS_LOCKED ErrCode = 35
-	MORE_RECENT_SNAPSHOT_ALREADY_EXISTS ErrCode = 36
-	MISMATCHING_TARGET ErrCode = 37
-	MISMATCHING_OWNER ErrCode = 38
-	DIRECTORY_NOT_EMPTY ErrCode = 39
-	FILE_IS_TRANSIENT ErrCode = 40
-	OLD_DIRECTORY_NOT_FOUND ErrCode = 41
-	NEW_DIRECTORY_NOT_FOUND ErrCode = 42
-	LOOP_IN_DIRECTORY_RENAME ErrCode = 43
-	EDGE_NOT_FOUND ErrCode = 44
+	INTERNAL_ERROR                                   ErrCode = 10
+	FATAL_ERROR                                      ErrCode = 11
+	TIMEOUT                                          ErrCode = 12
+	MALFORMED_REQUEST                                ErrCode = 13
+	MALFORMED_RESPONSE                               ErrCode = 14
+	NOT_AUTHORISED                                   ErrCode = 15
+	UNRECOGNIZED_REQUEST                             ErrCode = 16
+	FILE_NOT_FOUND                                   ErrCode = 17
+	DIRECTORY_NOT_FOUND                              ErrCode = 18
+	NAME_NOT_FOUND                                   ErrCode = 19
+	TYPE_IS_DIRECTORY                                ErrCode = 20
+	TYPE_IS_NOT_DIRECTORY                            ErrCode = 21
+	BAD_COOKIE                                       ErrCode = 22
+	INCONSISTENT_STORAGE_CLASS_PARITY                ErrCode = 23
+	LAST_SPAN_STATE_NOT_CLEAN                        ErrCode = 24
+	COULD_NOT_PICK_BLOCK_SERVERS                     ErrCode = 25
+	BAD_SPAN_BODY                                    ErrCode = 26
+	SPAN_NOT_FOUND                                   ErrCode = 27
+	BLOCK_SERVER_NOT_FOUND                           ErrCode = 28
+	CANNOT_CERTIFY_BLOCKLESS_SPAN                    ErrCode = 29
+	BAD_NUMBER_OF_BLOCKS_PROOFS                      ErrCode = 30
+	BAD_BLOCK_PROOF                                  ErrCode = 31
+	CANNOT_OVERRIDE_NAME                             ErrCode = 32
+	NAME_IS_LOCKED                                   ErrCode = 33
+	OLD_NAME_IS_LOCKED                               ErrCode = 34
+	NEW_NAME_IS_LOCKED                               ErrCode = 35
+	MORE_RECENT_SNAPSHOT_ALREADY_EXISTS              ErrCode = 36
+	MISMATCHING_TARGET                               ErrCode = 37
+	MISMATCHING_OWNER                                ErrCode = 38
+	DIRECTORY_NOT_EMPTY                              ErrCode = 39
+	FILE_IS_TRANSIENT                                ErrCode = 40
+	OLD_DIRECTORY_NOT_FOUND                          ErrCode = 41
+	NEW_DIRECTORY_NOT_FOUND                          ErrCode = 42
+	LOOP_IN_DIRECTORY_RENAME                         ErrCode = 43
+	EDGE_NOT_FOUND                                   ErrCode = 44
 	CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY ErrCode = 45
 )
 
@@ -157,6 +159,8 @@ func shardMessageKind(body any) ShardMessageKind {
 		return FULL_READ_DIR
 	case *RemoveNonOwnedEdgeReq, *RemoveNonOwnedEdgeResp:
 		return REMOVE_NON_OWNED_EDGE
+	case *RemoveOwnedSnapshotFileEdgeReq, *RemoveOwnedSnapshotFileEdgeResp:
+		return REMOVE_OWNED_SNAPSHOT_FILE_EDGE
 	case *CreateDirectoryINodeReq, *CreateDirectoryINodeResp:
 		return CREATE_DIRECTORY_INODE
 	case *SetDirectoryOwnerReq, *SetDirectoryOwnerResp:
@@ -172,28 +176,28 @@ func shardMessageKind(body any) ShardMessageKind {
 	}
 }
 
-
 const (
-	LOOKUP ShardMessageKind = 0x1
-	STAT ShardMessageKind = 0x2
-	READ_DIR ShardMessageKind = 0x3
-	CONSTRUCT_FILE ShardMessageKind = 0x4
-	ADD_SPAN_INITIATE ShardMessageKind = 0x5
-	ADD_SPAN_CERTIFY ShardMessageKind = 0x6
-	LINK_FILE ShardMessageKind = 0x7
-	SOFT_UNLINK_FILE ShardMessageKind = 0xC
-	FILE_SPANS ShardMessageKind = 0xD
-	SAME_DIRECTORY_RENAME ShardMessageKind = 0xE
-	VISIT_DIRECTORIES ShardMessageKind = 0x15
-	VISIT_FILES ShardMessageKind = 0x20
-	VISIT_TRANSIENT_FILES ShardMessageKind = 0x16
-	FULL_READ_DIR ShardMessageKind = 0x21
-	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x17
-	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
-	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
-	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
-	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
-	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
+	LOOKUP                          ShardMessageKind = 0x1
+	STAT                            ShardMessageKind = 0x2
+	READ_DIR                        ShardMessageKind = 0x3
+	CONSTRUCT_FILE                  ShardMessageKind = 0x4
+	ADD_SPAN_INITIATE               ShardMessageKind = 0x5
+	ADD_SPAN_CERTIFY                ShardMessageKind = 0x6
+	LINK_FILE                       ShardMessageKind = 0x7
+	SOFT_UNLINK_FILE                ShardMessageKind = 0xC
+	FILE_SPANS                      ShardMessageKind = 0xD
+	SAME_DIRECTORY_RENAME           ShardMessageKind = 0xE
+	VISIT_DIRECTORIES               ShardMessageKind = 0x15
+	VISIT_FILES                     ShardMessageKind = 0x20
+	VISIT_TRANSIENT_FILES           ShardMessageKind = 0x16
+	FULL_READ_DIR                   ShardMessageKind = 0x21
+	REMOVE_NON_OWNED_EDGE           ShardMessageKind = 0x17
+	REMOVE_OWNED_SNAPSHOT_FILE_EDGE ShardMessageKind = 0x18
+	CREATE_DIRECTORY_INODE          ShardMessageKind = 0x80
+	SET_DIRECTORY_OWNER             ShardMessageKind = 0x81
+	CREATE_LOCKED_CURRENT_EDGE      ShardMessageKind = 0x82
+	LOCK_CURRENT_EDGE               ShardMessageKind = 0x83
+	UNLOCK_CURRENT_EDGE             ShardMessageKind = 0x84
 )
 
 func cdcMessageKind(body any) CDCMessageKind {
@@ -213,10 +217,9 @@ func cdcMessageKind(body any) CDCMessageKind {
 	}
 }
 
-
 const (
-	MAKE_DIRECTORY CDCMessageKind = 0x1
-	RENAME_FILE CDCMessageKind = 0x2
+	MAKE_DIRECTORY   CDCMessageKind = 0x1
+	RENAME_FILE      CDCMessageKind = 0x2
 	REMOVE_DIRECTORY CDCMessageKind = 0x3
 	RENAME_DIRECTORY CDCMessageKind = 0x4
 )
@@ -758,12 +761,16 @@ func (v *FullReadDirResp) Unpack(buf *bincode.Buf) error {
 
 func (v *RemoveNonOwnedEdgeReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.DirId))
+	buf.PackU64(uint64(v.TargetId))
 	buf.PackBytes([]byte(v.Name))
 	buf.PackU64(uint64(v.CreationTime))
 }
 
 func (v *RemoveNonOwnedEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
 	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
@@ -779,6 +786,36 @@ func (v *RemoveNonOwnedEdgeResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *RemoveNonOwnedEdgeResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *RemoveOwnedSnapshotFileEdgeReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.DirId))
+	buf.PackU64(uint64(v.TargetId))
+	buf.PackBytes([]byte(v.Name))
+	buf.PackU64(uint64(v.CreationTime))
+}
+
+func (v *RemoveOwnedSnapshotFileEdgeReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveOwnedSnapshotFileEdgeResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RemoveOwnedSnapshotFileEdgeResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
@@ -1109,6 +1146,29 @@ func (v *Edge) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
+func (v *EdgeWithOwnership) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.TargetId))
+	buf.PackU64(uint64(v.NameHash))
+	buf.PackBytes([]byte(v.Name))
+	buf.PackU64(uint64(v.CreationTime))
+}
+
+func (v *EdgeWithOwnership) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.NameHash)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *FetchedSpan) Pack(buf *bincode.Buf) {
 	buf.PackVarU61(uint64(v.ByteOffset))
 	buf.PackU8(uint8(v.Parity))
@@ -1192,4 +1252,3 @@ func (v *NewBlockInfo) Unpack(buf *bincode.Buf) error {
 	}
 	return nil
 }
-

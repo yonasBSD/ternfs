@@ -946,12 +946,26 @@ class CDCTests(unittest.TestCase):
         transient_file_1 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
         self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
         file_1 = cast(LookupResp, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
-        self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
+        self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
         transient_file_2 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
         self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_2.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'))
-        cast(LookupReq, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
-        # Now we can remove the oldest edge
-        self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time))
+        file_2 = cast(LookupResp, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
+        # we still cannot remove the old edge because it is owned
+        self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
+        # however we can remove it if we mean it
+        self.cdc.shards[0].execute_ok(RemoveOwnedSnapshotFileEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time))
+        # if we move the second file, we can remove it using RemoveNonOwnedEdgeReq
+        self.cdc.shards[0].execute_ok(SameDirectoryRenameReq(transient_file_2.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))
+        dir_edges = cast(FullReadDirResp, self.cdc.shards[0].execute_ok(FullReadDirReq(ROOT_DIR_INODE_ID, 0, b'', 0)))
+        assert dir_edges.finished
+        assert len(dir_edges.results) == 3
+        file_create, file_delete, newfile_create = tuple(sorted(dir_edges.results, key=lambda e: e.creation_time))
+        assert file_create.target_id == file_2.target_id
+        assert file_delete.target_id == NULL_INODE_ID
+        assert inode_id_extra(newfile_create.target_id)
+        assert inode_id_strip_extra(newfile_create.target_id) == file_2.target_id
+        self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, transient_file_2.id,  b'file', file_create.creation_time))
+        self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, NULL_INODE_ID,  b'file', file_delete.creation_time))
         # TODO finish adding/removing blocks etc.
     
     def test_snapshot_directory(self):

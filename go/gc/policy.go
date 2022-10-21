@@ -25,7 +25,7 @@ type policy struct {
 // * Every delete edge is preceded by a non-delete
 //
 // If it returns N, edges[:N] will be well formed too.
-func (policy *policy) edgesToRemove(now msgs.EggsTime, edges []msgs.Edge) int {
+func (policy *policy) edgesToRemove(now msgs.EggsTime, edges []msgs.EdgeWithOwnership) int {
 	hasPolicy := false
 	// Index into `edges`
 	lastEdgeToKeep := len(edges) - 1
@@ -69,6 +69,12 @@ func (policy *policy) edgesToRemove(now msgs.EggsTime, edges []msgs.Edge) int {
 	// if the last edge is a delete, remove that too (we can't keep a delete hanging)
 	if edges[lastEdgeToKeep].TargetId.Id() == msgs.NULL_INODE_ID {
 		lastEdgeToKeep++
+	} else {
+		// If the latest edge was _not_ a delete, we must not delete it, since it's
+		// the current edge
+		if lastEdgeToKeep == len(edges)-1 {
+			panic(fmt.Errorf("policy is unexpectedly removing the current edge!"))
+		}
 	}
 	if !hasPolicy {
 		panic(fmt.Errorf("no policy in %+v", policy))

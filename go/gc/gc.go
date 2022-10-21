@@ -100,19 +100,63 @@ type collectStats struct {
 	collectedEdges     uint64
 }
 
-func (gc *gc) applyPolicy(stats *collectStats, edges []msgs.Edge) error {
+func (gc *gc) applyPolicy(stats *collectStats, edges []msgs.EdgeWithOwnership, dirId msgs.InodeId) error {
 	stats.visitedEdges = stats.visitedEdges + uint64(len(edges))
 	now := msgs.Now()
 	toCollect := gc.policy.edgesToRemove(now, edges)
-	stats.collectedEdges += uint64(toCollect)
+	for _, edge := range edges[:toCollect] {
+		var err error
+		if edge.TargetId.Owned() {
+			if edge.TargetId.Id().Shard() == dirId.Shard() {
+				// same shard, we can delete directly. We also know that this is not a directory (it's an
+				// owned, but snapshot edge)
+				req := msgs.RemoveOwnedSnapshotFileEdgeReq{
+					DirId:        dirId,
+					Name:         edge.Name,
+					CreationTime: edge.CreationTime,
+				}
+				resp := msgs.RemoveOwnedSnapshotFileEdgeResp{}
+				err = request.ShardRequestSocket(gc, gc.socket, gc.buffer, gc.shardTimeout, &req, &resp)
+			} else {
+				// different shard, we need to go through the CDC
+				panic("cross-shard edge removal")
+			}
+		} else {
+			// non-owned edge, we can just kill it without worrying about much.
+			req := msgs.RemoveNonOwnedEdgeReq{
+				DirId:        dirId,
+				Name:         edge.Name,
+				CreationTime: edge.CreationTime,
+			}
+			resp := msgs.RemoveDirectoryResp{}
+			err = request.ShardRequestSocket(gc, gc.socket, gc.buffer, gc.shardTimeout, &req, &resp)
+		}
+		if err != nil {
+			switch code := err.(type) {
+			case msgs.ErrCode:
+				if code == msgs.EDGE_NOT_FOUND {
+					// this can happen if somebody got here before us
+					gc.log(fmt.Sprintf("could not find edge %+v while GC'ing (err %v), will continue for this directory (dir %v)", edge, code, dirId))
+					stats.collectedEdges++
+					continue // do not return error later
+				} else if code == msgs.DIRECTORY_NOT_FOUND {
+					// this can happen if somebody got here before us
+					gc.log(fmt.Sprintf("could not find directory %v when removing edge %+v, will stop removing edges in this directory.", dirId, edge))
+					return nil
+				}
+			}
+			return fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
+		}
+		stats.collectedEdges++
+	}
 	return nil
 }
 
-func (gc *gc) collectInDirectory(stats *collectStats, id msgs.InodeId) error {
+func (gc *gc) collectInDirectory(stats *collectStats, dirId msgs.InodeId) error {
 	stats.visitedDirectories++
-	edges := make([]msgs.Edge, 0)
+	edges := make([]msgs.EdgeWithOwnership, 0)
 	req := msgs.FullReadDirReq{
-		DirId: id,
+		DirId: dirId,
 	}
 	resp := msgs.FullReadDirResp{}
 	for {
@@ -122,13 +166,13 @@ func (gc *gc) collectInDirectory(stats *collectStats, id msgs.InodeId) error {
 		}
 		for _, result := range resp.Results {
 			if len(edges) > 0 && (edges[0].NameHash != result.NameHash || !bytes.Equal(edges[0].Name, result.Name)) {
-				gc.applyPolicy(stats, edges)
+				gc.applyPolicy(stats, edges, dirId)
 				edges = edges[:0]
 			}
 			edges = append(edges, result)
 		}
 		if resp.Finished {
-			gc.applyPolicy(stats, edges)
+			gc.applyPolicy(stats, edges, dirId)
 			break
 		}
 		lastResult := &resp.Results[len(resp.Results)-1]
@@ -201,17 +245,25 @@ func (gc *gc) run(panicChan chan error, body func(gc *gc)) {
 func main() {
 	logger := log.New(os.Stderr, "", log.Lshortfile)
 	panicChan := make(chan error, 1)
+	policy := policy{
+		keepWithin: time.Minute,
+		keepLast:   30,
+	}
 	for shid := 0; shid < 256; shid++ {
 		destructor := gc{
-			role:   "destructor",
-			shid:   msgs.ShardId(shid),
-			logger: logger,
+			role:         "destructor",
+			shid:         msgs.ShardId(shid),
+			logger:       logger,
+			policy:       policy,
+			shardTimeout: 10 * time.Second,
 		}
 		go destructor.run(panicChan, (*gc).destruct)
 		collector := gc{
-			role:   "collector",
-			shid:   msgs.ShardId(shid),
-			logger: logger,
+			role:         "collector",
+			shid:         msgs.ShardId(shid),
+			logger:       logger,
+			policy:       policy,
+			shardTimeout: 10 * time.Second,
 		}
 		go collector.run(panicChan, (*gc).collect)
 	}

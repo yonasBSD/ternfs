@@ -752,6 +752,11 @@ func main() {
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeReq{}),
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeResp{}),
 		},
+		{
+			0x18,
+			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeReq{}),
+			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeResp{}),
+		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		// Creates a directory with a given parent and given inode id. Unsafe because
 		// we can create directories with a certain parent while the paren't isn't
@@ -821,6 +826,7 @@ func main() {
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.FetchedBlock{}),
 		reflect.TypeOf(msgs.Edge{}),
+		reflect.TypeOf(msgs.EdgeWithOwnership{}),
 		reflect.TypeOf(msgs.FetchedSpan{}),
 		reflect.TypeOf(msgs.BlockInfo{}),
 		reflect.TypeOf(msgs.NewBlockInfo{}),

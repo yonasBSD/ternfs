@@ -72,7 +72,10 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     },
     ShardMessageKind.REMOVE_NON_OWNED_EDGE: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
-    }
+    },
+    ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE: {
+        ErrCode.TYPE_IS_DIRECTORY, ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
+    },
 }
 
 def kind_is_privileged(k: ShardMessageKind) -> bool:
@@ -157,6 +160,7 @@ class ShardResponse(bincode.Packable):
         assert ver == SHARD_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         resp_kind = bincode.unpack_u8(u)
+        body: Union[EggsError, ShardResponseBody]
         if resp_kind == EggsError.KIND:
             body = EggsError.unpack(u)
         else:

@@ -295,6 +295,13 @@ type FullReadDirReq struct {
 }
 
 type Edge struct {
+	TargetId     InodeId
+	NameHash     uint64
+	Name         []byte
+	CreationTime EggsTime
+}
+
+type EdgeWithOwnership struct {
 	TargetId     OwnedInodeId
 	NameHash     uint64
 	Name         []byte
@@ -303,7 +310,7 @@ type Edge struct {
 
 type FullReadDirResp struct {
 	Finished bool
-	Results  []Edge
+	Results  []EdgeWithOwnership
 }
 
 type CreateDirectoryINodeReq struct {
@@ -363,11 +370,21 @@ type RemoveEdgesResp struct{}
 
 type RemoveNonOwnedEdgeReq struct {
 	DirId        InodeId
+	TargetId     InodeId
 	Name         []byte
 	CreationTime EggsTime
 }
 
 type RemoveNonOwnedEdgeResp struct{}
+
+type RemoveOwnedSnapshotFileEdgeReq struct {
+	DirId        InodeId
+	TargetId     InodeId
+	Name         []byte
+	CreationTime EggsTime
+}
+
+type RemoveOwnedSnapshotFileEdgeResp struct{}
 
 type MakeDirectoryReq struct {
 	OwnerId InodeId

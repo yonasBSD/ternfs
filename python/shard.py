@@ -475,6 +475,9 @@ def create_current_edge_internal(
     dir = get_directory(cur, req.dir_id, ErrCode.DIRECTORY_NOT_FOUND)
     if isinstance(dir, EggsError):
         return dir
+    # Cannot create a current edge in a deleted (but still present in snapshot) directory.
+    if not req.dir_id == ROOT_DIR_INODE_ID and dir['owner_id'] == NULL_INODE_ID:
+        return EggsError(ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
     name_hash = hash_name(dir['hash_mode'], req.name)
     existing_current_edges = cur.execute(
         # This fetches the current edge (which we know to be the most recent one), and
@@ -1779,7 +1782,6 @@ class ShardTests(unittest.TestCase):
         transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
         self.shard.execute_err(LinkFileReq(transient_file_1.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'), ErrCode.BAD_COOKIE)
 
-
 SHUCKLE_POLL_PERIOD_SEC = 60
 
 def shuckle_json_to_block_server(json_obj: Dict[str, Any]) -> BlockServerInfo:
@@ -1839,7 +1841,7 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 next_timeout = max(0.0, (last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC) - time.time())
                 sock.settimeout(next_timeout)
                 data, addr = sock.recvfrom(UDP_MTU)
-                resp_body: Optional[ShardResponseBody] = None
+                resp_body: Optional[Union[ShardResponseBody, EggsError]] = None
                 unpacked_req = UnpackedShardRequest.unpack(data, cdc_key.CDC_KEY)
                 if isinstance(unpacked_req.request, EggsError):
                     resp_body = unpacked_req.request

@@ -43,6 +43,7 @@ class ErrCode(enum.IntEnum):
     NEW_DIRECTORY_NOT_FOUND = 42
     LOOP_IN_DIRECTORY_RENAME = 43
     EDGE_NOT_FOUND = 44
+    CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY = 45
 
 class ShardMessageKind(enum.IntEnum):
     LOOKUP = 0x1

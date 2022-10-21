@@ -41,6 +41,7 @@ const (
 	NEW_DIRECTORY_NOT_FOUND ErrCode = 42
 	LOOP_IN_DIRECTORY_RENAME ErrCode = 43
 	EDGE_NOT_FOUND ErrCode = 44
+	CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY ErrCode = 45
 )
 
 func (err ErrCode) String() string {
@@ -115,6 +116,8 @@ func (err ErrCode) String() string {
 		return "LOOP_IN_DIRECTORY_RENAME"
 	case 44:
 		return "EDGE_NOT_FOUND"
+	case 45:
+		return "CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}

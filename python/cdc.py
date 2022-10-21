@@ -949,11 +949,18 @@ class CDCTests(unittest.TestCase):
         self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
         transient_file_2 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
         self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_2.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'))
-        file_2 = cast(LookupReq, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
+        cast(LookupReq, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
         # Now we can remove the oldest edge
         self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, b'file', file_1.creation_time))
-
-
+        # TODO finish adding/removing blocks etc.
+    
+    def test_snapshot_directory(self):
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
+        self.cdc.execute_ok(RemoveDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
+        # can't create files or directories in the deleted directory
+        self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
+        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
 
 def run_forever(db: sqlite3.Connection):
     api_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)

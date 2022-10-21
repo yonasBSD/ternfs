@@ -12,7 +12,7 @@ const UDP_MTU = 1472
 
 type InodeType uint8
 type InodeId uint64
-type OwnedInodeId uint64
+type OwnedInodeId uint64 // 64th bit is used to mark whether the inode is owned.
 type ShardId uint8
 type Parity uint8
 type StorageClass uint8

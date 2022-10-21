@@ -426,6 +426,7 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 			len := fixedBytesLen(expr)
 			if len < 0 {
 				cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "1", true) // u8 len
+				cg.sadd(fmt.Sprintf("%s contents", expr.expr), fmt.Sprintf("len(self.%s)", expr.expr))
 				cg.pline(fmt.Sprintf("bincode.pack_bytes_into(self.%s, b)", expr.expr))
 				cg.uline(fmt.Sprintf("%s = bincode.unpack_bytes(u)", expr.expr))
 			} else {

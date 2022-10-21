@@ -46,9 +46,9 @@ def init_db(db: sqlite3.Connection):
     # What transactions we're currently or want to execute
     cur.execute('''
         create table if not exists transactions (
-            -- The ix specifies in which order we run the transactions
-            ix integer primary key autoincrement,
-            id integer not null, -- what was in the request
+            -- The id also specifies in which order we run the transactions
+            id integer primary key autoincrement,
+            request_id integer not null, -- what was in the request
             kind integer not null,
             body blob not null,
             done bool not null,
@@ -73,9 +73,8 @@ def init_db(db: sqlite3.Connection):
             check (not (started and next_step != 'begin') or (shard_request_id is not null and shard_request_shard is not null and shard_request_kind is not null and shard_request_body is not null))
         )
     ''')
-    cur.execute('create unique index if not exists transactions_by_id on transactions (id)')
     # We very often look for the first non-done request (that's the one we're doing)
-    cur.execute('create index if not exists transactions_by_completion on transactions (done, started, ix)')
+    cur.execute('create index if not exists transactions_by_completion on transactions (done, started, id)')
     db.commit()
     pass
 
@@ -522,14 +521,14 @@ def begin_next_transaction(cur: sqlite3.Cursor) -> bool:
         '''
             select * from transactions
                 where not done
-                order by ix asc, started desc -- started first, since true = 1
+                order by id asc, started desc -- started first, since true = 1
         '''
     ).fetchone()
     if candidate is None or candidate['started']:
         return False # nothing to start, we're already running something
     cur.execute(
-        "update transactions set started = TRUE, next_step = 'begin', state = :state, last_update_time = :now where ix = :ix",
-        {'ix': candidate['ix'], 'state': json.dumps(TRANSACTIONS[candidate['kind']]().state), 'now': eggs_time()}
+        "update transactions set started = TRUE, next_step = 'begin', state = :state, last_update_time = :now where id = :id",
+        {'id': candidate['id'], 'state': json.dumps(TRANSACTIONS[candidate['kind']]().state), 'now': eggs_time()}
     )
     return True
 
@@ -537,7 +536,7 @@ def begin_next_transaction(cur: sqlite3.Cursor) -> bool:
 def enqueue_transaction(cur: sqlite3.Cursor, req: CDCRequest) -> Optional[CDCStep]:
     sql_insert(
         cur, 'transactions',
-        id=req.request_id,
+        request_id=req.request_id,
         kind=req.body.KIND,
         body=bincode.pack(req.body),
         done=False,
@@ -613,17 +612,17 @@ def get_current_transaction(cur: sqlite3.Cursor) -> Optional[Dict[str, Any]]:
     else:
         return started_transactions[0]
 
-def mark_transaction_as_done(cur, *, ix: int, now: int, resp: Union[EggsError, CDCResponseBody]):
+def mark_transaction_as_done(cur, *, id: int, now: int, resp: Union[EggsError, CDCResponseBody]):
     cur.execute(
         '''
             update transactions
                 set
                     started = FALSE, done = TRUE, response_kind = :kind, response_body = :body,
                     next_step = NULL, state = NULL, shard_request_id = NULL, shard_request_shard = NULL, shard_request_kind = NULL, shard_request_body = NULL
-                where ix = :ix
+                where id = :id
         ''',
         {
-            'ix': ix,
+            'id': id,
             'now': now,
             'kind': resp.KIND,
             'body': bincode.pack(resp),
@@ -640,11 +639,11 @@ def abort_current_transaction(cur: sqlite3.Cursor) -> Optional[CDCResponse]:
         logging.info('No transaction was running -- nothing was aborted')
         return None
     mark_transaction_as_done(
-        cur, ix=current_tx['ix'], now=eggs_time(),
+        cur, id=current_tx['id'], now=eggs_time(),
         resp=EggsError(ErrCode.INTERNAL_ERROR),
     )
     print(f'Current transaction of type {current_tx["kind"]} was aborted')
-    return CDCResponse(request_id=current_tx['id'], body=EggsError(ErrCode.INTERNAL_ERROR))
+    return CDCResponse(request_id=current_tx['request_id'], body=EggsError(ErrCode.INTERNAL_ERROR))
 
 def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]:
     current_tx = get_current_transaction(cur)
@@ -665,10 +664,10 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
             '''
                 update transactions
                     set last_update_time = :now, next_step = :next_step, state = :state, shard_request_id = :req_id, shard_request_shard = :shard, shard_request_kind = :kind, shard_request_body = :body
-                    where ix = :ix
+                    where id = :id
             ''',
             {
-                'ix': current_tx['ix'],
+                'id': current_tx['id'],
                 'next_step': resp_internal.next_step,
                 'state': json.dumps(transaction.state),
                 'now': now,
@@ -680,8 +679,8 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
         )
         resp = CDCShardRequest(shard=resp_internal.shard, request=ShardRequest(request_id=req_id, body=resp_internal.request))
     else:
-        mark_transaction_as_done(cur, ix=current_tx['ix'], now=now, resp=resp_internal)
-        resp = CDCResponse(request_id=current_tx['id'], body=resp_internal)
+        mark_transaction_as_done(cur, id=current_tx['id'], now=now, resp=resp_internal)
+        resp = CDCResponse(request_id=current_tx['request_id'], body=resp_internal)
     return resp
 
 def open_db(db_dir: str) -> sqlite3.Connection:

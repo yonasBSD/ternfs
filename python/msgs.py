@@ -164,7 +164,7 @@ class Edge(bincode.Packable):
         _size += 8 # target_id
         _size += 8 # name_hash
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # creation_time
         return _size
 
@@ -196,7 +196,7 @@ class EdgeWithOwnership(bincode.Packable):
         _size += 8 # target_id
         _size += 8 # name_hash
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # creation_time
         return _size
 
@@ -244,7 +244,7 @@ class FetchedSpan(bincode.Packable):
         _size += 4 # crc32
         _size += bincode.v61_packed_size(self.size) # size
         _size += 1 # len(body_bytes)
-        _size += len(self.body_bytes) # body_bytes bytes
+        _size += len(self.body_bytes) # body_bytes contents
         _size += 2 # len(body_blocks)
         for i in range(len(self.body_blocks)):
             _size += self.body_blocks[i].calc_packed_size() # body_blocks[i]
@@ -326,7 +326,7 @@ class LookupReq(bincode.Packable):
         _size = 0
         _size += 8 # dir_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -399,7 +399,7 @@ class StatResp(bincode.Packable):
         _size += 8 # mtime
         _size += 8 # size_or_owner
         _size += 1 # len(opaque)
-        _size += len(self.opaque) # opaque bytes
+        _size += len(self.opaque) # opaque contents
         return _size
 
 @dataclass
@@ -557,7 +557,7 @@ class AddSpanInitiateReq(bincode.Packable):
         _size += 4 # crc32
         _size += bincode.v61_packed_size(self.size) # size
         _size += 1 # len(body_bytes)
-        _size += len(self.body_bytes) # body_bytes bytes
+        _size += len(self.body_bytes) # body_bytes contents
         _size += 2 # len(body_blocks)
         for i in range(len(self.body_blocks)):
             _size += self.body_blocks[i].calc_packed_size() # body_blocks[i]
@@ -673,7 +673,7 @@ class LinkFileReq(bincode.Packable):
         _size += 8 # cookie
         _size += 8 # owner_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -718,7 +718,7 @@ class SoftUnlinkFileReq(bincode.Packable):
         _size += 8 # owner_id
         _size += 8 # file_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -820,9 +820,9 @@ class SameDirectoryRenameReq(bincode.Packable):
         _size += 8 # target_id
         _size += 8 # dir_id
         _size += 1 # len(old_name)
-        _size += len(self.old_name) # old_name bytes
+        _size += len(self.old_name) # old_name contents
         _size += 1 # len(new_name)
-        _size += len(self.new_name) # new_name bytes
+        _size += len(self.new_name) # new_name contents
         return _size
 
 @dataclass
@@ -1020,7 +1020,7 @@ class FullReadDirReq(bincode.Packable):
         _size += 8 # dir_id
         _size += 8 # start_hash
         _size += 1 # len(start_name)
-        _size += len(self.start_name) # start_name bytes
+        _size += len(self.start_name) # start_name contents
         _size += 8 # start_time
         return _size
 
@@ -1083,7 +1083,7 @@ class RemoveNonOwnedEdgeReq(bincode.Packable):
         _size += 8 # dir_id
         _size += 8 # target_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # creation_time
         return _size
 
@@ -1132,7 +1132,7 @@ class RemoveOwnedSnapshotFileEdgeReq(bincode.Packable):
         _size += 8 # dir_id
         _size += 8 # target_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # creation_time
         return _size
 
@@ -1178,7 +1178,7 @@ class CreateDirectoryINodeReq(bincode.Packable):
         _size += 8 # id
         _size += 8 # owner_id
         _size += 1 # len(opaque)
-        _size += len(self.opaque) # opaque bytes
+        _size += len(self.opaque) # opaque contents
         return _size
 
 @dataclass
@@ -1269,7 +1269,7 @@ class CreateLockedCurrentEdgeReq(bincode.Packable):
         _size = 0
         _size += 8 # dir_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # target_id
         _size += 8 # creation_time
         return _size
@@ -1315,7 +1315,7 @@ class LockCurrentEdgeReq(bincode.Packable):
         _size = 0
         _size += 8 # dir_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # target_id
         return _size
 
@@ -1363,7 +1363,7 @@ class UnlockCurrentEdgeReq(bincode.Packable):
         _size = 0
         _size += 8 # dir_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         _size += 8 # target_id
         _size += 1 # was_moved
         return _size
@@ -1406,7 +1406,7 @@ class MakeDirectoryReq(bincode.Packable):
         _size = 0
         _size += 8 # owner_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -1461,10 +1461,10 @@ class RenameFileReq(bincode.Packable):
         _size += 8 # target_id
         _size += 8 # old_owner_id
         _size += 1 # len(old_name)
-        _size += len(self.old_name) # old_name bytes
+        _size += len(self.old_name) # old_name contents
         _size += 8 # new_owner_id
         _size += 1 # len(new_name)
-        _size += len(self.new_name) # new_name bytes
+        _size += len(self.new_name) # new_name contents
         return _size
 
 @dataclass
@@ -1509,7 +1509,7 @@ class RemoveDirectoryReq(bincode.Packable):
         _size += 8 # owner_id
         _size += 8 # target_id
         _size += 1 # len(name)
-        _size += len(self.name) # name bytes
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -1560,10 +1560,10 @@ class RenameDirectoryReq(bincode.Packable):
         _size += 8 # target_id
         _size += 8 # old_owner_id
         _size += 1 # len(old_name)
-        _size += len(self.old_name) # old_name bytes
+        _size += len(self.old_name) # old_name contents
         _size += 8 # new_owner_id
         _size += 1 # len(new_name)
-        _size += len(self.new_name) # new_name bytes
+        _size += len(self.new_name) # new_name contents
         return _size
 
 @dataclass

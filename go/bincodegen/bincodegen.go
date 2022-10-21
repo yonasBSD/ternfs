@@ -282,8 +282,8 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 	generateGoErrorCodes(out, errors)
 
-	generateGoMsgKind(out, "ShardMessageKind", "shardMessageKind", shardReqResps)
-	generateGoMsgKind(out, "CDCMessageKind", "cdcMessageKind", cdcReqResps)
+	generateGoMsgKind(out, "ShardMessageKind", "GetShardMessageKind", shardReqResps)
+	generateGoMsgKind(out, "CDCMessageKind", "GetCDCMessageKind", cdcReqResps)
 
 	for _, reqResp := range shardReqResps {
 		generateGoSingle(out, reqResp.req)

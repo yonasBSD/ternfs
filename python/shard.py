@@ -1182,6 +1182,11 @@ def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapsho
     )
     if cur.rowcount == 0:
         return EggsError(ErrCode.EDGE_NOT_FOUND)
+    # make file transient
+    cur.execute(
+        'update files set transient = TRUE, deadline = 0, last_span_state = :span_state where id = :file_id',
+        {'file_id': req.target_id, 'span_state': SpanState.CLEAN},
+    )
     return RemoveOwnedSnapshotFileEdgeResp()
     
 # read only
@@ -1356,6 +1361,7 @@ class TestDriver:
         for i in range(repeats):
             resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
             assert not isinstance(resp.body, EggsError), f'Got error at round {i}: {resp}'
+            break
         return resp.body
 
     def execute_err(self, req: ShardRequestBody, kind: Union[ErrCode, None] = None):

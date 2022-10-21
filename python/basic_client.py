@@ -22,6 +22,7 @@ import crypto
 from cdc_msgs import *
 from shard_msgs import *
 from common import *
+from error import *
 
 @dataclass
 class CommandArg:
@@ -65,15 +66,13 @@ def raw_command(cmd_name):
 
 LOCAL_HOST = '127.0.0.1'
 
-def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> ShardResponseBody:
-    assert (key is not None) == req_body.kind.is_privileged()
+def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> Union[EggsError, ShardResponseBody]:
+    assert (key is not None) == kind_is_privileged(req_body.KIND)
     port = shard_to_port(shard)
     request_id = eggs_time()
     target = (LOCAL_HOST, port)
     req = ShardRequest(request_id=request_id, body=req_body)
-    packed_req = bincode.pack(req)
-    if key is not None:
-        packed_req = crypto.add_mac(packed_req, key)
+    packed_req = req.pack(key)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         sock.bind(('', 0))
         sock.sendto(packed_req, target)
@@ -94,7 +93,7 @@ def send_shard_request_or_raise(shard: int, req_body: ShardRequestBody, key: Opt
         raise resp
     return resp
 
-def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> CDCResponseBody:
+def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, CDCResponseBody]:
     request_id = eggs_time()
     target = (LOCAL_HOST, CDC_PORT)
     req = CDCRequest(request_id=request_id, body=req_body)
@@ -162,7 +161,7 @@ def lookup(path: Path) -> int:
     return inode
 
 def mkdir_raw(owner_id: int, name: str) -> None:
-    send_cdc_request_or_raise(MakeDirReq(owner_id=owner_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii')))
 
 @human_command('mkdir')
 def mkdir(path: Path) -> None:
@@ -223,13 +222,13 @@ def mv(a: Path, b: Path) -> None:
 
 @raw_command('readdir_single')
 def readdir_single(id: int, start_hash: int):
-    print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, start_hash)))
+    print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReqNow(id, start_hash)))
 
 @raw_command('readdir')
 def readdir(id: int):
     continuation_key = 0
     while True:
-        resp = send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, continuation_key))
+        resp = send_shard_request_or_raise(inode_id_shard(id), ReadDirReqNow(id, continuation_key))
         assert isinstance(resp, ReadDirResp)
         for result in resp.results:
             s = result.name.decode("ascii") + ("/" if inode_id_type(result.target_id) == InodeType.DIRECTORY else "")
@@ -302,7 +301,8 @@ def create_file(name: Path, blob: bytes):
                 parity=PARITY,
                 crc32=crc32,
                 size=size,
-                body=[NewBlockInfo(crc32, size)]
+                body_blocks=[NewBlockInfo(crc32, size)],
+                body_bytes=b'',
             )
         )
         assert isinstance(span, AddSpanInitiateResp)
@@ -339,9 +339,9 @@ def cat(name: Path):
         for span in resp.spans:
             assert span.parity == PARITY
             assert span.storage_class == STORAGE_CLASS
-            assert isinstance(span.body, list)
-            assert len(span.body) == 1
-            sys.stdout.buffer.write(read_block(span.body[0]))
+            assert len(span.body_blocks) == 1
+            assert len(span.body_bytes) == 0
+            sys.stdout.buffer.write(read_block(span.body_blocks[0]))
         byte_offset = resp.next_offset
         if byte_offset == 0:
             break

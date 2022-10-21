@@ -219,20 +219,23 @@ class Operations(pyfuse3.Operations):
         while len(data) < size:
             spans = cast(FileSpansResp, await self._send_shard_req(inode_id_shard(file_id), FileSpansReq(file_id, offset)))
             for span in spans.spans:
+                span_data: bytes
                 if len(data) >= size: break
                 if span.storage_class == ZERO_FILL_STORAGE:
                     assert not span.body_bytes
                     assert not span.body_blocks
-                    data += b'\0' * span.size
+                    span_data = b'\0' * span.size
                 elif span.storage_class == INLINE_STORAGE:
                     assert not span.body_blocks
-                    data += span.body_bytes
+                    span_data = span.body_bytes
                 else:
                     assert not span.body_bytes
                     assert len(span.body_blocks) == 1
                     if span.body_blocks[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
                         raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
-                    data += await read_block(span.body_blocks[0])
+                    span_data = await read_block(span.body_blocks[0])
+                # we might be in the middle of a span
+                data += span_data[max(0, offset-span.byte_offset):]
             offset = spans.next_offset
             if offset == 0:
                 break

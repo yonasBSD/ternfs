@@ -953,6 +953,9 @@ class CDCTests(unittest.TestCase):
         self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
         # however we can remove it if we mean it
         self.cdc.shards[0].execute_ok(RemoveOwnedSnapshotFileEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time))
+        # We have a transient file now, since we removed an owned snapshot.
+        transients = cast(VisitTransientFilesResp, self.cdc.shards[0].execute_ok(VisitTransientFilesReq(0)))
+        assert len(transients.files) == 1
         # if we move the second file, we can remove it using RemoveNonOwnedEdgeReq
         self.cdc.shards[0].execute_ok(SameDirectoryRenameReq(transient_file_2.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))
         dir_edges = cast(FullReadDirResp, self.cdc.shards[0].execute_ok(FullReadDirReq(ROOT_DIR_INODE_ID, 0, b'', 0)))

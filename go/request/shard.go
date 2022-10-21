@@ -21,21 +21,6 @@ const (
 // '414853'
 const SHARD_PROTOCOL_VERSION uint32 = 0x414853
 
-func msgKind(body any) uint8 {
-	switch body.(type) {
-	case msgs.ErrCode:
-		return ERROR
-	case *msgs.VisitDirectoriesReq, *msgs.VisitDirectoriesResp:
-		return VISIT_DIRECTORIES
-	case *msgs.VisitTransientFilesReq, *msgs.VisitTransientFilesResp:
-		return VISIT_TRANSIENT_FILES
-	case *msgs.FullReadDirReq, *msgs.FullReadDirResp:
-		return HISTORICAL_READ_DIR
-	default:
-		panic(fmt.Sprintf("bad shard req/resp body %T", body))
-	}
-}
-
 type shardRequest struct {
 	RequestId uint64
 	Body      bincode.Packable
@@ -44,7 +29,7 @@ type shardRequest struct {
 func (req *shardRequest) Pack(buf *bincode.Buf) {
 	buf.PackU32(SHARD_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(msgKind(req.Body))
+	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
 	req.Body.Pack(buf)
 }
 
@@ -56,7 +41,7 @@ type ShardResponse struct {
 func (req *ShardResponse) Pack(buf *bincode.Buf) {
 	buf.PackU32(SHARD_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(msgKind(req.Body))
+	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
 	req.Body.Pack(buf)
 }
 
@@ -75,7 +60,7 @@ type UnpackedShardResponse struct {
 
 func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	// panic immediately if we get passed a bogus body
-	expectedKind := msgKind(resp.Body)
+	expectedKind := msgs.GetShardMessageKind(resp.Body)
 	// decode message header
 	var ver uint32
 	if err := buf.UnpackU32(&ver); err != nil {
@@ -105,7 +90,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 		resp.Error = errCode
 		return nil
 	}
-	if kind != expectedKind {
+	if msgs.ShardMessageKind(kind) != expectedKind {
 		resp.Error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
 		return nil
 	}

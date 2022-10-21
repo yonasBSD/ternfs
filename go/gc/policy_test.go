@@ -17,7 +17,7 @@ func date(day int) msgs.EggsTime {
 }
 
 func TestKeepWithin(t *testing.T) {
-	edges := []msgs.Edge{
+	edges := []msgs.EdgeWithOwnership{
 		{
 			TargetId:     inodeId(1),
 			NameHash:     0, // unneeded

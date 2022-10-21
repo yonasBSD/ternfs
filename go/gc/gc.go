@@ -128,7 +128,7 @@ func (gc *gc) applyPolicy(stats *collectStats, edges []msgs.EdgeWithOwnership, d
 				Name:         edge.Name,
 				CreationTime: edge.CreationTime,
 			}
-			resp := msgs.RemoveDirectoryResp{}
+			resp := msgs.RemoveNonOwnedEdgeResp{}
 			err = request.ShardRequestSocket(gc, gc.socket, gc.buffer, gc.shardTimeout, &req, &resp)
 		}
 		if err != nil {
@@ -172,7 +172,9 @@ func (gc *gc) collectInDirectory(stats *collectStats, dirId msgs.InodeId) error 
 			edges = append(edges, result)
 		}
 		if resp.Finished {
-			gc.applyPolicy(stats, edges, dirId)
+			if len(edges) > 0 {
+				gc.applyPolicy(stats, edges, dirId)
+			}
 			break
 		}
 		lastResult := &resp.Results[len(resp.Results)-1]

@@ -24,7 +24,7 @@ LOCAL_HOST = '127.0.0.1'
 PARITY = create_parity_mode(1, 0)
 STORAGE_CLASS = 2
 
-async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_secs: float = 2.0) -> ShardResponseBody:
+async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, ShardResponseBody]:
     port = shard_to_port(shard)
     request_id = eggs_time()
     target = (LOCAL_HOST, port)
@@ -45,7 +45,7 @@ async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_sec
     assert request_id == response.request_id
     return response.body
 
-async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> CDCResponseBody:
+async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, CDCResponseBody]:
     request_id = eggs_time()
     target = (LOCAL_HOST, CDC_PORT)
     req = CDCRequest(request_id=request_id, body=req_body)
@@ -314,7 +314,7 @@ class Operations(pyfuse3.Operations):
     async def mkdir(self, owner_id, name, mode, ctx=None):
         owner_id = fuse_id_to_eggs_id(owner_id)
         # TODO do something with the noode?
-        resp = cast(MakeDirResp, await self._send_cdc_req(MakeDirReq(owner_id, name)))
+        resp = cast(MakeDirectoryResp, await self._send_cdc_req(MakeDirectoryReq(owner_id, name)))
         return entry_attribute(resp.id, size=0, mtime=0)
     
     async def setattr(self, inode_id, attr, fields, fh, ctx=None):

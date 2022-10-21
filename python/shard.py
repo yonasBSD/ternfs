@@ -381,6 +381,21 @@ def check_edge_constraints(cur: sqlite3.Cursor, dir_id: int) -> bool:
     if edges_to_transient is not None:
         logging.error(f'Name {edges_to_transient["name"]} in dir {dir_id} points to transient file {edges_to_transient["target_id"]}')
         return False
+    # the directory mtime is higher or equal than all the edges creation times
+    dir = cur.execute('select * from directories where id = :dir_id', {'dir_id': dir_id}).fetchone()
+    more_recent_edges = cur.execute(
+        'select * from edges where dir_id = :dir_id and creation_time > :dir_mtime', {'dir_id': dir_id, 'dir_mtime': dir['mtime']}
+    ).fetchall()
+    if more_recent_edges:
+        logging.error(f'Edges {list(map(dict, more_recent_edges))} are more recent than dir mtime')
+        return False
+    if not dir_id == ROOT_DIR_INODE_ID and dir['owner_id'] == NULL_INODE_ID:
+        current_edges = cur.execute(
+            'select * from edges where dir_id = :dir_id and current', {'dir_id': dir_id}
+        ).fetchall()
+        if current_edges:
+            logging.error(f'Current edges {list(map(dict, current_edges))} are in a snapshot directory')
+            return False
     return True
 
 def check_spans_constraints(cur: sqlite3.Cursor, file_id: int) -> bool:
@@ -464,6 +479,10 @@ def hash_name(hash_mode: HashMode, n: bytes) -> int:
     else:
         raise ValueError(f'Unsupported hash mode: {hash_mode}')
 
+def update_dir_mtime(cur: sqlite3.Cursor, dir_id: int, now: int):
+    cur.execute('update directories set mtime = :now where id = :id', {'now': now, 'id': dir_id})
+    assert cur.rowcount == 1
+
 # We cannot expose an API which allows us to create non-locked current edges, see comment for
 # CreateLockedCurrentEdgeReq.
 def create_current_edge_internal(
@@ -518,10 +537,12 @@ def create_current_edge_internal(
             {k: existing_current_edge[k] for k in ('dir_id', 'creation_time')},
         )
         create()
+    update_dir_mtime(cur, dir_id=req.dir_id, now=req.creation_time)
     return CreateLockedCurrentEdgeResp()
 
 # not read only
 def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdgeReq) -> Union[EggsError, CreateLockedCurrentEdgeResp]:
+    now = eggs_time()
     res = create_current_edge_internal(cur, req, locked=True)
     assert check_edge_constraints(cur, req.dir_id)
     return res
@@ -1005,6 +1026,7 @@ def soft_unlink_current_edge(cur, *, dir_id: int, now: int, name: bytes, target_
         target_id=NULL_INODE_ID,
         owned=True,
     )
+    update_dir_mtime(cur, dir_id=dir_id, now=now)
     return None
 
 # not read only
@@ -1118,7 +1140,8 @@ def unlock_current_edge_inner(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) ->
             current=False,
             owned=False,
             target_id=NULL_INODE_ID
-        )        
+        )
+    update_dir_mtime(cur, dir_id=req.dir_id, now=now)
     return UnlockCurrentEdgeResp()
 def unlock_current_edge(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) -> Union[EggsError, UnlockCurrentEdgeResp]:
     res = unlock_current_edge_inner(cur, req)
@@ -1781,7 +1804,20 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
         transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
         self.shard.execute_err(LinkFileReq(transient_file_1.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'), ErrCode.BAD_COOKIE)
-
+    
+    def test_dir_mtimes(self):
+        now = eggs_time()
+        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
+        st_1 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        assert st_1.mtime > now
+        self.shard.execute_ok(SameDirectoryRenameReq(transient_file_1.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))
+        st_2 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        assert st_2.mtime > st_1.mtime
+        self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, transient_file_1.id, b'newfile'))
+        st_3 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        assert st_3.mtime > st_2.mtime
+    
 SHUCKLE_POLL_PERIOD_SEC = 60
 
 def shuckle_json_to_block_server(json_obj: Dict[str, Any]) -> BlockServerInfo:

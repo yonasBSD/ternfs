@@ -974,9 +974,9 @@ class CDCTests(unittest.TestCase):
         dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
         self.cdc.execute_ok(RemoveDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
         # can't create files or directories in the deleted directory
-        self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
+        self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
         transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE)))
-        self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
+        self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
 
 def run_forever(db: sqlite3.Connection):
     api_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)

@@ -492,12 +492,9 @@ def create_current_edge_internal(
     locked: bool,
 ) -> Union[EggsError, CreateLockedCurrentEdgeResp]:
     assert valid_name(req.name)
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=False) # not current edges in snapshot dirs
     if isinstance(dir, EggsError):
         return dir
-    # Cannot create a current edge in a deleted (but still present in snapshot) directory.
-    if not req.dir_id == ROOT_DIR_INODE_ID and dir['owner_id'] == NULL_INODE_ID:
-        return EggsError(ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY)
     name_hash = hash_name(dir['hash_mode'], req.name)
     existing_current_edges = cur.execute(
         # This fetches the current edge (which we know to be the most recent one), and
@@ -551,19 +548,19 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
 # read only
 def do_stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
     if inode_id_type(req.id) == InodeType.DIRECTORY:
-        dir = get_directory(cur, req.id)
+        dir = get_directory(cur, req.id, allow_snapshot=True)
         if isinstance(dir, EggsError):
             return dir
-        return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], opaque=dir['opaque'])
+        return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], is_current_directory=(dir['owner_id'] != NULL_INODE_ID), opaque=dir['opaque'])
     else:
         file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
         if file is None:
             return EggsError(ErrCode.FILE_NOT_FOUND)
-        return StatResp(mtime=file['mtime'], size_or_owner=file['size'], opaque=b'')
+        return StatResp(mtime=file['mtime'], size_or_owner=file['size'], is_current_directory=False, opaque=b'')
 
 # read only
 def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirResp]:
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=False)
     if isinstance(dir, EggsError):
         return dir
     entries = cur.execute(
@@ -619,7 +616,7 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
 # TODO as an optimization, we might want to omit edges for files which are only
 # current. This is likely to be a common case.
 def full_read_dir(cur: sqlite3.Cursor, req: FullReadDirReq) -> Union[EggsError, FullReadDirResp]:
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=True) # the GC needs this to peruse snapshot dirs
     if isinstance(dir, EggsError):
         return dir
     entries = cur.execute(
@@ -977,14 +974,14 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
                 fetched_block.flags = (bserver['terminal'] & BlockFlags.TERMINAL) | (bserver['stale'] & BlockFlags.STALE)
     return FileSpansResp(next_offset, resp_spans)
 
-def get_directory(cur: sqlite3.Cursor, id: int) -> Union[EggsError, Dict[str, Any]]:
+def get_directory(cur: sqlite3.Cursor, id: int, *, allow_snapshot: bool) -> Union[EggsError, Dict[str, Any]]:
     dir = cur.execute('select * from directories where id = :dir_id', {'dir_id': id}).fetchone()
-    if dir is None:
+    if dir is None or (id != ROOT_DIR_INODE_ID and dir['owner_id'] == NULL_INODE_ID and not allow_snapshot):
         return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
     return dir
 
 def get_current_edge(cur, *, dir_id: int, name: bytes, target_id: Union[int, None]) -> Union[Dict[str, Any], EggsError]:
-    dir = get_directory(cur, dir_id)
+    dir = get_directory(cur, dir_id, allow_snapshot=False) # no current edges in snapshot dirs
     if isinstance(dir, EggsError):
         return dir
     current_edge = cur.execute(
@@ -999,7 +996,7 @@ def get_current_edge(cur, *, dir_id: int, name: bytes, target_id: Union[int, Non
 
 # not exposed to the api
 def soft_unlink_current_edge(cur, *, dir_id: int, now: int, name: bytes, target_id: int, owned: bool) -> Union[EggsError, None]:
-    dir = get_directory(cur, dir_id)
+    dir = get_directory(cur, dir_id, allow_snapshot=False) # no current edges in snapshot dirs
     if isinstance(dir, EggsError):
         return dir
     current_edge = get_current_edge(cur, dir_id=dir_id, name=name, target_id=target_id)
@@ -1149,7 +1146,7 @@ def unlock_current_edge(cur: sqlite3.Cursor, req: UnlockCurrentEdgeReq) -> Union
 
 # not read only
 def remove_non_owned_edge(cur: sqlite3.Cursor, req: RemoveNonOwnedEdgeReq) -> Union[EggsError, RemoveNonOwnedEdgeResp]:
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=True) # the GC needs to be able to clean up in snapshot dirs
     if isinstance(dir, EggsError):
         return dir
     cur.execute(
@@ -1167,7 +1164,7 @@ def remove_non_owned_edge(cur: sqlite3.Cursor, req: RemoveNonOwnedEdgeReq) -> Un
 def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapshotFileEdgeReq) -> Union[EggsError, RemoveOwnedSnapshotFileEdgeResp]:
     if inode_id_type(req.target_id) == InodeType.DIRECTORY:
         return EggsError(ErrCode.TYPE_IS_DIRECTORY)
-    dir = get_directory(cur, req.dir_id)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=True) # the GC needs to work on deleted dirs who might still have owned files
     if isinstance(dir, EggsError):
         return dir
     cur.execute(
@@ -1550,6 +1547,7 @@ class ShardTests(unittest.TestCase):
         assert stat_1.mtime == create_dir_1.mtime
         assert stat_1.size_or_owner == ROOT_DIR_INODE_ID
         assert stat_1.opaque == b'first'
+        assert stat_1.is_current_directory
         # can't change owner
         self.shard.execute_err(replace(create_dir_req, owner_id=NULL_INODE_ID), kind=ErrCode.MISMATCHING_OWNER)
         # we can change the opaque stuff though TODO is this correct behavior? probably doesn't matter

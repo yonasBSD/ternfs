@@ -42,7 +42,6 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     ShardMessageKind.LINK_FILE: {
         ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.DIRECTORY_NOT_FOUND,
         ErrCode.LAST_SPAN_STATE_NOT_CLEAN, ErrCode.CANNOT_OVERRIDE_NAME, ErrCode.NAME_IS_LOCKED,
-        ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY,
         # This should be incredibly rare barring bad snapshot edges
         ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
     },
@@ -65,7 +64,6 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     },
     ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_IS_LOCKED, ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
-        ErrCode.CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY,
     },
     ShardMessageKind.LOCK_CURRENT_EDGE: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NAME_NOT_FOUND,

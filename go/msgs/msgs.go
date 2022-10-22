@@ -113,6 +113,9 @@ const (
 	ZERO_FILL_STORAGE StorageClass = 1
 )
 
+// Given directory inode and name, returns inode from outgoing
+// current edge. Does not consider non-current directories and
+// non-current edges.
 type LookupReq struct {
 	DirId InodeId
 	Name  []byte
@@ -123,6 +126,8 @@ type LookupResp struct {
 	CreationTime EggsTime
 }
 
+// Given inode, returns size, type, last modified for files,
+// last modified and parent for directories.
 type StatReq struct {
 	Id InodeId
 }
@@ -130,7 +135,10 @@ type StatReq struct {
 type StatResp struct {
 	Mtime       EggsTime
 	SizeOrOwner uint64 // file -> size, dirs -> owner
-	Opaque      []byte
+	// The next two fields are unused for files -- we don't know
+	// if a file is local by just looking at it.
+	IsCurrentDirectory bool
+	Opaque             []byte
 }
 
 type ReadDirReq struct {
@@ -148,6 +156,7 @@ type ReadDirResp struct {
 	Results  []Edge
 }
 
+// create a new transient file.
 type ConstructFileReq struct {
 	Type InodeType // must not be DIRECTORY
 }
@@ -162,6 +171,7 @@ type NewBlockInfo struct {
 	Size  uint64 `bincode:"varint"`
 }
 
+// add span. the file must be transient
 type AddSpanInitiateReq struct {
 	FileId       InodeId
 	Cookie       uint64
@@ -189,6 +199,7 @@ type AddSpanInitiateResp struct {
 	Blocks []BlockInfo
 }
 
+// certify span. again, the file must be transient.
 type AddSpanCertifyReq struct {
 	FileId     InodeId
 	Cookie     uint64
@@ -198,6 +209,8 @@ type AddSpanCertifyReq struct {
 
 type AddSpanCertifyResp struct{}
 
+// makes a transient file current. requires the inode, the
+// parent dir, and the filename.
 type LinkFileReq struct {
 	FileId  InodeId
 	Cookie  uint64
@@ -207,6 +220,7 @@ type LinkFileReq struct {
 
 type LinkFileResp struct{}
 
+// turns a current outgoing edge into a snapshot owning edge.
 type SoftUnlinkFileReq struct {
 	OwnerId InodeId
 	FileId  InodeId
@@ -313,6 +327,10 @@ type FullReadDirResp struct {
 	Results  []EdgeWithOwnership
 }
 
+// Creates a directory with a given parent and given inode id. Unsafe because
+// we can create directories with a certain parent while the paren't isn't
+// pointing at them (or isn't even a valid inode). We'd break the "no directory leaks"
+// invariant or the "null dir owner <-> not current" invariant.
 type CreateDirectoryINodeReq struct {
 	Id      InodeId
 	OwnerId InodeId
@@ -324,6 +342,8 @@ type CreateDirectoryINodeResp struct {
 	Mtime EggsTime
 }
 
+// This is needed to remove directories -- but it can break the invariants
+// between edges pointing to the dir and the owner.
 type SetDirectoryOwnerReq struct {
 	DirId   InodeId
 	OwnerId InodeId
@@ -336,6 +356,14 @@ type RemoveEdgesReq struct {
 	Edges []Edge
 }
 
+// These is generally needed when we need to move/create things cross-shard, but
+// is unsafe for various reasons:
+// * W must remember to unlock the edge, otherwise it'll be locked forever.
+// * We must make sure to not end up with multiple owners for the target.
+// TODO add comment about how creating an unlocked current edge is no good
+// if we want to retry things safely. We might create the edge without realizing
+// that we did (e.g. timeouts), and somebody might move it away in the meantime (with
+// some shard-local operation).
 type CreateLockedCurrentEdgeReq struct {
 	DirId    InodeId
 	Name     []byte

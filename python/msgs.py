@@ -43,7 +43,6 @@ class ErrCode(enum.IntEnum):
     NEW_DIRECTORY_NOT_FOUND = 42
     LOOP_IN_DIRECTORY_RENAME = 43
     EDGE_NOT_FOUND = 44
-    CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY = 45
 
 class ShardMessageKind(enum.IntEnum):
     LOOKUP = 0x1
@@ -376,14 +375,16 @@ class StatReq(bincode.Packable):
 @dataclass
 class StatResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.STAT
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # mtime + size_or_owner + len(opaque)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 # mtime + size_or_owner + is_current_directory + len(opaque)
     mtime: int
     size_or_owner: int
+    is_current_directory: bool
     opaque: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.mtime, b)
         bincode.pack_u64_into(self.size_or_owner, b)
+        bincode.pack_u8_into(self.is_current_directory, b)
         bincode.pack_bytes_into(self.opaque, b)
         return None
 
@@ -391,13 +392,15 @@ class StatResp(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'StatResp':
         mtime = bincode.unpack_u64(u)
         size_or_owner = bincode.unpack_u64(u)
+        is_current_directory = bool(bincode.unpack_u8(u))
         opaque = bincode.unpack_bytes(u)
-        return StatResp(mtime, size_or_owner, opaque)
+        return StatResp(mtime, size_or_owner, is_current_directory, opaque)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # mtime
         _size += 8 # size_or_owner
+        _size += 1 # is_current_directory
         _size += 1 # len(opaque)
         _size += len(self.opaque) # opaque contents
         return _size

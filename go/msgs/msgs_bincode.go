@@ -41,7 +41,6 @@ const (
 	NEW_DIRECTORY_NOT_FOUND ErrCode = 42
 	LOOP_IN_DIRECTORY_RENAME ErrCode = 43
 	EDGE_NOT_FOUND ErrCode = 44
-	CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY ErrCode = 45
 )
 
 func (err ErrCode) String() string {
@@ -116,8 +115,6 @@ func (err ErrCode) String() string {
 		return "LOOP_IN_DIRECTORY_RENAME"
 	case 44:
 		return "EDGE_NOT_FOUND"
-	case 45:
-		return "CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -268,6 +265,7 @@ func (v *StatReq) Unpack(buf *bincode.Buf) error {
 func (v *StatResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 	buf.PackU64(uint64(v.SizeOrOwner))
+	buf.PackBool(bool(v.IsCurrentDirectory))
 	buf.PackBytes([]byte(v.Opaque))
 }
 
@@ -276,6 +274,9 @@ func (v *StatResp) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.SizeOrOwner)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBool((*bool)(&v.IsCurrentDirectory)); err != nil {
 		return err
 	}
 	if err := buf.UnpackBytes((*[]byte)(&v.Opaque)); err != nil {

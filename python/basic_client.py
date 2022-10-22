@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import functools
-import itertools
-import math
-import posixpath
-import pprint
 import socket
 import struct
 import sys
-import time
 from typing import Callable, Dict, List, Optional, Tuple, Union, TypeVar
 import typing
 import logging
 from pathlib import Path
-import os
 import inspect
 
 import bincode
@@ -242,6 +235,11 @@ def ls(dir: Path) -> None:
     id = lookup(dir)
     print('')
     readdir(id)
+
+@human_command('full_ls')
+def full_ls(dir: Path) -> None:
+    id = lookup(dir)
+    print('')
 
 # Writes block, returns proof
 def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:

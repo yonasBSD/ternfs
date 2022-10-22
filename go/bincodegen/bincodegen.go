@@ -660,19 +660,14 @@ func main() {
 		"NEW_DIRECTORY_NOT_FOUND",
 		"LOOP_IN_DIRECTORY_RENAME",
 		"EDGE_NOT_FOUND",
-		"CANNOT_CREATE_CURRENT_EDGE_IN_SNAPSHOT_DIRECTORY",
 	}
 
 	shardReqResps := []reqRespType{
-		// given directory inode and name, returns inode from outgoing
-		// current edge.
 		{
 			0x01,
 			reflect.TypeOf(msgs.LookupReq{}),
 			reflect.TypeOf(msgs.LookupResp{}),
 		},
-		// given inode, returns size, type, last modified for files,
-		// last modified and parent for directories.
 		{
 			0x02,
 			reflect.TypeOf(msgs.StatReq{}),
@@ -683,34 +678,26 @@ func main() {
 			reflect.TypeOf(msgs.ReadDirReq{}),
 			reflect.TypeOf(msgs.ReadDirResp{}),
 		},
-		// create a new transient file. takes in desired path of file
-		// for debugging purposes
 		{
 			0x04,
 			reflect.TypeOf(msgs.ConstructFileReq{}),
 			reflect.TypeOf(msgs.ConstructFileResp{}),
 		},
-		// add span. the file must be transient
 		{
 			0x05,
 			reflect.TypeOf(msgs.AddSpanInitiateReq{}),
 			reflect.TypeOf(msgs.AddSpanInitiateResp{}),
 		},
-		// certify span. again, the file must be transient.
 		{
 			0x06,
 			reflect.TypeOf(msgs.AddSpanCertifyReq{}),
 			reflect.TypeOf(msgs.AddSpanCertifyResp{}),
 		},
-		// makes a transient file current. requires the inode, the
-		// parent dir, and the filename.
 		{
 			0x07,
 			reflect.TypeOf(msgs.LinkFileReq{}),
 			reflect.TypeOf(msgs.LinkFileResp{}),
 		},
-		// turns a current outgoing edge into a snapshot owning edge. requires parent directory
-		// and file name
 		{
 			0x0C,
 			reflect.TypeOf(msgs.SoftUnlinkFileReq{}),
@@ -759,30 +746,16 @@ func main() {
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeResp{}),
 		},
 		// UNSAFE OPERATIONS -- these can break invariants.
-		// Creates a directory with a given parent and given inode id. Unsafe because
-		// we can create directories with a certain parent while the paren't isn't
-		// pointing at them (or isn't even a valid inode). We'd break the "no directory leaks"
-		// invariant or the "null dir owner <-> not current" invariant.
 		{
 			0x80,
 			reflect.TypeOf(msgs.CreateDirectoryINodeReq{}),
 			reflect.TypeOf(msgs.CreateDirectoryINodeResp{}),
 		},
-		// This is needed to remove directories -- but it can break the invariants
-		// between edges pointing to the dir and the owner.
 		{
 			0x81,
 			reflect.TypeOf(msgs.SetDirectoryOwnerReq{}),
 			reflect.TypeOf(msgs.SetDirectoryOwnerResp{}),
 		},
-		// These is generally needed when we need to move/create things cross-shard, but
-		// is unsafe for various reasons:
-		// * W must remember to unlock the edge, otherwise it'll be locked forever.
-		// * We must make sure to not end up with multiple owners for the target.
-		// TODO add comment about how creating an unlocked current edge is no good
-		// if we want to retry things safely. We might create the edge without realizing
-		// that we did (e.g. timeouts), and somebody might move it away in the meantime (with
-		// some shard-local operation).
 		{
 			0x82,
 			reflect.TypeOf(msgs.CreateLockedCurrentEdgeReq{}),

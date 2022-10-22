@@ -795,7 +795,7 @@ class CDCTests(unittest.TestCase):
         num_files = entries_per_packet + entries_per_packet//2
         num_dirs = num_files # these will be evenly spread, so it's actually not so great as a test, but it's pretty slow otherwise
         for i in range(num_files):
-            f = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE), repeats=1))
+            f = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
             self.cdc.shards[0].execute_ok(LinkFileReq(file_id=f.id, cookie=f.cookie, owner_id=ROOT_DIR_INODE_ID, name=f'file-{i}'.encode()))
         for i in range(num_dirs):
             self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, f'dir-{i}'.encode()))
@@ -864,7 +864,7 @@ class CDCTests(unittest.TestCase):
         self.cdc.execute_err(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'), kind=ErrCode.CANNOT_OVERRIDE_NAME)
 
     def test_move_file(self):
-        file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[0].execute_ok(LinkFileReq(file_id=file.id, cookie=file.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'test-file'))
         dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir'))).id
         assert inode_id_shard(dir) != 0
@@ -892,7 +892,7 @@ class CDCTests(unittest.TestCase):
             new_name=b'test-dir-2',
         ), kind=ErrCode.TYPE_IS_DIRECTORY)
         # These are some unrecoverable errors
-        file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[0].execute_ok(LinkFileReq(file_id=file.id, cookie=file.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'test-file-3'))
         with DisableLogging:
             self.cdc.execute_err(
@@ -917,7 +917,7 @@ class CDCTests(unittest.TestCase):
         dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'2'))).id
         dir_1_3 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'3'))).id
         dir_2_4 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_2, b'4'))).id
-        file_2_foo = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_2)].execute_ok(ConstructFileReq(InodeType.FILE)))
+        file_2_foo = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_2)].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[inode_id_shard(dir_2)].execute_ok(LinkFileReq(file_2_foo.id, file_2_foo.cookie, dir_2, b'foo'))
         dir_1_3_5 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'5'))).id
         # not found failures
@@ -942,11 +942,11 @@ class CDCTests(unittest.TestCase):
         self.cdc.shards[0].execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, dir, b'dir'), ErrCode.TYPE_IS_DIRECTORY)
 
     def test_file_cycle(self):
-        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
         file_1 = cast(LookupResp, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
         self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
-        transient_file_2 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_2 = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[0].execute_ok(LinkFileReq(transient_file_2.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'))
         file_2 = cast(LookupResp, self.cdc.shards[0].execute_ok(LookupReq(ROOT_DIR_INODE_ID, b'file')))
         # we still cannot remove the old edge because it is owned
@@ -975,7 +975,7 @@ class CDCTests(unittest.TestCase):
         self.cdc.execute_ok(RemoveDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
         # can't create files or directories in the deleted directory
         self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
-        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
 
 def run_forever(db: sqlite3.Connection):

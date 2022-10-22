@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import collections
 import socket
 import struct
 import sys
@@ -9,6 +10,7 @@ import typing
 import logging
 from pathlib import Path
 import inspect
+import itertools
 
 import bincode
 import crypto
@@ -134,7 +136,7 @@ def stat_raw(id: int):
         print(f'size:        {resp.size_or_owner}')
 
 @human_command('stat')
-def stat(path: Path):
+def do_stat(path: Path):
     return stat_raw(lookup(path))
 
 def lookup_abs_path(path: Path):
@@ -230,6 +232,38 @@ def readdir(id: int):
         if continuation_key == 0:
             break
 
+@raw_command('full_readdir')
+def full_readdir(id: int):
+    start_hash = 0
+    start_name = b''
+    start_time = 0
+    all_results: Dict[str, List[EdgeWithOwnership]] = collections.defaultdict(list)
+    while True:
+        resp = send_shard_request_or_raise(inode_id_shard(id), FullReadDirReq(id, start_hash, start_name, start_time))
+        assert isinstance(resp, FullReadDirResp)
+        for result in resp.results:
+            all_results[result.name.decode('ascii')].append(result)
+        if resp.finished:
+            break
+        start_hash = resp.results[-1].name_hash
+        start_name = resp.results[-1].name
+        start_time = resp.results[-1].creation_time+1
+    for name, results in all_results.items():
+        print(name)
+        for result in results:
+            typ_str = {
+                InodeType.DIRECTORY: 'D',
+                InodeType.FILE: 'F',
+                InodeType.SYMLINK: 'S',
+                InodeType.RESERVED: ' ',
+            }
+            id = inode_id_strip_extra(result.target_id)
+            ownership = 'O' if inode_id_extra(result.target_id) else ' '
+            id_str = f'0x{id:016X}'
+            if id == NULL_INODE_ID:
+                id_str = '<deleted>'
+            print(f'  {typ_str[inode_id_type(id)]} {ownership} {eggs_time_str(result.creation_time)} {id_str}')
+        
 @human_command('ls')
 def ls(dir: Path) -> None:
     id = lookup(dir)
@@ -240,6 +274,7 @@ def ls(dir: Path) -> None:
 def full_ls(dir: Path) -> None:
     id = lookup(dir)
     print('')
+    full_readdir(id)
 
 # Writes block, returns proof
 def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
@@ -281,7 +316,7 @@ STORAGE_CLASS = 2
 def create_file(name: Path, blob: bytes):
     dir_id = lookup_abs_path(name.parent)
     shard = inode_id_shard(dir_id)
-    transient_file = send_shard_request_or_raise(shard, ConstructFileReq(InodeType.FILE))
+    transient_file = send_shard_request_or_raise(shard, ConstructFileReq(InodeType.FILE, name))
     assert isinstance(transient_file, ConstructFileResp)
     file_id = transient_file.id
     cookie = transient_file.cookie
@@ -355,6 +390,7 @@ def transient_files():
             assert isinstance(resp, VisitTransientFilesResp)
             for f in resp.files:
                 print(f'inode id:    0x{f.id:016X}')
+                print(f'note:        {f.note.decode("ascii")}')
                 print(f'type:        {repr(inode_id_type(f.id))}')
                 print(f'shard:       {shard}')
             begin_id = resp.next_id

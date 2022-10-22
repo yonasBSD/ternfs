@@ -230,7 +230,7 @@ func (v *LookupReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	return nil
@@ -332,10 +332,14 @@ func (v *ReadDirResp) Unpack(buf *bincode.Buf) error {
 
 func (v *ConstructFileReq) Pack(buf *bincode.Buf) {
 	buf.PackU8(uint8(v.Type))
+	buf.PackBytes([]byte(v.Note))
 }
 
 func (v *ConstructFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU8((*uint8)(&v.Type)); err != nil {
+		return err
+	}
+	if err := buf.UnpackString(&v.Note); err != nil {
 		return err
 	}
 	return nil
@@ -490,7 +494,7 @@ func (v *LinkFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	return nil
@@ -516,7 +520,7 @@ func (v *SoftUnlinkFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	return nil
@@ -584,10 +588,10 @@ func (v *SameDirectoryRenameReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.OldName)); err != nil {
+	if err := buf.UnpackString(&v.OldName); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.NewName)); err != nil {
+	if err := buf.UnpackString(&v.NewName); err != nil {
 		return err
 	}
 	return nil
@@ -725,7 +729,7 @@ func (v *FullReadDirReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.StartHash)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.StartName)); err != nil {
+	if err := buf.UnpackString(&v.StartName); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.StartTime)); err != nil {
@@ -774,7 +778,7 @@ func (v *RemoveNonOwnedEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {
@@ -804,7 +808,7 @@ func (v *RemoveOwnedSnapshotFileEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {
@@ -883,7 +887,7 @@ func (v *CreateLockedCurrentEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
@@ -912,7 +916,7 @@ func (v *LockCurrentEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
@@ -939,7 +943,7 @@ func (v *UnlockCurrentEdgeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
@@ -967,7 +971,7 @@ func (v *MakeDirectoryReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	return nil
@@ -999,13 +1003,13 @@ func (v *RenameFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OldOwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.OldName)); err != nil {
+	if err := buf.UnpackString(&v.OldName); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.NewOwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.NewName)); err != nil {
+	if err := buf.UnpackString(&v.NewName); err != nil {
 		return err
 	}
 	return nil
@@ -1031,7 +1035,7 @@ func (v *RemoveDirectoryReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	return nil
@@ -1059,13 +1063,13 @@ func (v *RenameDirectoryReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OldOwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.OldName)); err != nil {
+	if err := buf.UnpackString(&v.OldName); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.NewOwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.NewName)); err != nil {
+	if err := buf.UnpackString(&v.NewName); err != nil {
 		return err
 	}
 	return nil
@@ -1081,6 +1085,7 @@ func (v *RenameDirectoryResp) Unpack(buf *bincode.Buf) error {
 func (v *TransientFile) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
 	buf.PackU64(uint64(v.DeadlineTime))
+	buf.PackBytes([]byte(v.Note))
 }
 
 func (v *TransientFile) Unpack(buf *bincode.Buf) error {
@@ -1088,6 +1093,9 @@ func (v *TransientFile) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.DeadlineTime)); err != nil {
+		return err
+	}
+	if err := buf.UnpackString(&v.Note); err != nil {
 		return err
 	}
 	return nil
@@ -1138,7 +1146,7 @@ func (v *Edge) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.NameHash)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {
@@ -1161,7 +1169,7 @@ func (v *EdgeWithOwnership) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.NameHash)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Name)); err != nil {
+	if err := buf.UnpackString(&v.Name); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.CreationTime)); err != nil {

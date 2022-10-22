@@ -94,7 +94,7 @@ def eggs_time() -> int:
 
 def eggs_time_str(ns: int) -> str:
     dt = datetime.fromtimestamp((EGGS_EPOCH + ns) // 1000000000)
-    s = dt.strftime('%Y-%m-%d %H:%M:%S')
+    s = dt.strftime('%Y-%m-%dT%H:%M:%S')
     s += '.' + str(int(ns%1000000000)).zfill(9)
     return s
 

@@ -75,25 +75,30 @@ class CDCMessageKind(enum.IntEnum):
 
 @dataclass
 class TransientFile(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 8 # id + deadline_time
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # id + deadline_time + len(note)
     id: int
     deadline_time: int
+    note: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.id, b)
         bincode.pack_u64_into(self.deadline_time, b)
+        bincode.pack_bytes_into(self.note, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'TransientFile':
         id = bincode.unpack_u64(u)
         deadline_time = bincode.unpack_u64(u)
-        return TransientFile(id, deadline_time)
+        note = bincode.unpack_bytes(u)
+        return TransientFile(id, deadline_time, note)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # id
         _size += 8 # deadline_time
+        _size += 1 # len(note)
+        _size += len(self.note) # note contents
         return _size
 
 @dataclass
@@ -466,21 +471,26 @@ class ReadDirResp(bincode.Packable):
 @dataclass
 class ConstructFileReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CONSTRUCT_FILE
-    STATIC_SIZE: ClassVar[int] = 1 # type
+    STATIC_SIZE: ClassVar[int] = 1 + 1 # type + len(note)
     type: InodeType
+    note: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u8_into(self.type, b)
+        bincode.pack_bytes_into(self.note, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ConstructFileReq':
         type = InodeType(bincode.unpack_u8(u))
-        return ConstructFileReq(type)
+        note = bincode.unpack_bytes(u)
+        return ConstructFileReq(type, note)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 1 # type
+        _size += 1 # len(note)
+        _size += len(self.note) # note contents
         return _size
 
 @dataclass

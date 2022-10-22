@@ -173,3 +173,11 @@ func ShardRequestSocket(
 	sock.SetReadDeadline(time.Now().Add(timeout))
 	return ShardRequest(alerter, sock, sock, buffer, uint64(msgs.Now()), reqBody, respBody)
 }
+
+func ShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
+	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: shid.Port()})
+	if err != nil {
+		return nil, fmt.Errorf("could not create shard socket: %w", err)
+	}
+	return socket, nil
+}

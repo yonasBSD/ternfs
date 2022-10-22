@@ -2,6 +2,7 @@
 package msgs
 
 import (
+	"fmt"
 	"time"
 	"xtx/eggsfs/bincode"
 )
@@ -33,6 +34,10 @@ func (id InodeId) Shard() ShardId {
 	return ShardId(id & 0xFF)
 }
 
+func (id InodeId) String() string {
+	return fmt.Sprintf("0x%X", uint64(id))
+}
+
 func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {
 	return (InodeId(typ) << 61) | (InodeId(id) << 8) | InodeId(shard)
 }
@@ -46,6 +51,14 @@ func (id OwnedInodeId) Owned() bool {
 		return false
 	} else {
 		return true
+	}
+}
+
+func (id OwnedInodeId) String() string {
+	if id.Owned() {
+		return fmt.Sprintf("[O]%v", id.Id())
+	} else {
+		return fmt.Sprintf("[ ]%v", id.Id())
 	}
 }
 
@@ -83,6 +96,10 @@ func (t EggsTime) Time() time.Time {
 	return time.Unix(0, int64(uint64(t)+EGGS_EPOCH))
 }
 
+func (t EggsTime) String() string {
+	return t.Time().Format(time.RFC3339Nano)
+}
+
 type ErrCode uint16
 
 func (err ErrCode) Error() string {
@@ -118,7 +135,7 @@ const (
 // non-current edges.
 type LookupReq struct {
 	DirId InodeId
-	Name  []byte
+	Name  string
 }
 
 type LookupResp struct {
@@ -159,6 +176,9 @@ type ReadDirResp struct {
 // create a new transient file.
 type ConstructFileReq struct {
 	Type InodeType // must not be DIRECTORY
+	// this can be the future file name or anyway something that gives a pointer
+	// to what this transient wile will be or was (if we're destructing).
+	Note string
 }
 
 type ConstructFileResp struct {
@@ -215,7 +235,7 @@ type LinkFileReq struct {
 	FileId  InodeId
 	Cookie  uint64
 	OwnerId InodeId
-	Name    []byte
+	Name    string
 }
 
 type LinkFileResp struct{}
@@ -224,7 +244,7 @@ type LinkFileResp struct{}
 type SoftUnlinkFileReq struct {
 	OwnerId InodeId
 	FileId  InodeId
-	Name    []byte
+	Name    string
 }
 
 type SoftUnlinkFileResp struct{}
@@ -264,8 +284,8 @@ type FileSpansResp struct {
 type SameDirectoryRenameReq struct {
 	TargetId InodeId
 	DirId    InodeId
-	OldName  []byte
-	NewName  []byte
+	OldName  string
+	NewName  string
 }
 
 type SameDirectoryRenameResp struct{}
@@ -295,6 +315,7 @@ type VisitTransientFilesReq struct {
 type TransientFile struct {
 	Id           InodeId
 	DeadlineTime EggsTime
+	Note         string
 }
 type VisitTransientFilesResp struct {
 	NextId InodeId
@@ -304,21 +325,21 @@ type VisitTransientFilesResp struct {
 type FullReadDirReq struct {
 	DirId     InodeId
 	StartHash uint64
-	StartName []byte
+	StartName string
 	StartTime EggsTime
 }
 
 type Edge struct {
 	TargetId     InodeId
 	NameHash     uint64
-	Name         []byte
+	Name         string
 	CreationTime EggsTime
 }
 
 type EdgeWithOwnership struct {
 	TargetId     OwnedInodeId
 	NameHash     uint64
-	Name         []byte
+	Name         string
 	CreationTime EggsTime
 }
 
@@ -366,7 +387,7 @@ type RemoveEdgesReq struct {
 // some shard-local operation).
 type CreateLockedCurrentEdgeReq struct {
 	DirId    InodeId
-	Name     []byte
+	Name     string
 	TargetId InodeId
 	// We need this because we want idempotency (retrying this request should
 	// not create spurious edges when overriding files), and we want to guarantee
@@ -378,7 +399,7 @@ type CreateLockedCurrentEdgeResp struct{}
 
 type LockCurrentEdgeReq struct {
 	DirId    InodeId
-	Name     []byte
+	Name     string
 	TargetId InodeId
 }
 
@@ -387,7 +408,7 @@ type LockCurrentEdgeResp struct{}
 // This also lets us turn edges into snapshot.
 type UnlockCurrentEdgeReq struct {
 	DirId    InodeId
-	Name     []byte
+	Name     string
 	TargetId InodeId
 	WasMoved bool
 }
@@ -399,7 +420,7 @@ type RemoveEdgesResp struct{}
 type RemoveNonOwnedEdgeReq struct {
 	DirId        InodeId
 	TargetId     InodeId
-	Name         []byte
+	Name         string
 	CreationTime EggsTime
 }
 
@@ -408,7 +429,7 @@ type RemoveNonOwnedEdgeResp struct{}
 type RemoveOwnedSnapshotFileEdgeReq struct {
 	DirId        InodeId
 	TargetId     InodeId
-	Name         []byte
+	Name         string
 	CreationTime EggsTime
 }
 
@@ -416,7 +437,7 @@ type RemoveOwnedSnapshotFileEdgeResp struct{}
 
 type MakeDirectoryReq struct {
 	OwnerId InodeId
-	Name    []byte
+	Name    string
 }
 
 type MakeDirectoryResp struct {
@@ -426,9 +447,9 @@ type MakeDirectoryResp struct {
 type RenameFileReq struct {
 	TargetId   InodeId
 	OldOwnerId InodeId
-	OldName    []byte
+	OldName    string
 	NewOwnerId InodeId
-	NewName    []byte
+	NewName    string
 }
 
 type RenameFileResp struct{}
@@ -436,7 +457,7 @@ type RenameFileResp struct{}
 type RemoveDirectoryReq struct {
 	OwnerId  InodeId
 	TargetId InodeId
-	Name     []byte
+	Name     string
 }
 
 type RemoveDirectoryResp struct{}
@@ -444,9 +465,9 @@ type RemoveDirectoryResp struct{}
 type RenameDirectoryReq struct {
 	TargetId   InodeId
 	OldOwnerId InodeId
-	OldName    []byte
+	OldName    string
 	NewOwnerId InodeId
-	NewName    []byte
+	NewName    string
 }
 
 type RenameDirectoryResp struct{}

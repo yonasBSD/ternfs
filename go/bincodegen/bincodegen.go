@@ -79,6 +79,13 @@ func fixedBytesLen(e *subexpr) int {
 	return len
 }
 
+func sliceTypeElem(t reflect.Type) reflect.Type {
+	if t.Kind() == reflect.String {
+		return reflect.TypeOf(uint8(0))
+	}
+	return t.Elem()
+}
+
 func (cg *goCodegen) gen(expr *subexpr) {
 	t := expr.typ
 	switch t.Kind() {
@@ -111,13 +118,17 @@ func (cg *goCodegen) gen(expr *subexpr) {
 		assertNoTag(expr)
 		cg.pline(fmt.Sprintf("%v.Pack(buf)", expr.expr))
 		cg.ustep(fmt.Sprintf("%v.Unpack(buf)", expr.expr))
-	case reflect.Slice:
-		elem := t.Elem()
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
 			len := fixedBytesLen(expr)
 			if len < 0 {
 				cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.expr))
-				cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.expr))
+				if expr.typ.Kind() == reflect.String {
+					cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.expr))
+				} else {
+					cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.expr))
+				}
 			} else {
 				cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, []byte(%v))", len, expr.expr))
 				cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, (*[]byte)(&%v))", len, expr.expr))
@@ -324,8 +335,8 @@ func pythonType(t reflect.Type) string {
 		return "bool"
 	case reflect.Struct:
 		return t.Name()
-	case reflect.Slice:
-		elem := t.Elem()
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(t)
 		if elem.Kind() == reflect.Uint8 {
 			return "bytes"
 		} else {
@@ -420,8 +431,8 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 		cg.sadd(expr.expr, fmt.Sprintf("self.%s.calc_packed_size()", expr.expr))
 		cg.pline(fmt.Sprintf("self.%s.pack_into(b)", expr.expr))
 		cg.uline(fmt.Sprintf("%s = %s.unpack(u)", expr.expr, expr.typ.Name()))
-	case reflect.Slice:
-		elem := expr.typ.Elem()
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
 			len := fixedBytesLen(expr)
 			if len < 0 {

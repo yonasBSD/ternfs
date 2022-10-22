@@ -250,7 +250,7 @@ class Operations(pyfuse3.Operations):
 
     async def _create(self, dir_id: int, type: InodeType, name: bytes):
         assert type in (InodeType.FILE, InodeType.SYMLINK)
-        resp = cast(ConstructFileResp, await self._send_shard_req(inode_id_shard(dir_id), ConstructFileReq(type)))
+        resp = cast(ConstructFileResp, await self._send_shard_req(inode_id_shard(dir_id), ConstructFileReq(type, name)))
         self._files_under_construction[resp.id] = FileUnderConstruction(dir_id=dir_id, name=name, cookie=resp.cookie)
         return resp.id
 

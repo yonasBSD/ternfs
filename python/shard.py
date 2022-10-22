@@ -32,7 +32,6 @@ from error import *
 import cdc_key
 
 # TODO add an execute_many that does everything in a single transaction, for test speed (e.g. the one that creates a ton of files is slow)
-# TODO go through all repeats=1 and make sure they make sense
 # TODO consider revising edge operations to always take the modification time, for safety (much like they also now take the inode)
 
 def crc32_to_int(b: bytes) -> int:
@@ -96,10 +95,11 @@ def init_db(shard: int, db: sqlite3.Connection):
             -- these are present only if the file is transient, which we check below
             deadline integer,
             last_span_state integer,
+            note blob,
             check ((id & 0xFF) = {shard}),
             check (((id >> 61) & 0x03) in ({InodeType.FILE}, {InodeType.SYMLINK})),
-            check (not transient or (deadline is not null and last_span_state is not null)),
-            check (transient or (deadline is null and last_span_state is null))
+            check (not transient or (deadline is not null and last_span_state is not null and note is not null)),
+            check (transient or (deadline is null and last_span_state is null and note is null))
         )
     ''')
     cur.execute('create index if not exists files_by_transient on files (transient, id)')
@@ -674,6 +674,7 @@ def construct_file(cur: sqlite3.Cursor, req: ConstructFileReq) -> Union[EggsErro
         transient=True,
         deadline=now+DEADLINE_DURATION,
         last_span_state=SpanState.CLEAN,
+        note=req.note,
     )
     return ConstructFileResp(
         id=id,
@@ -689,7 +690,7 @@ def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> V
     ).fetchall()
     return VisitTransientFilesResp(
         next_id=0 if len(entries) < num_entries else entries[-1]['id'],
-        files=[TransientFile(entry['id'], entry['deadline']) for entry in entries[:num_entries]]
+        files=[TransientFile(entry['id'], entry['deadline'], entry['note']) for entry in entries[:num_entries]]
     )
 
 def get_transient_file(cur: sqlite3.Cursor, shard_info: ShardInfo, *, file_id: int, cookie: int, now: int):
@@ -888,7 +889,7 @@ def link_file_inner(cur: sqlite3.Cursor, req: LinkFileReq) -> Union[LinkFileResp
         ),
     )
     cur.execute(
-        'update files set transient = false, mtime = :now, deadline = null, last_span_state = null where id = :file_id',
+        'update files set transient = false, mtime = :now, deadline = null, last_span_state = null, note = null where id = :file_id',
         {'now': now, 'file_id': req.file_id}
     )
     if isinstance(res, EggsError):
@@ -1181,8 +1182,8 @@ def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapsho
         return EggsError(ErrCode.EDGE_NOT_FOUND)
     # make file transient
     cur.execute(
-        'update files set transient = TRUE, deadline = 0, last_span_state = :span_state where id = :file_id',
-        {'file_id': req.target_id, 'span_state': SpanState.CLEAN},
+        'update files set transient = TRUE, deadline = 0, last_span_state = :span_state, note = :name where id = :file_id',
+        {'file_id': req.target_id, 'span_state': SpanState.CLEAN, 'name': req.name},
     )
     return RemoveOwnedSnapshotFileEdgeResp()
     
@@ -1351,14 +1352,9 @@ class TestDriver:
 
     # We repeat by default as a very rough test for idempotency, but with a
     # blacklist for things we know will fail.
-    def execute_ok(self, req: ShardRequestBody, repeats: int = 2) -> Any:
-        if req.KIND in (ShardMessageKind.SAME_DIRECTORY_RENAME, ShardMessageKind.SOFT_UNLINK_FILE, ShardMessageKind.REMOVE_NON_OWNED_EDGE, ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE):
-            repeats = 1
-        resp: Any = None
-        for i in range(repeats):
-            resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
-            assert not isinstance(resp.body, EggsError), f'Got error at round {i}: {resp}'
-            break
+    def execute_ok(self, req: ShardRequestBody) -> Any:
+        resp = self.execute(ShardRequest(request_id=eggs_time(), body=req))
+        assert not isinstance(resp.body, EggsError), f'Got error: {resp}'
         return resp.body
 
     def execute_err(self, req: ShardRequestBody, kind: Union[ErrCode, None] = None):
@@ -1577,7 +1573,7 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_ok(LockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2))
         # now we unlock and move
         t_before_move = eggs_time()
-        self.shard.execute_ok(UnlockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, was_moved=True), repeats=1)
+        self.shard.execute_ok(UnlockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, was_moved=True))
         read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 0
         read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_before_move)))
@@ -1587,8 +1583,8 @@ class ShardTests(unittest.TestCase):
     
     def test_construct_file_1(self):
         # we don't check for idempotency because later we inspect those files
-        self.shard.execute_ok(ConstructFileReq(InodeType.FILE), repeats=1)
-        self.shard.execute_ok(ConstructFileReq(InodeType.SYMLINK), repeats=1)
+        self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b''))
+        self.shard.execute_ok(ConstructFileReq(InodeType.SYMLINK, b''))
         transient_files = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0)))
         assert len(transient_files.files) == 2
         assert inode_id_type(transient_files.files[0].id) == InodeType.FILE
@@ -1597,7 +1593,7 @@ class ShardTests(unittest.TestCase):
     def test_construct_file_2(self):
         num_files = 3*(UDP_MTU//TransientFile.STATIC_SIZE)
         for _ in range(num_files):
-            self.shard.execute_ok(ConstructFileReq(InodeType.FILE), repeats=1)
+            self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b''))
         read_files = 0
         current_inode = 0
         while True:
@@ -1612,7 +1608,7 @@ class ShardTests(unittest.TestCase):
     def test_spans(self):
         # TODO add check that the span file state is clean after adding INLINE/ZERO spans, dirty afterwards
         self.shard.execute_internal_ok(UpdateBlockServersInfoReq(self.test_block_servers))
-        transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE), repeats=1))
+        transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         add_span_req = AddSpanInitiateReq(file_id=transient_file.id, cookie=transient_file.cookie, byte_offset=0, storage_class=0, parity=0, crc32=b'0000', size=0, body_bytes=b'', body_blocks=[])
         byte_offset = 0
         # Can't add a block ahead
@@ -1766,14 +1762,14 @@ class ShardTests(unittest.TestCase):
 
     def test_same_dir_renames(self):
         # overwrite a file, and store another to keep alongside
-        transient_file_old = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_old = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(file_id=transient_file_old.id, cookie=transient_file_old.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'1'))
         assert self.shard.execute_ok(LookupReq(dir_id=ROOT_DIR_INODE_ID, name=b'1')).target_id == transient_file_old.id
         self.shard.execute_err(LookupReq(dir_id=ROOT_DIR_INODE_ID, name=b'2'), ErrCode.NAME_NOT_FOUND)
-        transient_file_other = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_other = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(file_id=transient_file_other.id, cookie=transient_file_other.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'other'))
         t_before_creation = eggs_time()
-        transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(file_id=transient_file.id, cookie=transient_file.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'1'))
         t_before_first_move = eggs_time()
         file_id = transient_file.id
@@ -1825,14 +1821,14 @@ class ShardTests(unittest.TestCase):
         )
     
     def test_bad_cookie(self):
-        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
-        transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_err(LinkFileReq(transient_file_1.id, transient_file_2.cookie, ROOT_DIR_INODE_ID, b'file'), ErrCode.BAD_COOKIE)
     
     def test_dir_mtimes(self):
         now = eggs_time()
-        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE)))
+        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
         st_1 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
         assert st_1.mtime > now

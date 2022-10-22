@@ -185,6 +185,15 @@ func (buf *Buf) UnpackBytes(data *[]byte) error {
 	return nil
 }
 
+func (buf *Buf) UnpackString(data *string) error {
+	var bs []byte
+	if err := buf.UnpackBytes(&bs); err != nil {
+		return err
+	}
+	*data = string(bs)
+	return nil
+}
+
 func (buf *Buf) UnpackFixedBytes(l int, data *[]byte) error {
 	if err := buf.hasBytes(l); err != nil {
 		return err

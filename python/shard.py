@@ -551,12 +551,12 @@ def do_stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
         dir = get_directory(cur, req.id, allow_snapshot=True)
         if isinstance(dir, EggsError):
             return dir
-        return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], is_current_directory=(dir['owner_id'] != NULL_INODE_ID), opaque=dir['opaque'])
+        return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], opaque=dir['opaque'])
     else:
         file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
         if file is None:
             return EggsError(ErrCode.FILE_NOT_FOUND)
-        return StatResp(mtime=file['mtime'], size_or_owner=file['size'], is_current_directory=False, opaque=b'')
+        return StatResp(mtime=file['mtime'], size_or_owner=file['size'], opaque=b'')
 
 # read only
 def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirResp]:
@@ -1194,6 +1194,42 @@ def lookup(cur: sqlite3.Cursor, req: LookupReq) -> Union[EggsError, LookupResp]:
         return current_edge
     return LookupResp(target_id=current_edge['target_id'], creation_time=current_edge['creation_time'])
 
+# not read only
+def remove_inode_req(cur: sqlite3.Cursor, req: RemoveInodeReq) -> Union[EggsError, RemoveInodeResp]:
+    if req.id == ROOT_DIR_INODE_ID:
+        return EggsError(ErrCode.CANNOT_REMOVE_ROOT_DIRECTORY)
+    if inode_id_type(req.id) == InodeType.DIRECTORY:
+        dir = get_directory(cur, req.id, allow_snapshot=True)
+        if isinstance(dir, EggsError):
+            return dir
+        if dir['owner_id'] != NULL_INODE_ID:
+            return EggsError(ErrCode.DIRECTORY_HAS_OWNER)
+        # we demand that all outgoing edges are removed before removing the entire inode
+        num_edges = cur.execute(
+            'select count(*) as c from edges where dir_id = :dir_id', {'dir_id': req.id}
+        ).fetchone()['c']
+        if num_edges > 0:
+            return EggsError(ErrCode.DIRECTORY_NOT_EMPTY)
+        cur.execute('delete from directories where id = :dir_id', {'dir_id': req.id})
+        assert cur.rowcount == 1
+        return RemoveInodeResp()
+    else:
+        # we demand for the file to be transient, and for it to have no spans
+        file = cur.execute(
+            'select transient from files where id = :file_id', {'file_id': req.id}
+        ).fetchone()
+        if file is None:
+            return EggsError(ErrCode.FILE_NOT_FOUND)
+        if not file['transient']:
+            return EggsError(ErrCode.FILE_IS_NOT_TRANSIENT)
+        num_spans = cur.execute(
+            'select count(*) as c from spans where file_id = :file_id', {'file_id': req.id},
+        ).fetchone()
+        if num_spans != 0:
+            return EggsError(ErrCode.FILE_NOT_EMPTY)
+        cur.execute('delete from files where id = :file_id', {'file_id': req.id})
+        return RemoveInodeResp()
+    
 
 class BlockServerInfo(TypedDict):
     ip: str
@@ -1282,6 +1318,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = remove_non_owned_edge(cur, req_body)
         elif isinstance(req_body, RemoveOwnedSnapshotFileEdgeReq):
             resp_body = remove_owned_snapshot_file_edge(cur, req_body)
+        elif isinstance(req_body, RemoveInodeReq):
+            resp_body = remove_inode_req(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:
@@ -1543,7 +1581,6 @@ class ShardTests(unittest.TestCase):
         assert stat_1.mtime == create_dir_1.mtime
         assert stat_1.size_or_owner == ROOT_DIR_INODE_ID
         assert stat_1.opaque == b'first'
-        assert stat_1.is_current_directory
         # can't change owner
         self.shard.execute_err(replace(create_dir_req, owner_id=NULL_INODE_ID), kind=ErrCode.MISMATCHING_OWNER)
         # we can change the opaque stuff though TODO is this correct behavior? probably doesn't matter

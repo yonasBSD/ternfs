@@ -1,7 +1,6 @@
 package gc
 
 import (
-	"fmt"
 	"time"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/utils"
@@ -9,7 +8,7 @@ import (
 
 // If multiple policies are present, the file will be deleted if
 // any of the policies are not respected.
-type Policy struct {
+type SnapshotPolicy struct {
 	// Keep all files/directories versions with a certain name within this time window.
 	// If zero, this kind of policy is inactive.
 	DeleteAfterTime time.Duration
@@ -24,16 +23,16 @@ type Policy struct {
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
 // If it returns N, edges[N:] will be well formed too.
-func (policy *Policy) edgesToRemove(now msgs.EggsTime, edges []msgs.EdgeWithOwnership) int {
+func (policy *SnapshotPolicy) edgesToRemove(now msgs.EggsTime, edges []msgs.EdgeWithOwnership) int {
 	if len(edges) == 0 {
 		return 0
 	}
 	// Index dividing edges, so that all all edges[i] i < firstGoodEdgeVersions should be
 	// removed, while all edges[i] i >= firstGoodEdgeVersions should be kept.
-	firstGoodEdgeVersions := len(edges) - 1
+	firstGoodEdgeVersions := 0
 	if policy.DeleteAfterVersions > 0 {
 		versionNumber := 0
-		for ; firstGoodEdgeVersions >= 0; firstGoodEdgeVersions-- {
+		for firstGoodEdgeVersions = len(edges) - 1; firstGoodEdgeVersions >= 0; firstGoodEdgeVersions-- {
 			// ignore deletes, we just want to keep the last N versions.
 			if edges[firstGoodEdgeVersions].TargetId.Id() == msgs.NULL_INODE_ID {
 				continue
@@ -45,9 +44,9 @@ func (policy *Policy) edgesToRemove(now msgs.EggsTime, edges []msgs.EdgeWithOwne
 			}
 		}
 	}
-	firstGoodEdgeTime := len(edges) - 1
+	firstGoodEdgeTime := 0
 	if policy.DeleteAfterTime > time.Duration(0) {
-		for ; firstGoodEdgeTime >= 0; firstGoodEdgeTime-- {
+		for firstGoodEdgeTime = len(edges) - 1; firstGoodEdgeTime >= 0; firstGoodEdgeTime-- {
 			// if this file was created before the cutoff, then it is the last one to
 			// matter.
 			creationTime := edges[firstGoodEdgeTime].CreationTime.Time()
@@ -64,7 +63,7 @@ func (policy *Policy) edgesToRemove(now msgs.EggsTime, edges []msgs.EdgeWithOwne
 		// If the latest edge was _not_ a delete, we must not delete it, since it's
 		// the current edge
 		if firstGoodEdge == len(edges) {
-			panic(fmt.Errorf("policy is unexpectedly removing the current edge!"))
+			panic("policy is unexpectedly removing the current edge")
 		}
 	}
 	return firstGoodEdge

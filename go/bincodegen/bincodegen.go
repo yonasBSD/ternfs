@@ -671,6 +671,10 @@ func main() {
 		"NEW_DIRECTORY_NOT_FOUND",
 		"LOOP_IN_DIRECTORY_RENAME",
 		"EDGE_NOT_FOUND",
+		"DIRECTORY_HAS_OWNER",
+		"FILE_IS_NOT_TRANSIENT",
+		"FILE_NOT_EMPTY",
+		"CANNOT_REMOVE_ROOT_DIRECTORY",
 	}
 
 	shardReqResps := []reqRespType{
@@ -782,6 +786,11 @@ func main() {
 			reflect.TypeOf(msgs.UnlockCurrentEdgeReq{}),
 			reflect.TypeOf(msgs.UnlockCurrentEdgeResp{}),
 		},
+		{
+			0x85,
+			reflect.TypeOf(msgs.RemoveInodeReq{}),
+			reflect.TypeOf(msgs.RemoveInodeResp{}),
+		},
 	}
 
 	cdcReqResps := []reqRespType{
@@ -797,13 +806,18 @@ func main() {
 		},
 		{
 			0x03,
-			reflect.TypeOf(msgs.RemoveDirectoryReq{}),
-			reflect.TypeOf(msgs.RemoveDirectoryResp{}),
+			reflect.TypeOf(msgs.SoftUnlinkDirectoryReq{}),
+			reflect.TypeOf(msgs.SoftUnlinkDirectoryResp{}),
 		},
 		{
 			0x04,
 			reflect.TypeOf(msgs.RenameDirectoryReq{}),
 			reflect.TypeOf(msgs.RenameDirectoryResp{}),
+		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.HardUnlinkDirectoryReq{}),
+			reflect.TypeOf(msgs.HardUnlinkDirectoryResp{}),
 		},
 	}
 

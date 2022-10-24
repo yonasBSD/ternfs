@@ -20,6 +20,9 @@ type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
 
+// For CDC/SHARD we use 0 as an error kind
+const ERROR_KIND uint8 = 0
+
 const (
 	DIRECTORY InodeType = 1
 	FILE      InodeType = 2
@@ -152,10 +155,7 @@ type StatReq struct {
 type StatResp struct {
 	Mtime       EggsTime
 	SizeOrOwner uint64 // file -> size, dirs -> owner
-	// The next two fields are unused for files -- we don't know
-	// if a file is local by just looking at it.
-	IsCurrentDirectory bool
-	Opaque             []byte
+	Opaque      []byte
 }
 
 type ReadDirReq struct {
@@ -454,13 +454,13 @@ type RenameFileReq struct {
 
 type RenameFileResp struct{}
 
-type RemoveDirectoryReq struct {
+type SoftUnlinkDirectoryReq struct {
 	OwnerId  InodeId
 	TargetId InodeId
 	Name     string
 }
 
-type RemoveDirectoryResp struct{}
+type SoftUnlinkDirectoryResp struct{}
 
 type RenameDirectoryReq struct {
 	TargetId   InodeId
@@ -471,3 +471,22 @@ type RenameDirectoryReq struct {
 }
 
 type RenameDirectoryResp struct{}
+
+// This operation is generally unsafe. For files, we do not know that
+// the file is not referenced somewhere. We can however check that the
+// file is transient and no spans.
+//
+// For directories it is also not safe. In theory, we could check
+// if the directory had no edges (or only non-owning edges), but we might
+// be in the middle of a CDC transaction that might be rolled back eventually.
+type RemoveInodeReq struct {
+	Id InodeId
+}
+
+type RemoveInodeResp struct{}
+
+type HardUnlinkDirectoryReq struct {
+	DirId InodeId
+}
+
+type HardUnlinkDirectoryResp struct{}

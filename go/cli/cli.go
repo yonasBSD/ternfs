@@ -24,6 +24,7 @@ func main() {
 	collectDeleteAfterTime := collectCmd.Duration("deleteAfterTime", time.Duration(0), "delete snapshot beyond time interval")
 
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
+	destructDry := destructCmd.Bool("dry", false, "whether to execute the destruction or not")
 	destructFileIdU64 := destructCmd.Uint64("file", 0, "transient file id to destruct")
 
 	if len(os.Args) < 2 {
@@ -41,27 +42,37 @@ func main() {
 		if dirId.Type() != msgs.DIRECTORY {
 			log.Fatalf("inode id %v is not a directory", dirId)
 		}
-
-		socket, err := request.ShardSocket(dirId.Shard())
+		shardSocket, err := request.ShardSocket(dirId.Shard())
 		if err != nil {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
-		policy := gc.Policy{
+		defer shardSocket.Close()
+		cdcSocket, err := request.CDCSocket()
+		if err != nil {
+			log.Fatalf("could not create shard socket: %v", err)
+		}
+		defer cdcSocket.Close()
+		policy := gc.SnapshotPolicy{
 			DeleteAfterVersions: *collectDeleteAfterVersions,
 			DeleteAfterTime:     *collectDeleteAfterTime,
 		}
 		gcEnv := gc.GcEnv{
-			Role:         "cli",
-			Logger:       log.New(os.Stdout, "", log.Lshortfile),
-			Shid:         dirId.Shard(),
-			Buffer:       make([]byte, msgs.UDP_MTU),
-			ShardTimeout: 10 * time.Second,
-			Verbose:      true,
-			ShardSocket:  socket,
-			Policy:       policy,
+			Role:           "cli",
+			Logger:         log.New(os.Stdout, "", log.Lshortfile),
+			Shid:           dirId.Shard(),
+			Timeout:        10 * time.Second,
+			Verbose:        true,
+			ShardSocket:    shardSocket,
+			CDCSocket:      cdcSocket,
+			SnapshotPolicy: policy,
+			Dry:            *collectDry,
 		}
 		stats := gc.CollectStats{}
-		gcEnv.CollectInDirectory(&stats, *collectDry, dirId)
+		err = gcEnv.CollectDirectory(&stats, dirId)
+		if err != nil {
+			log.Fatalf("could not collect %v, stats: %+v, err: %v", dirId, stats, err)
+		}
+		gcEnv.Info("finished collecting %v, stats: %+v", dirId, stats)
 	case "destruct":
 		destructCmd.Parse(os.Args[2:])
 		if *destructFileIdU64 == 0 {
@@ -72,6 +83,22 @@ func main() {
 		if fileId.Type() == msgs.DIRECTORY {
 			log.Fatalf("inode id %v is not a file/symlink", fileId)
 		}
+		socket, err := request.ShardSocket(fileId.Shard())
+		if err != nil {
+			log.Fatalf("could not create shard socket: %v", err)
+		}
+		gcEnv := gc.GcEnv{
+			Role:        "cli",
+			Logger:      log.New(os.Stdout, "", log.Lshortfile),
+			Shid:        fileId.Shard(),
+			Timeout:     10 * time.Second,
+			Verbose:     true,
+			ShardSocket: socket,
+			Dry:         *destructDry,
+		}
+		stats := gc.DestructionStats{}
+		gcEnv.DestructFile(&stats, fileId)
+		gcEnv.Info("finished destructing %v, stats: %+v", fileId, stats)
 	default:
 		badCommand()
 	}

@@ -1,6 +1,4 @@
-
 from dataclasses import dataclass
-import enum
 from typing import ClassVar, Dict, Optional, Tuple, Type, Union, Set
 
 import bincode
@@ -27,10 +25,13 @@ CDC_ERRORS: Dict[CDCMessageKind, Set[ErrCode]] = {
         ErrCode.OLD_NAME_IS_LOCKED, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NEW_DIRECTORY_NOT_FOUND,
         ErrCode.NEW_NAME_IS_LOCKED, ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS,
     },
-    CDCMessageKind.REMOVE_DIRECTORY: {
+    CDCMessageKind.SOFT_UNLINK_DIRECTORY: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,
         ErrCode.NAME_IS_LOCKED, ErrCode.TYPE_IS_NOT_DIRECTORY,
     },
+    CDCMessageKind.HARD_UNLINK_DIRECTORY: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_HAS_OWNER, ErrCode.CANNOT_REMOVE_ROOT_DIRECTORY,
+    }
 }
 
 @dataclass

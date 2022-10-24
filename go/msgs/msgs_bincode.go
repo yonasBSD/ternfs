@@ -41,6 +41,10 @@ const (
 	NEW_DIRECTORY_NOT_FOUND ErrCode = 42
 	LOOP_IN_DIRECTORY_RENAME ErrCode = 43
 	EDGE_NOT_FOUND ErrCode = 44
+	DIRECTORY_HAS_OWNER ErrCode = 45
+	FILE_IS_NOT_TRANSIENT ErrCode = 46
+	FILE_NOT_EMPTY ErrCode = 47
+	CANNOT_REMOVE_ROOT_DIRECTORY ErrCode = 48
 )
 
 func (err ErrCode) String() string {
@@ -115,6 +119,14 @@ func (err ErrCode) String() string {
 		return "LOOP_IN_DIRECTORY_RENAME"
 	case 44:
 		return "EDGE_NOT_FOUND"
+	case 45:
+		return "DIRECTORY_HAS_OWNER"
+	case 46:
+		return "FILE_IS_NOT_TRANSIENT"
+	case 47:
+		return "FILE_NOT_EMPTY"
+	case 48:
+		return "CANNOT_REMOVE_ROOT_DIRECTORY"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -166,6 +178,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return LOCK_CURRENT_EDGE
 	case *UnlockCurrentEdgeReq, *UnlockCurrentEdgeResp:
 		return UNLOCK_CURRENT_EDGE
+	case *RemoveInodeReq, *RemoveInodeResp:
+		return REMOVE_INODE
 	default:
 		panic(fmt.Sprintf("bad shard req/resp body %T", body))
 	}
@@ -194,6 +208,7 @@ const (
 	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
 	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
 	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
+	REMOVE_INODE ShardMessageKind = 0x85
 )
 
 func GetCDCMessageKind(body any) CDCMessageKind {
@@ -204,10 +219,12 @@ func GetCDCMessageKind(body any) CDCMessageKind {
 		return MAKE_DIRECTORY
 	case *RenameFileReq, *RenameFileResp:
 		return RENAME_FILE
-	case *RemoveDirectoryReq, *RemoveDirectoryResp:
-		return REMOVE_DIRECTORY
+	case *SoftUnlinkDirectoryReq, *SoftUnlinkDirectoryResp:
+		return SOFT_UNLINK_DIRECTORY
 	case *RenameDirectoryReq, *RenameDirectoryResp:
 		return RENAME_DIRECTORY
+	case *HardUnlinkDirectoryReq, *HardUnlinkDirectoryResp:
+		return HARD_UNLINK_DIRECTORY
 	default:
 		panic(fmt.Sprintf("bad shard req/resp body %T", body))
 	}
@@ -217,8 +234,9 @@ func GetCDCMessageKind(body any) CDCMessageKind {
 const (
 	MAKE_DIRECTORY CDCMessageKind = 0x1
 	RENAME_FILE CDCMessageKind = 0x2
-	REMOVE_DIRECTORY CDCMessageKind = 0x3
+	SOFT_UNLINK_DIRECTORY CDCMessageKind = 0x3
 	RENAME_DIRECTORY CDCMessageKind = 0x4
+	HARD_UNLINK_DIRECTORY CDCMessageKind = 0x5
 )
 
 func (v *LookupReq) Pack(buf *bincode.Buf) {
@@ -265,7 +283,6 @@ func (v *StatReq) Unpack(buf *bincode.Buf) error {
 func (v *StatResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 	buf.PackU64(uint64(v.SizeOrOwner))
-	buf.PackBool(bool(v.IsCurrentDirectory))
 	buf.PackBytes([]byte(v.Opaque))
 }
 
@@ -274,9 +291,6 @@ func (v *StatResp) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.SizeOrOwner)); err != nil {
-		return err
-	}
-	if err := buf.UnpackBool((*bool)(&v.IsCurrentDirectory)); err != nil {
 		return err
 	}
 	if err := buf.UnpackBytes((*[]byte)(&v.Opaque)); err != nil {
@@ -962,6 +976,24 @@ func (v *UnlockCurrentEdgeResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
+func (v *RemoveInodeReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *RemoveInodeReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveInodeResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RemoveInodeResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
 func (v *MakeDirectoryReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.OwnerId))
 	buf.PackBytes([]byte(v.Name))
@@ -1022,13 +1054,13 @@ func (v *RenameFileResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *RemoveDirectoryReq) Pack(buf *bincode.Buf) {
+func (v *SoftUnlinkDirectoryReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.OwnerId))
 	buf.PackU64(uint64(v.TargetId))
 	buf.PackBytes([]byte(v.Name))
 }
 
-func (v *RemoveDirectoryReq) Unpack(buf *bincode.Buf) error {
+func (v *SoftUnlinkDirectoryReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
 		return err
 	}
@@ -1041,10 +1073,10 @@ func (v *RemoveDirectoryReq) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *RemoveDirectoryResp) Pack(buf *bincode.Buf) {
+func (v *SoftUnlinkDirectoryResp) Pack(buf *bincode.Buf) {
 }
 
-func (v *RemoveDirectoryResp) Unpack(buf *bincode.Buf) error {
+func (v *SoftUnlinkDirectoryResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
@@ -1079,6 +1111,24 @@ func (v *RenameDirectoryResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *RenameDirectoryResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *HardUnlinkDirectoryReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.DirId))
+}
+
+func (v *HardUnlinkDirectoryReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *HardUnlinkDirectoryResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *HardUnlinkDirectoryResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 

@@ -125,7 +125,7 @@ def lookup_raw(dir_id: int, name: str):
     print(f'type:        {repr(inode_id_type(inode))}')
     print(f'shard:       {inode_id_shard(inode)}')
 
-@raw_command('stat_raw')
+@raw_command('stat')
 def stat_raw(id: int):
     resp = send_shard_request_or_raise(inode_id_shard(id), StatReq(id))
     assert isinstance(resp, StatResp)
@@ -184,7 +184,7 @@ def rm_file(path: Path) -> None:
 
 @raw_command('rm_dir')
 def rm_dir_raw(owner_id: int, dir_id: int, name: str) -> None:
-    send_cdc_request_or_raise(RemoveDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(SoftUnlinkDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
 
 @human_command('rm_dir')
 def rm_dir(path: Path) -> None:
@@ -316,7 +316,7 @@ STORAGE_CLASS = 2
 def create_file(name: Path, blob: bytes):
     dir_id = lookup_abs_path(name.parent)
     shard = inode_id_shard(dir_id)
-    transient_file = send_shard_request_or_raise(shard, ConstructFileReq(InodeType.FILE, name))
+    transient_file = send_shard_request_or_raise(shard, ConstructFileReq(InodeType.FILE, str(name).encode('ascii')))
     assert isinstance(transient_file, ConstructFileResp)
     file_id = transient_file.id
     cookie = transient_file.cookie

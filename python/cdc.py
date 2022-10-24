@@ -314,7 +314,7 @@ class RenameFile(Transaction):
 # 3. Unlock edge going into the directory, making it snapshot.
 #
 # If 2 fails, we need to roll back the locking, without making the edge snapshot.
-class RemoveDirectory(Transaction):
+class SoftUnlinkDirectory(Transaction):
     class RemoveDirectoryState(TypedDict):
         exit_error: Optional[ErrCode] # after we roll back, we return this error to the user
     state: RemoveDirectoryState
@@ -324,7 +324,7 @@ class RemoveDirectory(Transaction):
             'exit_error': None,
         }
 
-    def begin(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq) -> CDCStepInternal:
+    def begin(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq) -> CDCStepInternal:
         if inode_id_type(req.target_id) != InodeType.DIRECTORY:
             return EggsError(ErrCode.TYPE_IS_NOT_DIRECTORY)
         return CDCNeedsShard(
@@ -333,7 +333,7 @@ class RemoveDirectory(Transaction):
             request=LockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=req.target_id),
         )
 
-    def lock_resp(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
+    def lock_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return resp # Nothing to rollback
         return CDCNeedsShard(
@@ -342,7 +342,7 @@ class RemoveDirectory(Transaction):
             request=SetDirectoryOwnerReq(dir_id=req.target_id, owner_id=NULL_INODE_ID),
         )
     
-    def remove_owner_resp(self, cur: sqlite3.Cursor, req: RemoveDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
+    def remove_owner_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return self._init_rollback(req, resp.error_code) # we need to unlock what we locked
         return CDCNeedsShard(
@@ -355,9 +355,9 @@ class RemoveDirectory(Transaction):
         if isinstance(resp, EggsError):        
             logging.error(f"We couldn't unlock old edge in {req} (error {resp.error_code}), this is bad!")
             return EggsError(ErrCode.FATAL_ERROR)
-        return RemoveDirectoryResp()
+        return SoftUnlinkDirectoryResp()
     
-    def _init_rollback(self, req: RemoveDirectoryReq, err: ErrCode) -> CDCStepInternal:
+    def _init_rollback(self, req: SoftUnlinkDirectoryReq, err: ErrCode) -> CDCStepInternal:
         self.state['exit_error'] = err
         return CDCNeedsShard(
             next_step='rollback_resp',
@@ -505,13 +505,38 @@ class RenameDirectory(Transaction):
             return EggsError(ErrCode.FATAL_ERROR)
         assert self.state['exit_error']
         return EggsError(self.state['exit_error'])
-        
+
+# The only reason we have this here is for possible conflicts with SetDirectoryOwner,
+# which might temporarily set the owner of a directory to NULL. Since in the current
+# implementation we only ever have one transaction in flight in the CDC, we can just
+# execute this.
+class HardUnlinkDirectory(Transaction):
+    HardUnlinkDirectoryState = Tuple[()]
+    state: HardUnlinkDirectoryState
+
+    def __init__(self, state: Optional[HardUnlinkDirectoryState] = None):
+        self.state = state or ()
+
+    def begin(self, cur: sqlite3.Cursor, req: HardUnlinkDirectoryReq) -> CDCStepInternal:
+        if inode_id_type(req.dir_id) != InodeType.DIRECTORY:
+            return EggsError(ErrCode.TYPE_IS_NOT_DIRECTORY)
+        return CDCNeedsShard(
+            next_step='remove_inode_resp',
+            shard=inode_id_shard(req.dir_id),
+            request=RemoveInodeReq(req.dir_id),
+        )
+    
+    def remove_inode_resp(self, cur: sqlite3.Cursor, req: RemoveInodeReq, resp: ExpectedShardResp[RemoveInodeResp]) -> CDCStepInternal:
+        if isinstance(resp, EggsError):
+            return resp
+        return HardUnlinkDirectoryResp()
 
 TRANSACTIONS: Dict[CDCMessageKind, Type[Transaction]] = {
     CDCMessageKind.MAKE_DIRECTORY: MakeDirectory,
     CDCMessageKind.RENAME_FILE: RenameFile,
-    CDCMessageKind.REMOVE_DIRECTORY: RemoveDirectory,
+    CDCMessageKind.SOFT_UNLINK_DIRECTORY: SoftUnlinkDirectory,
     CDCMessageKind.RENAME_DIRECTORY: RenameDirectory,
+    CDCMessageKind.HARD_UNLINK_DIRECTORY: HardUnlinkDirectory,
 }
 
 # Returns whether a new transaction was started
@@ -698,7 +723,7 @@ def open_db(db_dir: str) -> sqlite3.Connection:
 # to the replacement
 ShardRequestsReplacements = Dict[
     ShardMessageKind,
-    Dict[int, ShardResponseBody]
+    Dict[int, Union[EggsError, ShardResponseBody]]
 ]
 
 def execute(
@@ -910,7 +935,7 @@ class CDCTests(unittest.TestCase):
     def test_unlink_dir(self):
         dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir'))).id
         # We can unlink an empty dir
-        self.cdc.execute_ok(RemoveDirectoryReq(owner_id=ROOT_DIR_INODE_ID, target_id=dir, name=b'test-dir'))
+        self.cdc.execute_ok(SoftUnlinkDirectoryReq(owner_id=ROOT_DIR_INODE_ID, target_id=dir, name=b'test-dir'))
     
     def test_move_dir(self):
         dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
@@ -972,11 +997,15 @@ class CDCTests(unittest.TestCase):
     
     def test_snapshot_directory(self):
         dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
-        self.cdc.execute_ok(RemoveDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
+        self.cdc.execute_ok(SoftUnlinkDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
         # can't create files or directories in the deleted directory
         self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
         transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
+    
+    def test_remove_inode(self):
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'))).id
+        self.cdc.shards[inode_id_shard(dir_1)].execute_err(RemoveInodeReq(dir_1), ErrCode.DIRECTORY_HAS_OWNER)
 
 def run_forever(db: sqlite3.Connection):
     api_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)

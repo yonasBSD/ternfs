@@ -33,6 +33,9 @@ func (alerter *mockAlerter) RaiseAlert(err error) {
 	*alerter = append(*alerter, err)
 }
 
+func (alerter *mockAlerter) Info(format string, v ...any)  {}
+func (alerter *mockAlerter) Debug(format string, v ...any) {}
+
 func TestReqOK(t *testing.T) {
 	request := msgs.VisitDirectoriesReq{
 		BeginId: 0,
@@ -68,7 +71,7 @@ func TestReqOK(t *testing.T) {
 	alerter := mockAlerter{}
 	response := msgs.VisitDirectoriesResp{}
 	err := ShardRequest(
-		&alerter, new(bytes.Buffer), &responses, make([]byte, msgs.UDP_MTU), requestId, &request, &response,
+		&alerter, new(bytes.Buffer), &responses, requestId, &request, &response,
 	)
 	for _, err := range alerter {
 		fmt.Printf("err: %v\n", err)
@@ -88,9 +91,8 @@ func TestReqTimeout(t *testing.T) {
 	sock, err := net.DialUDP("udp4", nil, mockSock.LocalAddr().(*net.UDPAddr))
 	assert.Nil(t, err)
 	defer sock.Close()
-	buffer := make([]byte, msgs.UDP_MTU)
 	err = ShardRequestSocket(
-		&mockAlerter{}, sock, buffer, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
+		&mockAlerter{}, sock, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
 	)
 	assert.NotNil(t, err)
 }

@@ -1,3 +1,4 @@
+// TODO Embarassing amounts of duplication between this and shard.go. Probably good to deduplicate.
 package request
 
 import (
@@ -10,35 +11,35 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-// >>> format(struct.unpack('<I', b'SHA\0')[0], 'x')
-// '414853'
-const SHARD_PROTOCOL_VERSION uint32 = 0x414853
+// >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
+// '434443'
+const CDC_PROTOCOL_VERSION uint32 = 0x434443
 
-type shardRequest struct {
+type cdcRequest struct {
 	RequestId uint64
 	Body      bincode.Packable
 }
 
-func (req *shardRequest) Pack(buf *bincode.Buf) {
-	buf.PackU32(SHARD_PROTOCOL_VERSION)
+func (req *cdcRequest) Pack(buf *bincode.Buf) {
+	buf.PackU32(CDC_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
+	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
 	req.Body.Pack(buf)
 }
 
-type ShardResponse struct {
+type CDCResponse struct {
 	RequestId uint64
 	Body      bincode.Bincodable
 }
 
-func (req *ShardResponse) Pack(buf *bincode.Buf) {
-	buf.PackU32(SHARD_PROTOCOL_VERSION)
+func (req *CDCResponse) Pack(buf *bincode.Buf) {
+	buf.PackU32(CDC_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
+	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
 	req.Body.Pack(buf)
 }
 
-type UnpackedShardResponse struct {
+type UnpackedCDCResponse struct {
 	RequestId uint64
 	Body      bincode.Unpackable
 	// This is where we could decode as far as decoding the request id,
@@ -51,16 +52,16 @@ type UnpackedShardResponse struct {
 	Error error
 }
 
-func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
+func (resp *UnpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	// panic immediately if we get passed a bogus body
-	expectedKind := msgs.GetShardMessageKind(resp.Body)
+	expectedKind := msgs.GetCDCMessageKind(resp.Body)
 	// decode message header
 	var ver uint32
 	if err := buf.UnpackU32(&ver); err != nil {
 		return err
 	}
-	if ver != SHARD_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", SHARD_PROTOCOL_VERSION, ver)
+	if ver != CDC_PROTOCOL_VERSION {
+		return fmt.Errorf("expected protocol version %v, but got %v", CDC_PROTOCOL_VERSION, ver)
 	}
 	if err := buf.UnpackU64(&resp.RequestId); err != nil {
 		return err
@@ -83,7 +84,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 		resp.Error = errCode
 		return nil
 	}
-	if msgs.ShardMessageKind(kind) != expectedKind {
+	if msgs.CDCMessageKind(kind) != expectedKind {
 		resp.Error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
 		return nil
 	}
@@ -96,7 +97,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func ShardRequest(
+func CDCRequest(
 	logger loglevels.LogLevels,
 	writer io.Writer,
 	reader io.Reader,
@@ -106,13 +107,13 @@ func ShardRequest(
 	// are made regarding the contents of `respBody`.
 	respBody bincode.Unpackable,
 ) error {
-	req := shardRequest{
+	req := cdcRequest{
 		RequestId: requestId,
 		Body:      reqBody,
 	}
 	buffer := make([]byte, msgs.UDP_MTU)
+	logger.Debug("about to send request %T to CDC", reqBody)
 	reqBytes := buffer
-	logger.Debug("about to send request %T to shard", reqBody)
 	bincode.PackIntoBytes(&reqBytes, &req)
 	written, err := writer.Write(reqBytes)
 	if err != nil {
@@ -133,7 +134,7 @@ func ShardRequest(
 			// pipe is broken, terminate with this err
 			return err
 		}
-		resp := UnpackedShardResponse{
+		resp := UnpackedCDCResponse{
 			Body: respBody,
 		}
 		if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
@@ -148,14 +149,14 @@ func ShardRequest(
 		if resp.Error != nil {
 			return resp.Error
 		}
-		logger.Debug("got response %T from shard", respBody)
+		logger.Debug("got response %T from CDC", respBody)
 		return nil
 	}
 }
 
 // This function will set the deadline for the socket.
 // TODO does the deadline persist -- i.e. are we permanently modifying this socket.
-func ShardRequestSocket(
+func CDCRequestSocket(
 	logger loglevels.LogLevels,
 	sock *net.UDPConn,
 	timeout time.Duration,
@@ -163,13 +164,13 @@ func ShardRequestSocket(
 	respBody bincode.Unpackable,
 ) error {
 	sock.SetReadDeadline(time.Now().Add(timeout))
-	return ShardRequest(logger, sock, sock, uint64(msgs.Now()), reqBody, respBody)
+	return CDCRequest(logger, sock, sock, uint64(msgs.Now()), reqBody, respBody)
 }
 
-func ShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
-	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: shid.Port()})
+func CDCSocket() (*net.UDPConn, error) {
+	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: msgs.CDC_PORT})
 	if err != nil {
-		return nil, fmt.Errorf("could not create shard socket: %w", err)
+		return nil, fmt.Errorf("could not create CDC socket: %w", err)
 	}
 	return socket, nil
 }

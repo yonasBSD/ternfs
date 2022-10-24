@@ -345,7 +345,7 @@ class Operations(pyfuse3.Operations):
     async def rmdir(self, parent_inode, name, ctx=None):
         parent_inode = fuse_id_to_eggs_id(parent_inode)
         target_id = cast(LookupResp, await self._send_shard_req(inode_id_shard(parent_inode), LookupReq(parent_inode, name))).target_id
-        await self._send_cdc_req(RemoveDirectoryReq(parent_inode, target_id, name))
+        await self._send_cdc_req(SoftUnlinkDirectoryReq(parent_inode, target_id, name))
     
     async def symlink(self, parent_inode, name, target, ctx=None):
         parent_inode = fuse_id_to_eggs_id(parent_inode)

@@ -74,6 +74,10 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE: {
         ErrCode.TYPE_IS_DIRECTORY, ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
     },
+    ShardMessageKind.REMOVE_INODE: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_HAS_OWNER, ErrCode.CANNOT_REMOVE_ROOT_DIRECTORY,
+        ErrCode.FILE_NOT_FOUND, ErrCode.FILE_NOT_EMPTY, ErrCode.FILE_IS_NOT_TRANSIENT,
+    },
 }
 
 def kind_is_privileged(k: ShardMessageKind) -> bool:

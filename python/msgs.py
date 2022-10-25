@@ -47,6 +47,9 @@ class ErrCode(enum.IntEnum):
     FILE_IS_NOT_TRANSIENT = 46
     FILE_NOT_EMPTY = 47
     CANNOT_REMOVE_ROOT_DIRECTORY = 48
+    FILE_EMPTY = 49
+    CANNOT_REMOVE_DIRTY_SPAN = 50
+    TARGET_NOT_IN_SAME_SHARD = 51
 
 class ShardMessageKind(enum.IntEnum):
     LOOKUP = 0x1
@@ -64,13 +67,17 @@ class ShardMessageKind(enum.IntEnum):
     VISIT_TRANSIENT_FILES = 0x16
     FULL_READ_DIR = 0x21
     REMOVE_NON_OWNED_EDGE = 0x17
-    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 0x18
+    INTRA_SHARD_HARD_FILE_UNLINK = 0x18
+    REMOVE_SPAN_INITIATE = 0x19
+    REMOVE_SPAN_CERTIFY = 0x1A
     CREATE_DIRECTORY_INODE = 0x80
     SET_DIRECTORY_OWNER = 0x81
     CREATE_LOCKED_CURRENT_EDGE = 0x82
     LOCK_CURRENT_EDGE = 0x83
     UNLOCK_CURRENT_EDGE = 0x84
     REMOVE_INODE = 0x85
+    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 0x86
+    MAKE_FILE_TRANSIENT = 0x87
 
 class CDCMessageKind(enum.IntEnum):
     MAKE_DIRECTORY = 0x1
@@ -78,16 +85,19 @@ class CDCMessageKind(enum.IntEnum):
     SOFT_UNLINK_DIRECTORY = 0x3
     RENAME_DIRECTORY = 0x4
     HARD_UNLINK_DIRECTORY = 0x5
+    HARD_UNLINK_FILE = 0x6
 
 @dataclass
 class TransientFile(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # id + deadline_time + len(note)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 1 # id + cookie + deadline_time + len(note)
     id: int
+    cookie: int
     deadline_time: int
     note: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.id, b)
+        bincode.pack_u64_into(self.cookie, b)
         bincode.pack_u64_into(self.deadline_time, b)
         bincode.pack_bytes_into(self.note, b)
         return None
@@ -95,13 +105,15 @@ class TransientFile(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'TransientFile':
         id = bincode.unpack_u64(u)
+        cookie = bincode.unpack_u64(u)
         deadline_time = bincode.unpack_u64(u)
         note = bincode.unpack_bytes(u)
-        return TransientFile(id, deadline_time, note)
+        return TransientFile(id, cookie, deadline_time, note)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # id
+        _size += 8 # cookie
         _size += 8 # deadline_time
         _size += 1 # len(note)
         _size += len(self.note) # note contents
@@ -312,6 +324,29 @@ class NewBlockInfo(bincode.Packable):
         _size = 0
         _size += 4 # crc32
         _size += bincode.v61_packed_size(self.size) # size
+        return _size
+
+@dataclass
+class BlockProof(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # block_id + proof
+    block_id: int
+    proof: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.block_id, b)
+        bincode.pack_fixed_into(self.proof, 8, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockProof':
+        block_id = bincode.unpack_u64(u)
+        proof = bincode.unpack_fixed(u, 8)
+        return BlockProof(block_id, proof)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # block_id
+        _size += 8 # proof
         return _size
 
 @dataclass
@@ -611,7 +646,7 @@ class AddSpanCertifyReq(bincode.Packable):
     file_id: int
     cookie: int
     byte_offset: int
-    proofs: List[bytes]
+    proofs: List[BlockProof]
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.file_id, b)
@@ -619,7 +654,7 @@ class AddSpanCertifyReq(bincode.Packable):
         bincode.pack_v61_into(self.byte_offset, b)
         bincode.pack_u16_into(len(self.proofs), b)
         for i in range(len(self.proofs)):
-            bincode.pack_fixed_into(self.proofs[i], 8, b)
+            self.proofs[i].pack_into(b)
         return None
 
     @staticmethod
@@ -629,7 +664,7 @@ class AddSpanCertifyReq(bincode.Packable):
         byte_offset = bincode.unpack_v61(u)
         proofs: List[Any] = [None]*bincode.unpack_u16(u)
         for i in range(len(proofs)):
-            proofs[i] = bincode.unpack_fixed(u, 8)
+            proofs[i] = BlockProof.unpack(u)
         return AddSpanCertifyReq(file_id, cookie, byte_offset, proofs)
 
     def calc_packed_size(self) -> int:
@@ -639,7 +674,7 @@ class AddSpanCertifyReq(bincode.Packable):
         _size += bincode.v61_packed_size(self.byte_offset) # byte_offset
         _size += 2 # len(proofs)
         for i in range(len(self.proofs)):
-            _size += 8 # proofs[i]
+            _size += self.proofs[i].calc_packed_size() # proofs[i]
         return _size
 
 @dataclass
@@ -1119,32 +1154,32 @@ class RemoveNonOwnedEdgeResp(bincode.Packable):
         return _size
 
 @dataclass
-class RemoveOwnedSnapshotFileEdgeReq(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # dir_id + target_id + len(name) + creation_time
-    dir_id: int
+class IntraShardHardFileUnlinkReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + target_id + len(name) + creation_time
+    owner_id: int
     target_id: int
     name: bytes
     creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.dir_id, b)
+        bincode.pack_u64_into(self.owner_id, b)
         bincode.pack_u64_into(self.target_id, b)
         bincode.pack_bytes_into(self.name, b)
         bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'RemoveOwnedSnapshotFileEdgeReq':
-        dir_id = bincode.unpack_u64(u)
+    def unpack(u: bincode.UnpackWrapper) -> 'IntraShardHardFileUnlinkReq':
+        owner_id = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
         creation_time = bincode.unpack_u64(u)
-        return RemoveOwnedSnapshotFileEdgeReq(dir_id, target_id, name, creation_time)
+        return IntraShardHardFileUnlinkReq(owner_id, target_id, name, creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 8 # dir_id
+        _size += 8 # owner_id
         _size += 8 # target_id
         _size += 1 # len(name)
         _size += len(self.name) # name contents
@@ -1152,16 +1187,124 @@ class RemoveOwnedSnapshotFileEdgeReq(bincode.Packable):
         return _size
 
 @dataclass
-class RemoveOwnedSnapshotFileEdgeResp(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE
+class IntraShardHardFileUnlinkResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK
     STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'RemoveOwnedSnapshotFileEdgeResp':
-        return RemoveOwnedSnapshotFileEdgeResp()
+    def unpack(u: bincode.UnpackWrapper) -> 'IntraShardHardFileUnlinkResp':
+        return IntraShardHardFileUnlinkResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+@dataclass
+class RemoveSpanInitiateReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_SPAN_INITIATE
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # file_id + cookie
+    file_id: int
+    cookie: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.file_id, b)
+        bincode.pack_u64_into(self.cookie, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveSpanInitiateReq':
+        file_id = bincode.unpack_u64(u)
+        cookie = bincode.unpack_u64(u)
+        return RemoveSpanInitiateReq(file_id, cookie)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # file_id
+        _size += 8 # cookie
+        return _size
+
+@dataclass
+class RemoveSpanInitiateResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_SPAN_INITIATE
+    STATIC_SIZE: ClassVar[int] = 2 # len(blocks)
+    byte_offset: int
+    blocks: List[BlockInfo]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_v61_into(self.byte_offset, b)
+        bincode.pack_u16_into(len(self.blocks), b)
+        for i in range(len(self.blocks)):
+            self.blocks[i].pack_into(b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveSpanInitiateResp':
+        byte_offset = bincode.unpack_v61(u)
+        blocks: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(blocks)):
+            blocks[i] = BlockInfo.unpack(u)
+        return RemoveSpanInitiateResp(byte_offset, blocks)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += bincode.v61_packed_size(self.byte_offset) # byte_offset
+        _size += 2 # len(blocks)
+        for i in range(len(self.blocks)):
+            _size += self.blocks[i].calc_packed_size() # blocks[i]
+        return _size
+
+@dataclass
+class RemoveSpanCertifyReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_SPAN_CERTIFY
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 2 # file_id + cookie + len(proofs)
+    file_id: int
+    cookie: int
+    byte_offset: int
+    proofs: List[BlockProof]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.file_id, b)
+        bincode.pack_u64_into(self.cookie, b)
+        bincode.pack_v61_into(self.byte_offset, b)
+        bincode.pack_u16_into(len(self.proofs), b)
+        for i in range(len(self.proofs)):
+            self.proofs[i].pack_into(b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveSpanCertifyReq':
+        file_id = bincode.unpack_u64(u)
+        cookie = bincode.unpack_u64(u)
+        byte_offset = bincode.unpack_v61(u)
+        proofs: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(proofs)):
+            proofs[i] = BlockProof.unpack(u)
+        return RemoveSpanCertifyReq(file_id, cookie, byte_offset, proofs)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # file_id
+        _size += 8 # cookie
+        _size += bincode.v61_packed_size(self.byte_offset) # byte_offset
+        _size += 2 # len(proofs)
+        for i in range(len(self.proofs)):
+            _size += self.proofs[i].calc_packed_size() # proofs[i]
+        return _size
+
+@dataclass
+class RemoveSpanCertifyResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_SPAN_CERTIFY
+    STATIC_SIZE: ClassVar[int] = 0 # 
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveSpanCertifyResp':
+        return RemoveSpanCertifyResp()
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -1436,6 +1579,96 @@ class RemoveInodeResp(bincode.Packable):
         return _size
 
 @dataclass
+class RemoveOwnedSnapshotFileEdgeReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + target_id + len(name) + creation_time
+    owner_id: int
+    target_id: int
+    name: bytes
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.owner_id, b)
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_bytes_into(self.name, b)
+        bincode.pack_u64_into(self.creation_time, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveOwnedSnapshotFileEdgeReq':
+        owner_id = bincode.unpack_u64(u)
+        target_id = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        creation_time = bincode.unpack_u64(u)
+        return RemoveOwnedSnapshotFileEdgeReq(owner_id, target_id, name, creation_time)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # owner_id
+        _size += 8 # target_id
+        _size += 1 # len(name)
+        _size += len(self.name) # name contents
+        _size += 8 # creation_time
+        return _size
+
+@dataclass
+class RemoveOwnedSnapshotFileEdgeResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE
+    STATIC_SIZE: ClassVar[int] = 0 # 
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'RemoveOwnedSnapshotFileEdgeResp':
+        return RemoveOwnedSnapshotFileEdgeResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+@dataclass
+class MakeFileTransientReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.MAKE_FILE_TRANSIENT
+    STATIC_SIZE: ClassVar[int] = 8 + 1 # id + len(note)
+    id: int
+    note: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.id, b)
+        bincode.pack_bytes_into(self.note, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MakeFileTransientReq':
+        id = bincode.unpack_u64(u)
+        note = bincode.unpack_bytes(u)
+        return MakeFileTransientReq(id, note)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # id
+        _size += 1 # len(note)
+        _size += len(self.note) # note contents
+        return _size
+
+@dataclass
+class MakeFileTransientResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.MAKE_FILE_TRANSIENT
+    STATIC_SIZE: ClassVar[int] = 0 # 
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'MakeFileTransientResp':
+        return MakeFileTransientResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+@dataclass
 class MakeDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
     STATIC_SIZE: ClassVar[int] = 8 + 1 # owner_id + len(name)
@@ -1669,8 +1902,57 @@ class HardUnlinkDirectoryResp(bincode.Packable):
         _size = 0
         return _size
 
-ShardRequestBody = Union[LookupReq, StatReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, RemoveOwnedSnapshotFileEdgeReq, CreateDirectoryINodeReq, SetDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveInodeReq]
-ShardResponseBody = Union[LookupResp, StatResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, RemoveOwnedSnapshotFileEdgeResp, CreateDirectoryINodeResp, SetDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveInodeResp]
+@dataclass
+class HardUnlinkFileReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.HARD_UNLINK_FILE
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + target_id + len(name) + creation_time
+    owner_id: int
+    target_id: int
+    name: bytes
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.owner_id, b)
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_bytes_into(self.name, b)
+        bincode.pack_u64_into(self.creation_time, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'HardUnlinkFileReq':
+        owner_id = bincode.unpack_u64(u)
+        target_id = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        creation_time = bincode.unpack_u64(u)
+        return HardUnlinkFileReq(owner_id, target_id, name, creation_time)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # owner_id
+        _size += 8 # target_id
+        _size += 1 # len(name)
+        _size += len(self.name) # name contents
+        _size += 8 # creation_time
+        return _size
+
+@dataclass
+class HardUnlinkFileResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.HARD_UNLINK_FILE
+    STATIC_SIZE: ClassVar[int] = 0 # 
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'HardUnlinkFileResp':
+        return HardUnlinkFileResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        return _size
+
+ShardRequestBody = Union[LookupReq, StatReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, IntraShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, CreateDirectoryINodeReq, SetDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveInodeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
+ShardResponseBody = Union[LookupResp, StatResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, IntraShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, CreateDirectoryINodeResp, SetDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveInodeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
 
 SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {
     ShardMessageKind.LOOKUP: (LookupReq, LookupResp),
@@ -1688,17 +1970,21 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.VISIT_TRANSIENT_FILES: (VisitTransientFilesReq, VisitTransientFilesResp),
     ShardMessageKind.FULL_READ_DIR: (FullReadDirReq, FullReadDirResp),
     ShardMessageKind.REMOVE_NON_OWNED_EDGE: (RemoveNonOwnedEdgeReq, RemoveNonOwnedEdgeResp),
-    ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE: (RemoveOwnedSnapshotFileEdgeReq, RemoveOwnedSnapshotFileEdgeResp),
+    ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK: (IntraShardHardFileUnlinkReq, IntraShardHardFileUnlinkResp),
+    ShardMessageKind.REMOVE_SPAN_INITIATE: (RemoveSpanInitiateReq, RemoveSpanInitiateResp),
+    ShardMessageKind.REMOVE_SPAN_CERTIFY: (RemoveSpanCertifyReq, RemoveSpanCertifyResp),
     ShardMessageKind.CREATE_DIRECTORY_INODE: (CreateDirectoryINodeReq, CreateDirectoryINodeResp),
     ShardMessageKind.SET_DIRECTORY_OWNER: (SetDirectoryOwnerReq, SetDirectoryOwnerResp),
     ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: (CreateLockedCurrentEdgeReq, CreateLockedCurrentEdgeResp),
     ShardMessageKind.LOCK_CURRENT_EDGE: (LockCurrentEdgeReq, LockCurrentEdgeResp),
     ShardMessageKind.UNLOCK_CURRENT_EDGE: (UnlockCurrentEdgeReq, UnlockCurrentEdgeResp),
     ShardMessageKind.REMOVE_INODE: (RemoveInodeReq, RemoveInodeResp),
+    ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE: (RemoveOwnedSnapshotFileEdgeReq, RemoveOwnedSnapshotFileEdgeResp),
+    ShardMessageKind.MAKE_FILE_TRANSIENT: (MakeFileTransientReq, MakeFileTransientResp),
 }
 
-CDCRequestBody = Union[MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq]
-CDCResponseBody = Union[MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp]
+CDCRequestBody = Union[MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, HardUnlinkFileReq]
+CDCResponseBody = Union[MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, HardUnlinkFileResp]
 
 CDC_REQUESTS: Dict[CDCMessageKind, Tuple[Type[CDCRequestBody], Type[CDCResponseBody]]] = {
     CDCMessageKind.MAKE_DIRECTORY: (MakeDirectoryReq, MakeDirectoryResp),
@@ -1706,5 +1992,6 @@ CDC_REQUESTS: Dict[CDCMessageKind, Tuple[Type[CDCRequestBody], Type[CDCResponseB
     CDCMessageKind.SOFT_UNLINK_DIRECTORY: (SoftUnlinkDirectoryReq, SoftUnlinkDirectoryResp),
     CDCMessageKind.RENAME_DIRECTORY: (RenameDirectoryReq, RenameDirectoryResp),
     CDCMessageKind.HARD_UNLINK_DIRECTORY: (HardUnlinkDirectoryReq, HardUnlinkDirectoryResp),
+    CDCMessageKind.HARD_UNLINK_FILE: (HardUnlinkFileReq, HardUnlinkFileResp),
 }
 

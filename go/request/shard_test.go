@@ -71,7 +71,7 @@ func TestReqOK(t *testing.T) {
 	alerter := mockAlerter{}
 	response := msgs.VisitDirectoriesResp{}
 	err := ShardRequest(
-		&alerter, new(bytes.Buffer), &responses, requestId, &request, &response,
+		&alerter, nil, new(bytes.Buffer), &responses, requestId, &request, &response,
 	)
 	for _, err := range alerter {
 		fmt.Printf("err: %v\n", err)
@@ -92,7 +92,7 @@ func TestReqTimeout(t *testing.T) {
 	assert.Nil(t, err)
 	defer sock.Close()
 	err = ShardRequestSocket(
-		&mockAlerter{}, sock, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
+		&mockAlerter{}, nil, sock, time.Millisecond, &msgs.VisitTransientFilesReq{}, &msgs.VisitTransientFilesResp{},
 	)
 	assert.NotNil(t, err)
 }

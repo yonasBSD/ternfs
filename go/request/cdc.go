@@ -147,6 +147,7 @@ func CDCRequest(
 		}
 		// we managed to decode, we just need to check that it's not an error
 		if resp.Error != nil {
+			logger.Debug("got error %v from CDC", resp.Error)
 			return resp.Error
 		}
 		logger.Debug("got response %T from CDC", respBody)

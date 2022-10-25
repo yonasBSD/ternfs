@@ -291,7 +291,7 @@ class Operations(pyfuse3.Operations):
                     file_id=file_id,
                     cookie=under_construction.cookie,
                     byte_offset=offset+ix,
-                    proofs=[block_proof],
+                    proofs=[BlockProof(block.block_id, block_proof)],
                 )
             )
         return len(buf)

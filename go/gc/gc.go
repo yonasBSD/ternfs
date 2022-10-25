@@ -1,6 +1,7 @@
 package gc
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"log"
 	"net"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/cdckey"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/request"
 )
@@ -23,6 +26,7 @@ type GcEnv struct {
 	SnapshotPolicy SnapshotPolicy
 	Verbose        bool
 	Dry            bool
+	CDCKey         cipher.Block
 }
 
 func (gc *GcEnv) RaiseAlert(err error) {
@@ -47,6 +51,14 @@ func (gc *GcEnv) Debug(format string, v0 ...any) {
 	}
 }
 
+func (gc *GcEnv) ShardRequest(req bincode.Packable, resp bincode.Unpackable) error {
+	return request.ShardRequestSocket(gc, gc.CDCKey, gc.ShardSocket, gc.Timeout, req, resp)
+}
+
+func (gc *GcEnv) CDCRequest(req bincode.Packable, resp bincode.Unpackable) error {
+	return request.CDCRequestSocket(gc, gc.CDCSocket, gc.Timeout, req, resp)
+}
+
 type DestructionStats struct {
 	VisitedFiles     uint64
 	DestructedFiles  uint64
@@ -54,9 +66,62 @@ type DestructionStats struct {
 	DestructedBlocks uint64
 }
 
-func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId) error {
-	gc.Debug("%v: destructing file, dry=%v", id, gc.Dry)
+func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline msgs.EggsTime, cookie uint64) error {
+	gc.Debug("%v: destructing file, dry=%v, cookie=%v", id, gc.Dry, cookie)
 	stats.VisitedFiles++
+	now := msgs.Now()
+	if now < deadline {
+		gc.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", id, deadline, now)
+	}
+	if gc.Dry {
+		gc.Debug("%v: dry running, stopping destruction here", id)
+		stats.DestructedFiles++
+		return nil
+	}
+	// Keep destructing spans until we have nothing
+	initReq := msgs.RemoveSpanInitiateReq{
+		FileId: id,
+		Cookie: cookie,
+	}
+	initResp := msgs.RemoveSpanInitiateResp{}
+	certifyReq := msgs.RemoveSpanCertifyReq{
+		FileId: id,
+		Cookie: cookie,
+	}
+	certifyResp := msgs.RemoveSpanCertifyResp{}
+	for {
+		err := gc.ShardRequest(&initReq, &initResp)
+		if err == msgs.FILE_EMPTY {
+			break // TODO: kinda ugly to rely on this for control flow...
+		}
+		if err != nil {
+			return fmt.Errorf("%v: could not initiate span removal: %w", id, err)
+		}
+		certifyReq.ByteOffset = initResp.ByteOffset
+		certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
+		for i, block := range initResp.Blocks {
+			proof, err := request.EraseBlock(gc, block)
+			if err != nil {
+				return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+			}
+			stats.DestructedBlocks++
+			certifyReq.Proofs[i].BlockId = block.BlockId
+			certifyReq.Proofs[i].Proof = proof
+		}
+		err = gc.ShardRequest(&certifyReq, &certifyResp)
+		if err != nil {
+			return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
+		}
+		stats.DestructedSpans++
+	}
+	// Now purge the inode
+	{
+		err := gc.ShardRequest(&msgs.RemoveInodeReq{Id: id}, &msgs.RemoveInodeResp{})
+		if err != nil {
+			return fmt.Errorf("%v: could not remove transient file inode after removing spans: %w", id, err)
+		}
+	}
+	stats.DestructedFiles++
 	return nil
 }
 
@@ -64,22 +129,25 @@ func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId) error {
 // all files have been traversed. Useful for testing a single iteration.
 func (gc *GcEnv) destructInner() (DestructionStats, error) {
 	var stats DestructionStats
-	socket, err := request.ShardSocket(gc.Shid)
+
+	shardSocket, err := request.ShardSocket(gc.Shid)
 	if err != nil {
 		return stats, err
 	}
-	defer socket.Close()
+	defer shardSocket.Close()
+	gc.ShardSocket = shardSocket
+
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
 	for {
-		err := request.ShardRequestSocket(gc, socket, gc.Timeout, &req, &resp)
+		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
 			return stats, fmt.Errorf("could not visit transient files: %w", err)
 		}
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
-			if err := gc.DestructFile(&stats, file.Id); err != nil {
-				return stats, fmt.Errorf("error while destructing file %v: %w", file, err)
+			if err := gc.DestructFile(&stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+				return stats, fmt.Errorf("%v: error while destructing file: %w", file, err)
 			}
 		}
 		req.BeginId = resp.NextId
@@ -102,9 +170,10 @@ func (gc *GcEnv) destruct() {
 }
 
 type CollectStats struct {
-	visitedDirectories uint64
-	visitedEdges       uint64
-	collectedEdges     uint64
+	visitedDirectories    uint64
+	visitedEdges          uint64
+	collectedEdges        uint64
+	destructedDirectories uint64
 }
 
 // returns whether all the edges were removed
@@ -122,20 +191,25 @@ func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership
 				// owned, but snapshot edge)
 				gc.Debug("%v: removing owned snapshot edge %+v", dirId, edge)
 				if !gc.Dry {
-					req := msgs.RemoveOwnedSnapshotFileEdgeReq{
-						DirId:        dirId,
+					req := msgs.IntraShardHardFileUnlinkReq{
+						OwnerId:      dirId,
 						TargetId:     edge.TargetId.Id(),
 						Name:         edge.Name,
 						CreationTime: edge.CreationTime,
 					}
-					resp := msgs.RemoveOwnedSnapshotFileEdgeResp{}
-					err = request.ShardRequestSocket(gc, gc.ShardSocket, gc.Timeout, &req, &resp)
+					err = gc.ShardRequest(&req, &msgs.IntraShardHardFileUnlinkResp{})
 				}
 			} else {
 				// different shard, we need to go through the CDC
 				gc.Debug("%v: removing cross-shard owned edge %+v", dirId, edge)
 				if !gc.Dry {
-					panic("cross-shard edge removal not implemented")
+					req := msgs.HardUnlinkFileReq{
+						OwnerId:      dirId,
+						TargetId:     edge.TargetId.Id(),
+						Name:         edge.Name,
+						CreationTime: edge.CreationTime,
+					}
+					err = gc.CDCRequest(&req, &msgs.HardUnlinkFileResp{})
 				}
 			}
 		} else {
@@ -148,27 +222,10 @@ func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				resp := msgs.RemoveNonOwnedEdgeResp{}
-				err = request.ShardRequestSocket(gc, gc.ShardSocket, gc.Timeout, &req, &resp)
+				err = gc.ShardRequest(&req, &msgs.RemoveNonOwnedEdgeResp{})
 			}
 		}
 		if err != nil {
-			switch code := err.(type) {
-			case msgs.ErrCode:
-				if code == msgs.EDGE_NOT_FOUND {
-					// this can happen if somebody got here before us. we choose not to
-					// continue because if for some reason this edge does exist (say
-					// because of a bug in this program) we don't want to leave a weird
-					// edge state.
-					gc.RaiseAlert(fmt.Errorf("%v: could not find edge %+v while GC'ing (err %v), will stop removing edges for this directory", dirId, edge, code))
-					return false, nil
-				} else if code == msgs.DIRECTORY_NOT_FOUND {
-					// this can happen if somebody got here before us, and we definitely
-					// can't continue.
-					gc.RaiseAlert(fmt.Errorf("%v: could not find directory when removing edge %+v, will stop removing edges in this directory", dirId, edge))
-					return false, nil
-				}
-			}
 			return false, fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
 		}
 		stats.collectedEdges++
@@ -186,7 +243,7 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 	resp := msgs.FullReadDirResp{}
 	remove := dirId != msgs.ROOT_DIR_INODE_ID
 	for {
-		err := request.ShardRequestSocket(gc, gc.ShardSocket, gc.Timeout, &req, &resp)
+		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
 			return err
 		}
@@ -220,7 +277,7 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 			Id: dirId,
 		}
 		resp := msgs.StatResp{}
-		err := request.ShardRequestSocket(gc, gc.ShardSocket, gc.Timeout, &req, &resp)
+		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
 			return fmt.Errorf("error while getting directory to check if we can remove it: %w", err)
 		}
@@ -232,11 +289,12 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 				DirId: dirId,
 			}
 			if !gc.Dry {
-				err := request.CDCRequestSocket(gc, gc.CDCSocket, gc.Timeout, &req, &msgs.HardUnlinkDirectoryResp{})
+				err := gc.CDCRequest(&req, &msgs.HardUnlinkDirectoryResp{})
 				if err != nil {
 					return fmt.Errorf("error while trying to remove directory inode: %w", err)
 				}
 			}
+			stats.destructedDirectories++
 		}
 	}
 	return nil
@@ -260,7 +318,7 @@ func (gc *GcEnv) collectInner() (CollectStats, error) {
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
 	for {
-		err := request.ShardRequestSocket(gc, gc.ShardSocket, gc.Timeout, &req, &resp)
+		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
 			return stats, fmt.Errorf("could not visit directories: %w", err)
 		}
@@ -311,25 +369,23 @@ func Run() {
 	logger := log.New(os.Stderr, "", log.Lshortfile)
 	panicChan := make(chan error, 1)
 	policy := SnapshotPolicy{
-		DeleteAfterTime:     time.Minute,
+		DeleteAfterTime:     time.Second,
 		DeleteAfterVersions: 30,
 	}
+	env := GcEnv{
+		Logger:         logger,
+		Timeout:        10 * time.Second,
+		CDCKey:         cdckey.CDCKey(),
+		SnapshotPolicy: policy,
+	}
 	for shid := 0; shid < 256; shid++ {
-		destructor := GcEnv{
-			Role:           "destructor",
-			Shid:           msgs.ShardId(shid),
-			Logger:         logger,
-			SnapshotPolicy: policy,
-			Timeout:        10 * time.Second,
-		}
+		destructor := env
+		env.Role = "destructor"
+		env.Shid = msgs.ShardId(shid)
 		go destructor.run(panicChan, (*GcEnv).destruct)
-		collector := GcEnv{
-			Role:           "collector",
-			Shid:           msgs.ShardId(shid),
-			Logger:         logger,
-			SnapshotPolicy: policy,
-			Timeout:        10 * time.Second,
-		}
+		collector := env
+		env.Role = "collector"
+		env.Shid = msgs.ShardId(shid)
 		go collector.run(panicChan, (*GcEnv).collect)
 	}
 	err := <-panicChan

@@ -43,6 +43,9 @@ func TestSimpleStruct(t *testing.T) {
 
 func TestU61(t *testing.T) {
 	buf := make([]byte, 8)
+	bbuf := Buf(buf)
+	bbuf.PackVarU61(0)
+	assert.Equal(t, 7, len(bbuf))
 	var x, y uint64
 	for i := 0; i < 61; i++ {
 		x = uint64(1) << i

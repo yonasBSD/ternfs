@@ -348,7 +348,7 @@ def create_file(name: Path, blob: bytes):
                 file_id=file_id,
                 cookie=cookie,
                 byte_offset=ix,
-                proofs=[block_proof],
+                proofs=[BlockProof(block.block_id, block_proof)],
             )
         )
     send_shard_request_or_raise(shard, LinkFileReq(file_id, cookie, dir_id, name.name.encode('ascii')))
@@ -390,9 +390,12 @@ def transient_files():
             assert isinstance(resp, VisitTransientFilesResp)
             for f in resp.files:
                 print(f'inode id:    0x{f.id:016X}')
+                print(f'cookie:      0x{f.cookie:016X}')
+                print(f'deadline:    {eggs_time_str(f.deadline_time)}')
                 print(f'note:        {f.note.decode("ascii")}')
                 print(f'type:        {repr(inode_id_type(f.id))}')
                 print(f'shard:       {shard}')
+                print()
             begin_id = resp.next_id
             if begin_id == 0:
                 break

@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-from ast import BitAnd
-from asyncio import wait_for
 from enum import IntEnum
-from inspect import BoundArguments
-from multiprocessing.connection import wait
 import sqlite3
 import sys
 import os
@@ -13,7 +9,6 @@ from typing import Any, TypedDict, cast, Iterable
 from dataclasses import replace
 import hashlib
 import secrets
-import math
 import struct
 import random
 import socket
@@ -165,11 +160,10 @@ def init_db(shard: int, db: sqlite3.Connection):
     # the "reverse block index"
     cur.execute(f'''
         create table if not exists block_to_span (
+            block_id integer not null primary key,
             block_server_id integer not null,
-            block_id integer not null,
             file_id integer not null,
             byte_offset integer not null,
-            primary key (block_server_id, block_id),
             -- the defer makes writing some code a bit simpler
             foreign key (file_id, byte_offset) references spans (file_id, byte_offset) deferrable initially deferred
         )
@@ -186,26 +180,27 @@ def block_add_cert(block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(32)
     struct.pack_into('<cQ4sI', b, 0, b'w', block['block_id'], crc32_from_int(block['crc32']), block['size'])
-    return crypto.cbc_mac_impl(b, key)[:8]
+    return crypto.compute_mac(b, key)
 
 def block_add_proof(block: Union[Block, BlockInfo], key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(16)
     block_id = block.block_id if isinstance(block, BlockInfo) else block['block_id']
     struct.pack_into('<cQ', b, 0, b'W', block_id)
-    return crypto.cbc_mac_impl(b, key)[:8]
+    return crypto.compute_mac(b, key)
 
 def block_delete_cert(block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(16)
     struct.pack_into('<cQ', b, 0, b'e', block['block_id'])
-    return crypto.cbc_mac_impl(b, key)[:8]
+    mac = crypto.compute_mac(b, key)
+    return mac
 
-def block_delete_prof(block: Block, key: crypto.ExpandedKey) -> bytes:
+def block_delete_proof(block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(16)
     struct.pack_into('<cQ', b, 0, b'E', block['block_id'])
-    return crypto.cbc_mac_impl(b, key)[:8]
+    return crypto.compute_mac(b, key)
 
 class Span(TypedDict):
     parity: int
@@ -683,6 +678,7 @@ def construct_file(cur: sqlite3.Cursor, req: ConstructFileReq) -> Union[EggsErro
 
 # read only
 def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> VisitTransientFilesResp:
+    shard_info = ShardInfo(cur)
     num_entries = (UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE)//TransientFile.STATIC_SIZE
     entries = cur.execute(
         'select * from files where transient and id >= :begin_id order by id asc limit :max_entries',
@@ -690,11 +686,11 @@ def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> V
     ).fetchall()
     return VisitTransientFilesResp(
         next_id=0 if len(entries) < num_entries else entries[-1]['id'],
-        files=[TransientFile(entry['id'], entry['deadline'], entry['note']) for entry in entries[:num_entries]]
+        files=[TransientFile(id=entry['id'], cookie=calc_cookie(shard_info.secret_key, entry['id']), deadline_time=entry['deadline'], note=entry['note']) for entry in entries[:num_entries]]
     )
 
 def get_transient_file(cur: sqlite3.Cursor, shard_info: ShardInfo, *, file_id: int, cookie: int, now: int):
-    file = cur.execute('select * from files where id = :file_id and transient and deadline > :now', {'file_id': file_id, 'now': now}).fetchone()
+    file = cur.execute('select * from files where id = :file_id and transient and deadline >= :now', {'file_id': file_id, 'now': now}).fetchone()
     if file is None:
         return EggsError(ErrCode.FILE_NOT_FOUND)
     if cookie != calc_cookie(shard_info.secret_key, file['id']):
@@ -837,10 +833,12 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
     bservers = lookup_block_servers(cur, map(lambda block: block['block_server_id'], span_body))
     for block, proof in zip(span_body, req.proofs):
+        if proof.block_id != block['block_id']:
+            return EggsError(ErrCode.BAD_BLOCK_PROOF)
         bserver = bservers.get(block['block_server_id'])
         if bserver is None:
             return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
-        if proof != block_add_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
+        if proof.proof != block_add_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
     # update everything in an idempotent fashion
     cur.execute(
@@ -855,6 +853,110 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
 
 def add_span_certify(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union[EggsError, AddSpanCertifyResp]:
     res = add_span_certify_inner(cur, req)
+    assert check_spans_constraints(cur, req.file_id)
+    return res
+
+def remove_span_initiate_inner(cur: sqlite3.Cursor, req: RemoveSpanInitiateReq) -> Union[EggsError, RemoveSpanInitiateResp]:
+    shard_info = ShardInfo(cur)
+    file = get_transient_file(cur, shard_info, file_id=req.file_id, cookie=req.cookie, now=0) # we don't care about deadline here
+    if isinstance(file, EggsError):
+        return file
+    last_span = cur.execute(
+        'select * from spans where file_id = :file_id order by byte_offset desc limit 1',
+        {'file_id': req.file_id}
+    ).fetchone()
+    if last_span is None:
+        return EggsError(ErrCode.FILE_EMPTY)
+    blockless = last_span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE)
+    if blockless:
+        # we just remove the span and we're done
+        cur.execute(
+            'delete from spans where file_id = :file_id and byte_offset = :byte_offset',
+            {'file_id': req.file_id, 'byte_offset': last_span['byte_offset']},
+        )
+        assert cur.rowcount == 1
+        return RemoveSpanInitiateResp(byte_offset=last_span['byte_offset'], blocks=[])
+    else:
+        # accept repeated calls in the name of idempotency
+        if last_span['state'] not in (SpanState.CLEAN, SpanState.CONDEMNED):
+            return EggsError(ErrCode.CANNOT_REMOVE_DIRTY_SPAN)
+        assert isinstance(last_span['body'], str)
+        blocks = cast(List[Block], json.loads(last_span['body']))
+        resp_blocks: List[BlockInfo] = []
+        for block in blocks:
+            block_servers = lookup_block_servers(cur, (block['block_server_id'],))
+            assert len(block_servers) == 1
+            block_server = block_servers[block['block_server_id']]
+            resp_blocks.append(BlockInfo(
+                ip=socket.inet_aton(block_server['ip']),
+                port=block_server['port'],
+                block_id=block['block_id'],
+                certificate=block_delete_cert(block, crypto.aes_expand_key(block_server['secret_key'])),
+            ))
+        # condemn the span
+        cur.execute(
+            'update spans set state = :condemned where file_id = :file_id and byte_offset = :byte_offset',
+            {'file_id': req.file_id, 'byte_offset': last_span['byte_offset'], 'condemned': SpanState.CONDEMNED},
+        )
+        assert cur.rowcount == 1
+        cur.execute(
+            'update files set last_span_state = :condemned where id = :file_id',
+            {'file_id': req.file_id, 'condemned': SpanState.CONDEMNED},
+        )
+        assert cur.rowcount == 1
+        return RemoveSpanInitiateResp(byte_offset=last_span['byte_offset'], blocks=resp_blocks)
+
+def remove_span_initiate(cur: sqlite3.Cursor, req: RemoveSpanInitiateReq) -> Union[EggsError, RemoveSpanInitiateResp]:
+    res = remove_span_initiate_inner(cur, req)
+    assert check_spans_constraints(cur, req.file_id)
+    return res
+
+def remove_span_certify_inner(cur: sqlite3.Cursor, req: RemoveSpanCertifyReq) -> Union[EggsError, RemoveSpanCertifyResp]:
+    now = eggs_time()
+    shard_info = ShardInfo(cur)
+    file = get_transient_file(cur, shard_info, file_id=req.file_id, cookie=req.cookie, now=0) # we don't care about deadline here
+    if isinstance(file, EggsError):
+        return file
+    span = cur.execute(
+        'select * from spans where file_id = :file_id and byte_offset = :byte_offset and state = :condemned',
+        {'file_id': req.file_id, 'byte_offset': req.byte_offset, 'condemned': SpanState.CONDEMNED},
+    ).fetchone()
+    if span is None:
+        return EggsError(ErrCode.SPAN_NOT_FOUND)
+    if isinstance(span['body'], bytes):
+        return EggsError(ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN)
+    span_body = cast(List[Block], json.loads(span['body']))
+    if len(span_body) != len(req.proofs):
+        return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
+    bservers = lookup_block_servers(cur, map(lambda block: block['block_server_id'], span_body))
+    deleted_blocks = []
+    for block, proof in zip(span_body, req.proofs):
+        if proof.block_id != block['block_id']:
+            return EggsError(ErrCode.BAD_BLOCK_PROOF)
+        bserver = bservers.get(block['block_server_id'])
+        if bserver is None:
+            return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
+        if proof.proof != block_delete_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
+            return EggsError(ErrCode.BAD_BLOCK_PROOF)
+        deleted_blocks.append(proof.block_id)
+    # update everything in an idempotent fashion
+    cur.execute(
+        'delete from spans where file_id = :file_id and byte_offset = :byte_offset',
+        {'file_id': req.file_id, 'byte_offset': req.byte_offset}
+    )
+    cur.execute(
+        f'delete from block_to_span where block_id in ({",".join("?"*len(deleted_blocks))})',
+        deleted_blocks,
+    )
+    cur.execute(
+        'update files set last_span_state = :state_after, mtime = :now where id = :file_id and size = :expected_size',
+        {'file_id': req.file_id, 'expected_size': file['size'] - span['size'], 'state_after': SpanState.CLEAN, 'now': now}
+    )
+    return RemoveSpanCertifyResp()
+
+
+def remove_span_certify(cur: sqlite3.Cursor, req: RemoveSpanCertifyReq) -> Union[EggsError, RemoveSpanCertifyResp]:
+    res = remove_span_certify_inner(cur, req)
     assert check_spans_constraints(cur, req.file_id)
     return res
 
@@ -1162,10 +1264,12 @@ def remove_non_owned_edge(cur: sqlite3.Cursor, req: RemoveNonOwnedEdgeReq) -> Un
     return RemoveNonOwnedEdgeResp()
 
 # not read only
-def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapshotFileEdgeReq) -> Union[EggsError, RemoveOwnedSnapshotFileEdgeResp]:
+def intra_shard_hard_file_unlink(cur: sqlite3.Cursor, req: IntraShardHardFileUnlinkReq) -> Union[EggsError, IntraShardHardFileUnlinkResp]:
     if inode_id_type(req.target_id) == InodeType.DIRECTORY:
         return EggsError(ErrCode.TYPE_IS_DIRECTORY)
-    dir = get_directory(cur, req.dir_id, allow_snapshot=True) # the GC needs to work on deleted dirs who might still have owned files
+    if inode_id_shard(req.owner_id) != inode_id_shard(req.target_id):
+        return EggsError(ErrCode.TARGET_NOT_IN_SAME_SHARD)
+    dir = get_directory(cur, req.owner_id, allow_snapshot=True) # the GC needs to work on deleted dirs who might still have owned files
     if isinstance(dir, EggsError):
         return dir
     cur.execute(
@@ -1176,7 +1280,7 @@ def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapsho
                     creation_time = :creation_time and target_id = :target_id
                     and owned = true and current = false
         ''',
-        {'dir_id': req.dir_id, 'name_hash': hash_name(dir['hash_mode'], req.name), 'name': req.name, 'creation_time': req.creation_time, 'target_id': req.target_id},
+        {'dir_id': req.owner_id, 'name_hash': hash_name(dir['hash_mode'], req.name), 'name': req.name, 'creation_time': req.creation_time, 'target_id': req.target_id},
     )
     if cur.rowcount == 0:
         return EggsError(ErrCode.EDGE_NOT_FOUND)
@@ -1185,8 +1289,43 @@ def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapsho
         'update files set transient = TRUE, deadline = 0, last_span_state = :span_state, note = :name where id = :file_id',
         {'file_id': req.target_id, 'span_state': SpanState.CLEAN, 'name': req.name},
     )
+    assert cur.rowcount == 1
+    return IntraShardHardFileUnlinkResp()
+
+# not read only
+def remove_owned_snapshot_file_edge(cur: sqlite3.Cursor, req: RemoveOwnedSnapshotFileEdgeReq) -> Union[EggsError, RemoveOwnedSnapshotFileEdgeResp]:
+    if inode_id_type(req.target_id) == InodeType.DIRECTORY:
+        return EggsError(ErrCode.TYPE_IS_DIRECTORY)
+    dir = get_directory(cur, req.owner_id, allow_snapshot=True) # the GC needs to work on deleted dirs who might still have owned files
+    if isinstance(dir, EggsError):
+        return dir
+    cur.execute(
+        '''
+            delete from edges
+                where
+                    dir_id = :dir_id and name_hash = :name_hash and name = :name and
+                    creation_time = :creation_time and target_id = :target_id
+                    and owned = true and current = false
+        ''',
+        {'dir_id': req.owner_id, 'name_hash': hash_name(dir['hash_mode'], req.name), 'name': req.name, 'creation_time': req.creation_time, 'target_id': req.target_id},
+    )
+    if cur.rowcount == 0:
+        return EggsError(ErrCode.EDGE_NOT_FOUND)
     return RemoveOwnedSnapshotFileEdgeResp()
-    
+
+# not read only
+def make_file_transient(cur: sqlite3.Cursor, req: MakeFileTransientReq) -> Union[EggsError, MakeFileTransientResp]:
+    file = cur.execute('select * from files where id = :file_id', {'file_id': req.id}).fetchone()
+    if file is None:
+        return EggsError(ErrCode.FILE_NOT_FOUND)
+    if file['transient']: # already done
+        return MakeFileTransientResp()
+    cur.execute(
+        'update files set transient = TRUE, deadline = 0, last_span_state = :span_state, note = :name where id = :file_id',
+        {'file_id': req.id, 'span_state': SpanState.CLEAN, 'name': req.note},
+    )
+    return MakeFileTransientResp()
+
 # read only
 def lookup(cur: sqlite3.Cursor, req: LookupReq) -> Union[EggsError, LookupResp]:
     current_edge = get_current_edge(cur, dir_id=req.dir_id, name=req.name, target_id=None)
@@ -1224,12 +1363,11 @@ def remove_inode_req(cur: sqlite3.Cursor, req: RemoveInodeReq) -> Union[EggsErro
             return EggsError(ErrCode.FILE_IS_NOT_TRANSIENT)
         num_spans = cur.execute(
             'select count(*) as c from spans where file_id = :file_id', {'file_id': req.id},
-        ).fetchone()
+        ).fetchone()['c']
         if num_spans != 0:
             return EggsError(ErrCode.FILE_NOT_EMPTY)
         cur.execute('delete from files where id = :file_id', {'file_id': req.id})
         return RemoveInodeResp()
-    
 
 class BlockServerInfo(TypedDict):
     ip: str
@@ -1292,6 +1430,10 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = add_span_initiate(cur, req_body)
         elif isinstance(req_body, AddSpanCertifyReq):
             resp_body = add_span_certify(cur, req_body)
+        elif isinstance(req_body, RemoveSpanInitiateReq):
+            resp_body = remove_span_initiate(cur, req_body)
+        elif isinstance(req_body, RemoveSpanCertifyReq):
+            resp_body = remove_span_certify(cur, req_body)
         elif isinstance(req_body, LinkFileReq):
             resp_body = link_file(cur, req_body)
         elif isinstance(req_body, FileSpansReq):
@@ -1316,10 +1458,14 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = full_read_dir(cur, req_body)
         elif isinstance(req_body, RemoveNonOwnedEdgeReq):
             resp_body = remove_non_owned_edge(cur, req_body)
-        elif isinstance(req_body, RemoveOwnedSnapshotFileEdgeReq):
-            resp_body = remove_owned_snapshot_file_edge(cur, req_body)
+        elif isinstance(req_body, IntraShardHardFileUnlinkReq):
+            resp_body = intra_shard_hard_file_unlink(cur, req_body)
         elif isinstance(req_body, RemoveInodeReq):
             resp_body = remove_inode_req(cur, req_body)
+        elif isinstance(req_body, RemoveOwnedSnapshotFileEdgeReq):
+            resp_body = remove_owned_snapshot_file_edge(cur, req_body)
+        elif isinstance(req_body, MakeFileTransientReq):
+            resp_body = make_file_transient(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:

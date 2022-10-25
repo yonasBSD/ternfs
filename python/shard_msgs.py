@@ -11,6 +11,7 @@ import crypto
 from common import *
 from error import *
 from msgs import *
+from cdc_key import *
 
 SHARD_PROTOCOL_VERSION = b'SHA\0'
 
@@ -68,8 +69,8 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     ShardMessageKind.LOCK_CURRENT_EDGE: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.MISMATCHING_TARGET, ErrCode.NAME_NOT_FOUND,
     },
-    ShardMessageKind.REMOVE_NON_OWNED_EDGE: {
-        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
+    ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND, ErrCode.TARGET_NOT_IN_SAME_SHARD,
     },
     ShardMessageKind.REMOVE_OWNED_SNAPSHOT_FILE_EDGE: {
         ErrCode.TYPE_IS_DIRECTORY, ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,

@@ -11,8 +11,6 @@ import unittest
 import logging
 import argparse
 import socket
-from xmlrpc.client import INTERNAL_ERROR
-import crypto
 import logging
 
 from cdc_msgs import *
@@ -27,6 +25,7 @@ import bincode
 
 # TODO test automatic cleanup of timed out requests
 # TODO test multiple requests at once (queued)
+# TODO very important! in the CDC steps, mark those that must be performed to ensure consistency of the system. These should be retried much more insistently.
 
 def init_db(db: sqlite3.Connection):
     cur = db.cursor()
@@ -531,12 +530,49 @@ class HardUnlinkDirectory(Transaction):
             return resp
         return HardUnlinkDirectoryResp()
 
+# 1. remove owning edge
+# 2. make file transient
+class HardUnlinkFile(Transaction):
+    class HardUnlinkFileState(TypedDict):
+        exit_error: Optional[ErrCode]
+    state: HardUnlinkFileState
+
+    def __init__(self, state: Optional[HardUnlinkFileState] = None):
+        self.state = state or {
+            'exit_error': None,
+        }
+
+    def begin(self, cur: sqlite3.Cursor, req: HardUnlinkFileReq) -> CDCStepInternal:
+        return CDCNeedsShard(
+            next_step='remove_edge_resp',
+            shard=inode_id_shard(req.owner_id),
+            request=RemoveOwnedSnapshotFileEdgeReq(req.owner_id, req.target_id, req.name, req.creation_time)
+        )
+    
+    def remove_edge_resp(self, cur: sqlite3.Cursor, req: HardUnlinkFileReq, resp: ExpectedShardResp[HardUnlinkFileResp]) -> CDCStepInternal:
+        if isinstance(resp, EggsError):
+            return resp # nothing to roll back
+        return CDCNeedsShard(
+            next_step='make_transient_resp',
+            shard=inode_id_shard(req.target_id),
+            request=MakeFileTransientReq(req.target_id, req.name),
+        )
+    
+    def make_transient_resp(self, cur: sqlite3.Cursor, req: HardUnlinkDirectoryReq, resp: ExpectedShardResp[MakeFileTransientReq]) -> CDCStepInternal:
+        if isinstance(resp, EggsError):
+            if resp.error_code == ErrCode.FILE_NOT_FOUND:
+                # this is a bit suspicious, but should be fine
+                return HardUnlinkFileResp()
+            raise RuntimeError('TODO implement hard unlink file rollback')
+        return HardUnlinkFileResp()
+
 TRANSACTIONS: Dict[CDCMessageKind, Type[Transaction]] = {
     CDCMessageKind.MAKE_DIRECTORY: MakeDirectory,
     CDCMessageKind.RENAME_FILE: RenameFile,
     CDCMessageKind.SOFT_UNLINK_DIRECTORY: SoftUnlinkDirectory,
     CDCMessageKind.RENAME_DIRECTORY: RenameDirectory,
     CDCMessageKind.HARD_UNLINK_DIRECTORY: HardUnlinkDirectory,
+    CDCMessageKind.HARD_UNLINK_FILE: HardUnlinkFile,
 }
 
 # Returns whether a new transaction was started

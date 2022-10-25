@@ -7,7 +7,6 @@ import (
 	"os"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"xtx/eggsfs/msgs"
 )
@@ -54,7 +53,7 @@ func (cg *goCodegen) ustep(e string) {
 
 // lack of pointer is intentional: we don't want to destructively
 // update the tabs.
-func (cg goCodegen) genIndent(expr *subexpr) {
+func (cg goCodegen) genInSlice(expr *subexpr) {
 	cg.tabs = cg.tabs[:len(cg.tabs)+1]
 	cg.gen(expr)
 }
@@ -62,21 +61,6 @@ func (cg goCodegen) genIndent(expr *subexpr) {
 func (cg *goCodegen) lenVar() string {
 	*cg.fresh = *cg.fresh + 1
 	return fmt.Sprintf("len%d", *cg.fresh)
-}
-
-// If -1, it's not fixed bytes. Otherwise, the fixed length.
-func fixedBytesLen(e *subexpr) int {
-	r := regexp.MustCompile("fixed([1-9][0-9]*)")
-	match := r.FindStringSubmatch(e.tag)
-	if match == nil {
-		assertExpectedTag(e, "tag fixedN or no tag")
-		return -1
-	}
-	len, err := strconv.Atoi(match[1])
-	if err != nil {
-		panic(fmt.Sprintf("unexpected error in int conversion %v", err))
-	}
-	return len
 }
 
 func sliceTypeElem(t reflect.Type) reflect.Type {
@@ -121,17 +105,11 @@ func (cg *goCodegen) gen(expr *subexpr) {
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
-			len := fixedBytesLen(expr)
-			if len < 0 {
-				cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.expr))
-				if expr.typ.Kind() == reflect.String {
-					cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.expr))
-				} else {
-					cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.expr))
-				}
+			cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.expr))
+			if expr.typ.Kind() == reflect.String {
+				cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.expr))
 			} else {
-				cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, []byte(%v))", len, expr.expr))
-				cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, (*[]byte)(&%v))", len, expr.expr))
+				cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.expr))
 			}
 		} else {
 			lenVar := cg.lenVar()
@@ -145,14 +123,21 @@ func (cg *goCodegen) gen(expr *subexpr) {
 			loop := fmt.Sprintf("for i := 0; i < %s; i++ {", lenVar)
 			cg.pline(loop)
 			cg.uline(loop)
-			cg.genIndent(&subexpr{
+			cg.genInSlice(&subexpr{
 				typ:  elem,
 				expr: fmt.Sprintf("%s[i]", expr.expr),
-				tag:  expr.tag,
 			})
 			cg.pline("}")
 			cg.uline("}")
 		}
+	case reflect.Array:
+		elem := sliceTypeElem(expr.typ)
+		if elem.Kind() != reflect.Uint8 {
+			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
+		}
+		len := expr.typ.Size()
+		cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, %v[:])", len, expr.expr))
+		cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, %v[:])", len, expr.expr))
 	default:
 		panic(fmt.Sprintf("unsupported type with kind %v", expr.typ.Kind()))
 	}
@@ -191,7 +176,7 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 	cg.uline(fmt.Sprintf("func (v *%s) Unpack(buf *bincode.Buf) error {", t.Name()))
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
-		cg.genIndent(&subexpr{
+		cg.genInSlice(&subexpr{
 			expr: fmt.Sprintf("v.%s", fld.Name),
 			tag:  parseTag(fld.Tag),
 			typ:  fld.Type,
@@ -335,7 +320,7 @@ func pythonType(t reflect.Type) string {
 		return "bool"
 	case reflect.Struct:
 		return t.Name()
-	case reflect.Slice, reflect.String:
+	case reflect.Slice, reflect.String, reflect.Array:
 		elem := sliceTypeElem(t)
 		if elem.Kind() == reflect.Uint8 {
 			return "bytes"
@@ -434,17 +419,10 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
-			len := fixedBytesLen(expr)
-			if len < 0 {
-				cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "1", true) // u8 len
-				cg.sadd(fmt.Sprintf("%s contents", expr.expr), fmt.Sprintf("len(self.%s)", expr.expr))
-				cg.pline(fmt.Sprintf("bincode.pack_bytes_into(self.%s, b)", expr.expr))
-				cg.uline(fmt.Sprintf("%s = bincode.unpack_bytes(u)", expr.expr))
-			} else {
-				cg.addStaticSize(expr.expr, fmt.Sprintf("%d", len), true)
-				cg.pline(fmt.Sprintf("bincode.pack_fixed_into(self.%s, %d, b)", expr.expr, len))
-				cg.uline(fmt.Sprintf("%s = bincode.unpack_fixed(u, %d)", expr.expr, len))
-			}
+			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "1", true) // u8 len
+			cg.sadd(fmt.Sprintf("%s contents", expr.expr), fmt.Sprintf("len(self.%s)", expr.expr))
+			cg.pline(fmt.Sprintf("bincode.pack_bytes_into(self.%s, b)", expr.expr))
+			cg.uline(fmt.Sprintf("%s = bincode.unpack_bytes(u)", expr.expr))
 		} else {
 			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "2", true) // u16 len
 			// pack
@@ -458,9 +436,17 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 			cg.genInSlice(&subexpr{
 				typ:  elem,
 				expr: fmt.Sprintf("%s[i]", expr.expr),
-				tag:  expr.tag,
 			})
 		}
+	case reflect.Array:
+		elem := sliceTypeElem(expr.typ)
+		if elem.Kind() != reflect.Uint8 {
+			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
+		}
+		len := expr.typ.Size()
+		cg.addStaticSize(expr.expr, fmt.Sprintf("%d", len), true)
+		cg.pline(fmt.Sprintf("bincode.pack_fixed_into(self.%s, %d, b)", expr.expr, len))
+		cg.uline(fmt.Sprintf("%s = bincode.unpack_fixed(u, %d)", expr.expr, len))
 	default:
 		panic(fmt.Sprintf("unsupported type with kind %v", expr.typ.Kind()))
 	}
@@ -675,6 +661,9 @@ func main() {
 		"FILE_IS_NOT_TRANSIENT",
 		"FILE_NOT_EMPTY",
 		"CANNOT_REMOVE_ROOT_DIRECTORY",
+		"FILE_EMPTY",
+		"CANNOT_REMOVE_DIRTY_SPAN",
+		"TARGET_NOT_IN_SAME_SHARD",
 	}
 
 	shardReqResps := []reqRespType{
@@ -757,8 +746,18 @@ func main() {
 		},
 		{
 			0x18,
-			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeReq{}),
-			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeResp{}),
+			reflect.TypeOf(msgs.IntraShardHardFileUnlinkReq{}),
+			reflect.TypeOf(msgs.IntraShardHardFileUnlinkResp{}),
+		},
+		{
+			0x19,
+			reflect.TypeOf(msgs.RemoveSpanInitiateReq{}),
+			reflect.TypeOf(msgs.RemoveSpanInitiateResp{}),
+		},
+		{
+			0x1A,
+			reflect.TypeOf(msgs.RemoveSpanCertifyReq{}),
+			reflect.TypeOf(msgs.RemoveSpanCertifyResp{}),
 		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
@@ -791,6 +790,16 @@ func main() {
 			reflect.TypeOf(msgs.RemoveInodeReq{}),
 			reflect.TypeOf(msgs.RemoveInodeResp{}),
 		},
+		{
+			0x86,
+			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeReq{}),
+			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeResp{}),
+		},
+		{
+			0x87,
+			reflect.TypeOf(msgs.MakeFileTransientReq{}),
+			reflect.TypeOf(msgs.MakeFileTransientResp{}),
+		},
 	}
 
 	cdcReqResps := []reqRespType{
@@ -819,6 +828,11 @@ func main() {
 			reflect.TypeOf(msgs.HardUnlinkDirectoryReq{}),
 			reflect.TypeOf(msgs.HardUnlinkDirectoryResp{}),
 		},
+		{
+			0x06,
+			reflect.TypeOf(msgs.HardUnlinkFileReq{}),
+			reflect.TypeOf(msgs.HardUnlinkFileResp{}),
+		},
 	}
 
 	extras := []reflect.Type{
@@ -829,6 +843,7 @@ func main() {
 		reflect.TypeOf(msgs.FetchedSpan{}),
 		reflect.TypeOf(msgs.BlockInfo{}),
 		reflect.TypeOf(msgs.NewBlockInfo{}),
+		reflect.TypeOf(msgs.BlockProof{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)

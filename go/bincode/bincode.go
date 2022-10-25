@@ -45,7 +45,9 @@ func (buf *Buf) PackVarU61(x uint64) {
 	}
 	neededBytes := ((bits + 3) + 8 - 1) / 8
 	x = (x << 3) | uint64(neededBytes-1)
-	for x > 0 {
+	first := true
+	for first || x > 0 {
+		first = false
 		(*buf)[0] = byte(x)
 		x = x >> 8
 		(*buf) = (*buf)[1:]
@@ -194,12 +196,14 @@ func (buf *Buf) UnpackString(data *string) error {
 	return nil
 }
 
-func (buf *Buf) UnpackFixedBytes(l int, data *[]byte) error {
+func (buf *Buf) UnpackFixedBytes(l int, data []byte) error {
+	if len(data) != l {
+		panic(fmt.Sprintf("expecting fixed bytes of len %v, got %v instead", l, len(data)))
+	}
 	if err := buf.hasBytes(l); err != nil {
 		return err
 	}
-	*data = make([]byte, l)
-	copy(*data, *buf)
+	copy(data, *buf)
 	*buf = (*buf)[l:]
 	return nil
 }

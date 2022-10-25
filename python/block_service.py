@@ -13,6 +13,7 @@ import socket
 import struct
 import sys
 import logging
+import traceback
 
 import common
 
@@ -138,7 +139,7 @@ ONE_HOUR_IN_NS = 60 * 60 * 1000 * 1000 * 1000
 PAST_CUTOFF = ONE_HOUR_IN_NS * 22
 FUTURE_CUTOFF = ONE_HOUR_IN_NS * 2
 
-async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, rk: crypto.ExpandedKey, base_path: Path) -> None:
+async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, rk: crypto.ExpandedKey, base_path: Path, time_check: bool) -> None:
     writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x00'*8)
     try:
         while True:
@@ -148,7 +149,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 # (block_id, mac) -> data
                 block_id = deser_erase_block(kind + (await reader.readexactly(16)), rk)
                 now = common.eggs_time()
-                if block_id <= (now + FUTURE_CUTOFF):
+                if time_check and block_id <= (now + FUTURE_CUTOFF):
                     logging.error(f'Block {block_id} is too recent to be deleted.')
                     return
                 erase_block(base_path, block_id) # can never fail
@@ -171,7 +172,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 # check that block_id is inside expected range
                 # this ensures we don't have "reply attack"-esque issues
                 now = common.eggs_time()
-                if not (now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF):
+                if time_check and (not (now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF)):
                     logging.error(f'Block {block_id} in the past')
                     return
                 assert size <= MAX_OBJECT_SIZE
@@ -203,6 +204,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             else:
                 # unknown request type
                 assert False
+    except Exception as err:
+        logging.error(f'Got exception while processing request')
+        traceback.print_exc()
     finally:
         writer.close()
 
@@ -219,7 +223,7 @@ async def periodically_register(key: bytes, port: int, storage_class: int) -> No
         sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
         await asyncio.sleep(1)
 
-async def async_main(*, path: str, port: int, storage_class: int) -> None:
+async def async_main(*, path: str, port: int, storage_class: int, time_check: bool) -> None:
     assert (2 <= storage_class <= 255), f'Storage class {storage_class} out of range'
 
     # open the key file and ensure we are exclusive
@@ -249,21 +253,22 @@ async def async_main(*, path: str, port: int, storage_class: int) -> None:
     logging.info(f'Block service {path} bound to port {port}')
 
     # create the server (starts listening for requests immediately)
-    server = await asyncio.start_server(lambda rs, ws: handle_client(rs, ws, rk, Path(path)), sock=sock)
+    server = await asyncio.start_server(lambda rs, ws: handle_client(reader=rs, writer=ws, rk=rk, base_path=Path(path), time_check=time_check), sock=sock)
 
     # run forever
     await asyncio.gather(
         periodically_register(key, port, storage_class),
         server.serve_forever())
 
-def main(*, path: str, port: int, storage_class: int) -> None:
-    asyncio.run(async_main(path=path, port=port, storage_class=storage_class))
+def main(*, path: str, port: int, storage_class: int, time_check: bool) -> None:
+    asyncio.run(async_main(path=path, port=port, storage_class=storage_class, time_check=time_check))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Block service')
     parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
     parser.add_argument('--storage_class', help='Storage class byte', type=int, default=2)
+    parser.add_argument('--no-time-check', action='store_true', type=bool)
     config = parser.parse_args()
 
     # Arbitrary port here
-    main(path=config.path, port=0, storage_class=config.storage_class)
+    main(path=config.path, port=0, storage_class=config.storage_class, time_check=not (config.no_time_check))

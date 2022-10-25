@@ -1,11 +1,13 @@
 package request
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"io"
 	"net"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/cbcmac"
 	"xtx/eggsfs/loglevels"
 	"xtx/eggsfs/msgs"
 )
@@ -15,15 +17,29 @@ import (
 const SHARD_PROTOCOL_VERSION uint32 = 0x414853
 
 type shardRequest struct {
-	RequestId uint64
-	Body      bincode.Packable
+	requestId uint64
+	body      bincode.Packable
 }
 
 func (req *shardRequest) Pack(buf *bincode.Buf) {
 	buf.PackU32(SHARD_PROTOCOL_VERSION)
-	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
-	req.Body.Pack(buf)
+	buf.PackU64(req.requestId)
+	buf.PackU8(uint8(msgs.GetShardMessageKind(req.body)))
+	req.body.Pack(buf)
+}
+
+func packShardRequest(out *[]byte, req *shardRequest, cdcKey cipher.Block) {
+	written := bincode.PackToBytes(*out, req)
+	if (msgs.GetShardMessageKind(req.body) & 0x80) != 0 {
+		// privileged, we must have a key
+		if cdcKey == nil {
+			panic(fmt.Errorf("trying to encode request of privileged kind %T, but got no CDC key", req.body))
+		}
+		mac := cbcmac.CBCMAC(cdcKey, (*out)[:written])
+		copy((*out)[written:written+len(mac)], mac[:])
+		written += len(mac)
+	}
+	*out = (*out)[:written]
 }
 
 type ShardResponse struct {
@@ -98,6 +114,7 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 
 func ShardRequest(
 	logger loglevels.LogLevels,
+	cdcKey cipher.Block,
 	writer io.Writer,
 	reader io.Reader,
 	requestId uint64,
@@ -107,13 +124,13 @@ func ShardRequest(
 	respBody bincode.Unpackable,
 ) error {
 	req := shardRequest{
-		RequestId: requestId,
-		Body:      reqBody,
+		requestId: requestId,
+		body:      reqBody,
 	}
 	buffer := make([]byte, msgs.UDP_MTU)
 	reqBytes := buffer
 	logger.Debug("about to send request %T to shard", reqBody)
-	bincode.PackIntoBytes(&reqBytes, &req)
+	packShardRequest(&reqBytes, &req, cdcKey)
 	written, err := writer.Write(reqBytes)
 	if err != nil {
 		return fmt.Errorf("couldn't send request: %w", err)
@@ -137,15 +154,16 @@ func ShardRequest(
 			Body: respBody,
 		}
 		if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-			logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.RequestId, err))
+			logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
 			continue
 		}
-		if resp.RequestId != req.RequestId {
-			logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.RequestId, resp.Body, resp.Error))
+		if resp.RequestId != req.requestId {
+			logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.requestId, resp.Body, resp.Error))
 			continue
 		}
 		// we managed to decode, we just need to check that it's not an error
 		if resp.Error != nil {
+			logger.Debug("got error %v from shard", resp.Error)
 			return resp.Error
 		}
 		logger.Debug("got response %T from shard", respBody)
@@ -157,13 +175,14 @@ func ShardRequest(
 // TODO does the deadline persist -- i.e. are we permanently modifying this socket.
 func ShardRequestSocket(
 	logger loglevels.LogLevels,
+	cdcKey cipher.Block,
 	sock *net.UDPConn,
 	timeout time.Duration,
 	reqBody bincode.Packable,
 	respBody bincode.Unpackable,
 ) error {
 	sock.SetReadDeadline(time.Now().Add(timeout))
-	return ShardRequest(logger, sock, sock, uint64(msgs.Now()), reqBody, respBody)
+	return ShardRequest(logger, cdcKey, sock, sock, uint64(msgs.Now()), reqBody, respBody)
 }
 
 func ShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {

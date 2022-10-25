@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"time"
+	"xtx/eggsfs/cdckey"
 	"xtx/eggsfs/gc"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/request"
@@ -26,6 +27,7 @@ func main() {
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
 	destructDry := destructCmd.Bool("dry", false, "whether to execute the destruction or not")
 	destructFileIdU64 := destructCmd.Uint64("file", 0, "transient file id to destruct")
+	destructFileCookie := destructCmd.Uint64("cookie", 0, "transient file cookie")
 
 	if len(os.Args) < 2 {
 		badCommand()
@@ -66,6 +68,7 @@ func main() {
 			CDCSocket:      cdcSocket,
 			SnapshotPolicy: policy,
 			Dry:            *collectDry,
+			CDCKey:         cdckey.CDCKey(),
 		}
 		stats := gc.CollectStats{}
 		err = gcEnv.CollectDirectory(&stats, dirId)
@@ -95,9 +98,13 @@ func main() {
 			Verbose:     true,
 			ShardSocket: socket,
 			Dry:         *destructDry,
+			CDCKey:      cdckey.CDCKey(),
 		}
 		stats := gc.DestructionStats{}
-		gcEnv.DestructFile(&stats, fileId)
+		err = gcEnv.DestructFile(&stats, fileId, 0, *destructFileCookie)
+		if err != nil {
+			log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)
+		}
 		gcEnv.Info("finished destructing %v, stats: %+v", fileId, stats)
 	default:
 		badCommand()

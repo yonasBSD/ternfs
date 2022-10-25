@@ -187,7 +187,7 @@ type ConstructFileResp struct {
 }
 
 type NewBlockInfo struct {
-	Crc32 []byte `bincode:"fixed4"`
+	Crc32 [4]byte
 	Size  uint64 `bincode:"varint"`
 }
 
@@ -198,7 +198,7 @@ type AddSpanInitiateReq struct {
 	ByteOffset   uint64 `bincode:"varint"`
 	StorageClass StorageClass
 	Parity       Parity
-	Crc32        []byte `bincode:"fixed4"`
+	Crc32        [4]byte
 	Size         uint64 `bincode:"varint"`
 	// empty if storage class not inline
 	BodyBytes []byte
@@ -207,11 +207,11 @@ type AddSpanInitiateReq struct {
 }
 
 type BlockInfo struct {
-	Ip      []byte `bincode:"fixed4"`
+	Ip      [4]byte
 	Port    uint16
 	BlockId uint64
 	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
-	Certificate []byte `bincode:"fixed8"`
+	Certificate [8]byte
 }
 
 type AddSpanInitiateResp struct {
@@ -219,15 +219,40 @@ type AddSpanInitiateResp struct {
 	Blocks []BlockInfo
 }
 
+type BlockProof struct {
+	BlockId uint64
+	Proof   [8]byte
+}
+
 // certify span. again, the file must be transient.
 type AddSpanCertifyReq struct {
 	FileId     InodeId
 	Cookie     uint64
-	ByteOffset uint64   `bincode:"varint"`
-	Proofs     [][]byte `bincode:"fixed8"`
+	ByteOffset uint64 `bincode:"varint"`
+	Proofs     []BlockProof
 }
 
 type AddSpanCertifyResp struct{}
+
+type RemoveSpanInitiateReq struct {
+	FileId InodeId
+	Cookie uint64
+}
+
+type RemoveSpanInitiateResp struct {
+	ByteOffset uint64 `bincode:"varint"`
+	// If empty, this is a blockless span, and no certification is required
+	Blocks []BlockInfo
+}
+
+type RemoveSpanCertifyReq struct {
+	FileId     InodeId
+	Cookie     uint64
+	ByteOffset uint64 `bincode:"varint"`
+	Proofs     []BlockProof
+}
+
+type RemoveSpanCertifyResp struct{}
 
 // makes a transient file current. requires the inode, the
 // parent dir, and the filename.
@@ -255,10 +280,10 @@ type FileSpansReq struct {
 }
 
 type FetchedBlock struct {
-	Ip      []byte `bincode:"fixed4"`
+	Ip      [4]byte
 	Port    uint16
 	BlockId BlockId
-	Crc32   []byte `bincode:"fixed4"`
+	Crc32   [4]byte
 	Size    uint64 `bincode:"varint"`
 	Flags   uint8
 }
@@ -270,7 +295,7 @@ type FetchedSpan struct {
 	ByteOffset   uint64 `bincode:"varint"`
 	Parity       Parity
 	StorageClass StorageClass
-	Crc32        []byte `bincode:"fixed4"`
+	Crc32        [4]byte
 	Size         uint64 `bincode:"varint"`
 	BodyBytes    []byte
 	BodyBlocks   []FetchedBlock
@@ -314,9 +339,12 @@ type VisitTransientFilesReq struct {
 
 type TransientFile struct {
 	Id           InodeId
+	Cookie       uint64
 	DeadlineTime EggsTime
 	Note         string
 }
+
+// Shall this be unsafe/private? We can freely get the cookie.
 type VisitTransientFilesResp struct {
 	NextId InodeId
 	Files  []TransientFile
@@ -426,14 +454,36 @@ type RemoveNonOwnedEdgeReq struct {
 
 type RemoveNonOwnedEdgeResp struct{}
 
+// Will remove the snapshot, owned edge; and move the file to transient in one
+// go.
+type IntraShardHardFileUnlinkReq struct {
+	OwnerId      InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
+}
+
+type IntraShardHardFileUnlinkResp struct{}
+
+// This is needed to implemente inter-shard hard file unlinking, and it is unsafe, since
+// we must make sure that the owned file is made transient in its shard.
 type RemoveOwnedSnapshotFileEdgeReq struct {
-	DirId        InodeId
+	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
 	CreationTime EggsTime
 }
 
 type RemoveOwnedSnapshotFileEdgeResp struct{}
+
+// This is required to implemented inter-shard had file unlinking, and it is unsafe
+// since it lets us make a file which is owned by a directory transient.
+type MakeFileTransientReq struct {
+	Id   InodeId
+	Note string
+}
+
+type MakeFileTransientResp struct{}
 
 type MakeDirectoryReq struct {
 	OwnerId InodeId
@@ -472,11 +522,10 @@ type RenameDirectoryReq struct {
 
 type RenameDirectoryResp struct{}
 
-// This operation is generally unsafe. For files, we do not know that
-// the file is not referenced somewhere. We can however check that the
-// file is transient and no spans.
+// This operation is safe for files: we can check that it has no spans,
+// and that it is transient.
 //
-// For directories it is also not safe. In theory, we could check
+// For directories however it is not safe. In theory, we could check
 // if the directory had no edges (or only non-owning edges), but we might
 // be in the middle of a CDC transaction that might be rolled back eventually.
 type RemoveInodeReq struct {
@@ -490,3 +539,12 @@ type HardUnlinkDirectoryReq struct {
 }
 
 type HardUnlinkDirectoryResp struct{}
+
+type HardUnlinkFileReq struct {
+	OwnerId      InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
+}
+
+type HardUnlinkFileResp struct{}

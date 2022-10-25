@@ -20,6 +20,27 @@ type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
 
+// These four below are the magic number to identify UDP packets. After a three-letter
+// string identifying the service we have a version number. The idea is that when the
+// version number increases you increase both req and resp. Different for req and resp
+// so that middleware can understand packets just by looking at their contents.
+
+// >>> format(struct.unpack('<I', b'SHA\0')[0], 'x')
+// '414853'
+const SHARD_REQ_PROTOCOL_VERSION uint32 = 0x414853
+
+// >>> format(struct.unpack('<I', b'SHA\1')[0], 'x')
+// '1414853'
+const SHARD_RESP_PROTOCOL_VERSION uint32 = 0x1414853
+
+// >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
+// '414853'
+const CDC_REQ_PROTOCOL_VERSION uint32 = 0x414853
+
+// >>> format(struct.unpack('<I', b'CDC\1')[0], 'x')
+// '1434443'
+const CDC_RESP_PROTOCOL_VERSION uint32 = 0x1434443
+
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
 

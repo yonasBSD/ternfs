@@ -13,7 +13,8 @@ from error import *
 from msgs import *
 from cdc_key import *
 
-SHARD_PROTOCOL_VERSION = b'SHA\0'
+SHARD_REQ_PROTOCOL_VERSION = b'SHA\0'
+SHARD_RESP_PROTOCOL_VERSION = b'SHA\1'
 
 INLINE_STORAGE = 0
 ZERO_FILL_STORAGE = 1
@@ -94,7 +95,7 @@ class ShardRequest:
 
     def pack(self, cdc_key: Optional[crypto.ExpandedKey] = None) -> bytes:
         b = bytearray()
-        bincode.pack_fixed_into(SHARD_PROTOCOL_VERSION, len(SHARD_PROTOCOL_VERSION), b)
+        bincode.pack_fixed_into(SHARD_REQ_PROTOCOL_VERSION, len(SHARD_REQ_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
@@ -115,8 +116,8 @@ class UnpackedShardRequest:
     @staticmethod
     def unpack(bs: bytes, cdc_key: Optional[crypto.ExpandedKey] = None) -> 'UnpackedShardRequest':
         u = bincode.UnpackWrapper(bs)
-        ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
-        assert ver == SHARD_PROTOCOL_VERSION, f'Expected shard protocol version {repr(SHARD_PROTOCOL_VERSION)}, but got {repr(ver)} instead.'
+        ver = bincode.unpack_fixed(u, len(SHARD_REQ_PROTOCOL_VERSION))
+        assert ver == SHARD_REQ_PROTOCOL_VERSION, f'Expected shard protocol version {repr(SHARD_REQ_PROTOCOL_VERSION)}, but got {repr(ver)} instead.'
         request_id = bincode.unpack_u64(u)
         # We've made it so far, now we can at least
         # return something
@@ -147,20 +148,20 @@ class UnpackedShardRequest:
 
 @dataclass
 class ShardResponse(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = len(SHARD_PROTOCOL_VERSION) + 8 + 1
+    STATIC_SIZE: ClassVar[int] = len(SHARD_RESP_PROTOCOL_VERSION) + 8 + 1
     request_id: int
     body: Union[EggsError, ShardResponseBody]
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(SHARD_PROTOCOL_VERSION, len(SHARD_PROTOCOL_VERSION), b)
+        bincode.pack_fixed_into(SHARD_RESP_PROTOCOL_VERSION, len(SHARD_RESP_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'ShardResponse':
-        ver = bincode.unpack_fixed(u, len(SHARD_PROTOCOL_VERSION))
-        assert ver == SHARD_PROTOCOL_VERSION
+        ver = bincode.unpack_fixed(u, len(SHARD_RESP_PROTOCOL_VERSION))
+        assert ver == SHARD_RESP_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         resp_kind = bincode.unpack_u8(u)
         body: Union[EggsError, ShardResponseBody]

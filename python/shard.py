@@ -1858,7 +1858,7 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(b'4321', 10000)]))
         self.shard.execute_err(replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(b'1234', 10000), NewBlockInfo(b'4321', 10000)]))
         # no mirroring
-        proper_span_resp = self.shard.execute_ok(proper_span_req)
+        proper_span_resp = cast(AddSpanInitiateResp, self.shard.execute_ok(proper_span_req))
         byte_offset += proper_span_req.size
         # RAID1
         mirrored_span_req = replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(data_crc32, len(data)), NewBlockInfo(data_crc32, len(data))])
@@ -1872,23 +1872,23 @@ class ShardTests(unittest.TestCase):
             file_id=transient_file.id,
             cookie=transient_file.cookie,
             byte_offset=proper_span_req.byte_offset,
-            proofs=[b'12345678'],
+            proofs=[BlockProof(proper_span_resp.blocks[0].block_id, b'12345678')],
         )
         self.shard.execute_err(
-            replace(certify_req, byte_offset=proper_span_req.byte_offset, proofs=[b'12345678']),
+            replace(certify_req, byte_offset=proper_span_req.byte_offset, proofs=[BlockProof(proper_span_resp.blocks[0].block_id, b'12345678')]),
             ErrCode.BAD_BLOCK_PROOF
         )
         # certifying for real
         self.shard.execute_ok(replace(
             certify_req, byte_offset=proper_span_req.byte_offset,
-            proofs=[block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key'])) for block in proper_span_resp.blocks]
+            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in proper_span_resp.blocks]
         ))
         mirrored_span_resp = self.shard.execute_ok(mirrored_span_req)
         byte_offset += mirrored_span_req.size
         # certify this other one...
         self.shard.execute_ok(replace(
             certify_req, byte_offset=mirrored_span_req.byte_offset,
-            proofs=[block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key'])) for block in mirrored_span_resp.blocks],
+            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in mirrored_span_resp.blocks],
         ))
         # RAID5
         raid5_span_req = replace(
@@ -1911,7 +1911,7 @@ class ShardTests(unittest.TestCase):
         # certify, again
         self.shard.execute_ok(replace(
             certify_req, byte_offset=raid5_span_req.byte_offset,
-            proofs=[block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key'])) for block in raid5_span_resp.blocks],
+            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in raid5_span_resp.blocks],
         ))
         # and now linking should go through
         self.shard.execute_ok(link_req)

@@ -6,7 +6,8 @@ from common import *
 from error import *
 from msgs import *
 
-CDC_PROTOCOL_VERSION = b'CDC\0'
+CDC_REQ_PROTOCOL_VERSION = b'CDC\0'
+CDC_RESP_PROTOCOL_VERSION = b'CDC\1'
 
 # INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
 CDC_ERRORS: Dict[CDCMessageKind, Set[ErrCode]] = {
@@ -40,15 +41,15 @@ class CDCRequest(bincode.Packable):
     body: CDCRequestBody
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
+        bincode.pack_fixed_into(CDC_REQ_PROTOCOL_VERSION, len(CDC_REQ_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CDCRequest':
-        ver = bincode.unpack_fixed(u, len(CDC_PROTOCOL_VERSION))
-        assert ver == CDC_PROTOCOL_VERSION
+        ver = bincode.unpack_fixed(u, len(CDC_REQ_PROTOCOL_VERSION))
+        assert ver == CDC_REQ_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         body_kind = CDCMessageKind(bincode.unpack_u8(u))
         body_type = CDC_REQUESTS[body_kind][0]
@@ -57,20 +58,20 @@ class CDCRequest(bincode.Packable):
 
 @dataclass
 class CDCResponse(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = len(CDC_PROTOCOL_VERSION) + 8 + 1
+    STATIC_SIZE: ClassVar[int] = len(CDC_RESP_PROTOCOL_VERSION) + 8 + 1
     request_id: int
     body: Union[CDCResponseBody, EggsError]
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(CDC_PROTOCOL_VERSION, len(CDC_PROTOCOL_VERSION), b)
+        bincode.pack_fixed_into(CDC_RESP_PROTOCOL_VERSION, len(CDC_RESP_PROTOCOL_VERSION), b)
         bincode.pack_u64_into(self.request_id, b)
         bincode.pack_u8_into(self.body.KIND, b)
         self.body.pack_into(b)
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CDCResponse':
-        ver = bincode.unpack_fixed(u, len(CDC_PROTOCOL_VERSION))
-        assert ver == CDC_PROTOCOL_VERSION
+        ver = bincode.unpack_fixed(u, len(CDC_RESP_PROTOCOL_VERSION))
+        assert ver == CDC_RESP_PROTOCOL_VERSION
         request_id = bincode.unpack_u64(u)
         resp_kind = bincode.unpack_u8(u)
         body: Union[CDCResponseBody, EggsError]

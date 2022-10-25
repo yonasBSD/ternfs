@@ -11,17 +11,13 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-// >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
-// '434443'
-const CDC_PROTOCOL_VERSION uint32 = 0x434443
-
 type cdcRequest struct {
 	RequestId uint64
 	Body      bincode.Packable
 }
 
 func (req *cdcRequest) Pack(buf *bincode.Buf) {
-	buf.PackU32(CDC_PROTOCOL_VERSION)
+	buf.PackU32(msgs.CDC_REQ_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
 	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
 	req.Body.Pack(buf)
@@ -33,7 +29,7 @@ type CDCResponse struct {
 }
 
 func (req *CDCResponse) Pack(buf *bincode.Buf) {
-	buf.PackU32(CDC_PROTOCOL_VERSION)
+	buf.PackU32(msgs.CDC_RESP_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
 	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
 	req.Body.Pack(buf)
@@ -60,8 +56,8 @@ func (resp *UnpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU32(&ver); err != nil {
 		return err
 	}
-	if ver != CDC_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", CDC_PROTOCOL_VERSION, ver)
+	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
+		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
 	}
 	if err := buf.UnpackU64(&resp.RequestId); err != nil {
 		return err

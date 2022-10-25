@@ -12,17 +12,13 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-// >>> format(struct.unpack('<I', b'SHA\0')[0], 'x')
-// '414853'
-const SHARD_PROTOCOL_VERSION uint32 = 0x414853
-
 type shardRequest struct {
 	requestId uint64
 	body      bincode.Packable
 }
 
 func (req *shardRequest) Pack(buf *bincode.Buf) {
-	buf.PackU32(SHARD_PROTOCOL_VERSION)
+	buf.PackU32(msgs.SHARD_REQ_PROTOCOL_VERSION)
 	buf.PackU64(req.requestId)
 	buf.PackU8(uint8(msgs.GetShardMessageKind(req.body)))
 	req.body.Pack(buf)
@@ -48,7 +44,7 @@ type ShardResponse struct {
 }
 
 func (req *ShardResponse) Pack(buf *bincode.Buf) {
-	buf.PackU32(SHARD_PROTOCOL_VERSION)
+	buf.PackU32(msgs.SHARD_RESP_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
 	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
 	req.Body.Pack(buf)
@@ -75,8 +71,8 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU32(&ver); err != nil {
 		return err
 	}
-	if ver != SHARD_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", SHARD_PROTOCOL_VERSION, ver)
+	if ver != msgs.SHARD_RESP_PROTOCOL_VERSION {
+		return fmt.Errorf("expected protocol version %v, but got %v", msgs.SHARD_RESP_PROTOCOL_VERSION, ver)
 	}
 	if err := buf.UnpackU64(&resp.RequestId); err != nil {
 		return err

@@ -25,7 +25,6 @@ import bincode
 
 # TODO test automatic cleanup of timed out requests
 # TODO test multiple requests at once (queued)
-# TODO very important! in the CDC steps, mark those that must be performed to ensure consistency of the system. These should be retried much more insistently.
 
 def init_db(db: sqlite3.Connection):
     cur = db.cursor()
@@ -65,11 +64,12 @@ def init_db(db: sqlite3.Connection):
             shard_request_id integer,
             shard_request_shard integer,
             shard_request_kind integer,
+            shard_request_critical bool,
             shard_request_body blob,
-            check (not done or (response_kind is not null and response_body is not null and state is null and next_step is null and shard_request_id is null and shard_request_shard is null and shard_request_kind is null and shard_request_body is null)),
+            check (not done or (response_kind is not null and response_body is not null and state is null and next_step is null and shard_request_id is null and shard_request_shard is null and shard_request_kind is null and shard_request_critical is null and shard_request_body is null)),
             check (not started or (response_kind is null and response_body is null and state is not null and next_step is not null))
             -- Unless we've just begun the request, we have a shard request in flight to proceed
-            check (not (started and next_step != 'begin') or (shard_request_id is not null and shard_request_shard is not null and shard_request_kind is not null and shard_request_body is not null))
+            check (not (started and next_step != 'begin') or (shard_request_id is not null and shard_request_shard is not null and shard_request_kind is not null and shard_request_critical is not null and shard_request_body is not null))
         )
     ''')
     # We very often look for the first non-done request (that's the one we're doing)
@@ -93,6 +93,9 @@ class CDCNeedsShard:
     next_step: str
     shard: int
     request: ShardRequestBody
+    # if this is set, we need this request to complete to preserve
+    # the invariants of the system.
+    critical: bool
 
 # When we make progress in the CDC, we either finish a transaction,
 # getting a response, or request data from a shard to make progress
@@ -103,6 +106,7 @@ CDCStepInternal = Union[CDCResponseBody, EggsError, CDCNeedsShard]
 class CDCShardRequest:
     shard: int
     request: ShardRequest
+    critical: bool
 CDCStep = Union[CDCResponse, CDCShardRequest]
 
 # This is just a type to type methods better in transactions
@@ -147,6 +151,7 @@ class MakeDirectory(Transaction):
             next_step='create_dir_resp',
             shard=inode_id_shard(self.state['dir_id']),
             request=CreateDirectoryINodeReq(self.state['dir_id'], owner_id=req.owner_id, info=req.info),
+            critical=False,
         )
 
     def create_dir_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[CreateDirectoryINodeResp]) -> CDCStepInternal:
@@ -159,7 +164,8 @@ class MakeDirectory(Transaction):
         return CDCNeedsShard(
             next_step='create_locked_edge_resp',
             shard=inode_id_shard(req.owner_id),
-            request=CreateLockedCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=self.state['dir_id'], creation_time=now)
+            request=CreateLockedCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=self.state['dir_id'], creation_time=now),
+            critical=False,
         )
     
     def create_locked_edge_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[CreateLockedCurrentEdgeResp]) -> CDCStepInternal:
@@ -171,12 +177,11 @@ class MakeDirectory(Transaction):
             next_step='unlock_edge_resp',
             shard=inode_id_shard(req.owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=self.state['dir_id'], was_moved=False),
+            critical=True,
         )
     
     def unlock_edge_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[UnlockCurrentEdgeResp]):
-        if isinstance(resp, EggsError):
-            logging.error("We couldn't unlock the newly created locked edge when making a directory! This is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         # We're done!
         return MakeDirectoryResp(self.state['dir_id'])
 
@@ -187,13 +192,12 @@ class MakeDirectory(Transaction):
             shard=inode_id_shard(self.state['dir_id']),
             # we've just created this directory, it is empty, therefore the policy
             # is irrelevant.
-            request=RemoveDirectoryOwnerReq(self.state['dir_id'], DEFAULT_DIRECTORY_INFO.body[0])
+            request=RemoveDirectoryOwnerReq(self.state['dir_id'], DEFAULT_DIRECTORY_INFO.body[0]),
+            critical=True,
         )
 
     def rollback_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[RemoveDirectoryOwnerResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f"We couldn't roll back MakeDir {self.state['dir_id']} (error {resp.error_code}), this is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         assert self.state['exit_error'] is not None
         return EggsError(self.state['exit_error'])
     
@@ -226,6 +230,7 @@ class RenameFile(Transaction):
             next_step='lock_old_resp',
             shard=inode_id_shard(req.old_owner_id),
             request=LockCurrentEdgeReq(dir_id=req.old_owner_id, name=req.old_name, target_id=req.target_id),
+            critical=False,
         )
     
     def lock_old_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
@@ -248,7 +253,8 @@ class RenameFile(Transaction):
                 name=req.new_name,
                 target_id=req.target_id,
                 creation_time=self.state['new_edge_creation_time'],
-            )
+            ),
+            critical=False,
         )
     
     def create_new_locked_edge_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[CreateLockedCurrentEdgeResp]) -> CDCStepInternal:
@@ -267,12 +273,11 @@ class RenameFile(Transaction):
             next_step='unlock_new_edge_resp',
             shard=inode_id_shard(req.new_owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.new_owner_id, name=req.new_name, target_id=req.target_id, was_moved=False),
+            critical=True,
         )
     
     def unlock_new_edge_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[UnlockCurrentEdgeResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error("We couldn't unlock the newly created locked edge when making a directory! This is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         # We're done creating the destination edge, now unlock the source, marking it as moved
         return CDCNeedsShard(
             next_step='unlock_old_edge_resp',
@@ -282,13 +287,12 @@ class RenameFile(Transaction):
                 name=req.old_name,
                 target_id=req.target_id,
                 was_moved=True,
-            )
+            ),
+            critical=True,
         )
     
     def unlock_old_edge_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[UnlockCurrentEdgeReq]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f"We couldn't unlock old edge in {req} (error {resp.error_code}), this is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         return RenameFileResp()
 
     def _init_rollback(self, req: RenameFileReq, err: ErrCode) -> CDCStepInternal:
@@ -297,12 +301,11 @@ class RenameFile(Transaction):
             next_step='rollback_resp',
             shard=inode_id_shard(req.old_owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.old_owner_id, name=req.old_name, target_id=req.target_id, was_moved=False),
+            critical=True,
         )
     
     def rollback_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[UnlockCurrentEdgeResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f"We couldn't roll back {req} (error {resp.error_code}), this is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         assert self.state['exit_error'] is not None
         return EggsError(self.state['exit_error'])
 
@@ -333,6 +336,7 @@ class SoftUnlinkDirectory(Transaction):
             next_step='lock_resp',
             shard=inode_id_shard(req.owner_id),
             request=LockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=req.target_id),
+            critical=False,
         )
 
     def lock_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
@@ -342,6 +346,7 @@ class SoftUnlinkDirectory(Transaction):
             next_step='stat_resp',
             shard=inode_id_shard(req.target_id),
             request=StatDirectoryReq(req.target_id),
+            critical=False,
         )
     
     def stat_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[StatDirectoryResp]) -> CDCStepInternal:
@@ -353,6 +358,7 @@ class SoftUnlinkDirectory(Transaction):
                 next_step='remove_owner_resp',
                 shard=inode_id_shard(req.target_id),
                 request=RemoveDirectoryOwnerReq(dir_id=req.target_id, info=resp.info.body[0]),
+                critical=False,
             )
         else:
             # otherwise, we keep going upwards
@@ -360,6 +366,7 @@ class SoftUnlinkDirectory(Transaction):
                 next_step='stat_resp',
                 shard=inode_id_shard(resp.owner),
                 request=StatDirectoryReq(resp.owner),
+                critical=False,
             )
     
     def remove_owner_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[RemoveDirectoryOwnerResp]) -> CDCStepInternal:
@@ -369,12 +376,11 @@ class SoftUnlinkDirectory(Transaction):
             next_step='unlock_resp',
             shard=inode_id_shard(req.owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=req.target_id, was_moved=True),
+            critical=True,
         )
     
     def unlock_resp(self, cur: sqlite3.Cursor, req: UnlockCurrentEdgeResp, resp: ExpectedShardResp[UnlockCurrentEdgeResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):        
-            logging.error(f"We couldn't unlock old edge in {req} (error {resp.error_code}), this is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         return SoftUnlinkDirectoryResp()
     
     def _init_rollback(self, req: SoftUnlinkDirectoryReq, err: ErrCode) -> CDCStepInternal:
@@ -383,12 +389,11 @@ class SoftUnlinkDirectory(Transaction):
             next_step='rollback_resp',
             shard=inode_id_shard(req.owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.owner_id, name=req.name, target_id=req.target_id, was_moved=False),
+            critical=True,
         )
 
     def rollback_resp(self, cur: sqlite3.Cursor, req: RenameFileReq, resp: ExpectedShardResp[UnlockCurrentEdgeResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f"We couldn't roll back {req} (error {resp.error_code}), this is bad!")
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         assert self.state['exit_error'] is not None
         return EggsError(self.state['exit_error'])
 
@@ -433,6 +438,7 @@ class RenameDirectory(Transaction):
             next_step='lock_old_resp',
             shard=inode_id_shard(req.old_owner_id),
             request=LockCurrentEdgeReq(dir_id=req.old_owner_id, name=req.old_name, target_id=req.target_id),
+            critical=False,
         )
     
     def lock_old_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[LockCurrentEdgeResp]) -> CDCStepInternal:
@@ -450,6 +456,7 @@ class RenameDirectory(Transaction):
             next_step='stat_resp',
             shard=inode_id_shard(self.state['current_directory']),
             request=StatDirectoryReq(self.state['current_directory']),
+            critical=False,
         )
     
     def stat_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[StatDirectoryResp]) -> CDCStepInternal:
@@ -473,6 +480,7 @@ class RenameDirectory(Transaction):
                 next_step='create_new_resp',
                 shard=inode_id_shard(req.new_owner_id),
                 request=CreateLockedCurrentEdgeReq(req.new_owner_id, req.new_name, req.target_id, eggs_time()),
+                critical=False,
             )
         self.state['parent_cache'][self.state['current_directory']] = resp.owner
         self.state['current_directory'] = resp.owner
@@ -492,32 +500,29 @@ class RenameDirectory(Transaction):
             next_step='unlock_new_resp',
             shard=inode_id_shard(req.new_owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.new_owner_id, name=req.new_name, target_id=req.target_id, was_moved=False),
+            critical=True,
         )
     
     def unlock_new_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[UnlockCurrentEdgeReq]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f'Unexpected error in edge unlocking operation! {resp}')
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         return CDCNeedsShard(
             next_step='unlock_old_resp',
             shard=inode_id_shard(req.old_owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.old_owner_id, name=req.old_name, target_id=req.target_id, was_moved=True),
+            critical=True,
         )
     
     def unlock_old_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[UnlockCurrentEdgeReq]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f'Unexpected error in edge unlocking operation! {resp}')
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         return CDCNeedsShard(
             next_step='set_owner_resp',
             shard=inode_id_shard(req.target_id),
             request=SetDirectoryOwnerReq(dir_id=req.target_id, owner_id=req.new_owner_id),
+            critical=True,
         )
     
     def set_owner_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f'Unexpected error when setting directory owner! {resp}')
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         # We're finally done
         return RenameDirectoryResp()
    
@@ -527,12 +532,11 @@ class RenameDirectory(Transaction):
             next_step='rollback_resp',
             shard=inode_id_shard(req.old_owner_id),
             request=UnlockCurrentEdgeReq(dir_id=req.old_owner_id, name=req.old_name, target_id=req.target_id, was_moved=False),
+            critical=True,
         )
     
     def rollback_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[UnlockCurrentEdgeResp]) -> CDCStepInternal:
-        if isinstance(resp, EggsError):
-            logging.error(f'Unexpected error in edge unlocking operation! {resp}')
-            return EggsError(ErrCode.FATAL_ERROR)
+        assert not isinstance(resp, EggsError) # critical
         assert self.state['exit_error']
         return EggsError(self.state['exit_error'])
 
@@ -554,6 +558,7 @@ class HardUnlinkDirectory(Transaction):
             next_step='remove_inode_resp',
             shard=inode_id_shard(req.dir_id),
             request=RemoveInodeReq(req.dir_id),
+            critical=False,
         )
     
     def remove_inode_resp(self, cur: sqlite3.Cursor, req: RemoveInodeReq, resp: ExpectedShardResp[RemoveInodeResp]) -> CDCStepInternal:
@@ -577,7 +582,8 @@ class HardUnlinkFile(Transaction):
         return CDCNeedsShard(
             next_step='remove_edge_resp',
             shard=inode_id_shard(req.owner_id),
-            request=RemoveOwnedSnapshotFileEdgeReq(req.owner_id, req.target_id, req.name, req.creation_time)
+            request=RemoveOwnedSnapshotFileEdgeReq(req.owner_id, req.target_id, req.name, req.creation_time),
+            critical=False,
         )
     
     def remove_edge_resp(self, cur: sqlite3.Cursor, req: HardUnlinkFileReq, resp: ExpectedShardResp[HardUnlinkFileResp]) -> CDCStepInternal:
@@ -587,6 +593,7 @@ class HardUnlinkFile(Transaction):
             next_step='make_transient_resp',
             shard=inode_id_shard(req.target_id),
             request=MakeFileTransientReq(req.target_id, req.name),
+            critical=False,
         )
     
     def make_transient_resp(self, cur: sqlite3.Cursor, req: HardUnlinkDirectoryReq, resp: ExpectedShardResp[MakeFileTransientReq]) -> CDCStepInternal:
@@ -710,7 +717,7 @@ def mark_transaction_as_done(cur, *, id: int, now: int, resp: Union[EggsError, C
             update transactions
                 set
                     started = FALSE, done = TRUE, response_kind = :kind, response_body = :body,
-                    next_step = NULL, state = NULL, shard_request_id = NULL, shard_request_shard = NULL, shard_request_kind = NULL, shard_request_body = NULL
+                    next_step = NULL, state = NULL, shard_request_id = NULL, shard_request_shard = NULL, shard_request_kind = NULL, shard_request_critical = NULL, shard_request_body = NULL
                 where id = :id
         ''',
         {
@@ -755,7 +762,7 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
         cur.execute(
             '''
                 update transactions
-                    set last_update_time = :now, next_step = :next_step, state = :state, shard_request_id = :req_id, shard_request_shard = :shard, shard_request_kind = :kind, shard_request_body = :body
+                    set last_update_time = :now, next_step = :next_step, state = :state, shard_request_id = :req_id, shard_request_shard = :shard, shard_request_kind = :kind, shard_request_critical = :critical, shard_request_body = :body
                     where id = :id
             ''',
             {
@@ -766,10 +773,15 @@ def advance_current_transaction(cur: sqlite3.Cursor, *args) -> Optional[CDCStep]
                 'req_id': req_id,
                 'shard': resp_internal.shard,
                 'kind': resp_internal.request.KIND,
+                'critical': resp_internal.critical,
                 'body': bincode.pack(resp_internal.request),
             }
         )
-        resp = CDCShardRequest(shard=resp_internal.shard, request=ShardRequest(request_id=req_id, body=resp_internal.request))
+        resp = CDCShardRequest(
+            shard=resp_internal.shard,
+            request=ShardRequest(request_id=req_id, body=resp_internal.request),
+            critical=resp_internal.critical,
+        )
     else:
         mark_transaction_as_done(cur, id=current_tx['id'], now=now, resp=resp_internal)
         resp = CDCResponse(request_id=current_tx['request_id'], body=resp_internal)
@@ -819,6 +831,8 @@ def execute(
                 del replacements[shard_req_kind][seen_kinds[shard_req_kind]]
             else:
                 shard_resp = execute_shard_request(shard_request)
+                if isinstance(shard_resp, EggsError) and shard_request.critical:
+                    raise RuntimeError(f'Got error {shard_resp} for critical shard request {shard_request}! Cannot proceed safely.')
                 msg = ShardResponse(request_id=shard_resp.request_id, body=shard_resp.body)
             seen_kinds[shard_req_kind] += 1
     # Check that all replacements have fired
@@ -937,20 +951,6 @@ class CDCTests(unittest.TestCase):
         )
         assert self._only_root_dir_and_orphans(self._collect_all_inodes())
 
-    def test_make_dir_error_3(self):
-        # In this case, when rolling back fails, we do expect an
-        # orphan dir.
-        with DisableLogging:
-            self.cdc.execute_err(
-                MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO),
-                replacements={
-                    ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)},
-                    ShardMessageKind.REMOVE_DIRECTORY_OWNER: {0: EggsError(ErrCode.INTERNAL_ERROR)},
-                },
-                kind=ErrCode.FATAL_ERROR,
-            )
-        assert not self._only_root_dir_and_orphans(self._collect_all_inodes())
-        
     def test_make_dir_no_override(self):
         self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO))
         self.cdc.execute_err(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO), kind=ErrCode.CANNOT_OVERRIDE_NAME)
@@ -983,21 +983,6 @@ class CDCTests(unittest.TestCase):
             new_owner_id=dir,
             new_name=b'test-dir-2',
         ), kind=ErrCode.TYPE_IS_DIRECTORY)
-        # These are some unrecoverable errors
-        file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
-        self.cdc.shards[0].execute_ok(LinkFileReq(file_id=file.id, cookie=file.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'test-file-3'))
-        with DisableLogging:
-            self.cdc.execute_err(
-                RenameFileReq(
-                    target_id=file.id,
-                    old_owner_id=ROOT_DIR_INODE_ID,
-                    old_name=b'test-file-3',
-                    new_owner_id=dir,
-                    new_name=b'test-file-3',
-                ),
-                kind=ErrCode.FATAL_ERROR,
-                replacements={ShardMessageKind.UNLOCK_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
-            )
     
     def test_unlink_dir(self):
         dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir', INHERIT_DIRECTORY_INFO))).id

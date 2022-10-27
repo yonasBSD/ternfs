@@ -17,7 +17,7 @@ import (
 	"xtx/eggsfs/request"
 )
 
-type cachedDirInfo struct {
+type CachedDirInfo struct {
 	info     msgs.DirectoryInfoBody
 	cachedAt time.Time
 }
@@ -34,7 +34,7 @@ type GcEnv struct {
 	Verbose           bool
 	Dry               bool
 	CDCKey            cipher.Block
-	DirInfoCache      map[msgs.InodeId]cachedDirInfo
+	DirInfoCache      map[msgs.InodeId]CachedDirInfo
 	DirInfoCacheMutex *sync.RWMutex
 }
 
@@ -56,7 +56,7 @@ func (gc *GcEnv) lookupCachedDirInfo(dirId msgs.InodeId) *msgs.DirectoryInfoBody
 
 func (gc *GcEnv) updateCachedDirInfo(dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) {
 	gc.DirInfoCacheMutex.Lock()
-	gc.DirInfoCache[dirId] = cachedDirInfo{
+	gc.DirInfoCache[dirId] = CachedDirInfo{
 		info:     *dirInfo,
 		cachedAt: time.Now(),
 	}
@@ -469,7 +469,7 @@ func Run(verbose bool) {
 		Timeout:           10 * time.Second,
 		CDCKey:            cdckey.CDCKey(),
 		Verbose:           verbose,
-		DirInfoCache:      map[msgs.InodeId]cachedDirInfo{},
+		DirInfoCache:      map[msgs.InodeId]CachedDirInfo{},
 		DirInfoCacheMutex: new(sync.RWMutex),
 	}
 	for shid := 0; shid < 256; shid++ {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 	"xtx/eggsfs/cdckey"
 	"xtx/eggsfs/gc"
@@ -31,9 +32,21 @@ func main() {
 		badCommand()
 	}
 
+	gcEnv := gc.GcEnv{
+		Role:              "cli",
+		Logger:            log.New(os.Stdout, "", log.Lshortfile),
+		LogMutex:          new(sync.Mutex),
+		Timeout:           10 * time.Second,
+		CDCKey:            cdckey.CDCKey(),
+		Verbose:           true,
+		DirInfoCache:      map[msgs.InodeId]gc.CachedDirInfo{},
+		DirInfoCacheMutex: new(sync.RWMutex),
+	}
+
 	switch os.Args[1] {
 	case "collect":
 		collectCmd.Parse(os.Args[2:])
+		gcEnv.Dry = *collectDry
 		if *collectDirIdU64 == 0 {
 			collectCmd.Usage()
 			os.Exit(2)
@@ -52,17 +65,8 @@ func main() {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
 		defer cdcSocket.Close()
-		gcEnv := gc.GcEnv{
-			Role:        "cli",
-			Logger:      log.New(os.Stdout, "", log.Lshortfile),
-			Shid:        dirId.Shard(),
-			Timeout:     10 * time.Second,
-			Verbose:     true,
-			ShardSocket: shardSocket,
-			CDCSocket:   cdcSocket,
-			Dry:         *collectDry,
-			CDCKey:      cdckey.CDCKey(),
-		}
+		gcEnv.ShardSocket = shardSocket
+		gcEnv.CDCSocket = cdcSocket
 		stats := gc.CollectStats{}
 		err = gcEnv.CollectDirectory(&stats, dirId)
 		if err != nil {
@@ -71,6 +75,7 @@ func main() {
 		gcEnv.Info("finished collecting %v, stats: %+v", dirId, stats)
 	case "destruct":
 		destructCmd.Parse(os.Args[2:])
+		gcEnv.Dry = *destructDry
 		if *destructFileIdU64 == 0 {
 			destructCmd.Usage()
 			os.Exit(2)
@@ -83,16 +88,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
-		gcEnv := gc.GcEnv{
-			Role:        "cli",
-			Logger:      log.New(os.Stdout, "", log.Lshortfile),
-			Shid:        fileId.Shard(),
-			Timeout:     10 * time.Second,
-			Verbose:     true,
-			ShardSocket: socket,
-			Dry:         *destructDry,
-			CDCKey:      cdckey.CDCKey(),
-		}
+		gcEnv.ShardSocket = socket
 		stats := gc.DestructionStats{}
 		err = gcEnv.DestructFile(&stats, fileId, 0, *destructFileCookie)
 		if err != nil {

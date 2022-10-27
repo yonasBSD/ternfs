@@ -128,29 +128,43 @@ def lookup_raw(dir_id: int, name: str):
     print(f'type:        {repr(inode_id_type(inode))}')
     print(f'shard:       {inode_id_shard(inode)}')
 
+def print_dir_info(info: DirectoryInfoBody):
+    print(f'  delete_after_time:      {timedelta(microseconds=info.delete_after_time/1000)}')
+    print(f'  delete_after_versions:  {info.delete_after_versions}')
+    print(f'  span policies:')
+    print(f'    255:\tINLINE')
+    for policy in info.span_policies:
+        print(f'    {span_size_str(policy.max_size)}:\t{STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
+
+def resolve_dir_info(id) -> Tuple[int, DirectoryInfoBody]:
+    resp = send_shard_request_or_raise(inode_id_shard(id), StatDirectoryReq(id))
+    assert isinstance(resp, StatDirectoryResp)
+    if resp.info.body:
+        return id, resp.info.body[0]
+    else:
+        return resolve_dir_info(resp.owner)
+
 @command('stat_raw')
 def stat_raw(id: int):
-    resp = send_shard_request_or_raise(inode_id_shard(id), StatReq(id))
-    assert isinstance(resp, StatResp)
-    print(f'mtime:       {eggs_time_str(resp.mtime)}')
     if inode_id_type(id) == InodeType.DIRECTORY:
-        print(f'owner:       0x{resp.size_or_owner:016X}')
-        if resp.opaque:
-            try:
-                data = bincode.unpack(DirectoryData, resp.opaque).body
-                print(f'raw opaque:  {resp.opaque!r}')
-                print(f'  delete_after_time:      {timedelta(microseconds=data.delete_after_time/1000)}')
-                print(f'  delete_after_versions:  {data.delete_after_versions}')
-                print(f'  span policies:')
-                print(f'    255:\tINLINE')
-                for policy in data.span_policies:
-                    print(f'    {span_size_str(policy.max_size)}:\t{STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
-            except Exception as err:
-                print(f'data:        could not parse: {err} ({resp.opaque!r})')
+        resp = send_shard_request_or_raise(inode_id_shard(id), StatDirectoryReq(id))
+        assert isinstance(resp, StatDirectoryResp)
+        print(f'mtime:       {eggs_time_str(resp.mtime)}')
+        print(f'owner:       0x{resp.owner:016X}')
+        if resp.info.body:
+            print(f'info:')
+            print_dir_info(resp.info.body[0])
         else:
-            print(f'data:        <empty>')
+            print(f'info (inherited):')
+            print(resp.info)
+            inherited_from, info = resolve_dir_info(id)
+            print(f'  inherited from:         0x{inherited_from:016X}')
+            print_dir_info(info)
     else:
-        print(f'size:        {resp.size_or_owner}')
+        resp = send_shard_request_or_raise(inode_id_shard(id), StatFileReq(id))
+        assert isinstance(resp, StatFileResp)
+        print(f'mtime:       {eggs_time_str(resp.mtime)}')
+        print(f'size:        {resp.size}')
 
 @command('stat')
 def do_stat(path: Path):
@@ -173,7 +187,7 @@ def lookup(path: Path) -> int:
     return inode
 
 def mkdir_raw(owner_id: int, name: str) -> None:
-    send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii')))
+    send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii'), info=INHERIT_DIRECTORY_INFO))
 
 @command('mkdir')
 def mkdir(path: Path) -> None:
@@ -272,14 +286,14 @@ def full_readdir(id: int):
                 InodeType.DIRECTORY: 'D',
                 InodeType.FILE: 'F',
                 InodeType.SYMLINK: 'S',
-                InodeType.RESERVED: ' ',
             }
             id = inode_id_strip_extra(result.target_id)
             ownership = 'O' if inode_id_extra(result.target_id) else ' '
             id_str = f'0x{id:016X}'
             if id == NULL_INODE_ID:
-                id_str = '<deleted>'
-            print(f'  {typ_str[inode_id_type(id)]} {ownership} {eggs_time_str(result.creation_time)} {id_str}')
+                print(f'    {ownership} {eggs_time_str(result.creation_time)} <deleted>')
+            else:
+                print(f'  {typ_str[inode_id_type(id)]} {ownership} {eggs_time_str(result.creation_time)} {id_str}')
         
 @command('ls')
 def ls(dir: Path) -> None:
@@ -333,8 +347,8 @@ def parse_parity(s: str) -> int:
     data, parity = s.split('+')
     return create_parity_mode(int(data), int(parity))
 
-@command('set_directory_data_raw')
-def set_directory_data_raw(id: int, delete_after_time: timedelta, delete_after_versions: int, *span_policies: str) -> None:
+@command('set_directory_info_raw')
+def set_directory_info_raw(id: int, delete_after_time: timedelta, delete_after_versions: int, *span_policies: str) -> None:
     if len(span_policies) < 1:
         raise ValueError('Expecting at least one span policy!')
     def bad_span_policy():
@@ -354,24 +368,25 @@ def set_directory_data_raw(id: int, delete_after_time: timedelta, delete_after_v
             raise ValueError(f'Reserved storage class {storage_class}')
         policies.append(SpanPolicy(size, storage_class, parse_parity(parity_str)))
     delete_after_time_ns = int(delete_after_time.total_seconds()) * 1000 * 1000 * 1000
-    data = DirectoryData(DirectoryData0(False, delete_after_time_ns, delete_after_versions, policies))
-    send_shard_request_or_raise(inode_id_shard(id), SetDirectoryDataReq(id, bincode.pack(data)))
+    info = DirectoryInfo(False, [DirectoryInfoBody(delete_after_time_ns, delete_after_versions, policies)])
+    send_shard_request_or_raise(inode_id_shard(id), SetDirectoryInfoReq(id, info))
     stat_raw(id)
 
-@command('inherit_directory_data_raw')
-def inherit_directory_data_raw(id: int) -> None:
-    data = DirectoryData(DirectoryData0(False, 0, 0, []))
-    print(data)
+@command('inherit_directory_info_raw')
+def inherit_directory_info_raw(id: int) -> None:
+    info = DirectoryInfo(False, [])
+    send_shard_request_or_raise(inode_id_shard(id), SetDirectoryInfoReq(id, info))
+    stat_raw(id)
 
-@command('inherit_directory_data')
-def inherit_directory_data(path: Path) -> None:
+@command('inherit_directory_info')
+def inherit_directory_info(path: Path) -> None:
     id = lookup_abs_path(path)
-    inherit_directory_data_raw(id)
+    inherit_directory_info_raw(id)
 
-@command('set_directory_data')
+@command('set_directory_info')
 def set_directory_data(path: Path, delete_after_time: timedelta, delete_after_versions: int, *span_policies: str) -> None:
     id = lookup_abs_path(path)
-    set_directory_data_raw(id, delete_after_time, delete_after_versions, *span_policies)
+    set_directory_info_raw(id, delete_after_time, delete_after_versions, *span_policies)
 
 # Writes block, returns proof
 def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:

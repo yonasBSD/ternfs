@@ -1,7 +1,12 @@
 package main
 
-import "xtx/eggsfs/gc"
+import (
+	"flag"
+	"xtx/eggsfs/gc"
+)
 
 func main() {
-	gc.Run()
+	verbose := flag.Bool("verbose", false, "enables debug logging")
+	flag.Parse()
+	gc.Run(*verbose)
 }

@@ -478,7 +478,7 @@ def remove_directory_owner(cur: sqlite3.Cursor, req: RemoveDirectoryOwnerReq) ->
         info = DirectoryInfo(True, [req.info])
     # do the update
     cur.execute(
-        'update directories set owner_id = :owner_id where id = :dir_id',
+        'update directories set owner_id = :owner_id, info = :info where id = :dir_id',
         {'owner_id': NULL_INODE_ID, 'dir_id': req.dir_id, 'info': bincode.pack(info)}
     )
     assert cur.rowcount == 1

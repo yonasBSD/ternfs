@@ -1092,11 +1092,15 @@ def run_forever(db: sqlite3.Connection):
         assert req.request.request_id == resp.request_id
         return resp
     while True:
-        data, addr = api_sock.recvfrom(UDP_MTU)
-        req = bincode.unpack(CDCRequest, data)
-        resp = execute(execute_shard_req, db, req)
-        api_sock.sendto(bincode.pack(resp), addr)
-
+        try:
+            data, addr = api_sock.recvfrom(UDP_MTU)
+            req = bincode.unpack(CDCRequest, data)
+            resp = execute(execute_shard_req, db, req)
+            api_sock.sendto(bincode.pack(resp), addr)
+        except Exception:
+            logging.error(f'Got exception while processing CDC request')
+            traceback.print_exc()
+    
 
 def main(db_dir: str):
     db = open_db(db_dir)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"xtx/eggsfs/bincode"
@@ -22,37 +23,50 @@ type cachedDirInfo struct {
 }
 
 type GcEnv struct {
-	Logger       *log.Logger
-	Shid         msgs.ShardId
-	Role         string
-	ShardSocket  *net.UDPConn
-	CDCSocket    *net.UDPConn
-	Timeout      time.Duration
-	Verbose      bool
-	Dry          bool
-	CDCKey       cipher.Block
-	dirInfoCache map[msgs.InodeId]cachedDirInfo
+	Logger *log.Logger
+	// we use a lock on top of the logger lock to have stack traces to be on ther own
+	LogMutex          *sync.Mutex
+	Shid              msgs.ShardId
+	Role              string
+	ShardSocket       *net.UDPConn
+	CDCSocket         *net.UDPConn
+	Timeout           time.Duration
+	Verbose           bool
+	Dry               bool
+	CDCKey            cipher.Block
+	DirInfoCache      map[msgs.InodeId]cachedDirInfo
+	DirInfoCacheMutex *sync.RWMutex
 }
 
 func (gc *GcEnv) lookupCachedDirInfo(dirId msgs.InodeId) *msgs.DirectoryInfoBody {
 	now := time.Now()
-	cached := gc.dirInfoCache[dirId]
+	gc.DirInfoCacheMutex.RLock()
+	cached := gc.DirInfoCache[dirId]
+	gc.DirInfoCacheMutex.RUnlock()
+
 	if now.Sub(cached.cachedAt) > time.Hour {
-		delete(gc.dirInfoCache, dirId)
+		gc.DirInfoCacheMutex.Lock()
+		delete(gc.DirInfoCache, dirId)
+		gc.DirInfoCacheMutex.Unlock()
 		return nil
 	}
+
 	return &cached.info
 }
 
 func (gc *GcEnv) updateCachedDirInfo(dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) {
-	gc.dirInfoCache[dirId] = cachedDirInfo{
+	gc.DirInfoCacheMutex.Lock()
+	gc.DirInfoCache[dirId] = cachedDirInfo{
 		info:     *dirInfo,
 		cachedAt: time.Now(),
 	}
+	gc.DirInfoCacheMutex.Unlock()
 }
 
 func (gc *GcEnv) RaiseAlert(err error) {
+	gc.LogMutex.Lock()
 	gc.Logger.Printf("%s[%d]: ALERT: %v\n", gc.Role, gc.Shid, err)
+	gc.LogMutex.Unlock()
 }
 
 func (gc *GcEnv) Info(format string, v0 ...any) {
@@ -60,7 +74,9 @@ func (gc *GcEnv) Info(format string, v0 ...any) {
 	v[0] = gc.Role
 	v[1] = gc.Shid
 	copy(v[2:], v0)
+	gc.LogMutex.Lock()
 	gc.Logger.Printf("%s[%d]: "+format+"\n", v...)
+	gc.LogMutex.Unlock()
 }
 
 func (gc *GcEnv) Debug(format string, v0 ...any) {
@@ -69,7 +85,9 @@ func (gc *GcEnv) Debug(format string, v0 ...any) {
 		v[0] = gc.Role
 		v[1] = gc.Shid
 		copy(v[2:], v0)
+		gc.LogMutex.Lock()
 		gc.Logger.Printf("%s[%d]: "+format+"\n", v...)
+		gc.LogMutex.Unlock()
 	}
 }
 
@@ -340,11 +358,13 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 			edges = append(edges, result)
 		}
 		if resp.Finished {
-			allRemoved, err := gc.applyPolicy(stats, edges, dirId, dirInfo)
-			if err != nil {
-				return err
+			if len(edges) > 0 {
+				allRemoved, err := gc.applyPolicy(stats, edges, dirId, dirInfo)
+				if err != nil {
+					return err
+				}
+				remove = remove && allRemoved
 			}
-			remove = remove && allRemoved
 			break
 		}
 		lastResult := &resp.Results[len(resp.Results)-1]
@@ -426,10 +446,12 @@ func (gc *GcEnv) run(panicChan chan error, body func(gc *GcEnv)) {
 	defer func() {
 		if err := recover(); err != nil {
 			gc.RaiseAlert(fmt.Errorf("PANIC %v", err))
-			gc.Info("PANIC %v. Stacktrace:", err)
+			gc.LogMutex.Lock()
+			gc.Logger.Printf("%s[%d]: PANIC %v. Stacktrace:", gc.Role, gc.Shid, err)
 			for _, line := range strings.Split(string(debug.Stack()), "\n") {
-				gc.Info(line)
+				gc.Logger.Printf("%s[%d]: %s", gc.Role, gc.Shid, line)
 			}
+			gc.LogMutex.Unlock()
 			panicChan <- fmt.Errorf("%s[%v]: PANIC %v", gc.Role, gc.Shid, err)
 		}
 	}()
@@ -438,13 +460,17 @@ func (gc *GcEnv) run(panicChan chan error, body func(gc *GcEnv)) {
 	}
 }
 
-func Run() {
+func Run(verbose bool) {
 	logger := log.New(os.Stderr, "", log.Lshortfile)
 	panicChan := make(chan error, 1)
 	env := GcEnv{
-		Logger:  logger,
-		Timeout: 10 * time.Second,
-		CDCKey:  cdckey.CDCKey(),
+		Logger:            logger,
+		LogMutex:          new(sync.Mutex),
+		Timeout:           10 * time.Second,
+		CDCKey:            cdckey.CDCKey(),
+		Verbose:           verbose,
+		DirInfoCache:      map[msgs.InodeId]cachedDirInfo{},
+		DirInfoCacheMutex: new(sync.RWMutex),
 	}
 	for shid := 0; shid < 256; shid++ {
 		destructor := env

@@ -37,8 +37,8 @@ const SHARD_REQ_PROTOCOL_VERSION uint32 = 0x414853
 const SHARD_RESP_PROTOCOL_VERSION uint32 = 0x1414853
 
 // >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
-// '414853'
-const CDC_REQ_PROTOCOL_VERSION uint32 = 0x414853
+// '434443'
+const CDC_REQ_PROTOCOL_VERSION uint32 = 0x434443
 
 // >>> format(struct.unpack('<I', b'CDC\1')[0], 'x')
 // '1434443'

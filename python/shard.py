@@ -123,7 +123,7 @@ def init_db(shard: int, db: sqlite3.Connection):
             owner_id integer not null,
             mtime integer not null,
             hash_mode integer not null,
-            opaque blob not null,
+            info blob not null,
             check ((id & 0xFF) = {shard}),
             check (((id >> 61) & 0x03) = {InodeType.DIRECTORY}),
             check (owner_id = {NULL_INODE_ID} or ((owner_id >> 61) & 0x03) = {InodeType.DIRECTORY})
@@ -131,7 +131,7 @@ def init_db(shard: int, db: sqlite3.Connection):
     ''')
     if shard == inode_id_shard(ROOT_DIR_INODE_ID):
         create_directory_inode(
-            cur, CreateDirectoryINodeReq(id=ROOT_DIR_INODE_ID, owner_id=NULL_INODE_ID, opaque=b'')
+            cur, CreateDirectoryINodeReq(id=ROOT_DIR_INODE_ID, owner_id=NULL_INODE_ID, info=DEFAULT_DIRECTORY_INFO)
         )
     cur.execute(f'''
         create table if not exists edges (
@@ -416,6 +416,7 @@ def check_spans_constraints(cur: sqlite3.Cursor, file_id: int) -> bool:
 
 # not read only
 def create_directory_inode(cur: sqlite3.Cursor, req: CreateDirectoryINodeReq) -> Union[EggsError, CreateDirectoryINodeResp]:
+    # TODO check that if inherited is false, we have a body
     if inode_id_type(req.id) != InodeType.DIRECTORY:
         return EggsError(ErrCode.TYPE_IS_NOT_DIRECTORY)
     now = eggs_time()
@@ -423,7 +424,7 @@ def create_directory_inode(cur: sqlite3.Cursor, req: CreateDirectoryINodeReq) ->
     if existing is None:
         sql_insert(
             cur, 'directories',
-            id=req.id, owner_id=req.owner_id, mtime=now, hash_mode=HashMode.TRUNC_MD5, opaque=req.opaque,
+            id=req.id, owner_id=req.owner_id, mtime=now, hash_mode=HashMode.TRUNC_MD5, info=bincode.pack(req.info),
         )
     else:
         # The assumption here is that only the CDC creates directories, and it doles out
@@ -432,28 +433,56 @@ def create_directory_inode(cur: sqlite3.Cursor, req: CreateDirectoryINodeReq) ->
         if req.owner_id != existing['owner_id']:
             return EggsError(ErrCode.MISMATCHING_OWNER)
         cur.execute(
-            'update directories set mtime = :mtime, opaque = :opaque where id = :id',
-            {'mtime': now, 'opaque': req.opaque, 'id': req.id}
+            'update directories set mtime = :mtime, info = :info where id = :id',
+            {'mtime': now, 'info': bincode.pack(req.info), 'id': req.id}
         )
     return CreateDirectoryINodeResp(mtime=now)
 
 # not read only
 def set_directory_owner(cur: sqlite3.Cursor, req: SetDirectoryOwnerReq) -> Union[EggsError, SetDirectoryOwnerResp]:
-    if req.owner_id == NULL_INODE_ID:
-        # if we have any outgoing current edges, we can't disown this
-        num_current_edges = cur.execute(
-            'select count(*) as c from edges where dir_id = :dir_id and current', {'dir_id': req.dir_id}
-        ).fetchone()['c']
-        if num_current_edges > 0:
-            return EggsError(ErrCode.DIRECTORY_NOT_EMPTY)
+    assert not req.owner_id == NULL_INODE_ID # TODO better error
+    assert inode_id_type(req.owner_id) == InodeType.DIRECTORY # TODO better error 
+    dir = get_directory(cur, req.dir_id, allow_snapshot=True)
+    if isinstance(dir, EggsError):
+        return dir
+    # return to normal inherited state if the old owner was null
+    info = bincode.unpack(DirectoryInfo, dir['info'])
+    if dir['owner_id'] == NULL_INODE_ID and info.inherited:
+        info = DirectoryInfo(True, [])
     # do the update
     cur.execute(
-        'update directories set owner_id = :owner_id where id = :dir_id',
-        {'owner_id': req.owner_id, 'dir_id': req.dir_id}
+        'update directories set owner_id = :owner_id, info = :info where id = :dir_id',
+        {'owner_id': req.owner_id, 'dir_id': req.dir_id, 'info': bincode.pack(info)}
     )
     if cur.rowcount == 0:
         return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
     return SetDirectoryOwnerResp()
+
+# not read only
+def remove_directory_owner(cur: sqlite3.Cursor, req: RemoveDirectoryOwnerReq) -> Union[EggsError, RemoveDirectoryOwnerResp]:
+    assert req.dir_id != ROOT_DIR_INODE_ID
+    dir = get_directory(cur, req.dir_id, allow_snapshot=True)
+    if isinstance(dir, EggsError):
+        return dir
+    if dir['owner_id'] == NULL_INODE_ID:
+        return RemoveDirectoryOwnerResp()
+    # if we have any outgoing current edges, we can't disown this
+    num_current_edges = cur.execute(
+        'select count(*) as c from edges where dir_id = :dir_id and current', {'dir_id': req.dir_id}
+    ).fetchone()['c']
+    if num_current_edges > 0:
+        return EggsError(ErrCode.DIRECTORY_NOT_EMPTY)
+    # materialize the info if necessary
+    info = bincode.unpack(DirectoryInfo, dir['info'])
+    if info.inherited:
+        info = DirectoryInfo(True, [req.info])
+    # do the update
+    cur.execute(
+        'update directories set owner_id = :owner_id where id = :dir_id',
+        {'owner_id': NULL_INODE_ID, 'dir_id': req.dir_id, 'info': bincode.pack(info)}
+    )
+    assert cur.rowcount == 1
+    return RemoveDirectoryOwnerResp()
 
 def valid_name(b: bytes) -> bool:
     if b in (b'.', b'..'):
@@ -541,17 +570,19 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
     return res
 
 # read only
-def do_stat(cur: sqlite3.Cursor, req: StatReq) -> Union[EggsError, StatResp]:
-    if inode_id_type(req.id) == InodeType.DIRECTORY:
-        dir = get_directory(cur, req.id, allow_snapshot=True)
-        if isinstance(dir, EggsError):
-            return dir
-        return StatResp(mtime=dir['mtime'], size_or_owner=dir['owner_id'], opaque=dir['opaque'])
-    else:
-        file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
-        if file is None:
-            return EggsError(ErrCode.FILE_NOT_FOUND)
-        return StatResp(mtime=file['mtime'], size_or_owner=file['size'], opaque=b'')
+def stat_file_req(cur: sqlite3.Cursor, req: StatFileReq) -> Union[EggsError, StatFileResp]:
+    file = cur.execute('select * from files where id = :id and not transient', {'id': req.id}).fetchone()
+    if file is None:
+        return EggsError(ErrCode.FILE_NOT_FOUND)
+    return StatFileResp(mtime=file['mtime'], size=file['size'])
+
+# read only
+def stat_directory_req(cur: sqlite3.Cursor, req: StatDirectoryReq) -> Union[EggsError, StatDirectoryResp]:
+    dir = get_directory(cur, req.id, allow_snapshot=True)
+    if isinstance(dir, EggsError):
+        return dir
+    info = bincode.unpack(DirectoryInfo, dir['info'])
+    return StatDirectoryResp(mtime=dir['mtime'], owner=dir['owner_id'], info=info)
 
 # read only
 def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirResp]:
@@ -1369,6 +1400,15 @@ def remove_inode_req(cur: sqlite3.Cursor, req: RemoveInodeReq) -> Union[EggsErro
         cur.execute('delete from files where id = :file_id', {'file_id': req.id})
         return RemoveInodeResp()
 
+# not read only
+def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[EggsError, SetDirectoryInfoResp]:
+    assert not req.id == ROOT_DIR_INODE_ID and req.info.inherited # TODO better error
+    cur.execute('update directories set info = :data where id = :id', {'info': bincode.pack(req.info), 'id': req.id})
+    if cur.rowcount == 0:
+        return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
+    assert cur.rowcount == 1
+    return SetDirectoryInfoResp()
+
 class BlockServerInfo(TypedDict):
     ip: str
     port: int
@@ -1414,8 +1454,10 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
     try:
         if isinstance(req_body, CreateDirectoryINodeReq):
             resp_body = create_directory_inode(cur, req_body)
-        elif isinstance(req_body, StatReq):
-            resp_body = do_stat(cur, req_body)
+        elif isinstance(req_body, StatFileReq):
+            resp_body = stat_file_req(cur, req_body)
+        elif isinstance(req_body, StatDirectoryReq):
+            resp_body = stat_directory_req(cur, req_body)
         elif isinstance(req_body, CreateLockedCurrentEdgeReq):
             resp_body = create_locked_current_edge(cur, req_body)
         elif isinstance(req_body, ReadDirReq):
@@ -1444,6 +1486,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = soft_unlink_file(cur, req_body)
         elif isinstance(req_body, SetDirectoryOwnerReq):
             resp_body = set_directory_owner(cur, req_body)
+        elif isinstance(req_body, RemoveDirectoryOwnerReq):
+            resp_body = remove_directory_owner(cur, req_body)
         elif isinstance(req_body, VisitDirectoriesReq):
             resp_body = visit_directories(cur, req_body)
         elif isinstance(req_body, VisitFilesReq):
@@ -1466,6 +1510,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = remove_owned_snapshot_file_edge(cur, req_body)
         elif isinstance(req_body, MakeFileTransientReq):
             resp_body = make_file_transient(cur, req_body)
+        elif isinstance(req_body, SetDirectoryInfoReq):
+            resp_body = set_directory_info(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:
@@ -1596,28 +1642,28 @@ class ShardTests(unittest.TestCase):
         self.shard.sql_check_constraint_fail('insert into files (id, size, transient, mtime, last_span_state) values (:id, 0, FALSE, 0, 0)', {'id': self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard)})
         # directories
         self.shard.sql_check_constraint_fail(
-            "insert into directories (id, owner_id, mtime, hash_mode, opaque) values (:id, :owner, 0, 0, x'')",
+            "insert into directories (id, owner_id, mtime, hash_mode, info) values (:id, :owner, 0, 0, x'')",
             {'id': self.shard.fresh_inode_id(InodeType.DIRECTORY, (self.shard.shard+1)%256), 'owner': NULL_INODE_ID}
         )
         self.shard.sql_check_constraint_fail(
-            "insert into directories (id, owner_id, mtime, hash_mode, opaque) values (:id, :owner, 0, 0, x'')",
+            "insert into directories (id, owner_id, mtime, hash_mode, info) values (:id, :owner, 0, 0, x'')",
             {'id': self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard), 'owner': NULL_INODE_ID}
         )
         self.shard.sql_check_constraint_fail(
-            "insert into directories (id, owner_id, mtime, hash_mode, opaque) values (:id, :owner, 0, 0, x'')",
+            "insert into directories (id, owner_id, mtime, hash_mode, info) values (:id, :owner, 0, 0, x'')",
             {'id': self.shard.fresh_inode_id(InodeType.DIRECTORY, self.shard.shard), 'owner': self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard)}
         )
         self.shard.sql_dry(
-            "insert into directories (id, owner_id, mtime, hash_mode, opaque) values (:id, :owner, 0, 0, x'')",
+            "insert into directories (id, owner_id, mtime, hash_mode, info) values (:id, :owner, 0, 0, x'')",
             {'id': self.shard.fresh_inode_id(InodeType.DIRECTORY, self.shard.shard), 'owner': NULL_INODE_ID}
         )
         self.shard.sql_dry(
-            "insert into directories (id, owner_id, mtime, hash_mode, opaque) values (:id, :owner, 0, 0, x'')",
+            "insert into directories (id, owner_id, mtime, hash_mode, info) values (:id, :owner, 0, 0, x'')",
             {'id': self.shard.fresh_inode_id(InodeType.DIRECTORY, self.shard.shard), 'owner': self.shard.fresh_inode_id(InodeType.DIRECTORY, (self.shard.shard+1)%255)}
         )
         # edges
         test_dir = self.shard.fresh_inode_id(InodeType.DIRECTORY, self.shard.shard)
-        self.shard.execute_ok(CreateDirectoryINodeReq(test_dir, ROOT_DIR_INODE_ID, b''))
+        self.shard.execute_ok(CreateDirectoryINodeReq(test_dir, ROOT_DIR_INODE_ID, INHERIT_DIRECTORY_INFO))
         test_name = {
             'name': b'test',
             'name_hash': hash_name(HashMode.TRUNC_MD5, b'test'),
@@ -1717,22 +1763,22 @@ class ShardTests(unittest.TestCase):
         fail_check_edge_constraints()
 
     def test_root_dir(self):
-        self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID))
+        self.shard.execute_ok(StatDirectoryReq(ROOT_DIR_INODE_ID))
 
     def test_create_dir(self):
         dir_id = self.shard.fresh_inode_id(InodeType.DIRECTORY, self.shard.shard)
-        create_dir_req = CreateDirectoryINodeReq(id=dir_id, owner_id=ROOT_DIR_INODE_ID, opaque=b'first')
+        create_dir_req = CreateDirectoryINodeReq(id=dir_id, owner_id=ROOT_DIR_INODE_ID, info=INHERIT_DIRECTORY_INFO)
         create_dir_1 = self.shard.execute_ok(create_dir_req)
-        stat_1 = self.shard.execute_ok(StatReq(dir_id))
+        stat_1 = cast(StatDirectoryResp, self.shard.execute_ok(StatDirectoryReq(dir_id)))
         assert stat_1.mtime == create_dir_1.mtime
-        assert stat_1.size_or_owner == ROOT_DIR_INODE_ID
-        assert stat_1.opaque == b'first'
+        assert stat_1.owner == ROOT_DIR_INODE_ID
+        assert stat_1.info.inherited
         # can't change owner
         self.shard.execute_err(replace(create_dir_req, owner_id=NULL_INODE_ID), kind=ErrCode.MISMATCHING_OWNER)
-        # we can change the opaque stuff though TODO is this correct behavior? probably doesn't matter
-        self.shard.execute_ok(replace(create_dir_req, opaque=b'second'))
-        stat_2 = self.shard.execute_ok(StatReq(dir_id))
-        assert stat_2.opaque == b'second'
+        # we can change the info stuff though TODO is this correct behavior? probably doesn't matter
+        self.shard.execute_ok(replace(create_dir_req, info=DEFAULT_DIRECTORY_INFO))
+        stat_2 = self.shard.execute_ok(StatDirectoryReq(dir_id))
+        assert not stat_2.info.inherited
     
     def test_create_current_edge(self):
         dummy_target_1 = self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard)
@@ -1919,13 +1965,13 @@ class ShardTests(unittest.TestCase):
         root_dir_files = self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0))
         assert root_dir_files.results[0].name == b'test-file'
         # check that the file is as big as we expect
-        file_stat = cast(StatResp, self.shard.execute_ok(StatReq(root_dir_files.results[0].target_id)))
-        assert file_stat.size_or_owner == (raid5_span_req.byte_offset + raid5_span_req.size)
+        file_stat = cast(StatFileResp, self.shard.execute_ok(StatFileReq(root_dir_files.results[0].target_id)))
+        assert file_stat.size == (raid5_span_req.byte_offset + raid5_span_req.size)
         # check that the blocks are what we expect
         spans = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 0)))
         assert spans.next_offset == 0
         assert len(spans.spans) == 5 # inline, zero, no mirroring/raid, simple mirroring, raid5
-        assert file_stat.size_or_owner == (spans.spans[-1].byte_offset + spans.spans[-1].size)
+        assert file_stat.size == (spans.spans[-1].byte_offset + spans.spans[-1].size)
         for i, span in enumerate(spans.spans[:-1]):
             assert span.byte_offset + span.size == spans.spans[i+1].byte_offset
         assert spans.spans[0].body_bytes == b'test-inline-block'
@@ -2013,13 +2059,13 @@ class ShardTests(unittest.TestCase):
         now = eggs_time()
         transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.shard.execute_ok(LinkFileReq(transient_file_1.id, transient_file_1.cookie, ROOT_DIR_INODE_ID, b'file'))
-        st_1 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        st_1 = cast(StatDirectoryResp, self.shard.execute_ok(StatDirectoryReq(ROOT_DIR_INODE_ID)))
         assert st_1.mtime > now
         self.shard.execute_ok(SameDirectoryRenameReq(transient_file_1.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))
-        st_2 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        st_2 = cast(StatDirectoryResp, self.shard.execute_ok(StatDirectoryReq(ROOT_DIR_INODE_ID)))
         assert st_2.mtime > st_1.mtime
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, transient_file_1.id, b'newfile'))
-        st_3 = cast(StatResp, self.shard.execute_ok(StatReq(ROOT_DIR_INODE_ID)))
+        st_3 = cast(StatDirectoryResp, self.shard.execute_ok(StatDirectoryReq(ROOT_DIR_INODE_ID)))
         assert st_3.mtime > st_2.mtime
     
 SHUCKLE_POLL_PERIOD_SEC = 60

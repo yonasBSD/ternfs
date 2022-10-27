@@ -147,8 +147,10 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return 0
 	case *LookupReq, *LookupResp:
 		return LOOKUP
-	case *StatReq, *StatResp:
-		return STAT
+	case *StatFileReq, *StatFileResp:
+		return STAT_FILE
+	case *StatDirectoryReq, *StatDirectoryResp:
+		return STAT_DIRECTORY
 	case *ReadDirReq, *ReadDirResp:
 		return READ_DIR
 	case *ConstructFileReq, *ConstructFileResp:
@@ -165,6 +167,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return FILE_SPANS
 	case *SameDirectoryRenameReq, *SameDirectoryRenameResp:
 		return SAME_DIRECTORY_RENAME
+	case *SetDirectoryInfoReq, *SetDirectoryInfoResp:
+		return SET_DIRECTORY_INFO
 	case *VisitDirectoriesReq, *VisitDirectoriesResp:
 		return VISIT_DIRECTORIES
 	case *VisitFilesReq, *VisitFilesResp:
@@ -185,6 +189,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return CREATE_DIRECTORY_INODE
 	case *SetDirectoryOwnerReq, *SetDirectoryOwnerResp:
 		return SET_DIRECTORY_OWNER
+	case *RemoveDirectoryOwnerReq, *RemoveDirectoryOwnerResp:
+		return REMOVE_DIRECTORY_OWNER
 	case *CreateLockedCurrentEdgeReq, *CreateLockedCurrentEdgeResp:
 		return CREATE_LOCKED_CURRENT_EDGE
 	case *LockCurrentEdgeReq, *LockCurrentEdgeResp:
@@ -205,7 +211,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 
 const (
 	LOOKUP ShardMessageKind = 0x1
-	STAT ShardMessageKind = 0x2
+	STAT_FILE ShardMessageKind = 0x2
+	STAT_DIRECTORY ShardMessageKind = 0x8
 	READ_DIR ShardMessageKind = 0x3
 	CONSTRUCT_FILE ShardMessageKind = 0x4
 	ADD_SPAN_INITIATE ShardMessageKind = 0x5
@@ -214,6 +221,7 @@ const (
 	SOFT_UNLINK_FILE ShardMessageKind = 0xC
 	FILE_SPANS ShardMessageKind = 0xD
 	SAME_DIRECTORY_RENAME ShardMessageKind = 0xE
+	SET_DIRECTORY_INFO ShardMessageKind = 0xF
 	VISIT_DIRECTORIES ShardMessageKind = 0x15
 	VISIT_FILES ShardMessageKind = 0x20
 	VISIT_TRANSIENT_FILES ShardMessageKind = 0x16
@@ -224,6 +232,7 @@ const (
 	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x1A
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
+	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
 	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
 	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
 	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
@@ -293,31 +302,57 @@ func (v *LookupResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *StatReq) Pack(buf *bincode.Buf) {
+func (v *StatFileReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
 }
 
-func (v *StatReq) Unpack(buf *bincode.Buf) error {
+func (v *StatFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *StatResp) Pack(buf *bincode.Buf) {
+func (v *StatFileResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
-	buf.PackU64(uint64(v.SizeOrOwner))
-	buf.PackBytes([]byte(v.Opaque))
+	buf.PackU64(uint64(v.Size))
 }
 
-func (v *StatResp) Unpack(buf *bincode.Buf) error {
+func (v *StatFileResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Mtime)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.SizeOrOwner)); err != nil {
+	if err := buf.UnpackU64((*uint64)(&v.Size)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Opaque)); err != nil {
+	return nil
+}
+
+func (v *StatDirectoryReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *StatDirectoryReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *StatDirectoryResp) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Mtime))
+	buf.PackU64(uint64(v.Owner))
+	v.Info.Pack(buf)
+}
+
+func (v *StatDirectoryResp) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Mtime)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.Owner)); err != nil {
+		return err
+	}
+	if err := v.Info.Unpack(buf); err != nil {
 		return err
 	}
 	return nil
@@ -642,6 +677,28 @@ func (v *SameDirectoryRenameResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
+func (v *SetDirectoryInfoReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+	v.Info.Pack(buf)
+}
+
+func (v *SetDirectoryInfoReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := v.Info.Unpack(buf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SetDirectoryInfoResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *SetDirectoryInfoResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
 func (v *VisitDirectoriesReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.BeginId))
 }
@@ -947,7 +1004,7 @@ func (v *RemoveSpanCertifyResp) Unpack(buf *bincode.Buf) error {
 func (v *CreateDirectoryINodeReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
 	buf.PackU64(uint64(v.OwnerId))
-	buf.PackBytes([]byte(v.Opaque))
+	v.Info.Pack(buf)
 }
 
 func (v *CreateDirectoryINodeReq) Unpack(buf *bincode.Buf) error {
@@ -957,7 +1014,7 @@ func (v *CreateDirectoryINodeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Opaque)); err != nil {
+	if err := v.Info.Unpack(buf); err != nil {
 		return err
 	}
 	return nil
@@ -993,6 +1050,28 @@ func (v *SetDirectoryOwnerResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *SetDirectoryOwnerResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *RemoveDirectoryOwnerReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.DirId))
+	v.Info.Pack(buf)
+}
+
+func (v *RemoveDirectoryOwnerReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	if err := v.Info.Unpack(buf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveDirectoryOwnerResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RemoveDirectoryOwnerResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
@@ -1155,6 +1234,7 @@ func (v *MakeFileTransientResp) Unpack(buf *bincode.Buf) error {
 func (v *MakeDirectoryReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.OwnerId))
 	buf.PackBytes([]byte(v.Name))
+	v.Info.Pack(buf)
 }
 
 func (v *MakeDirectoryReq) Unpack(buf *bincode.Buf) error {
@@ -1162,6 +1242,9 @@ func (v *MakeDirectoryReq) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackString(&v.Name); err != nil {
+		return err
+	}
+	if err := v.Info.Unpack(buf); err != nil {
 		return err
 	}
 	return nil
@@ -1515,6 +1598,81 @@ func (v *BlockProof) Unpack(buf *bincode.Buf) error {
 	}
 	if err := buf.UnpackFixedBytes(8, v.Proof[:]); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (v *SpanPolicy) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.MaxSize))
+	buf.PackU8(uint8(v.StorageClass))
+	buf.PackU8(uint8(v.Parity))
+}
+
+func (v *SpanPolicy) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.MaxSize)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU8((*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU8((*uint8)(&v.Parity)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *DirectoryInfoBody) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.DeleteAfterTime))
+	buf.PackU8(uint8(v.DeleteAfterVersions))
+	len1 := len(v.SpanPolicies)
+	buf.PackLength(len1)
+	for i := 0; i < len1; i++ {
+		v.SpanPolicies[i].Pack(buf)
+	}
+}
+
+func (v *DirectoryInfoBody) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.DeleteAfterTime)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU8((*uint8)(&v.DeleteAfterVersions)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := buf.UnpackLength(&len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.SpanPolicies, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.SpanPolicies[i].Unpack(buf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *DirectoryInfo) Pack(buf *bincode.Buf) {
+	buf.PackBool(bool(v.Inherited))
+	len1 := len(v.Body)
+	buf.PackLength(len1)
+	for i := 0; i < len1; i++ {
+		v.Body[i].Pack(buf)
+	}
+}
+
+func (v *DirectoryInfo) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackBool((*bool)(&v.Inherited)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := buf.UnpackLength(&len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Body, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Body[i].Unpack(buf); err != nil {
+			return err
+		}
 	}
 	return nil
 }

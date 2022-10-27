@@ -31,7 +31,7 @@ UDP_MTU = 1472
 # Note that this schema is also utilized in the SQLite checks. So if
 # you change them, you also have to change those.
 
-# Reserved is 0 so that the NULL_INODE can be zero without conflicts.
+# 0 is reserved so that the NULL_INODE can be zero without conflicts.
 class InodeType(enum.IntEnum):
     RESERVED = 0
     DIRECTORY = 1
@@ -39,7 +39,9 @@ class InodeType(enum.IntEnum):
     SYMLINK = 3
 
 def inode_id_type(inode: int) -> InodeType:
-    return InodeType((inode >> 61) & 0x03)
+    typ = InodeType((inode >> 61) & 0x03)
+    assert typ in (InodeType.DIRECTORY, InodeType.FILE, InodeType.SYMLINK)
+    return typ
 
 def inode_id_shard(inode: int) -> int:
     return inode & 0xFF
@@ -82,7 +84,7 @@ def num_total_blocks(parity_mode: int) -> int:
     return num_data_blocks(parity_mode) + num_parity_blocks(parity_mode)
 
 def create_parity_mode(data_blocks: int, parity_blocks: int) -> int:
-    assert data_blocks >= 0 and data_blocks < 16
+    assert data_blocks > 0 and data_blocks < 16
     assert parity_blocks >= 0 and data_blocks < 16
     return data_blocks | (parity_blocks << 4)
 

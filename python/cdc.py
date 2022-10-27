@@ -146,7 +146,7 @@ class MakeDirectory(Transaction):
         return CDCNeedsShard(
             next_step='create_dir_resp',
             shard=inode_id_shard(self.state['dir_id']),
-            request=CreateDirectoryINodeReq(self.state['dir_id'], owner_id=req.owner_id, opaque=b''),
+            request=CreateDirectoryINodeReq(self.state['dir_id'], owner_id=req.owner_id, info=req.info),
         )
 
     def create_dir_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[CreateDirectoryINodeResp]) -> CDCStepInternal:
@@ -185,10 +185,12 @@ class MakeDirectory(Transaction):
         return CDCNeedsShard(
             next_step='rollback_resp',
             shard=inode_id_shard(self.state['dir_id']),
-            request=SetDirectoryOwnerReq(self.state['dir_id'], owner_id=NULL_INODE_ID)
+            # we've just created this directory, it is empty, therefore the policy
+            # is irrelevant.
+            request=RemoveDirectoryOwnerReq(self.state['dir_id'], DEFAULT_DIRECTORY_INFO.body[0])
         )
 
-    def rollback_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
+    def rollback_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[RemoveDirectoryOwnerResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             logging.error(f"We couldn't roll back MakeDir {self.state['dir_id']} (error {resp.error_code}), this is bad!")
             return EggsError(ErrCode.FATAL_ERROR)
@@ -308,11 +310,12 @@ class RenameFile(Transaction):
 #
 # 1. Lock edge going into the directory to remove. This prevents things making
 #     making it snapshot or similar in the meantime.
-# 2. Remove directory owner from directory that we want to remove. This will fail if there still
+# 2. Resolve the directory info, since we'll need to store it when we remove the directory owner.
+# 3. Remove directory owner from directory that we want to remove. This will fail if there still
 #     are current edges there.
-# 3. Unlock edge going into the directory, making it snapshot.
+# 4. Unlock edge going into the directory, making it snapshot.
 #
-# If 2 fails, we need to roll back the locking, without making the edge snapshot.
+# If 2 or 3 fail, we need to roll back the locking, without making the edge snapshot.
 class SoftUnlinkDirectory(Transaction):
     class RemoveDirectoryState(TypedDict):
         exit_error: Optional[ErrCode] # after we roll back, we return this error to the user
@@ -336,12 +339,30 @@ class SoftUnlinkDirectory(Transaction):
         if isinstance(resp, EggsError):
             return resp # Nothing to rollback
         return CDCNeedsShard(
-            next_step='remove_owner_resp',
+            next_step='stat_resp',
             shard=inode_id_shard(req.target_id),
-            request=SetDirectoryOwnerReq(dir_id=req.target_id, owner_id=NULL_INODE_ID),
+            request=StatDirectoryReq(req.target_id),
         )
     
-    def remove_owner_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
+    def stat_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[StatDirectoryResp]) -> CDCStepInternal:
+        if isinstance(resp, EggsError):
+            return self._init_rollback(req, resp.error_code) # we need to unlock what we locked
+        if resp.info.body:
+            # if we get a directory info body, we're done finding the directory info
+            return CDCNeedsShard(
+                next_step='remove_owner_resp',
+                shard=inode_id_shard(req.target_id),
+                request=RemoveDirectoryOwnerReq(dir_id=req.target_id, info=resp.info.body[0]),
+            )
+        else:
+            # otherwise, we keep going upwards
+            return CDCNeedsShard(
+                next_step='stat_resp',
+                shard=inode_id_shard(resp.owner),
+                request=StatDirectoryReq(resp.owner),
+            )
+    
+    def remove_owner_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[RemoveDirectoryOwnerResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return self._init_rollback(req, resp.error_code) # we need to unlock what we locked
         return CDCNeedsShard(
@@ -378,6 +399,7 @@ class SoftUnlinkDirectory(Transaction):
 # 3. Create and lock the new edge
 # 4. Unlock the new edge
 # 5. Unlock and unlink the old edge
+# 6. Update the owner of the moved directory to the new directory
 #
 # If we wail at step 2 or 3, we need to unlock the edge we locked at step 1. Step 4 and 5
 # should never fail.
@@ -427,10 +449,10 @@ class RenameDirectory(Transaction):
         return CDCNeedsShard(
             next_step='stat_resp',
             shard=inode_id_shard(self.state['current_directory']),
-            request=StatReq(self.state['current_directory']),
+            request=StatDirectoryReq(self.state['current_directory']),
         )
     
-    def stat_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[StatResp]) -> CDCStepInternal:
+    def stat_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[StatDirectoryResp]) -> CDCStepInternal:
         assert self.state['current_directory'] is not None
         if isinstance(resp, EggsError):
             # Internal error because this should never happen, unless we haven't found the destination
@@ -443,18 +465,17 @@ class RenameDirectory(Transaction):
                 logging.error(f'Unexpected error for stat of directory {self.state["current_directory"]} which should exist: {resp}')
                 err = ErrCode.INTERNAL_ERROR
             return self._init_rollback(req, err)
-        owner = resp.size_or_owner
-        if owner in self.state['parent_cache']:
+        if resp.owner in self.state['parent_cache']:
             return self._init_rollback(req, ErrCode.LOOP_IN_DIRECTORY_RENAME)
-        if owner == NULL_INODE_ID:
+        if resp.owner == NULL_INODE_ID:
             # We're done traversing
             return CDCNeedsShard(
                 next_step='create_new_resp',
                 shard=inode_id_shard(req.new_owner_id),
                 request=CreateLockedCurrentEdgeReq(req.new_owner_id, req.new_name, req.target_id, eggs_time()),
             )
-        self.state['parent_cache'][self.state['current_directory']] = owner
-        self.state['current_directory'] = owner
+        self.state['parent_cache'][self.state['current_directory']] = resp.owner
+        self.state['current_directory'] = resp.owner
         return self._init_parent_lookup()
     
     def create_new_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[CreateLockedCurrentEdgeReq]) -> CDCStepInternal:
@@ -487,6 +508,16 @@ class RenameDirectory(Transaction):
         if isinstance(resp, EggsError):
             logging.error(f'Unexpected error in edge unlocking operation! {resp}')
             return EggsError(ErrCode.FATAL_ERROR)
+        return CDCNeedsShard(
+            next_step='set_owner_resp',
+            shard=inode_id_shard(req.target_id),
+            request=SetDirectoryOwnerReq(dir_id=req.target_id, owner_id=req.new_owner_id),
+        )
+    
+    def set_owner_resp(self, cur: sqlite3.Cursor, req: RenameDirectoryReq, resp: ExpectedShardResp[SetDirectoryOwnerResp]) -> CDCStepInternal:
+        if isinstance(resp, EggsError):
+            logging.error(f'Unexpected error when setting directory owner! {resp}')
+            return EggsError(ErrCode.FATAL_ERROR)
         # We're finally done
         return RenameDirectoryResp()
    
@@ -505,7 +536,7 @@ class RenameDirectory(Transaction):
         assert self.state['exit_error']
         return EggsError(self.state['exit_error'])
 
-# The only reason we have this here is for possible conflicts with SetDirectoryOwner,
+# The only reason we have this here is for possible conflicts with RemoveDirectoryOwner,
 # which might temporarily set the owner of a directory to NULL. Since in the current
 # implementation we only ever have one transaction in flight in the CDC, we can just
 # execute this.
@@ -859,7 +890,7 @@ class CDCTests(unittest.TestCase):
             f = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
             self.cdc.shards[0].execute_ok(LinkFileReq(file_id=f.id, cookie=f.cookie, owner_id=ROOT_DIR_INODE_ID, name=f'file-{i}'.encode()))
         for i in range(num_dirs):
-            self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, f'dir-{i}'.encode()))
+            self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, f'dir-{i}'.encode(), INHERIT_DIRECTORY_INFO))
         collected_files = 0
         collected_dirs = -1 # there's the root dir
         for id in self._collect_all_inodes():
@@ -871,8 +902,8 @@ class CDCTests(unittest.TestCase):
         assert collected_dirs == num_dirs
 
     def test_make_dir(self):
-        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-1'))).id
-        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-2'))).id
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-1', INHERIT_DIRECTORY_INFO))).id
+        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-2', INHERIT_DIRECTORY_INFO))).id
         def read_dir_names(files):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
@@ -884,15 +915,15 @@ class CDCTests(unittest.TestCase):
         for id in ids:
             assert inode_id_type(id) == InodeType.DIRECTORY
             if id == ROOT_DIR_INODE_ID: continue
-            stat = cast(StatResp, self.cdc.shards[inode_id_shard(id)].execute_ok(StatReq(id)))
-            if stat.size_or_owner != NULL_INODE_ID: return False
+            stat = cast(StatDirectoryResp, self.cdc.shards[inode_id_shard(id)].execute_ok(StatDirectoryReq(id)))
+            if stat.owner != NULL_INODE_ID: return False
         return True
 
     def test_make_dir_error_1(self):
         # We get rightful warnings instead
         with DisableLogging:
             self.cdc.execute_err(
-                MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'),
+                MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO),
                 replacements={ShardMessageKind.CREATE_DIRECTORY_INODE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
                 kind=ErrCode.INTERNAL_ERROR,
             )
@@ -900,7 +931,7 @@ class CDCTests(unittest.TestCase):
     
     def test_make_dir_error_2(self):
         self.cdc.execute_err(
-            MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'),
+            MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO),
             replacements={ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)}},
             kind=ErrCode.INTERNAL_ERROR,
         )
@@ -911,25 +942,25 @@ class CDCTests(unittest.TestCase):
         # orphan dir.
         with DisableLogging:
             self.cdc.execute_err(
-                MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'),
+                MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO),
                 replacements={
                     ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {0: EggsError(ErrCode.INTERNAL_ERROR)},
-                    ShardMessageKind.SET_DIRECTORY_OWNER: {0: EggsError(ErrCode.INTERNAL_ERROR)},
+                    ShardMessageKind.REMOVE_DIRECTORY_OWNER: {0: EggsError(ErrCode.INTERNAL_ERROR)},
                 },
                 kind=ErrCode.FATAL_ERROR,
             )
         assert not self._only_root_dir_and_orphans(self._collect_all_inodes())
         
     def test_make_dir_no_override(self):
-        self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'))
-        self.cdc.execute_err(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'), kind=ErrCode.CANNOT_OVERRIDE_NAME)
+        self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO))
+        self.cdc.execute_err(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO), kind=ErrCode.CANNOT_OVERRIDE_NAME)
 
     def test_move_file(self):
         file = cast(ConstructFileResp, self.cdc.shards[0].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[0].execute_ok(LinkFileReq(file_id=file.id, cookie=file.cookie, owner_id=ROOT_DIR_INODE_ID, name=b'test-file'))
-        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir'))).id
+        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir', INHERIT_DIRECTORY_INFO))).id
         assert inode_id_shard(dir) != 0
-        cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir, b'test-dir-inner'))).id
+        cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir, b'test-dir-inner', INHERIT_DIRECTORY_INFO))).id
         self.cdc.execute_err(RenameFileReq( # don't override dirs
             target_id=file.id,
             old_owner_id=ROOT_DIR_INODE_ID,
@@ -944,7 +975,7 @@ class CDCTests(unittest.TestCase):
             new_owner_id=dir,
             new_name=b'test-file',
         ))
-        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir-2'))).id
+        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir-2', INHERIT_DIRECTORY_INFO))).id
         self.cdc.execute_err(RenameFileReq( # refuse to move directories
             target_id=dir_2,
             old_owner_id=ROOT_DIR_INODE_ID,
@@ -969,18 +1000,18 @@ class CDCTests(unittest.TestCase):
             )
     
     def test_unlink_dir(self):
-        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir'))).id
+        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test-dir', INHERIT_DIRECTORY_INFO))).id
         # We can unlink an empty dir
         self.cdc.execute_ok(SoftUnlinkDirectoryReq(owner_id=ROOT_DIR_INODE_ID, target_id=dir, name=b'test-dir'))
     
     def test_move_dir(self):
-        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
-        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'2'))).id
-        dir_1_3 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'3'))).id
-        dir_2_4 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_2, b'4'))).id
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1', INHERIT_DIRECTORY_INFO))).id
+        dir_2 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'2', INHERIT_DIRECTORY_INFO))).id
+        dir_1_3 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'3', INHERIT_DIRECTORY_INFO))).id
+        dir_2_4 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_2, b'4', INHERIT_DIRECTORY_INFO))).id
         file_2_foo = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_2)].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[inode_id_shard(dir_2)].execute_ok(LinkFileReq(file_2_foo.id, file_2_foo.cookie, dir_2, b'foo'))
-        dir_1_3_5 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'5'))).id
+        dir_1_3_5 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(dir_1, b'5', INHERIT_DIRECTORY_INFO))).id
         # not found failures
         self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'2', dir_2, b'bad'), ErrCode.MISMATCHING_TARGET)
         self.cdc.execute_err(RenameDirectoryReq(dir_1, ROOT_DIR_INODE_ID, b'1', make_inode_id(InodeType.DIRECTORY, 4, 123), b'blah'), ErrCode.NEW_DIRECTORY_NOT_FOUND)
@@ -999,7 +1030,7 @@ class CDCTests(unittest.TestCase):
         self.cdc.execute_ok(RenameDirectoryReq(dir_1, dir_2, b'1', ROOT_DIR_INODE_ID, b'1'))
 
     def test_bad_soft_unlink_dir(self):
-        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'dir'))).id
+        dir = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'dir', INHERIT_DIRECTORY_INFO))).id
         self.cdc.shards[0].execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, dir, b'dir'), ErrCode.TYPE_IS_DIRECTORY)
 
     def test_file_cycle(self):
@@ -1013,7 +1044,7 @@ class CDCTests(unittest.TestCase):
         # we still cannot remove the old edge because it is owned
         self.cdc.shards[0].execute_err(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time), ErrCode.EDGE_NOT_FOUND)
         # however we can remove it if we mean it
-        self.cdc.shards[0].execute_ok(RemoveOwnedSnapshotFileEdgeReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time))
+        self.cdc.shards[0].execute_ok(IntraShardHardFileUnlinkReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time))
         # We have a transient file now, since we removed an owned snapshot.
         transients = cast(VisitTransientFilesResp, self.cdc.shards[0].execute_ok(VisitTransientFilesReq(0)))
         assert len(transients.files) == 1
@@ -1032,15 +1063,15 @@ class CDCTests(unittest.TestCase):
         # TODO finish adding/removing blocks etc.
     
     def test_snapshot_directory(self):
-        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1'))).id
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'1', INHERIT_DIRECTORY_INFO))).id
         self.cdc.execute_ok(SoftUnlinkDirectoryReq(ROOT_DIR_INODE_ID, dir_1, b'1'))
         # can't create files or directories in the deleted directory
-        self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
+        self.cdc.execute_err(MakeDirectoryReq(dir_1, b'2', INHERIT_DIRECTORY_INFO), ErrCode.DIRECTORY_NOT_FOUND)
         transient_file_1 = cast(ConstructFileResp, self.cdc.shards[inode_id_shard(dir_1)].execute_ok(ConstructFileReq(InodeType.FILE, b'')))
         self.cdc.shards[inode_id_shard(dir_1)].execute_err(LinkFileReq(transient_file_1.id, transient_file_1.cookie, dir_1, b'2'), ErrCode.DIRECTORY_NOT_FOUND)
     
     def test_remove_inode(self):
-        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test'))).id
+        dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO))).id
         self.cdc.shards[inode_id_shard(dir_1)].execute_err(RemoveInodeReq(dir_1), ErrCode.DIRECTORY_HAS_OWNER)
 
 def run_forever(db: sqlite3.Connection):

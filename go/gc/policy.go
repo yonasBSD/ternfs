@@ -7,7 +7,8 @@ import (
 )
 
 // If multiple policies are present, the file will be deleted if
-// any of the policies are not respected.
+// any of the policies are not respected. If neither policy is present,
+// snapshots will never be deleted.
 type SnapshotPolicy struct {
 	// Keep all files/directories versions with a certain name within this time window.
 	// If zero, this kind of policy is inactive.

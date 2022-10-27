@@ -173,6 +173,8 @@ func (buf *Buf) UnpackVarU61(x *uint64) error {
 	return nil
 }
 
+// This function will discard what's in `data`, and just
+// set the pointer to a slice of the backing `buf`.
 func (buf *Buf) UnpackBytes(data *[]byte) error {
 	var l uint8
 	if err := buf.UnpackU8(&l); err != nil {
@@ -181,8 +183,7 @@ func (buf *Buf) UnpackBytes(data *[]byte) error {
 	if err := buf.hasBytes(int(l)); err != nil {
 		return err
 	}
-	*data = make([]byte, l)
-	copy(*data, *buf)
+	*data = (*buf)[:l]
 	*buf = (*buf)[l:]
 	return nil
 }
@@ -196,6 +197,14 @@ func (buf *Buf) UnpackString(data *string) error {
 	return nil
 }
 
+// The intent with this one (as opposed with `UnpackBytes`) is
+// to use it with a fixed-sized array, e.g.
+//
+//     var x [4]byte
+//     buf.UnpackFixedBytes(4, x[:])
+//
+// Which is why it does not take a pointer like `UnpackBytes`,
+// and copies the data.
 func (buf *Buf) UnpackFixedBytes(l int, data []byte) error {
 	if len(data) != l {
 		panic(fmt.Sprintf("expecting fixed bytes of len %v, got %v instead", l, len(data)))
@@ -233,6 +242,10 @@ type Unpackable interface {
 }
 
 // Note that this function errors if we don't consume all the input.
+//
+// Also note that this function will return data structures which refer to `data`. In
+// other words, make sure to not mutate `data` while you're still using the unpacked
+// data structure.
 func UnpackFromBytes(v Unpackable, data []byte) error {
 	buf := Buf(data)
 	if err := v.Unpack(&buf); err != nil {

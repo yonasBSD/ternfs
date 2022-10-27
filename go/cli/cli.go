@@ -21,8 +21,6 @@ func main() {
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirIdU64 := collectCmd.Uint64("dir", 0, "directory inode id to GC")
 	collectDry := collectCmd.Bool("dry", false, "whether to execute the GC or not")
-	collectDeleteAfterVersions := collectCmd.Int("deleteAfterVersions", 0, "delete snapshots beyond N versions")
-	collectDeleteAfterTime := collectCmd.Duration("deleteAfterTime", time.Duration(0), "delete snapshot beyond time interval")
 
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
 	destructDry := destructCmd.Bool("dry", false, "whether to execute the destruction or not")
@@ -54,21 +52,16 @@ func main() {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
 		defer cdcSocket.Close()
-		policy := gc.SnapshotPolicy{
-			DeleteAfterVersions: *collectDeleteAfterVersions,
-			DeleteAfterTime:     *collectDeleteAfterTime,
-		}
 		gcEnv := gc.GcEnv{
-			Role:           "cli",
-			Logger:         log.New(os.Stdout, "", log.Lshortfile),
-			Shid:           dirId.Shard(),
-			Timeout:        10 * time.Second,
-			Verbose:        true,
-			ShardSocket:    shardSocket,
-			CDCSocket:      cdcSocket,
-			SnapshotPolicy: policy,
-			Dry:            *collectDry,
-			CDCKey:         cdckey.CDCKey(),
+			Role:        "cli",
+			Logger:      log.New(os.Stdout, "", log.Lshortfile),
+			Shid:        dirId.Shard(),
+			Timeout:     10 * time.Second,
+			Verbose:     true,
+			ShardSocket: shardSocket,
+			CDCSocket:   cdcSocket,
+			Dry:         *collectDry,
+			CDCKey:      cdckey.CDCKey(),
 		}
 		stats := gc.CollectStats{}
 		err = gcEnv.CollectDirectory(&stats, dirId)

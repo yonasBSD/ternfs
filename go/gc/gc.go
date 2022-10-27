@@ -16,17 +16,39 @@ import (
 	"xtx/eggsfs/request"
 )
 
+type cachedDirInfo struct {
+	info     msgs.DirectoryInfoBody
+	cachedAt time.Time
+}
+
 type GcEnv struct {
-	Logger         *log.Logger
-	Shid           msgs.ShardId
-	Role           string
-	ShardSocket    *net.UDPConn
-	CDCSocket      *net.UDPConn
-	Timeout        time.Duration
-	SnapshotPolicy SnapshotPolicy
-	Verbose        bool
-	Dry            bool
-	CDCKey         cipher.Block
+	Logger       *log.Logger
+	Shid         msgs.ShardId
+	Role         string
+	ShardSocket  *net.UDPConn
+	CDCSocket    *net.UDPConn
+	Timeout      time.Duration
+	Verbose      bool
+	Dry          bool
+	CDCKey       cipher.Block
+	dirInfoCache map[msgs.InodeId]cachedDirInfo
+}
+
+func (gc *GcEnv) lookupCachedDirInfo(dirId msgs.InodeId) *msgs.DirectoryInfoBody {
+	now := time.Now()
+	cached := gc.dirInfoCache[dirId]
+	if now.Sub(cached.cachedAt) > time.Hour {
+		delete(gc.dirInfoCache, dirId)
+		return nil
+	}
+	return &cached.info
+}
+
+func (gc *GcEnv) updateCachedDirInfo(dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) {
+	gc.dirInfoCache[dirId] = cachedDirInfo{
+		info:     *dirInfo,
+		cachedAt: time.Now(),
+	}
 }
 
 func (gc *GcEnv) RaiseAlert(err error) {
@@ -177,11 +199,15 @@ type CollectStats struct {
 }
 
 // returns whether all the edges were removed
-func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership, dirId msgs.InodeId) (bool, error) {
-	gc.Debug("%v: about to apply policy %+v for name %s", dirId, gc.SnapshotPolicy, edges[0].Name)
+func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership, dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) (bool, error) {
+	policy := SnapshotPolicy{
+		DeleteAfterTime:     time.Duration(dirInfo.DeleteAfterTime),
+		DeleteAfterVersions: int(dirInfo.DeleteAfterVersions),
+	}
+	gc.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
 	stats.visitedEdges = stats.visitedEdges + uint64(len(edges))
 	now := msgs.Now()
-	toCollect := gc.SnapshotPolicy.edgesToRemove(now, edges)
+	toCollect := policy.edgesToRemove(now, edges)
 	gc.Debug("%v: will remove %d edges out of %d", dirId, toCollect, len(edges))
 	for _, edge := range edges[:toCollect] {
 		var err error
@@ -233,15 +259,69 @@ func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership
 	return toCollect == len(edges), nil
 }
 
+func (gc *GcEnv) resolveExternalDirectoryInfo(dirId msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
+	sock, err := request.ShardSocket(dirId.Shard())
+	if err != nil {
+		return nil, fmt.Errorf("could not open socket to perform stat in external shard %v to resolve directory info: %w", dirId.Shard(), err)
+	}
+	statResp := msgs.StatDirectoryResp{}
+	err = request.ShardRequestSocket(gc, gc.CDCKey, sock, gc.Timeout, &msgs.StatDirectoryReq{Id: dirId}, &statResp)
+	sock.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("could not send stat to external shard %v to resolve directory info: %w", dirId.Shard(), err)
+	}
+
+	return gc.resolveDirectoryInfo(dirId, &statResp)
+}
+
+func (gc *GcEnv) resolveDirectoryInfo(dirId msgs.InodeId, statResp *msgs.StatDirectoryResp) (*msgs.DirectoryInfoBody, error) {
+	// we have the data directly in the stat response
+	if len(statResp.Info.Body) > 0 {
+		dirInfoBody := &statResp.Info.Body[0]
+		gc.updateCachedDirInfo(dirId, dirInfoBody)
+		return dirInfoBody, nil
+	}
+
+	// we have the data in the cache
+	dirInfoBody := gc.lookupCachedDirInfo(dirId)
+	if dirInfoBody != nil {
+		return dirInfoBody, nil
+	}
+
+	// we need to traverse upwards
+	dirInfoBody, err := gc.resolveExternalDirectoryInfo(statResp.Owner)
+	if err != nil {
+		return nil, err
+	}
+
+	return dirInfoBody, nil
+}
+
 func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error {
 	gc.Debug("%v: collecting, dry=%v", dirId, gc.Dry)
 	stats.visitedDirectories++
+
+	statReq := msgs.StatDirectoryReq{
+		Id: dirId,
+	}
+	statResp := msgs.StatDirectoryResp{}
+	err := gc.ShardRequest(&statReq, &statResp)
+	if err != nil {
+		return fmt.Errorf("error while stat'ing directory: %w", err)
+	}
+
+	dirInfo, err := gc.resolveDirectoryInfo(dirId, &statResp)
+	if err != nil {
+		return err
+	}
+
 	edges := make([]msgs.EdgeWithOwnership, 0)
 	req := msgs.FullReadDirReq{
 		DirId: dirId,
 	}
 	resp := msgs.FullReadDirResp{}
-	remove := dirId != msgs.ROOT_DIR_INODE_ID
+	remove := true
 	for {
 		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
@@ -250,7 +330,7 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 		gc.Debug("%v: got %d edges in response", dirId, len(resp.Results))
 		for _, result := range resp.Results {
 			if len(edges) > 0 && (edges[0].NameHash != result.NameHash || edges[0].Name != result.Name) {
-				allRemoved, err := gc.applyPolicy(stats, edges, dirId)
+				allRemoved, err := gc.applyPolicy(stats, edges, dirId, dirInfo)
 				if err != nil {
 					return err
 				}
@@ -260,7 +340,7 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 			edges = append(edges, result)
 		}
 		if resp.Finished {
-			allRemoved, err := gc.applyPolicy(stats, edges, dirId)
+			allRemoved, err := gc.applyPolicy(stats, edges, dirId, dirInfo)
 			if err != nil {
 				return err
 			}
@@ -272,18 +352,10 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 		req.StartName = lastResult.Name
 		req.StartTime = lastResult.CreationTime + 1
 	}
-	if remove {
-		req := msgs.StatReq{
-			Id: dirId,
-		}
-		resp := msgs.StatResp{}
-		err := gc.ShardRequest(&req, &resp)
-		if err != nil {
-			return fmt.Errorf("error while getting directory to check if we can remove it: %w", err)
-		}
-		// Note that the root directory will always have no owner, but we never end up
-		// here (see `remove` definition)
-		if msgs.InodeId(resp.SizeOrOwner) == msgs.NULL_INODE_ID {
+	if dirId != msgs.ROOT_DIR_INODE_ID && remove {
+		// Note that there is a race condition -- we do the stat quite a bit before
+		// this. But this call will just fail if the directory has an owner.
+		if statResp.Owner == msgs.NULL_INODE_ID {
 			gc.Debug("%v: removing directory inode, since it has no edges and no owner", dirId)
 			req := msgs.HardUnlinkDirectoryReq{
 				DirId: dirId,
@@ -302,6 +374,7 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 
 func (gc *GcEnv) collectInner() (CollectStats, error) {
 	var stats CollectStats
+
 	shardSocket, err := request.ShardSocket(gc.Shid)
 	if err != nil {
 		return stats, err
@@ -368,15 +441,10 @@ func (gc *GcEnv) run(panicChan chan error, body func(gc *GcEnv)) {
 func Run() {
 	logger := log.New(os.Stderr, "", log.Lshortfile)
 	panicChan := make(chan error, 1)
-	policy := SnapshotPolicy{
-		DeleteAfterTime:     time.Second,
-		DeleteAfterVersions: 30,
-	}
 	env := GcEnv{
-		Logger:         logger,
-		Timeout:        10 * time.Second,
-		CDCKey:         cdckey.CDCKey(),
-		SnapshotPolicy: policy,
+		Logger:  logger,
+		Timeout: 10 * time.Second,
+		CDCKey:  cdckey.CDCKey(),
 	}
 	for shid := 0; shid < 256; shid++ {
 		destructor := env

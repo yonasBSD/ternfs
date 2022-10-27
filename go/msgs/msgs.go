@@ -9,6 +9,9 @@ import (
 
 //go:generate go run ../bincodegen
 
+// --------------------------------------------------------------------
+// Common types and utilities
+
 const UDP_MTU = 1472
 
 type InodeType uint8
@@ -50,8 +53,25 @@ const (
 	SYMLINK   InodeType = 3
 )
 
+func (typ InodeType) String() string {
+	switch typ {
+	case DIRECTORY:
+		return "DIRECTORY"
+	case FILE:
+		return "FILE"
+	case SYMLINK:
+		return "SYMLINK"
+	default:
+		return fmt.Sprintf("InodeType(%d)", uint8(typ))
+	}
+}
+
 func (id InodeId) Type() InodeType {
-	return InodeType((id >> 61) & 0x03)
+	typ := InodeType((id >> 61) & 0x03)
+	if !(typ == DIRECTORY || typ == FILE || typ == SYMLINK) {
+		panic(fmt.Errorf("bad inode type %v -- are you calling Type() on NULL_INODE_ID?", typ))
+	}
+	return typ
 }
 
 func (id InodeId) Shard() ShardId {
@@ -149,6 +169,9 @@ type CDCMessageKind uint8
 
 const ERROR uint8 = 0
 
+// --------------------------------------------------------------------
+// Shard requests/responses
+
 const (
 	INLINE_STORAGE    StorageClass = 0
 	ZERO_FILL_STORAGE StorageClass = 1
@@ -167,16 +190,23 @@ type LookupResp struct {
 	CreationTime EggsTime
 }
 
-// Given inode, returns size, type, last modified for files,
-// last modified and parent for directories.
-type StatReq struct {
+type StatFileReq struct {
 	Id InodeId
 }
 
-type StatResp struct {
-	Mtime       EggsTime
-	SizeOrOwner uint64 // file -> size, dirs -> owner
-	Opaque      []byte
+type StatFileResp struct {
+	Mtime EggsTime
+	Size  uint64
+}
+
+type StatDirectoryReq struct {
+	Id InodeId
+}
+
+type StatDirectoryResp struct {
+	Mtime EggsTime
+	Owner InodeId // if NULL_INODE_ID, the directory is currently soft unlinked
+	Info  DirectoryInfo
 }
 
 type ReadDirReq struct {
@@ -186,7 +216,7 @@ type ReadDirReq struct {
 	//     an empty directory listing.
 	// * all the times after the last modification will return the current directory
 	//     listing (use 0xFFFFFFFFFFFFFFFF to just get the current directory listing)
-	AsOfTime EggsTime //
+	AsOfTime EggsTime
 }
 
 type ReadDirResp struct {
@@ -404,22 +434,32 @@ type FullReadDirResp struct {
 type CreateDirectoryINodeReq struct {
 	Id      InodeId
 	OwnerId InodeId
-	// stuff like expiration policy, storage class, etc.
-	Opaque []byte
+	// If Inherit is set here, the rest of the fields will be ignored, and the
+	// directory info will be filled in with the parent info.
+	Info DirectoryInfo
 }
 
 type CreateDirectoryINodeResp struct {
 	Mtime EggsTime
 }
 
-// This is needed to remove directories -- but it can break the invariants
+// This is needed to move directories -- but it can break the invariants
 // between edges pointing to the dir and the owner.
 type SetDirectoryOwnerReq struct {
 	DirId   InodeId
-	OwnerId InodeId
+	OwnerId InodeId // must not be a directory (no NULL_INODE_ID!)
 }
 
 type SetDirectoryOwnerResp struct{}
+
+// This is needed to remove directories -- but again, it can break invariants.
+type RemoveDirectoryOwnerReq struct {
+	DirId InodeId
+	// The current (concrete) info of the directory owner.
+	Info DirectoryInfoBody
+}
+
+type RemoveDirectoryOwnerResp struct{}
 
 type RemoveEdgesReq struct {
 	DirId InodeId
@@ -506,9 +546,20 @@ type MakeFileTransientReq struct {
 
 type MakeFileTransientResp struct{}
 
+type SetDirectoryInfoReq struct {
+	Id   InodeId
+	Info DirectoryInfo
+}
+
+type SetDirectoryInfoResp struct{}
+
+// --------------------------------------------------------------------
+// CDC requests/responses
+
 type MakeDirectoryReq struct {
 	OwnerId InodeId
 	Name    string
+	Info    DirectoryInfo
 }
 
 type MakeDirectoryResp struct {
@@ -569,3 +620,37 @@ type HardUnlinkFileReq struct {
 }
 
 type HardUnlinkFileResp struct{}
+
+// --------------------------------------------------------------------
+// directory data
+
+type SpanPolicy struct {
+	MaxSize      uint64
+	StorageClass StorageClass
+	Parity       Parity
+}
+
+// See SnapshotPolicy for the meaning of `DeleteAfterTime` and
+// `DeleteAfterVersions`
+type DirectoryInfoBody struct {
+	DeleteAfterTime     uint64 // nanoseconds
+	DeleteAfterVersions uint8
+	// Sorted by MaxSize. There's always an implicit policy for inline
+	// spans (max size 255).
+	SpanPolicies []SpanPolicy
+}
+
+type DirectoryInfo struct {
+	// This flag tells us whether the directory was set to inherit the
+	// directory info.
+	Inherited bool
+	// Here list is used as optional. If `Inherited`` is `false`, then
+	// the length must be one. If it is `true`, then the length should
+	// be zero, unless the directory owner is none, in which case it
+	// should be one.
+	//
+	// We need to materialize the directory info for soft unlinked directories
+	// with inherited infos, otherwise we won't be able to easily get the
+	// directory info (since we do not have a reverse directory lookup).
+	Body []DirectoryInfoBody
+}

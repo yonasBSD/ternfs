@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 import enum
 import itertools
 from typing import ClassVar, Dict, List, NamedTuple, Optional, Tuple, Type, Union, Set
@@ -19,6 +20,13 @@ SHARD_RESP_PROTOCOL_VERSION = b'SHA\1'
 INLINE_STORAGE = 0
 ZERO_FILL_STORAGE = 1
 
+# These are not understood by the shard
+STORAGE_CLASSES: Dict[int, str] = {
+    2: 'HDD',
+    3: 'FLASH',
+}
+STORAGE_CLASSES_BY_NAME: Dict[str, int] = { name: i for i, name in STORAGE_CLASSES.items() }
+
 class BlockFlags(enum.IntFlag):
     STALE = 1
     TERMINAL = 2
@@ -29,7 +37,8 @@ def ReadDirReqNow(dir_id: int, start_hash: int) -> ReadDirReq:
 # INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
 SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     ShardMessageKind.LOOKUP: {ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND},
-    ShardMessageKind.STAT: {ErrCode.DIRECTORY_NOT_FOUND, ErrCode.FILE_NOT_FOUND},
+    ShardMessageKind.STAT_FILE: {ErrCode.FILE_NOT_FOUND},
+    ShardMessageKind.STAT_DIRECTORY: {ErrCode.DIRECTORY_NOT_FOUND},
     ShardMessageKind.READ_DIR: {ErrCode.DIRECTORY_NOT_FOUND},
     ShardMessageKind.CONSTRUCT_FILE: {ErrCode.TYPE_IS_DIRECTORY},
     ShardMessageKind.ADD_SPAN_INITIATE: {
@@ -62,6 +71,9 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
         ErrCode.TYPE_IS_NOT_DIRECTORY, ErrCode.MISMATCHING_OWNER,
     },
     ShardMessageKind.SET_DIRECTORY_OWNER: {
+        ErrCode.DIRECTORY_NOT_FOUND,
+    },
+    ShardMessageKind.REMOVE_DIRECTORY_OWNER: {
         ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_NOT_FOUND,
     },
     ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE: {
@@ -80,6 +92,9 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_HAS_OWNER, ErrCode.CANNOT_REMOVE_ROOT_DIRECTORY,
         ErrCode.FILE_NOT_FOUND, ErrCode.FILE_NOT_EMPTY, ErrCode.FILE_IS_NOT_TRANSIENT,
     },
+    ShardMessageKind.REMOVE_NON_OWNED_EDGE: {
+        ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
+    }
 }
 
 def kind_is_privileged(k: ShardMessageKind) -> bool:
@@ -170,3 +185,26 @@ class ShardResponse(bincode.Packable):
         else:
             body = SHARD_REQUESTS[ShardMessageKind(resp_kind)][1].unpack(u)
         return ShardResponse(request_id, body)
+
+# Will be used for the root directory
+DEFAULT_DIRECTORY_INFO = DirectoryInfo(
+    inherited=False,
+    body=[DirectoryInfoBody(
+        delete_after_time=int(timedelta(days=30).total_seconds()) * 1000 * 1000 * 1000,
+        delete_after_versions=0,
+        span_policies=[
+            SpanPolicy(
+                max_size=10<<20, # 10MiB
+                storage_class=STORAGE_CLASSES_BY_NAME['FLASH'],
+                parity=create_parity_mode(3, 3),
+            ),
+            SpanPolicy(
+                max_size=100<<20, # 100MiB
+                storage_class=STORAGE_CLASSES_BY_NAME['HDD'],
+                parity=create_parity_mode(9, 6),
+            ),
+        ]
+    )]
+)
+
+INHERIT_DIRECTORY_INFO = DirectoryInfo(inherited=True, body=[])

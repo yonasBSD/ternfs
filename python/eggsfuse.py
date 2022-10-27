@@ -124,7 +124,7 @@ def entry_attribute(inode_id: int, size: int, mtime: int) -> pyfuse3.EntryAttrib
     entry.st_uid = 0
     entry.st_gid = 0
     entry.st_rdev = 0
-    entry.st_size = (type != InodeType.DIRECTORY) and size
+    entry.st_size = size
 
     entry.st_blksize = 512
     entry.st_blocks = 1 # TODO can we return something reasonable here?
@@ -174,8 +174,12 @@ class Operations(pyfuse3.Operations):
 
     async def getattr(self, inode_id, ctx=None):
         inode_id = fuse_id_to_eggs_id(inode_id)
-        resp = cast(StatResp, await self._send_shard_req(inode_id_shard(inode_id), StatReq(inode_id)))
-        return entry_attribute(inode_id=inode_id, size=resp.size_or_owner, mtime=resp.mtime)
+        if inode_id_type(inode_id) == InodeType.DIRECTORY:
+            resp = cast(StatDirectoryResp, await self._send_shard_req(inode_id_shard(inode_id), StatDirectoryReq(inode_id)))
+            return entry_attribute(inode_id=inode_id, size=0, mtime=resp.mtime)
+        else:
+            resp = cast(StatFileResp, await self._send_shard_req(inode_id_shard(inode_id), StatFileReq(inode_id)))
+            return entry_attribute(inode_id=inode_id, size=resp.size, mtime=resp.mtime)
 
     async def opendir(self, inode_id, ctx=None):
         inode_id = fuse_id_to_eggs_id(inode_id)
@@ -317,7 +321,7 @@ class Operations(pyfuse3.Operations):
     async def mkdir(self, owner_id, name, mode, ctx=None):
         owner_id = fuse_id_to_eggs_id(owner_id)
         # TODO do something with the noode?
-        resp = cast(MakeDirectoryResp, await self._send_cdc_req(MakeDirectoryReq(owner_id, name)))
+        resp = cast(MakeDirectoryResp, await self._send_cdc_req(MakeDirectoryReq(owner_id, name, INHERIT_DIRECTORY_INFO)))
         return entry_attribute(resp.id, size=0, mtime=0)
     
     async def setattr(self, inode_id, attr, fields, fh, ctx=None):
@@ -357,7 +361,7 @@ class Operations(pyfuse3.Operations):
     async def readlink(self, file_id, ctx=None):
         file_id = fuse_id_to_eggs_id(file_id)
         assert inode_id_type(file_id) == InodeType.SYMLINK
-        size = cast(StatResp, await self._send_shard_req(inode_id_shard(file_id), StatReq(file_id))).size_or_owner
+        size = cast(StatFileResp, await self._send_shard_req(inode_id_shard(file_id), StatFileReq(file_id))).size
         data = b''
         while len(data) < size:
             data += await self.read(file_id, len(data), size - len(data))

@@ -5,6 +5,7 @@ See the [proposal](https://xtxmarketscom.sharepoint.com/:w:/s/ECN/EdVNBAzB7klPsV
 * A prototype server implementation in Python;
 * A basic command line client in Python;
 * A FUSE driver in Python;
+* Garbage collector in Go.
 
 ## Starting the Python server
 
@@ -59,7 +60,17 @@ The reason for this is that `foobar` is created by the shell and then opened aga
 ## Testing
 
 ```
-./python/tests.py
+./tests.sh
 ```
 
-We try to test all operations and all error conditions. The CDC test driver can inject shard failures to test cases where shard requests go wrong.
+## Garbage Collection
+
+Run
+
+```
+go run .
+```
+
+in `go/gc/gcdaemon` to run the garbage collector. It'll loop through directories removing what it consider stale files and stale directories.
+
+You can also run the cli in `go/cli` to explicitly garbage collect a directory or a transient file. You can use `basic_client.py` to see what transient files there are (`./basic_client.py transient_files`).

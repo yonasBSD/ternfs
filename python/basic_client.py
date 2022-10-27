@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+from datetime import timedelta
 import socket
 import struct
 import sys
@@ -11,6 +12,7 @@ import logging
 from pathlib import Path
 import inspect
 import itertools
+import re
 
 import bincode
 import crypto
@@ -29,15 +31,22 @@ class CommandArg:
 class Command:
     fun: Any
     args: List[CommandArg]
+    trailing_args: Optional[str]
 
-human_commands: Dict[str, Command] = {}
+commands: Dict[str, Command] = {}
 raw_commands: Dict[str, Command] = {}
 
-def command(commands: Dict[str, Command], cmd_name: str):
+def command(cmd_name: str):
+    global commands
     assert cmd_name not in commands
     def decorator(f):
         args: List[CommandArg] = []
+        trailing_arsgs: Optional[str] = None
         for name, param in inspect.signature(f).parameters.items():
+            if param.kind == param.VAR_POSITIONAL:
+                trailing_arsgs = name
+                continue
+            assert param.kind == param.POSITIONAL_OR_KEYWORD
             assert param.annotation != param.empty
             typ: type = param.annotation
             # Strip optional
@@ -47,17 +56,11 @@ def command(commands: Dict[str, Command], cmd_name: str):
             if param.default != param.empty:
                 default = param.default
             args.append(CommandArg(name=name, type=typ, default=default))
-        commands[cmd_name] = Command(fun=f, args=args)
+        commands[cmd_name] = Command(fun=f, args=args, trailing_args=trailing_arsgs)
         def wrapper(*args, **kwargs):
             return f(*args, **kwargs)
         return wrapper
     return decorator
-
-def human_command(cmd_name):
-    return command(human_commands, cmd_name)
-
-def raw_command(cmd_name):
-    return command(raw_commands, cmd_name)
 
 LOCAL_HOST = '127.0.0.1'
 
@@ -118,24 +121,38 @@ def lookup_internal(dir_id: int, name: str) -> int:
     assert isinstance(resp, LookupResp)
     return resp.target_id
 
-@raw_command('lookup')
+@command('lookup_raw')
 def lookup_raw(dir_id: int, name: str):
     inode = lookup_internal(dir_id, name)
     print(f'inode id:    0x{inode:016X}')
     print(f'type:        {repr(inode_id_type(inode))}')
     print(f'shard:       {inode_id_shard(inode)}')
 
-@raw_command('stat')
+@command('stat_raw')
 def stat_raw(id: int):
     resp = send_shard_request_or_raise(inode_id_shard(id), StatReq(id))
     assert isinstance(resp, StatResp)
     print(f'mtime:       {eggs_time_str(resp.mtime)}')
     if inode_id_type(id) == InodeType.DIRECTORY:
         print(f'owner:       0x{resp.size_or_owner:016X}')
+        if resp.opaque:
+            try:
+                data = bincode.unpack(DirectoryData, resp.opaque).body
+                print(f'raw opaque:  {resp.opaque!r}')
+                print(f'  delete_after_time:      {timedelta(microseconds=data.delete_after_time/1000)}')
+                print(f'  delete_after_versions:  {data.delete_after_versions}')
+                print(f'  span policies:')
+                print(f'    255:\tINLINE')
+                for policy in data.span_policies:
+                    print(f'    {span_size_str(policy.max_size)}:\t{STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
+            except Exception as err:
+                print(f'data:        could not parse: {err} ({resp.opaque!r})')
+        else:
+            print(f'data:        <empty>')
     else:
         print(f'size:        {resp.size_or_owner}')
 
-@human_command('stat')
+@command('stat')
 def do_stat(path: Path):
     return stat_raw(lookup(path))
 
@@ -147,7 +164,7 @@ def lookup_abs_path(path: Path):
         cur_inode = lookup_internal(cur_inode, part)
     return cur_inode
 
-@human_command('lookup')
+@command('lookup')
 def lookup(path: Path) -> int:
     inode = lookup_abs_path(path)
     print(f'inode id:    0x{inode:016X}')
@@ -158,7 +175,7 @@ def lookup(path: Path) -> int:
 def mkdir_raw(owner_id: int, name: str) -> None:
     send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii')))
 
-@human_command('mkdir')
+@command('mkdir')
 def mkdir(path: Path) -> None:
     owner_id = lookup_abs_path(path.parent)
     # before talking to the cross-dir co-ordinator, check whether this
@@ -172,38 +189,38 @@ def mkdir(path: Path) -> None:
             raise err
     return mkdir_raw(owner_id, path.name)
 
-@raw_command('rm_file_raw')
+@command('rm_file_raw')
 def rm_file_raw(owner_id: int, file_id: int, name: str) -> None:
     send_shard_request_or_raise(inode_id_shard(owner_id), SoftUnlinkFileReq(owner_id, file_id, name.encode('ascii')))
 
-@human_command('rm_file')
+@command('rm_file')
 def rm_file(path: Path) -> None:
     dir_id = lookup_abs_path(path.parent)
     file_id = lookup_internal(dir_id, path.name)
     rm_file_raw(dir_id, file_id, path.name)
 
-@raw_command('rm_dir')
+@command('rm_dir_raw')
 def rm_dir_raw(owner_id: int, dir_id: int, name: str) -> None:
     send_cdc_request_or_raise(SoftUnlinkDirectoryReq(owner_id=owner_id, target_id=dir_id, name=name.encode('ascii')))
 
-@human_command('rm_dir')
+@command('rm_dir')
 def rm_dir(path: Path) -> None:
     owner_id = lookup_abs_path(path.parent)
     dir_id = lookup_internal(owner_id, path.name)
     rm_dir_raw(owner_id, dir_id, path.name)
 
-@raw_command('same_dir_mv')
+@command('same_dir_mv')
 def same_dir_mv(target_id: int, dir_id: int, old: str, new: str) -> None:
     send_shard_request_or_raise(inode_id_shard(dir_id), SameDirectoryRenameReq(dir_id=dir_id, target_id=target_id, old_name=old.encode('ascii'), new_name=new.encode('ascii')))
 
-@raw_command('mv')
+@command('mv_raw')
 def mv_raw(target_id: int, old_owner_id: int, old_name: str, new_owner_id: int, new_name: str):
     if inode_id_type(target_id) == InodeType.FILE:
         send_cdc_request_or_raise(RenameFileReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
     else:
         send_cdc_request_or_raise(RenameDirectoryReq(target_id, old_owner_id, old_name.encode('ascii'), new_owner_id, new_name.encode('ascii')))
 
-@human_command('mv')
+@command('mv')
 def mv(a: Path, b: Path) -> None:
     owner_a = lookup_abs_path(a.parent)
     a_id = lookup_internal(owner_a, a.name)
@@ -215,11 +232,11 @@ def mv(a: Path, b: Path) -> None:
     else:
         send_cdc_request_or_raise(RenameDirectoryReq(a_id, owner_a, a.name.encode('ascii'), owner_b, b.name.encode('ascii')))
 
-@raw_command('readdir_single')
+@command('readdir_single')
 def readdir_single(id: int, start_hash: int):
     print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReqNow(id, start_hash)))
 
-@raw_command('readdir')
+@command('readdir')
 def readdir(id: int):
     continuation_key = 0
     while True:
@@ -232,7 +249,7 @@ def readdir(id: int):
         if continuation_key == 0:
             break
 
-@raw_command('full_readdir')
+@command('full_readdir')
 def full_readdir(id: int):
     start_hash = 0
     start_name = b''
@@ -264,17 +281,97 @@ def full_readdir(id: int):
                 id_str = '<deleted>'
             print(f'  {typ_str[inode_id_type(id)]} {ownership} {eggs_time_str(result.creation_time)} {id_str}')
         
-@human_command('ls')
+@command('ls')
 def ls(dir: Path) -> None:
     id = lookup(dir)
     print('')
     readdir(id)
 
-@human_command('full_ls')
+@command('full_ls')
 def full_ls(dir: Path) -> None:
     id = lookup(dir)
     print('')
     full_readdir(id)
+
+def parse_duration(time_str: str) -> timedelta:
+    regex = re.compile(r'((?P<weeks>\d+?)w)?((?P<days>\d+?)d)?((?P<hours>\d+?)hr)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?')
+    parts = regex.match(time_str)
+    if parts is None:
+        raise ValueError(f'Bad duration string {time_str}, expecting something of the form <weeks>w<days>d<hours>hr<minutes>m<seconds>s, all fields optional.')
+    time_params = {}
+    for name, param in parts.groupdict().items():
+        if param:
+            time_params[name] = int(param)
+    return timedelta(**time_params)
+
+def span_size_str(size: int) -> str:
+    if size % (1<<20) == 0:
+        return f'{size>>20}M'
+    if size % (1<<10) == 0:
+        return f'{size>>10}K'
+    return str(size)
+
+def parse_span_size(size_str: str) -> int:
+    regex = re.compile(r'(?P<digits>[0-9]+)(?P<unit>M|K)?')
+    parts = regex.match(size_str)
+    if parts is None:
+        raise ValueError(f'Bad size string {size_str}, expecting <size>M|K, where M stands for MiB and K for KiB. The M|K suffix is optional.')
+    size = int(parts.groupdict()['digits'])
+    unit = parts.groupdict().get('unit')
+    if unit == 'M':
+        size = size << 20
+    if unit == 'K':
+        size = size << 10
+    if size % (1<<16) != 0:
+        raise ValueError(f'size {size_str} is not a multiple of 64KiB')
+    return size
+
+def parity_str(parity: int) -> str:
+    return f'{num_data_blocks(parity)}+{num_parity_blocks(parity)}'
+
+def parse_parity(s: str) -> int:
+    data, parity = s.split('+')
+    return create_parity_mode(int(data), int(parity))
+
+@command('set_directory_data_raw')
+def set_directory_data_raw(id: int, delete_after_time: timedelta, delete_after_versions: int, *span_policies: str) -> None:
+    if len(span_policies) < 1:
+        raise ValueError('Expecting at least one span policy!')
+    def bad_span_policy():
+        raise ValueError(f'Span policies must be of the form <max-size> <storage-class> <data-blocks>+<parity-blocks>')
+    if len(span_policies)%3 != 0:
+        bad_span_policy()
+    policies: List[SpanPolicy] = []
+    last_size = 255
+    for i in range(0, len(span_policies), 3):
+        size_str, storage_class_str, parity_str = span_policies[i:i+3]
+        size = parse_span_size(size_str)
+        if size <= last_size:
+            raise ValueError(f'Unsorted span policies')
+        last_size = size
+        storage_class = int(storage_class_str)
+        if storage_class in (ZERO_FILL_STORAGE, INLINE_STORAGE):
+            raise ValueError(f'Reserved storage class {storage_class}')
+        policies.append(SpanPolicy(size, storage_class, parse_parity(parity_str)))
+    delete_after_time_ns = int(delete_after_time.total_seconds()) * 1000 * 1000 * 1000
+    data = DirectoryData(DirectoryData0(False, delete_after_time_ns, delete_after_versions, policies))
+    send_shard_request_or_raise(inode_id_shard(id), SetDirectoryDataReq(id, bincode.pack(data)))
+    stat_raw(id)
+
+@command('inherit_directory_data_raw')
+def inherit_directory_data_raw(id: int) -> None:
+    data = DirectoryData(DirectoryData0(False, 0, 0, []))
+    print(data)
+
+@command('inherit_directory_data')
+def inherit_directory_data(path: Path) -> None:
+    id = lookup_abs_path(path)
+    inherit_directory_data_raw(id)
+
+@command('set_directory_data')
+def set_directory_data(path: Path, delete_after_time: timedelta, delete_after_versions: int, *span_policies: str) -> None:
+    id = lookup_abs_path(path)
+    set_directory_data_raw(id, delete_after_time, delete_after_versions, *span_policies)
 
 # Writes block, returns proof
 def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
@@ -353,16 +450,16 @@ def create_file(name: Path, blob: bytes):
         )
     send_shard_request_or_raise(shard, LinkFileReq(file_id, cookie, dir_id, name.name.encode('ascii')))
 
-@human_command('echo_into')
+@command('echo_into')
 def create_file_from_str(name: Path, str: str):
     return create_file(name, str.encode('utf-8'))
 
-@human_command('copy_into')
+@command('copy_into')
 def create_file_from_file(dest_path: Path, source_file: Path):
     with open(source_file, mode='rb') as f:
         return create_file(dest_path, f.read())
 
-@human_command('cat')
+@command('cat')
 def cat(name: Path):
     file_id = lookup_abs_path(name)
     byte_offset = 0
@@ -381,7 +478,7 @@ def cat(name: Path):
     sys.stdout.flush()
             
 
-@human_command('transient_files')
+@command('transient_files')
 def transient_files():
     for shard in range(256):
         begin_id = 0
@@ -402,14 +499,9 @@ def transient_files():
 
 def main() -> None:
     args = sys.argv[1:]
-    raw = '-r' in args or '--raw' in args
-    args = list(filter(lambda a: a not in ('-r', '--raw'), args))
 
     parser = argparse.ArgumentParser(description='EggsFS CLI')
-    # Just for the help, we parse it above
-    parser.add_argument('-r', '--raw', action='store_true', help='Use operations taking the same arguments as the shard_msg/cdc_msg, rather than human friendly versions. Note that this help text depends on whether you pass this flag.')
 
-    commands = raw_commands if raw else human_commands
     subparsers = parser.add_subparsers(dest='command')
     subparsers.required = True
 
@@ -421,13 +513,22 @@ def main() -> None:
                 extra['default'] = arg.default
             if arg.type == int:
                 cmd_parser.add_argument(arg.name, type=lambda x: int(x, 0), **extra)
+            elif arg.type == timedelta:
+                cmd_parser.add_argument(arg.name, type=parse_duration, **extra)
+            elif arg.type == bool:
+                cmd_parser.add_argument(f'--{arg.name}', action='store_true')
             else:
                 cmd_parser.add_argument(arg.name, type=arg.type, **extra)
+        if cmd.trailing_args:
+            cmd_parser.add_argument(cmd.trailing_args, nargs='*')
 
     config = parser.parse_args(args)
     print(config)
     command = commands[config.command]
-    command.fun(**{ arg.name: getattr(config, arg.name) for arg in command.args })
+    args = [getattr(config, arg.name) for arg in command.args]
+    if command.trailing_args:
+        args += getattr(config, command.trailing_args)
+    command.fun(*args)
 
 if __name__ == '__main__':
     main()

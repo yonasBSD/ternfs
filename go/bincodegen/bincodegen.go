@@ -139,7 +139,7 @@ func (cg *goCodegen) gen(expr *subexpr) {
 		cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, %v[:])", len, expr.expr))
 		cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, %v[:])", len, expr.expr))
 	default:
-		panic(fmt.Sprintf("unsupported type with kind %v", expr.typ.Kind()))
+		panic(fmt.Sprintf("unsupported type %v with kind %v", expr.typ, expr.typ.Kind()))
 	}
 }
 
@@ -214,7 +214,13 @@ func generateGoMsgKind(out io.Writer, typeName string, funName string, reqResps 
 	fmt.Fprintf(out, "\tswitch body.(type) {\n")
 	fmt.Fprintf(out, "\tcase ErrCode:\n")
 	fmt.Fprintf(out, "\t\treturn 0\n")
+	seenKinds := map[uint8]bool{}
 	for _, reqResp := range reqResps {
+		present := seenKinds[reqResp.kind]
+		if present {
+			panic(fmt.Errorf("duplicate kind %d for %s", reqResp.kind, typeName))
+		}
+		seenKinds[reqResp.kind] = true
 		reqName := reqResp.req.Name()
 		respName := reqResp.resp.Name()
 		kindName := reqRespEnum(reqResp)
@@ -674,8 +680,13 @@ func main() {
 		},
 		{
 			0x02,
-			reflect.TypeOf(msgs.StatReq{}),
-			reflect.TypeOf(msgs.StatResp{}),
+			reflect.TypeOf(msgs.StatFileReq{}),
+			reflect.TypeOf(msgs.StatFileResp{}),
+		},
+		{
+			0x08,
+			reflect.TypeOf(msgs.StatDirectoryReq{}),
+			reflect.TypeOf(msgs.StatDirectoryResp{}),
 		},
 		{
 			0x03,
@@ -716,6 +727,11 @@ func main() {
 			0x0E,
 			reflect.TypeOf(msgs.SameDirectoryRenameReq{}),
 			reflect.TypeOf(msgs.SameDirectoryRenameResp{}),
+		},
+		{
+			0x0F,
+			reflect.TypeOf(msgs.SetDirectoryInfoReq{}),
+			reflect.TypeOf(msgs.SetDirectoryInfoResp{}),
 		},
 		// PRIVATE OPERATIONS -- These are safe operations, but we don't want the FS client itself
 		// to perform them. TODO make privileged?
@@ -769,6 +785,11 @@ func main() {
 			0x81,
 			reflect.TypeOf(msgs.SetDirectoryOwnerReq{}),
 			reflect.TypeOf(msgs.SetDirectoryOwnerResp{}),
+		},
+		{
+			0x89,
+			reflect.TypeOf(msgs.RemoveDirectoryOwnerReq{}),
+			reflect.TypeOf(msgs.RemoveDirectoryOwnerResp{}),
 		},
 		{
 			0x82,
@@ -844,6 +865,9 @@ func main() {
 		reflect.TypeOf(msgs.BlockInfo{}),
 		reflect.TypeOf(msgs.NewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockProof{}),
+		reflect.TypeOf(msgs.SpanPolicy{}),
+		reflect.TypeOf(msgs.DirectoryInfoBody{}),
+		reflect.TypeOf(msgs.DirectoryInfo{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)

@@ -9,6 +9,8 @@ from typing import cast
 import errno
 import os
 import struct
+import bisect
+import operator
 
 from common import *
 from shard_msgs import *
@@ -19,10 +21,6 @@ import crypto as crypto
 
 
 LOCAL_HOST = '127.0.0.1'
-
-# No mirroring for now, 4k blocks, just so that we create many blocks.
-PARITY = create_parity_mode(1, 0)
-STORAGE_CLASS = 2
 
 async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, ShardResponseBody]:
     port = shard_to_port(shard)
@@ -50,6 +48,7 @@ async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) 
     target = (LOCAL_HOST, CDC_PORT)
     req = CDCRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
+    packed_resp: bytes
     with trio.socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
         await sock.bind(('', 0))
         await sock.sendto(packed_req, target)
@@ -152,6 +151,9 @@ class FileUnderConstruction:
     dir_id: int
     name: bytes
     cookie: int
+    dir_info: DirectoryInfoBody
+    offset: int
+    current_span: bytearray
 
 class Operations(pyfuse3.Operations):
     # From inode, to eventual destination.
@@ -234,7 +236,7 @@ class Operations(pyfuse3.Operations):
                     span_data = span.body_bytes
                 else:
                     assert not span.body_bytes
-                    assert len(span.body_blocks) == 1
+                    assert num_data_blocks(span.parity) == 1
                     if span.body_blocks[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
                         raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
                     span_data = await read_block(span.body_blocks[0])
@@ -252,10 +254,17 @@ class Operations(pyfuse3.Operations):
         file_id = fuse_id_to_eggs_id(file_id)
         return file_info(file_id)
 
+    async def _resolve_directory_info(self, dir_id: int) -> DirectoryInfoBody:
+        resp = cast(StatDirectoryResp, await self._send_shard_req(inode_id_shard(dir_id), StatDirectoryReq(dir_id)))
+        if resp.info.body:
+            return resp.info.body[0]
+        return await self._resolve_directory_info(resp.owner)
+
     async def _create(self, dir_id: int, type: InodeType, name: bytes):
         assert type in (InodeType.FILE, InodeType.SYMLINK)
+        dir_info = await self._resolve_directory_info(dir_id)
         resp = cast(ConstructFileResp, await self._send_shard_req(inode_id_shard(dir_id), ConstructFileReq(type, name)))
-        self._files_under_construction[resp.id] = FileUnderConstruction(dir_id=dir_id, name=name, cookie=resp.cookie)
+        self._files_under_construction[resp.id] = FileUnderConstruction(dir_id=dir_id, name=name, cookie=resp.cookie, dir_info=dir_info, current_span=bytearray(), offset=0)
         return resp.id
 
     async def create(self, dir_id, name, mode, flags, ctx=None):
@@ -265,45 +274,85 @@ class Operations(pyfuse3.Operations):
         file_id = await self._create(dir_id, InodeType.FILE, name)
         return (file_info(file_id), entry_attribute(file_id, size=0, mtime=0))
     
+    async def _write_current_span(self, file_id: int, under_construction: FileUnderConstruction, last_policy: bool, policy: SpanPolicy):
+        data_blocks, parity_blocks = num_data_blocks(policy.parity), num_parity_blocks(policy.parity)
+        assert data_blocks == 1 # no RS yet
+        if not last_policy:
+            assert len(under_construction.current_span) <= policy.max_size
+        data = bytes(under_construction.current_span[:policy.max_size])
+        assert len(data) > 255
+        crc32 = crypto.crc32c(data)
+        size = len(data)
+        body_blocks = [NewBlockInfo(crc32, size) for _ in range(data_blocks+parity_blocks)]
+        span = cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
+            file_id=file_id,
+            cookie=under_construction.cookie,
+            byte_offset=under_construction.offset,
+            storage_class=policy.storage_class,
+            parity=policy.parity,
+            crc32=crc32,
+            size=size,
+            body_blocks=body_blocks,
+            body_bytes=b'',
+        )))
+        assert len(span.blocks) == data_blocks+parity_blocks
+        proofs = [BlockProof(block.block_id, await write_block(block=block, data=data, crc32=crc32)) for block in span.blocks]
+        await self._send_shard_req(
+            inode_id_shard(file_id),
+            AddSpanCertifyReq(
+                file_id=file_id,
+                cookie=under_construction.cookie,
+                byte_offset=under_construction.offset,
+                proofs=proofs,
+            )
+        )
+        under_construction.current_span = under_construction.current_span[len(data):]
+        under_construction.offset = under_construction.offset + len(data)
+
+    async def _write_current_span_inline(self, file_id: int, under_construction: FileUnderConstruction):
+        data = bytes(under_construction.current_span)
+        assert len(data) < 256
+        assert len(data) > 0
+        crc32 = crypto.crc32c(data)
+        cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
+            file_id=file_id,
+            cookie=under_construction.cookie,
+            byte_offset=under_construction.offset,
+            storage_class=INLINE_STORAGE,
+            parity=0,
+            crc32=crc32,
+            size=len(data),
+            body_blocks=[],
+            body_bytes=data,
+        )))
+        under_construction.current_span = bytearray()
+        under_construction.offset = under_construction.offset + len(data)
+
     async def write(self, file_id, offset, buf):
         under_construction = self._files_under_construction.get(file_id)
         if under_construction is None:
             # This is when we try to open an existing file for writing
             raise pyfuse3.FUSEError(errno.EROFS)
-        # Split in 4k chunks
-        for ix in range(0, len(buf), 1<<12):
-            data = buf[ix:ix+(1<<12)]
-            crc32 = crypto.crc32c(data)
-            size = len(data)
-            span = cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
-                file_id=file_id,
-                cookie=under_construction.cookie,
-                byte_offset=offset+ix,
-                storage_class=STORAGE_CLASS,
-                parity=PARITY,
-                crc32=crc32,
-                size=size,
-                body_blocks=[NewBlockInfo(crc32, size)],
-                body_bytes=b'',
-            )))
-            assert len(span.blocks) == 1
-            block = span.blocks[0]
-            block_proof = await write_block(block=block, data=data, crc32=crc32)
-            await self._send_shard_req(
-                inode_id_shard(file_id),
-                AddSpanCertifyReq(
-                    file_id=file_id,
-                    cookie=under_construction.cookie,
-                    byte_offset=offset+ix,
-                    proofs=[BlockProof(block.block_id, block_proof)],
-                )
-            )
+        assert under_construction.offset+len(under_construction.current_span) == offset # TODO better error
+        under_construction.current_span += buf
+        # flush the span eagerly if we're past the max span size
+        max_span_size = under_construction.dir_info.span_policies[-1].max_size
+        while len(under_construction.current_span) >= max_span_size:
+            await self._write_current_span(file_id, under_construction, last_policy=True, policy=under_construction.dir_info.span_policies[-1])
         return len(buf)
 
     async def flush(self, file_id):
         under_construction = self._files_under_construction.get(file_id)
         if under_construction is None:
             return
+        # flush the remaining span
+        if len(under_construction.current_span) == 0:
+            pass
+        elif len(under_construction.current_span) < 256:
+            await self._write_current_span_inline(file_id, under_construction)
+        else:
+            policy = bisect.bisect_left(list(map(operator.attrgetter('max_size'), under_construction.dir_info.span_policies)), len(under_construction.current_span))
+            await self._write_current_span(file_id, under_construction, last_policy=False, policy=under_construction.dir_info.span_policies[policy])
         # Create the transient file
         await self._send_shard_req(
             inode_id_shard(under_construction.dir_id),

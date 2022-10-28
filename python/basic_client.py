@@ -11,7 +11,6 @@ import typing
 import logging
 from pathlib import Path
 import inspect
-import itertools
 import re
 
 import bincode
@@ -132,9 +131,9 @@ def print_dir_info(info: DirectoryInfoBody):
     print(f'  delete_after_time:      {timedelta(microseconds=info.delete_after_time/1000)}')
     print(f'  delete_after_versions:  {info.delete_after_versions}')
     print(f'  span policies:')
-    print(f'    255:\tINLINE')
+    print(f'    255: INLINE')
     for policy in info.span_policies:
-        print(f'    {span_size_str(policy.max_size)}:\t{STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
+        print(f'    {span_size_str(policy.max_size)}: {STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
 
 def resolve_dir_info(id) -> Tuple[int, DirectoryInfoBody]:
     resp = send_shard_request_or_raise(inode_id_shard(id), StatDirectoryReq(id))
@@ -363,7 +362,7 @@ def set_directory_info_raw(id: int, delete_after_time: timedelta, delete_after_v
         if size <= last_size:
             raise ValueError(f'Unsorted span policies')
         last_size = size
-        storage_class = int(storage_class_str)
+        storage_class = STORAGE_CLASSES_BY_NAME[storage_class_str]
         if storage_class in (ZERO_FILL_STORAGE, INLINE_STORAGE):
             raise ValueError(f'Reserved storage class {storage_class}')
         policies.append(SpanPolicy(size, storage_class, parse_parity(parity_str)))
@@ -482,11 +481,13 @@ def cat(name: Path):
         resp = send_shard_request_or_raise(inode_id_shard(file_id), FileSpansReq(file_id=file_id, byte_offset=byte_offset))
         assert isinstance(resp, FileSpansResp)
         for span in resp.spans:
-            assert span.parity == PARITY
-            assert span.storage_class == STORAGE_CLASS
-            assert len(span.body_blocks) == 1
-            assert len(span.body_bytes) == 0
-            sys.stdout.buffer.write(read_block(span.body_blocks[0]))
+            if span.storage_class == INLINE_STORAGE:
+                sys.stdout.buffer.write(span.body_bytes)
+            elif span.storage_class == ZERO_FILL_STORAGE:
+                sys.stdout.buffer.write(b'\x00'*span.size)
+            else:
+                assert num_data_blocks(span.parity) == 1
+                sys.stdout.buffer.write(read_block(span.body_blocks[0]))
         byte_offset = resp.next_offset
         if byte_offset == 0:
             break
@@ -511,6 +512,44 @@ def transient_files():
             begin_id = resp.next_id
             if begin_id == 0:
                 break
+
+def storage_class_str(i: int) -> str:
+    if i == INLINE_STORAGE:
+        return 'INLINE'
+    elif i == ZERO_FILL_STORAGE:
+        return 'ZERO_FILL'
+    else:
+        return STORAGE_CLASSES[i]
+
+@command('file_spans')
+def file_spans(f: Path):
+    file_id = lookup(f)
+    print()
+    byte_offset = 0
+    while True:
+        resp = send_shard_request_or_raise(inode_id_shard(file_id), FileSpansReq(file_id=file_id, byte_offset=byte_offset))
+        assert isinstance(resp, FileSpansResp)
+        for span in resp.spans:
+            print(f'{span.byte_offset}:')
+            print(f'  size:    {span_size_str(span.size)}')
+            print(f'  storage: {storage_class_str(span.storage_class)}')
+            print(f'  crc32c:  {span.crc32!r}')
+            if span.storage_class == INLINE_STORAGE:
+                print(f'  body:    {span.body_bytes!r}')
+            elif span.storage_class != ZERO_FILL_STORAGE:
+                print(f'  parity:  {parity_str(span.parity)}')
+                print(f'  blocks:')
+                for block in span.body_blocks:
+                    print(f'    - ip:       {socket.inet_ntoa(block.ip)}')
+                    print(f'      port:     {block.port}')
+                    print(f'      block id: 0x{block.block_id:016X}')
+                    print(f'      crc32c:   {block.crc32}')
+                    print(f'      size:     {span_size_str(block.size)}')
+                    print(f'      flags:    {format(block.flags, "08b")}')
+        byte_offset = resp.next_offset
+        if byte_offset == 0:
+            break
+    sys.stdout.flush()
 
 def main() -> None:
     args = sys.argv[1:]

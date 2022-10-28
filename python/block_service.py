@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from asyncio.log import logger
 from pathlib import Path
 from typing import Tuple, cast
 import argparse
@@ -16,6 +17,7 @@ import logging
 import traceback
 
 import common
+from shard_msgs import STORAGE_CLASSES_BY_NAME
 
 def block_id_to_path(base_path: Path, block_id: int) -> Path:
     # 256 subdirectories
@@ -215,15 +217,17 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
 # initialization
 ###########################################
 
-async def periodically_register(key: bytes, port: int, storage_class: int) -> None:
+async def periodically_register(*, key: bytes, port: int, storage_class: int, failure_domain: str) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    m = struct.pack('<16sHB', key, port, storage_class)
+    failure_domain_bs = failure_domain.encode('ascii')
+    m = struct.pack('<16sHB16s', key, port, storage_class, failure_domain_bs)
     shuckle = ('localhost', 5000)
     while True:
         sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
         await asyncio.sleep(1)
 
-async def async_main(*, path: str, port: int, storage_class: int, time_check: bool) -> None:
+async def async_main(*, path: str, port: int, failure_domain: str, storage_class_str: str, time_check: bool) -> None:
+    storage_class = STORAGE_CLASSES_BY_NAME[storage_class_str]
     assert (2 <= storage_class <= 255), f'Storage class {storage_class} out of range'
 
     # open the key file and ensure we are exclusive
@@ -257,18 +261,19 @@ async def async_main(*, path: str, port: int, storage_class: int, time_check: bo
 
     # run forever
     await asyncio.gather(
-        periodically_register(key, port, storage_class),
+        periodically_register(key=key, port=port, storage_class=storage_class, failure_domain=failure_domain),
         server.serve_forever())
 
-def main(*, path: str, port: int, storage_class: int, time_check: bool) -> None:
-    asyncio.run(async_main(path=path, port=port, storage_class=storage_class, time_check=time_check))
+def main(*, path: str, port: int, storage_class: str, failure_domain: str, time_check: bool) -> None:
+    asyncio.run(async_main(path=path, port=port, failure_domain=failure_domain, storage_class_str=storage_class, time_check=time_check))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Block service')
     parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
-    parser.add_argument('--storage_class', help='Storage class byte', type=int, default=2)
-    parser.add_argument('--no-time-check', action='store_true', type=bool)
+    parser.add_argument('--storage_class', help='Storage class byte', type=str, default='HDD')
+    parser.add_argument('--failure_domain', help='Failure domain', type=str)
+    parser.add_argument('--no_time_check', action='store_true', type=bool, help='Do not perform block deletion time check (to prevent replay attacks). Useful for testing.')
     config = parser.parse_args()
 
     # Arbitrary port here
-    main(path=config.path, port=0, storage_class=config.storage_class, time_check=not (config.no_time_check))
+    main(path=config.path, port=0, storage_class=config.storage_class, failure_domain=config.failure_domain, time_check=not (config.no_time_check))

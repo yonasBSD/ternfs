@@ -513,25 +513,34 @@ class StatFileReq(bincode.Packable):
 @dataclass
 class StatFileResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.STAT_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 # mtime + size
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 # mtime + size + transient + len(note)
     mtime: int
     size: int
+    transient: bool
+    note: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.mtime, b)
         bincode.pack_u64_into(self.size, b)
+        bincode.pack_u8_into(self.transient, b)
+        bincode.pack_bytes_into(self.note, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'StatFileResp':
         mtime = bincode.unpack_u64(u)
         size = bincode.unpack_u64(u)
-        return StatFileResp(mtime, size)
+        transient = bool(bincode.unpack_u8(u))
+        note = bincode.unpack_bytes(u)
+        return StatFileResp(mtime, size, transient, note)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # mtime
         _size += 8 # size
+        _size += 1 # transient
+        _size += 1 # len(note)
+        _size += len(self.note) # note contents
         return _size
 
 @dataclass

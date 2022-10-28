@@ -316,6 +316,8 @@ func (v *StatFileReq) Unpack(buf *bincode.Buf) error {
 func (v *StatFileResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 	buf.PackU64(uint64(v.Size))
+	buf.PackBool(bool(v.Transient))
+	buf.PackBytes([]byte(v.Note))
 }
 
 func (v *StatFileResp) Unpack(buf *bincode.Buf) error {
@@ -323,6 +325,12 @@ func (v *StatFileResp) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.Size)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBool((*bool)(&v.Transient)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBytes((*[]byte)(&v.Note)); err != nil {
 		return err
 	}
 	return nil

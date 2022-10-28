@@ -18,6 +18,8 @@ import sys
 import os
 import logging
 
+from shard_msgs import STORAGE_CLASSES
+
 app = Quart(__name__)
 
 ###########################################
@@ -27,7 +29,7 @@ app = Quart(__name__)
 # queue of keys that we should check and upsert in the db
 # push None to shutdown the cororoutine
 KEYS_TO_CHECK: Deque[bytes] = collections.deque()
-KEY_TO_IP_PORT_SC: Dict[bytes, Tuple[str, int, int]] = {}
+KEY_TO_IP_PORT_SC: Dict[bytes, Tuple[str, int, int, str]] = {}
 
 DB: sqlite3.Connection
 
@@ -35,7 +37,7 @@ EPOCH = datetime.datetime(2020, 1, 1)
 MAX_STALE_SECS = 600
 
 # verify we can contact a device, if we can update the database
-async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> None:
+async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int, failure_domain: str) -> None:
     global DB
 
     now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
@@ -45,7 +47,8 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> No
     token = secrets.token_bytes(8)
     try:
         reader, writer = await asyncio.open_connection(ip, port)
-    except ConnectionRefusedError:
+    except ConnectionRefusedError as err:
+        app.logger.error(f'Could not connect to {(ip, port)}: {err}')
         return
     try:
         writer.write(b's' + token)
@@ -61,35 +64,46 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int) -> No
     # put the information into the database
     # (either creating a new record or updating an old one
     DB.execute("""
-        insert into block_services (secret_key, ip_port, storage_class, last_check, used_bytes, free_bytes, used_n, free_n)
-        values (?, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (secret_key) do update set ip_port=?, storage_class=?, last_check=?, used_bytes=?, free_bytes=?, used_n=?, free_n=?
-    """, (secret_key.hex(), f'{ip}:{port}', sc, now, used_bytes, free_bytes, used_n, free_n, f'{ip}:{port}', sc, now, used_bytes, free_bytes, used_n, free_n))
+        insert into block_services (secret_key, ip_port, storage_class, failure_domain, last_check, used_bytes, free_bytes, used_n, free_n)
+        values (:key, :addr, :sc, :failure_domain, :now, :used_bytes, :free_bytes, :used_n, :free_n)
+        on conflict (secret_key)
+            do update set ip_port=:addr, storage_class=:sc, failure_domain=:failure_domain, last_check=:now, used_bytes=:used_bytes, free_bytes=:free_bytes, used_n=:used_n, free_n=:free_n
+    """, {
+        'key': secret_key.hex(),
+        'addr': f'{ip}:{port}',
+        'sc': sc,
+        'failure_domain': failure_domain,
+        'now': now,
+        'used_bytes': used_bytes,
+        'free_bytes': free_bytes,
+        'used_n': used_n,
+        'free_n': free_n,
+    })
     DB.commit()
 
     # given we have updated the database we should ensure this is getting covered by periodic checks
     # and that it's being checked with the right ip/port
     if secret_key not in KEY_TO_IP_PORT_SC:
         KEYS_TO_CHECK.append(secret_key) # it's brand new
-    KEY_TO_IP_PORT_SC[secret_key] = (ip, port, sc)
+    KEY_TO_IP_PORT_SC[secret_key] = (ip, port, sc, failure_domain)
 
 
 async def check_devices_forever() -> None:
     global DB
 
     while True:
-        c = DB.execute('select secret_key, ip_port, storage_class from block_services').fetchall()
+        c = DB.execute('select secret_key, ip_port, storage_class, failure_domain from block_services').fetchall()
         app.logger.info(f'Started periodic check routine, loaded {len(c)} devices')
-        for key, ip_port, sc in c:
+        for key, ip_port, sc, failure_domain in c:
             ip, port = ip_port.split(':')
             port = int(port)
             key = bytes.fromhex(key)
             try:
-                await check_one_device(key, ip, port, sc)
+                await check_one_device(key, ip, port, sc, failure_domain)
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                app.logger.error(f'Failed to check device at {ip_port}', exc_info=True)
+                app.logger.error(f'Failed to check device at {ip_port}: {e}', exc_info=True)
                 pass
         await asyncio.sleep(60)
 
@@ -107,14 +121,16 @@ async def listen_for_registrations() -> None:
     while True:
         try:
             data, (ip, port) = await q.get()
-            key, tcp_port, sc = struct.unpack('<16sHB', data)
-            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc):
+            key, tcp_port, sc, failure_domain = struct.unpack('<16sHB16s', data)
+            failure_domain = failure_domain.decode('ascii').rstrip('\x00')
+            # print('XXX failure_domain', failure_domain)
+            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc, failure_domain):
                 # it's new or changed ip - need to check it
-                await check_one_device(key, ip, tcp_port, sc)
+                await check_one_device(key, ip, tcp_port, sc, failure_domain)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            app.logger.error(f'Error processing registration for {ip}:{tcp_port}', exc_info=True)
+            app.logger.error(f'Error processing registration for {ip}:{tcp_port}: {e}', exc_info=True)
 
 
 ###########################################
@@ -151,7 +167,8 @@ def is_stale(value: int) -> bool:
 async def index() -> str:
     global DB
     c = DB.execute('select * from block_services')
-    return await render_template('index.html', devices=list(c.fetchall()))
+    items = [dict(row) | {'storage_class_str': STORAGE_CLASSES[row['storage_class']]} for row in c]
+    return await render_template('index.html', devices=items)
 
 @app.route('/change_status', methods=['POST'])
 async def change_status() -> Response:
@@ -223,15 +240,16 @@ async def list_devices() -> Response:
         id_to_w = {}
 
     # build the response
-    c = DB.execute("select id, ip_port, storage_class, last_check, status, secret_key from block_services")
+    c = DB.execute("select id, ip_port, storage_class, failure_domain, last_check, status, secret_key from block_services")
     ret = []
-    for id, ip_port, storage_class, last_check, status, secret_key in c.fetchall():
+    for id, ip_port, storage_class, failure_domain, last_check, status, secret_key in c.fetchall():
         is_stale = last_check <= now - MAX_STALE_SECS
         if is_stale or status != 'ok': assert id not in id_to_w
         ret.append({
             'ip': ip_port.split(':')[0],
             'port': int(ip_port.split(':')[1]),
             'storage_class': storage_class,
+            'failure_domain': failure_domain,
             'is_terminal': status == 'terminal',
             'is_stale': is_stale,
             'write_weight': id_to_w.get(id, 0.0),
@@ -247,7 +265,6 @@ async def list_devices() -> Response:
 def init_db(db_dir: str) -> None:
     global DB
 
-    #TODO: add storage_mode
     db_path = os.path.join(db_dir, f'shuckle.sqlite')
     logging.info(f'Running shuckle with db {db_path}')
     DB = sqlite3.connect(db_path)
@@ -260,6 +277,7 @@ def init_db(db_dir: str) -> None:
             status integer not null default "ok",
             ip_port text unique not null,
             storage_class integer not null,
+            failure_domain text not null,
             last_check integer not null,
             used_bytes integer not null,
             free_bytes integer not null,

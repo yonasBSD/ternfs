@@ -195,8 +195,10 @@ type StatFileReq struct {
 }
 
 type StatFileResp struct {
-	Mtime EggsTime
-	Size  uint64
+	Mtime     EggsTime
+	Size      uint64
+	Transient bool
+	Note      []byte // empty if not transient
 }
 
 type StatDirectoryReq struct {

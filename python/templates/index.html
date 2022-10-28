@@ -7,6 +7,7 @@
 <tr>
     <th>Address
     <th>Storage class
+    <th>Failure domain
     <th>Status
     <th>Last checked
     <th>Stored bytes
@@ -15,7 +16,8 @@
 {% for item in devices %}
 <tr>
     <td>{{ item.ip_port|resolve }}
-    <td>{{ item.storage_class }}
+    <td>{{ item.storage_class_str }}
+    <td>{{ item.failure_domain }}
     <td>{{ item.status }}
     {% if item.last_check is stale %}
     <td style="color:red">{{ item.last_check|dateformat }}

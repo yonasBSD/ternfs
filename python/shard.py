@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import operator
 from enum import IntEnum
 import sqlite3
 import sys
@@ -18,6 +19,7 @@ import unittest
 import logging
 import requests
 import itertools
+import bisect
 
 import crypto
 from common import *
@@ -69,6 +71,7 @@ def init_db(shard: int, db: sqlite3.Connection):
             ip str not null,
             port integer not null,
             storage_class integer not null,
+            failure_domain text not null,
             terminal bool not null,
             stale bool not null,
             write_weight real not null,
@@ -260,18 +263,25 @@ def check_span_body(span: Span) -> bool:
     return True
 
 def pick_block_servers(cur: sqlite3.Cursor, storage_class: int, num: int) -> Optional[List[Dict[str, Any]]]:
-    servers = cur.execute(
+    servers = list(cur.execute(
         '''
-            select id, ip, port, secret_key, sum(write_weight) over (rows unbounded preceding) as cum_weight from block_servers
+            select failure_domain, write_weight, id, ip, port, secret_key from block_servers
                 where storage_class = :storage_class and active and not terminal and not stale
+                order by failure_domain
         ''',
         {'storage_class': storage_class}
-    ).fetchall()
-    if not servers:
-        return None
-    # can't use random.choices in prod
-    # needs to select bservers on different "failure domains"
-    return random.choices(servers, cum_weights=[s['cum_weight'] for s in servers], k=num)
+    ).fetchall())
+    servers_weights = list(map(operator.itemgetter('write_weight'), servers))
+    selected_block_servers: List[Dict[str, Any]] = []
+    while len(selected_block_servers) < num:
+        if not servers:
+            return None
+        server = tuple(random.choices(servers, weights=servers_weights))[0]
+        selected_block_servers.append(server)
+        servers, servers_weights = zip(
+            *filter(lambda x: x[0]['failure_domain'] != server['failure_domain'], zip(servers, servers_weights))
+        )
+    return selected_block_servers
 
 def lookup_block_servers(cur: sqlite3.Cursor, ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
     servers = {}
@@ -571,10 +581,10 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
 
 # read only
 def stat_file_req(cur: sqlite3.Cursor, req: StatFileReq) -> Union[EggsError, StatFileResp]:
-    file = cur.execute('select * from files where id = :id and not transient', {'id': req.id}).fetchone()
+    file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
     if file is None:
         return EggsError(ErrCode.FILE_NOT_FOUND)
-    return StatFileResp(mtime=file['mtime'], size=file['size'])
+    return StatFileResp(mtime=file['mtime'], size=file['size'], transient=file['transient'], note=(file['note'] or b''))
 
 # read only
 def stat_directory_req(cur: sqlite3.Cursor, req: StatDirectoryReq) -> Union[EggsError, StatDirectoryResp]:
@@ -1402,8 +1412,8 @@ def remove_inode_req(cur: sqlite3.Cursor, req: RemoveInodeReq) -> Union[EggsErro
 
 # not read only
 def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[EggsError, SetDirectoryInfoResp]:
-    assert not req.id == ROOT_DIR_INODE_ID and req.info.inherited # TODO better error
-    cur.execute('update directories set info = :data where id = :id', {'info': bincode.pack(req.info), 'id': req.id})
+    assert not (req.id == ROOT_DIR_INODE_ID and req.info.inherited) # TODO better error
+    cur.execute('update directories set info = :info where id = :id', {'info': bincode.pack(req.info), 'id': req.id})
     if cur.rowcount == 0:
         return EggsError(ErrCode.DIRECTORY_NOT_FOUND)
     assert cur.rowcount == 1
@@ -1413,6 +1423,7 @@ class BlockServerInfo(TypedDict):
     ip: str
     port: int
     storage_class: int
+    failure_domain: str
     terminal: bool
     stale: bool
     write_weight: float
@@ -1432,11 +1443,11 @@ def update_block_servers_info(cur: sqlite3.Cursor, req: UpdateBlockServersInfoRe
     cur.executemany(
         '''
             insert into block_servers
-                (active, ip, port, secret_key, storage_class, write_weight, terminal, stale) values (TRUE, :ip, :port, :secret_key, :storage_class, :write_weight, :terminal, :stale)
+                (active, ip, port, secret_key, storage_class, failure_domain, write_weight, terminal, stale) values (TRUE, :ip, :port, :secret_key, :storage_class, :failure_domain, :write_weight, :terminal, :stale)
                 on conflict (ip, port)
                     do update set
                         active = TRUE, secret_key = excluded.secret_key, storage_class = excluded.storage_class,
-                        write_weight = :write_weight, terminal = :terminal, stale = :stale
+                        failure_domain = :failure_domain, write_weight = :write_weight, terminal = :terminal, stale = :stale
         ''',
         req.block_servers,
     )
@@ -1621,6 +1632,7 @@ class ShardTests(unittest.TestCase):
                 ip=f'192.168.0.{i}',
                 port=0,
                 storage_class=2,
+                failure_domain='NONE',
                 write_weight=random.uniform(0.0, 1.0),
                 secret_key=secrets.token_bytes(16),
                 terminal=False,
@@ -2075,6 +2087,7 @@ def shuckle_json_to_block_server(json_obj: Dict[str, Any]) -> BlockServerInfo:
         ip=json_obj['ip'],
         port=json_obj['port'],
         storage_class=json_obj['storage_class'],
+        failure_domain=json_obj['failure_domain'],
         write_weight=json_obj['write_weight'],
         secret_key=bytes.fromhex(json_obj['secret_key']),
         terminal=json_obj['is_terminal'],

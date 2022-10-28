@@ -123,7 +123,6 @@ async def listen_for_registrations() -> None:
             data, (ip, port) = await q.get()
             key, tcp_port, sc, failure_domain = struct.unpack('<16sHB16s', data)
             failure_domain = failure_domain.decode('ascii').rstrip('\x00')
-            # print('XXX failure_domain', failure_domain)
             if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc, failure_domain):
                 # it's new or changed ip - need to check it
                 await check_one_device(key, ip, tcp_port, sc, failure_domain)

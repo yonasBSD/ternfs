@@ -544,7 +544,7 @@ def file_spans_raw(file_id: int):
                     print(f'    - ip:       {socket.inet_ntoa(block.ip)}')
                     print(f'      port:     {block.port}')
                     print(f'      block id: 0x{block.block_id:016X}')
-                    print(f'      crc32c:   {block.crc32}')
+                    print(f'      crc32c:   {block.crc32!r}')
                     print(f'      size:     {span_size_str(block.size)}')
                     print(f'      flags:    {format(block.flags, "08b")}')
         byte_offset = resp.next_offset

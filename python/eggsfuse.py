@@ -54,7 +54,7 @@ async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) 
         await sock.sendto(packed_req, target)
         timed_out = True
         with trio.move_on_after(timeout_secs):
-            packed_resp = await sock.recv(UDP_MTU)
+            packed_resp = cast(bytes, await sock.recv(UDP_MTU))
             timed_out = False
         if timed_out:
             return EggsError(ErrCode.TIMEOUT)

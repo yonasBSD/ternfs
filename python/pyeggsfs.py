@@ -2,7 +2,6 @@
 from multiprocessing import Process
 import argparse
 import sys
-from time import time
 from typing import List
 import os
 from pathlib import Path

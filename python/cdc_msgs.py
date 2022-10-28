@@ -49,7 +49,7 @@ class CDCRequest(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'CDCRequest':
         ver = bincode.unpack_fixed(u, len(CDC_REQ_PROTOCOL_VERSION))
-        assert ver == CDC_REQ_PROTOCOL_VERSION, f'Expected {CDC_REQ_PROTOCOL_VERSION}, got {ver}'
+        assert ver == CDC_REQ_PROTOCOL_VERSION, f'Expected {CDC_REQ_PROTOCOL_VERSION!r}, got {ver!r}'
         request_id = bincode.unpack_u64(u)
         body_kind = CDCMessageKind(bincode.unpack_u8(u))
         body_type = CDC_REQUESTS[body_kind][0]

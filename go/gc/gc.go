@@ -91,6 +91,14 @@ func (gc *GcEnv) Debug(format string, v0 ...any) {
 	}
 }
 
+func (gc *GcEnv) Log(debug bool, format string, v ...any) {
+	if debug {
+		gc.Debug(format, v...)
+	} else {
+		gc.Info(format, v...)
+	}
+}
+
 func (gc *GcEnv) ShardRequest(req bincode.Packable, resp bincode.Unpackable) error {
 	return request.ShardRequestSocket(gc, gc.CDCKey, gc.ShardSocket, gc.Timeout, req, resp)
 }
@@ -137,20 +145,22 @@ func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline
 		if err != nil {
 			return fmt.Errorf("%v: could not initiate span removal: %w", id, err)
 		}
-		certifyReq.ByteOffset = initResp.ByteOffset
-		certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
-		for i, block := range initResp.Blocks {
-			proof, err := request.EraseBlock(gc, block)
-			if err != nil {
-				return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+		if len(initResp.Blocks) > 0 {
+			certifyReq.ByteOffset = initResp.ByteOffset
+			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
+			for i, block := range initResp.Blocks {
+				proof, err := request.EraseBlock(gc, block)
+				if err != nil {
+					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+				}
+				stats.DestructedBlocks++
+				certifyReq.Proofs[i].BlockId = block.BlockId
+				certifyReq.Proofs[i].Proof = proof
 			}
-			stats.DestructedBlocks++
-			certifyReq.Proofs[i].BlockId = block.BlockId
-			certifyReq.Proofs[i].Proof = proof
-		}
-		err = gc.ShardRequest(&certifyReq, &certifyResp)
-		if err != nil {
-			return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
+			err = gc.ShardRequest(&certifyReq, &certifyResp)
+			if err != nil {
+				return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
+			}
 		}
 		stats.DestructedSpans++
 	}
@@ -187,7 +197,7 @@ func (gc *GcEnv) destructInner() (DestructionStats, error) {
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
 			if err := gc.DestructFile(&stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				return stats, fmt.Errorf("%v: error while destructing file: %w", file, err)
+				return stats, fmt.Errorf("%+v: error while destructing file: %w", file, err)
 			}
 		}
 		req.BeginId = resp.NextId
@@ -204,8 +214,9 @@ func (gc *GcEnv) destruct() {
 		gc.RaiseAlert(err)
 	}
 	sleepDuration := time.Minute
-	gc.Info("stats after one destruction iteration: %+v", stats)
-	gc.Info("finished destructing files, will sleep for %v", sleepDuration)
+	debug := stats.DestructedBlocks == 0
+	gc.Log(debug, "stats after one destruction iteration: %+v", stats)
+	gc.Log(debug, "finished destructing files, will sleep for %v", sleepDuration)
 	time.Sleep(sleepDuration)
 }
 
@@ -437,8 +448,9 @@ func (gc *GcEnv) collect() {
 		gc.RaiseAlert(err)
 	}
 	sleepDuration := time.Minute
-	gc.Info("stats after one GC iteration: %+v", stats)
-	gc.Info("finished GC'ing files, will sleep for %v", sleepDuration)
+	debug := stats.collectedEdges == 0 && stats.destructedDirectories == 0
+	gc.Log(debug, "stats after one GC iteration: %+v", stats)
+	gc.Log(debug, "finished GC'ing files, will sleep for %v", sleepDuration)
 	time.Sleep(sleepDuration)
 }
 
@@ -472,6 +484,7 @@ func Run(verbose bool) {
 		DirInfoCache:      map[msgs.InodeId]CachedDirInfo{},
 		DirInfoCacheMutex: new(sync.RWMutex),
 	}
+	logger.Printf("starting one collector and one destructor per shard.")
 	for shid := 0; shid < 256; shid++ {
 		destructor := env
 		env.Role = "destructor"

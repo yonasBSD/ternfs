@@ -918,9 +918,8 @@ def remove_span_initiate_inner(cur: sqlite3.Cursor, req: RemoveSpanInitiateReq) 
         assert cur.rowcount == 1
         return RemoveSpanInitiateResp(byte_offset=last_span['byte_offset'], blocks=[])
     else:
-        # accept repeated calls in the name of idempotency
-        if last_span['state'] not in (SpanState.CLEAN, SpanState.CONDEMNED):
-            return EggsError(ErrCode.CANNOT_REMOVE_DIRTY_SPAN)
+        # note that we allow to remove dirty spans -- this is important to deal well with
+        # the case where a writer dies in the middle of adding a span.
         assert isinstance(last_span['body'], str)
         blocks = cast(List[Block], json.loads(last_span['body']))
         resp_blocks: List[BlockInfo] = []

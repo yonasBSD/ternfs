@@ -654,5 +654,11 @@ type DirectoryInfo struct {
 	// We need to materialize the directory info for soft unlinked directories
 	// with inherited infos, otherwise we won't be able to easily get the
 	// directory info (since we do not have a reverse directory lookup).
+	//
+	// For consumers, the right way to interpret this is to just look at
+	// the body. If it's present, then it should be used. If it's _not_
+	// present, then the directory should be traversed upwards. It is a
+	// server bug for directories with no owners (soft unlinked or ROOT)
+	// to have no body.
 	Body []DirectoryInfoBody
 }

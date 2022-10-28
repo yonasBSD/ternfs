@@ -164,6 +164,9 @@ def stat_raw(id: int):
         assert isinstance(resp, StatFileResp)
         print(f'mtime:       {eggs_time_str(resp.mtime)}')
         print(f'size:        {resp.size}')
+        print(f'transient:   {resp.transient}')
+        if resp.transient:
+            print(f'note:        {resp.note!r}')
 
 @command('stat')
 def do_stat(path: Path):
@@ -521,10 +524,8 @@ def storage_class_str(i: int) -> str:
     else:
         return STORAGE_CLASSES[i]
 
-@command('file_spans')
-def file_spans(f: Path):
-    file_id = lookup(f)
-    print()
+@command('file_spans_raw')
+def file_spans_raw(file_id: int):
     byte_offset = 0
     while True:
         resp = send_shard_request_or_raise(inode_id_shard(file_id), FileSpansReq(file_id=file_id, byte_offset=byte_offset))
@@ -550,6 +551,12 @@ def file_spans(f: Path):
         if byte_offset == 0:
             break
     sys.stdout.flush()
+
+@command('file_spans')
+def file_spans(f: Path):
+    file_id = lookup(f)
+    print()
+    file_spans_raw(file_id)
 
 def main() -> None:
     args = sys.argv[1:]

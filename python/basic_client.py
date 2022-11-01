@@ -49,8 +49,8 @@ def command(cmd_name: str):
             assert param.annotation != param.empty
             typ: type = param.annotation
             # Strip optional
-            if isinstance(typ, typing._UnionGenericAlias):
-                typ = typ.__args__[0]
+            if isinstance(typ, typing._UnionGenericAlias): # type: ignore
+                typ = typ.__args__[0]                      # type: ignore
             default: Optional[Any] = None
             if param.default != param.empty:
                 default = param.default

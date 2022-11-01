@@ -17,8 +17,8 @@ from cdc_key import *
 SHARD_REQ_PROTOCOL_VERSION = b'SHA\0'
 SHARD_RESP_PROTOCOL_VERSION = b'SHA\1'
 
-INLINE_STORAGE = 0
-ZERO_FILL_STORAGE = 1
+ZERO_FILL_STORAGE = 0
+INLINE_STORAGE = 1
 
 # These are not understood by the shard
 STORAGE_CLASSES: Dict[int, str] = {

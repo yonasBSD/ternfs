@@ -129,7 +129,7 @@ async def listen_for_registrations() -> None:
         except asyncio.CancelledError:
             return
         except Exception as e:
-            app.logger.error(f'Error processing registration for {ip}:{tcp_port}: {e}', exc_info=True)
+            app.logger.error(f'Error processing registration for {ip}:{tcp_port}: {e}', exc_info=True) # type: ignore
 
 
 ###########################################

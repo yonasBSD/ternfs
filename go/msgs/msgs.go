@@ -173,8 +173,8 @@ const ERROR uint8 = 0
 // Shard requests/responses
 
 const (
-	INLINE_STORAGE    StorageClass = 0
-	ZERO_FILL_STORAGE StorageClass = 1
+	ZERO_STORAGE   StorageClass = 0
+	INLINE_STORAGE StorageClass = 1
 )
 
 // Given directory inode and name, returns inode from outgoing
@@ -244,7 +244,24 @@ type NewBlockInfo struct {
 	Size  uint64 `bincode:"varint"`
 }
 
-// add span. the file must be transient
+// Add span. The file must be transient.
+//
+// Generally speaking, the block sizes will all be the same. However, there are two
+// exceptions.
+//
+// * If the erasure code we use dictates the data to be a multiple of a certain number
+//     of bytes, then the sum of the data block sizes might be larger than the span size
+//     to ensure that, in which case the excess must be zero and can be discarded.
+// * The span size can be greater than the sum of data blocks, in which case trailing
+//     zeros are added. This is to support cheap creation of gaps in the file.
+//
+// The zero storage class (ZERO_STORAGE) is not strictly needed -- we could just use
+// a span size with no data blocks at all. But it's still nice to distinguish it explicitly
+// -- otherwise you'd have to specify some dummy storage class for such spans, and you would
+// not be able to check that there _is_ some data when you expect it to.
+//
+// The inline storage class allows small files (< 256 bytes) to be stored directly
+// in the metadata.
 type AddSpanInitiateReq struct {
 	FileId       InodeId
 	Cookie       uint64

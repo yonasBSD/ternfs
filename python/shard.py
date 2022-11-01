@@ -232,11 +232,10 @@ def check_span_body(span: Span) -> bool:
     if not isinstance(span['body'], list):
         return False
     
-    # check size consistency
+    # Check size consistency. The span size might be bigger or smaller than
+    # the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
+    # for details.
     data_blocks = num_data_blocks(span['parity'])
-    implied_size = sum(b['size'] for b in span['body'][:data_blocks])
-    if span['size'] != implied_size:
-        return False
     
     # consistency check for mirroring: they must be all the same
     if data_blocks == 1:

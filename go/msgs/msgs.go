@@ -22,6 +22,7 @@ type Parity uint8
 type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
+type BlockServiceId uint64
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -241,17 +242,22 @@ type ConstructFileResp struct {
 
 type NewBlockInfo struct {
 	Crc32 [4]byte
-	Size  uint64 `bincode:"varint"`
+}
+
+type BlockServiceBlacklist struct {
+	Ip   [4]byte
+	Port uint16
+	Id   BlockServiceId
 }
 
 // Add span. The file must be transient.
 //
-// Generally speaking, the block sizes will all be the same. However, there are two
+// Generally speaking, the num_data_blocks*BlockSize == Size. However, there are two
 // exceptions.
 //
 // * If the erasure code we use dictates the data to be a multiple of a certain number
 //     of bytes, then the sum of the data block sizes might be larger than the span size
-//     to ensure that, in which case the excess must be zero and can be discarded.
+//     to ensure that, in which case the excess data must be zero and can be discarded.
 // * The span size can be greater than the sum of data blocks, in which case trailing
 //     zeros are added. This is to support cheap creation of gaps in the file.
 //
@@ -267,9 +273,15 @@ type AddSpanInitiateReq struct {
 	Cookie       uint64
 	ByteOffset   uint64 `bincode:"varint"`
 	StorageClass StorageClass
-	Parity       Parity
-	Crc32        [4]byte
-	Size         uint64 `bincode:"varint"`
+	// A single element of these matches if all the nonzero elements in it match.
+	// This is useful when the kernel knows it cannot communicate with a certain block
+	// service (because it noticed that it is broken before shuckle/shard did, or
+	// because of some transient network problem, or...).
+	Blacklist []BlockServiceBlacklist
+	Parity    Parity
+	Crc32     [4]byte
+	Size      uint64 `bincode:"varint"`
+	BlockSize uint64 `bincode:"varint"`
 	// empty if storage class not inline
 	BodyBytes []byte
 	// empty if storage class zero/inline
@@ -277,9 +289,10 @@ type AddSpanInitiateReq struct {
 }
 
 type BlockInfo struct {
-	Ip      [4]byte
-	Port    uint16
-	BlockId uint64
+	BlockServiceIp   [4]byte
+	BlockServicePort uint16
+	BlockServiceId   BlockServiceId
+	BlockId          uint64
 	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
 	Certificate [8]byte
 }
@@ -350,12 +363,9 @@ type FileSpansReq struct {
 }
 
 type FetchedBlock struct {
-	Ip      [4]byte
-	Port    uint16
-	BlockId BlockId
-	Crc32   [4]byte
-	Size    uint64 `bincode:"varint"`
-	Flags   uint8
+	BlockServiceIx uint8 // Index into `BlockServices`
+	BlockId        BlockId
+	Crc32          [4]byte
 }
 
 // If the storage class is zero-filled, BodyBytes and BodyBlocks are empty.
@@ -367,13 +377,28 @@ type FetchedSpan struct {
 	StorageClass StorageClass
 	Crc32        [4]byte
 	Size         uint64 `bincode:"varint"`
-	BodyBytes    []byte
-	BodyBlocks   []FetchedBlock
+	// See comment for AddSpanInitiateReq for explanations regarding span
+	// vs block size, and also body bytes vs. body blocks
+	BlockSize  uint64 `bincode:"varint"`
+	BodyBytes  []byte
+	BodyBlocks []FetchedBlock
+}
+
+type BlockService struct {
+	Ip   [4]byte
+	Port uint16
+	// The BlockServiceId is stable (derived from the secret key, which is stored on the
+	// block service id).
+	//
+	// The ip/port are not, and in fact might be shared by multiple block services.
+	Id    BlockServiceId
+	Flags uint8
 }
 
 type FileSpansResp struct {
-	NextOffset uint64 `bincode:"varint"`
-	Spans      []FetchedSpan
+	NextOffset    uint64 `bincode:"varint"`
+	BlockServices []BlockService
+	Spans         []FetchedSpan
 }
 
 type SameDirectoryRenameReq struct {

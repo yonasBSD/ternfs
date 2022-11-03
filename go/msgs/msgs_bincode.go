@@ -21,10 +21,10 @@ const (
 	BAD_COOKIE ErrCode = 22
 	INCONSISTENT_STORAGE_CLASS_PARITY ErrCode = 23
 	LAST_SPAN_STATE_NOT_CLEAN ErrCode = 24
-	COULD_NOT_PICK_BLOCK_SERVERS ErrCode = 25
+	COULD_NOT_PICK_BLOCK_SERVICES ErrCode = 25
 	BAD_SPAN_BODY ErrCode = 26
 	SPAN_NOT_FOUND ErrCode = 27
-	BLOCK_SERVER_NOT_FOUND ErrCode = 28
+	BLOCK_SERVICE_NOT_FOUND ErrCode = 28
 	CANNOT_CERTIFY_BLOCKLESS_SPAN ErrCode = 29
 	BAD_NUMBER_OF_BLOCKS_PROOFS ErrCode = 30
 	BAD_BLOCK_PROOF ErrCode = 31
@@ -83,13 +83,13 @@ func (err ErrCode) String() string {
 	case 24:
 		return "LAST_SPAN_STATE_NOT_CLEAN"
 	case 25:
-		return "COULD_NOT_PICK_BLOCK_SERVERS"
+		return "COULD_NOT_PICK_BLOCK_SERVICES"
 	case 26:
 		return "BAD_SPAN_BODY"
 	case 27:
 		return "SPAN_NOT_FOUND"
 	case 28:
-		return "BLOCK_SERVER_NOT_FOUND"
+		return "BLOCK_SERVICE_NOT_FOUND"
 	case 29:
 		return "CANNOT_CERTIFY_BLOCKLESS_SPAN"
 	case 30:
@@ -446,13 +446,19 @@ func (v *AddSpanInitiateReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Cookie))
 	buf.PackVarU61(uint64(v.ByteOffset))
 	buf.PackU8(uint8(v.StorageClass))
+	len1 := len(v.Blacklist)
+	buf.PackLength(len1)
+	for i := 0; i < len1; i++ {
+		v.Blacklist[i].Pack(buf)
+	}
 	buf.PackU8(uint8(v.Parity))
 	buf.PackFixedBytes(4, v.Crc32[:])
 	buf.PackVarU61(uint64(v.Size))
+	buf.PackVarU61(uint64(v.BlockSize))
 	buf.PackBytes([]byte(v.BodyBytes))
-	len1 := len(v.BodyBlocks)
-	buf.PackLength(len1)
-	for i := 0; i < len1; i++ {
+	len2 := len(v.BodyBlocks)
+	buf.PackLength(len2)
+	for i := 0; i < len2; i++ {
 		v.BodyBlocks[i].Pack(buf)
 	}
 }
@@ -470,6 +476,16 @@ func (v *AddSpanInitiateReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU8((*uint8)(&v.StorageClass)); err != nil {
 		return err
 	}
+	var len1 int
+	if err := buf.UnpackLength(&len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blacklist, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Blacklist[i].Unpack(buf); err != nil {
+			return err
+		}
+	}
 	if err := buf.UnpackU8((*uint8)(&v.Parity)); err != nil {
 		return err
 	}
@@ -479,15 +495,18 @@ func (v *AddSpanInitiateReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackVarU61((*uint64)(&v.Size)); err != nil {
 		return err
 	}
+	if err := buf.UnpackVarU61((*uint64)(&v.BlockSize)); err != nil {
+		return err
+	}
 	if err := buf.UnpackBytes((*[]byte)(&v.BodyBytes)); err != nil {
 		return err
 	}
-	var len1 int
-	if err := buf.UnpackLength(&len1); err != nil {
+	var len2 int
+	if err := buf.UnpackLength(&len2); err != nil {
 		return err
 	}
-	bincode.EnsureLength(&v.BodyBlocks, len1)
-	for i := 0; i < len1; i++ {
+	bincode.EnsureLength(&v.BodyBlocks, len2)
+	for i := 0; i < len2; i++ {
 		if err := v.BodyBlocks[i].Unpack(buf); err != nil {
 			return err
 		}
@@ -631,9 +650,14 @@ func (v *FileSpansReq) Unpack(buf *bincode.Buf) error {
 
 func (v *FileSpansResp) Pack(buf *bincode.Buf) {
 	buf.PackVarU61(uint64(v.NextOffset))
-	len1 := len(v.Spans)
+	len1 := len(v.BlockServices)
 	buf.PackLength(len1)
 	for i := 0; i < len1; i++ {
+		v.BlockServices[i].Pack(buf)
+	}
+	len2 := len(v.Spans)
+	buf.PackLength(len2)
+	for i := 0; i < len2; i++ {
 		v.Spans[i].Pack(buf)
 	}
 }
@@ -646,8 +670,18 @@ func (v *FileSpansResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackLength(&len1); err != nil {
 		return err
 	}
-	bincode.EnsureLength(&v.Spans, len1)
+	bincode.EnsureLength(&v.BlockServices, len1)
 	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(buf); err != nil {
+			return err
+		}
+	}
+	var len2 int
+	if err := buf.UnpackLength(&len2); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Spans, len2)
+	for i := 0; i < len2; i++ {
 		if err := v.Spans[i].Unpack(buf); err != nil {
 			return err
 		}
@@ -1435,31 +1469,19 @@ func (v *TransientFile) Unpack(buf *bincode.Buf) error {
 }
 
 func (v *FetchedBlock) Pack(buf *bincode.Buf) {
-	buf.PackFixedBytes(4, v.Ip[:])
-	buf.PackU16(uint16(v.Port))
+	buf.PackU8(uint8(v.BlockServiceIx))
 	buf.PackU64(uint64(v.BlockId))
 	buf.PackFixedBytes(4, v.Crc32[:])
-	buf.PackVarU61(uint64(v.Size))
-	buf.PackU8(uint8(v.Flags))
 }
 
 func (v *FetchedBlock) Unpack(buf *bincode.Buf) error {
-	if err := buf.UnpackFixedBytes(4, v.Ip[:]); err != nil {
-		return err
-	}
-	if err := buf.UnpackU16((*uint16)(&v.Port)); err != nil {
+	if err := buf.UnpackU8((*uint8)(&v.BlockServiceIx)); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.BlockId)); err != nil {
 		return err
 	}
 	if err := buf.UnpackFixedBytes(4, v.Crc32[:]); err != nil {
-		return err
-	}
-	if err := buf.UnpackVarU61((*uint64)(&v.Size)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU8((*uint8)(&v.Flags)); err != nil {
 		return err
 	}
 	return nil
@@ -1517,6 +1539,7 @@ func (v *FetchedSpan) Pack(buf *bincode.Buf) {
 	buf.PackU8(uint8(v.StorageClass))
 	buf.PackFixedBytes(4, v.Crc32[:])
 	buf.PackVarU61(uint64(v.Size))
+	buf.PackVarU61(uint64(v.BlockSize))
 	buf.PackBytes([]byte(v.BodyBytes))
 	len1 := len(v.BodyBlocks)
 	buf.PackLength(len1)
@@ -1541,6 +1564,9 @@ func (v *FetchedSpan) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackVarU61((*uint64)(&v.Size)); err != nil {
 		return err
 	}
+	if err := buf.UnpackVarU61((*uint64)(&v.BlockSize)); err != nil {
+		return err
+	}
 	if err := buf.UnpackBytes((*[]byte)(&v.BodyBytes)); err != nil {
 		return err
 	}
@@ -1558,17 +1584,21 @@ func (v *FetchedSpan) Unpack(buf *bincode.Buf) error {
 }
 
 func (v *BlockInfo) Pack(buf *bincode.Buf) {
-	buf.PackFixedBytes(4, v.Ip[:])
-	buf.PackU16(uint16(v.Port))
+	buf.PackFixedBytes(4, v.BlockServiceIp[:])
+	buf.PackU16(uint16(v.BlockServicePort))
+	buf.PackU64(uint64(v.BlockServiceId))
 	buf.PackU64(uint64(v.BlockId))
 	buf.PackFixedBytes(8, v.Certificate[:])
 }
 
 func (v *BlockInfo) Unpack(buf *bincode.Buf) error {
-	if err := buf.UnpackFixedBytes(4, v.Ip[:]); err != nil {
+	if err := buf.UnpackFixedBytes(4, v.BlockServiceIp[:]); err != nil {
 		return err
 	}
-	if err := buf.UnpackU16((*uint16)(&v.Port)); err != nil {
+	if err := buf.UnpackU16((*uint16)(&v.BlockServicePort)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.BlockServiceId)); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.BlockId)); err != nil {
@@ -1582,14 +1612,10 @@ func (v *BlockInfo) Unpack(buf *bincode.Buf) error {
 
 func (v *NewBlockInfo) Pack(buf *bincode.Buf) {
 	buf.PackFixedBytes(4, v.Crc32[:])
-	buf.PackVarU61(uint64(v.Size))
 }
 
 func (v *NewBlockInfo) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackFixedBytes(4, v.Crc32[:]); err != nil {
-		return err
-	}
-	if err := buf.UnpackVarU61((*uint64)(&v.Size)); err != nil {
 		return err
 	}
 	return nil
@@ -1681,6 +1707,48 @@ func (v *DirectoryInfo) Unpack(buf *bincode.Buf) error {
 		if err := v.Body[i].Unpack(buf); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (v *BlockServiceBlacklist) Pack(buf *bincode.Buf) {
+	buf.PackFixedBytes(4, v.Ip[:])
+	buf.PackU16(uint16(v.Port))
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *BlockServiceBlacklist) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackFixedBytes(4, v.Ip[:]); err != nil {
+		return err
+	}
+	if err := buf.UnpackU16((*uint16)(&v.Port)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockService) Pack(buf *bincode.Buf) {
+	buf.PackFixedBytes(4, v.Ip[:])
+	buf.PackU16(uint16(v.Port))
+	buf.PackU64(uint64(v.Id))
+	buf.PackU8(uint8(v.Flags))
+}
+
+func (v *BlockService) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackFixedBytes(4, v.Ip[:]); err != nil {
+		return err
+	}
+	if err := buf.UnpackU16((*uint16)(&v.Port)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU8((*uint8)(&v.Flags)); err != nil {
+		return err
 	}
 	return nil
 }

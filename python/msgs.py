@@ -23,10 +23,10 @@ class ErrCode(enum.IntEnum):
     BAD_COOKIE = 22
     INCONSISTENT_STORAGE_CLASS_PARITY = 23
     LAST_SPAN_STATE_NOT_CLEAN = 24
-    COULD_NOT_PICK_BLOCK_SERVERS = 25
+    COULD_NOT_PICK_BLOCK_SERVICES = 25
     BAD_SPAN_BODY = 26
     SPAN_NOT_FOUND = 27
-    BLOCK_SERVER_NOT_FOUND = 28
+    BLOCK_SERVICE_NOT_FOUND = 28
     CANNOT_CERTIFY_BLOCKLESS_SPAN = 29
     BAD_NUMBER_OF_BLOCKS_PROOFS = 30
     BAD_BLOCK_PROOF = 31
@@ -124,41 +124,29 @@ class TransientFile(bincode.Packable):
 
 @dataclass
 class FetchedBlock(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 4 + 1 # ip + port + block_id + crc32 + flags
-    ip: bytes
-    port: int
+    STATIC_SIZE: ClassVar[int] = 1 + 8 + 4 # block_service_ix + block_id + crc32
+    block_service_ix: int
     block_id: int
     crc32: bytes
-    size: int
-    flags: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u8_into(self.block_service_ix, b)
         bincode.pack_u64_into(self.block_id, b)
         bincode.pack_fixed_into(self.crc32, 4, b)
-        bincode.pack_v61_into(self.size, b)
-        bincode.pack_u8_into(self.flags, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'FetchedBlock':
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
+        block_service_ix = bincode.unpack_u8(u)
         block_id = bincode.unpack_u64(u)
         crc32 = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_v61(u)
-        flags = bincode.unpack_u8(u)
-        return FetchedBlock(ip, port, block_id, crc32, size, flags)
+        return FetchedBlock(block_service_ix, block_id, crc32)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 4 # ip
-        _size += 2 # port
+        _size += 1 # block_service_ix
         _size += 8 # block_id
         _size += 4 # crc32
-        _size += bincode.v61_packed_size(self.size) # size
-        _size += 1 # flags
         return _size
 
 @dataclass
@@ -233,6 +221,7 @@ class FetchedSpan(bincode.Packable):
     storage_class: int
     crc32: bytes
     size: int
+    block_size: int
     body_bytes: bytes
     body_blocks: List[FetchedBlock]
 
@@ -242,6 +231,7 @@ class FetchedSpan(bincode.Packable):
         bincode.pack_u8_into(self.storage_class, b)
         bincode.pack_fixed_into(self.crc32, 4, b)
         bincode.pack_v61_into(self.size, b)
+        bincode.pack_v61_into(self.block_size, b)
         bincode.pack_bytes_into(self.body_bytes, b)
         bincode.pack_u16_into(len(self.body_blocks), b)
         for i in range(len(self.body_blocks)):
@@ -255,11 +245,12 @@ class FetchedSpan(bincode.Packable):
         storage_class = bincode.unpack_u8(u)
         crc32 = bincode.unpack_fixed(u, 4)
         size = bincode.unpack_v61(u)
+        block_size = bincode.unpack_v61(u)
         body_bytes = bincode.unpack_bytes(u)
         body_blocks: List[Any] = [None]*bincode.unpack_u16(u)
         for i in range(len(body_blocks)):
             body_blocks[i] = FetchedBlock.unpack(u)
-        return FetchedSpan(byte_offset, parity, storage_class, crc32, size, body_bytes, body_blocks)
+        return FetchedSpan(byte_offset, parity, storage_class, crc32, size, block_size, body_bytes, body_blocks)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -268,6 +259,7 @@ class FetchedSpan(bincode.Packable):
         _size += 1 # storage_class
         _size += 4 # crc32
         _size += bincode.v61_packed_size(self.size) # size
+        _size += bincode.v61_packed_size(self.block_size) # block_size
         _size += 1 # len(body_bytes)
         _size += len(self.body_bytes) # body_bytes contents
         _size += 2 # len(body_blocks)
@@ -277,31 +269,35 @@ class FetchedSpan(bincode.Packable):
 
 @dataclass
 class BlockInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 8 # ip + port + block_id + certificate
-    ip: bytes
-    port: int
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 8 + 8 # block_service_ip + block_service_port + block_service_id + block_id + certificate
+    block_service_ip: bytes
+    block_service_port: int
+    block_service_id: int
     block_id: int
     certificate: bytes
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
+        bincode.pack_fixed_into(self.block_service_ip, 4, b)
+        bincode.pack_u16_into(self.block_service_port, b)
+        bincode.pack_u64_into(self.block_service_id, b)
         bincode.pack_u64_into(self.block_id, b)
         bincode.pack_fixed_into(self.certificate, 8, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockInfo':
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
+        block_service_ip = bincode.unpack_fixed(u, 4)
+        block_service_port = bincode.unpack_u16(u)
+        block_service_id = bincode.unpack_u64(u)
         block_id = bincode.unpack_u64(u)
         certificate = bincode.unpack_fixed(u, 8)
-        return BlockInfo(ip, port, block_id, certificate)
+        return BlockInfo(block_service_ip, block_service_port, block_service_id, block_id, certificate)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 4 # ip
-        _size += 2 # port
+        _size += 4 # block_service_ip
+        _size += 2 # block_service_port
+        _size += 8 # block_service_id
         _size += 8 # block_id
         _size += 8 # certificate
         return _size
@@ -310,23 +306,19 @@ class BlockInfo(bincode.Packable):
 class NewBlockInfo(bincode.Packable):
     STATIC_SIZE: ClassVar[int] = 4 # crc32
     crc32: bytes
-    size: int
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_fixed_into(self.crc32, 4, b)
-        bincode.pack_v61_into(self.size, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'NewBlockInfo':
         crc32 = bincode.unpack_fixed(u, 4)
-        size = bincode.unpack_v61(u)
-        return NewBlockInfo(crc32, size)
+        return NewBlockInfo(crc32)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 4 # crc32
-        _size += bincode.v61_packed_size(self.size) # size
         return _size
 
 @dataclass
@@ -439,6 +431,64 @@ class DirectoryInfo(bincode.Packable):
         _size += 2 # len(body)
         for i in range(len(self.body)):
             _size += self.body[i].calc_packed_size() # body[i]
+        return _size
+
+@dataclass
+class BlockServiceBlacklist(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 # ip + port + id
+    ip: bytes
+    port: int
+    id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_fixed_into(self.ip, 4, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u64_into(self.id, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceBlacklist':
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        id = bincode.unpack_u64(u)
+        return BlockServiceBlacklist(ip, port, id)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 4 # ip
+        _size += 2 # port
+        _size += 8 # id
+        return _size
+
+@dataclass
+class BlockService(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 1 # ip + port + id + flags
+    ip: bytes
+    port: int
+    id: int
+    flags: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_fixed_into(self.ip, 4, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u64_into(self.id, b)
+        bincode.pack_u8_into(self.flags, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockService':
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        id = bincode.unpack_u64(u)
+        flags = bincode.unpack_u8(u)
+        return BlockService(ip, port, id, flags)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 4 # ip
+        _size += 2 # port
+        _size += 8 # id
+        _size += 1 # flags
         return _size
 
 @dataclass
@@ -701,14 +751,16 @@ class ConstructFileResp(bincode.Packable):
 @dataclass
 class AddSpanInitiateReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.ADD_SPAN_INITIATE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 + 4 + 1 + 2 # file_id + cookie + storage_class + parity + crc32 + len(body_bytes) + len(body_blocks)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 2 + 1 + 4 + 1 + 2 # file_id + cookie + storage_class + len(blacklist) + parity + crc32 + len(body_bytes) + len(body_blocks)
     file_id: int
     cookie: int
     byte_offset: int
     storage_class: int
+    blacklist: List[BlockServiceBlacklist]
     parity: int
     crc32: bytes
     size: int
+    block_size: int
     body_bytes: bytes
     body_blocks: List[NewBlockInfo]
 
@@ -717,9 +769,13 @@ class AddSpanInitiateReq(bincode.Packable):
         bincode.pack_u64_into(self.cookie, b)
         bincode.pack_v61_into(self.byte_offset, b)
         bincode.pack_u8_into(self.storage_class, b)
+        bincode.pack_u16_into(len(self.blacklist), b)
+        for i in range(len(self.blacklist)):
+            self.blacklist[i].pack_into(b)
         bincode.pack_u8_into(self.parity, b)
         bincode.pack_fixed_into(self.crc32, 4, b)
         bincode.pack_v61_into(self.size, b)
+        bincode.pack_v61_into(self.block_size, b)
         bincode.pack_bytes_into(self.body_bytes, b)
         bincode.pack_u16_into(len(self.body_blocks), b)
         for i in range(len(self.body_blocks)):
@@ -732,14 +788,18 @@ class AddSpanInitiateReq(bincode.Packable):
         cookie = bincode.unpack_u64(u)
         byte_offset = bincode.unpack_v61(u)
         storage_class = bincode.unpack_u8(u)
+        blacklist: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(blacklist)):
+            blacklist[i] = BlockServiceBlacklist.unpack(u)
         parity = bincode.unpack_u8(u)
         crc32 = bincode.unpack_fixed(u, 4)
         size = bincode.unpack_v61(u)
+        block_size = bincode.unpack_v61(u)
         body_bytes = bincode.unpack_bytes(u)
         body_blocks: List[Any] = [None]*bincode.unpack_u16(u)
         for i in range(len(body_blocks)):
             body_blocks[i] = NewBlockInfo.unpack(u)
-        return AddSpanInitiateReq(file_id, cookie, byte_offset, storage_class, parity, crc32, size, body_bytes, body_blocks)
+        return AddSpanInitiateReq(file_id, cookie, byte_offset, storage_class, blacklist, parity, crc32, size, block_size, body_bytes, body_blocks)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -747,9 +807,13 @@ class AddSpanInitiateReq(bincode.Packable):
         _size += 8 # cookie
         _size += bincode.v61_packed_size(self.byte_offset) # byte_offset
         _size += 1 # storage_class
+        _size += 2 # len(blacklist)
+        for i in range(len(self.blacklist)):
+            _size += self.blacklist[i].calc_packed_size() # blacklist[i]
         _size += 1 # parity
         _size += 4 # crc32
         _size += bincode.v61_packed_size(self.size) # size
+        _size += bincode.v61_packed_size(self.block_size) # block_size
         _size += 1 # len(body_bytes)
         _size += len(self.body_bytes) # body_bytes contents
         _size += 2 # len(body_blocks)
@@ -958,12 +1022,16 @@ class FileSpansReq(bincode.Packable):
 @dataclass
 class FileSpansResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.FILE_SPANS
-    STATIC_SIZE: ClassVar[int] = 2 # len(spans)
+    STATIC_SIZE: ClassVar[int] = 2 + 2 # len(block_services) + len(spans)
     next_offset: int
+    block_services: List[BlockService]
     spans: List[FetchedSpan]
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_v61_into(self.next_offset, b)
+        bincode.pack_u16_into(len(self.block_services), b)
+        for i in range(len(self.block_services)):
+            self.block_services[i].pack_into(b)
         bincode.pack_u16_into(len(self.spans), b)
         for i in range(len(self.spans)):
             self.spans[i].pack_into(b)
@@ -972,14 +1040,20 @@ class FileSpansResp(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'FileSpansResp':
         next_offset = bincode.unpack_v61(u)
+        block_services: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(block_services)):
+            block_services[i] = BlockService.unpack(u)
         spans: List[Any] = [None]*bincode.unpack_u16(u)
         for i in range(len(spans)):
             spans[i] = FetchedSpan.unpack(u)
-        return FileSpansResp(next_offset, spans)
+        return FileSpansResp(next_offset, block_services, spans)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += bincode.v61_packed_size(self.next_offset) # next_offset
+        _size += 2 # len(block_services)
+        for i in range(len(self.block_services)):
+            _size += self.block_services[i].calc_packed_size() # block_services[i]
         _size += 2 # len(spans)
         for i in range(len(self.spans)):
             _size += self.spans[i].calc_packed_size() # spans[i]

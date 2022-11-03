@@ -37,7 +37,7 @@ EPOCH = datetime.datetime(2020, 1, 1)
 MAX_STALE_SECS = 600
 
 # verify we can contact a device, if we can update the database
-async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int, failure_domain: str) -> None:
+async def check_one_device(id: int, secret_key: bytes, ip: str, port: int, sc: int, failure_domain: str) -> None:
     global DB
 
     now = int((datetime.datetime.utcnow() - EPOCH).total_seconds())
@@ -51,7 +51,7 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int, failu
         app.logger.error(f'Could not connect to {(ip, port)}: {err}')
         return
     try:
-        writer.write(b's' + token)
+        writer.write(struct.pack('<Q', id) + b's' + token)
         m = await reader.readexactly(49)
     finally:
         writer.close()
@@ -64,11 +64,12 @@ async def check_one_device(secret_key: bytes, ip: str, port: int, sc: int, failu
     # put the information into the database
     # (either creating a new record or updating an old one
     DB.execute("""
-        insert into block_services (secret_key, ip_port, storage_class, failure_domain, last_check, used_bytes, free_bytes, used_n, free_n)
-        values (:key, :addr, :sc, :failure_domain, :now, :used_bytes, :free_bytes, :used_n, :free_n)
+        insert into block_services (id, secret_key, ip_port, storage_class, failure_domain, last_check, used_bytes, free_bytes, used_n, free_n)
+        values (:id, :key, :addr, :sc, :failure_domain, :now, :used_bytes, :free_bytes, :used_n, :free_n)
         on conflict (secret_key)
             do update set ip_port=:addr, storage_class=:sc, failure_domain=:failure_domain, last_check=:now, used_bytes=:used_bytes, free_bytes=:free_bytes, used_n=:used_n, free_n=:free_n
     """, {
+        'id': id,
         'key': secret_key.hex(),
         'addr': f'{ip}:{port}',
         'sc': sc,
@@ -92,14 +93,14 @@ async def check_devices_forever() -> None:
     global DB
 
     while True:
-        c = DB.execute('select secret_key, ip_port, storage_class, failure_domain from block_services').fetchall()
+        c = DB.execute('select id, secret_key, ip_port, storage_class, failure_domain from block_services').fetchall()
         app.logger.info(f'Started periodic check routine, loaded {len(c)} devices')
-        for key, ip_port, sc, failure_domain in c:
+        for id, key, ip_port, sc, failure_domain in c:
             ip, port = ip_port.split(':')
             port = int(port)
             key = bytes.fromhex(key)
             try:
-                await check_one_device(key, ip, port, sc, failure_domain)
+                await check_one_device(id, key, ip, port, sc, failure_domain)
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -121,11 +122,11 @@ async def listen_for_registrations() -> None:
     while True:
         try:
             data, (ip, port) = await q.get()
-            key, tcp_port, sc, failure_domain = struct.unpack('<16sHB16s', data)
+            id, key, tcp_port, sc, failure_domain = struct.unpack('<Q16sHB16s', data)
             failure_domain = failure_domain.decode('ascii').rstrip('\x00')
             if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc, failure_domain):
                 # it's new or changed ip - need to check it
-                await check_one_device(key, ip, tcp_port, sc, failure_domain)
+                await check_one_device(id, key, ip, tcp_port, sc, failure_domain)
         except asyncio.CancelledError:
             return
         except Exception as e:
@@ -245,6 +246,7 @@ async def list_devices() -> Response:
         is_stale = last_check <= now - MAX_STALE_SECS
         if is_stale or status != 'ok': assert id not in id_to_w
         ret.append({
+            'id': id,
             'ip': ip_port.split(':')[0],
             'port': int(ip_port.split(':')[1]),
             'storage_class': storage_class,

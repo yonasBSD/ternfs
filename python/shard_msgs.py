@@ -43,12 +43,12 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
     ShardMessageKind.CONSTRUCT_FILE: {ErrCode.TYPE_IS_DIRECTORY},
     ShardMessageKind.ADD_SPAN_INITIATE: {
         ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.INCONSISTENT_STORAGE_CLASS_PARITY,
-        ErrCode.LAST_SPAN_STATE_NOT_CLEAN, ErrCode.COULD_NOT_PICK_BLOCK_SERVERS,
-        ErrCode.BAD_SPAN_BODY, ErrCode.SPAN_NOT_FOUND, ErrCode.BLOCK_SERVER_NOT_FOUND,
+        ErrCode.LAST_SPAN_STATE_NOT_CLEAN, ErrCode.COULD_NOT_PICK_BLOCK_SERVICES,
+        ErrCode.BAD_SPAN_BODY, ErrCode.SPAN_NOT_FOUND, ErrCode.BLOCK_SERVICE_NOT_FOUND,
     },
     ShardMessageKind.ADD_SPAN_CERTIFY: {
         ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN,
-        ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS, ErrCode.BLOCK_SERVER_NOT_FOUND, ErrCode.BAD_BLOCK_PROOF,
+        ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS, ErrCode.BLOCK_SERVICE_NOT_FOUND, ErrCode.BAD_BLOCK_PROOF,
     },
     ShardMessageKind.LINK_FILE: {
         ErrCode.FILE_NOT_FOUND, ErrCode.BAD_COOKIE, ErrCode.DIRECTORY_NOT_FOUND,
@@ -99,9 +99,6 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
 
 def kind_is_privileged(k: ShardMessageKind) -> bool:
     return bool(k & 0x80)
-
-assert FileSpansResp.STATIC_SIZE == 2
-FileSpansResp_SIZE_UPPER_BOUND = 2 + 8
 
 @dataclass
 class ShardRequest:

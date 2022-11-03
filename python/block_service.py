@@ -141,11 +141,19 @@ ONE_HOUR_IN_NS = 60 * 60 * 1000 * 1000 * 1000
 PAST_CUTOFF = ONE_HOUR_IN_NS * 22
 FUTURE_CUTOFF = ONE_HOUR_IN_NS * 2
 
-async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, rk: crypto.ExpandedKey, base_path: Path, time_check: bool) -> None:
+async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, key: bytes, base_path: Path, time_check: bool) -> None:
+    rk = crypto.aes_expand_key(key)
     writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x00'*8)
     try:
         while True:
-            kind = await reader.read(1)
+            received_block_service_id_str = await reader.read(8)
+            if received_block_service_id_str == b'':
+                # EOF
+                return
+            received_block_service_id = struct.unpack('<Q', received_block_service_id_str)[0]
+            # Right now we do not support multiplexing
+            assert block_service_id(key) == received_block_service_id, f'Expected id {block_service_id(key)}, got {received_block_service_id}'
+            kind = await reader.readexactly(1)
             if kind == b'e':
                 # erase block
                 # (block_id, mac) -> data
@@ -199,10 +207,6 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 m = ser_stats(token, used_bytes, free_bytes, used_n, free_n, rk)
                 writer.write(m)
 
-            elif kind == b'':
-                # EOF
-                return
-
             else:
                 # unknown request type
                 assert False
@@ -217,10 +221,20 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
 # initialization
 ###########################################
 
+def block_service_id(secret_key: bytes) -> int:
+    # we don't really care about leaking part or all of the key -- the whole key business is to defend
+    # against bugs, not malicious agents.
+    #
+    # That said, we prefer to encode the knowledge of how to generate block service ids once, 
+    # in the block service.
+    #
+    # Also, we remove the highest bit for the sake of SQLite, at least for now
+    return struct.unpack('<Q', secret_key[:8])[0] & 0x7FFFFFFFFFFFFFFF
+
 async def periodically_register(*, key: bytes, port: int, storage_class: int, failure_domain: str) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     failure_domain_bs = failure_domain.encode('ascii')
-    m = struct.pack('<16sHB16s', key, port, storage_class, failure_domain_bs)
+    m = struct.pack('<Q16sHB16s', block_service_id(key), key, port, storage_class, failure_domain_bs)
     shuckle = ('localhost', 5000)
     while True:
         sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
@@ -249,7 +263,6 @@ async def async_main(*, path: str, port: int, failure_domain: str, storage_class
     else:
         assert len(key) == 16
     logging.info(f'Using secret key {key.hex()}')
-    rk = crypto.aes_expand_key(key)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(('localhost', port))
@@ -257,7 +270,7 @@ async def async_main(*, path: str, port: int, failure_domain: str, storage_class
     logging.info(f'Block service {path} bound to port {port}')
 
     # create the server (starts listening for requests immediately)
-    server = await asyncio.start_server(lambda rs, ws: handle_client(reader=rs, writer=ws, rk=rk, base_path=Path(path), time_check=time_check), sock=sock)
+    server = await asyncio.start_server(lambda rs, ws: handle_client(reader=rs, writer=ws, key=key, base_path=Path(path), time_check=time_check), sock=sock)
 
     # run forever
     await asyncio.gather(

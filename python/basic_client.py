@@ -392,8 +392,8 @@ def set_directory_data(path: Path, delete_after_time: timedelta, delete_after_ve
 
 # Writes block, returns proof
 def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
-    header = struct.pack('<cQ4sI8s', b'w', block.block_id, crc32, len(data), block.certificate)
-    with socket.create_connection((socket.inet_ntoa(block.ip), block.port)) as conn:
+    header = struct.pack('<QcQ4sI8s', block.block_service_id, b'w', block.block_id, crc32, len(data), block.certificate)
+    with socket.create_connection((socket.inet_ntoa(block.block_service_ip), block.block_service_port)) as conn:
         conn.send(header + data)
         resp = conn.recv(17)
         assert len(resp) == 17
@@ -405,22 +405,23 @@ def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
         raise RuntimeError(f'Bad block id, expected {block.block_id} got {rblock_id}')
     return proof
 
-def read_block(block: FetchedBlock) -> bytes:
-    ip = socket.inet_ntoa(block.ip)
-    msg = struct.pack('<cQ', b'f', block.block_id)
-    with socket.create_connection((ip, block.port)) as conn:
+def read_block(*, block_services: List[BlockService], block_size: int, block: FetchedBlock) -> bytes:
+    block_service = block_services[block.block_service_ix]
+    ip = socket.inet_ntoa(block_service.ip)
+    msg = struct.pack('<QcQ', b'f', block_service.id, block.block_id)
+    with socket.create_connection((ip, block_service.port)) as conn:
         conn.send(msg)
         reply = conn.recv(5)
         assert len(reply) == 5
         kind, ret_block_sz = struct.unpack('<cI', reply)
         if kind != b'F':
             raise Exception(f'Bad reply {reply!r}')
-        if ret_block_sz != block.size:
-            raise Exception(f'Block {block.block_id} inconsistent size: metadata says {block.size}, block service says {ret_block_sz}')
+        if ret_block_sz != block_size:
+            raise Exception(f'Block {block.block_id} inconsistent size: metadata says {block_size}, block service says {ret_block_sz}')
         # TODO check crc32
         data = b''
-        while len(data) < block.size:
-            data += conn.recv(block.size - len(data))
+        while len(data) < block_size:
+            data += conn.recv(block_size - len(data))
         return data
 
 # No mirroring for now, 4k blocks, just so that we create many blocks.
@@ -448,7 +449,9 @@ def create_file(name: Path, blob: bytes):
                 parity=PARITY,
                 crc32=crc32,
                 size=size,
-                body_blocks=[NewBlockInfo(crc32, size)],
+                block_size=size,
+                blacklist=[],
+                body_blocks=[NewBlockInfo(crc32)],
                 body_bytes=b'',
             )
         )
@@ -490,7 +493,7 @@ def cat(name: Path):
                 sys.stdout.buffer.write(b'\x00'*span.size)
             else:
                 assert num_data_blocks(span.parity) == 1
-                sys.stdout.buffer.write(read_block(span.body_blocks[0]))
+                sys.stdout.buffer.write(read_block(block_services=resp.block_services, block_size=span.block_size, block=span.body_blocks[0]))
         byte_offset = resp.next_offset
         if byte_offset == 0:
             break
@@ -532,21 +535,22 @@ def file_spans_raw(file_id: int):
         assert isinstance(resp, FileSpansResp)
         for span in resp.spans:
             print(f'{span.byte_offset}:')
-            print(f'  size:    {span_size_str(span.size)}')
-            print(f'  storage: {storage_class_str(span.storage_class)}')
-            print(f'  crc32c:  {span.crc32!r}')
+            print(f'  size:       {span_size_str(span.size)}')
+            print(f'  block size: {span_size_str(span.block_size)}')
+            print(f'  storage:    {storage_class_str(span.storage_class)}')
+            print(f'  crc32c:     {span.crc32!r}')
             if span.storage_class == INLINE_STORAGE:
-                print(f'  body:    {span.body_bytes!r}')
+                print(f'  body:       {span.body_bytes!r}')
             elif span.storage_class != ZERO_FILL_STORAGE:
-                print(f'  parity:  {parity_str(span.parity)}')
+                print(f'  parity:     {parity_str(span.parity)}')
                 print(f'  blocks:')
                 for block in span.body_blocks:
-                    print(f'    - ip:       {socket.inet_ntoa(block.ip)}')
-                    print(f'      port:     {block.port}')
+                    block_service = resp.block_services[block.block_service_ix]
+                    print(f'    - ip:       {socket.inet_ntoa(block_service.ip)}')
+                    print(f'      port:     {block_service.port}')
                     print(f'      block id: 0x{block.block_id:016X}')
                     print(f'      crc32c:   {block.crc32!r}')
-                    print(f'      size:     {span_size_str(block.size)}')
-                    print(f'      flags:    {format(block.flags, "08b")}')
+                    print(f'      flags:    {format(block_service.flags, "08b")}')
         byte_offset = resp.next_offset
         if byte_offset == 0:
             break

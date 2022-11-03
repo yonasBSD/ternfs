@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 	"xtx/eggsfs/cdckey"
-	"xtx/eggsfs/gc"
+	"xtx/eggsfs/janitor"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/request"
 )
@@ -32,14 +32,14 @@ func main() {
 		badCommand()
 	}
 
-	gcEnv := gc.GcEnv{
+	gcEnv := janitor.Env{
 		Role:              "cli",
 		Logger:            log.New(os.Stdout, "", log.Lshortfile),
 		LogMutex:          new(sync.Mutex),
 		Timeout:           10 * time.Second,
 		CDCKey:            cdckey.CDCKey(),
 		Verbose:           true,
-		DirInfoCache:      map[msgs.InodeId]gc.CachedDirInfo{},
+		DirInfoCache:      map[msgs.InodeId]janitor.CachedDirInfo{},
 		DirInfoCacheMutex: new(sync.RWMutex),
 	}
 
@@ -67,7 +67,7 @@ func main() {
 		defer cdcSocket.Close()
 		gcEnv.ShardSocket = shardSocket
 		gcEnv.CDCSocket = cdcSocket
-		stats := gc.CollectStats{}
+		stats := janitor.CollectStats{}
 		err = gcEnv.CollectDirectory(&stats, dirId)
 		if err != nil {
 			log.Fatalf("could not collect %v, stats: %+v, err: %v", dirId, stats, err)
@@ -89,7 +89,7 @@ func main() {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
 		gcEnv.ShardSocket = socket
-		stats := gc.DestructionStats{}
+		stats := janitor.DestructionStats{}
 		err = gcEnv.DestructFile(&stats, fileId, 0, *destructFileCookie)
 		if err != nil {
 			log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)

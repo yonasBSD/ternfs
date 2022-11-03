@@ -1,111 +1,12 @@
-package gc
+package janitor
 
 import (
-	"crypto/cipher"
 	"fmt"
-	"log"
-	"net"
-	"os"
-	"runtime/debug"
-	"strings"
-	"sync"
 	"time"
 
-	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/cdckey"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/request"
 )
-
-type CachedDirInfo struct {
-	info     msgs.DirectoryInfoBody
-	cachedAt time.Time
-}
-
-type GcEnv struct {
-	Logger *log.Logger
-	// we use a lock on top of the logger lock to have stack traces to be on ther own
-	LogMutex          *sync.Mutex
-	Shid              msgs.ShardId
-	Role              string
-	ShardSocket       *net.UDPConn
-	CDCSocket         *net.UDPConn
-	Timeout           time.Duration
-	Verbose           bool
-	Dry               bool
-	CDCKey            cipher.Block
-	DirInfoCache      map[msgs.InodeId]CachedDirInfo
-	DirInfoCacheMutex *sync.RWMutex
-}
-
-func (gc *GcEnv) lookupCachedDirInfo(dirId msgs.InodeId) *msgs.DirectoryInfoBody {
-	now := time.Now()
-	gc.DirInfoCacheMutex.RLock()
-	cached := gc.DirInfoCache[dirId]
-	gc.DirInfoCacheMutex.RUnlock()
-
-	if now.Sub(cached.cachedAt) > time.Hour {
-		gc.DirInfoCacheMutex.Lock()
-		delete(gc.DirInfoCache, dirId)
-		gc.DirInfoCacheMutex.Unlock()
-		return nil
-	}
-
-	return &cached.info
-}
-
-func (gc *GcEnv) updateCachedDirInfo(dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) {
-	gc.DirInfoCacheMutex.Lock()
-	gc.DirInfoCache[dirId] = CachedDirInfo{
-		info:     *dirInfo,
-		cachedAt: time.Now(),
-	}
-	gc.DirInfoCacheMutex.Unlock()
-}
-
-func (gc *GcEnv) RaiseAlert(err error) {
-	gc.LogMutex.Lock()
-	gc.Logger.Printf("%s[%d]: ALERT: %v\n", gc.Role, gc.Shid, err)
-	gc.LogMutex.Unlock()
-}
-
-func (gc *GcEnv) Info(format string, v0 ...any) {
-	v := make([]any, 2+len(v0))
-	v[0] = gc.Role
-	v[1] = gc.Shid
-	copy(v[2:], v0)
-	gc.LogMutex.Lock()
-	gc.Logger.Printf("%s[%d]: "+format+"\n", v...)
-	gc.LogMutex.Unlock()
-}
-
-func (gc *GcEnv) Debug(format string, v0 ...any) {
-	if gc.Verbose {
-		v := make([]any, 2+len(v0))
-		v[0] = gc.Role
-		v[1] = gc.Shid
-		copy(v[2:], v0)
-		gc.LogMutex.Lock()
-		gc.Logger.Printf("%s[%d]: "+format+"\n", v...)
-		gc.LogMutex.Unlock()
-	}
-}
-
-func (gc *GcEnv) Log(debug bool, format string, v ...any) {
-	if debug {
-		gc.Debug(format, v...)
-	} else {
-		gc.Info(format, v...)
-	}
-}
-
-func (gc *GcEnv) ShardRequest(req bincode.Packable, resp bincode.Unpackable) error {
-	return request.ShardRequestSocket(gc, gc.CDCKey, gc.ShardSocket, gc.Timeout, req, resp)
-}
-
-func (gc *GcEnv) CDCRequest(req bincode.Packable, resp bincode.Unpackable) error {
-	return request.CDCRequestSocket(gc, gc.CDCSocket, gc.Timeout, req, resp)
-}
 
 type DestructionStats struct {
 	VisitedFiles     uint64
@@ -114,7 +15,7 @@ type DestructionStats struct {
 	DestructedBlocks uint64
 }
 
-func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline msgs.EggsTime, cookie uint64) error {
+func (gc *Env) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline msgs.EggsTime, cookie uint64) error {
 	gc.Debug("%v: destructing file, dry=%v, cookie=%v", id, gc.Dry, cookie)
 	stats.VisitedFiles++
 	now := msgs.Now()
@@ -177,7 +78,7 @@ func (gc *GcEnv) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
-func (gc *GcEnv) destructInner() (DestructionStats, error) {
+func (gc *Env) destructInner() (DestructionStats, error) {
 	var stats DestructionStats
 
 	shardSocket, err := request.ShardSocket(gc.Shid)
@@ -208,7 +109,7 @@ func (gc *GcEnv) destructInner() (DestructionStats, error) {
 	return stats, nil
 }
 
-func (gc *GcEnv) destruct() {
+func (gc *Env) Destruct() {
 	stats, err := gc.destructInner()
 	if err != nil {
 		gc.RaiseAlert(err)
@@ -221,20 +122,20 @@ func (gc *GcEnv) destruct() {
 }
 
 type CollectStats struct {
-	visitedDirectories    uint64
-	visitedEdges          uint64
-	collectedEdges        uint64
-	destructedDirectories uint64
+	VisitedDirectories    uint64
+	VisitedEdges          uint64
+	CollectedEdges        uint64
+	DestructedDirectories uint64
 }
 
 // returns whether all the edges were removed
-func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership, dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) (bool, error) {
+func (gc *Env) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership, dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody) (bool, error) {
 	policy := SnapshotPolicy{
 		DeleteAfterTime:     time.Duration(dirInfo.DeleteAfterTime),
 		DeleteAfterVersions: int(dirInfo.DeleteAfterVersions),
 	}
 	gc.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
-	stats.visitedEdges = stats.visitedEdges + uint64(len(edges))
+	stats.VisitedEdges = stats.VisitedEdges + uint64(len(edges))
 	now := msgs.Now()
 	toCollect := policy.edgesToRemove(now, edges)
 	gc.Debug("%v: will remove %d edges out of %d", dirId, toCollect, len(edges))
@@ -283,12 +184,12 @@ func (gc *GcEnv) applyPolicy(stats *CollectStats, edges []msgs.EdgeWithOwnership
 		if err != nil {
 			return false, fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
 		}
-		stats.collectedEdges++
+		stats.CollectedEdges++
 	}
 	return toCollect == len(edges), nil
 }
 
-func (gc *GcEnv) resolveExternalDirectoryInfo(dirId msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
+func (gc *Env) resolveExternalDirectoryInfo(dirId msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
 	sock, err := request.ShardSocket(dirId.Shard())
 	if err != nil {
 		return nil, fmt.Errorf("could not open socket to perform stat in external shard %v to resolve directory info: %w", dirId.Shard(), err)
@@ -304,7 +205,7 @@ func (gc *GcEnv) resolveExternalDirectoryInfo(dirId msgs.InodeId) (*msgs.Directo
 	return gc.resolveDirectoryInfo(dirId, &statResp)
 }
 
-func (gc *GcEnv) resolveDirectoryInfo(dirId msgs.InodeId, statResp *msgs.StatDirectoryResp) (*msgs.DirectoryInfoBody, error) {
+func (gc *Env) resolveDirectoryInfo(dirId msgs.InodeId, statResp *msgs.StatDirectoryResp) (*msgs.DirectoryInfoBody, error) {
 	// we have the data directly in the stat response
 	if len(statResp.Info.Body) > 0 {
 		dirInfoBody := &statResp.Info.Body[0]
@@ -327,9 +228,9 @@ func (gc *GcEnv) resolveDirectoryInfo(dirId msgs.InodeId, statResp *msgs.StatDir
 	return dirInfoBody, nil
 }
 
-func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error {
+func (gc *Env) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error {
 	gc.Debug("%v: collecting, dry=%v", dirId, gc.Dry)
-	stats.visitedDirectories++
+	stats.VisitedDirectories++
 
 	statReq := msgs.StatDirectoryReq{
 		Id: dirId,
@@ -397,13 +298,13 @@ func (gc *GcEnv) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error
 					return fmt.Errorf("error while trying to remove directory inode: %w", err)
 				}
 			}
-			stats.destructedDirectories++
+			stats.DestructedDirectories++
 		}
 	}
 	return nil
 }
 
-func (gc *GcEnv) collectInner() (CollectStats, error) {
+func (gc *Env) collectInner() (CollectStats, error) {
 	var stats CollectStats
 
 	shardSocket, err := request.ShardSocket(gc.Shid)
@@ -442,59 +343,14 @@ func (gc *GcEnv) collectInner() (CollectStats, error) {
 	return stats, nil
 }
 
-func (gc *GcEnv) collect() {
+func (gc *Env) Collect() {
 	stats, err := gc.collectInner()
 	if err != nil {
 		gc.RaiseAlert(err)
 	}
 	sleepDuration := time.Minute
-	debug := stats.collectedEdges == 0 && stats.destructedDirectories == 0
+	debug := stats.CollectedEdges == 0 && stats.DestructedDirectories == 0
 	gc.Log(debug, "stats after one GC iteration: %+v", stats)
 	gc.Log(debug, "finished GC'ing files, will sleep for %v", sleepDuration)
 	time.Sleep(sleepDuration)
-}
-
-func (gc *GcEnv) run(panicChan chan error, body func(gc *GcEnv)) {
-	defer func() {
-		if err := recover(); err != nil {
-			gc.RaiseAlert(fmt.Errorf("PANIC %v", err))
-			gc.LogMutex.Lock()
-			gc.Logger.Printf("%s[%d]: PANIC %v. Stacktrace:", gc.Role, gc.Shid, err)
-			for _, line := range strings.Split(string(debug.Stack()), "\n") {
-				gc.Logger.Printf("%s[%d]: %s", gc.Role, gc.Shid, line)
-			}
-			gc.LogMutex.Unlock()
-			panicChan <- fmt.Errorf("%s[%v]: PANIC %v", gc.Role, gc.Shid, err)
-		}
-	}()
-	for {
-		body(gc)
-	}
-}
-
-func Run(verbose bool) {
-	logger := log.New(os.Stderr, "", log.Lshortfile)
-	panicChan := make(chan error, 1)
-	env := GcEnv{
-		Logger:            logger,
-		LogMutex:          new(sync.Mutex),
-		Timeout:           10 * time.Second,
-		CDCKey:            cdckey.CDCKey(),
-		Verbose:           verbose,
-		DirInfoCache:      map[msgs.InodeId]CachedDirInfo{},
-		DirInfoCacheMutex: new(sync.RWMutex),
-	}
-	logger.Printf("starting one collector and one destructor per shard.")
-	for shid := 0; shid < 256; shid++ {
-		destructor := env
-		env.Role = "destructor"
-		env.Shid = msgs.ShardId(shid)
-		go destructor.run(panicChan, (*GcEnv).destruct)
-		collector := env
-		env.Role = "collector"
-		env.Shid = msgs.ShardId(shid)
-		go collector.run(panicChan, (*GcEnv).collect)
-	}
-	err := <-panicChan
-	logger.Fatal(fmt.Errorf("got fatal error, tearing down: %w", err))
 }

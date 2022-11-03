@@ -19,13 +19,12 @@ from msgs import *
 from error import *
 import crypto as crypto
 
-
-LOCAL_HOST = '127.0.0.1'
+LOCALHOST = '127.0.0.1'
 
 async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, ShardResponseBody]:
     port = shard_to_port(shard)
     request_id = eggs_time()
-    target = (LOCAL_HOST, port)
+    target = (LOCALHOST, port)
     req = ShardRequest(request_id=request_id, body=req_body)
     packed_req = req.pack()
     with trio.socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
@@ -45,7 +44,7 @@ async def send_shard_request(shard: int, req_body: ShardRequestBody, timeout_sec
 
 async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) -> Union[EggsError, CDCResponseBody]:
     request_id = eggs_time()
-    target = (LOCAL_HOST, CDC_PORT)
+    target = (LOCALHOST, CDC_PORT)
     req = CDCRequest(request_id=request_id, body=req_body)
     packed_req = bincode.pack(req)
     packed_resp: bytes
@@ -62,28 +61,29 @@ async def send_cdc_request(req_body: CDCRequestBody, timeout_secs: float = 2.0) 
     assert request_id == response.request_id
     return response.body
 
-async def read_block(block: FetchedBlock) -> bytes:
-    ip = socket.inet_ntoa(block.ip)
-    msg = struct.pack('<cQ', b'f', block.block_id)
-    conn = await trio.open_tcp_stream(ip, block.port) # TODO how promptly is this closed?
+async def read_block(*, block_services: List[BlockService], block_size: int, block: FetchedBlock) -> bytes:
+    block_service = block_services[block.block_service_ix]
+    ip = socket.inet_ntoa(block_service.ip)
+    msg = struct.pack('<QcQ', block_service.id, b'f', block.block_id)
+    conn = await trio.open_tcp_stream(ip, block_service.port) # TODO how promptly is this closed?
     await conn.send_all(msg)
     reply = await conn.receive_some(5)
     assert len(reply) == 5
     kind, ret_block_sz = struct.unpack('<cI', reply)
     if kind != b'F':
         raise Exception(f'Bad reply {reply!r}')
-    if ret_block_sz != block.size:
-        raise Exception(f'Block {block.block_id} inconsistent size: metadata says {block.size}, block service says {ret_block_sz}')
+    if ret_block_sz != block_size:
+        raise Exception(f'Block {block.block_id} inconsistent size: metadata says {block_size}, block service says {ret_block_sz}')
     # TODO check crc32
     data = b''
-    while len(data) < block.size:
-        data += await conn.receive_some(block.size - len(data))
+    while len(data) < block_size:
+        data += await conn.receive_some(block_size - len(data))
     return data
 
 # Writes block, returns proof
 async def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
-    header = struct.pack('<cQ4sI8s', b'w', block.block_id, crc32, len(data), block.certificate)
-    conn = await trio.open_tcp_stream(socket.inet_ntoa(block.ip), block.port)
+    header = struct.pack('<QcQ4sI8s', block.block_service_id, b'w', block.block_id, crc32, len(data), block.certificate)
+    conn = await trio.open_tcp_stream(socket.inet_ntoa(block.block_service_ip), block.block_service_port)
     await conn.send_all(header + data)
     resp = await conn.receive_some(17)
     assert len(resp) == 17
@@ -237,9 +237,11 @@ class Operations(pyfuse3.Operations):
                 else:
                     assert not span.body_bytes
                     assert num_data_blocks(span.parity) == 1
-                    if span.body_blocks[0].flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
+                    data_block = span.body_blocks[0]
+                    block_service = spans.block_services[data_block.block_service_ix]
+                    if block_service.flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
                         raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
-                    span_data = await read_block(span.body_blocks[0])
+                    span_data = await read_block(block_services=spans.block_services, block_size=span.block_size, block=span.body_blocks[0])
                 # we might be in the middle of a span
                 data += span_data[max(0, offset-span.byte_offset):]
             offset = spans.next_offset
@@ -283,7 +285,7 @@ class Operations(pyfuse3.Operations):
         assert len(data) > 255
         crc32 = crypto.crc32c(data)
         size = len(data)
-        body_blocks = [NewBlockInfo(crc32, size) for _ in range(data_blocks+parity_blocks)]
+        body_blocks = [NewBlockInfo(crc32) for _ in range(data_blocks+parity_blocks)]
         span = cast(AddSpanInitiateResp, await self._send_shard_req(inode_id_shard(file_id), AddSpanInitiateReq(
             file_id=file_id,
             cookie=under_construction.cookie,
@@ -292,8 +294,10 @@ class Operations(pyfuse3.Operations):
             parity=policy.parity,
             crc32=crc32,
             size=size,
+            block_size=size,
             body_blocks=body_blocks,
             body_bytes=b'',
+            blacklist=[],
         )))
         assert len(span.blocks) == data_blocks+parity_blocks
         proofs = [BlockProof(block.block_id, await write_block(block=block, data=data, crc32=crc32)) for block in span.blocks]
@@ -322,8 +326,10 @@ class Operations(pyfuse3.Operations):
             parity=0,
             crc32=crc32,
             size=len(data),
+            block_size=len(data),
             body_blocks=[],
             body_bytes=data,
+            blacklist=[],
         )))
         under_construction.current_span = bytearray()
         under_construction.offset = under_construction.offset + len(data)

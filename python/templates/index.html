@@ -5,6 +5,7 @@
 <table border=1 cellpadding=10>
 <thead>
 <tr>
+    <th>ID
     <th>Address
     <th>Storage class
     <th>Failure domain
@@ -15,6 +16,7 @@
 <tbody>
 {% for item in devices %}
 <tr>
+    <td>{{ item.id }}
     <td>{{ item.ip_port|resolve }}
     <td>{{ item.storage_class_str }}
     <td>{{ item.failure_domain }}

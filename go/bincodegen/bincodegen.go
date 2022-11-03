@@ -643,10 +643,10 @@ func main() {
 		"BAD_COOKIE",
 		"INCONSISTENT_STORAGE_CLASS_PARITY",
 		"LAST_SPAN_STATE_NOT_CLEAN",
-		"COULD_NOT_PICK_BLOCK_SERVERS",
+		"COULD_NOT_PICK_BLOCK_SERVICES",
 		"BAD_SPAN_BODY",
 		"SPAN_NOT_FOUND",
-		"BLOCK_SERVER_NOT_FOUND",
+		"BLOCK_SERVICE_NOT_FOUND",
 		"CANNOT_CERTIFY_BLOCKLESS_SPAN",
 		"BAD_NUMBER_OF_BLOCKS_PROOFS",
 		"BAD_BLOCK_PROOF",
@@ -868,6 +868,8 @@ func main() {
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.DirectoryInfoBody{}),
 		reflect.TypeOf(msgs.DirectoryInfo{}),
+		reflect.TypeOf(msgs.BlockServiceBlacklist{}),
+		reflect.TypeOf(msgs.BlockService{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)

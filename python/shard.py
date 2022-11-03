@@ -65,8 +65,8 @@ def init_db(shard: int, db: sqlite3.Connection):
         {'shard': shard, 'secret_key': secrets.token_bytes(16)}
     )
     cur.execute('''
-        create table if not exists block_servers (
-            id integer primary key autoincrement,
+        create table if not exists block_services (
+            id integer primary key,
             secret_key blob not null unique,
             ip str not null,
             port integer not null,
@@ -74,14 +74,11 @@ def init_db(shard: int, db: sqlite3.Connection):
             failure_domain text not null,
             terminal bool not null,
             stale bool not null,
-            write_weight real not null,
-            -- This is whether the block server was present in the last shuckle
-            -- update. We keep all the others to have stable ids.
-            active bool not null
+            write_weight real not null
         )
     ''')
-    cur.execute('create unique index if not exists block_servers_by_addr on block_servers (ip, port)')
-    cur.execute('create index if not exists block_servers_by_storage_class on block_servers (storage_class)')
+    cur.execute('create unique index if not exists block_services_by_addr on block_services (ip, port)')
+    cur.execute('create index if not exists block_services_by_storage_class on block_services (storage_class)')
     # TODO is it worth including creation time for files/dir objects themselves?
     # I think it _would_ be useful for forensics/debugging
     cur.execute(f'''
@@ -110,6 +107,7 @@ def init_db(shard: int, db: sqlite3.Connection):
             parity integer not null,
             crc32 integer not null,
             size integer not null,
+            block_size integer not null,
             -- * ZERO_FILL_STORAGE: empty blob
             -- * INLINE_STORAGE: blob with length < 256
             -- * All the others: json list of Blocks
@@ -164,25 +162,27 @@ def init_db(shard: int, db: sqlite3.Connection):
     cur.execute(f'''
         create table if not exists block_to_span (
             block_id integer not null primary key,
-            block_server_id integer not null,
+            block_service_id integer not null,
             file_id integer not null,
             byte_offset integer not null,
-            -- the defer makes writing some code a bit simpler
+            -- the defer makes writing some code a bit simpler,
+            -- where we manipulate this leaving temporarily inconsistent state
+            -- while running the transaction.
             foreign key (file_id, byte_offset) references spans (file_id, byte_offset) deferrable initially deferred
         )
     ''')
+    cur.execute('create index if not exists spans_to_block_service on block_to_span (block_service_id)')
     db.commit()
 
 class Block(TypedDict):
-    block_server_id: int
+    block_service_id: int
     block_id: int
     crc32: int
-    size: int
 
-def block_add_cert(block: Block, key: crypto.ExpandedKey) -> bytes:
+def block_add_cert(*, block_size: int, block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(32)
-    struct.pack_into('<cQ4sI', b, 0, b'w', block['block_id'], crc32_from_int(block['crc32']), block['size'])
+    struct.pack_into('<cQ4sI', b, 0, b'w', block['block_id'], crc32_from_int(block['crc32']), block_size)
     return crypto.compute_mac(b, key)
 
 def block_add_proof(block: Union[Block, BlockInfo], key: crypto.ExpandedKey) -> bytes:
@@ -211,19 +211,24 @@ class Span(TypedDict):
     crc32: int
     body: Union[bytes, List[Block]]
     size: int
+    block_size: int
 
 def check_span_body(span: Span) -> bool:
     crc32 = crc32_from_int(span['crc32'])
+
+    # Note that the span size might be bigger or smaller than
+    # the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
+    # for details.
 
     # The two special cases
     if span['storage_class'] == ZERO_FILL_STORAGE:
         if span['body'] != b'' or span['parity'] != 0:
             return False
-        if crypto.crc32c(b'\0' * span['size']) != crc32 :
+        if crypto.crc32c(b'\0' * span['size']) != crc32:
             return False
         return True
     if span['storage_class'] == INLINE_STORAGE:
-        if not (span['parity'] == 0 and isinstance(span['body'], bytes) and span['size'] == len(span['body'])):
+        if not (span['parity'] == 0 and isinstance(span['body'], bytes) and span['block_size'] == len(span['body'])):
             return False
         if crypto.crc32c(span['body']) != crc32:
             return False
@@ -232,9 +237,6 @@ def check_span_body(span: Span) -> bool:
     if not isinstance(span['body'], list):
         return False
     
-    # Check size consistency. The span size might be bigger or smaller than
-    # the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
-    # for details.
     data_blocks = num_data_blocks(span['parity'])
     
     # consistency check for mirroring: they must be all the same
@@ -254,38 +256,36 @@ def check_span_body(span: Span) -> bool:
         # for the shard to validate).
         blocks_crc32 = b'\0\0\0\0'
         for block in span['body'][:data_blocks]:
-            blocks_crc32 = crypto.crc32c_combine(blocks_crc32, crc32_from_int(block['crc32']), block['size'])
+            blocks_crc32 = crypto.crc32c_combine(blocks_crc32, crc32_from_int(block['crc32']), span['block_size'])
         if crc32 != blocks_crc32:
             return False
         # TODO check parity block CRC32
 
     return True
 
-def pick_block_servers(cur: sqlite3.Cursor, storage_class: int, num: int) -> Optional[List[Dict[str, Any]]]:
+def pick_block_services(cur: sqlite3.Cursor, storage_class: int, num: int) -> Optional[List[Dict[str, Any]]]:
     servers = list(cur.execute(
         '''
-            select failure_domain, write_weight, id, ip, port, secret_key from block_servers
-                where storage_class = :storage_class and active and not terminal and not stale
+            select failure_domain, write_weight, id, ip, port, secret_key from block_services
+                where storage_class = :storage_class and not terminal and not stale
                 order by failure_domain
         ''',
         {'storage_class': storage_class}
     ).fetchall())
-    servers_weights = list(map(operator.itemgetter('write_weight'), servers))
-    selected_block_servers: List[Dict[str, Any]] = []
-    while len(selected_block_servers) < num:
+    selected_block_services: List[Dict[str, Any]] = []
+    # TODO obviously very slow (quadratic) if we have many failure domains
+    while len(selected_block_services) < num:
         if not servers:
             return None
-        server = tuple(random.choices(servers, weights=servers_weights))[0]
-        selected_block_servers.append(server)
-        servers, servers_weights = zip(
-            *filter(lambda x: x[0]['failure_domain'] != server['failure_domain'], zip(servers, servers_weights))
-        )
-    return selected_block_servers
+        server = tuple(random.choices(servers, weights=list(map(operator.itemgetter('write_weight'), servers))))[0]
+        selected_block_services.append(server)
+        servers = list(filter(lambda x: x['failure_domain'] != server['failure_domain'], servers))
+    return selected_block_services
 
-def lookup_block_servers(cur: sqlite3.Cursor, ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
+def lookup_block_services(cur: sqlite3.Cursor, ids: Iterable[int]) -> Dict[int, Dict[str, Any]]:
     servers = {}
     unique_ids = list(set(ids))
-    for block in cur.execute(f'select id, ip, port, terminal, stale, secret_key from block_servers where id in ({",".join("?"*len(unique_ids))})', unique_ids):
+    for block in cur.execute(f'select id, ip, port, terminal, stale, secret_key from block_services where id in ({",".join("?"*len(unique_ids))})', unique_ids):
         servers[block['id']] = block
     return servers
 
@@ -748,10 +748,16 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
         return EggsError(ErrCode.INCONSISTENT_STORAGE_CLASS_PARITY)
     resp_blocks: List[BlockInfo] = []
     span_crc32 = crc32_to_int(req.crc32)
+    # preemptively advance deadline, so we can exit early for zero-sized spans
+    cur.execute(
+        'update files set deadline = :deadline where id = :file_id',
+        {'deadline': now+DEADLINE_DURATION, 'file_id': req.file_id}
+    )
     # special case: adding a zero-sized span does nothing
     if req.size == 0:
         if req.storage_class != ZERO_FILL_STORAGE:
             return EggsError(ErrCode.BAD_SPAN_BODY)
+        return AddSpanInitiateResp([])
     # req.byte_offset is at the end of file: we actually need to create a span
     elif req.byte_offset == file['size']:
         if file['last_span_state'] != SpanState.CLEAN:
@@ -761,44 +767,48 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             'storage_class': req.storage_class,
             'crc32': span_crc32,
             'size': req.size,
+            'block_size': req.block_size,
         }
         if blockless:
             # nothing to do, just store the body, which won't be anything in zero-fill case
-            assert len(req.body_blocks) == 0
-            if req.storage_class == ZERO_FILL_STORAGE:
-                assert len(req.body_bytes) == 0
+            if len(req.body_blocks) != 0:
+                return EggsError(ErrCode.BAD_SPAN_BODY)
+            if req.storage_class == INLINE_STORAGE and req.size != req.block_size:
+                return EggsError(ErrCode.BAD_SPAN_BODY)
+            if req.storage_class == ZERO_FILL_STORAGE and len(req.body_bytes) != 0:
+                return EggsError(ErrCode.BAD_SPAN_BODY)
             span['body'] = req.body_bytes
             span['state'] = SpanState.CLEAN
         else:
             # we need to actually store the span
-            block_servers = pick_block_servers(cur, req.storage_class, num_total_blocks(req.parity))
-            if block_servers is None:
-                return EggsError(ErrCode.COULD_NOT_PICK_BLOCK_SERVERS)
-            assert len(block_servers) == len(req.body_blocks)
+            block_services = pick_block_services(cur, req.storage_class, num_total_blocks(req.parity))
+            if block_services is None:
+                return EggsError(ErrCode.COULD_NOT_PICK_BLOCK_SERVICES)
+            assert len(block_services) == len(req.body_blocks)
             assert len(req.body_bytes) == 0
             span['state'] = SpanState.DIRTY
             span['body'] = [] # the blocks
-            for block_info, block_server in zip(cast(List[NewBlockInfo], req.body_blocks), block_servers):
+            for block_info, block_service in zip(cast(List[NewBlockInfo], req.body_blocks), block_services):
                 block_id = shard_info.next_block_id(cur, now)
                 block: Block = {
-                    'block_server_id': block_server['id'],
+                    'block_service_id': block_service['id'],
                     'block_id': block_id,
                     'crc32': crc32_to_int(block_info.crc32),
-                    'size': block_info.size,
                 }
                 span['body'].append(block)
                 sql_insert(
                     cur, 'block_to_span',
-                    block_server_id=block['block_server_id'],
+                    block_service_id=block['block_service_id'],
                     block_id=block_id,
                     file_id=req.file_id,
                     byte_offset=req.byte_offset,
                 )
                 resp_blocks.append(BlockInfo(
-                    ip=socket.inet_aton(block_server['ip']),
-                    port=block_server['port'],
+                    block_service_ip=socket.inet_aton(block_service['ip']),
+                    block_service_port=block_service['port'],
+                    block_service_id=block_service['id'],
                     block_id=block_id,
-                    certificate=block_add_cert(block, crypto.aes_expand_key(block_server['secret_key'])),
+                    certificate=block_add_cert(block_size=req.block_size, block=block, key=crypto.aes_expand_key(block_service['secret_key'])),
                 ))
         if not check_span_body(cast(Span, span)):
             return EggsError(ErrCode.BAD_SPAN_BODY)
@@ -814,13 +824,14 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
     # otherwise, we fetch the existing span
     else:
         existing_span = cur.execute(
-            'select * from spans where file_id = :file_id and byte_offset = :byte_offset and storage_class = :storage_class and crc32 = :crc32 and size = :size and parity = :parity',
+            'select * from spans where file_id = :file_id and byte_offset = :byte_offset and storage_class = :storage_class and crc32 = :crc32 and size = :size and block_size = :block_size and parity = :parity',
             {
                 'file_id': req.file_id,
                 'byte_offset': req.byte_offset,
                 'storage_class': req.storage_class,
                 'crc32': span_crc32,
                 'size': req.size,
+                'block_size': req.block_size,
                 'parity': req.parity,
             }
         ).fetchone()
@@ -830,23 +841,20 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             body = json.loads(existing_span['body'])
             assert isinstance(body, list)
             for block in body:
-                bserver_id = block['block_server_id']
-                bserver = lookup_block_servers(cur, (bserver_id,)).get(bserver_id)
-                if bserver is None:
-                    return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
+                block_service_id = block['block_service_id']
+                block_server = lookup_block_services(cur, (block_service_id,)).get(block_service_id)
+                if block_server is None:
+                    return EggsError(ErrCode.BLOCK_SERVICE_NOT_FOUND)
                 resp_blocks.append(BlockInfo(
-                    ip=socket.inet_aton(bserver['ip']),
-                    port=bserver['port'],
+                    block_service_ip=socket.inet_aton(block_server['ip']),
+                    block_service_port=block_server['port'],
+                    block_service_id=block_server['id'],
                     block_id=block['block_id'],
-                    certificate=block_add_cert(block, crypto.aes_expand_key(bserver['secret_key'])),
+                    certificate=block_add_cert(block_size=req.block_size, block=block, key=crypto.aes_expand_key(block_server['secret_key'])),
                 ))
-    # advance deadline
-    cur.execute(
-        'update files set deadline = :deadline where id = :file_id',
-        {'deadline': now+DEADLINE_DURATION, 'file_id': req.file_id}
-    )
     return AddSpanInitiateResp(resp_blocks)
 
+# TODO honour block service blacklist
 def add_span_initiate(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Union[EggsError, AddSpanInitiateResp]:
     res = add_span_initiate_inner(cur, req)
     assert check_spans_constraints(cur, req.file_id)
@@ -871,13 +879,13 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
     span_body = cast(List[Block], json.loads(span['body']))
     if len(span_body) != len(req.proofs):
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
-    bservers = lookup_block_servers(cur, map(lambda block: block['block_server_id'], span_body))
+    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], span_body))
     for block, proof in zip(span_body, req.proofs):
         if proof.block_id != block['block_id']:
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
-        bserver = bservers.get(block['block_server_id'])
+        bserver = bservers.get(block['block_service_id'])
         if bserver is None:
-            return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
+            return EggsError(ErrCode.BLOCK_SERVICE_NOT_FOUND)
         if proof.proof != block_add_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
     # update everything in an idempotent fashion
@@ -923,14 +931,15 @@ def remove_span_initiate_inner(cur: sqlite3.Cursor, req: RemoveSpanInitiateReq) 
         blocks = cast(List[Block], json.loads(last_span['body']))
         resp_blocks: List[BlockInfo] = []
         for block in blocks:
-            block_servers = lookup_block_servers(cur, (block['block_server_id'],))
-            assert len(block_servers) == 1
-            block_server = block_servers[block['block_server_id']]
+            block_services = lookup_block_services(cur, (block['block_service_id'],))
+            assert len(block_services) == 1
+            block_service = block_services[block['block_service_id']]
             resp_blocks.append(BlockInfo(
-                ip=socket.inet_aton(block_server['ip']),
-                port=block_server['port'],
+                block_service_ip=socket.inet_aton(block_service['ip']),
+                block_service_port=block_service['port'],
+                block_service_id=block_service['id'],
                 block_id=block['block_id'],
-                certificate=block_delete_cert(block, crypto.aes_expand_key(block_server['secret_key'])),
+                certificate=block_delete_cert(block, crypto.aes_expand_key(block_service['secret_key'])),
             ))
         # condemn the span
         cur.execute(
@@ -967,14 +976,14 @@ def remove_span_certify_inner(cur: sqlite3.Cursor, req: RemoveSpanCertifyReq) ->
     span_body = cast(List[Block], json.loads(span['body']))
     if len(span_body) != len(req.proofs):
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
-    bservers = lookup_block_servers(cur, map(lambda block: block['block_server_id'], span_body))
+    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], span_body))
     deleted_blocks = []
     for block, proof in zip(span_body, req.proofs):
         if proof.block_id != block['block_id']:
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
-        bserver = bservers.get(block['block_server_id'])
+        bserver = bservers.get(block['block_service_id'])
         if bserver is None:
-            return EggsError(ErrCode.BLOCK_SERVER_NOT_FOUND)
+            return EggsError(ErrCode.BLOCK_SERVICE_NOT_FOUND)
         if proof.proof != block_delete_proof(block, crypto.aes_expand_key(bserver['secret_key'])):
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
         deleted_blocks.append(proof.block_id)
@@ -1063,15 +1072,13 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc',
         query_params
     ) # no fetchall -- we don't know how many we're going to fit, so fetch lazily.
-    budget = UDP_MTU - ShardResponse.STATIC_SIZE - FileSpansResp_SIZE_UPPER_BOUND
+    budget = UDP_MTU - ShardResponse.STATIC_SIZE - FileSpansResp.STATIC_SIZE
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
-    needed_block_servers: Set[int] = set()
-    block_id_to_block_server: Dict[int, int] = {}
+    block_services_ids: List[int] = []
     for span in (spans if first_span is None else itertools.chain((first_span,), spans)):
         body_blocks: List[FetchedBlock] = []
         body_bytes = b''
-        resp_body: Union[bytes, List[FetchedBlock]]
         if span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE):
             assert isinstance(span['body'], bytes)
             body_bytes = span['body']
@@ -1079,42 +1086,55 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
             assert isinstance(span['body'], str)
             blocks = cast(List[Block], json.loads(span['body']))
             for block in blocks:
-                # We'll fill in the block server later -- we're in the middle of a query now.
+                try:
+                    block_service_ix = block_services_ids.index(block['block_service_id'])
+                except ValueError:
+                    budget -= BlockService.STATIC_SIZE
+                    if budget < 0:
+                        break
+                    block_service_ix = len(block_services_ids)
+                    block_services_ids.append(block['block_service_id'])
                 body_blocks.append(FetchedBlock(
-                    ip=None, port=None, block_id=block['block_id'], crc32=crc32_from_int(block['crc32']), size=block['size'], flags=None # type: ignore
+                    block_service_ix=block_service_ix,
+                    block_id=block['block_id'],
+                    crc32=crc32_from_int(block['crc32']),
                 ))
-                needed_block_servers.add(block['block_server_id'])
-                block_id_to_block_server[block['block_id']] = block['block_server_id']
         resp_span = FetchedSpan(
             byte_offset=span['byte_offset'],
             parity=span['parity'],
             storage_class=span['storage_class'],
             crc32=crc32_from_int(span['crc32']),
             size=span['size'],
+            block_size=span['block_size'],
             body_blocks=body_blocks,
             body_bytes=body_bytes,
         )
-        size = resp_span.calc_packed_size()
-        if size > budget:
+        budget -= resp_span.calc_packed_size()
+        if budget < 0:
             next_offset = resp_span.byte_offset
             break
-        budget -= size
         resp_spans.append(resp_span)
-    bservers = lookup_block_servers(cur, needed_block_servers)
-    for span in resp_spans:
-        for fetched_block in span.body_blocks:
-            bserver = bservers.get(block_id_to_block_server[fetched_block.block_id])
-            if bserver is None:
-                # don't fail just because we don't know where the bserver is, client may be able to continue using
-                # parity data
-                fetched_block.ip = b'\xff\xff\xff\xff'
-                fetched_block.port = 65535
-                fetched_block.flags = BlockFlags.STALE
-            else:
-                fetched_block.ip = socket.inet_aton(bserver['ip'])
-                fetched_block.port = bserver['port']
-                fetched_block.flags = (bserver['terminal'] & BlockFlags.TERMINAL) | (bserver['stale'] & BlockFlags.STALE)
-    return FileSpansResp(next_offset, resp_spans)
+    block_services: List[BlockService] = []
+    found_block_services = lookup_block_services(cur, block_services_ids)
+    for block_service_id in block_services_ids:
+        block_service = found_block_services.get(block_service_id)
+        if block_service:
+            block_services.append(BlockService(
+                ip=socket.inet_aton(block_service['ip']),
+                port=block_service['port'],
+                id=block_service_id,
+                flags=(block_service['terminal'] & BlockFlags.TERMINAL) | (block_service['stale'] & BlockFlags.STALE),
+            ))
+        else:
+            # don't fail just because we don't know where the block service is, client may be able to
+            # continue using parity data
+            block_services.append(BlockService(
+                ip=b'\xff\xff\xff\xff',
+                port=65535,
+                id=block_service_id,
+                flags=BlockFlags.STALE,
+            ))
+    return FileSpansResp(next_offset, block_services, resp_spans)
 
 def get_directory(cur: sqlite3.Cursor, id: int, *, allow_snapshot: bool) -> Union[EggsError, Dict[str, Any]]:
     dir = cur.execute('select * from directories where id = :dir_id', {'dir_id': id}).fetchone()
@@ -1417,7 +1437,8 @@ def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[E
     assert cur.rowcount == 1
     return SetDirectoryInfoResp()
 
-class BlockServerInfo(TypedDict):
+class BlockServiceInfo(TypedDict):
+    id: int
     ip: str
     port: int
     storage_class: int
@@ -1428,33 +1449,29 @@ class BlockServerInfo(TypedDict):
     secret_key: bytes
 
 @dataclass
-class UpdateBlockServersInfoReq:
-    block_servers: List[BlockServerInfo]
+class UpdateBlockServicesInfoReq:
+    block_services: List[BlockServiceInfo]
 
 @dataclass
-class UpdateBlockServersInfoResp:
+class UpdateBlockServicesInfoResp:
     pass
 
-def update_block_servers_info(cur: sqlite3.Cursor, req: UpdateBlockServersInfoReq) -> UpdateBlockServersInfoResp:
-    # TODO test, I think this works but I need to test this better
-    cur.execute('update block_servers set active = FALSE')
+def update_block_services_info(cur: sqlite3.Cursor, req: UpdateBlockServicesInfoReq) -> UpdateBlockServicesInfoResp:
+    cur.execute('delete from block_services')
     cur.executemany(
         '''
-            insert into block_servers
-                (active, ip, port, secret_key, storage_class, failure_domain, write_weight, terminal, stale) values (TRUE, :ip, :port, :secret_key, :storage_class, :failure_domain, :write_weight, :terminal, :stale)
-                on conflict (ip, port)
-                    do update set
-                        active = TRUE, secret_key = excluded.secret_key, storage_class = excluded.storage_class,
-                        failure_domain = :failure_domain, write_weight = :write_weight, terminal = :terminal, stale = :stale
+            insert into block_services
+                (id, ip, port, secret_key, storage_class, failure_domain, write_weight, terminal, stale)
+                values (:id, :ip, :port, :secret_key, :storage_class, :failure_domain, :write_weight, :terminal, :stale)
         ''',
-        req.block_servers,
+        req.block_services,
     )
-    return UpdateBlockServersInfoResp()
+    return UpdateBlockServicesInfoResp()
 
 # This includes requests that we only issue internally, but essentially this is
 # LogEntry
-ShadRequestBodyInternal = Union[ShardRequestBody, UpdateBlockServersInfoReq]
-ShardResponseBodyInternal = Union[ShardResponseBody, UpdateBlockServersInfoResp]
+ShadRequestBodyInternal = Union[ShardRequestBody, UpdateBlockServicesInfoReq]
+ShardResponseBodyInternal = Union[ShardResponseBody, UpdateBlockServicesInfoResp]
 
 def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) -> ShardResponseBody:
     logging.debug(f'Starting to execute {type(req_body)}')
@@ -1475,8 +1492,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = construct_file(cur, req_body)
         elif isinstance(req_body, VisitTransientFilesReq):
             resp_body = visit_transient_files(cur, req_body)
-        elif isinstance(req_body, UpdateBlockServersInfoReq):
-            resp_body = update_block_servers_info(cur, req_body)
+        elif isinstance(req_body, UpdateBlockServicesInfoReq):
+            resp_body = update_block_services_info(cur, req_body)
         elif isinstance(req_body, AddSpanInitiateReq):
             resp_body = add_span_initiate(cur, req_body)
         elif isinstance(req_body, AddSpanCertifyReq):
@@ -1624,21 +1641,21 @@ class ShardTests(unittest.TestCase):
         logging.debug(f'Running shard test with db dir {db_dir}')
         self.shard = TestDriver(db_dir, 0)
 
-        self.test_block_servers: List[BlockServerInfo] = []
+        self.test_block_services: List[BlockServiceInfo] = []
         for i in range(50):
-            self.test_block_servers.append(BlockServerInfo(
+            self.test_block_services.append(BlockServiceInfo(
+                id=i,
                 ip=f'192.168.0.{i}',
                 port=0,
                 storage_class=2,
-                failure_domain='NONE',
+                failure_domain=str(i),
                 write_weight=random.uniform(0.0, 1.0),
                 secret_key=secrets.token_bytes(16),
                 terminal=False,
                 stale=False,
             ))
-        # we use the IP to uniquely recognize these later on
-        self.test_block_servers_by_ip = {
-            socket.inet_aton(block_server['ip']): block_server for block_server in self.test_block_servers
+        self.test_block_services_by_id = {
+            block_service['id']: block_service for block_service in self.test_block_services
         }
 
     def test_sql_constraints(self):
@@ -1846,9 +1863,21 @@ class ShardTests(unittest.TestCase):
 
     def test_spans(self):
         # TODO add check that the span file state is clean after adding INLINE/ZERO spans, dirty afterwards
-        self.shard.execute_internal_ok(UpdateBlockServersInfoReq(self.test_block_servers))
+        self.shard.execute_internal_ok(UpdateBlockServicesInfoReq(self.test_block_services))
         transient_file = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
-        add_span_req = AddSpanInitiateReq(file_id=transient_file.id, cookie=transient_file.cookie, byte_offset=0, storage_class=0, parity=0, crc32=b'0000', size=0, body_bytes=b'', body_blocks=[])
+        add_span_req = AddSpanInitiateReq(
+            file_id=transient_file.id,
+            cookie=transient_file.cookie,
+            byte_offset=0,
+            storage_class=ZERO_FILL_STORAGE,
+            parity=0,
+            crc32=b'0000',
+            size=0,
+            block_size=0,
+            blacklist=[],
+            body_bytes=b'',
+            body_blocks=[],
+        )
         byte_offset = 0
         # Can't add a block ahead
         inline_span_req = replace(
@@ -1857,6 +1886,7 @@ class ShardTests(unittest.TestCase):
             storage_class=INLINE_STORAGE,
             parity=0,
             size=len(b'test-inline-block'),
+            block_size=len(b'test-inline-block'),
             body_bytes=b'test-inline-block',
             crc32=crypto.crc32c(b'test-inline-block'),
         )
@@ -1868,7 +1898,7 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(replace(inline_span_req, size=0, body_bytes=b'', crc32=(b'\0'*4)), ErrCode.BAD_SPAN_BODY)
         # can't have bad crc
         self.shard.execute_err(replace(inline_span_req, crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
-        self.shard.execute_err(replace(inline_span_req, size=100, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
+        self.shard.execute_err(replace(inline_span_req, size=100, block_size=0, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
         inline_span = self.shard.execute_ok(inline_span_req)
         byte_offset += inline_span_req.size
         transient_file_1 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
@@ -1879,12 +1909,12 @@ class ShardTests(unittest.TestCase):
         transient_file_2 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
         assert transient_file_2.deadline_time > transient_file_1.deadline_time
         # empty, only bumps the deadline
-        self.shard.execute_ok(replace(inline_span_req, size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=(b'\0\0\0\0')))
+        self.shard.execute_ok(replace(inline_span_req, size=0, block_size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=(b'\0\0\0\0')))
         # non-empty zero span
-        self.shard.execute_ok(replace(inline_span_req, size=100, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=crypto.crc32c(b'\0'*100)))
+        self.shard.execute_ok(replace(inline_span_req, size=100, block_size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=crypto.crc32c(b'\0'*100)))
         byte_offset += 100
         # onto proper blocks
-        data = random.randbytes(1000)
+        data = random.randbytes(100*3) # For RAID5
         data_crc32 = crypto.crc32c(data)
         proper_span_req = replace(
             add_span_req,
@@ -1893,31 +1923,28 @@ class ShardTests(unittest.TestCase):
             parity=create_parity_mode(1, 0),
             crc32=data_crc32,
             size=len(data),
+            block_size=len(data),
             body_bytes=b'',
-            body_blocks=[NewBlockInfo(data_crc32, len(data))],
+            body_blocks=[NewBlockInfo(data_crc32)],
         )
-        # bad size/crc
-        self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(data_crc32, len(data)-1)]))
-        data_1 = data[:100]
-        data_1_crc32 = crypto.crc32c(data_1)
-        data_2 = data[100:200]
-        data_2_crc32 = crypto.crc32c(data_2)
-        data_3 = data[200:]
-        data_3_crc32 = crypto.crc32c(data_3)
-        assert crypto.crc32c_combine(crypto.crc32c_combine(data_1_crc32, data_2_crc32, len(data_2)), data_3_crc32, len(data_3)) == data_crc32
-        self.shard.execute_err(replace(
-            proper_span_req,
-            parity=create_parity_mode(3,1),
-            body_bytes=b'',
-            body_blocks=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)-1), NewBlockInfo(b'1234', 100)])
+        # bad CRC
+        self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(b'4321')]), ErrCode.BAD_SPAN_BODY)
+        self.shard.execute_err(
+            replace(
+                proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(b'1234'), NewBlockInfo(b'4321')]
+            ),
+            ErrCode.BAD_SPAN_BODY,
         )
-        self.shard.execute_err(replace(proper_span_req, body_bytes=b'', body_blocks=[NewBlockInfo(b'4321', 10000)]))
-        self.shard.execute_err(replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(b'1234', 10000), NewBlockInfo(b'4321', 10000)]))
         # no mirroring
         proper_span_resp = cast(AddSpanInitiateResp, self.shard.execute_ok(proper_span_req))
         byte_offset += proper_span_req.size
         # RAID1
-        mirrored_span_req = replace(proper_span_req, parity=create_parity_mode(1,1), body_bytes=b'', body_blocks=[NewBlockInfo(data_crc32, len(data)), NewBlockInfo(data_crc32, len(data))])
+        mirrored_span_req = replace(
+            proper_span_req,
+            parity=create_parity_mode(1,1),
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(data_crc32), NewBlockInfo(data_crc32)]
+        )
         # can't insert at the same position with different parity
         self.shard.execute_err(mirrored_span_req, ErrCode.SPAN_NOT_FOUND)
         mirrored_span_req = replace(mirrored_span_req, byte_offset=byte_offset)
@@ -1937,22 +1964,33 @@ class ShardTests(unittest.TestCase):
         # certifying for real
         self.shard.execute_ok(replace(
             certify_req, byte_offset=proper_span_req.byte_offset,
-            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in proper_span_resp.blocks]
+            proofs=[BlockProof(
+                block.block_id,
+                block_add_proof(block, crypto.aes_expand_key(self.test_block_services_by_id[block.block_service_id]['secret_key']))
+            ) for block in proper_span_resp.blocks]
         ))
         mirrored_span_resp = self.shard.execute_ok(mirrored_span_req)
         byte_offset += mirrored_span_req.size
         # certify this other one...
         self.shard.execute_ok(replace(
             certify_req, byte_offset=mirrored_span_req.byte_offset,
-            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in mirrored_span_resp.blocks],
+            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_services_by_id[block.block_service_id]['secret_key']))) for block in mirrored_span_resp.blocks],
         ))
         # RAID5
+        data_1 = data[:len(data)//3]
+        data_2 = data[len(data)//3:2*len(data)//3]
+        data_3 = data[2*len(data)//3:3*len(data)//3]
+        assert len(data_1) == len(data_2) and len(data_2) == len(data_3)
+        data_1_crc32 = crypto.crc32c(data_1)
+        data_2_crc32 = crypto.crc32c(data_2)
+        data_3_crc32 = crypto.crc32c(data_3)
         raid5_span_req = replace(
             proper_span_req,
             byte_offset=byte_offset,
             parity=create_parity_mode(3,1),
+            block_size=len(data)//3,
             body_bytes=b'',
-            body_blocks=[NewBlockInfo(data_1_crc32, len(data_1)), NewBlockInfo(data_2_crc32, len(data_2)), NewBlockInfo(data_3_crc32, len(data_3)), NewBlockInfo(b'1234', 100)]
+            body_blocks=[NewBlockInfo(data_1_crc32), NewBlockInfo(data_2_crc32), NewBlockInfo(data_3_crc32), NewBlockInfo(b'1234')]
         )
         raid5_span_resp = cast(AddSpanInitiateResp, self.shard.execute_ok(raid5_span_req))
         assert len(set([b.block_id for b in raid5_span_resp.blocks])) == len(raid5_span_resp.blocks)
@@ -1967,7 +2005,10 @@ class ShardTests(unittest.TestCase):
         # certify, again
         self.shard.execute_ok(replace(
             certify_req, byte_offset=raid5_span_req.byte_offset,
-            proofs=[BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_servers_by_ip[block.ip]['secret_key']))) for block in raid5_span_resp.blocks],
+            proofs=[
+                BlockProof(block.block_id, block_add_proof(block, crypto.aes_expand_key(self.test_block_services_by_id[block.block_service_id]['secret_key'])))
+                for block in raid5_span_resp.blocks
+            ],
         ))
         # and now linking should go through
         self.shard.execute_ok(link_req)
@@ -1992,7 +2033,7 @@ class ShardTests(unittest.TestCase):
         # check that all the blocks could be found
         for span in spans.spans:
             for block in span.body_blocks:
-                assert not (block.flags & BlockFlags.STALE)
+                assert not (spans.block_services[block.block_service_ix].flags & BlockFlags.STALE)
         # check that starting in the middle of a span returns the same
         spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(root_dir_files.results[0].target_id, 1)))
         assert spans == spans_2
@@ -2080,8 +2121,9 @@ class ShardTests(unittest.TestCase):
     
 SHUCKLE_POLL_PERIOD_SEC = 60
 
-def shuckle_json_to_block_server(json_obj: Dict[str, Any]) -> BlockServerInfo:
-    return BlockServerInfo(
+def shuckle_json_to_block_service(json_obj: Dict[str, Any]) -> BlockServiceInfo:
+    return BlockServiceInfo(
+        id=json_obj['id'],
         ip=json_obj['ip'],
         port=json_obj['port'],
         storage_class=json_obj['storage_class'],
@@ -2093,21 +2135,21 @@ def shuckle_json_to_block_server(json_obj: Dict[str, Any]) -> BlockServerInfo:
     )
 
 
-def fetch_block_servers_from_shuckle() -> List[BlockServerInfo]:
+def fetch_block_services_from_shuckle() -> List[BlockServiceInfo]:
     resp = requests.get('http://localhost:5000/show_me_what_you_got')
     resp.raise_for_status()
     return [
-        shuckle_json_to_block_server(datum)
+        shuckle_json_to_block_service(datum)
         for datum in resp.json()
     ]
 
-def update_block_servers(db: sqlite3.Connection, *, swallow_errors: bool):
+def update_block_services(db: sqlite3.Connection, *, swallow_errors: bool):
     def log_err(err):
-        logging.error(f'Could not update block servers: {err}')
+        logging.error(f'Could not update block services: {err}')
     try:
-        block_servers_update = execute_internal(db, UpdateBlockServersInfoReq(fetch_block_servers_from_shuckle()))
-        if isinstance(block_servers_update, EggsError):
-            log_err(block_servers_update)
+        block_services_update = execute_internal(db, UpdateBlockServicesInfoReq(fetch_block_services_from_shuckle()))
+        if isinstance(block_services_update, EggsError):
+            log_err(block_services_update)
     except Exception as err:
         if swallow_errors:
             log_err(err)
@@ -2124,7 +2166,7 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
     started_checking_at = time.time()
     while True:
         try:
-            update_block_servers(db, swallow_errors=False)
+            update_block_services(db, swallow_errors=False)
             break
         except Exception as err:
             if not wait_for_shuckle or time.time() - started_checking_at > 5:
@@ -2154,7 +2196,7 @@ def run_forever(db: sqlite3.Connection, *, wait_for_shuckle: bool) -> None:
                 pass
             # get shuckle update if we should
             if time.time() > last_shuckle_update + SHUCKLE_POLL_PERIOD_SEC:
-                update_block_servers(db, swallow_errors=False)
+                update_block_services(db, swallow_errors=False)
                 last_shuckle_update = time.time()
         # catch all exceptions in main loop -- i.e., never die apart from when
         # asked to

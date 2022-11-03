@@ -395,10 +395,11 @@ def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
     header = struct.pack('<QcQ4sI8s', block.block_service_id, b'w', block.block_id, crc32, len(data), block.certificate)
     with socket.create_connection((socket.inet_ntoa(block.block_service_ip), block.block_service_port)) as conn:
         conn.send(header + data)
-        resp = conn.recv(17)
-        assert len(resp) == 17
+        resp = conn.recv(8 + 17)
+        assert len(resp) == 8 + 17
     proof: bytes
-    rkind, rblock_id, proof = struct.unpack('<cQ8s', resp)
+    block_service_id, rkind, rblock_id, proof = struct.unpack('<QcQ8s', resp)
+    assert block_service_id == block.block_service_id
     if rkind != b'W':
         raise RuntimeError(f'Unexpected response kind {rkind} {resp!r}')
     if rblock_id != block.block_id:
@@ -411,9 +412,10 @@ def read_block(*, block_services: List[BlockService], block_size: int, block: Fe
     msg = struct.pack('<QcQ', b'f', block_service.id, block.block_id)
     with socket.create_connection((ip, block_service.port)) as conn:
         conn.send(msg)
-        reply = conn.recv(5)
-        assert len(reply) == 5
-        kind, ret_block_sz = struct.unpack('<cI', reply)
+        reply = conn.recv(8 + 5)
+        assert len(reply) == 8 + 5
+        block_service_id, kind, ret_block_sz = struct.unpack('<cI', reply)
+        assert block_service.id == block_service_id
         if kind != b'F':
             raise Exception(f'Bad reply {reply!r}')
         if ret_block_sz != block_size:

@@ -1437,6 +1437,11 @@ def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[E
     assert cur.rowcount == 1
     return SetDirectoryInfoResp()
 
+# not read only
+def swap_blocks(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, SwapBlocksResp]:
+    # only exact byte offsets here
+    pass
+
 class BlockServiceInfo(TypedDict):
     id: int
     ip: str
@@ -1538,6 +1543,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = make_file_transient(cur, req_body)
         elif isinstance(req_body, SetDirectoryInfoReq):
             resp_body = set_directory_info(cur, req_body)
+        elif isinstance(req_body, SwapBlocksReq):
+            resp_body = swap_blocks(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:

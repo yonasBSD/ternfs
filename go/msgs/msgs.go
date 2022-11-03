@@ -170,6 +170,23 @@ type CDCMessageKind uint8
 
 const ERROR uint8 = 0
 
+func MkParity(dataBlocks uint8, parityBlocks uint8) Parity {
+	if dataBlocks == 0 || dataBlocks >= 16 {
+		panic(fmt.Errorf("bad data blocks %v", dataBlocks))
+	}
+	if parityBlocks >= 16 {
+		panic(fmt.Errorf("bad parity blocks %v", parityBlocks))
+	}
+	return Parity(dataBlocks | (parityBlocks << 4))
+}
+
+func (parity Parity) DataBlocks() int {
+	return int(parity) & 0x0F
+}
+func (parity Parity) ParityBlocks() int {
+	return int(parity) >> 4
+}
+
 // --------------------------------------------------------------------
 // Shard requests/responses
 
@@ -596,6 +613,24 @@ type SetDirectoryInfoReq struct {
 }
 
 type SetDirectoryInfoResp struct{}
+
+type SwapBlocksReq struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	BlockId1    BlockId
+	FileId2     InodeId
+	ByteOffset2 uint64
+	BlockId2    BlockId
+}
+
+type SwapBlocksResp struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	BlockId1    BlockId
+	FileId2     InodeId
+	ByteOffset2 uint64
+	BlockId2    BlockId
+}
 
 // --------------------------------------------------------------------
 // CDC requests/responses

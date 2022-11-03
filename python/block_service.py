@@ -146,11 +146,11 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
     writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x00'*8)
     try:
         while True:
-            received_block_service_id_str = await reader.read(8)
-            if received_block_service_id_str == b'':
+            block_service_str = await reader.read(8)
+            if block_service_str == b'':
                 # EOF
                 return
-            received_block_service_id = struct.unpack('<Q', received_block_service_id_str)[0]
+            received_block_service_id = struct.unpack('<Q', block_service_str)[0]
             # Right now we do not support multiplexing
             assert block_service_id(key) == received_block_service_id, f'Expected id {block_service_id(key)}, got {received_block_service_id}'
             kind = await reader.readexactly(1)
@@ -164,6 +164,7 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                     return
                 erase_block(base_path, block_id) # can never fail
                 m = ser_erase_cert(block_id, rk)
+                writer.write(block_service_str)
                 writer.write(m)
 
             elif kind == b'f':
@@ -172,6 +173,7 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 block_id = deser_fetch_block(kind + (await reader.readexactly(8)))
                 data = fetch_block(base_path, block_id)
                 m = ser_fetch_response(len(data))
+                writer.write(block_service_str)
                 writer.write(m)
                 writer.write(data)
 
@@ -190,6 +192,7 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 assert crypto.crc32c(data) == crc
                 write_block(base_path, block_id, data)
                 m = ser_write_cert(block_id, rk)
+                writer.write(block_service_str)
                 writer.write(m)
 
             elif kind == b'c':
@@ -198,6 +201,7 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 block_id = deser_crc_block(kind + (await reader.readexactly(8)))
                 data = fetch_block(base_path, block_id)
                 m = ser_crc_response(len(data), crypto.crc32c(data))
+                writer.write(block_service_str)
                 writer.write(m)
 
             elif kind == b's':
@@ -205,6 +209,7 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 token = deser_stats(kind + (await reader.readexactly(8)))
                 used_bytes, free_bytes, used_n, free_n = get_stats(base_path)
                 m = ser_stats(token, used_bytes, free_bytes, used_n, free_n, rk)
+                writer.write(block_service_str)
                 writer.write(m)
 
             else:

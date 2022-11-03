@@ -67,9 +67,10 @@ async def read_block(*, block_services: List[BlockService], block_size: int, blo
     msg = struct.pack('<QcQ', block_service.id, b'f', block.block_id)
     conn = await trio.open_tcp_stream(ip, block_service.port) # TODO how promptly is this closed?
     await conn.send_all(msg)
-    reply = await conn.receive_some(5)
-    assert len(reply) == 5
-    kind, ret_block_sz = struct.unpack('<cI', reply)
+    reply = await conn.receive_some(8 + 5)
+    assert len(reply) == 8 + 5
+    block_service_id, kind, ret_block_sz = struct.unpack('<QcI', reply)
+    assert block_service.id == block_service_id
     if kind != b'F':
         raise Exception(f'Bad reply {reply!r}')
     if ret_block_sz != block_size:
@@ -85,10 +86,11 @@ async def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
     header = struct.pack('<QcQ4sI8s', block.block_service_id, b'w', block.block_id, crc32, len(data), block.certificate)
     conn = await trio.open_tcp_stream(socket.inet_ntoa(block.block_service_ip), block.block_service_port)
     await conn.send_all(header + data)
-    resp = await conn.receive_some(17)
-    assert len(resp) == 17
+    resp = await conn.receive_some(8 + 17)
+    assert len(resp) == 8 + 17
     proof: bytes
-    rkind, rblock_id, proof = struct.unpack('<cQ8s', resp)
+    block_service_id, rkind, rblock_id, proof = struct.unpack('<QcQ8s', resp)
+    assert block.block_service_id == block_service_id
     if rkind != b'W':
         raise RuntimeError(f'Unexpected response kind {rkind} {resp!r}')
     if rblock_id != block.block_id:

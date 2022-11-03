@@ -775,6 +775,11 @@ func main() {
 			reflect.TypeOf(msgs.RemoveSpanCertifyReq{}),
 			reflect.TypeOf(msgs.RemoveSpanCertifyResp{}),
 		},
+		{
+			0x22,
+			reflect.TypeOf(msgs.SwapBlocksReq{}),
+			reflect.TypeOf(msgs.SwapBlocksResp{}),
+		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
 			0x80,

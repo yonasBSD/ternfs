@@ -185,6 +185,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return REMOVE_SPAN_INITIATE
 	case *RemoveSpanCertifyReq, *RemoveSpanCertifyResp:
 		return REMOVE_SPAN_CERTIFY
+	case *SwapBlocksReq, *SwapBlocksResp:
+		return SWAP_BLOCKS
 	case *CreateDirectoryINodeReq, *CreateDirectoryINodeResp:
 		return CREATE_DIRECTORY_INODE
 	case *SetDirectoryOwnerReq, *SetDirectoryOwnerResp:
@@ -230,6 +232,7 @@ const (
 	INTRA_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x18
 	REMOVE_SPAN_INITIATE ShardMessageKind = 0x19
 	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x1A
+	SWAP_BLOCKS ShardMessageKind = 0x22
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -1040,6 +1043,68 @@ func (v *RemoveSpanCertifyResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *RemoveSpanCertifyResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *SwapBlocksReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.FileId1))
+	buf.PackU64(uint64(v.ByteOffset1))
+	buf.PackU64(uint64(v.BlockId1))
+	buf.PackU64(uint64(v.FileId2))
+	buf.PackU64(uint64(v.ByteOffset2))
+	buf.PackU64(uint64(v.BlockId2))
+}
+
+func (v *SwapBlocksReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.FileId1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.BlockId1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.FileId2)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.ByteOffset2)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.BlockId2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SwapBlocksResp) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.FileId1))
+	buf.PackU64(uint64(v.ByteOffset1))
+	buf.PackU64(uint64(v.BlockId1))
+	buf.PackU64(uint64(v.FileId2))
+	buf.PackU64(uint64(v.ByteOffset2))
+	buf.PackU64(uint64(v.BlockId2))
+}
+
+func (v *SwapBlocksResp) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.FileId1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.BlockId1)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.FileId2)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.ByteOffset2)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.BlockId2)); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -227,6 +227,7 @@ func (buf *Buf) UnpackLength(l *int) error {
 }
 
 // Useful in codegen, weirdly go does not include something like vector::resize.
+//
 // This does not resize exponentially, which is annoying, but better than allocating
 // every time.
 func EnsureLength[T any](xs *[]T, l int) {

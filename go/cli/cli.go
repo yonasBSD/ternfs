@@ -20,18 +20,18 @@ func badCommand() {
 
 func main() {
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
-	collectDirIdU64 := collectCmd.Uint64("dir", 0, "directory inode id to GC")
-	collectDry := collectCmd.Bool("dry", false, "whether to execute the GC or not")
+	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC")
+	collectDry := collectCmd.Bool("dry", false, "Whether to execute the GC or not")
 
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
-	destructDry := destructCmd.Bool("dry", false, "whether to execute the destruction or not")
-	destructFileIdU64 := destructCmd.Uint64("file", 0, "transient file id to destruct")
-	destructFileCookie := destructCmd.Uint64("cookie", 0, "transient file cookie")
+	destructDry := destructCmd.Bool("dry", false, "Whether to execute the destruction or not")
+	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
+	destructFileCookie := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 
 	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
-	migrateDry := migrateCmd.Bool("dry", false, "whether to execute the migration or not")
-	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "file in which to migrate blocks")
-	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "block service to migrate from")
+	migrateDry := migrateCmd.Bool("dry", false, "Whether to execute the migration or not.")
+	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
+	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
 
 	if len(os.Args) < 2 {
 		badCommand()
@@ -60,7 +60,8 @@ func main() {
 		if dirId.Type() != msgs.DIRECTORY {
 			log.Fatalf("inode id %v is not a directory", dirId)
 		}
-		shardSocket, err := request.ShardSocket(dirId.Shard())
+		env.Shid = dirId.Shard()
+		shardSocket, err := request.ShardSocket(env.Shid)
 		if err != nil {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
@@ -82,47 +83,78 @@ func main() {
 		destructCmd.Parse(os.Args[2:])
 		env.Dry = *destructDry
 		if *destructFileIdU64 == 0 {
-			destructCmd.Usage()
-			os.Exit(2)
+			stats := janitor.DestructionStats{}
+			for shid := 0; shid < 256; shid++ {
+				env.Shid = msgs.ShardId(shid)
+				socket, err := request.ShardSocket(env.Shid)
+				if err != nil {
+					log.Fatalf("could not create shard socket: %v", err)
+				}
+				defer socket.Close()
+				env.ShardSocket = socket
+				err = env.DestructFiles(&stats)
+				if err != nil {
+					log.Fatalf("could not destruct in shard %v, stats: %+v, err: %v", shid, stats, err)
+				}
+			}
+			env.Info("finished destructing files, stats: %+v", stats)
+		} else {
+			fileId := msgs.InodeId(*destructFileIdU64)
+			if fileId.Type() == msgs.DIRECTORY {
+				log.Fatalf("inode id %v is not a file/symlink", fileId)
+			}
+			env.Shid = fileId.Shard()
+			shardSocket, err := request.ShardSocket(env.Shid)
+			if err != nil {
+				log.Fatalf("could not create shard socket: %v", err)
+			}
+			defer shardSocket.Close()
+			env.ShardSocket = shardSocket
+			stats := janitor.DestructionStats{}
+			err = env.DestructFile(&stats, fileId, 0, *destructFileCookie)
+			if err != nil {
+				log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)
+			}
+			env.Info("finished destructing %v, stats: %+v", fileId, stats)
 		}
-		fileId := msgs.InodeId(*destructFileIdU64)
-		if fileId.Type() == msgs.DIRECTORY {
-			log.Fatalf("inode id %v is not a file/symlink", fileId)
-		}
-		socket, err := request.ShardSocket(fileId.Shard())
-		if err != nil {
-			log.Fatalf("could not create shard socket: %v", err)
-		}
-		env.ShardSocket = socket
-		stats := janitor.DestructionStats{}
-		err = env.DestructFile(&stats, fileId, 0, *destructFileCookie)
-		if err != nil {
-			log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)
-		}
-		env.Info("finished destructing %v, stats: %+v", fileId, stats)
 	case "migrate":
 		migrateCmd.Parse(os.Args[2:])
 		env.Dry = *migrateDry
-		if *migrateFileIdU64 == 0 {
-			migrateCmd.Usage()
-			os.Exit(2)
-		}
-		fileId := msgs.InodeId(*migrateFileIdU64)
 		if *migrateBlockService == 0 {
 			migrateCmd.Usage()
 			os.Exit(2)
 		}
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
-		socket, err := request.ShardSocket(fileId.Shard())
-		if err != nil {
-			log.Fatalf("could not create shard socket: %v", err)
+		if *migrateFileIdU64 == 0 {
+			stats := janitor.MigrateStats{}
+			for shid := 0; shid < 256; shid++ {
+				env.Shid = msgs.ShardId(shid)
+				socket, err := request.ShardSocket(env.Shid)
+				if err != nil {
+					log.Fatalf("could not create shard socket: %v", err)
+				}
+				defer socket.Close()
+				env.ShardSocket = socket
+				if err := env.MigrateBlocks(&stats, blockServiceId); err != nil {
+					log.Fatalf("could not destruct in shard %v, stats: %+v, err: %v", shid, stats, err)
+				}
+			}
+			env.Info("finished collecting, stats: %+v", stats)
+		} else {
+			fileId := msgs.InodeId(*migrateFileIdU64)
+			env.Shid = fileId.Shard()
+			socket, err := request.ShardSocket(env.Shid)
+			if err != nil {
+				log.Fatalf("could not create shard socket: %v", err)
+			}
+			defer socket.Close()
+			env.ShardSocket = socket
+			stats := janitor.MigrateStats{}
+			if err := env.MigrateBlocksInFile(&stats, blockServiceId, fileId); err != nil {
+				log.Fatalf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err)
+			}
+			env.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)
 		}
-		env.ShardSocket = socket
-		migrated, err := env.MigrateBlocks(fileId, blockServiceId)
-		if err != nil {
-			log.Fatalf("error while migrating file %v away from block service %v after %v blocks: %v", fileId, blockServiceId, migrated, err)
-		}
-		env.Info("finished migrating %v away from block service %v, %v blocks migrated", fileId, blockServiceId, migrated)
 	default:
 		badCommand()
 	}

@@ -454,7 +454,8 @@ type VisitFilesResp struct {
 }
 
 type VisitTransientFilesReq struct {
-	BeginId InodeId
+	BeginId          InodeId
+	OnlyPastDeadline bool
 }
 
 type TransientFile struct {
@@ -634,6 +635,14 @@ type SwapBlocksReq struct {
 }
 
 type SwapBlocksResp struct{}
+
+type BlockServiceFilesReq struct {
+	BlockServiceId BlockServiceId
+}
+
+type BlockServiceFilesResp struct {
+	FileIds []InodeId
+}
 
 // --------------------------------------------------------------------
 // CDC requests/responses

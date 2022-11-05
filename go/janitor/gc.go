@@ -79,27 +79,27 @@ func (gc *Env) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline m
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
-func (gc *Env) destructInner() (DestructionStats, error) {
-	var stats DestructionStats
-
+func (gc *Env) DestructFiles(stats *DestructionStats) error {
 	shardSocket, err := request.ShardSocket(gc.Shid)
 	if err != nil {
-		return stats, err
+		return err
 	}
 	defer shardSocket.Close()
 	gc.ShardSocket = shardSocket
 
-	req := msgs.VisitTransientFilesReq{}
+	req := msgs.VisitTransientFilesReq{
+		OnlyPastDeadline: true,
+	}
 	resp := msgs.VisitTransientFilesResp{}
 	for {
 		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
-			return stats, fmt.Errorf("could not visit transient files: %w", err)
+			return fmt.Errorf("could not visit transient files: %w", err)
 		}
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
-			if err := gc.DestructFile(&stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				return stats, fmt.Errorf("%+v: error while destructing file: %w", file, err)
+			if err := gc.DestructFile(stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
 			}
 		}
 		req.BeginId = resp.NextId
@@ -107,12 +107,12 @@ func (gc *Env) destructInner() (DestructionStats, error) {
 			break
 		}
 	}
-	return stats, nil
+	return nil
 }
 
-func (gc *Env) Destruct() {
-	stats, err := gc.destructInner()
-	if err != nil {
+func (gc *Env) DestructForever() {
+	stats := DestructionStats{}
+	if err := gc.DestructFiles(&stats); err != nil {
 		gc.RaiseAlert(err)
 	}
 	sleepDuration := time.Minute
@@ -305,18 +305,16 @@ func (gc *Env) CollectDirectory(stats *CollectStats, dirId msgs.InodeId) error {
 	return nil
 }
 
-func (gc *Env) collectInner() (CollectStats, error) {
-	var stats CollectStats
-
+func (gc *Env) CollectDirectories(stats *CollectStats) error {
 	shardSocket, err := request.ShardSocket(gc.Shid)
 	if err != nil {
-		return stats, err
+		return err
 	}
 	defer shardSocket.Close()
 	gc.ShardSocket = shardSocket
 	cdcSocket, err := request.CDCSocket()
 	if err != nil {
-		return stats, err
+		return err
 	}
 	defer cdcSocket.Close()
 	gc.CDCSocket = cdcSocket
@@ -326,14 +324,14 @@ func (gc *Env) collectInner() (CollectStats, error) {
 	for {
 		err := gc.ShardRequest(&req, &resp)
 		if err != nil {
-			return stats, fmt.Errorf("could not visit directories: %w", err)
+			return fmt.Errorf("could not visit directories: %w", err)
 		}
 		for _, id := range resp.Ids {
 			if id.Type() != msgs.DIRECTORY {
 				panic(fmt.Errorf("bad directory inode %v", id))
 			}
-			if err := gc.CollectDirectory(&stats, id); err != nil {
-				return stats, fmt.Errorf("error while collecting inode %v: %w", id, err)
+			if err := gc.CollectDirectory(stats, id); err != nil {
+				return fmt.Errorf("error while collecting inode %v: %w", id, err)
 			}
 		}
 		req.BeginId = resp.NextId
@@ -341,12 +339,12 @@ func (gc *Env) collectInner() (CollectStats, error) {
 			break
 		}
 	}
-	return stats, nil
+	return nil
 }
 
-func (gc *Env) Collect() {
-	stats, err := gc.collectInner()
-	if err != nil {
+func (gc *Env) CollectForever() {
+	stats := CollectStats{}
+	if err := gc.CollectDirectories(&stats); err != nil {
 		gc.RaiseAlert(err)
 	}
 	sleepDuration := time.Minute

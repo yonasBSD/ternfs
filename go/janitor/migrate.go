@@ -75,14 +75,18 @@ func (env *Env) copyBlock(
 	return dstBlock.BlockId, nil
 }
 
+type MigrateStats struct {
+	MigratedFiles  uint64
+	MigratedBlocks uint64
+}
+
 // Migrates the blocks in that block service, in that file.
 //
 // If the source block service it's still healthy, it'll just copy the block over, otherwise
 // it'll be recovered from the other. If possible, anyway.
 //
 // Returns the number of migrated blocks.
-func (env *Env) MigrateBlocks(fileId msgs.InodeId, blockServiceId msgs.BlockServiceId) (int, error) {
-	migrated := 0
+func (env *Env) MigrateBlocksInFile(stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
 	scratchFile := scratchFile{}
 	if !env.Dry {
 		stopHeartbeat := make(chan struct{}, 1)
@@ -117,9 +121,8 @@ func (env *Env) MigrateBlocks(fileId msgs.InodeId, blockServiceId msgs.BlockServ
 	}
 	fileSpansResp := msgs.FileSpansResp{}
 	for {
-		err := env.ShardRequest(&fileSpansReq, &fileSpansResp)
-		if err != nil {
-			return migrated, err
+		if err := env.ShardRequest(&fileSpansReq, &fileSpansResp); err != nil {
+			return err
 		}
 		for _, span := range fileSpansResp.Spans {
 			if span.Parity.DataBlocks() != 1 {
@@ -147,11 +150,11 @@ func (env *Env) MigrateBlocks(fileId msgs.InodeId, blockServiceId msgs.BlockServ
 					replacementFound = true
 					if !env.Dry {
 						if err := env.ensureScratchFile(fileId, &scratchFile); err != nil {
-							return migrated, err
+							return err
 						}
 						newBlock, err := env.copyBlock(&scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
 						if err != nil {
-							return migrated, err
+							return err
 						}
 						swapReq := msgs.SwapBlocksReq{
 							FileId1:     fileId,
@@ -162,20 +165,45 @@ func (env *Env) MigrateBlocks(fileId msgs.InodeId, blockServiceId msgs.BlockServ
 							BlockId2:    newBlock,
 						}
 						if err := env.ShardRequest(&swapReq, &msgs.SwapBlocksResp{}); err != nil {
-							return migrated, err
+							return err
 						}
 					}
-					migrated++
+					stats.MigratedBlocks++
 					break
 				}
 			}
 			if !replacementFound {
-				return migrated, fmt.Errorf("could not migrate block %v in file %v out of block service %v, because a suitable replacement block was not found", blockToMigrate, fileId, blockServiceId)
+				return fmt.Errorf("could not migrate block %v in file %v out of block service %v, because a suitable replacement block was not found", blockToMigrate, fileId, blockServiceId)
 			}
 		}
 		if fileSpansResp.NextOffset == 0 {
 			break
 		}
 	}
-	return migrated, nil
+	stats.MigratedFiles++
+	return nil
+}
+
+// Tries to migrate as many blocks as possible from that block service.
+func (env *Env) MigrateBlocks(stats *MigrateStats, blockServiceId msgs.BlockServiceId) error {
+	if env.Dry {
+		panic("MigrateBlocks cannot work with dry -- we rely on migrating the files to get an empty BlockServiceFilesResp")
+	}
+	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
+	filesResp := msgs.BlockServiceFilesResp{}
+	for {
+		if err := env.ShardRequest(&filesReq, &filesResp); err != nil {
+			return fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
+		}
+		if len(filesResp.FileIds) == 0 {
+			env.Debug("could not find any file for block service %v, terminating", blockServiceId)
+			return nil
+		}
+		env.Debug("will migrate %d files", len(filesResp.FileIds))
+		for _, file := range filesResp.FileIds {
+			if err := env.MigrateBlocksInFile(stats, blockServiceId, file); err != nil {
+				return err
+			}
+		}
+	}
 }

@@ -19,6 +19,8 @@ type CachedDirInfo struct {
 	cachedAt time.Time
 }
 
+// TODO make some of the fields private and initialize things here --
+// so that we don't get out of sync sockets/shid etc.
 type Env struct {
 	Logger *log.Logger
 	// we use a lock on top of the logger lock to have stack traces to be on ther own

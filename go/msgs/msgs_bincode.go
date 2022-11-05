@@ -187,6 +187,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return REMOVE_SPAN_CERTIFY
 	case *SwapBlocksReq, *SwapBlocksResp:
 		return SWAP_BLOCKS
+	case *BlockServiceFilesReq, *BlockServiceFilesResp:
+		return BLOCK_SERVICE_FILES
 	case *CreateDirectoryINodeReq, *CreateDirectoryINodeResp:
 		return CREATE_DIRECTORY_INODE
 	case *SetDirectoryOwnerReq, *SetDirectoryOwnerResp:
@@ -233,6 +235,7 @@ const (
 	REMOVE_SPAN_INITIATE ShardMessageKind = 0x19
 	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x1A
 	SWAP_BLOCKS ShardMessageKind = 0x22
+	BLOCK_SERVICE_FILES ShardMessageKind = 0x23
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -820,10 +823,14 @@ func (v *VisitFilesResp) Unpack(buf *bincode.Buf) error {
 
 func (v *VisitTransientFilesReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.BeginId))
+	buf.PackBool(bool(v.OnlyPastDeadline))
 }
 
 func (v *VisitTransientFilesReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.BeginId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackBool((*bool)(&v.OnlyPastDeadline)); err != nil {
 		return err
 	}
 	return nil
@@ -1081,6 +1088,39 @@ func (v *SwapBlocksResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *SwapBlocksResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *BlockServiceFilesReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.BlockServiceId))
+}
+
+func (v *BlockServiceFilesReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceFilesResp) Pack(buf *bincode.Buf) {
+	len1 := len(v.FileIds)
+	buf.PackLength(len1)
+	for i := 0; i < len1; i++ {
+		buf.PackU64(uint64(v.FileIds[i]))
+	}
+}
+
+func (v *BlockServiceFilesResp) Unpack(buf *bincode.Buf) error {
+	var len1 int
+	if err := buf.UnpackLength(&len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.FileIds, len1)
+	for i := 0; i < len1; i++ {
+		if err := buf.UnpackU64((*uint64)(&v.FileIds[i])); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

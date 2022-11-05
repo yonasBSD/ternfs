@@ -73,6 +73,7 @@ class ShardMessageKind(enum.IntEnum):
     REMOVE_SPAN_INITIATE = 0x19
     REMOVE_SPAN_CERTIFY = 0x1A
     SWAP_BLOCKS = 0x22
+    BLOCK_SERVICE_FILES = 0x23
     CREATE_DIRECTORY_INODE = 0x80
     SET_DIRECTORY_OWNER = 0x81
     REMOVE_DIRECTORY_OWNER = 0x89
@@ -1253,21 +1254,25 @@ class VisitFilesResp(bincode.Packable):
 @dataclass
 class VisitTransientFilesReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.VISIT_TRANSIENT_FILES
-    STATIC_SIZE: ClassVar[int] = 8 # begin_id
+    STATIC_SIZE: ClassVar[int] = 8 + 1 # begin_id + only_past_deadline
     begin_id: int
+    only_past_deadline: bool
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.begin_id, b)
+        bincode.pack_u8_into(self.only_past_deadline, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'VisitTransientFilesReq':
         begin_id = bincode.unpack_u64(u)
-        return VisitTransientFilesReq(begin_id)
+        only_past_deadline = bool(bincode.unpack_u8(u))
+        return VisitTransientFilesReq(begin_id, only_past_deadline)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # begin_id
+        _size += 1 # only_past_deadline
         return _size
 
 @dataclass
@@ -1623,6 +1628,52 @@ class SwapBlocksResp(bincode.Packable):
 
     def calc_packed_size(self) -> int:
         _size = 0
+        return _size
+
+@dataclass
+class BlockServiceFilesReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.BLOCK_SERVICE_FILES
+    STATIC_SIZE: ClassVar[int] = 8 # block_service_id
+    block_service_id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.block_service_id, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceFilesReq':
+        block_service_id = bincode.unpack_u64(u)
+        return BlockServiceFilesReq(block_service_id)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # block_service_id
+        return _size
+
+@dataclass
+class BlockServiceFilesResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.BLOCK_SERVICE_FILES
+    STATIC_SIZE: ClassVar[int] = 2 # len(file_ids)
+    file_ids: List[int]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u16_into(len(self.file_ids), b)
+        for i in range(len(self.file_ids)):
+            bincode.pack_u64_into(self.file_ids[i], b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceFilesResp':
+        file_ids: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(file_ids)):
+            file_ids[i] = bincode.unpack_u64(u)
+        return BlockServiceFilesResp(file_ids)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 2 # len(file_ids)
+        for i in range(len(self.file_ids)):
+            _size += 8 # file_ids[i]
         return _size
 
 @dataclass
@@ -2309,8 +2360,8 @@ class HardUnlinkFileResp(bincode.Packable):
         _size = 0
         return _size
 
-ShardRequestBody = Union[LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, IntraShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, CreateDirectoryINodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveInodeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
-ShardResponseBody = Union[LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, IntraShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, CreateDirectoryINodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveInodeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
+ShardRequestBody = Union[LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, IntraShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, CreateDirectoryINodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveInodeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
+ShardResponseBody = Union[LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, IntraShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, CreateDirectoryINodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveInodeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
 
 SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {
     ShardMessageKind.LOOKUP: (LookupReq, LookupResp),
@@ -2334,6 +2385,7 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.REMOVE_SPAN_INITIATE: (RemoveSpanInitiateReq, RemoveSpanInitiateResp),
     ShardMessageKind.REMOVE_SPAN_CERTIFY: (RemoveSpanCertifyReq, RemoveSpanCertifyResp),
     ShardMessageKind.SWAP_BLOCKS: (SwapBlocksReq, SwapBlocksResp),
+    ShardMessageKind.BLOCK_SERVICE_FILES: (BlockServiceFilesReq, BlockServiceFilesResp),
     ShardMessageKind.CREATE_DIRECTORY_INODE: (CreateDirectoryINodeReq, CreateDirectoryINodeResp),
     ShardMessageKind.SET_DIRECTORY_OWNER: (SetDirectoryOwnerReq, SetDirectoryOwnerResp),
     ShardMessageKind.REMOVE_DIRECTORY_OWNER: (RemoveDirectoryOwnerReq, RemoveDirectoryOwnerResp),

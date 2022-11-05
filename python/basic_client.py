@@ -507,7 +507,7 @@ def transient_files():
     for shard in range(256):
         begin_id = 0
         while True:
-            resp = send_shard_request_or_raise(shard, VisitTransientFilesReq(begin_id))
+            resp = send_shard_request_or_raise(shard, VisitTransientFilesReq(begin_id, false))
             assert isinstance(resp, VisitTransientFilesResp)
             for f in resp.files:
                 print(f'inode id:    0x{f.id:016X}')
@@ -564,6 +564,16 @@ def file_spans(f: Path):
     file_id = lookup(f)
     print()
     file_spans_raw(file_id)
+
+@command('block_service_files')
+def block_service_files(block_service_id: int):
+    fs = []
+    for i in range(256):
+        resp = send_shard_request_or_raise(i, BlockServiceFilesReq(block_service_id))
+        assert isinstance(resp, BlockServiceFilesResp)
+        fs.extend(resp.file_ids)
+    for f in fs:
+        print(f'- 0x{f:016X}')
 
 def main() -> None:
     args = sys.argv[1:]

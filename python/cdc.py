@@ -1031,7 +1031,7 @@ class CDCTests(unittest.TestCase):
         # however we can remove it if we mean it
         self.cdc.shards[0].execute_ok(IntraShardHardFileUnlinkReq(ROOT_DIR_INODE_ID, file_1.target_id, b'file', file_1.creation_time))
         # We have a transient file now, since we removed an owned snapshot.
-        transients = cast(VisitTransientFilesResp, self.cdc.shards[0].execute_ok(VisitTransientFilesReq(0)))
+        transients = cast(VisitTransientFilesResp, self.cdc.shards[0].execute_ok(VisitTransientFilesReq(0, False)))
         assert len(transients.files) == 1
         # if we move the second file, we can remove it using RemoveNonOwnedEdgeReq
         self.cdc.shards[0].execute_ok(SameDirectoryRenameReq(transient_file_2.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))

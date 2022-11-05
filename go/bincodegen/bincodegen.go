@@ -780,6 +780,11 @@ func main() {
 			reflect.TypeOf(msgs.SwapBlocksReq{}),
 			reflect.TypeOf(msgs.SwapBlocksResp{}),
 		},
+		{
+			0x23,
+			reflect.TypeOf(msgs.BlockServiceFilesReq{}),
+			reflect.TypeOf(msgs.BlockServiceFilesResp{}),
+		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
 			0x80,

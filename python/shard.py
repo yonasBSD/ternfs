@@ -730,8 +730,8 @@ def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> V
     budget = UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE
     # lazy fetch, for easy budget "next id" computation
     entries = cur.execute(
-        'select * from files where transient and id >= :begin_id order by id asc',
-        {'begin_id': req.begin_id}
+        'select * from files where transient and id >= :begin_id and deadline >= :max_deadline order by id asc',
+        {'begin_id': req.begin_id, 'max_deadline': eggs_time() if req.only_past_deadline else 0}
     )
     resp_files: List[TransientFile] = []
     next_id = 0
@@ -1001,12 +1001,12 @@ def remove_span_certify_inner(cur: sqlite3.Cursor, req: RemoveSpanCertifyReq) ->
         deleted_blocks.append(proof.block_id)
     # update everything in an idempotent fashion
     cur.execute(
-        'delete from spans where file_id = :file_id and byte_offset = :byte_offset',
-        {'file_id': req.file_id, 'byte_offset': req.byte_offset}
+        'delete from blocks where file_id = :file_id and byte_offset = :byte_offset',
+        {'file_id': req.file_id, 'byte_offset': req.byte_offset},
     )
     cur.execute(
-        f'delete from block_to_span where block_id in ({",".join("?"*len(deleted_blocks))})',
-        deleted_blocks,
+        'delete from spans where file_id = :file_id and byte_offset = :byte_offset',
+        {'file_id': req.file_id, 'byte_offset': req.byte_offset}
     )
     cur.execute(
         'update files set last_span_state = :state_after, mtime = :now where id = :file_id and size = :expected_size',
@@ -1501,6 +1501,21 @@ def swap_blocks(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, Swa
     check_spans_constraints(cur, req.file_id2)
     return x
 
+# read only
+def block_service_files(cur: sqlite3.Cursor, req: BlockServiceFilesReq) -> Union[EggsError, BlockServiceFilesResp]:
+    max_files = (UDP_MTU-ShardResponse.STATIC_SIZE-BlockServiceFilesResp.STATIC_SIZE)//8
+    files = list(map(
+        lambda x: x['id'],
+        # TODO we exclude transient files so that we can keep calling this API in migration
+        # until it's empty. Migration discards blocks into transient files, so if transient
+        # files are included here, it'd never terminate.
+        cur.execute(
+            'select files.id from blocks, files where files.id = blocks.file_id and not files.transient and block_service_id = :id limit :max_files',
+            {'id': req.block_service_id, 'max_files': max_files}
+        )
+    ))
+    return BlockServiceFilesResp(files)
+
 class BlockServiceInfo(TypedDict):
     id: int
     ip: str
@@ -1604,6 +1619,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = set_directory_info(cur, req_body)
         elif isinstance(req_body, SwapBlocksReq):
             resp_body = swap_blocks(cur, req_body)
+        elif isinstance(req_body, BlockServiceFilesReq):
+            resp_body = block_service_files(cur, req_body)
         else:
             resp_body = EggsError(ErrCode.UNRECOGNIZED_REQUEST)
     except Exception:
@@ -1907,7 +1924,7 @@ class ShardTests(unittest.TestCase):
         # we don't check for idempotency because later we inspect those files
         self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b''))
         self.shard.execute_ok(ConstructFileReq(InodeType.SYMLINK, b''))
-        transient_files = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0)))
+        transient_files = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0, False)))
         assert len(transient_files.files) == 2
         assert inode_id_type(transient_files.files[0].id) == InodeType.FILE
         assert inode_id_type(transient_files.files[1].id) == InodeType.SYMLINK
@@ -1919,7 +1936,7 @@ class ShardTests(unittest.TestCase):
         read_files = 0
         current_inode = 0
         while True:
-            transient_files = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(current_inode)))
+            transient_files = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(current_inode, False)))
             read_files += len(transient_files.files)
             assert read_files <= num_files
             assert (read_files == num_files) == (transient_files.next_id == 0)
@@ -1967,12 +1984,12 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(replace(inline_span_req, size=100, block_size=0, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=b'1234'), ErrCode.BAD_SPAN_BODY)
         inline_span = self.shard.execute_ok(inline_span_req)
         byte_offset += inline_span_req.size
-        transient_file_1 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
+        transient_file_1 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0, False))).files[0]
         # empty list when adding inline block
         assert not inline_span.blocks
         # idempotent, but bumps the deadline
         self.shard.execute_ok(inline_span_req)
-        transient_file_2 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0))).files[0]
+        transient_file_2 = cast(VisitTransientFilesResp, self.shard.execute_ok(VisitTransientFilesReq(0, False))).files[0]
         assert transient_file_2.deadline_time > transient_file_1.deadline_time
         # empty, only bumps the deadline
         self.shard.execute_ok(replace(inline_span_req, size=0, block_size=0, byte_offset=inline_span_req.size, storage_class=ZERO_FILL_STORAGE, body_bytes=b'', crc32=(b'\0\0\0\0')))

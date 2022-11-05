@@ -73,19 +73,19 @@ def deser_erase_block(m: bytes, rk: crypto.ExpandedKey) -> int:
     # prefix=e, length=17
     m2 = crypto.remove_mac(m, rk)
     assert m2 is not None
-    kind, block_id = struct.unpack('<cQ', m2)
+    _, kind, block_id = struct.unpack('<QcQ', m2)
     assert kind == b'e'
     return cast(int, block_id)
 
 def deser_fetch_block(m: bytes) -> int:
     # prefix=f, length=9
-    kind, block_id = struct.unpack('<cQ', m)
+    _, kind, block_id = struct.unpack('<QcQ', m)
     assert kind == b'f'
     return cast(int, block_id)
 
 def deser_crc_block(m: bytes) -> int:
     # prefix=c, length=9
-    kind, block_id = struct.unpack('<cQ', m)
+    _, kind, block_id = struct.unpack('<QcQ', m)
     assert kind == b'c'
     return cast(int, block_id)
 
@@ -94,41 +94,42 @@ def deser_write_block(m: bytes, rk: crypto.ExpandedKey) -> Tuple[int, bytes, int
     # prefix=w, length=25
     m2 = crypto.remove_mac(m, rk)
     assert m2 is not None
-    kind, block_id, crc, size = struct.unpack('<cQ4sI', m2)
+    _, kind, block_id, crc, size = struct.unpack('<QcQ4sI', m2)
     assert kind == b'w'
     return cast(int, block_id), cast(bytes, crc), cast(int, size)
 
 def deser_stats(m: bytes) -> int:
     # prefix=s, length=9
-    kind, token = struct.unpack('<cQ', m)
+    _, kind, token = struct.unpack('<QcQ', m)
     assert kind == b's'
     return cast(int, token)
 
-def ser_erase_cert(block_id: int, rk: crypto.ExpandedKey) -> bytes:
+def ser_erase_cert(block_service_id: int, block_id: int, rk: crypto.ExpandedKey) -> bytes:
     # confirm block_id was erased
     # prefix=E, length=9
-    m = struct.pack('<cQ', b'E', block_id)
-    return crypto.add_mac(m, rk)
+    m = struct.pack('<QcQ', block_service_id, b'E', block_id)
+    resp = crypto.add_mac(m, rk)
+    return resp
 
-def ser_fetch_response(size: int) -> bytes:
+def ser_fetch_response(block_service_id: int, size: int) -> bytes:
     # just return the four byte size followed by the data
     # prefix=F, length=5
-    return struct.pack('<cI', b'F', size)
+    return struct.pack('<QcI', block_service_id, b'F', size)
 
-def ser_crc_response(size: int, crc: bytes) -> bytes:
+def ser_crc_response(block_service_id: int, size: int, crc: bytes) -> bytes:
     # return size and crc
     # prefix=C, length=9
-    return struct.pack('<cI4s', b'C', size, crc)
+    return struct.pack('<QcI4s', block_service_id, b'C', size, crc)
 
-def ser_write_cert(block_id: int, rk: crypto.ExpandedKey) -> bytes:
+def ser_write_cert(block_service_id: int, block_id: int, rk: crypto.ExpandedKey) -> bytes:
     # confirm block was written
     # prefix=W, length=9
-    m = struct.pack('<cQ', b'W', block_id)
+    m = struct.pack('<QcQ', block_service_id, b'W', block_id)
     return crypto.add_mac(m, rk)
 
-def ser_stats(token: int, used_bytes: int, free_bytes: int, used_n: int, free_n: int, rk: crypto.ExpandedKey) -> bytes:
+def ser_stats(block_service_id: int, token: int, used_bytes: int, free_bytes: int, used_n: int, free_n: int, rk: crypto.ExpandedKey) -> bytes:
     # prefix=S, length=41
-    m = struct.pack('<cQQQQQ', b'S', token, used_bytes, free_bytes, used_n, free_n)
+    m = struct.pack('<QcQQQQQ', block_service_id, b'S', token, used_bytes, free_bytes, used_n, free_n)
     return crypto.add_mac(m, rk)
 
 ###########################################
@@ -142,6 +143,7 @@ PAST_CUTOFF = ONE_HOUR_IN_NS * 22
 FUTURE_CUTOFF = ONE_HOUR_IN_NS * 2
 
 async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, key: bytes, base_path: Path, time_check: bool) -> None:
+    id = block_service_id(key)
     rk = crypto.aes_expand_key(key)
     writer.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b'\x00'*8)
     try:
@@ -152,35 +154,33 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 return
             received_block_service_id = struct.unpack('<Q', block_service_str)[0]
             # Right now we do not support multiplexing
-            assert block_service_id(key) == received_block_service_id, f'Expected id {block_service_id(key)}, got {received_block_service_id}'
+            assert id == received_block_service_id, f'Expected id 0x{id:016X}, got 0x{received_block_service_id:016X}'
             kind = await reader.readexactly(1)
             if kind == b'e':
                 # erase block
                 # (block_id, mac) -> data
-                block_id = deser_erase_block(kind + (await reader.readexactly(16)), rk)
+                block_id = deser_erase_block(block_service_str + kind + (await reader.readexactly(16)), rk)
                 now = common.eggs_time()
                 if time_check and block_id <= (now + FUTURE_CUTOFF):
                     logging.error(f'Block {block_id} is too recent to be deleted.')
                     return
                 erase_block(base_path, block_id) # can never fail
-                m = ser_erase_cert(block_id, rk)
-                writer.write(block_service_str)
+                m = ser_erase_cert(id, block_id, rk)
                 writer.write(m)
 
             elif kind == b'f':
                 # fetch block (no MAC is required)
                 # block_id -> data
-                block_id = deser_fetch_block(kind + (await reader.readexactly(8)))
+                block_id = deser_fetch_block(block_service_str + kind + (await reader.readexactly(8)))
                 data = fetch_block(base_path, block_id)
-                m = ser_fetch_response(len(data))
-                writer.write(block_service_str)
+                m = ser_fetch_response(id, len(data))
                 writer.write(m)
                 writer.write(data)
 
             elif kind == b'w':
                 # write block
                 # (block_id, crc, size, mac) -> data
-                block_id, crc, size = deser_write_block(kind + (await reader.readexactly(24)), rk)
+                block_id, crc, size = deser_write_block(block_service_str + kind + (await reader.readexactly(24)), rk)
                 # check that block_id is inside expected range
                 # this ensures we don't have "reply attack"-esque issues
                 now = common.eggs_time()
@@ -191,25 +191,22 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 data = await reader.readexactly(size)
                 assert crypto.crc32c(data) == crc
                 write_block(base_path, block_id, data)
-                m = ser_write_cert(block_id, rk)
-                writer.write(block_service_str)
+                m = ser_write_cert(id, block_id, rk)
                 writer.write(m)
 
             elif kind == b'c':
                 # CRC block (return CRC instead of data, no MAC is required)
                 # block_id -> (size, crc)
-                block_id = deser_crc_block(kind + (await reader.readexactly(8)))
+                block_id = deser_crc_block(block_service_str + kind + (await reader.readexactly(8)))
                 data = fetch_block(base_path, block_id)
-                m = ser_crc_response(len(data), crypto.crc32c(data))
-                writer.write(block_service_str)
+                m = ser_crc_response(id, len(data), crypto.crc32c(data))
                 writer.write(m)
 
             elif kind == b's':
                 # status report (return a MAC so they can verify we are the correct process)
-                token = deser_stats(kind + (await reader.readexactly(8)))
+                token = deser_stats(block_service_str + kind + (await reader.readexactly(8)))
                 used_bytes, free_bytes, used_n, free_n = get_stats(base_path)
-                m = ser_stats(token, used_bytes, free_bytes, used_n, free_n, rk)
-                writer.write(block_service_str)
+                m = ser_stats(id, token, used_bytes, free_bytes, used_n, free_n, rk)
                 writer.write(m)
 
             else:

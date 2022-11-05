@@ -182,27 +182,28 @@ class Block(TypedDict):
 def block_add_cert(*, block_size: int, block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
     b = bytearray(32)
-    struct.pack_into('<cQ4sI', b, 0, b'w', block['block_id'], crc32_from_int(block['crc32']), block_size)
+    struct.pack_into('<QcQ4sI', b, 0, block['block_service_id'], b'w', block['block_id'], crc32_from_int(block['crc32']), block_size)
     return crypto.compute_mac(b, key)
 
 def block_add_proof(block: Union[Block, BlockInfo], key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
-    b = bytearray(16)
+    b = bytearray(32)
     block_id = block.block_id if isinstance(block, BlockInfo) else block['block_id']
-    struct.pack_into('<cQ', b, 0, b'W', block_id)
+    block_service_id = block.block_service_id if isinstance(block, BlockInfo) else block['block_service_id']
+    struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
     return crypto.compute_mac(b, key)
 
 def block_delete_cert(block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
-    b = bytearray(16)
-    struct.pack_into('<cQ', b, 0, b'e', block['block_id'])
+    b = bytearray(32)
+    struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'e', block['block_id'])
     mac = crypto.compute_mac(b, key)
     return mac
 
 def block_delete_proof(block: Block, key: crypto.ExpandedKey) -> bytes:
     assert isinstance(key, list) and len(key) == 44
-    b = bytearray(16)
-    struct.pack_into('<cQ', b, 0, b'E', block['block_id'])
+    b = bytearray(32)
+    struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
     return crypto.compute_mac(b, key)
 
 class Span(TypedDict):
@@ -263,15 +264,23 @@ def check_span_body(span: Span) -> bool:
 
     return True
 
-def pick_block_services(cur: sqlite3.Cursor, storage_class: int, num: int) -> Optional[List[Dict[str, Any]]]:
-    servers = list(cur.execute(
+def pick_block_services(cur: sqlite3.Cursor, storage_class: int, num: int, blacklists: List[BlockServiceBlacklist]) -> Optional[List[Dict[str, Any]]]:
+    servers: Iterable[Dict[str, Any]] = cur.execute(
         '''
             select failure_domain, write_weight, id, ip, port, secret_key from block_services
                 where storage_class = :storage_class and not terminal and not stale
                 order by failure_domain
         ''',
         {'storage_class': storage_class}
-    ).fetchall())
+    ).fetchall()
+    def apply_blacklist(server: Dict[str, Any]) -> bool:
+        for blacklist in blacklists:
+            if server['id'] == blacklist.id:
+                return False
+            if server['ip'] == socket.inet_aton(server['ip']) and server['port'] == blacklist.port:
+                return False
+        return True
+    servers = list(filter(apply_blacklist, servers))
     selected_block_services: List[Dict[str, Any]] = []
     # TODO obviously very slow (quadratic) if we have many failure domains
     while len(selected_block_services) < num:
@@ -719,15 +728,28 @@ def construct_file(cur: sqlite3.Cursor, req: ConstructFileReq) -> Union[EggsErro
 # read only
 def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> VisitTransientFilesResp:
     shard_info = ShardInfo(cur)
-    num_entries = (UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE)//TransientFile.STATIC_SIZE
-    entries = cur.execute(
+    budget = UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE
+    max_entries = (UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE)//TransientFile.STATIC_SIZE
+    entries = list(cur.execute(
         'select * from files where transient and id >= :begin_id order by id asc limit :max_entries',
-        {'begin_id': req.begin_id, 'max_entries': num_entries+1}
-    ).fetchall()
-    return VisitTransientFilesResp(
-        next_id=0 if len(entries) < num_entries else entries[-1]['id'],
-        files=[TransientFile(id=entry['id'], cookie=calc_cookie(shard_info.secret_key, entry['id']), deadline_time=entry['deadline'], note=entry['note']) for entry in entries[:num_entries]]
-    )
+        {'begin_id': req.begin_id, 'max_entries': max_entries+1}
+    ))
+    next_id = 0
+    resp_files: List[TransientFile] = []
+    for ix, entry in enumerate(entries):
+        resp_file = TransientFile(
+            id=entry['id'],
+            cookie=calc_cookie(shard_info.secret_key, entry['id']),
+            deadline_time=entry['deadline'],
+            note=entry['note'],
+        )
+        budget -= resp_file.calc_packed_size()
+        if budget < 0:
+            if len(entries) < max_entries:
+                next_id = entries[ix+1]['id']
+            break
+        resp_files.append(resp_file)
+    return VisitTransientFilesResp(next_id, resp_files)
 
 def get_transient_file(cur: sqlite3.Cursor, shard_info: ShardInfo, *, file_id: int, cookie: int, now: int):
     file = cur.execute('select * from files where id = :file_id and transient and deadline >= :now', {'file_id': file_id, 'now': now}).fetchone()
@@ -781,7 +803,7 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             span['state'] = SpanState.CLEAN
         else:
             # we need to actually store the span
-            block_services = pick_block_services(cur, req.storage_class, num_total_blocks(req.parity))
+            block_services = pick_block_services(cur, req.storage_class, num_total_blocks(req.parity), req.blacklist)
             if block_services is None:
                 return EggsError(ErrCode.COULD_NOT_PICK_BLOCK_SERVICES)
             assert len(block_services) == len(req.body_blocks)
@@ -1055,13 +1077,11 @@ def link_file(cur: sqlite3.Cursor, req: LinkFileReq) -> Union[LinkFileResp, Eggs
 # read only
 def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, EggsError]:
     file = cur.execute(
-        'select id, transient from files where id = :file_id',
+        'select id from files where id = :file_id',
         {'file_id': req.file_id}
     ).fetchone()
     if file is None:
         return EggsError(ErrCode.FILE_NOT_FOUND)
-    if file['transient']:
-        return EggsError(ErrCode.FILE_IS_TRANSIENT)
     query_params = {'file_id': req.file_id, 'byte_offset': req.byte_offset}
     # Make sure that we get the span containing the offset
     first_span = cur.execute(
@@ -1438,9 +1458,58 @@ def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[E
     return SetDirectoryInfoResp()
 
 # not read only
-def swap_blocks(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, SwapBlocksResp]:
+def swap_blocks_inner(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, SwapBlocksResp]:
     # only exact byte offsets here
-    pass
+    spans = list(cur.execute(
+        '''
+            select * from spans
+                where (
+                    (file_id = :file_id_1 and byte_offset = :byte_offset_1) or
+                    (file_id = :file_id_2 and byte_offset = :byte_offset_2)
+                )
+        ''',
+        {
+            'file_id_1': req.file_id1,
+            'byte_offset_1': req.byte_offset1,
+            'file_id_2': req.file_id2,
+            'byte_offset_2': req.byte_offset2,
+        }
+    ).fetchall())
+    if len(spans) != 2:
+        return EggsError(ErrCode.SPAN_NOT_FOUND)
+    span_1, span_2 = spans
+    assert span_1['state'] == span_2['state'] # We don't want to put not-certified blocks in clean spans, or similar
+    assert span_1['block_size'] == span_2['block_size']
+    blocks_1: List[Block] = json.loads(span_1['body'])
+    block_1_ix = -1
+    for ix in range(len(blocks_1)):
+        if blocks_1[ix]['block_id'] == req.block_id1:
+            block_1_ix = ix
+            break
+    assert block_1_ix >= 0
+    blocks_2: List[Block] = json.loads(span_2['body'])
+    block_2_ix = -1
+    for ix in range(len(blocks_2)):
+        if blocks_2[ix]['block_id'] == req.block_id2:
+            block_2_ix = ix
+            break
+    assert block_2_ix >= 0
+    blocks_1[block_1_ix], blocks_2[block_2_ix] = blocks_2[block_2_ix], blocks_1[block_1_ix]
+    cur.executemany(
+        'update spans set body = :body where file_id = :file_id and byte_offset = :byte_offset',
+        [
+            {'file_id': req.file_id1, 'byte_offset': req.byte_offset1, 'body': json.dumps(blocks_1)},
+            {'file_id': req.file_id2, 'byte_offset': req.byte_offset2, 'body': json.dumps(blocks_2)},
+        ]
+    )
+    assert cur.rowcount == 2
+    return SwapBlocksResp()
+
+def swap_blocks(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, SwapBlocksResp]:
+    x = swap_blocks_inner(cur, req)
+    check_spans_constraints(cur, req.file_id1)
+    check_spans_constraints(cur, req.file_id2)
+    return x
 
 class BlockServiceInfo(TypedDict):
     id: int
@@ -2125,6 +2194,45 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, transient_file_1.id, b'newfile'))
         st_3 = cast(StatDirectoryResp, self.shard.execute_ok(StatDirectoryReq(ROOT_DIR_INODE_ID)))
         assert st_3.mtime > st_2.mtime
+    
+    def test_swap_blocks(self):
+        self.shard.execute_internal_ok(UpdateBlockServicesInfoReq(self.test_block_services))
+        transient_file_1 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
+        blocks_1 = cast(AddSpanInitiateResp, self.shard.execute_ok(AddSpanInitiateReq(
+            file_id=transient_file_1.id,
+            cookie=transient_file_1.cookie,
+            byte_offset=0,
+            storage_class=2,
+            blacklist=[],
+            parity=create_parity_mode(1, 0),
+            crc32=b'1234',
+            size=100,
+            block_size=100,
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(b'1234')],
+        )))
+        transient_file_2 = cast(ConstructFileResp, self.shard.execute_ok(ConstructFileReq(InodeType.FILE, b'')))
+        blocks_2 = cast(AddSpanInitiateResp, self.shard.execute_ok(AddSpanInitiateReq(
+            file_id=transient_file_2.id,
+            cookie=transient_file_2.cookie,
+            byte_offset=0,
+            storage_class=2,
+            blacklist=[],
+            parity=create_parity_mode(1, 0),
+            crc32=b'1234',
+            size=100,
+            block_size=100,
+            body_bytes=b'',
+            body_blocks=[NewBlockInfo(b'1234')],
+        )))
+        self.shard.execute_ok(SwapBlocksReq(
+            transient_file_1.id, 0, blocks_1.blocks[0].block_id,
+            transient_file_2.id, 0, blocks_2.blocks[0].block_id,
+        ))
+        spans_1 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(transient_file_1.id, 0)))
+        spans_2 = cast(FileSpansResp, self.shard.execute_ok(FileSpansReq(transient_file_2.id, 0)))
+        assert spans_1.spans[0].body_blocks[0].block_id == blocks_2.blocks[0].block_id
+        assert spans_2.spans[0].body_blocks[0].block_id == blocks_1.blocks[0].block_id
     
 SHUCKLE_POLL_PERIOD_SEC = 60
 

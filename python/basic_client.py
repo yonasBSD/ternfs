@@ -548,11 +548,12 @@ def file_spans_raw(file_id: int):
                 print(f'  blocks:')
                 for block in span.body_blocks:
                     block_service = resp.block_services[block.block_service_ix]
-                    print(f'    - ip:       {socket.inet_ntoa(block_service.ip)}')
-                    print(f'      port:     {block_service.port}')
-                    print(f'      block id: 0x{block.block_id:016X}')
-                    print(f'      crc32c:   {block.crc32!r}')
-                    print(f'      flags:    {format(block_service.flags, "08b")}')
+                    print(f'    - ip:               {socket.inet_ntoa(block_service.ip)}')
+                    print(f'      port:             {block_service.port}')
+                    print(f'      block service id: 0x{block_service.id:016X}')
+                    print(f'      block id:         0x{block.block_id:016X}')
+                    print(f'      crc32c:           {block.crc32!r}')
+                    print(f'      flags:            {format(block_service.flags, "08b")}')
         byte_offset = resp.next_offset
         if byte_offset == 0:
             break

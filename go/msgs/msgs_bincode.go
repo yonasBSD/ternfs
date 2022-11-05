@@ -1078,33 +1078,9 @@ func (v *SwapBlocksReq) Unpack(buf *bincode.Buf) error {
 }
 
 func (v *SwapBlocksResp) Pack(buf *bincode.Buf) {
-	buf.PackU64(uint64(v.FileId1))
-	buf.PackU64(uint64(v.ByteOffset1))
-	buf.PackU64(uint64(v.BlockId1))
-	buf.PackU64(uint64(v.FileId2))
-	buf.PackU64(uint64(v.ByteOffset2))
-	buf.PackU64(uint64(v.BlockId2))
 }
 
 func (v *SwapBlocksResp) Unpack(buf *bincode.Buf) error {
-	if err := buf.UnpackU64((*uint64)(&v.FileId1)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.ByteOffset1)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.BlockId1)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.FileId2)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.ByteOffset2)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.BlockId2)); err != nil {
-		return err
-	}
 	return nil
 }
 

@@ -61,7 +61,7 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
         ErrCode.NAME_IS_LOCKED, ErrCode.TYPE_IS_DIRECTORY,
     },
     ShardMessageKind.FILE_SPANS: {
-        ErrCode.FILE_NOT_FOUND, ErrCode.FILE_IS_TRANSIENT,
+        ErrCode.FILE_NOT_FOUND,
     },
     ShardMessageKind.SAME_DIRECTORY_RENAME: {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.NAME_NOT_FOUND, ErrCode.MISMATCHING_TARGET,

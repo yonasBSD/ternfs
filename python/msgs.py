@@ -1612,41 +1612,17 @@ class SwapBlocksReq(bincode.Packable):
 @dataclass
 class SwapBlocksResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SWAP_BLOCKS
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 8 + 8 + 8 # file_id1 + byte_offset1 + block_id1 + file_id2 + byte_offset2 + block_id2
-    file_id1: int
-    byte_offset1: int
-    block_id1: int
-    file_id2: int
-    byte_offset2: int
-    block_id2: int
+    STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.file_id1, b)
-        bincode.pack_u64_into(self.byte_offset1, b)
-        bincode.pack_u64_into(self.block_id1, b)
-        bincode.pack_u64_into(self.file_id2, b)
-        bincode.pack_u64_into(self.byte_offset2, b)
-        bincode.pack_u64_into(self.block_id2, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'SwapBlocksResp':
-        file_id1 = bincode.unpack_u64(u)
-        byte_offset1 = bincode.unpack_u64(u)
-        block_id1 = bincode.unpack_u64(u)
-        file_id2 = bincode.unpack_u64(u)
-        byte_offset2 = bincode.unpack_u64(u)
-        block_id2 = bincode.unpack_u64(u)
-        return SwapBlocksResp(file_id1, byte_offset1, block_id1, file_id2, byte_offset2, block_id2)
+        return SwapBlocksResp()
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 8 # file_id1
-        _size += 8 # byte_offset1
-        _size += 8 # block_id1
-        _size += 8 # file_id2
-        _size += 8 # byte_offset2
-        _size += 8 # block_id2
         return _size
 
 @dataclass

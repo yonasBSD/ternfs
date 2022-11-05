@@ -83,6 +83,14 @@ func (id InodeId) String() string {
 	return fmt.Sprintf("0x%X", uint64(id))
 }
 
+func (id BlockServiceId) String() string {
+	return fmt.Sprintf("0x%X", uint64(id))
+}
+
+func (id BlockId) String() string {
+	return fmt.Sprintf("0x%X", uint64(id))
+}
+
 func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {
 	return (InodeId(typ) << 61) | (InodeId(id) << 8) | InodeId(shard)
 }
@@ -309,7 +317,7 @@ type BlockInfo struct {
 	BlockServiceIp   [4]byte
 	BlockServicePort uint16
 	BlockServiceId   BlockServiceId
-	BlockId          uint64
+	BlockId          BlockId
 	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
 	Certificate [8]byte
 }
@@ -320,7 +328,7 @@ type AddSpanInitiateResp struct {
 }
 
 type BlockProof struct {
-	BlockId uint64
+	BlockId BlockId
 	Proof   [8]byte
 }
 
@@ -614,6 +622,8 @@ type SetDirectoryInfoReq struct {
 
 type SetDirectoryInfoResp struct{}
 
+// TODO this works with transient files, but don't require a cookie -- it's a bit
+// inconsistent.
 type SwapBlocksReq struct {
 	FileId1     InodeId
 	ByteOffset1 uint64
@@ -623,14 +633,7 @@ type SwapBlocksReq struct {
 	BlockId2    BlockId
 }
 
-type SwapBlocksResp struct {
-	FileId1     InodeId
-	ByteOffset1 uint64
-	BlockId1    BlockId
-	FileId2     InodeId
-	ByteOffset2 uint64
-	BlockId2    BlockId
-}
+type SwapBlocksResp struct{}
 
 // --------------------------------------------------------------------
 // CDC requests/responses
@@ -739,3 +742,16 @@ type DirectoryInfo struct {
 	// to have no body.
 	Body []DirectoryInfoBody
 }
+
+/*
+// --------------------------------------------------------------------
+// block service msgs
+
+type EraseBlockReq struct {
+	BlockId BlockId
+}
+
+type EraseBlockResp struct {
+
+}
+*/

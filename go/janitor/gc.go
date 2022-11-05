@@ -27,6 +27,7 @@ func (gc *Env) DestructFile(stats *DestructionStats, id msgs.InodeId, deadline m
 		stats.DestructedFiles++
 		return nil
 	}
+	// TODO need to think about transient files that already had dirty spans at the end.
 	// Keep destructing spans until we have nothing
 	initReq := msgs.RemoveSpanInitiateReq{
 		FileId: id,

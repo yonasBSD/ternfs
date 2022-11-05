@@ -65,9 +65,14 @@ func (req *blockServiceReq) writeUint64(x uint64) {
 	req.cursor += 8
 }
 
+func (req *blockServiceReq) writeUint32(x uint32) {
+	binary.LittleEndian.PutUint32(req.buf[req.cursor:], x)
+	req.cursor += 4
+}
+
 func (req *blockServiceReq) writeBytes(xs []byte) {
 	copy(req.buf[req.cursor:], xs)
-	req.cursor += len(req.buf)
+	req.cursor += len(xs)
 }
 
 type blockServiceResp struct {
@@ -90,7 +95,13 @@ func (resp *blockServiceResp) init(req *blockServiceReq, kind byte) error {
 	if err := resp.expectByte(kind); err != nil {
 		return err
 	}
-	return resp.expectByte(kind)
+	return nil
+}
+
+func (resp *blockServiceResp) finished() {
+	if resp.cursor != len(resp.buf) {
+		panic(fmt.Errorf("buf is not consumed, len=%d, cursor=%d", len(resp.buf), resp.cursor))
+	}
 }
 
 func (resp *blockServiceResp) readByte() byte {
@@ -102,7 +113,7 @@ func (resp *blockServiceResp) readByte() byte {
 func (resp *blockServiceResp) expectByte(expected byte) error {
 	got := resp.readByte()
 	if expected != got {
-		return fmt.Errorf("expecting byte %v, got %v from block service %v (%v:%d)", expected, got, resp.req.id, resp.req.ip, resp.req.port)
+		return fmt.Errorf("expecting byte %v (%c), got %v (%c) from block service %v (%v:%d)", expected, expected, got, got, resp.req.id, resp.req.ip, resp.req.port)
 	}
 	return nil
 }
@@ -121,9 +132,23 @@ func (resp *blockServiceResp) expectUint64(expected uint64) error {
 	return nil
 }
 
+func (resp *blockServiceResp) readUint32() uint32 {
+	x := binary.LittleEndian.Uint32(resp.buf[resp.cursor:])
+	resp.cursor += 4
+	return x
+}
+
+func (resp *blockServiceResp) expectUint32(expected uint32) error {
+	got := resp.readUint32()
+	if expected != got {
+		return fmt.Errorf("expecting uint32 %v, got %v from block service %v (%v:%d)", expected, got, resp.req.id, resp.req.ip, resp.req.port)
+	}
+	return nil
+}
+
 func (resp *blockServiceResp) readBytes(bs []byte) {
 	copy(bs, resp.buf[resp.cursor:])
-	resp.cursor += len(resp.buf)
+	resp.cursor += len(bs)
 }
 
 func EraseBlock(
@@ -138,18 +163,20 @@ func EraseBlock(
 		return proof, err
 	}
 	defer req.close()
-	req.writeUint64(block.BlockId)
+	req.writeUint64(uint64(block.BlockId))
 	req.writeBytes(block.Certificate[:])
 	if err := req.send(); err != nil {
 		return proof, err
 	}
-	// response: ('E', block_id, proof)
-	var respBuf [17]byte
+	// response: (block_service_id, 'E', block_id, proof)
+	var respBuf [8 + 1 + 8 + 8]byte
 	resp := blockServiceResp{buf: respBuf[:]}
 	if err := resp.init(&req, 'E'); err != nil {
 		return proof, err
 	}
+	resp.expectUint64(uint64(block.BlockId))
 	resp.readBytes(proof[:])
+	resp.finished()
 	return proof, nil
 }
 
@@ -173,42 +200,45 @@ func CopyBlock(
 	readReq.writeUint64(uint64(sourceBlock.BlockId))
 	readReq.send()
 	// read response: (block_service_id, 'F', size)
-	var readRespBuf [8 + 1 + 8]byte
+	var readRespBuf [8 + 1 + 4]byte
 	readResp := blockServiceResp{buf: readRespBuf[:]}
 	if err := readResp.init(&readReq, 'F'); err != nil {
 		return proof, err
 	}
-	if err := readResp.expectUint64(sourceBlockSize); err != nil {
+	if err := readResp.expectUint32(uint32(sourceBlockSize)); err != nil {
 		return proof, err
 	}
-	// read block
-	block := make([]byte, sourceBlockSize)
-	if _, err := io.ReadFull(readReq.sock, block); err != nil {
+	readResp.finished()
+	// read block data
+	blockData := make([]byte, sourceBlockSize)
+	if _, err := io.ReadFull(readReq.sock, blockData); err != nil {
 		return proof, readReq.err("read block", err)
 	}
 	// start writing the block: message (block_service_id, 'w', block_id, crc32, block_size, certificate)
-	var writeReqBuf [8 + 1 + 8 + 4 + 8 + 8]byte
+	var writeReqBuf [8 + 1 + 8 + 4 + 4 + 8]byte
 	writeReq := blockServiceReq{buf: writeReqBuf[:]}
 	if err := writeReq.init(dstBlock.BlockServiceId, net.IP(dstBlock.BlockServiceIp[:]), int(dstBlock.BlockServicePort), 'w'); err != nil {
 		return proof, err
 	}
 	defer writeReq.close()
-	writeReq.writeUint64(dstBlock.BlockId)
+	writeReq.writeUint64(uint64(dstBlock.BlockId))
 	writeReq.writeBytes(sourceBlock.Crc32[:])
-	writeReq.writeUint64(sourceBlockSize)
+	writeReq.writeUint32(uint32(sourceBlockSize))
 	writeReq.writeBytes(dstBlock.Certificate[:])
+	writeReq.send()
+	// Write block data
+	if _, err := writeReq.sock.Write(blockData); err != nil {
+		return proof, writeReq.err("write block", err)
+	}
 	// write response: (block_service_id, 'W', block_id, proof)
 	var writeRespBuf [8 + 1 + 8 + 8]byte
 	writeResp := blockServiceResp{buf: writeRespBuf[:]}
 	if err := writeResp.init(&writeReq, 'W'); err != nil {
 		return proof, err
 	}
-	writeResp.expectUint64(dstBlock.BlockId)
+	writeResp.expectUint64(uint64(dstBlock.BlockId))
 	writeResp.readBytes(proof[:])
-	// Write block
-	if _, err := writeReq.sock.Write(block); err != nil {
-		return proof, writeReq.err("write block", err)
-	}
+	writeResp.finished()
 	// we're finally done
 	return proof, nil
 }

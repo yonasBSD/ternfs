@@ -52,12 +52,13 @@ async def check_one_device(id: int, secret_key: bytes, ip: str, port: int, sc: i
         return
     try:
         writer.write(struct.pack('<Q', id) + b's' + token)
-        m = await reader.readexactly(49)
+        m = await reader.readexactly(8+49)
     finally:
         writer.close()
     m2 = crypto.remove_mac(m, rk)
     assert m2 is not None, 'bad mac'
-    kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<c8sQQQQ', m2)
+    received_id, kind, got_token, used_bytes, free_bytes, used_n, free_n = struct.unpack('<Qc8sQQQQ', m2)
+    assert id == received_id, 'bad received id'
     assert kind == b'S', 'bad response kind'
     assert got_token == token, 'token mismatch'
 
@@ -167,7 +168,7 @@ def is_stale(value: int) -> bool:
 async def index() -> str:
     global DB
     c = DB.execute('select * from block_services')
-    items = [dict(row) | {'storage_class_str': STORAGE_CLASSES[row['storage_class']]} for row in c]
+    items = [dict(row) | {'storage_class_str': STORAGE_CLASSES[row['storage_class']], 'id_str': f'0x{row["id"]:016X}'} for row in c]
     return await render_template('index.html', devices=items)
 
 @app.route('/change_status', methods=['POST'])

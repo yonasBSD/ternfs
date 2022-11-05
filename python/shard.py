@@ -108,16 +108,29 @@ def init_db(shard: int, db: sqlite3.Connection):
             crc32 integer not null,
             size integer not null,
             block_size integer not null,
-            -- * ZERO_FILL_STORAGE: empty blob
-            -- * INLINE_STORAGE: blob with length < 256
-            -- * All the others: json list of Blocks
-            body any not null,
+            -- only present in INLINE_STORAGE
+            inline_body blob,
             primary key (file_id, byte_offset),
             foreign key (file_id) references files (id),
             check (state in ({SpanState.CLEAN}, {SpanState.DIRTY}, {SpanState.CONDEMNED})),
-            check (storage_class not in ({INLINE_STORAGE}, {ZERO_FILL_STORAGE}) or parity = 0)
+            check (storage_class not in ({INLINE_STORAGE}, {ZERO_FILL_STORAGE}) or parity = 0),
+            check ((storage_class = {INLINE_STORAGE}) = (inline_body is not null))
         )
     ''')
+    cur.execute(f'''
+        create table if not exists blocks (
+            block_id integer primary key not null check (block_id >= 0),
+            block_service_id integer not null,
+            crc32 integer not null,
+            file_id integer not null,
+            byte_offset integer not null,
+            ix integer not null check (ix >= 0),
+            foreign key (file_id) references files (id),
+            foreign key (file_id, byte_offset) references spans (file_id, byte_offset)
+        )
+    ''')
+    cur.execute('create index if not exists spans_to_block_service on blocks (block_service_id)')
+    cur.execute('create index if not exists file_location_to_block on blocks (file_id, byte_offset)')
     cur.execute(f'''
         create table if not exists directories (
             id integer primary key not null check (id >= 0 and id != {NULL_INODE_ID}),
@@ -158,20 +171,6 @@ def init_db(shard: int, db: sqlite3.Connection):
     ''')
     cur.execute('create index if not exists edges_name_time on edges (dir_id, name, creation_time)')
     cur.execute('create index if not exists edges_name_current on edges (dir_id, name, current)')
-    # the "reverse block index"
-    cur.execute(f'''
-        create table if not exists block_to_span (
-            block_id integer not null primary key,
-            block_service_id integer not null,
-            file_id integer not null,
-            byte_offset integer not null,
-            -- the defer makes writing some code a bit simpler,
-            -- where we manipulate this leaving temporarily inconsistent state
-            -- while running the transaction.
-            foreign key (file_id, byte_offset) references spans (file_id, byte_offset) deferrable initially deferred
-        )
-    ''')
-    cur.execute('create index if not exists spans_to_block_service on block_to_span (block_service_id)')
     db.commit()
 
 class Block(TypedDict):
@@ -214,36 +213,36 @@ class Span(TypedDict):
     size: int
     block_size: int
 
-def check_span_body(span: Span) -> bool:
-    crc32 = crc32_from_int(span['crc32'])
+def check_span_body(req: AddSpanInitiateReq) -> bool:
+    crc32 = req.crc32
 
     # Note that the span size might be bigger or smaller than
     # the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
     # for details.
 
     # The two special cases
-    if span['storage_class'] == ZERO_FILL_STORAGE:
-        if span['body'] != b'' or span['parity'] != 0:
+    if req.storage_class == ZERO_FILL_STORAGE:
+        if req.body_bytes != b'' or req.body_blocks or req.parity != 0 or req.block_size != 0:
             return False
-        if crypto.crc32c(b'\0' * span['size']) != crc32:
+        if crypto.crc32c(b'\0' * req.size) != crc32:
             return False
         return True
-    if span['storage_class'] == INLINE_STORAGE:
-        if not (span['parity'] == 0 and isinstance(span['body'], bytes) and span['block_size'] == len(span['body'])):
+    if req.storage_class == INLINE_STORAGE:
+        if req.parity != 0 or len(req.body_bytes) != req.size or req.body_blocks or req.block_size != 0:
             return False
-        if crypto.crc32c(span['body']) != crc32:
+        if crypto.crc32c(req.body_bytes) != crc32:
             return False
         return True
 
-    if not isinstance(span['body'], list):
+    if not req.body_blocks:
         return False
     
-    data_blocks = num_data_blocks(span['parity'])
+    data_blocks = num_data_blocks(req.parity)
     
     # consistency check for mirroring: they must be all the same
     if data_blocks == 1:
-        for block in span['body']:
-            if block['crc32'] != span['crc32']:
+        for block in req.body_blocks:
+            if block.crc32 != crc32:
                 return False
     # consistency check for general case
     else:
@@ -256,8 +255,8 @@ def check_span_body(span: Span) -> bool:
         # can validate the rest, if it wants to, but it would be too expensive
         # for the shard to validate).
         blocks_crc32 = b'\0\0\0\0'
-        for block in span['body'][:data_blocks]:
-            blocks_crc32 = crypto.crc32c_combine(blocks_crc32, crc32_from_int(block['crc32']), span['block_size'])
+        for block in req.body_blocks[:data_blocks]:
+            blocks_crc32 = crypto.crc32c_combine(blocks_crc32, block.crc32, req.block_size)
         if crc32 != blocks_crc32:
             return False
         # TODO check parity block CRC32
@@ -729,14 +728,14 @@ def construct_file(cur: sqlite3.Cursor, req: ConstructFileReq) -> Union[EggsErro
 def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> VisitTransientFilesResp:
     shard_info = ShardInfo(cur)
     budget = UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE
-    max_entries = (UDP_MTU-ShardResponse.STATIC_SIZE-VisitTransientFilesResp.STATIC_SIZE)//TransientFile.STATIC_SIZE
-    entries = list(cur.execute(
-        'select * from files where transient and id >= :begin_id order by id asc limit :max_entries',
-        {'begin_id': req.begin_id, 'max_entries': max_entries+1}
-    ))
-    next_id = 0
+    # lazy fetch, for easy budget "next id" computation
+    entries = cur.execute(
+        'select * from files where transient and id >= :begin_id order by id asc',
+        {'begin_id': req.begin_id}
+    )
     resp_files: List[TransientFile] = []
-    for ix, entry in enumerate(entries):
+    next_id = 0
+    for entry in entries:
         resp_file = TransientFile(
             id=entry['id'],
             cookie=calc_cookie(shard_info.secret_key, entry['id']),
@@ -745,8 +744,7 @@ def visit_transient_files(cur: sqlite3.Cursor, req: VisitTransientFilesReq) -> V
         )
         budget -= resp_file.calc_packed_size()
         if budget < 0:
-            if len(entries) < max_entries:
-                next_id = entries[ix+1]['id']
+            next_id = entry['id']
             break
         resp_files.append(resp_file)
     return VisitTransientFilesResp(next_id, resp_files)
@@ -759,12 +757,20 @@ def get_transient_file(cur: sqlite3.Cursor, shard_info: ShardInfo, *, file_id: i
         return EggsError(ErrCode.BAD_COOKIE)
     return file
 
+def get_span_blocks(cur: sqlite3.Cursor, *, file_id: int, offset: int) -> List[Block]:
+    return list(cur.execute(
+        'select block_id, block_service_id, crc32 from blocks where file_id = :file_id and byte_offset = :byte_offset order by ix asc',
+        {'file_id': file_id, 'byte_offset': offset}
+    ))
+
 def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Union[EggsError, AddSpanInitiateResp]:
     now = eggs_time()
     shard_info = ShardInfo(cur)
     file = get_transient_file(cur, shard_info, file_id=req.file_id, cookie=req.cookie, now=now)
     if isinstance(file, EggsError):
         return file
+    if not check_span_body(req):
+        return EggsError(ErrCode.BAD_SPAN_BODY)
     blockless = req.storage_class in (ZERO_FILL_STORAGE, INLINE_STORAGE)
     if req.parity == 0 and not blockless:
         return EggsError(ErrCode.INCONSISTENT_STORAGE_CLASS_PARITY)
@@ -790,40 +796,36 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
             'crc32': span_crc32,
             'size': req.size,
             'block_size': req.block_size,
+            'inline_body': req.body_bytes if req.storage_class == INLINE_STORAGE else None,
+            'state': SpanState.CLEAN if blockless else SpanState.DIRTY,
         }
-        if blockless:
-            # nothing to do, just store the body, which won't be anything in zero-fill case
-            if len(req.body_blocks) != 0:
-                return EggsError(ErrCode.BAD_SPAN_BODY)
-            if req.storage_class == INLINE_STORAGE and req.size != req.block_size:
-                return EggsError(ErrCode.BAD_SPAN_BODY)
-            if req.storage_class == ZERO_FILL_STORAGE and len(req.body_bytes) != 0:
-                return EggsError(ErrCode.BAD_SPAN_BODY)
-            span['body'] = req.body_bytes
-            span['state'] = SpanState.CLEAN
-        else:
-            # we need to actually store the span
+        # add span
+        sql_insert(cur, 'spans', file_id=req.file_id, byte_offset=req.byte_offset, **span)
+        # increase file size
+        cur.execute(
+            'update files set size = :size, last_span_state = :span_state where id = :file_id',
+            {'size': file['size']+req.size, 'file_id': req.file_id, 'span_state': span['state']}
+        )
+        if not blockless:
+            # store the blocks
             block_services = pick_block_services(cur, req.storage_class, num_total_blocks(req.parity), req.blacklist)
             if block_services is None:
                 return EggsError(ErrCode.COULD_NOT_PICK_BLOCK_SERVICES)
             assert len(block_services) == len(req.body_blocks)
             assert len(req.body_bytes) == 0
-            span['state'] = SpanState.DIRTY
-            span['body'] = [] # the blocks
-            for block_info, block_service in zip(cast(List[NewBlockInfo], req.body_blocks), block_services):
+            for ix, (block_info, block_service) in enumerate(zip(cast(List[NewBlockInfo], req.body_blocks), block_services)):
                 block_id = shard_info.next_block_id(cur, now)
                 block: Block = {
                     'block_service_id': block_service['id'],
                     'block_id': block_id,
                     'crc32': crc32_to_int(block_info.crc32),
                 }
-                span['body'].append(block)
                 sql_insert(
-                    cur, 'block_to_span',
-                    block_service_id=block['block_service_id'],
-                    block_id=block_id,
+                    cur, 'blocks',
                     file_id=req.file_id,
                     byte_offset=req.byte_offset,
+                    ix=ix,
+                    **block,
                 )
                 resp_blocks.append(BlockInfo(
                     block_service_ip=socket.inet_aton(block_service['ip']),
@@ -832,17 +834,6 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
                     block_id=block_id,
                     certificate=block_add_cert(block_size=req.block_size, block=block, key=crypto.aes_expand_key(block_service['secret_key'])),
                 ))
-        if not check_span_body(cast(Span, span)):
-            return EggsError(ErrCode.BAD_SPAN_BODY)
-        if isinstance(span['body'], list):
-            span['body'] = json.dumps(span['body'])
-        # add span
-        sql_insert(cur, 'spans', file_id=req.file_id, byte_offset=req.byte_offset, **span)
-        # increase file size
-        cur.execute(
-            'update files set size = :size, last_span_state = :span_state where id = :file_id',
-            {'size': file['size']+req.size, 'file_id': req.file_id, 'span_state': span['state']}
-        )
     # otherwise, we fetch the existing span
     else:
         existing_span = cur.execute(
@@ -860,9 +851,7 @@ def add_span_initiate_inner(cur: sqlite3.Cursor, req: AddSpanInitiateReq) -> Uni
         if existing_span is None:
             return EggsError(ErrCode.SPAN_NOT_FOUND)
         if not blockless:
-            body = json.loads(existing_span['body'])
-            assert isinstance(body, list)
-            for block in body:
+            for block in get_span_blocks(cur, file_id=req.file_id, offset=req.byte_offset):
                 block_service_id = block['block_service_id']
                 block_server = lookup_block_services(cur, (block_service_id,)).get(block_service_id)
                 if block_server is None:
@@ -896,13 +885,16 @@ def add_span_certify_inner(cur: sqlite3.Cursor, req: AddSpanCertifyReq) -> Union
     ).fetchone()
     if span is None:
         return EggsError(ErrCode.SPAN_NOT_FOUND)
-    if isinstance(span['body'], bytes):
+    if span['storage_class'] in (INLINE_STORAGE, ZERO_FILL_STORAGE):
         return EggsError(ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN)
-    span_body = cast(List[Block], json.loads(span['body']))
-    if len(span_body) != len(req.proofs):
+    blocks: List[Block] = list(cur.execute(
+        'select block_id, block_service_id, crc32 from blocks where file_id = :file_id and byte_offset = :byte_offset',
+        {'file_id': req.file_id, 'byte_offset': req.byte_offset}
+    ).fetchall())
+    if len(blocks) != len(req.proofs):
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
-    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], span_body))
-    for block, proof in zip(span_body, req.proofs):
+    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], blocks))
+    for block, proof in zip(blocks, req.proofs):
         if proof.block_id != block['block_id']:
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
         bserver = bservers.get(block['block_service_id'])
@@ -949,10 +941,8 @@ def remove_span_initiate_inner(cur: sqlite3.Cursor, req: RemoveSpanInitiateReq) 
     else:
         # note that we allow to remove dirty spans -- this is important to deal well with
         # the case where a writer dies in the middle of adding a span.
-        assert isinstance(last_span['body'], str)
-        blocks = cast(List[Block], json.loads(last_span['body']))
         resp_blocks: List[BlockInfo] = []
-        for block in blocks:
+        for block in get_span_blocks(cur, file_id=req.file_id, offset=last_span['byte_offset']):
             block_services = lookup_block_services(cur, (block['block_service_id'],))
             assert len(block_services) == 1
             block_service = block_services[block['block_service_id']]
@@ -993,14 +983,14 @@ def remove_span_certify_inner(cur: sqlite3.Cursor, req: RemoveSpanCertifyReq) ->
     ).fetchone()
     if span is None:
         return EggsError(ErrCode.SPAN_NOT_FOUND)
-    if isinstance(span['body'], bytes):
+    if span['storage_class'] in (INLINE_STORAGE, ZERO_FILL_STORAGE):
         return EggsError(ErrCode.CANNOT_CERTIFY_BLOCKLESS_SPAN)
-    span_body = cast(List[Block], json.loads(span['body']))
-    if len(span_body) != len(req.proofs):
+    blocks = get_span_blocks(cur, file_id=req.file_id, offset=req.byte_offset)
+    if len(blocks) != len(req.proofs):
         return EggsError(ErrCode.BAD_NUMBER_OF_BLOCKS_PROOFS)
-    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], span_body))
+    bservers = lookup_block_services(cur, map(lambda block: block['block_service_id'], blocks))
     deleted_blocks = []
-    for block, proof in zip(span_body, req.proofs):
+    for block, proof in zip(blocks, req.proofs):
         if proof.block_id != block['block_id']:
             return EggsError(ErrCode.BAD_BLOCK_PROOF)
         bserver = bservers.get(block['block_service_id'])
@@ -1088,10 +1078,12 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
         'select * from spans where file_id = :file_id and byte_offset <= :byte_offset order by byte_offset desc limit 1',
         query_params
     ).fetchone()
+    # fetch all immediately given that we do inner queries (`get_span_blocks`).
+    # TODO we could do a single query here
     spans = cur.execute(
-        'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc',
+        'select * from spans where file_id = :file_id and byte_offset > :byte_offset order by byte_offset asc limit 50',
         query_params
-    ) # no fetchall -- we don't know how many we're going to fit, so fetch lazily.
+    ).fetchall()
     budget = UDP_MTU - ShardResponse.STATIC_SIZE - FileSpansResp.STATIC_SIZE
     resp_spans: List[FetchedSpan] = []
     next_offset = 0
@@ -1099,13 +1091,10 @@ def file_spans(cur: sqlite3.Cursor, req: FileSpansReq) -> Union[FileSpansResp, E
     for span in (spans if first_span is None else itertools.chain((first_span,), spans)):
         body_blocks: List[FetchedBlock] = []
         body_bytes = b''
-        if span['storage_class'] in (ZERO_FILL_STORAGE, INLINE_STORAGE):
-            assert isinstance(span['body'], bytes)
-            body_bytes = span['body']
+        if span['storage_class'] == INLINE_STORAGE:
+            body_bytes = span['inline_body']
         else:
-            assert isinstance(span['body'], str)
-            blocks = cast(List[Block], json.loads(span['body']))
-            for block in blocks:
+            for block in get_span_blocks(cur, file_id=req.file_id, offset=span['byte_offset']):
                 try:
                     block_service_ix = block_services_ids.index(block['block_service_id'])
                 except ValueError:
@@ -1459,6 +1448,7 @@ def set_directory_info(cur: sqlite3.Cursor, req: SetDirectoryInfoReq) -> Union[E
 
 # not read only
 def swap_blocks_inner(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsError, SwapBlocksResp]:
+    # TODO now that we have a blocks table this can be written more concisely
     # only exact byte offsets here
     spans = list(cur.execute(
         '''
@@ -1480,26 +1470,26 @@ def swap_blocks_inner(cur: sqlite3.Cursor, req: SwapBlocksReq) -> Union[EggsErro
     span_1, span_2 = spans
     assert span_1['state'] == span_2['state'] # We don't want to put not-certified blocks in clean spans, or similar
     assert span_1['block_size'] == span_2['block_size']
-    blocks_1: List[Block] = json.loads(span_1['body'])
+    blocks_1 = get_span_blocks(cur, file_id=req.file_id1, offset=req.byte_offset1)
     block_1_ix = -1
     for ix in range(len(blocks_1)):
         if blocks_1[ix]['block_id'] == req.block_id1:
             block_1_ix = ix
             break
     assert block_1_ix >= 0
-    blocks_2: List[Block] = json.loads(span_2['body'])
+    blocks_2: List[Block] = get_span_blocks(cur, file_id=req.file_id2, offset=req.byte_offset2)
     block_2_ix = -1
     for ix in range(len(blocks_2)):
         if blocks_2[ix]['block_id'] == req.block_id2:
             block_2_ix = ix
             break
     assert block_2_ix >= 0
-    blocks_1[block_1_ix], blocks_2[block_2_ix] = blocks_2[block_2_ix], blocks_1[block_1_ix]
+    assert blocks_1[block_1_ix]['crc32'] == blocks_2[block_2_ix]['crc32']
     cur.executemany(
-        'update spans set body = :body where file_id = :file_id and byte_offset = :byte_offset',
+        'update blocks set file_id = :file_id, byte_offset = :byte_offset, ix = :ix where block_id = :block_id',
         [
-            {'file_id': req.file_id1, 'byte_offset': req.byte_offset1, 'body': json.dumps(blocks_1)},
-            {'file_id': req.file_id2, 'byte_offset': req.byte_offset2, 'body': json.dumps(blocks_2)},
+            {'file_id': req.file_id1, 'byte_offset': req.byte_offset1, 'ix': block_1_ix, 'block_id': blocks_2[block_2_ix]['block_id']},
+            {'file_id': req.file_id2, 'byte_offset': req.byte_offset2, 'ix': block_2_ix, 'block_id': blocks_1[block_1_ix]['block_id']},
         ]
     )
     assert cur.rowcount == 2
@@ -1962,7 +1952,7 @@ class ShardTests(unittest.TestCase):
             storage_class=INLINE_STORAGE,
             parity=0,
             size=len(b'test-inline-block'),
-            block_size=len(b'test-inline-block'),
+            block_size=0,
             body_bytes=b'test-inline-block',
             crc32=crypto.crc32c(b'test-inline-block'),
         )

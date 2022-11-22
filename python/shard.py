@@ -588,10 +588,17 @@ def create_locked_current_edge(cur: sqlite3.Cursor, req: CreateLockedCurrentEdge
 
 # read only
 def stat_file_req(cur: sqlite3.Cursor, req: StatFileReq) -> Union[EggsError, StatFileResp]:
-    file = cur.execute('select * from files where id = :id', {'id': req.id}).fetchone()
+    file = cur.execute('select * from files where id = :id and not transient', {'id': req.id}).fetchone()
     if file is None:
         return EggsError(ErrCode.FILE_NOT_FOUND)
-    return StatFileResp(mtime=file['mtime'], size=file['size'], transient=file['transient'], note=(file['note'] or b''))
+    return StatFileResp(mtime=file['mtime'], size=file['size'])
+
+# read only
+def stat_transient_file_req(cur: sqlite3.Cursor, req: StatFileReq) -> Union[EggsError, StatFileResp]:
+    file = cur.execute('select * from files where id = :id and transient', {'id': req.id}).fetchone()
+    if file is None:
+        return EggsError(ErrCode.FILE_NOT_FOUND)
+    return StatTransientFileResp(mtime=file['mtime'], size=file['size'], note=file['note'])
 
 # read only
 def stat_directory_req(cur: sqlite3.Cursor, req: StatDirectoryReq) -> Union[EggsError, StatDirectoryResp]:
@@ -603,31 +610,18 @@ def stat_directory_req(cur: sqlite3.Cursor, req: StatDirectoryReq) -> Union[Eggs
 
 # read only
 def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirResp]:
-    dir = get_directory(cur, req.dir_id, allow_snapshot=False)
+    dir = get_directory(cur, req.dir_id, allow_snapshot=not req.must_be_current)
     if isinstance(dir, EggsError):
         return dir
     entries = cur.execute(
-        # The window selects the current row, and the previous row chronologically, excluding
-        # everything after as_of. We want the rows that are first, and that have non-null target
-        # id.
-        #
-        # TODO this will always consider at least one edge per name (current or snapshot), which
-        # is not good if we create a million files and then remove them. We should
-        # * Just use the `current` column in the common case.
-        # * Add a (dir_id, name_hash, creation_time) type index to make the other case faster too.
         '''
-            with results as (
-                select row_number() over this_and_successor as row, target_id, owned, current, name_hash, name, creation_time
-                    from edges
-                    where dir_id = :dir_id and name_hash >= :next_hash and creation_time <= :as_of
-                    window this_and_successor as (partition by name_hash, name order by creation_time desc range between 1 preceding and current row)
-            ) select target_id, owned, current, name_hash, name, creation_time from results where row = 1 and target_id != :null;
+            select target_id, name_hash, name, creation_time
+                from edges
+                where current and dir_id = :dir_id and name_hash >= :next_hash
         ''',
         {
             'dir_id': req.dir_id,
             'next_hash': req.start_hash,
-            # usual sqlite problem that it cannot work with 64bit unsigned int
-            'as_of': req.as_of_time & 0x7FFFFFFFFFFFFFFF,
             'null': NULL_INODE_ID,
         }
     )
@@ -658,15 +652,15 @@ def read_dir(cur: sqlite3.Cursor, req: ReadDirReq) -> Union[EggsError, ReadDirRe
 
 # TODO as an optimization, we might want to omit edges for files which are only
 # current. This is likely to be a common case.
-def full_read_dir(cur: sqlite3.Cursor, req: FullReadDirReq) -> Union[EggsError, FullReadDirResp]:
+def snapshot_read_dir(cur: sqlite3.Cursor, req: SnapshotReadDirReq) -> Union[EggsError, SnapshotReadDirResp]:
     dir = get_directory(cur, req.dir_id, allow_snapshot=True) # the GC needs this to peruse snapshot dirs
     if isinstance(dir, EggsError):
         return dir
     entries = cur.execute(
         '''
-            select target_id, name_hash, name, creation_time, owned, current
+            select target_id, name_hash, name, creation_time, owned
                 from edges
-                where dir_id = :dir_id and (
+                where dir_id = :dir_id and not current and (
                     (name_hash = :start_hash and name = :start_name and creation_time >= :start_time) or
                     (name_hash = :start_hash and name > :start_name) or
                     (name_hash > :start_hash)
@@ -679,12 +673,12 @@ def full_read_dir(cur: sqlite3.Cursor, req: FullReadDirReq) -> Union[EggsError, 
             'start_time': req.start_time,
         }
     )
-    payloads: List[EdgeWithOwnership] = []
-    curr_size = ShardResponse.STATIC_SIZE + FullReadDirResp.STATIC_SIZE
+    payloads: List[SnapshotEdge] = []
+    curr_size = ShardResponse.STATIC_SIZE + SnapshotReadDirResp.STATIC_SIZE
     finished = True
     for entry in entries:
-        payload = EdgeWithOwnership(
-            target_id=inode_id_set_extra(entry['target_id'], bool(entry['owned'] or entry['current'])),
+        payload = SnapshotEdge(
+            target_id=inode_id_set_extra(entry['target_id'], bool(entry['owned'])),
             name_hash=entry['name_hash'],
             name=entry['name'],
             creation_time=entry['creation_time'],
@@ -694,7 +688,7 @@ def full_read_dir(cur: sqlite3.Cursor, req: FullReadDirReq) -> Union[EggsError, 
             break
         payloads.append(payload)
         curr_size += payload.calc_packed_size()
-    return FullReadDirResp(
+    return SnapshotReadDirResp(
         finished=finished,
         results=payloads,
     )
@@ -1561,6 +1555,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = create_directory_inode(cur, req_body)
         elif isinstance(req_body, StatFileReq):
             resp_body = stat_file_req(cur, req_body)
+        elif isinstance(req_body, StatTransientFileReq):
+            resp_body = stat_transient_file_req(cur, req_body)
         elif isinstance(req_body, StatDirectoryReq):
             resp_body = stat_directory_req(cur, req_body)
         elif isinstance(req_body, CreateLockedCurrentEdgeReq):
@@ -1603,8 +1599,8 @@ def execute_internal(db: sqlite3.Connection, req_body: ShadRequestBodyInternal) 
             resp_body = unlock_current_edge(cur, req_body)
         elif isinstance(req_body, LookupReq):
             resp_body = lookup(cur, req_body)
-        elif isinstance(req_body, FullReadDirReq):
-            resp_body = full_read_dir(cur, req_body)
+        elif isinstance(req_body, SnapshotReadDirReq):
+            resp_body = snapshot_read_dir(cur, req_body)
         elif isinstance(req_body, RemoveNonOwnedEdgeReq):
             resp_body = remove_non_owned_edge(cur, req_body)
         elif isinstance(req_body, IntraShardHardFileUnlinkReq):
@@ -1890,6 +1886,32 @@ class ShardTests(unittest.TestCase):
         stat_2 = self.shard.execute_ok(StatDirectoryReq(dir_id))
         assert not stat_2.info.inherited
     
+    # Returns a dummy ReadDirResp just to be compatible with old code
+    def read_dir_as_of_time(self, dir_id: int, as_of_time: int) -> ReadDirResp:
+        # Collect all edges
+        resp = self.shard.execute_ok(ReadDirReq(dir_id, start_hash=0, must_be_current=False))
+        assert not resp.next_hash # just one batch
+        edges = resp.results
+        resp = self.shard.execute_ok(SnapshotReadDirReq(dir_id, start_hash=0, start_name=b'', start_time=0))
+        assert resp.finished
+        edges += [Edge(target_id=inode_id_strip_extra(r.target_id), name_hash=r.name_hash, name=r.name, creation_time=r.creation_time) for r in resp.results]
+        # sort them
+        edges.sort(key=lambda e: (e.name_hash, e.name, e.creation_time))
+        # pick the correct one for each name
+        as_of_edges: List[Edge] = []
+        for edge in edges:
+            if edge.creation_time <= as_of_time:
+                if len(as_of_edges) == 0 or as_of_edges[-1].name != edge.name:
+                    as_of_edges.append(edge)
+                else:
+                    as_of_edges[-1] = edge
+        # filter deletion edges
+        as_of_edges = list(filter(lambda e: e.target_id != NULL_INODE_ID, as_of_edges))
+        return ReadDirResp(
+            next_hash=0,
+            results=as_of_edges,
+        )
+    
     def test_create_current_edge(self):
         dummy_target_1 = self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard)
         dummy_target_2 = self.shard.fresh_inode_id(InodeType.FILE, self.shard.shard)
@@ -1897,10 +1919,10 @@ class ShardTests(unittest.TestCase):
         create_locked_edge_req = CreateLockedCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, creation_time=t_create)
         self.shard.execute_ok(create_locked_edge_req)
         # check that the edge is there
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqCurrent(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 1
         assert read_dir.results[0].name == b'test' and read_dir.results[0].target_id == dummy_target_2
-        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_create-1)).results 
+        assert not self.read_dir_as_of_time(dir_id=ROOT_DIR_INODE_ID, as_of_time=t_create-1).results
         # idempotence
         self.shard.execute_ok(create_locked_edge_req)
         # switching the id or the time should fail
@@ -1913,12 +1935,12 @@ class ShardTests(unittest.TestCase):
         # now we unlock and move
         t_before_move = eggs_time()
         self.shard.execute_ok(UnlockCurrentEdgeReq(dir_id=ROOT_DIR_INODE_ID, name=b'test', target_id=dummy_target_2, was_moved=True))
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
+        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqCurrent(dir_id=ROOT_DIR_INODE_ID, start_hash=0)))
         assert len(read_dir.results) == 0
-        read_dir = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_before_move)))
+        read_dir = self.read_dir_as_of_time(dir_id=ROOT_DIR_INODE_ID, as_of_time=t_before_move)
         assert len(read_dir.results) == 1
         assert read_dir.results[0].name == b'test' and read_dir.results[0].target_id == dummy_target_2
-        assert not self.shard.execute_ok(ReadDirReq(dir_id=ROOT_DIR_INODE_ID, start_hash=0, as_of_time=t_create-1)).results
+        assert not self.read_dir_as_of_time(dir_id=ROOT_DIR_INODE_ID, as_of_time=t_create-1).results
     
     def test_construct_file_1(self):
         # we don't check for idempotency because later we inspect those files
@@ -2096,7 +2118,7 @@ class ShardTests(unittest.TestCase):
         # and now linking should go through
         self.shard.execute_ok(link_req)
         # check that we get it in the directory
-        root_dir_files = self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0))
+        root_dir_files = self.shard.execute_ok(ReadDirReqCurrent(ROOT_DIR_INODE_ID, start_hash=0))
         assert root_dir_files.results[0].name == b'test-file'
         # check that the file is as big as we expect
         file_stat = cast(StatFileResp, self.shard.execute_ok(StatFileReq(root_dir_files.results[0].target_id)))
@@ -2143,7 +2165,7 @@ class ShardTests(unittest.TestCase):
         # can't check idempotency for directory renames -- the client is supposed to resolve these
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'))
         self.shard.execute_err(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'1', new_name=b'2'), ErrCode.NAME_NOT_FOUND)
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqCurrent(ROOT_DIR_INODE_ID, start_hash=0)))
         def read_dir_names(files):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
@@ -2153,14 +2175,14 @@ class ShardTests(unittest.TestCase):
         t_before_second_move = eggs_time()
         self.shard.execute_ok(SameDirectoryRenameReq(dir_id=ROOT_DIR_INODE_ID, target_id=file_id, old_name=b'2', new_name=b'3'))
         # verify that we get the right result with the as of time
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_creation, start_hash=0)))
+        files = self.read_dir_as_of_time(ROOT_DIR_INODE_ID, as_of_time=t_before_creation)
         assert read_dir_targets(files) == {transient_file_old.id, transient_file_other.id} and read_dir_names(files) == {b'1', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_move, start_hash=0)))
+        files = self.read_dir_as_of_time(ROOT_DIR_INODE_ID, as_of_time=t_before_first_move)
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'1', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_move, start_hash=0)))
+        files = self.read_dir_as_of_time(ROOT_DIR_INODE_ID, as_of_time=t_before_second_move)
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'2', b'other'}
         # finally, the current one
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqCurrent(ROOT_DIR_INODE_ID, start_hash=0)))
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
         # now delete the files
         t_before_first_deletion = eggs_time()
@@ -2171,11 +2193,11 @@ class ShardTests(unittest.TestCase):
         self.shard.execute_err(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'1'), ErrCode.NAME_NOT_FOUND)
         self.shard.execute_ok(SoftUnlinkFileReq(ROOT_DIR_INODE_ID, file_id=transient_file.id, name=b'3'))
         # now get the files, again in order
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_first_deletion, start_hash=0)))
+        files = self.read_dir_as_of_time(ROOT_DIR_INODE_ID, as_of_time=t_before_first_deletion)
         assert read_dir_targets(files) == {transient_file_other.id, transient_file.id} and read_dir_names(files) == {b'3', b'other'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReq(ROOT_DIR_INODE_ID, as_of_time=t_before_second_deletion, start_hash=0)))
+        files = self.read_dir_as_of_time(ROOT_DIR_INODE_ID, as_of_time=t_before_second_deletion)
         assert read_dir_targets(files) == {transient_file.id} and read_dir_names(files) == {b'3'}
-        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqNow(ROOT_DIR_INODE_ID, start_hash=0)))
+        files = cast(ReadDirResp, self.shard.execute_ok(ReadDirReqCurrent(ROOT_DIR_INODE_ID, start_hash=0)))
         assert not read_dir_targets(files)
         # as a bonus, try and fail to create a current edge older than the dead edge
         self.shard.execute_err(

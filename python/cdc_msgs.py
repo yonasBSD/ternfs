@@ -9,6 +9,7 @@ from msgs import *
 CDC_REQ_PROTOCOL_VERSION = b'CDC\0'
 CDC_RESP_PROTOCOL_VERSION = b'CDC\1'
 
+'''
 # INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
 CDC_ERRORS: Dict[CDCMessageKind, Set[ErrCode]] = {
     CDCMessageKind.MAKE_DIRECTORY: {
@@ -34,6 +35,7 @@ CDC_ERRORS: Dict[CDCMessageKind, Set[ErrCode]] = {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.DIRECTORY_NOT_EMPTY, ErrCode.DIRECTORY_HAS_OWNER, ErrCode.CANNOT_REMOVE_ROOT_DIRECTORY,
     }
 }
+'''
 
 @dataclass
 class CDCRequest(bincode.Packable):

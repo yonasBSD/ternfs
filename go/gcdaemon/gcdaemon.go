@@ -5,38 +5,75 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
+	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
-	"xtx/eggsfs/cdckey"
-	"xtx/eggsfs/janitor"
+	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
 
+func loop(log eggs.LogLevels, panicChan chan error, body func()) {
+	defer func() {
+		if err := recover(); err != nil {
+			env.RaiseAlert(fmt.Errorf("PANIC %v", err))
+			env.logMutex.Lock()
+			env.Logger.Printf("%s[%d]: PANIC %v. Stacktrace:", env.Role, env.Shid, err)
+			for _, line := range strings.Split(string(debug.Stack()), "\n") {
+				env.Logger.Printf("%s[%d]: %s", env.Role, env.Shid, line)
+			}
+			env.logMutex.Unlock()
+			panicChan <- fmt.Errorf("%s[%v]: PANIC %v", env.Role, env.Shid, err)
+		}
+	}()
+	for {
+		body()
+	}
+}
+
 func main() {
 	verbose := flag.Bool("verbose", false, "enables debug logging")
+	shards := flag.String("shards", "", "specific shards to collect on, comma-separated")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.Lshortfile)
-	panicChan := make(chan error, 1)
-	env := janitor.Env{
-		Logger:            logger,
-		LogMutex:          new(sync.Mutex),
-		Timeout:           10 * time.Second,
-		CDCKey:            cdckey.CDCKey(),
-		Verbose:           *verbose,
-		DirInfoCache:      map[msgs.InodeId]janitor.CachedDirInfo{},
-		DirInfoCacheMutex: new(sync.RWMutex),
+
+	shardsToCollect := make(map[msgs.ShardId]bool)
+	if *shards != "" {
+		for _, shardStr := range strings.Split(*shards, ",") {
+			shardInt, err := strconv.Atoi(shardStr)
+			if err != nil || shardInt < 0 || shardInt > 255 {
+				logger.Fatal(fmt.Errorf("invalid shard string `%s'", shardStr))
+			}
+			shid := msgs.ShardId(shardInt)
+			shardsToCollect[shid] = true
+		}
+	} else {
+		for shid := 0; shid < 256; shid++ {
+			shardsToCollect[msgs.ShardId(shid)] = true
+		}
 	}
-	logger.Printf("starting one collector and one destructor per shard.")
+
+	panicChan := make(chan error, 1)
+	env := eggs.DaemonEnv{
+		Logger:  logger,
+		Timeout: 10 * time.Second,
+		CDCKey:  eggs.CDCKey(),
+		Verbose: *verbose,
+	}
+	logger.Printf("starting one collector and one destructor (running on %d shards).", len(shardsToCollect))
 	for shid := 0; shid < 256; shid++ {
+		if !shardsToCollect[msgs.ShardId(shid)] {
+			continue
+		}
 		destructor := env
 		destructor.Role = "destructor"
 		destructor.Shid = msgs.ShardId(shid)
-		go destructor.Loop(panicChan, (*janitor.Env).DestructForever)
+		go destructor.Loop(panicChan, (*eggs.DaemonEnv).DestructForever)
 		collector := env
 		collector.Role = "collector"
 		collector.Shid = msgs.ShardId(shid)
-		go collector.Loop(panicChan, (*janitor.Env).CollectForever)
+		go collector.Loop(panicChan, (*eggs.DaemonEnv).CollectForever)
 	}
 	err := <-panicChan
 	logger.Fatal(fmt.Errorf("got fatal error, tearing down: %w", err))

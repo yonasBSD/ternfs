@@ -46,7 +46,7 @@ ERR_CODE_TO_ERRNO: Dict[ErrCode, int] = {
     ErrCode.NAME_IS_LOCKED: errno.EEXIST,
     ErrCode.OLD_NAME_IS_LOCKED: errno.EBUSY,
     ErrCode.NEW_NAME_IS_LOCKED: errno.EBUSY,
-    ErrCode.MORE_RECENT_SNAPSHOT_ALREADY_EXISTS: errno.EBUSY, # reasonable?
+    ErrCode.DIRECTORY_MTIME_IS_TOO_RECENT: errno.EBUSY, # reasonable?
     ErrCode.MISMATCHING_TARGET: errno.EINVAL,
     ErrCode.MISMATCHING_OWNER: errno.EINVAL,
     ErrCode.DIRECTORY_NOT_EMPTY: errno.ENOTEMPTY,

@@ -8,18 +8,19 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode"
 	"xtx/eggsfs/msgs"
 )
 
 type subexpr struct {
-	typ  reflect.Type
-	tag  string
-	expr string
+	typ reflect.Type
+	tag string
+	fld string
 }
 
 func assertExpectedTag(e *subexpr, expected string) {
 	if e.tag != "" {
-		panic(fmt.Sprintf("expected %s for subexpr %s", expected, e.expr))
+		panic(fmt.Sprintf("expected %s for subexpr %s", expected, e.fld))
 	}
 }
 
@@ -75,57 +76,57 @@ func (cg *goCodegen) gen(expr *subexpr) {
 	switch t.Kind() {
 	case reflect.Uint8:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU8(uint8(%v))", expr.expr))
-		cg.ustep(fmt.Sprintf("buf.UnpackU8((*uint8)(&%s))", expr.expr))
+		cg.pline(fmt.Sprintf("buf.PackU8(uint8(%v))", expr.fld))
+		cg.ustep(fmt.Sprintf("buf.UnpackU8((*uint8)(&%s))", expr.fld))
 	case reflect.Bool:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackBool(bool(%v))", expr.expr))
-		cg.ustep(fmt.Sprintf("buf.UnpackBool((*bool)(&%s))", expr.expr))
+		cg.pline(fmt.Sprintf("buf.PackBool(bool(%v))", expr.fld))
+		cg.ustep(fmt.Sprintf("buf.UnpackBool((*bool)(&%s))", expr.fld))
 	case reflect.Uint16:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU16(uint16(%v))", expr.expr))
-		cg.ustep(fmt.Sprintf("buf.UnpackU16((*uint16)(&%s))", expr.expr))
+		cg.pline(fmt.Sprintf("buf.PackU16(uint16(%v))", expr.fld))
+		cg.ustep(fmt.Sprintf("buf.UnpackU16((*uint16)(&%s))", expr.fld))
 	case reflect.Uint32:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU32(uint32(%v))", expr.expr))
-		cg.ustep(fmt.Sprintf("buf.UnpackU32((*uint32)(&%s))", expr.expr))
+		cg.pline(fmt.Sprintf("buf.PackU32(uint32(%v))", expr.fld))
+		cg.ustep(fmt.Sprintf("buf.UnpackU32((*uint32)(&%s))", expr.fld))
 	case reflect.Uint64:
 		if expr.tag == "varint" {
-			cg.pline(fmt.Sprintf("buf.PackVarU61(uint64(%v))", expr.expr))
-			cg.ustep(fmt.Sprintf("buf.UnpackVarU61((*uint64)(&%s))", expr.expr))
+			cg.pline(fmt.Sprintf("buf.PackVarU61(uint64(%v))", expr.fld))
+			cg.ustep(fmt.Sprintf("buf.UnpackVarU61((*uint64)(&%s))", expr.fld))
 		} else {
 			assertExpectedTag(expr, `tag bincode:"varint" or no tag`)
-			cg.pline(fmt.Sprintf("buf.PackU64(uint64(%v))", expr.expr))
-			cg.ustep(fmt.Sprintf("buf.UnpackU64((*uint64)(&%s))", expr.expr))
+			cg.pline(fmt.Sprintf("buf.PackU64(uint64(%v))", expr.fld))
+			cg.ustep(fmt.Sprintf("buf.UnpackU64((*uint64)(&%s))", expr.fld))
 		}
 	case reflect.Struct:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("%v.Pack(buf)", expr.expr))
-		cg.ustep(fmt.Sprintf("%v.Unpack(buf)", expr.expr))
+		cg.pline(fmt.Sprintf("%v.Pack(buf)", expr.fld))
+		cg.ustep(fmt.Sprintf("%v.Unpack(buf)", expr.fld))
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
-			cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.expr))
+			cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.fld))
 			if expr.typ.Kind() == reflect.String {
-				cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.expr))
+				cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.fld))
 			} else {
-				cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.expr))
+				cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.fld))
 			}
 		} else {
 			lenVar := cg.lenVar()
 			// handle length
-			cg.pline(fmt.Sprintf("%s := len(%s)", lenVar, expr.expr))
+			cg.pline(fmt.Sprintf("%s := len(%s)", lenVar, expr.fld))
 			cg.pline(fmt.Sprintf("buf.PackLength(%s)", lenVar))
 			cg.uline(fmt.Sprintf("var %s int", lenVar))
 			cg.ustep(fmt.Sprintf("buf.UnpackLength(&%s)", lenVar))
 			// handle body
-			cg.uline(fmt.Sprintf("bincode.EnsureLength(&%s, %s)", expr.expr, lenVar))
+			cg.uline(fmt.Sprintf("bincode.EnsureLength(&%s, %s)", expr.fld, lenVar))
 			loop := fmt.Sprintf("for i := 0; i < %s; i++ {", lenVar)
 			cg.pline(loop)
 			cg.uline(loop)
 			cg.genInSlice(&subexpr{
-				typ:  elem,
-				expr: fmt.Sprintf("%s[i]", expr.expr),
+				typ: elem,
+				fld: fmt.Sprintf("%s[i]", expr.fld),
 			})
 			cg.pline("}")
 			cg.uline("}")
@@ -136,8 +137,8 @@ func (cg *goCodegen) gen(expr *subexpr) {
 			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
 		}
 		len := expr.typ.Size()
-		cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, %v[:])", len, expr.expr))
-		cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, %v[:])", len, expr.expr))
+		cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, %v[:])", len, expr.fld))
+		cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, %v[:])", len, expr.fld))
 	default:
 		panic(fmt.Sprintf("unsupported type %v with kind %v", expr.typ, expr.typ.Kind()))
 	}
@@ -177,9 +178,9 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		cg.genInSlice(&subexpr{
-			expr: fmt.Sprintf("v.%s", fld.Name),
-			tag:  parseTag(fld.Tag),
-			typ:  fld.Type,
+			fld: fmt.Sprintf("v.%s", fld.Name),
+			tag: parseTag(fld.Tag),
+			typ: fld.Type,
 		})
 	}
 	cg.uline("\treturn nil")
@@ -192,10 +193,10 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 
 func enumName(t reflect.Type) string {
 	tName := t.Name()
-	if !strings.HasSuffix(tName, "Req") && !strings.HasSuffix(tName, "Resp") {
+	if !strings.HasSuffix(tName, "Req") && !strings.HasSuffix(tName, "Resp") && !strings.HasSuffix(tName, "Entry") {
 		panic(fmt.Errorf("bad req/resp name %v", tName))
 	}
-	trimmed := strings.TrimSuffix(strings.TrimSuffix(tName, "Req"), "Resp")
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(tName, "Req"), "Resp"), "Entry")
 	re := regexp.MustCompile(`(.)([A-Z])`)
 	return strings.ToUpper(string(re.ReplaceAll([]byte(trimmed), []byte("${1}_${2}"))))
 }
@@ -316,7 +317,7 @@ func pythonType(t reflect.Type) string {
 	if t.Name() == "InodeType" {
 		return "InodeType"
 	}
-	if t.Name() == "OwnedInodeId" {
+	if t.Name() == "InodeIdExtra" {
 		return "InodeIdWithExtra"
 	}
 	switch t.Kind() {
@@ -379,69 +380,69 @@ func (cg pythonCodegen) genInSlice(expr *subexpr) {
 
 func (cg *pythonCodegen) gen(expr *subexpr) {
 	if expr.typ.Name() == "InodeType" {
-		cg.addStaticSize(expr.expr, "1", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = InodeType(bincode.unpack_u8(u))", expr.expr))
+		cg.addStaticSize(expr.fld, "1", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = InodeType(bincode.unpack_u8(u))", expr.fld))
 		return
 	}
-	if expr.typ.Name() == "OwnedInodeId" {
-		cg.addStaticSize(expr.expr, "8", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u64_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = InodeIdWithExtra(bincode.unpack_u64(u))", expr.expr))
+	if expr.typ.Name() == "InodeIdExtra" {
+		cg.addStaticSize(expr.fld, "8", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u64_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = InodeIdWithExtra(bincode.unpack_u64(u))", expr.fld))
 		return
 	}
 	switch expr.typ.Kind() {
 	case reflect.Uint8:
-		cg.addStaticSize(expr.expr, "1", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = bincode.unpack_u8(u)", expr.expr))
+		cg.addStaticSize(expr.fld, "1", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = bincode.unpack_u8(u)", expr.fld))
 	case reflect.Bool:
-		cg.addStaticSize(expr.expr, "1", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = bool(bincode.unpack_u8(u))", expr.expr))
+		cg.addStaticSize(expr.fld, "1", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u8_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = bool(bincode.unpack_u8(u))", expr.fld))
 	case reflect.Uint16:
-		cg.addStaticSize(expr.expr, "2", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u16_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = bincode.unpack_u16(u)", expr.expr))
+		cg.addStaticSize(expr.fld, "2", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u16_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = bincode.unpack_u16(u)", expr.fld))
 	case reflect.Uint32:
-		cg.addStaticSize(expr.expr, "4", true)
-		cg.pline(fmt.Sprintf("bincode.pack_u32_into(self.%s, b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = bincode.unpack_u32(u)", expr.expr))
+		cg.addStaticSize(expr.fld, "4", true)
+		cg.pline(fmt.Sprintf("bincode.pack_u32_into(self.%s, b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = bincode.unpack_u32(u)", expr.fld))
 	case reflect.Uint64:
 		if expr.tag == "varint" {
-			cg.pline(fmt.Sprintf("bincode.pack_v61_into(self.%s, b)", expr.expr))
-			cg.uline(fmt.Sprintf("%s = bincode.unpack_v61(u)", expr.expr))
-			cg.sadd(expr.expr, fmt.Sprintf("bincode.v61_packed_size(self.%s)", expr.expr))
+			cg.pline(fmt.Sprintf("bincode.pack_v61_into(self.%s, b)", expr.fld))
+			cg.uline(fmt.Sprintf("%s = bincode.unpack_v61(u)", expr.fld))
+			cg.sadd(expr.fld, fmt.Sprintf("bincode.v61_packed_size(self.%s)", expr.fld))
 		} else {
-			cg.addStaticSize(expr.expr, "8", true)
-			cg.pline(fmt.Sprintf("bincode.pack_u64_into(self.%s, b)", expr.expr))
-			cg.uline(fmt.Sprintf("%s = bincode.unpack_u64(u)", expr.expr))
+			cg.addStaticSize(expr.fld, "8", true)
+			cg.pline(fmt.Sprintf("bincode.pack_u64_into(self.%s, b)", expr.fld))
+			cg.uline(fmt.Sprintf("%s = bincode.unpack_u64(u)", expr.fld))
 		}
 	case reflect.Struct:
-		cg.addStaticSize(expr.expr, fmt.Sprintf("%s.STATIC_SIZE", expr.typ.Name()), false)
-		cg.sadd(expr.expr, fmt.Sprintf("self.%s.calc_packed_size()", expr.expr))
-		cg.pline(fmt.Sprintf("self.%s.pack_into(b)", expr.expr))
-		cg.uline(fmt.Sprintf("%s = %s.unpack(u)", expr.expr, expr.typ.Name()))
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%s.STATIC_SIZE", expr.typ.Name()), false)
+		cg.sadd(expr.fld, fmt.Sprintf("self.%s.calc_packed_size()", expr.fld))
+		cg.pline(fmt.Sprintf("self.%s.pack_into(b)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = %s.unpack(u)", expr.fld, expr.typ.Name()))
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
-			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "1", true) // u8 len
-			cg.sadd(fmt.Sprintf("%s contents", expr.expr), fmt.Sprintf("len(self.%s)", expr.expr))
-			cg.pline(fmt.Sprintf("bincode.pack_bytes_into(self.%s, b)", expr.expr))
-			cg.uline(fmt.Sprintf("%s = bincode.unpack_bytes(u)", expr.expr))
+			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.fld), "1", true) // u8 len
+			cg.sadd(fmt.Sprintf("%s contents", expr.fld), fmt.Sprintf("len(self.%s)", expr.fld))
+			cg.pline(fmt.Sprintf("bincode.pack_bytes_into(self.%s, b)", expr.fld))
+			cg.uline(fmt.Sprintf("%s = bincode.unpack_bytes(u)", expr.fld))
 		} else {
-			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.expr), "2", true) // u16 len
+			cg.addStaticSize(fmt.Sprintf("len(%s)", expr.fld), "2", true) // u16 len
 			// pack
-			cg.pline(fmt.Sprintf("bincode.pack_u16_into(len(self.%s), b)", expr.expr))
-			cg.pline(fmt.Sprintf("for i in range(len(self.%s)):", expr.expr))
+			cg.pline(fmt.Sprintf("bincode.pack_u16_into(len(self.%s), b)", expr.fld))
+			cg.pline(fmt.Sprintf("for i in range(len(self.%s)):", expr.fld))
 			// unpack
-			cg.uline(fmt.Sprintf("%s: List[Any] = [None]*bincode.unpack_u16(u)", expr.expr))
-			cg.uline(fmt.Sprintf("for i in range(len(%s)):", expr.expr))
+			cg.uline(fmt.Sprintf("%s: List[Any] = [None]*bincode.unpack_u16(u)", expr.fld))
+			cg.uline(fmt.Sprintf("for i in range(len(%s)):", expr.fld))
 			// size
-			cg.sline(fmt.Sprintf("for i in range(len(self.%s)):", expr.expr))
+			cg.sline(fmt.Sprintf("for i in range(len(self.%s)):", expr.fld))
 			cg.genInSlice(&subexpr{
-				typ:  elem,
-				expr: fmt.Sprintf("%s[i]", expr.expr),
+				typ: elem,
+				fld: fmt.Sprintf("%s[i]", expr.fld),
 			})
 		}
 	case reflect.Array:
@@ -450,9 +451,9 @@ func (cg *pythonCodegen) gen(expr *subexpr) {
 			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
 		}
 		len := expr.typ.Size()
-		cg.addStaticSize(expr.expr, fmt.Sprintf("%d", len), true)
-		cg.pline(fmt.Sprintf("bincode.pack_fixed_into(self.%s, %d, b)", expr.expr, len))
-		cg.uline(fmt.Sprintf("%s = bincode.unpack_fixed(u, %d)", expr.expr, len))
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%d", len), true)
+		cg.pline(fmt.Sprintf("bincode.pack_fixed_into(self.%s, %d, b)", expr.fld, len))
+		cg.uline(fmt.Sprintf("%s = bincode.unpack_fixed(u, %d)", expr.fld, len))
 	default:
 		panic(fmt.Sprintf("unsupported type with kind %v", expr.typ.Kind()))
 	}
@@ -481,9 +482,9 @@ func generatePythonSingle(w io.Writer, t reflect.Type, which string) {
 		name := upperCamelToSnake(fld.Name)
 		names[i] = name
 		cg.gen(&subexpr{
-			typ:  fld.Type,
-			tag:  parseTag(fld.Tag),
-			expr: name,
+			typ: fld.Type,
+			tag: parseTag(fld.Tag),
+			fld: name,
 		})
 	}
 
@@ -597,7 +598,7 @@ func generatePython(errors []string, shardReqResps []reqRespType, cdcReqResps []
 	return out.Bytes()
 }
 
-func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateC(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	fmt.Fprintln(out, "// Automatically generated with go run bincodegen.")
@@ -619,6 +620,464 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintf(out, "\n")
 
 	return out.Bytes()
+}
+
+func cppType(t reflect.Type) string {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" {
+		return t.Name()
+	}
+	switch t.Kind() {
+	case reflect.Uint8:
+		return "uint8_t"
+	case reflect.Uint16:
+		return "uint16_t"
+	case reflect.Uint32:
+		return "uint32_t"
+	case reflect.Uint64:
+		return "uint64_t"
+	case reflect.Bool:
+		return "bool"
+	case reflect.Struct:
+		return t.Name()
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(t)
+		if elem.Kind() == reflect.Uint8 {
+			return "BincodeBytes"
+		} else {
+			return fmt.Sprintf("BincodeList<%s>", cppType(elem))
+		}
+	case reflect.Array:
+		return fmt.Sprintf("BincodeFixedBytes<%d>", t.Size())
+	default:
+		panic(fmt.Sprintf("unsupported type with kind %v", t.Kind()))
+	}
+}
+
+type cppCodegen struct {
+	pack           *bytes.Buffer
+	unpack         *bytes.Buffer
+	clear          *bytes.Buffer
+	size           *bytes.Buffer
+	eq             *bytes.Buffer
+	staticSize     []string
+	staticSizeInfo []string
+}
+
+func (cg *cppCodegen) pline(s string) {
+	cg.pack.Write([]byte(fmt.Sprintf("    %s;\n", s)))
+}
+
+func (cg *cppCodegen) uline(s string) {
+	cg.unpack.Write([]byte(fmt.Sprintf("    %s;\n", s)))
+}
+
+func (cg *cppCodegen) cline(s string) {
+	cg.clear.Write([]byte(fmt.Sprintf("    %s;\n", s)))
+}
+
+func (cg *cppCodegen) sline(what string, s string) {
+	cg.size.Write([]byte(fmt.Sprintf("        _size += %s; // %s\n", s, what)))
+}
+
+func (cg *cppCodegen) eline(s string) {
+	cg.eq.Write([]byte(fmt.Sprintf("    if (%s) { return false; };\n", s)))
+}
+
+func (gc *cppCodegen) addStaticSize(what string, s string, sameAsSize bool) {
+	gc.staticSize = append(gc.staticSize, s)
+	gc.staticSizeInfo = append(gc.staticSizeInfo, what)
+	if sameAsSize {
+		gc.sline(what, s)
+	}
+}
+
+func (cg *cppCodegen) gen(expr *subexpr) {
+	k := expr.typ.Kind()
+
+	// pack/unpack
+	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
+	// when unpacking
+	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" {
+		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
+		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
+	} else if k == reflect.Uint64 && expr.tag == "varint" {
+		cg.pline(fmt.Sprintf("buf.packVarU61(%s)", expr.fld))
+		cg.uline(fmt.Sprintf("%s = buf.unpackVarU61()", expr.fld))
+	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
+		cg.pline(fmt.Sprintf("buf.packScalar<%s>(%s)", cppType(expr.typ), expr.fld))
+		cg.uline(fmt.Sprintf("%s = buf.unpackScalar<%s>()", expr.fld, cppType(expr.typ)))
+	} else if k == reflect.Array {
+		elem := sliceTypeElem(expr.typ)
+		if elem.Kind() != reflect.Uint8 {
+			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
+		}
+		len := expr.typ.Size()
+		cg.pline(fmt.Sprintf("buf.packFixedBytes<%d>(%s)", len, expr.fld))
+		cg.uline(fmt.Sprintf("buf.unpackFixedBytes<%d>(%s)", len, expr.fld))
+	} else if k == reflect.Slice || k == reflect.String {
+		elem := sliceTypeElem(expr.typ)
+		if elem.Kind() == reflect.Uint8 {
+			cg.pline(fmt.Sprintf("buf.packBytes(%s)", expr.fld))
+			cg.uline(fmt.Sprintf("buf.unpackBytes(%s)", expr.fld))
+		} else {
+			cg.pline(fmt.Sprintf("buf.packList<%s>(%s)", cppType(elem), expr.fld))
+			cg.uline(fmt.Sprintf("buf.unpackList<%s>(%s)", cppType(elem), expr.fld))
+		}
+	} else {
+		panic(fmt.Errorf("unexpected kind %v", k))
+	}
+
+	// clear/eq
+	switch k {
+	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" {
+			cg.cline(fmt.Sprintf("%s = %s()", expr.fld, cppType(expr.typ)))
+		} else {
+			cg.cline(fmt.Sprintf("%s = %s(0)", expr.fld, cppType(expr.typ)))
+		}
+		cg.eline(fmt.Sprintf("(%s)this->%s != (%s)rhs.%s", cppType(expr.typ), expr.fld, cppType(expr.typ), expr.fld))
+	case reflect.Array, reflect.Slice, reflect.Struct, reflect.String:
+		cg.cline(fmt.Sprintf("%s.clear()", expr.fld))
+		cg.eline(fmt.Sprintf("%s != rhs.%s", expr.fld, expr.fld))
+	}
+
+	// size
+	if k == reflect.Uint64 && expr.tag == "varint" {
+		cg.sline(expr.fld, fmt.Sprintf("varU61Size(%s)", expr.fld))
+	} else if k == reflect.Array {
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%s::STATIC_SIZE", cppType(expr.typ)), true)
+	} else if k == reflect.Slice || k == reflect.Struct || k == reflect.String {
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%s::STATIC_SIZE", cppType(expr.typ)), false)
+		cg.sline(expr.fld, fmt.Sprintf("%s.packedSize()", expr.fld))
+	} else {
+		var sz int
+		switch k {
+		case reflect.Bool, reflect.Uint8:
+			sz = 1
+		case reflect.Uint16:
+			sz = 2
+		case reflect.Uint32:
+			sz = 4
+		case reflect.Uint64:
+			sz = 8
+		default:
+			panic(fmt.Errorf("unexpected kind %v", k))
+		}
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%d", sz), true)
+	}
+}
+
+func cppFieldName(fld reflect.StructField) string {
+	nameBytes := []rune(fld.Name)
+	nameBytes[0] = unicode.ToLower(nameBytes[0])
+	return string(nameBytes)
+}
+
+func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
+	if t.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("type %v is not a struct", t))
+	}
+
+	cg := cppCodegen{
+		pack:   new(bytes.Buffer),
+		unpack: new(bytes.Buffer),
+		clear:  new(bytes.Buffer),
+		size:   new(bytes.Buffer),
+		eq:     new(bytes.Buffer),
+	}
+
+	fmt.Fprintf(hpp, "struct %s {\n", t.Name())
+	for i := 0; i < t.NumField(); i++ {
+		fld := t.Field(i)
+		name := cppFieldName(fld)
+		fmt.Fprintf(hpp, "    %s %s;\n", cppType(fld.Type), name)
+		cg.gen(&subexpr{
+			typ: fld.Type,
+			tag: parseTag(fld.Tag),
+			fld: name,
+		})
+	}
+	if len(cg.staticSize) == 0 {
+		cg.staticSize = append(cg.staticSize, "0")
+	}
+	fmt.Fprintf(hpp, "\n")
+	fmt.Fprintf(hpp, "    static constexpr uint16_t STATIC_SIZE = %s; // %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
+	fmt.Fprintf(hpp, "\n")
+	fmt.Fprintf(hpp, "    %s() { clear(); }\n\n", t.Name())
+	fmt.Fprintf(hpp, "    uint16_t packedSize() const {\n")
+	fmt.Fprintf(hpp, "        uint16_t _size = 0;\n")
+	hpp.Write(cg.size.Bytes())
+	fmt.Fprintf(hpp, "        return _size;\n")
+	fmt.Fprintf(hpp, "    }\n")
+	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
+	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf);\n")
+	fmt.Fprintf(hpp, "    void clear();\n")
+	fmt.Fprintf(hpp, "    bool operator==(const %s&rhs) const;\n", t.Name())
+	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(cpp, "void %s::pack(BincodeBuf& buf) const {\n", t.Name())
+	cpp.Write(cg.pack.Bytes())
+	fmt.Fprintf(cpp, "}\n")
+	fmt.Fprintf(cpp, "void %s::unpack(BincodeBuf& buf) {\n", t.Name())
+	cpp.Write(cg.unpack.Bytes())
+	fmt.Fprintf(cpp, "}\n")
+	fmt.Fprintf(cpp, "void %s::clear() {\n", t.Name())
+	cpp.Write(cg.clear.Bytes())
+	fmt.Fprintf(cpp, "}\n")
+
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, const %s& x);\n\n", t.Name())
+
+	fmt.Fprintf(cpp, "bool %s::operator==(const %s& rhs) const {\n", t.Name(), t.Name())
+	cpp.Write(cg.eq.Bytes())
+	fmt.Fprintf(cpp, "    return true;\n")
+	fmt.Fprintf(cpp, "}\n")
+
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, const %s& x) {\n", t.Name())
+	fmt.Fprintf(cpp, "    out << \"%s(\"", t.Name())
+	for i := 0; i < t.NumField(); i++ {
+		if i > 0 {
+			fmt.Fprintf(cpp, " << \", \"")
+		}
+		fld := t.Field(i)
+		if cppType(fld.Type) == "uint8_t" {
+			fmt.Fprintf(cpp, " << \"%s=\" << (int)x.%s", fld.Name, cppFieldName(fld))
+		} else {
+			fmt.Fprintf(cpp, " << \"%s=\" << x.%s", fld.Name, cppFieldName(fld))
+		}
+	}
+	fmt.Fprintf(cpp, " << \")\";\n")
+	fmt.Fprintf(cpp, "    return out;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+}
+
+func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRespType) {
+	fmt.Fprintf(hpp, "enum class %sMessageKind : uint8_t {\n", name)
+	fmt.Fprintf(hpp, "    ERROR = 0,\n")
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(hpp, "    %s = %d,\n", reqRespEnum(reqResp), reqResp.kind)
+	}
+	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, %sMessageKind kind);\n\n", name)
+
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, %sMessageKind kind) {\n", name)
+	fmt.Fprintf(cpp, "    switch (kind) {\n")
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(cpp, "    case %sMessageKind::%s:\n", name, reqRespEnum(reqResp))
+		fmt.Fprintf(cpp, "        out << \"%s\";\n", reqRespEnum(reqResp))
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        out << \"%sMessageKind(\" << ((int)kind) << \")\";\n", name)
+	fmt.Fprintf(cpp, "        break;\n")
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "    return out;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+}
+
+type containerType struct {
+	name string
+	enum string
+	typ  reflect.Type
+}
+
+func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeName string, types []containerType) {
+	fmt.Fprintf(hpp, "struct %s {\n", name)
+	fmt.Fprintf(hpp, "private:\n")
+	fmt.Fprintf(hpp, "    %s _kind = (%s)0;\n", kindTypeName, kindTypeName)
+	fmt.Fprintf(hpp, "    std::tuple<")
+	for i, typ := range types {
+		if i > 0 {
+			fmt.Fprintf(hpp, ", ")
+		}
+		hpp.Write([]byte(cppType(typ.typ)))
+	}
+	fmt.Fprintf(hpp, "> _data;\n")
+	fmt.Fprintf(hpp, "public:\n")
+	fmt.Fprintf(hpp, "    %s kind() const { return _kind; }\n", kindTypeName)
+	for i, typ := range types {
+		fmt.Fprintf(hpp, "    const %s& get%s() const;\n", cppType(typ.typ), typ.name)
+		fmt.Fprintf(hpp, "    %s& set%s();\n", cppType(typ.typ), typ.name)
+		fmt.Fprintf(cpp, "const %s& %s::get%s() const {\n", cppType(typ.typ), name, typ.name)
+		fmt.Fprintf(cpp, "    ALWAYS_ASSERT(_kind == %s::%s, \"%%s != %%s\", _kind, %s::%s);\n", kindTypeName, typ.enum, kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "    return std::get<%d>(_data);\n", i)
+		fmt.Fprintf(cpp, "}\n")
+		fmt.Fprintf(cpp, "%s& %s::set%s() {\n", cppType(typ.typ), name, typ.name)
+		fmt.Fprintf(cpp, "    _kind = %s::%s;\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "    auto& x = std::get<%d>(_data);\n", i)
+		fmt.Fprintf(cpp, "    x.clear();\n")
+		fmt.Fprintf(cpp, "    return x;\n")
+		fmt.Fprintf(cpp, "}\n")
+	}
+	fmt.Fprintf(hpp, "\n")
+	fmt.Fprintf(hpp, "    void clear() { _kind = (%s)0; };\n\n", kindTypeName)
+	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
+	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf, %s kind);\n", kindTypeName)
+	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, const %s& x);\n\n", name)
+
+	fmt.Fprintf(cpp, "void %s::pack(BincodeBuf& buf) const {\n", name)
+	fmt.Fprintf(cpp, "    switch (_kind) {\n")
+	for i, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        std::get<%d>(_data).pack(buf);\n", i)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
+	fmt.Fprintf(cpp, "void %s::unpack(BincodeBuf& buf, %s kind) {\n", name, kindTypeName)
+	fmt.Fprintf(cpp, "    _kind = kind;\n")
+	fmt.Fprintf(cpp, "    switch (kind) {\n")
+	for i, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        std::get<%d>(_data).unpack(buf);\n", i)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw BINCODE_EXCEPTION(\"bad %s kind %%s\", kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, const %s& x) {\n", name)
+	fmt.Fprintf(cpp, "    switch (x.kind()) {\n")
+	for _, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        out << x.get%s();\n", typ.name)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", x.kind());\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "    return out;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+}
+
+func generateCppLogEntries(hpp io.Writer, cpp io.Writer, types []reflect.Type) {
+	containerTypes := make([]containerType, len(types))
+	fmt.Fprintf(hpp, "enum class ShardLogEntryKind : uint16_t {\n")
+	for i, typ := range types {
+		fmt.Fprintf(hpp, "    %s = %d,\n", enumName(typ), i+1) // skip 0 since we use it as an empty value
+		containerTypes[i].typ = typ
+		containerTypes[i].enum = enumName(typ)
+		if !strings.HasSuffix(typ.Name(), "Entry") {
+			panic(fmt.Errorf("bad log entry type %s", typ.Name()))
+		}
+		containerTypes[i].name = string([]byte(types[i].Name())[:len(types[i].Name())-len("Entry")])
+	}
+	fmt.Fprintf(hpp, "};\n\n")
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);\n\n")
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {\n")
+	fmt.Fprintf(cpp, "    switch (err) {\n")
+	for _, typ := range containerTypes {
+		fmt.Fprintf(cpp, "    case ShardLogEntryKind::%s:\n", typ.enum)
+		fmt.Fprintf(cpp, "        out << \"%s\";\n", typ.enum)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        out << \"ShardLogEntryKind(\" << ((int)err) << \")\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "    return out;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
+	for _, typ := range types {
+		generateCppSingle(hpp, cpp, typ)
+	}
+	generateCppContainer(hpp, cpp, "ShardLogEntryContainer", "ShardLogEntryKind", containerTypes)
+}
+
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+	hppOut := new(bytes.Buffer)
+	cppOut := new(bytes.Buffer)
+
+	fmt.Fprintln(hppOut, "// Automatically generated with go run bincodegen.")
+	fmt.Fprintln(hppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
+	fmt.Fprintln(hppOut, "#pragma once")
+	fmt.Fprintln(hppOut, "#include \"Msgs.hpp\"")
+	fmt.Fprintln(hppOut)
+
+	fmt.Fprintln(cppOut, "// Automatically generated with go run bincodegen.")
+	fmt.Fprintln(cppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
+	fmt.Fprintln(cppOut, "#include \"Msgs.hpp\"")
+	fmt.Fprintln(cppOut)
+
+	fmt.Fprintf(hppOut, "enum class EggsError : uint16_t {\n")
+	for i, err := range errors {
+		fmt.Fprintf(hppOut, "    %s = %d,\n", err, errCodeOffset+i)
+	}
+	fmt.Fprintf(hppOut, "};\n\n")
+	fmt.Fprintf(hppOut, "std::ostream& operator<<(std::ostream& out, EggsError err);\n\n")
+	fmt.Fprintf(cppOut, "std::ostream& operator<<(std::ostream& out, EggsError err) {\n")
+	fmt.Fprintf(cppOut, "    switch (err) {\n")
+	for _, err := range errors {
+		fmt.Fprintf(cppOut, "    case EggsError::%s:\n", err)
+		fmt.Fprintf(cppOut, "        out << \"%s\";\n", err)
+		fmt.Fprintf(cppOut, "        break;\n")
+	}
+	fmt.Fprintf(cppOut, "    default:\n")
+	fmt.Fprintf(cppOut, "        out << \"EggsError(\" << ((int)err) << \")\";\n")
+	fmt.Fprintf(cppOut, "        break;\n")
+	fmt.Fprintf(cppOut, "    }\n")
+	fmt.Fprintf(cppOut, "    return out;\n")
+	fmt.Fprintf(cppOut, "}\n\n")
+
+	for _, typ := range extras {
+		generateCppSingle(hppOut, cppOut, typ)
+	}
+	for _, reqResp := range shardReqResps {
+		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.resp)
+	}
+	for _, reqResp := range cdcReqResps {
+		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.resp)
+	}
+
+	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
+	reqContainerTypes := make([]containerType, len(shardReqResps))
+	for i, reqResp := range shardReqResps {
+		reqContainerTypes[i] = containerType{
+			name: string([]byte(reqResp.req.Name())[:len(reqResp.req.Name())-len("Req")]),
+			enum: reqRespEnum(reqResp),
+			typ:  reqResp.req,
+		}
+	}
+	generateCppContainer(hppOut, cppOut, "ShardReqContainer", "ShardMessageKind", reqContainerTypes)
+	respContainerTypes := make([]containerType, len(shardReqResps))
+	for i, reqResp := range shardReqResps {
+		respContainerTypes[i] = containerType{
+			name: string([]byte(reqResp.resp.Name())[:len(reqResp.resp.Name())-len("Resp")]),
+			enum: reqRespEnum(reqResp),
+			typ:  reqResp.resp,
+		}
+	}
+	generateCppContainer(hppOut, cppOut, "ShardRespContainer", "ShardMessageKind", respContainerTypes)
+
+	generateCppLogEntries(
+		hppOut,
+		cppOut,
+		[]reflect.Type{
+			reflect.TypeOf(msgs.ConstructFileEntry{}),
+			reflect.TypeOf(msgs.LinkFileEntry{}),
+			reflect.TypeOf(msgs.SameDirectoryRenameEntry{}),
+			reflect.TypeOf(msgs.SoftUnlinkFileEntry{}),
+			reflect.TypeOf(msgs.CreateDirectoryInodeEntry{}),
+			reflect.TypeOf(msgs.CreateLockedCurrentEdgeEntry{}),
+			reflect.TypeOf(msgs.UnlockCurrentEdgeEntry{}),
+			reflect.TypeOf(msgs.LockCurrentEdgeEntry{}),
+			reflect.TypeOf(msgs.RemoveDirectoryOwnerEntry{}),
+			reflect.TypeOf(msgs.RemoveInodeEntry{}),
+			reflect.TypeOf(msgs.SetDirectoryOwnerEntry{}),
+			reflect.TypeOf(msgs.SetDirectoryInfoEntry{}),
+			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
+			reflect.TypeOf(msgs.IntraShardHardFileUnlinkEntry{}),
+			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
+		},
+	)
+
+	return hppOut.Bytes(), cppOut.Bytes()
 }
 
 func main() {
@@ -654,7 +1113,7 @@ func main() {
 		"NAME_IS_LOCKED",
 		"OLD_NAME_IS_LOCKED",
 		"NEW_NAME_IS_LOCKED",
-		"MORE_RECENT_SNAPSHOT_ALREADY_EXISTS",
+		"DIRECTORY_MTIME_IS_TOO_RECENT",
 		"MISMATCHING_TARGET",
 		"MISMATCHING_OWNER",
 		"DIRECTORY_NOT_EMPTY",
@@ -669,7 +1128,13 @@ func main() {
 		"CANNOT_REMOVE_ROOT_DIRECTORY",
 		"FILE_EMPTY",
 		"CANNOT_REMOVE_DIRTY_SPAN",
-		"TARGET_NOT_IN_SAME_SHARD",
+		"BAD_SHARD",
+		"BAD_NAME",
+		"MORE_RECENT_SNAPSHOT_EDGE",
+		"MORE_RECENT_CURRENT_EDGE",
+		"BAD_DIRECTORY_INFO",
+		"CREATION_TIME_TOO_RECENT",
+		"DEADLINE_NOT_PASSED",
 	}
 
 	shardReqResps := []reqRespType{
@@ -682,6 +1147,11 @@ func main() {
 			0x02,
 			reflect.TypeOf(msgs.StatFileReq{}),
 			reflect.TypeOf(msgs.StatFileResp{}),
+		},
+		{
+			0x0A,
+			reflect.TypeOf(msgs.StatTransientFileReq{}),
+			reflect.TypeOf(msgs.StatTransientFileResp{}),
 		},
 		{
 			0x08,
@@ -785,11 +1255,16 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceFilesReq{}),
 			reflect.TypeOf(msgs.BlockServiceFilesResp{}),
 		},
+		{
+			0x24,
+			reflect.TypeOf(msgs.RemoveInodeReq{}),
+			reflect.TypeOf(msgs.RemoveInodeResp{}),
+		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
 			0x80,
-			reflect.TypeOf(msgs.CreateDirectoryINodeReq{}),
-			reflect.TypeOf(msgs.CreateDirectoryINodeResp{}),
+			reflect.TypeOf(msgs.CreateDirectoryInodeReq{}),
+			reflect.TypeOf(msgs.CreateDirectoryInodeResp{}),
 		},
 		{
 			0x81,
@@ -815,11 +1290,6 @@ func main() {
 			0x84,
 			reflect.TypeOf(msgs.UnlockCurrentEdgeReq{}),
 			reflect.TypeOf(msgs.UnlockCurrentEdgeResp{}),
-		},
-		{
-			0x85,
-			reflect.TypeOf(msgs.RemoveInodeReq{}),
-			reflect.TypeOf(msgs.RemoveInodeResp{}),
 		},
 		{
 			0x86,
@@ -869,17 +1339,18 @@ func main() {
 	extras := []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.FetchedBlock{}),
+		reflect.TypeOf(msgs.CurrentEdge{}),
 		reflect.TypeOf(msgs.Edge{}),
-		reflect.TypeOf(msgs.EdgeWithOwnership{}),
 		reflect.TypeOf(msgs.FetchedSpan{}),
 		reflect.TypeOf(msgs.BlockInfo{}),
 		reflect.TypeOf(msgs.NewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockProof{}),
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.DirectoryInfoBody{}),
-		reflect.TypeOf(msgs.DirectoryInfo{}),
+		reflect.TypeOf(msgs.SetDirectoryInfo{}),
 		reflect.TypeOf(msgs.BlockServiceBlacklist{}),
 		reflect.TypeOf(msgs.BlockService{}),
+		reflect.TypeOf(msgs.FullReadDirCursor{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)
@@ -899,12 +1370,28 @@ func main() {
 	defer pythonOutFile.Close()
 	pythonOutFile.Write(generatePython(errors, shardReqResps, cdcReqResps, extras))
 
-	cppOutFilename := fmt.Sprintf("%s/../../cpp/eggs_msgs.h", cwd)
+	cOutFilename := fmt.Sprintf("%s/../../c/eggs_msgs.h", cwd)
+	cOutFile, err := os.Create(cOutFilename)
+	if err != nil {
+		panic(err)
+	}
+	defer cOutFile.Close()
+	cOutFile.Write(generateC(errors, shardReqResps, cdcReqResps, extras))
+
+	hppOutFilename := fmt.Sprintf("%s/../../cpp/MsgsGen.hpp", cwd)
+	hppOutFile, err := os.Create(hppOutFilename)
+	if err != nil {
+		panic(err)
+	}
+	defer hppOutFile.Close()
+	cppOutFilename := fmt.Sprintf("%s/../../cpp/MsgsGen.cpp", cwd)
 	cppOutFile, err := os.Create(cppOutFilename)
 	if err != nil {
 		panic(err)
 	}
 	defer cppOutFile.Close()
-	cppOutFile.Write(generateCpp(errors, shardReqResps, cdcReqResps, extras))
+	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, extras)
+	hppOutFile.Write(hppBytes)
+	cppOutFile.Write(cppBytes)
 
 }

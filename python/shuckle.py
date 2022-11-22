@@ -17,6 +17,7 @@ import argparse
 import sys
 import os
 import logging
+from pathlib import Path
 
 from shard_msgs import STORAGE_CLASSES
 
@@ -308,13 +309,23 @@ async def shutdown() -> None:
     CHECK_DEVICES_FOREVER_TASK.cancel()
     LISTEN_FOR_REGISTRATIONS_TASK.cancel()
 
-def main(db_path: str):
+def main(db_path: str, port: int):
     init_db(db_path)
-    logging.info(f'Running shuckle webapp at 0.0.0:5000')
-    app.run('0.0.0.0', 5000, debug=True, use_reloader=False)
+    logging.info(f'Running shuckle webapp at 0.0.0:{port}')
+    app.run('0.0.0.0', port, debug=True, use_reloader=False)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Runs shuckle')
     parser.add_argument('db_dir', help='Directory to create or load db')
+    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--log_file', type=Path)
+    parser.add_argument('--port', type=int, default=5000)
     config = parser.parse_args(sys.argv[1:])
-    main(config.db_dir)
+
+    log_level = logging.DEBUG if config.verbose else logging.WARNING
+    if config.log_file:
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+    else:
+        logging.basicConfig(level=log_level)
+
+    main(config.db_dir, config.port)

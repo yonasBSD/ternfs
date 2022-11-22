@@ -16,7 +16,7 @@ const UDP_MTU = 1472
 
 type InodeType uint8
 type InodeId uint64
-type OwnedInodeId uint64 // 64th bit is used to mark whether the inode is owned.
+type InodeIdExtra uint64 // 64th bit is used to mark whether the inode is owned.
 type ShardId uint8
 type Parity uint8
 type StorageClass uint8
@@ -95,11 +95,11 @@ func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {
 	return (InodeId(typ) << 61) | (InodeId(id) << 8) | InodeId(shard)
 }
 
-func (id OwnedInodeId) Id() InodeId {
+func (id InodeIdExtra) Id() InodeId {
 	return InodeId(uint64(id) & ^(uint64(1) << 63))
 }
 
-func (id OwnedInodeId) Owned() bool {
+func (id InodeIdExtra) Extra() bool {
 	if (uint64(id) >> 63) == 0 {
 		return false
 	} else {
@@ -107,20 +107,20 @@ func (id OwnedInodeId) Owned() bool {
 	}
 }
 
-func (id OwnedInodeId) String() string {
-	if id.Owned() {
-		return fmt.Sprintf("[O]%v", id.Id())
+func (id InodeIdExtra) String() string {
+	if id.Extra() {
+		return fmt.Sprintf("[X]%v", id.Id())
 	} else {
 		return fmt.Sprintf("[ ]%v", id.Id())
 	}
 }
 
-func MakeOwnedInodeId(id InodeId, owned bool) OwnedInodeId {
+func MakeInodeIdExtra(id InodeId, owned bool) InodeIdExtra {
 	x := uint64(id)
 	if owned {
 		x = x | (1 << 63)
 	}
-	return OwnedInodeId(x)
+	return InodeIdExtra(x)
 }
 
 const (
@@ -206,6 +206,8 @@ const (
 // Given directory inode and name, returns inode from outgoing
 // current edge. Does not consider non-current directories and
 // non-current edges.
+//
+// Returns DIRECTORY_NOT_FOUND if the directory is snapshot.
 type LookupReq struct {
 	DirId InodeId
 	Name  string
@@ -216,40 +218,80 @@ type LookupResp struct {
 	CreationTime EggsTime
 }
 
+// Does not consider transient files. Might return snapshot files:
+// we don't really have a way of knowing if a file is snapshot just by
+// looking at it, unlike directories.
 type StatFileReq struct {
 	Id InodeId
 }
 
 type StatFileResp struct {
-	Mtime     EggsTime
-	Size      uint64
-	Transient bool
-	Note      []byte // empty if not transient
+	Mtime EggsTime
+	Size  uint64
 }
 
+type StatTransientFileReq struct {
+	Id InodeId
+}
+
+type StatTransientFileResp struct {
+	Mtime EggsTime
+	Size  uint64
+	Note  []byte
+}
+
+// Considers all directories, also snapshot/transient ones. Remember that
+// a transient directory is just a snapshot directory with no outgoing
+// edges.
+//
+// The caller can detect if the directory is snapshot (unlike with files),
+// and avoid calling `ReadDirReq`, which won't work.1
 type StatDirectoryReq struct {
 	Id InodeId
 }
 
-type StatDirectoryResp struct {
-	Mtime EggsTime
-	Owner InodeId // if NULL_INODE_ID, the directory is currently soft unlinked
-	Info  DirectoryInfo
+type SetDirectoryInfo struct {
+	// If `Inherited = true`, `Body` should be empty, and vice-versa.
+	//
+	// Note that while we keep the directory info opaque in all the
+	// shard/cdc APIs, we do define the relevant data structure here,
+	// since we need them among other things to perform GC
+	// (see `DirectoryInfoBody`).
+	Inherited bool
+	Body      []byte
 }
 
+type StatDirectoryResp struct {
+	Mtime EggsTime
+	Owner InodeId // if NULL_INODE_ID, the directory is currently snapshot
+	// If this is empty, then the client should traverse upwards and
+	// ask the owner to find out what the info is (this might require
+	// multiple hops).
+	//
+	// If `Owner = NULL_INODE_ID`, then `DirectoryInfo` will not be empty.
+	Info []byte
+}
+
+// Does not consider snaphsot/transient directories, unlike `StatDirectoryReq`.
+// This is since clients almost never want this, and when they do they're almost
+// certainly better served by FullReadDirReq.
 type ReadDirReq struct {
 	DirId     InodeId
 	StartHash uint64
-	// * all the times leading up to the creation of the directory will return
-	//     an empty directory listing.
-	// * all the times after the last modification will return the current directory
-	//     listing (use 0xFFFFFFFFFFFFFFFF to just get the current directory listing)
-	AsOfTime EggsTime
 }
 
+type CurrentEdge struct {
+	TargetId     InodeId
+	NameHash     uint64
+	Name         string
+	CreationTime EggsTime
+}
+
+// Names with the same hash will never straddle two `ReadDirResp`s, assuming the
+// directory contents don't change in the meantime.
 type ReadDirResp struct {
 	NextHash uint64
-	Results  []Edge
+	Results  []CurrentEdge
 }
 
 // create a new transient file.
@@ -262,7 +304,7 @@ type ConstructFileReq struct {
 
 type ConstructFileResp struct {
 	Id     InodeId
-	Cookie uint64
+	Cookie [8]byte
 }
 
 type NewBlockInfo struct {
@@ -295,7 +337,7 @@ type BlockServiceBlacklist struct {
 // in the metadata.
 type AddSpanInitiateReq struct {
 	FileId       InodeId
-	Cookie       uint64
+	Cookie       [8]byte
 	ByteOffset   uint64 `bincode:"varint"`
 	StorageClass StorageClass
 	// A single element of these matches if all the nonzero elements in it match.
@@ -335,7 +377,7 @@ type BlockProof struct {
 // certify span. again, the file must be transient.
 type AddSpanCertifyReq struct {
 	FileId     InodeId
-	Cookie     uint64
+	Cookie     [8]byte
 	ByteOffset uint64 `bincode:"varint"`
 	Proofs     []BlockProof
 }
@@ -344,7 +386,7 @@ type AddSpanCertifyResp struct{}
 
 type RemoveSpanInitiateReq struct {
 	FileId InodeId
-	Cookie uint64
+	Cookie [8]byte
 }
 
 type RemoveSpanInitiateResp struct {
@@ -355,18 +397,24 @@ type RemoveSpanInitiateResp struct {
 
 type RemoveSpanCertifyReq struct {
 	FileId     InodeId
-	Cookie     uint64
+	Cookie     [8]byte
 	ByteOffset uint64 `bincode:"varint"`
 	Proofs     []BlockProof
 }
 
 type RemoveSpanCertifyResp struct{}
 
-// makes a transient file current. requires the inode, the
+// Makes a transient file current. Requires the inode, the
 // parent dir, and the filename.
+//
+// If the file is not transient, but does exist, this will return
+// normally. This is not strictly necessary but simplifies writing
+// the clients (since they) need to retry.
+//
+// An expired transient file is considered gone.
 type LinkFileReq struct {
 	FileId  InodeId
-	Cookie  uint64
+	Cookie  [8]byte
 	OwnerId InodeId
 	Name    string
 }
@@ -382,6 +430,9 @@ type SoftUnlinkFileReq struct {
 
 type SoftUnlinkFileResp struct{}
 
+// Starts from the first span with byte offset <= than the provided
+// ByteOffset (this is so that you can just start reading a file
+// somewhere without hunting for the right span).
 type FileSpansReq struct {
 	FileId     InodeId
 	ByteOffset uint64 `bincode:"varint"`
@@ -453,16 +504,19 @@ type VisitFilesResp struct {
 	Ids    []InodeId
 }
 
+// We intentionally do not allow to only visit the "past deadline" files, to not
+// have possibly long-running requests on the server (because they need to traverse
+// many files before finding the correct one). Instead we let the GC process spend
+// time doing that (or we could just stop visiting when we encounter a not-expired
+// file, since they are in increasing id order, and therefore the new one come last)
 type VisitTransientFilesReq struct {
-	BeginId          InodeId
-	OnlyPastDeadline bool
+	BeginId InodeId
 }
 
 type TransientFile struct {
 	Id           InodeId
-	Cookie       uint64
+	Cookie       [8]byte
 	DeadlineTime EggsTime
-	Note         string
 }
 
 // Shall this be unsafe/private? We can freely get the cookie.
@@ -471,45 +525,52 @@ type VisitTransientFilesResp struct {
 	Files  []TransientFile
 }
 
-type FullReadDirReq struct {
-	DirId     InodeId
+type FullReadDirCursor struct {
+	Current   bool
 	StartHash uint64
 	StartName string
-	StartTime EggsTime
+	StartTime EggsTime // must be 0 if Current=true
+}
+
+// This streams all the edges, first the snapshot ones, then the current ones,
+// and does so regardless whether the directory has been removed or not.
+//
+// Starts from the first edge >= than the cursor. The snapshot edges come first.
+type FullReadDirReq struct {
+	DirId  InodeId
+	Cursor FullReadDirCursor
 }
 
 type Edge struct {
-	TargetId     InodeId
-	NameHash     uint64
-	Name         string
-	CreationTime EggsTime
-}
-
-type EdgeWithOwnership struct {
-	TargetId     OwnedInodeId
+	Current bool
+	// if current, the extra bit tells us whether the edge is locked. this
+	// shouldn't really be useful to any client, but FullReadDir is sort of
+	// an internal request anyway.
+	//
+	// if not current, the extra bit tells us whether the edge is owned.
+	// this is needed for GC.
+	TargetId     InodeIdExtra
 	NameHash     uint64
 	Name         string
 	CreationTime EggsTime
 }
 
 type FullReadDirResp struct {
-	Finished bool
-	Results  []EdgeWithOwnership
+	Next    FullReadDirCursor // default value if we're done
+	Results []Edge
 }
 
 // Creates a directory with a given parent and given inode id. Unsafe because
 // we can create directories with a certain parent while the paren't isn't
 // pointing at them (or isn't even a valid inode). We'd break the "no directory leaks"
 // invariant or the "null dir owner <-> not current" invariant.
-type CreateDirectoryINodeReq struct {
+type CreateDirectoryInodeReq struct {
 	Id      InodeId
 	OwnerId InodeId
-	// If Inherit is set here, the rest of the fields will be ignored, and the
-	// directory info will be filled in with the parent info.
-	Info DirectoryInfo
+	Info    SetDirectoryInfo
 }
 
-type CreateDirectoryINodeResp struct {
+type CreateDirectoryInodeResp struct {
 	Mtime EggsTime
 }
 
@@ -525,8 +586,9 @@ type SetDirectoryOwnerResp struct{}
 // This is needed to remove directories -- but again, it can break invariants.
 type RemoveDirectoryOwnerReq struct {
 	DirId InodeId
-	// The current (concrete) info of the directory owner.
-	Info DirectoryInfoBody
+	// We need this since we're removing the OwnerId. This field must
+	// be non-empty.
+	Info []byte
 }
 
 type RemoveDirectoryOwnerResp struct{}
@@ -618,7 +680,7 @@ type MakeFileTransientResp struct{}
 
 type SetDirectoryInfoReq struct {
 	Id   InodeId
-	Info DirectoryInfo
+	Info SetDirectoryInfo
 }
 
 type SetDirectoryInfoResp struct{}
@@ -644,13 +706,16 @@ type BlockServiceFilesResp struct {
 	FileIds []InodeId
 }
 
+type DirectoryEmptyReq struct {
+}
+
 // --------------------------------------------------------------------
 // CDC requests/responses
 
 type MakeDirectoryReq struct {
 	OwnerId InodeId
 	Name    string
-	Info    DirectoryInfo
+	Info    SetDirectoryInfo
 }
 
 type MakeDirectoryResp struct {
@@ -713,7 +778,7 @@ type HardUnlinkFileReq struct {
 type HardUnlinkFileResp struct{}
 
 // --------------------------------------------------------------------
-// directory data
+// directory info
 
 type SpanPolicy struct {
 	MaxSize      uint64
@@ -724,43 +789,113 @@ type SpanPolicy struct {
 // See SnapshotPolicy for the meaning of `DeleteAfterTime` and
 // `DeleteAfterVersions`
 type DirectoryInfoBody struct {
+	// We store a version number for this serialized data structure
+	// since it is opaque to the server and therefore we might want
+	// to evolve it separatedly. Right now it's 1 for this data structure.
+	Version             uint8
 	DeleteAfterTime     uint64 // nanoseconds
 	DeleteAfterVersions uint8
 	// Sorted by MaxSize. There's always an implicit policy for inline
-	// spans (max size 255).
+	// spans (max size 255). Which means that the first `MaxSize`
+	// must be > 255.
 	SpanPolicies []SpanPolicy
 }
 
-type DirectoryInfo struct {
-	// This flag tells us whether the directory was set to inherit the
-	// directory info.
-	Inherited bool
-	// Here list is used as optional. If `Inherited`` is `false`, then
-	// the length must be one. If it is `true`, then the length should
-	// be zero, unless the directory owner is none, in which case it
-	// should be one.
-	//
-	// We need to materialize the directory info for soft unlinked directories
-	// with inherited infos, otherwise we won't be able to easily get the
-	// directory info (since we do not have a reverse directory lookup).
-	//
-	// For consumers, the right way to interpret this is to just look at
-	// the body. If it's present, then it should be used. If it's _not_
-	// present, then the directory should be traversed upwards. It is a
-	// server bug for directories with no owners (soft unlinked or ROOT)
-	// to have no body.
-	Body []DirectoryInfoBody
-}
-
-/*
 // --------------------------------------------------------------------
-// block service msgs
+// log entries
+//
+// these are only used internally, but we define them here for codegen
+// simplicity.
+//
+// We only define the individual entries here, the framing is specified
+// in c++. The framing, amongst other things, includes the log entry time
+// and the index, so we don't also store it here.
 
-type EraseBlockReq struct {
-	BlockId BlockId
+type ConstructFileEntry struct {
+	Id           InodeId
+	Type         InodeType
+	DeadlineTime EggsTime
+	Note         string
 }
 
-type EraseBlockResp struct {
-
+type LinkFileEntry struct {
+	FileId  InodeId
+	OwnerId InodeId
+	Name    string
 }
-*/
+
+type SameDirectoryRenameEntry struct {
+	TargetId InodeId
+	DirId    InodeId
+	OldName  string
+	NewName  string
+}
+
+type SoftUnlinkFileEntry struct {
+	OwnerId InodeId
+	FileId  InodeId
+	Name    string
+}
+
+type CreateDirectoryInodeEntry struct {
+	Id      InodeId
+	OwnerId InodeId
+	Info    SetDirectoryInfo
+}
+
+type CreateLockedCurrentEdgeEntry struct {
+	DirId        InodeId
+	Name         string
+	TargetId     InodeId
+	CreationTime EggsTime
+}
+
+type UnlockCurrentEdgeEntry struct {
+	DirId    InodeId
+	Name     string
+	TargetId InodeId
+	WasMoved bool
+}
+
+type LockCurrentEdgeEntry struct {
+	DirId    InodeId
+	Name     string
+	TargetId InodeId
+}
+
+type RemoveDirectoryOwnerEntry struct {
+	DirId InodeId
+	Info  []byte
+}
+
+type RemoveInodeEntry struct {
+	Id InodeId
+}
+
+type SetDirectoryOwnerEntry struct {
+	DirId   InodeId
+	OwnerId InodeId // must be a directory (no NULL_INODE_ID!)
+}
+
+type SetDirectoryInfoEntry struct {
+	DirId InodeId
+	Info  SetDirectoryInfo
+}
+
+type RemoveNonOwnedEdgeEntry struct {
+	DirId        InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
+}
+
+type IntraShardHardFileUnlinkEntry struct {
+	OwnerId      InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
+}
+
+type RemoveSpanInitiateEntry struct {
+	FileId InodeId
+}

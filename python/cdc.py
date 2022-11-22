@@ -12,6 +12,7 @@ import logging
 import argparse
 import socket
 import logging
+from pathlib import Path
 
 from cdc_msgs import *
 from cdc_key import *
@@ -19,8 +20,7 @@ from common import *
 from msgs import *
 from shard_msgs import *
 from error import *
-import shard
-from shard import sql_insert, DisableLogging
+# import shard
 import bincode
 
 # TODO test automatic cleanup of timed out requests
@@ -39,7 +39,7 @@ def init_db(db: sqlite3.Connection):
     ''')
     cur.execute(
         f'insert or ignore into cdc values (0, :next_dir)',
-        {'shard': shard, 'next_dir': ROOT_DIR_INODE_ID+1}
+        {'next_dir': ROOT_DIR_INODE_ID+1}
     )
     # What transactions we're currently or want to execute
     cur.execute('''
@@ -150,11 +150,11 @@ class MakeDirectory(Transaction):
         return CDCNeedsShard(
             next_step='create_dir_resp',
             shard=inode_id_shard(self.state['dir_id']),
-            request=CreateDirectoryINodeReq(self.state['dir_id'], owner_id=req.owner_id, info=req.info),
+            request=CreateDirectoryInodeReq(self.state['dir_id'], owner_id=req.owner_id, info=req.info),
             critical=False,
         )
 
-    def create_dir_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[CreateDirectoryINodeResp]) -> CDCStepInternal:
+    def create_dir_resp(self, cur: sqlite3.Cursor, req: MakeDirectoryReq, resp: ExpectedShardResp[CreateDirectoryInodeResp]) -> CDCStepInternal:
         # We never expect to fail here. That said, the rollback now is safe.
         if isinstance(resp, EggsError):
             logging.warning(f'Unexpected error {resp} when creating directory inode with id {self.state["dir_id"]}.')
@@ -840,7 +840,7 @@ def execute(
         assert not m
     return response
 
-
+'''
 # Useful for testing, does everything locally
 class TestDriver:
     def __init__(self, db_dir: str):
@@ -922,7 +922,7 @@ class CDCTests(unittest.TestCase):
             return set([r.name for r in files.results])
         def read_dir_targets(files):
             return set([r.target_id for r in files.results])
-        dirs = self.cdc.shards[0].execute_ok(ReadDirReqNow(dir_id=ROOT_DIR_INODE_ID, start_hash=0))
+        dirs = self.cdc.shards[0].execute_ok(ReadDirReqCurrent(dir_id=ROOT_DIR_INODE_ID, start_hash=0))
         assert read_dir_names(dirs) == {b'test-1', b'test-2'} and read_dir_targets(dirs) == {dir_1, dir_2}
     
     def _only_root_dir_and_orphans(self, ids: Generator[int, None, None]):
@@ -1035,14 +1035,13 @@ class CDCTests(unittest.TestCase):
         assert len(transients.files) == 1
         # if we move the second file, we can remove it using RemoveNonOwnedEdgeReq
         self.cdc.shards[0].execute_ok(SameDirectoryRenameReq(transient_file_2.id, ROOT_DIR_INODE_ID, b'file', b'newfile'))
-        dir_edges = cast(FullReadDirResp, self.cdc.shards[0].execute_ok(FullReadDirReq(ROOT_DIR_INODE_ID, 0, b'', 0)))
-        assert dir_edges.finished
-        assert len(dir_edges.results) == 3
-        file_create, file_delete, newfile_create = tuple(sorted(dir_edges.results, key=lambda e: e.creation_time))
+        snapshot_edges = cast(SnapshotReadDirResp, self.cdc.shards[0].execute_ok(SnapshotReadDirReq(ROOT_DIR_INODE_ID, 0, b'', 0)))
+        current_edges = cast(ReadDirResp, self.cdc.shards[0].execute_ok(ReadDirReqCurrent(ROOT_DIR_INODE_ID, 0)))
+        assert snapshot_edges.finished and current_edges.next_hash == 0
+        assert (len(snapshot_edges.results) + len(current_edges.results)) == 3
+        file_create, file_delete, newfile_create = tuple(snapshot_edges.results + current_edges.results)
         assert file_create.target_id == file_2.target_id
         assert file_delete.target_id == NULL_INODE_ID
-        assert inode_id_extra(newfile_create.target_id)
-        assert inode_id_strip_extra(newfile_create.target_id) == file_2.target_id
         self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, transient_file_2.id,  b'file', file_create.creation_time))
         self.cdc.shards[0].execute_ok(RemoveNonOwnedEdgeReq(ROOT_DIR_INODE_ID, NULL_INODE_ID,  b'file', file_delete.creation_time))
         # TODO finish adding/removing blocks etc.
@@ -1058,8 +1057,10 @@ class CDCTests(unittest.TestCase):
     def test_remove_inode(self):
         dir_1 = cast(MakeDirectoryResp, self.cdc.execute_ok(MakeDirectoryReq(ROOT_DIR_INODE_ID, b'test', INHERIT_DIRECTORY_INFO))).id
         self.cdc.shards[inode_id_shard(dir_1)].execute_err(RemoveInodeReq(dir_1), ErrCode.DIRECTORY_HAS_OWNER)
+'''
 
 def run_forever(db: sqlite3.Connection):
+    logging.info(f'Running on port {CDC_PORT}')
     api_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     api_sock.bind(('', CDC_PORT))
     shard_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -1085,7 +1086,6 @@ def run_forever(db: sqlite3.Connection):
         except Exception:
             logging.error(f'Got exception while processing CDC request')
             traceback.print_exc()
-    
 
 def main(db_dir: str):
     db = open_db(db_dir)
@@ -1094,6 +1094,15 @@ def main(db_dir: str):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Runs the cross-directory coordinator')
     parser.add_argument('db_dir', help='Location to create or load db')
+    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--log_file', type=Path)
+    parser.add_argument('--port', type=int, default=5000)
     config = parser.parse_args(sys.argv[1:])
+
+    log_level = logging.DEBUG if config.verbose else logging.WARNING
+    if config.log_file:
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+    else:
+        logging.basicConfig(level=log_level)
 
     main(config.db_dir)

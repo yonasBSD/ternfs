@@ -196,7 +196,7 @@ class Operations(pyfuse3.Operations):
     async def readdir(self, dir_id, continuation_key, token):
         assert inode_id_type(dir_id) == InodeType.DIRECTORY
         while True:
-            resp = cast(ReadDirResp, await self._send_shard_req(inode_id_shard(dir_id), ReadDirReqNow(dir_id, continuation_key)))
+            resp = cast(ReadDirResp, await self._send_shard_req(inode_id_shard(dir_id), ReadDirReq(dir_id, continuation_key)))
             for result in resp.results:
                 # FUSE (or at least pyfuse) expects the mtime/ctime here
                 entry = await self.getattr(result.target_id)

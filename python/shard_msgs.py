@@ -31,8 +31,12 @@ class BlockFlags(enum.IntFlag):
     STALE = 1
     TERMINAL = 2
 
-def ReadDirReqNow(dir_id: int, start_hash: int) -> ReadDirReq:
-    return ReadDirReq(dir_id, start_hash, as_of_time=0xFFFFFFFFFFFFFFFF)
+'''
+def ReadDirReqCurrent(dir_id: int, start_hash: int) -> ReadDirReq:
+    return ReadDirReq(dir_id, start_hash, must_be_current=True)
+
+def ReadDirReqAll(dir_id: int, start_hash: int) -> ReadDirReq:
+    return ReadDirReq(dir_id, start_hash, must_be_current=False)
 
 # INTERNAL_ERROR/FATAL_ERROR/TIMEOUT are implicitly included in all of these
 SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
@@ -96,6 +100,7 @@ SHARD_ERRORS: Dict[ShardMessageKind, Set[ErrCode]] = {
         ErrCode.DIRECTORY_NOT_FOUND, ErrCode.EDGE_NOT_FOUND,
     }
 }
+'''
 
 def kind_is_privileged(k: ShardMessageKind) -> bool:
     return bool(k & 0x80)
@@ -184,37 +189,37 @@ class ShardResponse(bincode.Packable):
         return ShardResponse(request_id, body)
 
 # Will be used for the root directory
-DEFAULT_DIRECTORY_INFO = DirectoryInfo(
-    inherited=False,
-    body=[DirectoryInfoBody(
-        delete_after_time=int(timedelta(days=30).total_seconds()) * 1000 * 1000 * 1000,
-        delete_after_versions=0,
-        # right now we only support mirroring
-        span_policies=[
-            SpanPolicy(
-                max_size=1<<20, # 1MiB
-                storage_class=STORAGE_CLASSES_BY_NAME['FLASH'],
-                parity=create_parity_mode(1, 1),
-            ),
-            SpanPolicy(
-                max_size=10<<20, # 10MiB
-                storage_class=STORAGE_CLASSES_BY_NAME['HDD'],
-                parity=create_parity_mode(1, 1),
-            ),
-        ],
-        # span_policies=[
-        #     SpanPolicy(
-        #         max_size=10<<20, # 10MiB
-        #         storage_class=STORAGE_CLASSES_BY_NAME['FLASH'],
-        #         parity=create_parity_mode(3, 3),
-        #     ),
-        #     SpanPolicy(
-        #         max_size=100<<20, # 100MiB
-        #         storage_class=STORAGE_CLASSES_BY_NAME['HDD'],
-        #         parity=create_parity_mode(9, 6),
-        #     ),
-        # ]
-    )]
-)
-
-INHERIT_DIRECTORY_INFO = DirectoryInfo(inherited=True, body=[])
+# DEFAULT_DIRECTORY_INFO = DirectoryInfo(
+#     inherited=False,
+#     body=[DirectoryInfoBody(
+#         delete_after_time=int(timedelta(days=30).total_seconds()) * 1000 * 1000 * 1000,
+#         delete_after_versions=0,
+#         # right now we only support mirroring
+#         span_policies=[
+#             SpanPolicy(
+#                 max_size=1<<20, # 1MiB
+#                 storage_class=STORAGE_CLASSES_BY_NAME['FLASH'],
+#                 parity=create_parity_mode(1, 1),
+#             ),
+#             SpanPolicy(
+#                 max_size=10<<20, # 10MiB
+#                 storage_class=STORAGE_CLASSES_BY_NAME['HDD'],
+#                 parity=create_parity_mode(1, 1),
+#             ),
+#         ],
+#         # span_policies=[
+#         #     SpanPolicy(
+#         #         max_size=10<<20, # 10MiB
+#         #         storage_class=STORAGE_CLASSES_BY_NAME['FLASH'],
+#         #         parity=create_parity_mode(3, 3),
+#         #     ),
+#         #     SpanPolicy(
+#         #         max_size=100<<20, # 100MiB
+#         #         storage_class=STORAGE_CLASSES_BY_NAME['HDD'],
+#         #         parity=create_parity_mode(9, 6),
+#         #     ),
+#         # ]
+#     )]
+# )
+# 
+# INHERIT_DIRECTORY_INFO = DirectoryInfo(inherited=True, body=[])

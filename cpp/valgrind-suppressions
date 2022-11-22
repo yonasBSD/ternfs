@@ -1,0 +1,19 @@
+# I haven't investigated this -- some uninitialized memory when
+# invoking libunwind for the first time.
+{
+   libunwind-uninitialized
+   Memcheck:Param
+   write(buf)
+   fun:syscall
+   obj:/usr/lib/libunwind.so.8.0.1
+   obj:/usr/lib/libunwind.so.8.0.1
+   obj:/usr/lib/libunwind.so.8.0.1
+   obj:/usr/lib/libunwind.so.8.0.1
+   fun:_ULx86_64_step
+   fun:backtrace
+   fun:LibUnwindInternals
+   fun:__cxx_global_var_init.1
+   fun:_GLOBAL__sub_I_Backtrace.cpp
+   fun:__libc_csu_init
+   fun:(below main)
+}

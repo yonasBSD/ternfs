@@ -1,0 +1,313 @@
+#pragma once
+
+#include <string.h>
+#include <sys/types.h>
+#include <exception>
+#include <type_traits>
+#include <rocksdb/slice.h>
+#include <iomanip>
+#include <bit>
+#include <vector>
+
+#include "Common.hpp"
+#include "Assert.hpp"
+
+// We rely on this when casting from/to scalars here. If we ever run this on big endian
+// systems, the whole bincode code will have to be looked at closely.
+static_assert(std::endian::native == std::endian::little);
+
+// These are not owned -- they'll point to some other buffer (e.g.
+// the buffer we received the message in, or some scratchpad).
+struct BincodeBytes {
+    uint8_t length;
+    const uint8_t* data;
+
+    static constexpr uint16_t STATIC_SIZE = 1; // length
+
+    BincodeBytes(): BincodeBytes("", 0) {}
+    BincodeBytes(const char* data_, size_t length_): length(length_), data((const uint8_t*)data_) {
+        ALWAYS_ASSERT(length_ < 256);
+    }
+    BincodeBytes(const rocksdb::Slice& slice): length(slice.size()), data((const uint8_t*)slice.data()) {
+        ALWAYS_ASSERT(slice.size() < 256);
+    }
+
+    BincodeBytes(const char* str) {
+        size_t length = strlen(str);
+        ALWAYS_ASSERT(length < 256);
+        this->length = length;
+        this->data = (const uint8_t*)str;
+    }
+
+    void clear() {
+        length = 0;
+        data = (const uint8_t*)"";
+    }
+
+    uint8_t packedSize() const {
+        return 1 + length;
+    }
+
+    bool operator==(const BincodeBytes& rhs) const {
+        return length == rhs.length && (strncmp((const char*)data, (const char*)rhs.data, length) == 0);
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, const BincodeBytes& x);
+
+template<typename A>
+struct BincodeList {
+    std::vector<A> els;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // length
+
+    void clear() { els.resize(0); }
+
+    uint16_t packedSize() const {
+        uint16_t sz = 2;
+        for (const auto& el: els) {
+            sz += el.packedSize();
+        }
+        return sz;
+    }
+
+    bool operator==(const BincodeList<A>& rhs) const {
+        if (els.size() != rhs.els.size()) {
+            return false;
+        }
+        for (int i = 0; i < els.size(); i++) {
+            if (els[i] != rhs.els[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+template<typename A>
+static std::ostream& operator<<(std::ostream& out, const BincodeList<A>& x) {
+    out << "[";
+    for (int i = 0; i < x.els.size(); i++) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << x.els[i];
+    }
+    out << "]";
+    return out;
+}
+
+template<uint16_t SZ>
+struct BincodeFixedBytes {
+    std::array<uint8_t, SZ> data;
+    static constexpr uint16_t STATIC_SIZE = SZ;
+
+    BincodeFixedBytes() { clear(); }
+    BincodeFixedBytes(const std::array<uint8_t, SZ>& data_): data(data_) {}
+
+    void clear() { memset(&data[0], 0, SZ); }
+
+    constexpr uint16_t packedSize() const {
+        return SZ;
+    }
+
+    bool operator==(const BincodeFixedBytes<SZ>& rhs) const {
+        return data == rhs.data;
+    }
+};
+
+template<uint16_t SZ>
+static std::ostream& operator<<(std::ostream& out, const BincodeFixedBytes<SZ>& x) {
+    // Unlike operator<< for BincodeBytes, we always escape here,
+    // since these are basically never ASCII strings.
+    out << "b" << SZ << "\"";
+    const char cfill = out.fill();
+    out << std::hex << std::setfill('0');
+    for (int i = 0; i < SZ; i++) {
+        out << "\\x" << std::setw(2) << ((int)x.data[i]);
+    }
+    out << std::setfill(cfill) << std::dec;
+    out << "\"";
+    return out;
+}
+
+#define BINCODE_EXCEPTION(...) BincodeException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))
+
+class BincodeException : public AbstractException {
+public:
+    template <typename TFmt, typename ... Args>
+    BincodeException(int line, const char *file, const char *function, TFmt fmt, Args ... args) {
+        std::stringstream ss;
+        ss << "BincodeException(" << file << "@" << line << " in " << function << "):\n";
+        format_pack(ss, fmt, args...);
+        _msg = ss.str();
+    }
+    virtual const char *what() const noexcept override;
+private:
+    std::string _msg;
+};
+
+inline uint8_t varU61Size(uint64_t x) {
+    uint64_t bits = 64 - std::countl_zero(x);
+    ALWAYS_ASSERT(bits < 62, "uint64_t too large for packVarU61: %s", x);
+    uint64_t neededBytes = ((bits + 3) + 8 - 1) / 8;
+    return neededBytes;
+}
+
+struct BincodeBuf {
+    uint8_t* data;
+    uint8_t* cursor;
+    uint8_t* end;
+
+    BincodeBuf() = delete;
+    BincodeBuf(char* buf, size_t len): data((uint8_t*)buf), cursor((uint8_t*)buf), end((uint8_t*)buf+len) {}
+    BincodeBuf(std::string& str): BincodeBuf(str.data(), str.size()) {}
+
+    size_t len() const {
+        return cursor - data;
+    }
+
+    size_t remaining() const {
+        return end - cursor;
+    }
+
+    void ensureFinished() const {
+        ALWAYS_ASSERT(remaining() == 0);
+    }
+
+    void ensureSizeOrPanic(size_t sz) const {
+        ALWAYS_ASSERT(remaining() >= sz);
+    }
+
+    template<typename A>
+    void packScalar(A x) {
+        static_assert(std::is_integral_v<A>);
+        ensureSizeOrPanic(sizeof(A));
+        memcpy(cursor, &x, sizeof(x));
+        cursor += sizeof(A);
+    }
+
+    void packVarU61(uint64_t x) {
+        uint64_t neededBytes = varU61Size(x);
+        ensureSizeOrPanic(neededBytes);
+        x = (x << 3) | (neededBytes-1);
+        memcpy(cursor, &x, neededBytes);
+        cursor += neededBytes;
+    }
+
+    template<size_t SZ>
+    void packFixedBytes(const BincodeFixedBytes<SZ>& x) {
+        ensureSizeOrPanic(SZ);
+        memcpy(cursor, &x.data[0], SZ);
+        cursor += SZ;
+    }
+
+    void packBytes(const BincodeBytes& x) {
+        ensureSizeOrPanic(1+x.length);
+        packScalar<uint8_t>(x.length);
+        memcpy(cursor, x.data, x.length);
+        cursor += x.length;
+    }
+
+    template<typename A>
+    void packList(const BincodeList<A>& xs) {
+        ALWAYS_ASSERT(xs.els.size() < (1<<16));
+        packScalar<uint16_t>(xs.els.size());
+        for (const auto& x: xs.els) {
+            x.pack(*this);
+        }
+    }
+
+    template<typename A>
+    A unpackScalar() {
+        static_assert(std::is_integral_v<A>);
+        if (unlikely(remaining() < sizeof(A))) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack scalar (need %s, got %s)", sizeof(A), remaining());
+        }
+        A x;
+        memcpy(&x, cursor, sizeof(A));
+        cursor += sizeof(A);
+        return x;
+    }
+
+    uint64_t unpackVarU61() {
+        uint64_t head = unpackScalar<uint8_t>();
+        uint64_t bytes = head & (8 - 1);
+        if (unlikely(remaining() < bytes)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack var u61 (need %s, got %s)", bytes, remaining());
+        }
+        uint64_t tail = 0;
+        memcpy(&tail, cursor, bytes);
+        cursor += bytes;
+        return (head >> 3) | (tail << 5);
+    }
+
+    template<size_t SZ>
+    void unpackFixedBytes(BincodeFixedBytes<SZ>& x) {
+        if (unlikely(remaining() < SZ)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack fixed bytes (need %s, got %s)", SZ, remaining());
+        }
+        memcpy(&x.data[0], cursor, SZ);
+        cursor += SZ;
+    }
+
+    void unpackBytes(BincodeBytes& x) {
+        x.length = unpackScalar<uint8_t>();
+        if (unlikely(remaining() < x.length)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack bytes (need %s, got %s)", (int)x.length, remaining());
+        }
+        x.data = cursor;
+        cursor += x.length;
+    }
+
+    template<typename A>
+    void unpackList(BincodeList<A>& xs) {
+        xs.els.resize(unpackScalar<uint16_t>());
+        for (int i = 0; i < xs.els.size(); i++) {
+            xs.els[i].unpack(*this);
+        }
+    }
+
+    rocksdb::Slice slice() const {
+        return rocksdb::Slice((const char*)data, len());
+    }
+};
+
+constexpr size_t UDP_MTU = 1472;
+
+struct BincodeBytesScratchpad {
+private:
+    std::vector<uint8_t> _buf;
+    uint16_t _cursor;
+public:
+    BincodeBytesScratchpad(): _buf(UDP_MTU), _cursor(0) {}
+
+    void allocate(uint8_t length, BincodeBytes& bytes) {
+        ALWAYS_ASSERT(_cursor + length <= UDP_MTU);
+        bytes.length = length;
+        bytes.data = &_buf[0] + _cursor;
+        memset((uint8_t*)bytes.data, 0, bytes.length);
+        _cursor += length;
+    }
+
+    void copyTo(const BincodeBytes& from, BincodeBytes& to) {
+        allocate(from.length, to);
+        memcpy((uint8_t*)to.data, from.data, from.length);
+    }
+
+    void copyTo(const char* from, BincodeBytes& to) {
+        allocate(strlen(from), to);
+        memcpy((uint8_t*)to.data, from, to.length);
+    }
+
+    BincodeBytes copy(const BincodeBytes& from) {
+        BincodeBytes b;
+        allocate(from.length, b);
+        copyTo(from, b);
+        return b;
+    }
+
+    void reset() {
+        _cursor = 0;
+    }
+};

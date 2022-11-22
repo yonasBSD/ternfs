@@ -15,6 +15,7 @@ import struct
 import sys
 import logging
 import traceback
+import logging.config
 
 import common
 from shard_msgs import STORAGE_CLASSES_BY_NAME
@@ -287,8 +288,16 @@ if __name__ == '__main__':
     parser.add_argument('path', help='Path to the root of the storage partition', type=Path)
     parser.add_argument('--storage_class', help='Storage class byte', type=str, default='HDD')
     parser.add_argument('--failure_domain', help='Failure domain', type=str)
-    parser.add_argument('--no_time_check', action='store_true', type=bool, help='Do not perform block deletion time check (to prevent replay attacks). Useful for testing.')
+    parser.add_argument('--no_time_check', action='store_true', help='Do not perform block deletion time check (to prevent replay attacks). Useful for testing.')
+    parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--log_file', type=Path)
     config = parser.parse_args()
 
-    # Arbitrary port here
-    main(path=config.path, port=0, storage_class=config.storage_class, failure_domain=config.failure_domain, time_check=not (config.no_time_check))
+    log_level = logging.DEBUG if config.verbose else logging.WARNING
+    if config.log_file:
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+    else:
+        logging.basicConfig(level=log_level)
+
+    main(path=config.path, port=config.port, storage_class=config.storage_class, failure_domain=config.failure_domain, time_check=not (config.no_time_check))

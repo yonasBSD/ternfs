@@ -87,6 +87,7 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
 def send_shard_request_or_raise(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> ShardResponseBody:
     resp = send_shard_request(shard, req_body, key, timeout_secs)
     if isinstance(resp, EggsError):
+        print('XXX', req_body)
         raise resp
     return resp
 
@@ -201,7 +202,7 @@ def mkdir(path: Path) -> None:
         lookup_internal(owner_id, path.name)
         raise EggsError(ErrCode.CANNOT_OVERRIDE_NAME)
     except EggsError as err:
-        if err.error_code != ErrCode.DIRECTORY_NOT_FOUND:
+        if err.error_code != ErrCode.NAME_NOT_FOUND:
             raise err
     return mkdir_raw(owner_id, path.name)
 
@@ -250,13 +251,13 @@ def mv(a: Path, b: Path) -> None:
 
 @command('readdir_single')
 def readdir_single(id: int, start_hash: int):
-    print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReqNow(id, start_hash)))
+    print(send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, start_hash)))
 
 @command('readdir')
 def readdir(id: int):
     continuation_key = 0
     while True:
-        resp = send_shard_request_or_raise(inode_id_shard(id), ReadDirReqNow(id, continuation_key))
+        resp = send_shard_request_or_raise(inode_id_shard(id), ReadDirReq(id, continuation_key))
         assert isinstance(resp, ReadDirResp)
         for result in resp.results:
             s = result.name.decode("ascii") + ("/" if inode_id_type(result.target_id) == InodeType.DIRECTORY else "")
@@ -267,20 +268,16 @@ def readdir(id: int):
 
 @command('full_readdir')
 def full_readdir(id: int):
-    start_hash = 0
-    start_name = b''
-    start_time = 0
-    all_results: Dict[str, List[EdgeWithOwnership]] = collections.defaultdict(list)
+    all_results: Dict[str, List[Edge]] = collections.defaultdict(list)
+    cursor = FullReadDirCursor(current=False, start_hash=0, start_name=b'', start_time=0)
     while True:
-        resp = send_shard_request_or_raise(inode_id_shard(id), FullReadDirReq(id, start_hash, start_name, start_time))
+        resp = send_shard_request_or_raise(inode_id_shard(id), FullReadDirReq(id, cursor))
         assert isinstance(resp, FullReadDirResp)
         for result in resp.results:
             all_results[result.name.decode('ascii')].append(result)
-        if resp.finished:
+        if resp.next.start_hash == 0:
             break
-        start_hash = resp.results[-1].name_hash
-        start_name = resp.results[-1].name
-        start_time = resp.results[-1].creation_time+1
+        cursor = resp.next
     for name, results in all_results.items():
         print(name)
         for result in results:
@@ -290,7 +287,11 @@ def full_readdir(id: int):
                 InodeType.SYMLINK: 'S',
             }
             id = inode_id_strip_extra(result.target_id)
-            ownership = 'O' if inode_id_extra(result.target_id) else ' '
+            ownership = ' '
+            if result.current:
+                ownership = 'O'
+            elif inode_id_extra(result.target_id):
+                ownership = 'O'
             id_str = f'0x{id:016X}'
             if id == NULL_INODE_ID:
                 print(f'    {ownership} {eggs_time_str(result.creation_time)} <deleted>')

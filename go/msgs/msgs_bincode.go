@@ -32,7 +32,7 @@ const (
 	NAME_IS_LOCKED ErrCode = 33
 	OLD_NAME_IS_LOCKED ErrCode = 34
 	NEW_NAME_IS_LOCKED ErrCode = 35
-	MORE_RECENT_SNAPSHOT_ALREADY_EXISTS ErrCode = 36
+	DIRECTORY_MTIME_IS_TOO_RECENT ErrCode = 36
 	MISMATCHING_TARGET ErrCode = 37
 	MISMATCHING_OWNER ErrCode = 38
 	DIRECTORY_NOT_EMPTY ErrCode = 39
@@ -47,7 +47,13 @@ const (
 	CANNOT_REMOVE_ROOT_DIRECTORY ErrCode = 48
 	FILE_EMPTY ErrCode = 49
 	CANNOT_REMOVE_DIRTY_SPAN ErrCode = 50
-	TARGET_NOT_IN_SAME_SHARD ErrCode = 51
+	BAD_SHARD ErrCode = 51
+	BAD_NAME ErrCode = 52
+	MORE_RECENT_SNAPSHOT_EDGE ErrCode = 53
+	MORE_RECENT_CURRENT_EDGE ErrCode = 54
+	BAD_DIRECTORY_INFO ErrCode = 55
+	CREATION_TIME_TOO_RECENT ErrCode = 56
+	DEADLINE_NOT_PASSED ErrCode = 57
 )
 
 func (err ErrCode) String() string {
@@ -105,7 +111,7 @@ func (err ErrCode) String() string {
 	case 35:
 		return "NEW_NAME_IS_LOCKED"
 	case 36:
-		return "MORE_RECENT_SNAPSHOT_ALREADY_EXISTS"
+		return "DIRECTORY_MTIME_IS_TOO_RECENT"
 	case 37:
 		return "MISMATCHING_TARGET"
 	case 38:
@@ -135,7 +141,19 @@ func (err ErrCode) String() string {
 	case 50:
 		return "CANNOT_REMOVE_DIRTY_SPAN"
 	case 51:
-		return "TARGET_NOT_IN_SAME_SHARD"
+		return "BAD_SHARD"
+	case 52:
+		return "BAD_NAME"
+	case 53:
+		return "MORE_RECENT_SNAPSHOT_EDGE"
+	case 54:
+		return "MORE_RECENT_CURRENT_EDGE"
+	case 55:
+		return "BAD_DIRECTORY_INFO"
+	case 56:
+		return "CREATION_TIME_TOO_RECENT"
+	case 57:
+		return "DEADLINE_NOT_PASSED"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -149,6 +167,8 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return LOOKUP
 	case *StatFileReq, *StatFileResp:
 		return STAT_FILE
+	case *StatTransientFileReq, *StatTransientFileResp:
+		return STAT_TRANSIENT_FILE
 	case *StatDirectoryReq, *StatDirectoryResp:
 		return STAT_DIRECTORY
 	case *ReadDirReq, *ReadDirResp:
@@ -189,7 +209,9 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return SWAP_BLOCKS
 	case *BlockServiceFilesReq, *BlockServiceFilesResp:
 		return BLOCK_SERVICE_FILES
-	case *CreateDirectoryINodeReq, *CreateDirectoryINodeResp:
+	case *RemoveInodeReq, *RemoveInodeResp:
+		return REMOVE_INODE
+	case *CreateDirectoryInodeReq, *CreateDirectoryInodeResp:
 		return CREATE_DIRECTORY_INODE
 	case *SetDirectoryOwnerReq, *SetDirectoryOwnerResp:
 		return SET_DIRECTORY_OWNER
@@ -201,8 +223,6 @@ func GetShardMessageKind(body any) ShardMessageKind {
 		return LOCK_CURRENT_EDGE
 	case *UnlockCurrentEdgeReq, *UnlockCurrentEdgeResp:
 		return UNLOCK_CURRENT_EDGE
-	case *RemoveInodeReq, *RemoveInodeResp:
-		return REMOVE_INODE
 	case *RemoveOwnedSnapshotFileEdgeReq, *RemoveOwnedSnapshotFileEdgeResp:
 		return REMOVE_OWNED_SNAPSHOT_FILE_EDGE
 	case *MakeFileTransientReq, *MakeFileTransientResp:
@@ -216,6 +236,7 @@ func GetShardMessageKind(body any) ShardMessageKind {
 const (
 	LOOKUP ShardMessageKind = 0x1
 	STAT_FILE ShardMessageKind = 0x2
+	STAT_TRANSIENT_FILE ShardMessageKind = 0xA
 	STAT_DIRECTORY ShardMessageKind = 0x8
 	READ_DIR ShardMessageKind = 0x3
 	CONSTRUCT_FILE ShardMessageKind = 0x4
@@ -236,13 +257,13 @@ const (
 	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x1A
 	SWAP_BLOCKS ShardMessageKind = 0x22
 	BLOCK_SERVICE_FILES ShardMessageKind = 0x23
+	REMOVE_INODE ShardMessageKind = 0x24
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
 	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
 	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
 	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
-	REMOVE_INODE ShardMessageKind = 0x85
 	REMOVE_OWNED_SNAPSHOT_FILE_EDGE ShardMessageKind = 0x86
 	MAKE_FILE_TRANSIENT ShardMessageKind = 0x87
 )
@@ -322,8 +343,6 @@ func (v *StatFileReq) Unpack(buf *bincode.Buf) error {
 func (v *StatFileResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 	buf.PackU64(uint64(v.Size))
-	buf.PackBool(bool(v.Transient))
-	buf.PackBytes([]byte(v.Note))
 }
 
 func (v *StatFileResp) Unpack(buf *bincode.Buf) error {
@@ -333,7 +352,31 @@ func (v *StatFileResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Size)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBool((*bool)(&v.Transient)); err != nil {
+	return nil
+}
+
+func (v *StatTransientFileReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *StatTransientFileReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *StatTransientFileResp) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Mtime))
+	buf.PackU64(uint64(v.Size))
+	buf.PackBytes([]byte(v.Note))
+}
+
+func (v *StatTransientFileResp) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Mtime)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.Size)); err != nil {
 		return err
 	}
 	if err := buf.UnpackBytes((*[]byte)(&v.Note)); err != nil {
@@ -356,7 +399,7 @@ func (v *StatDirectoryReq) Unpack(buf *bincode.Buf) error {
 func (v *StatDirectoryResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 	buf.PackU64(uint64(v.Owner))
-	v.Info.Pack(buf)
+	buf.PackBytes([]byte(v.Info))
 }
 
 func (v *StatDirectoryResp) Unpack(buf *bincode.Buf) error {
@@ -366,7 +409,7 @@ func (v *StatDirectoryResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Owner)); err != nil {
 		return err
 	}
-	if err := v.Info.Unpack(buf); err != nil {
+	if err := buf.UnpackBytes((*[]byte)(&v.Info)); err != nil {
 		return err
 	}
 	return nil
@@ -375,7 +418,6 @@ func (v *StatDirectoryResp) Unpack(buf *bincode.Buf) error {
 func (v *ReadDirReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.DirId))
 	buf.PackU64(uint64(v.StartHash))
-	buf.PackU64(uint64(v.AsOfTime))
 }
 
 func (v *ReadDirReq) Unpack(buf *bincode.Buf) error {
@@ -383,9 +425,6 @@ func (v *ReadDirReq) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.StartHash)); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.AsOfTime)); err != nil {
 		return err
 	}
 	return nil
@@ -434,14 +473,14 @@ func (v *ConstructFileReq) Unpack(buf *bincode.Buf) error {
 
 func (v *ConstructFileResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 }
 
 func (v *ConstructFileResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	return nil
@@ -449,7 +488,7 @@ func (v *ConstructFileResp) Unpack(buf *bincode.Buf) error {
 
 func (v *AddSpanInitiateReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.FileId))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 	buf.PackVarU61(uint64(v.ByteOffset))
 	buf.PackU8(uint8(v.StorageClass))
 	len1 := len(v.Blacklist)
@@ -473,7 +512,7 @@ func (v *AddSpanInitiateReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	if err := buf.UnpackVarU61((*uint64)(&v.ByteOffset)); err != nil {
@@ -544,7 +583,7 @@ func (v *AddSpanInitiateResp) Unpack(buf *bincode.Buf) error {
 
 func (v *AddSpanCertifyReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.FileId))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 	buf.PackVarU61(uint64(v.ByteOffset))
 	len1 := len(v.Proofs)
 	buf.PackLength(len1)
@@ -557,7 +596,7 @@ func (v *AddSpanCertifyReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	if err := buf.UnpackVarU61((*uint64)(&v.ByteOffset)); err != nil {
@@ -585,7 +624,7 @@ func (v *AddSpanCertifyResp) Unpack(buf *bincode.Buf) error {
 
 func (v *LinkFileReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.FileId))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 	buf.PackU64(uint64(v.OwnerId))
 	buf.PackBytes([]byte(v.Name))
 }
@@ -594,7 +633,7 @@ func (v *LinkFileReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.OwnerId)); err != nil {
@@ -823,14 +862,10 @@ func (v *VisitFilesResp) Unpack(buf *bincode.Buf) error {
 
 func (v *VisitTransientFilesReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.BeginId))
-	buf.PackBool(bool(v.OnlyPastDeadline))
 }
 
 func (v *VisitTransientFilesReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.BeginId)); err != nil {
-		return err
-	}
-	if err := buf.UnpackBool((*bool)(&v.OnlyPastDeadline)); err != nil {
 		return err
 	}
 	return nil
@@ -864,29 +899,21 @@ func (v *VisitTransientFilesResp) Unpack(buf *bincode.Buf) error {
 
 func (v *FullReadDirReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.DirId))
-	buf.PackU64(uint64(v.StartHash))
-	buf.PackBytes([]byte(v.StartName))
-	buf.PackU64(uint64(v.StartTime))
+	v.Cursor.Pack(buf)
 }
 
 func (v *FullReadDirReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.StartHash)); err != nil {
-		return err
-	}
-	if err := buf.UnpackString(&v.StartName); err != nil {
-		return err
-	}
-	if err := buf.UnpackU64((*uint64)(&v.StartTime)); err != nil {
+	if err := v.Cursor.Unpack(buf); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (v *FullReadDirResp) Pack(buf *bincode.Buf) {
-	buf.PackBool(bool(v.Finished))
+	v.Next.Pack(buf)
 	len1 := len(v.Results)
 	buf.PackLength(len1)
 	for i := 0; i < len1; i++ {
@@ -895,7 +922,7 @@ func (v *FullReadDirResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *FullReadDirResp) Unpack(buf *bincode.Buf) error {
-	if err := buf.UnpackBool((*bool)(&v.Finished)); err != nil {
+	if err := v.Next.Unpack(buf); err != nil {
 		return err
 	}
 	var len1 int
@@ -973,14 +1000,14 @@ func (v *IntraShardHardFileUnlinkResp) Unpack(buf *bincode.Buf) error {
 
 func (v *RemoveSpanInitiateReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.FileId))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 }
 
 func (v *RemoveSpanInitiateReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	return nil
@@ -1014,7 +1041,7 @@ func (v *RemoveSpanInitiateResp) Unpack(buf *bincode.Buf) error {
 
 func (v *RemoveSpanCertifyReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.FileId))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 	buf.PackVarU61(uint64(v.ByteOffset))
 	len1 := len(v.Proofs)
 	buf.PackLength(len1)
@@ -1027,7 +1054,7 @@ func (v *RemoveSpanCertifyReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.FileId)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	if err := buf.UnpackVarU61((*uint64)(&v.ByteOffset)); err != nil {
@@ -1124,13 +1151,31 @@ func (v *BlockServiceFilesResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *CreateDirectoryINodeReq) Pack(buf *bincode.Buf) {
+func (v *RemoveInodeReq) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+}
+
+func (v *RemoveInodeReq) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveInodeResp) Pack(buf *bincode.Buf) {
+}
+
+func (v *RemoveInodeResp) Unpack(buf *bincode.Buf) error {
+	return nil
+}
+
+func (v *CreateDirectoryInodeReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
 	buf.PackU64(uint64(v.OwnerId))
 	v.Info.Pack(buf)
 }
 
-func (v *CreateDirectoryINodeReq) Unpack(buf *bincode.Buf) error {
+func (v *CreateDirectoryInodeReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
 		return err
 	}
@@ -1143,11 +1188,11 @@ func (v *CreateDirectoryINodeReq) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *CreateDirectoryINodeResp) Pack(buf *bincode.Buf) {
+func (v *CreateDirectoryInodeResp) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Mtime))
 }
 
-func (v *CreateDirectoryINodeResp) Unpack(buf *bincode.Buf) error {
+func (v *CreateDirectoryInodeResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Mtime)); err != nil {
 		return err
 	}
@@ -1178,14 +1223,14 @@ func (v *SetDirectoryOwnerResp) Unpack(buf *bincode.Buf) error {
 
 func (v *RemoveDirectoryOwnerReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.DirId))
-	v.Info.Pack(buf)
+	buf.PackBytes([]byte(v.Info))
 }
 
 func (v *RemoveDirectoryOwnerReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := v.Info.Unpack(buf); err != nil {
+	if err := buf.UnpackBytes((*[]byte)(&v.Info)); err != nil {
 		return err
 	}
 	return nil
@@ -1281,24 +1326,6 @@ func (v *UnlockCurrentEdgeResp) Pack(buf *bincode.Buf) {
 }
 
 func (v *UnlockCurrentEdgeResp) Unpack(buf *bincode.Buf) error {
-	return nil
-}
-
-func (v *RemoveInodeReq) Pack(buf *bincode.Buf) {
-	buf.PackU64(uint64(v.Id))
-}
-
-func (v *RemoveInodeReq) Unpack(buf *bincode.Buf) error {
-	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RemoveInodeResp) Pack(buf *bincode.Buf) {
-}
-
-func (v *RemoveInodeResp) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
@@ -1528,22 +1555,18 @@ func (v *HardUnlinkFileResp) Unpack(buf *bincode.Buf) error {
 
 func (v *TransientFile) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.Id))
-	buf.PackU64(uint64(v.Cookie))
+	buf.PackFixedBytes(8, v.Cookie[:])
 	buf.PackU64(uint64(v.DeadlineTime))
-	buf.PackBytes([]byte(v.Note))
 }
 
 func (v *TransientFile) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU64((*uint64)(&v.Cookie)); err != nil {
+	if err := buf.UnpackFixedBytes(8, v.Cookie[:]); err != nil {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.DeadlineTime)); err != nil {
-		return err
-	}
-	if err := buf.UnpackString(&v.Note); err != nil {
 		return err
 	}
 	return nil
@@ -1568,14 +1591,14 @@ func (v *FetchedBlock) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *Edge) Pack(buf *bincode.Buf) {
+func (v *CurrentEdge) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.TargetId))
 	buf.PackU64(uint64(v.NameHash))
 	buf.PackBytes([]byte(v.Name))
 	buf.PackU64(uint64(v.CreationTime))
 }
 
-func (v *Edge) Unpack(buf *bincode.Buf) error {
+func (v *CurrentEdge) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
@@ -1591,14 +1614,18 @@ func (v *Edge) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *EdgeWithOwnership) Pack(buf *bincode.Buf) {
+func (v *Edge) Pack(buf *bincode.Buf) {
+	buf.PackBool(bool(v.Current))
 	buf.PackU64(uint64(v.TargetId))
 	buf.PackU64(uint64(v.NameHash))
 	buf.PackBytes([]byte(v.Name))
 	buf.PackU64(uint64(v.CreationTime))
 }
 
-func (v *EdgeWithOwnership) Unpack(buf *bincode.Buf) error {
+func (v *Edge) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackBool((*bool)(&v.Current)); err != nil {
+		return err
+	}
 	if err := buf.UnpackU64((*uint64)(&v.TargetId)); err != nil {
 		return err
 	}
@@ -1737,6 +1764,7 @@ func (v *SpanPolicy) Unpack(buf *bincode.Buf) error {
 }
 
 func (v *DirectoryInfoBody) Pack(buf *bincode.Buf) {
+	buf.PackU8(uint8(v.Version))
 	buf.PackU64(uint64(v.DeleteAfterTime))
 	buf.PackU8(uint8(v.DeleteAfterVersions))
 	len1 := len(v.SpanPolicies)
@@ -1747,6 +1775,9 @@ func (v *DirectoryInfoBody) Pack(buf *bincode.Buf) {
 }
 
 func (v *DirectoryInfoBody) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU8((*uint8)(&v.Version)); err != nil {
+		return err
+	}
 	if err := buf.UnpackU64((*uint64)(&v.DeleteAfterTime)); err != nil {
 		return err
 	}
@@ -1766,28 +1797,17 @@ func (v *DirectoryInfoBody) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func (v *DirectoryInfo) Pack(buf *bincode.Buf) {
+func (v *SetDirectoryInfo) Pack(buf *bincode.Buf) {
 	buf.PackBool(bool(v.Inherited))
-	len1 := len(v.Body)
-	buf.PackLength(len1)
-	for i := 0; i < len1; i++ {
-		v.Body[i].Pack(buf)
-	}
+	buf.PackBytes([]byte(v.Body))
 }
 
-func (v *DirectoryInfo) Unpack(buf *bincode.Buf) error {
+func (v *SetDirectoryInfo) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackBool((*bool)(&v.Inherited)); err != nil {
 		return err
 	}
-	var len1 int
-	if err := buf.UnpackLength(&len1); err != nil {
+	if err := buf.UnpackBytes((*[]byte)(&v.Body)); err != nil {
 		return err
-	}
-	bincode.EnsureLength(&v.Body, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Body[i].Unpack(buf); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -1829,6 +1849,29 @@ func (v *BlockService) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU8((*uint8)(&v.Flags)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FullReadDirCursor) Pack(buf *bincode.Buf) {
+	buf.PackBool(bool(v.Current))
+	buf.PackU64(uint64(v.StartHash))
+	buf.PackBytes([]byte(v.StartName))
+	buf.PackU64(uint64(v.StartTime))
+}
+
+func (v *FullReadDirCursor) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackBool((*bool)(&v.Current)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.StartHash)); err != nil {
+		return err
+	}
+	if err := buf.UnpackString(&v.StartName); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.StartTime)); err != nil {
 		return err
 	}
 	return nil

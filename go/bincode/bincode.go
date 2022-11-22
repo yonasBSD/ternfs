@@ -39,7 +39,7 @@ func (buf *Buf) PackU64(x uint64) {
 }
 
 func (buf *Buf) PackVarU61(x uint64) {
-	bits := 64 - bits.LeadingZeros64(x)
+	bits := bits.Len64(x)
 	if bits > 61 {
 		panic(fmt.Sprintf("uint64 too large for PackU61Var: %v", x))
 	}

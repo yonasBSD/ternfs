@@ -1,0 +1,16 @@
+{
+    "files.exclude": {
+        "cpp/.**.d": true,
+        "cpp/.**.o": true,
+        "cpp/vgcore.*": true,
+        "cpp/eggs-shard": true,
+        "cpp/tests": true,
+        "cpp/.cache": true,
+        "cpp/.mypy_cache": true,
+        "python/_crc32c*": true,
+        "go/integrationtest/integrationtest": true,
+        "go/runeggs/runeggs": true,
+        "go/gcdaemon/gcdaemon": true,
+        "go/cli/cli": true,
+    }
+}

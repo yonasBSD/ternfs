@@ -1,16 +1,14 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"sync"
 	"time"
-	"xtx/eggsfs/cdckey"
-	"xtx/eggsfs/janitor"
+	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/request"
 )
 
 func badCommand() {
@@ -26,7 +24,7 @@ func main() {
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
 	destructDry := destructCmd.Bool("dry", false, "Whether to execute the destruction or not")
 	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
-	destructFileCookie := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
+	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 
 	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
 	migrateDry := migrateCmd.Bool("dry", false, "Whether to execute the migration or not.")
@@ -37,15 +35,12 @@ func main() {
 		badCommand()
 	}
 
-	env := janitor.Env{
-		Role:              "cli",
-		Logger:            log.New(os.Stdout, "", log.Lshortfile),
-		LogMutex:          new(sync.Mutex),
-		Timeout:           10 * time.Second,
-		CDCKey:            cdckey.CDCKey(),
-		Verbose:           true,
-		DirInfoCache:      map[msgs.InodeId]janitor.CachedDirInfo{},
-		DirInfoCacheMutex: new(sync.RWMutex),
+	env := eggs.DaemonEnv{
+		Role:    "cli",
+		Logger:  log.New(os.Stdout, "", log.Lshortfile),
+		Timeout: 10 * time.Second,
+		CDCKey:  eggs.CDCKey(),
+		Verbose: true,
 	}
 
 	switch os.Args[1] {
@@ -61,19 +56,19 @@ func main() {
 			log.Fatalf("inode id %v is not a directory", dirId)
 		}
 		env.Shid = dirId.Shard()
-		shardSocket, err := request.ShardSocket(env.Shid)
+		shardSocket, err := eggs.ShardSocket(env.Shid)
 		if err != nil {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
 		defer shardSocket.Close()
-		cdcSocket, err := request.CDCSocket()
+		cdcSocket, err := eggs.CDCSocket()
 		if err != nil {
 			log.Fatalf("could not create shard socket: %v", err)
 		}
 		defer cdcSocket.Close()
 		env.ShardSocket = shardSocket
 		env.CDCSocket = cdcSocket
-		stats := janitor.CollectStats{}
+		stats := eggs.CollectStats{}
 		err = env.CollectDirectory(&stats, dirId)
 		if err != nil {
 			log.Fatalf("could not collect %v, stats: %+v, err: %v", dirId, stats, err)
@@ -83,10 +78,10 @@ func main() {
 		destructCmd.Parse(os.Args[2:])
 		env.Dry = *destructDry
 		if *destructFileIdU64 == 0 {
-			stats := janitor.DestructionStats{}
+			stats := eggs.DestructionStats{}
 			for shid := 0; shid < 256; shid++ {
 				env.Shid = msgs.ShardId(shid)
-				socket, err := request.ShardSocket(env.Shid)
+				socket, err := eggs.ShardSocket(env.Shid)
 				if err != nil {
 					log.Fatalf("could not create shard socket: %v", err)
 				}
@@ -104,14 +99,16 @@ func main() {
 				log.Fatalf("inode id %v is not a file/symlink", fileId)
 			}
 			env.Shid = fileId.Shard()
-			shardSocket, err := request.ShardSocket(env.Shid)
+			shardSocket, err := eggs.ShardSocket(env.Shid)
 			if err != nil {
 				log.Fatalf("could not create shard socket: %v", err)
 			}
 			defer shardSocket.Close()
 			env.ShardSocket = shardSocket
-			stats := janitor.DestructionStats{}
-			err = env.DestructFile(&stats, fileId, 0, *destructFileCookie)
+			stats := eggs.DestructionStats{}
+			var destructFileCookie [8]byte
+			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
+			err = env.DestructFile(&stats, fileId, 0, destructFileCookie)
 			if err != nil {
 				log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)
 			}
@@ -126,10 +123,10 @@ func main() {
 		}
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		if *migrateFileIdU64 == 0 {
-			stats := janitor.MigrateStats{}
+			stats := eggs.MigrateStats{}
 			for shid := 0; shid < 256; shid++ {
 				env.Shid = msgs.ShardId(shid)
-				socket, err := request.ShardSocket(env.Shid)
+				socket, err := eggs.ShardSocket(env.Shid)
 				if err != nil {
 					log.Fatalf("could not create shard socket: %v", err)
 				}
@@ -143,13 +140,13 @@ func main() {
 		} else {
 			fileId := msgs.InodeId(*migrateFileIdU64)
 			env.Shid = fileId.Shard()
-			socket, err := request.ShardSocket(env.Shid)
+			socket, err := eggs.ShardSocket(env.Shid)
 			if err != nil {
 				log.Fatalf("could not create shard socket: %v", err)
 			}
 			defer socket.Close()
 			env.ShardSocket = socket
-			stats := janitor.MigrateStats{}
+			stats := eggs.MigrateStats{}
 			if err := env.MigrateBlocksInFile(&stats, blockServiceId, fileId); err != nil {
 				log.Fatalf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err)
 			}

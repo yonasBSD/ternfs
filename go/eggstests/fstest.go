@@ -5,12 +5,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
-	"math/rand"
 	"os"
 	"path"
+	"runtime/debug"
+	"sort"
 	"strconv"
+	"strings"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -25,6 +26,7 @@ type fsTestOpts struct {
 	inlineFileProb float64
 	maxFileSize    int
 	spanSize       int
+	checkThreads   int
 }
 
 type fsTestHarness[Id comparable] interface {
@@ -35,14 +37,14 @@ type fsTestHarness[Id comparable] interface {
 	checkFileData(log *lib.Logger, id Id, size uint64, dataSeed uint64)
 	// files, directories
 	readDirectory(log *lib.Logger, dir Id) ([]string, []string)
+	removeFile(log *lib.Logger, dir Id, name string)
+	removeDirectory(log *lib.Logger, dir Id, name string)
 }
 
 type apiFsTestHarness struct {
 	client       *lib.Client
 	dirInfoCache *lib.DirInfoCache
-	// buffer we use both to create and to read files.
-	fileContentsBuf []byte
-	readBufPool     *lib.ReadSpanBufPool
+	readBufPool  *lib.ReadSpanBufPool
 }
 
 func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.EggsTime) {
@@ -106,7 +108,7 @@ func (c *apiFsTestHarness) rename(
 func (c *apiFsTestHarness) createFile(
 	log *lib.Logger, owner msgs.InodeId, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (msgs.InodeId, msgs.EggsTime) {
-	return createFile(log, c.client, c.dirInfoCache, owner, spanSize, name, size, dataSeed, &c.fileContentsBuf)
+	return createFile(log, c.client, c.dirInfoCache, owner, spanSize, name, size, dataSeed, c.readBufPool)
 }
 
 func (c *apiFsTestHarness) readDirectory(log *lib.Logger, dir msgs.InodeId) (files []string, dirs []string) {
@@ -121,21 +123,21 @@ func (c *apiFsTestHarness) readDirectory(log *lib.Logger, dir msgs.InodeId) (fil
 	return files, dirs
 }
 
-func checkFileData(actualData []byte, expectedData []byte) {
+func checkFileData(id any, from int, to int, actualData []byte, expectedData []byte) {
 	if !bytes.Equal(actualData, expectedData) {
 		dir, err := os.MkdirTemp("", "eggs-fstest-files.")
 		if err != nil {
-			panic(fmt.Errorf("mismatching data, could not create temp directory"))
+			panic(fmt.Errorf("mismatching data (%v,%v) for file %v, could not create temp directory", from, to, id))
 		}
 		expectedPath := path.Join(dir, "expected")
 		actualPath := path.Join(dir, "actual")
 		if err := os.WriteFile(expectedPath, expectedData, 0644); err != nil {
-			panic(fmt.Errorf("mismatching data, could not create data file"))
+			panic(fmt.Errorf("mismatching data (%v,%v), could not create data file", from, to))
 		}
 		if err := os.WriteFile(actualPath, actualData, 0644); err != nil {
-			panic(fmt.Errorf("mismatching data, could not create data file"))
+			panic(fmt.Errorf("mismatching data (%v,%v), could not create data file", from, to))
 		}
-		panic(fmt.Errorf("mismatching data, expected data is in %v, found data is in %v", expectedPath, actualPath))
+		panic(fmt.Errorf("mismatching data (%v,%v), expected data is in %v, found data is in %v", from, to, expectedPath, actualPath))
 	}
 
 }
@@ -156,19 +158,39 @@ func ensureLen(buf []byte, l int) []byte {
 }
 
 func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
-	fileData := readFile(log, c.readBufPool, c.client, id, &c.fileContentsBuf)
-	fullSize := int(size)
-	c.fileContentsBuf = ensureLen(c.fileContentsBuf, fullSize)
-	expectedData := c.fileContentsBuf[:int(size)]
-	wyhash.New(dataSeed).Read(expectedData[:int(size)])
-	checkFileData(fileData, expectedData)
+	actualData := c.readBufPool.Get(int(size))
+	defer c.readBufPool.Put(actualData)
+	*actualData = readFile(log, c.readBufPool, c.client, id, *actualData)
+	expectedData := c.readBufPool.Get(int(size))
+	defer c.readBufPool.Put(expectedData)
+	wyhash.New(dataSeed).Read(*expectedData)
+	checkFileData(id, 0, int(size), *actualData, *expectedData)
+}
+
+func (c *apiFsTestHarness) removeFile(log *lib.Logger, ownerId msgs.InodeId, name string) {
+	lookupResp := msgs.LookupResp{}
+	if err := c.client.ShardRequest(log, ownerId.Shard(), &msgs.LookupReq{DirId: ownerId, Name: name}, &lookupResp); err != nil {
+		panic(err)
+	}
+	if err := c.client.ShardRequest(log, ownerId.Shard(), &msgs.SoftUnlinkFileReq{OwnerId: ownerId, FileId: lookupResp.TargetId, Name: name, CreationTime: lookupResp.CreationTime}, &msgs.SoftUnlinkFileResp{}); err != nil {
+		panic(err)
+	}
+}
+
+func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId, name string) {
+	lookupResp := msgs.LookupResp{}
+	if err := c.client.ShardRequest(log, ownerId.Shard(), &msgs.LookupReq{DirId: ownerId, Name: name}, &lookupResp); err != nil {
+		panic(err)
+	}
+	if err := c.client.CDCRequest(log, &msgs.SoftUnlinkDirectoryReq{OwnerId: ownerId, TargetId: lookupResp.TargetId, Name: name, CreationTime: lookupResp.CreationTime}, &msgs.SoftUnlinkDirectoryResp{}); err != nil {
+		panic(err)
+	}
 }
 
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
 type posixFsTestHarness struct {
-	expectedDataBuf []byte
-	actualDataBuf   []byte
+	bufPool *lib.ReadSpanBufPool
 }
 
 func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
@@ -203,11 +225,34 @@ func (*posixFsTestHarness) rename(
 func (c *posixFsTestHarness) createFile(
 	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (fileFullPath string, t msgs.EggsTime) {
-	c.actualDataBuf = ensureLen(c.actualDataBuf, int(size))
-	wyhash.New(dataSeed).Read(c.actualDataBuf[:size])
+	actualDataBuf := c.bufPool.Get(int(size))
+	defer c.bufPool.Put(actualDataBuf)
+	rand := wyhash.New(dataSeed)
+	rand.Read(*actualDataBuf)
 	fileFullPath = path.Join(dirFullPath, name)
-	log.LogStack(1, lib.DEBUG, "posix create file %v", fileFullPath)
-	if err := os.WriteFile(fileFullPath, c.actualDataBuf, 0644); err != nil {
+	f, err := os.Create(fileFullPath)
+	if err != nil {
+		panic(err)
+	}
+	log.LogStack(1, lib.DEBUG, "posix create file %v (%v size)", fileFullPath, size)
+	if size > 0 {
+		// write in randomly sized chunks
+		chunks := int(rand.Uint32()%10) + 1
+		offsets := make([]int, chunks+1)
+		offsets[0] = 0
+		for i := 1; i < chunks; i++ {
+			offsets[i] = int(rand.Uint64() % size)
+		}
+		offsets[chunks] = int(size)
+		sort.Ints(offsets)
+		for i := 0; i < chunks; i++ {
+			log.Trace("writing from %v to %v", offsets[i], offsets[i+1])
+			if _, err := f.Write((*actualDataBuf)[offsets[i]:offsets[i+1]]); err != nil {
+				panic(err)
+			}
+		}
+	}
+	if err := f.Close(); err != nil {
 		panic(err)
 	}
 	return fileFullPath, 0
@@ -215,12 +260,12 @@ func (c *posixFsTestHarness) createFile(
 
 func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) (files []string, dirs []string) {
 	log.LogStack(1, lib.DEBUG, "posix readdir for %v", dirFullPath)
-	fileInfo, err := ioutil.ReadDir(dirFullPath)
+	fileInfo, err := os.ReadDir(dirFullPath)
 	if err != nil {
 		panic(err)
 	}
 	for _, fi := range fileInfo {
-		if fi.Mode().IsDir() {
+		if fi.IsDir() {
 			dirs = append(dirs, fi.Name())
 		} else {
 			files = append(files, fi.Name())
@@ -230,21 +275,21 @@ func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) 
 }
 
 func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string, size uint64, dataSeed uint64) {
+	log.Debug("checking data for file %v", fullFilePath)
 	fullSize := int(size)
-	c.expectedDataBuf = ensureLen(c.expectedDataBuf, fullSize)
-	wyhash.New(dataSeed).Read(c.expectedDataBuf[:int(size)])
-	c.actualDataBuf = ensureLen(c.actualDataBuf, fullSize)
+	expectedData := c.bufPool.Get(fullSize)
+	defer c.bufPool.Put(expectedData)
+	rand := wyhash.New(dataSeed)
+	rand.Read(*expectedData)
+	actualData := c.bufPool.Get(fullSize)
+	defer c.bufPool.Put(actualData)
 	f, err := os.Open(fullFilePath)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
-	// First we check the whole thing
-	if _, err := io.ReadFull(f, c.actualDataBuf); err != nil {
-		panic(err)
-	}
-	checkFileData(c.actualDataBuf, c.expectedDataBuf)
-	// then we start doing random reads around
+	log.Debug("checking for file %v of expected len %v", fullFilePath, fullSize)
+	// First do some random reads, hopefully stimulating span caches in some interesting way
 	if fullSize > 1 {
 		for i := 0; i < 10; i++ {
 			offset := int(rand.Uint64() % uint64(fullSize-1))
@@ -253,14 +298,31 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 			if _, err := f.Seek(int64(offset), 0); err != nil {
 				panic(err)
 			}
-			expectedPartialData := c.expectedDataBuf[offset : offset+size]
-			actualPartialData := c.actualDataBuf[offset : offset+size]
+			expectedPartialData := (*expectedData)[offset : offset+size]
+			actualPartialData := (*actualData)[offset : offset+size]
 			if _, err := io.ReadFull(f, actualPartialData); err != nil {
 				panic(err)
 			}
-			checkFileData(actualPartialData, expectedPartialData)
+			checkFileData(fullFilePath, offset, offset+size, actualPartialData, expectedPartialData)
 		}
 	}
+	// Then we check the whole thing
+	if _, err := f.Seek(0, 0); err != nil {
+		panic(err)
+	}
+	_, err = io.ReadFull(f, *actualData)
+	if err != nil {
+		panic(err)
+	}
+	checkFileData(fullFilePath, 0, fullSize, *actualData, *expectedData)
+}
+
+func (c *posixFsTestHarness) removeFile(log *lib.Logger, ownerId string, name string) {
+	os.Remove(path.Join(ownerId, name))
+}
+
+func (c *posixFsTestHarness) removeDirectory(log *lib.Logger, ownerId string, name string) {
+	os.Remove(path.Join(ownerId, name))
 }
 
 var _ = (fsTestHarness[string])((*posixFsTestHarness)(nil))
@@ -461,12 +523,12 @@ func (d *fsTestDir[Id]) check(log *lib.Logger, harness fsTestHarness[Id]) {
 		panic(fmt.Errorf("bad number of edges -- got %v + %v, expected %v + %v", len(files), len(dirs), len(d.children.files), len(d.children.files)))
 	}
 	for _, fileName := range files {
-		log.Debug("checking file %v", fileName)
 		name, err := strconv.Atoi(fileName)
 		if err != nil {
 			panic(err)
 		}
 		file, present := d.children.files[name]
+		log.Debug("checking file %v (size %v)", fileName, file.body.size)
 		if !present {
 			panic(fmt.Errorf("file %v not found", name))
 		}
@@ -488,6 +550,27 @@ func (d *fsTestDir[Id]) check(log *lib.Logger, harness fsTestHarness[Id]) {
 	// recurse down
 	for _, dir := range d.children.directories {
 		dir.body.check(log, harness)
+	}
+}
+
+func (d *fsTestDir[Id]) clean(log *lib.Logger, harness fsTestHarness[Id]) {
+	files, dirs := harness.readDirectory(log, d.id)
+	for _, fileName := range files {
+		log.Debug("removing file %v", fileName)
+		harness.removeFile(log, d.id, fileName)
+	}
+	for _, dirName := range dirs {
+		log.Debug("cleaning dir %v", dirName)
+		name, err := strconv.Atoi(dirName)
+		if err != nil {
+			panic(err)
+		}
+		dir, present := d.children.directories[name]
+		if !present {
+			panic(fmt.Errorf("directory %v not found", name))
+		}
+		dir.body.clean(log, harness)
+		harness.removeDirectory(log, d.id, dirName)
 	}
 }
 
@@ -519,15 +602,15 @@ func findBlockServiceToPurge(log *lib.Logger, client *lib.Client) msgs.BlockServ
 
 func fsTestInternal[Id comparable](
 	log *lib.Logger,
+	state *fsTestState[Id],
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *lib.ClientCounters,
 	harness fsTestHarness[Id],
 	rootId Id,
 ) {
-	state := fsTestState[Id]{
-		totalDirs: 1, // root dir
-		rootDir:   *newFsTestDir(rootId),
+	if opts.checkThreads == 0 {
+		panic(fmt.Errorf("must specify at least one check thread"))
 	}
 	branching := int(math.Log(float64(opts.numDirs)) / math.Log(float64(opts.depth)))
 	rand := wyhash.New(42)
@@ -582,30 +665,110 @@ func fsTestInternal[Id comparable](
 			state.makeFile(log, harness, opts, rand, dir, state.totalDirs+state.totalFiles)
 		}
 	}
+}
+
+func fsTestInternalCheck[Id comparable](
+	log *lib.Logger,
+	state *fsTestState[Id],
+	shuckleAddress string,
+	opts *fsTestOpts,
+	counters *lib.ClientCounters,
+	harness fsTestHarness[Id],
+	rootId Id,
+) {
 	// finally, check that our view of the world is the real view of the world
 	log.Info("checking directories/files")
+	errsChans := make([](chan any), opts.checkThreads)
+	for i := 0; i < opts.checkThreads; i++ {
+		errChan := make(chan any)
+		errsChans[i] = errChan
+		go func() {
+			defer func() {
+				err := recover()
+				if err != nil {
+					log.Info("stacktrace for %v:", err)
+					for _, line := range strings.Split(string(debug.Stack()), "\n") {
+						log.Info(line)
+					}
+				}
+				errChan <- err
+
+			}()
+			state.rootDir.check(log, harness)
+		}()
+	}
+	for i := 0; i < opts.checkThreads; i++ {
+		err := <-errsChans[i]
+		if err != nil {
+			panic(fmt.Errorf("checking thread %v failed: %v", i, err))
+		}
+	}
 	state.rootDir.check(log, harness)
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
-	{
-		client, err := lib.NewClient(log, shuckleAddress, nil, counters, nil)
-		if err != nil {
-			panic(err)
+	/*
+		{
+			client, err := lib.NewClient(log, shuckleAddress, nil, counters, nil)
+			if err != nil {
+				panic(err)
+			}
+			defer client.Close()
+			blockServiceToPurge := findBlockServiceToPurge(log, client)
+			log.Info("will migrate block service %v", blockServiceToPurge)
+			migrateStats := lib.MigrateStats{}
+			err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, blockServiceToPurge)
+			if err != nil {
+				panic(fmt.Errorf("could not migrate: %w", err))
+			}
+			if migrateStats.MigratedBlocks == 0 {
+				panic(fmt.Errorf("migrate didn't migrate any blocks"))
+			}
 		}
-		defer client.Close()
-		blockServiceToPurge := findBlockServiceToPurge(log, client)
-		log.Info("will migrate block service %v", blockServiceToPurge)
-		migrateStats := lib.MigrateStats{}
-		err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, blockServiceToPurge)
-		if err != nil {
-			panic(fmt.Errorf("could not migrate: %w", err))
-		}
-		if migrateStats.MigratedBlocks == 0 {
-			panic(fmt.Errorf("migrate didn't migrate any blocks"))
-		}
+		// And check the state again, don't bother with multiple threads thoush
+		state.rootDir.check(log, harness)
+	*/
+	// Now, remove everything -- the cleanup would do this anyway, but we want to stimulate
+	// the removal paths in the filesystem tests.
+	state.rootDir.clean(log, harness)
+}
+
+func replaceMountPoint(mountPoint string, mountPointFuse string, fp string) string {
+	return mountPointFuse + fp[len(mountPoint):]
+}
+
+func convertDirToFuse(
+	dir *fsTestDir[string],
+	mountPoint string,
+	mountPointFuse string,
+) *fsTestDir[string] {
+	newDir := fsTestDir[string]{
+		id: replaceMountPoint(mountPoint, mountPointFuse, dir.id),
+		children: fsTestChildren[string]{
+			files:       make(map[int]fsTestChild[fsTestFile[string]]),
+			directories: make(map[int]fsTestChild[fsTestDir[string]]),
+		},
 	}
-	// And check the state again
-	state.rootDir.check(log, harness)
+	for i, file := range dir.children.files {
+		newFile := file
+		newFile.body.id = replaceMountPoint(mountPoint, mountPointFuse, newFile.body.id)
+		newDir.children.files[i] = newFile
+	}
+	for i, childDir := range dir.children.directories {
+		newChildDir := childDir
+		newChildDir.body = *convertDirToFuse(&childDir.body, mountPoint, mountPointFuse)
+		newDir.children.directories[i] = newChildDir
+	}
+	return &newDir
+}
+
+func convertToFuse(
+	state *fsTestState[string],
+	mountPoint string,
+	mountPointFuse string,
+) *fsTestState[string] {
+	newState := *state
+	newState.rootDir = *convertDirToFuse(&state.rootDir, mountPoint, mountPointFuse)
+	return &newState
 }
 
 func fsTest(
@@ -626,9 +789,21 @@ func fsTest(
 			dirInfoCache: lib.NewDirInfoCache(),
 			readBufPool:  lib.NewReadSpanBufPool(),
 		}
-		fsTestInternal[msgs.InodeId](log, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
+		state := fsTestState[msgs.InodeId]{
+			totalDirs: 1, // root dir
+			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
+		}
+		fsTestInternal[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
+		fsTestInternalCheck[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
-		harness := &posixFsTestHarness{}
-		fsTestInternal[string](log, shuckleAddress, opts, counters, harness, realFs)
+		harness := &posixFsTestHarness{
+			bufPool: lib.NewReadSpanBufPool(),
+		}
+		state := fsTestState[string]{
+			totalDirs: 1, // root dir
+			rootDir:   *newFsTestDir(realFs),
+		}
+		fsTestInternal[string](log, &state, shuckleAddress, opts, counters, harness, realFs)
+		fsTestInternalCheck[string](log, &state, shuckleAddress, opts, counters, harness, realFs)
 	}
 }

@@ -153,6 +153,50 @@ type eggsNode struct {
 	id msgs.InodeId
 }
 
+func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
+	log.Debug("getattr inode=%v", id)
+
+	out.Ino = uint64(id)
+	out.Mode = inodeTypeToMode(id.Type())
+	if id.Type() == msgs.DIRECTORY {
+		resp := msgs.StatDirectoryResp{}
+		if err := shardRequest(id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != 0 {
+			return err
+		}
+	} else {
+		fileStatCacheMu.RLock()
+		cached, found := fileStatCache[id]
+		fileStatCacheMu.RUnlock()
+
+		if !found {
+			resp := msgs.StatFileResp{}
+			if err := shardRequest(id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != 0 {
+				return err
+			}
+			cached.mtime = resp.Mtime
+			cached.size = resp.Size
+			fileStatCacheMu.Lock()
+			fileStatCache[id] = cached
+			fileStatCacheMu.Unlock()
+		}
+
+		log.Debug("getattr size=%v", cached.size)
+		out.Size = cached.size
+		mtime := msgs.EGGS_EPOCH + uint64(cached.mtime)
+		mtimesec := mtime / 1000000000
+		mtimens := uint32(mtime % 1000000000)
+		out.Ctime = mtimesec
+		out.Ctimensec = mtimens
+		out.Mtime = mtimesec
+		out.Mtimensec = mtimens
+	}
+	return 0
+}
+
+func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	return getattr(n.id, &out.Attr)
+}
+
 func (n *eggsNode) Lookup(
 	ctx context.Context, name string, out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
@@ -171,6 +215,9 @@ func (n *eggsNode) Lookup(
 		mode = syscall.S_IFLNK
 	default:
 		panic(fmt.Errorf("bad type %v", resp.TargetId.Type()))
+	}
+	if err := getattr(resp.TargetId, &out.Attr); err != 0 {
+		return nil, err
 	}
 	return n.NewInode(ctx, &eggsNode{id: resp.TargetId}, fs.StableAttr{Ino: uint64(resp.TargetId), Mode: mode}), 0
 }
@@ -316,61 +363,29 @@ func (n *eggsNode) Mkdir(
 	return n.NewInode(ctx, &eggsNode{id: resp.Id}, fs.StableAttr{Ino: uint64(resp.Id), Mode: syscall.S_IFDIR}), 0
 }
 
-func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	log.Debug("getattr inode=%v", n.id)
-
-	out.Ino = uint64(n.id)
-	out.Mode = inodeTypeToMode(n.id.Type())
-	if n.id.Type() == msgs.DIRECTORY {
-		resp := msgs.StatDirectoryResp{}
-		if err := shardRequest(n.id.Shard(), &msgs.StatDirectoryReq{Id: n.id}, &resp); err != 0 {
-			return err
-		}
-	} else {
-		fileStatCacheMu.RLock()
-		cached, found := fileStatCache[n.id]
-		fileStatCacheMu.RUnlock()
-
-		if !found {
-			resp := msgs.StatFileResp{}
-			if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &resp); err != 0 {
-				return err
-			}
-			cached.mtime = resp.Mtime
-			cached.size = resp.Size
-			fileStatCacheMu.Lock()
-			fileStatCache[n.id] = cached
-			fileStatCacheMu.Unlock()
-		}
-
-		out.Size = cached.size
-		mtime := msgs.EGGS_EPOCH + uint64(cached.mtime)
-		mtimesec := mtime / 1000000000
-		mtimens := uint32(mtime % 1000000000)
-		out.Ctime = mtimesec
-		out.Ctimensec = mtimens
-		out.Mtime = mtimesec
-		out.Mtimensec = mtimens
-	}
-	return 0
-}
-
 func (f *transientFile) writeSpan() syscall.Errno {
 	if f.data == nil {
 		return 0 // happens when dup is called on file
 	}
-	spanSize := uint32(len(*f.data))
+	maxSize := int(f.spanPolicy.Entries[len(f.spanPolicy.Entries)-1].MaxSize)
+	boundary := maxSize
+	if len(*f.data) < maxSize {
+		boundary = len(*f.data)
+	}
+	spanData := (*f.data)[:boundary]
+	leftover := append([]byte{}, (*f.data)[boundary:]...)
+	spanSize := uint32(len(spanData))
 	if spanSize == 0 {
 		return 0
 	}
 	var err error
-	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, *f.data)
+	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
 	if err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)
 	}
 	f.written += uint64(spanSize)
-	*f.data = (*f.data)[:0]
+	*f.data = append((*f.data)[:0], leftover...)
 
 	return 0
 }
@@ -514,8 +529,8 @@ type openFile struct {
 	id   msgs.InodeId
 	size uint64 // total size of file
 
-	spanReader lib.TaintableReadCloser // the span we're currently reading from
-	readOffset int64                   // the offset we're currently reading at, in the span reader above
+	spanReader lib.PuttableReadCloser // the span we're currently reading from
+	readOffset int64                  // the offset we're currently reading at, in the span reader above
 
 	// We store the last successful span resp, to avoid re-issuing it if we can
 	spans *msgs.FileSpansResp
@@ -619,7 +634,6 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 	if off != of.readOffset {
 		log.Debug("mismatching offset (%v vs %v), will reset span", off, of.readOffset)
 		if of.spanReader != nil {
-			of.spanReader.Taint()
 			of.spanReader.Close()
 			of.spanReader = nil
 		}
@@ -650,7 +664,6 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
 	if of.spanReader != nil {
-		of.spanReader.Taint()
 		of.spanReader.Close()
 	}
 	return 0
@@ -865,7 +878,11 @@ func main() {
 	root := eggsNode{
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
-	server, err := fs.Mount(mountPoint, &root, &fs.Options{Logger: logger})
+	fuseOptions := &fs.Options{
+		Logger: logger,
+	}
+	// fuseOptions.Debug = *trace
+	server, err := fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not mount: %v", err)
 		os.Exit(1)

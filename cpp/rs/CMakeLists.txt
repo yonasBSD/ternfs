@@ -1,4 +1,4 @@
-add_library(rs rs.h rs.cpp gf.hpp gf_tables.cpp)
+add_library(rs rs.h rs.cpp gf_tables.c)
 
 add_executable(rs-tests tests.cpp)
 target_link_libraries(rs-tests PRIVATE rs)

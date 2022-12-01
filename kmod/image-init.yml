@@ -1,0 +1,9 @@
+#cloud-config
+hostname: uovo
+users:
+  - name: fmazzol
+    ssh-authorized-keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE93TJCd7qWh/kHzaBoCSU9VgOKSWlUls9OkiBNCjG3B francesco.mazzoli@xtxmarkets.com
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    groups: sudo
+    shell: /bin/bash

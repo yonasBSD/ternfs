@@ -310,28 +310,381 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	return out.Bytes()
 }
 
-func generateC(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
-	out := new(bytes.Buffer)
+func generateKmodMsgKind(w io.Writer, what string, reqResps []reqRespType) {
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(w, "#define EGGSFS_%s_%s 0x%X\n", what, reqRespEnum(reqResp), reqResp.kind)
+	}
+	fmt.Fprintf(w, "\n")
+}
 
-	fmt.Fprintln(out, "// Automatically generated with go run bincodegen.")
-	fmt.Fprintln(out, "// Run `go generate ./...` from the go/ directory to regenerate it.")
+func kmodFieldName(s string) string {
+	re := regexp.MustCompile(`(.)([A-Z])`)
+	return strings.ToLower(string(re.ReplaceAll([]byte(s), []byte("${1}_${2}"))))
+}
+
+func kmodStructName(typ reflect.Type) string {
+	re := regexp.MustCompile(`(.)([A-Z])`)
+	s := strings.ToLower(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
+	return fmt.Sprintf("eggsfs_%s", s)
+}
+
+func kmodStaticSizeName(typ reflect.Type) string {
+	re := regexp.MustCompile(`(.)([A-Z])`)
+	s := strings.ToUpper(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
+	return fmt.Sprintf("EGGSFS_%s_SIZE", s)
+}
+
+func kmodMaxSizeName(typ reflect.Type) string {
+	re := regexp.MustCompile(`(.)([A-Z])`)
+	s := strings.ToUpper(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
+	return fmt.Sprintf("EGGSFS_%s_MAX_SIZE", s)
+}
+
+func generateKmodStructOpaque(w io.Writer, typ reflect.Type, suffix string) {
+	if typ.Kind() != reflect.Struct {
+		panic(fmt.Errorf("unexpected non-struct type %v", typ))
+	}
+	fmt.Fprintf(w, "struct %s_%s;\n", kmodStructName(typ), suffix)
+}
+
+func generateKmodStruct(w io.Writer, typ reflect.Type, fldName string, fld string) {
+	if typ.Kind() != reflect.Struct {
+		panic(fmt.Errorf("unexpected non-struct type %v", typ))
+	}
+	fmt.Fprintf(w, "struct %s_%s { %s; };\n", kmodStructName(typ), fldName, fld)
+}
+
+func generateKmodSize(staticSizes map[string]int, maxSizes map[string]int, w io.Writer, typ reflect.Type) {
+	if typ.Kind() != reflect.Struct {
+		panic(fmt.Errorf("unexpected non-struct type %v", typ))
+	}
+	updateSize := func(size *int, update int) {
+		if update < 0 {
+			*size = -1
+		} else if *size >= 0 {
+			*size += update
+		}
+	}
+	staticSize := 0
+	maxSize := 0
+	for i := 0; i < typ.NumField(); i++ {
+		fld := typ.Field(i)
+		fldK := fld.Type.Kind()
+		if fldK == reflect.Struct {
+			fldStaticSize, found := staticSizes[kmodStaticSizeName(fld.Type)]
+			if found {
+				updateSize(&staticSize, fldStaticSize)
+				updateSize(&maxSize, fldStaticSize)
+			} else {
+				updateSize(&staticSize, -1)
+				fldMaxSize, found := staticSizes[kmodMaxSizeName(fld.Type)]
+				if found {
+					updateSize(&maxSize, fldMaxSize)
+				} else {
+					updateSize(&maxSize, -1)
+				}
+			}
+		} else if fldK == reflect.Bool || fldK == reflect.Uint8 || fldK == reflect.Uint16 || fldK == reflect.Uint32 || fldK == reflect.Uint64 || fldK == reflect.Array {
+			updateSize(&staticSize, int(fld.Type.Size()))
+			updateSize(&maxSize, int(fld.Type.Size()))
+		} else if fldK == reflect.Slice || fldK == reflect.String {
+			updateSize(&staticSize, -1)
+			elem := sliceTypeElem(fld.Type)
+			if elem.Kind() == reflect.Uint8 {
+				updateSize(&maxSize, 256) // len + body
+			} else {
+				updateSize(&maxSize, -1)
+			}
+		} else {
+			panic(fmt.Errorf("unexpected kind %v", fldK))
+		}
+	}
+	if staticSize >= 0 {
+		sizeName := kmodStaticSizeName(typ)
+		staticSizes[sizeName] = staticSize
+		fmt.Fprintf(w, "#define %s %v\n", sizeName, staticSize)
+	} else if maxSize >= 0 {
+		sizeName := kmodMaxSizeName(typ)
+		maxSizes[sizeName] = maxSize
+		fmt.Fprintf(w, "#define %s %v\n", sizeName, maxSize)
+	}
+}
+
+func kmodType(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Uint8:
+		return "u8"
+	case reflect.Uint16:
+		return "u16"
+	case reflect.Uint32:
+		return "u32"
+	case reflect.Uint64:
+		return "u64"
+	case reflect.Bool:
+		return "bool"
+	case reflect.Struct:
+		return fmt.Sprintf("%s*", kmodStructName(t))
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(t)
+		if elem.Kind() == reflect.Uint8 {
+			return "eggsfs_bytes*"
+		} else {
+			return kmodType(elem)
+		}
+	default:
+		panic(fmt.Sprintf("unsupported type with kind %v", t.Kind()))
+	}
+}
+
+func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) {
+	generateKmodStructOpaque(h, typ, "start")
+	fmt.Fprintf(h, "#define %s_get_start(ctx, start) struct %s_start* start = NULL\n\n", kmodStructName(typ), kmodStructName(typ))
+	prevType := fmt.Sprintf("struct %s_start*", kmodStructName(typ))
+	for i := 0; i < typ.NumField(); i++ {
+		fld := typ.Field(i)
+		fldK := fld.Type.Kind()
+		fldTyp := fld.Type
+		endianness := "le"
+		if fldK == reflect.Array {
+			sz := fld.Type.Size()
+			endianness = "be"
+			if sz == 4 {
+				fldK = reflect.Uint32
+				fldTyp = reflect.TypeOf(uint32(0))
+			} else if sz == 8 {
+				fldK = reflect.Uint64
+				fldTyp = reflect.TypeOf(uint64(0))
+			} else {
+				panic(fmt.Errorf("bad array size %v", fld.Type.Size()))
+			}
+		}
+		fldName := kmodFieldName(fld.Name)
+		fldKTyp := kmodType(fldTyp)
+		if fldK == reflect.Struct {
+			fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "    { %s* __dummy __attribute__((unused)) = &(prev); }; \\\n", prevType)
+			fmt.Fprintf(h, "    struct %s_start* next = NULL\n\n", kmodStructName(fldTyp))
+			prevType = fmt.Sprintf("struct %s_end*", kmodStructName(fldTyp))
+		} else if fldK == reflect.Slice || fldK == reflect.String {
+			elemTyp := sliceTypeElem(fldTyp)
+			if elemTyp.Kind() == reflect.Uint8 {
+				generateKmodStruct(h, typ, fldName, "struct eggsfs_bincode_bytes str")
+				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) { \n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "    if (likely(ctx->err == 0)) { \n")
+				fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < 1)) { \n")
+				fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; \n")
+				fmt.Fprintf(h, "        } else { \n")
+				fmt.Fprintf(h, "            next->str.len = *(u8*)(ctx->buf); \n")
+				fmt.Fprintf(h, "            ctx->buf++; \n")
+				fmt.Fprintf(h, "            if (unlikely(ctx->end - ctx->buf < next->str.len)) { \n")
+				fmt.Fprintf(h, "                ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; \n")
+				fmt.Fprintf(h, "            } else { \n")
+				fmt.Fprintf(h, "                next->str.buf = ctx->buf; \n")
+				fmt.Fprintf(h, "                ctx->buf += next->str.len; \n")
+				fmt.Fprintf(h, "            } \n")
+				fmt.Fprintf(h, "        } \n")
+				fmt.Fprintf(h, "    }\n")
+				fmt.Fprintf(h, "}\n")
+				fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    _%s_get_%s(ctx, &(prev), &(next))\n\n", kmodStructName(typ), fldName)
+				prevType = nextType
+			} else {
+				generateKmodStruct(h, typ, fldName, "u16 len")
+				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) { \n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "    if (likely(ctx->err == 0)) { \n")
+				fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < 2)) { \n")
+				fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; \n")
+				fmt.Fprintf(h, "        } else { \n")
+				fmt.Fprintf(h, "            next->len = get_unaligned_le16(ctx->buf); \n")
+				fmt.Fprintf(h, "            ctx->buf += 2; \n")
+				fmt.Fprintf(h, "        } \n")
+				fmt.Fprintf(h, "    } else { \n")
+				fmt.Fprintf(h, "        next->len = 0; \n") // so that loops can work even in the case of errors
+				fmt.Fprintf(h, "    } \n")
+				fmt.Fprintf(h, "} \n")
+				fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    _%s_get_%s(ctx, &(prev), &(next))\n\n", kmodStructName(typ), fldName)
+				prevType = nextType
+			}
+		} else if fldK == reflect.Bool || fldK == reflect.Uint8 || fldK == reflect.Uint16 || fldK == reflect.Uint32 || fldK == reflect.Uint64 {
+			generateKmodStruct(h, typ, fldName, fmt.Sprintf("%s x", fldKTyp))
+			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) { \n", kmodStructName(typ), fldName, prevType, nextType)
+			fmt.Fprintf(h, "    if (likely(ctx->err == 0)) { \n")
+			fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < %d)) { \n", fldTyp.Size())
+			fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; \n")
+			fmt.Fprintf(h, "        } else { \n")
+			switch fldK {
+			case reflect.Bool:
+				fmt.Fprintf(h, "            next->x = *(bool*)(ctx->buf); \n")
+			case reflect.Uint8:
+				fmt.Fprintf(h, "            next->x = *(u8*)(ctx->buf); \n")
+			case reflect.Uint16:
+				fmt.Fprintf(h, "            next->x = get_unaligned_%s16(ctx->buf); \n", endianness)
+			case reflect.Uint32:
+				fmt.Fprintf(h, "            next->x = get_unaligned_%s32(ctx->buf); \n", endianness)
+			case reflect.Uint64:
+				fmt.Fprintf(h, "            next->x = get_unaligned_%s64(ctx->buf); \n", endianness)
+			}
+			fmt.Fprintf(h, "            ctx->buf += %d; \n", fldTyp.Size())
+			fmt.Fprintf(h, "        } \n")
+			fmt.Fprintf(h, "    }\n")
+			fmt.Fprintf(h, "}\n")
+			fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "    _%s_get_%s(ctx, &(prev), &(next))\n\n", kmodStructName(typ), fldName)
+			prevType = nextType
+		} else {
+			panic(fmt.Errorf("unexpected kind %v", fldK))
+		}
+	}
+	generateKmodStructOpaque(h, typ, "end")
+	fmt.Fprintf(h, "#define %s_get_end(ctx, prev, next) \\\n", kmodStructName(typ))
+	fmt.Fprintf(h, "    { %s* __dummy __attribute__((unused)) = &(prev); }\\\n", prevType)
+	fmt.Fprintf(h, "    struct %s_end* next = NULL\n\n", kmodStructName(typ))
+	fmt.Fprintf(h, "static inline void %s_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct %s_end* end) {\n", kmodStructName(typ), kmodStructName(typ))
+	fmt.Fprintf(h, "    if (unlikely(ctx->buf != ctx->end)) { \n")
+	fmt.Fprintf(h, "        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; \n")
+	fmt.Fprintf(h, "    }\n")
+	fmt.Fprintf(h, "}\n\n")
+}
+
+func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) {
+	fmt.Fprintf(h, "#define %s_put_start(ctx, start) struct %s_start* start = NULL\n\n", kmodStructName(typ), kmodStructName(typ))
+	prevType := fmt.Sprintf("struct %s_start*", kmodStructName(typ))
+	for i := 0; i < typ.NumField(); i++ {
+		fld := typ.Field(i)
+		fldK := fld.Type.Kind()
+		fldTyp := fld.Type
+		endianness := "le"
+		if fldK == reflect.Array {
+			sz := fld.Type.Size()
+			endianness = "be"
+			if sz == 4 {
+				fldK = reflect.Uint32
+				fldTyp = reflect.TypeOf(uint32(0))
+			} else if sz == 8 {
+				fldK = reflect.Uint64
+				fldTyp = reflect.TypeOf(uint64(0))
+			} else {
+				panic(fmt.Errorf("bad array size %v", fld.Type.Size()))
+			}
+		}
+		fldName := kmodFieldName(fld.Name)
+		fldKTyp := kmodType(fldTyp)
+		if fldK == reflect.Struct {
+			// fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
+			// fmt.Fprintf(h, "    { %s* __dummy __attribute__((unused)) = &(prev); }; \\\n", prevType)
+			// fmt.Fprintf(h, "    struct %s_start* next = NULL\n\n", kmodStructName(fldTyp))
+			// prevType = fmt.Sprintf("struct %s_end*", kmodStructName(fldTyp))
+		} else if fldK == reflect.Slice || fldK == reflect.String {
+			elemTyp := sliceTypeElem(fldTyp)
+			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
+			if elemTyp.Kind() == reflect.Uint8 {
+				fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, const char* str, int str_len) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "    next = NULL;\n")
+				fmt.Fprintf(h, "    BUG_ON(str_len < 0 || str_len > 255);\n")
+				fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));\n")
+				fmt.Fprintf(h, "    *(u8*)(ctx->cursor) = str_len;\n")
+				fmt.Fprintf(h, "    memcpy(ctx->cursor + 1, str, str_len);\n")
+				fmt.Fprintf(h, "    ctx->cursor += 1 + str_len;\n")
+				fmt.Fprintf(h, "}\n")
+				fmt.Fprintf(h, "#define %s_put_%s(ctx, prev, next, str, str_len) \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    _%s_put_%s(ctx, &(prev), &(next), str, str_len)\n\n", kmodStructName(typ), fldName)
+			} else {
+				fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, int len) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "    next = NULL;\n")
+				fmt.Fprintf(h, "    BUG_ON(len < 0 || len >= 1<<16);\n")
+				fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < 2);\n")
+				fmt.Fprintf(h, "    put_unaligned_le16(len, ctx->cursor);\n")
+				fmt.Fprintf(h, "    ctx->cursor += 2;\n")
+				fmt.Fprintf(h, "}\n")
+				fmt.Fprintf(h, "#define %s_put_%s(ctx, prev, next, len) \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+				fmt.Fprintf(h, "    _%s_put_%s(ctx, &(prev), &(next), len)\n\n", kmodStructName(typ), fldName)
+			}
+			prevType = nextType
+		} else if fldK == reflect.Bool || fldK == reflect.Uint8 || fldK == reflect.Uint16 || fldK == reflect.Uint32 || fldK == reflect.Uint64 {
+			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, %s x) {\n", kmodStructName(typ), fldName, prevType, nextType, fldKTyp)
+			fmt.Fprintf(h, "    next = NULL;\n")
+			fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < %d);\n", fldTyp.Size())
+			switch fldK {
+			case reflect.Bool:
+				fmt.Fprintf(h, "    *(bool*)(ctx->cursor) = x;\n")
+			case reflect.Uint8:
+				fmt.Fprintf(h, "    *(u8*)(ctx->cursor) = x;\n")
+			case reflect.Uint16:
+				fmt.Fprintf(h, "    put_unaligned_%s16(x, ctx->cursor);\n", endianness)
+			case reflect.Uint32:
+				fmt.Fprintf(h, "    put_unaligned_%s32(x, ctx->cursor);\n", endianness)
+			case reflect.Uint64:
+				fmt.Fprintf(h, "    put_unaligned_%s64(x, ctx->cursor);\n", endianness)
+			}
+			fmt.Fprintf(h, "    ctx->cursor += %d;\n", fldTyp.Size())
+			fmt.Fprintf(h, "}\n")
+			fmt.Fprintf(h, "#define %s_put_%s(ctx, prev, next, x) \\\n", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
+			fmt.Fprintf(h, "    _%s_put_%s(ctx, &(prev), &(next), x)\n\n", kmodStructName(typ), fldName)
+			prevType = nextType
+		} else {
+			panic(fmt.Errorf("unexpected kind %v", fldK))
+		}
+	}
+	fmt.Fprintf(h, "#define %s_put_end(ctx, prev, next) \\\n", kmodStructName(typ))
+	fmt.Fprintf(h, "    { %s* __dummy __attribute__((unused)) = &(prev); }\\\n", prevType)
+	fmt.Fprintf(h, "    struct %s_end* next __attribute__((unused)) = NULL\n\n", kmodStructName(typ))
+}
+
+func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) []byte {
+	hOut := new(bytes.Buffer)
+
+	fmt.Fprintln(hOut, "// Automatically generated with go run bincodegen.")
+	fmt.Fprintln(hOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
+	fmt.Fprintln(hOut)
 
 	for i, err := range errors {
-		fmt.Fprintf(out, "#define EGGSFS_ERR_%s %d\n", err, errCodeOffset+i)
+		fmt.Fprintf(hOut, "#define EGGSFS_ERR_%s %d\n", err, errCodeOffset+i)
 	}
-	fmt.Fprintf(out, "\n")
+	fmt.Fprintf(hOut, "\n")
 
-	for _, reqResp := range shardReqResps {
-		fmt.Fprintf(out, "#define EGGSFS_META_%s 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
+	generateKmodMsgKind(hOut, "SHARD", shardReqResps)
+	generateKmodMsgKind(hOut, "CDC", cdcReqResps)
+	generateKmodMsgKind(hOut, "SHUCKLE", shuckleReqResps)
+	generateKmodMsgKind(hOut, "BLOCKS", blocksReqResps)
+
+	fmt.Fprintln(hOut)
+
+	staticSizes := make(map[string]int)
+	maxSizes := make(map[string]int)
+	for _, typ := range extras {
+		generateKmodSize(staticSizes, maxSizes, hOut, typ)
+		generateKmodGet(staticSizes, hOut, typ)
+		generateKmodPut(staticSizes, hOut, typ)
 	}
-	fmt.Fprintf(out, "\n")
 
-	for _, reqResp := range cdcReqResps {
-		fmt.Fprintf(out, "#define EGGSFS_CDC_%s 0x%X\n", reqRespEnum(reqResp), reqResp.kind)
+	generateReqResps := func(reqResps []reqRespType) {
+		for _, reqResp := range reqResps {
+			generateKmodSize(staticSizes, maxSizes, hOut, reqResp.req)
+			generateKmodGet(staticSizes, hOut, reqResp.req)
+			generateKmodPut(staticSizes, hOut, reqResp.req)
+			generateKmodSize(staticSizes, maxSizes, hOut, reqResp.resp)
+			generateKmodGet(staticSizes, hOut, reqResp.resp)
+			generateKmodPut(staticSizes, hOut, reqResp.resp)
+		}
 	}
-	fmt.Fprintf(out, "\n")
 
-	return out.Bytes()
+	generateReqResps(shardReqResps)
+	generateReqResps(cdcReqResps)
+	generateReqResps(shuckleReqResps)
+	generateReqResps(blocksReqResps)
+
+	return hOut.Bytes()
 }
 
 func cppType(t reflect.Type) string {
@@ -549,6 +902,8 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 		fld := t.Field(i)
 		if cppType(fld.Type) == "uint8_t" {
 			fmt.Fprintf(cpp, " << \"%s=\" << (int)x.%s", fld.Name, cppFieldName(fld))
+		} else if fld.Type.Kind() == reflect.String {
+			fmt.Fprintf(cpp, " << \"%s=\" << GoLangQuotedStringFmt(x.%s.data(), x.%s.size())", fld.Name, cppFieldName(fld), cppFieldName(fld))
 		} else {
 			fmt.Fprintf(cpp, " << \"%s=\" << x.%s", fld.Name, cppFieldName(fld))
 		}
@@ -899,7 +1254,7 @@ func main() {
 		"BLOCK_TOO_BIG",
 	}
 
-	shardReqResps := []reqRespType{
+	kernelShardReqResps := []reqRespType{
 		{
 			0x01,
 			reflect.TypeOf(msgs.LookupReq{}),
@@ -909,11 +1264,6 @@ func main() {
 			0x02,
 			reflect.TypeOf(msgs.StatFileReq{}),
 			reflect.TypeOf(msgs.StatFileResp{}),
-		},
-		{
-			0x03,
-			reflect.TypeOf(msgs.StatTransientFileReq{}),
-			reflect.TypeOf(msgs.StatTransientFileResp{}),
 		},
 		{
 			0x04,
@@ -961,24 +1311,32 @@ func main() {
 			reflect.TypeOf(msgs.SameDirectoryRenameResp{}),
 		},
 		{
-			0x0D,
-			reflect.TypeOf(msgs.SetDirectoryInfoReq{}),
-			reflect.TypeOf(msgs.SetDirectoryInfoResp{}),
+			0x10,
+			reflect.TypeOf(msgs.AddInlineSpanReq{}),
+			reflect.TypeOf(msgs.AddInlineSpanResp{}),
 		},
 		{
 			0x0E,
 			reflect.TypeOf(msgs.SnapshotLookupReq{}),
 			reflect.TypeOf(msgs.SnapshotLookupResp{}),
 		},
+	}
+
+	shardReqResps := append(kernelShardReqResps, []reqRespType{
+		{
+			0x03,
+			reflect.TypeOf(msgs.StatTransientFileReq{}),
+			reflect.TypeOf(msgs.StatTransientFileResp{}),
+		},
+		{
+			0x0D,
+			reflect.TypeOf(msgs.SetDirectoryInfoReq{}),
+			reflect.TypeOf(msgs.SetDirectoryInfoResp{}),
+		},
 		{
 			0x0F,
 			reflect.TypeOf(msgs.ExpireTransientFileReq{}),
 			reflect.TypeOf(msgs.ExpireTransientFileResp{}),
-		},
-		{
-			0x10,
-			reflect.TypeOf(msgs.AddInlineSpanReq{}),
-			reflect.TypeOf(msgs.AddInlineSpanResp{}),
 		},
 		// PRIVATE OPERATIONS -- These are safe operations, but we don't want the FS client itself
 		// to perform them. TODO make privileged?
@@ -1078,9 +1436,9 @@ func main() {
 			reflect.TypeOf(msgs.MakeFileTransientReq{}),
 			reflect.TypeOf(msgs.MakeFileTransientResp{}),
 		},
-	}
+	}...)
 
-	cdcReqResps := []reqRespType{
+	kernelCdcReqResps := []reqRespType{
 		{
 			0x01,
 			reflect.TypeOf(msgs.MakeDirectoryReq{}),
@@ -1101,6 +1459,9 @@ func main() {
 			reflect.TypeOf(msgs.RenameDirectoryReq{}),
 			reflect.TypeOf(msgs.RenameDirectoryResp{}),
 		},
+	}
+
+	cdcReqResps := append(kernelCdcReqResps, []reqRespType{
 		{
 			0x05,
 			reflect.TypeOf(msgs.HardUnlinkDirectoryReq{}),
@@ -1111,9 +1472,22 @@ func main() {
 			reflect.TypeOf(msgs.CrossShardHardUnlinkFileReq{}),
 			reflect.TypeOf(msgs.CrossShardHardUnlinkFileResp{}),
 		},
+	}...)
+
+	kernelShuckleReqResps := []reqRespType{
+		{
+			0x03,
+			reflect.TypeOf(msgs.ShardsReq{}),
+			reflect.TypeOf(msgs.ShardsResp{}),
+		},
+		{
+			0x07,
+			reflect.TypeOf(msgs.CdcReq{}),
+			reflect.TypeOf(msgs.CdcResp{}),
+		},
 	}
 
-	shuckleReqResps := []reqRespType{
+	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{
 		{
 			0x01,
 			reflect.TypeOf(msgs.BlockServicesForShardReq{}),
@@ -1123,11 +1497,6 @@ func main() {
 			0x02,
 			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
 			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
-		},
-		{
-			0x03,
-			reflect.TypeOf(msgs.ShardsReq{}),
-			reflect.TypeOf(msgs.ShardsResp{}),
 		},
 		{
 			0x04,
@@ -1144,19 +1513,9 @@ func main() {
 			reflect.TypeOf(msgs.RegisterCdcReq{}),
 			reflect.TypeOf(msgs.RegisterCdcResp{}),
 		},
-		{
-			0x07,
-			reflect.TypeOf(msgs.CdcReq{}),
-			reflect.TypeOf(msgs.CdcResp{}),
-		},
-	}
+	}...)
 
-	blocksReqResps := []reqRespType{
-		{
-			0x01,
-			reflect.TypeOf(msgs.EraseBlockReq{}),
-			reflect.TypeOf(msgs.EraseBlockResp{}),
-		},
+	kernelBlocksReqResps := []reqRespType{
 		{
 			0x02,
 			reflect.TypeOf(msgs.FetchBlockReq{}),
@@ -1174,32 +1533,43 @@ func main() {
 		},
 	}
 
-	extras := []reflect.Type{
-		reflect.TypeOf(msgs.TransientFile{}),
-		reflect.TypeOf(msgs.FetchedBlock{}),
+	blocksReqResps := append(kernelBlocksReqResps, []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.EraseBlockReq{}),
+			reflect.TypeOf(msgs.EraseBlockResp{}),
+		},
+	}...)
+
+	kernelExtras := []reflect.Type{
+		reflect.TypeOf(msgs.DirectoryInfoEntry{}),
+		reflect.TypeOf(msgs.DirectoryInfo{}),
 		reflect.TypeOf(msgs.CurrentEdge{}),
-		reflect.TypeOf(msgs.Edge{}),
 		reflect.TypeOf(msgs.BlockInfo{}),
+		reflect.TypeOf(msgs.BlockProof{}),
+		reflect.TypeOf(msgs.BlockService{}),
+		reflect.TypeOf(msgs.ShardInfo{}),
+		reflect.TypeOf(msgs.BlockPolicyEntry{}),
+		reflect.TypeOf(msgs.SpanPolicyEntry{}),
+		reflect.TypeOf(msgs.StripePolicy{}),
+		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
+		reflect.TypeOf(msgs.FetchedBlock{}),
 		reflect.TypeOf(msgs.FetchedSpanHeader{}),
 		reflect.TypeOf(msgs.FetchedInlineSpan{}),
 		reflect.TypeOf(msgs.FetchedBlocksSpan{}),
-		reflect.TypeOf(msgs.BlockProof{}),
-		reflect.TypeOf(msgs.DirectoryInfoEntry{}),
-		reflect.TypeOf(msgs.DirectoryInfo{}),
-		reflect.TypeOf(msgs.BlockService{}),
+	}
+
+	extras := append(kernelExtras, []reflect.Type{
+		reflect.TypeOf(msgs.TransientFile{}),
+		reflect.TypeOf(msgs.Edge{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
-		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
-		reflect.TypeOf(msgs.ShardInfo{}),
 		reflect.TypeOf(msgs.RegisterShardInfo{}),
-		reflect.TypeOf(msgs.SpanPolicyEntry{}),
 		reflect.TypeOf(msgs.SpanPolicy{}),
-		reflect.TypeOf(msgs.BlockPolicyEntry{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
-		reflect.TypeOf(msgs.StripePolicy{}),
-	}
+	}...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
@@ -1210,13 +1580,14 @@ func main() {
 	defer goOutFile.Close()
 	goOutFile.Write(goCode)
 
-	cOutFilename := fmt.Sprintf("%s/../../c/eggs_msgs.h", cwd)
-	cOutFile, err := os.Create(cOutFilename)
+	kmodHOutFilename := fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd)
+	kmodHOutFile, err := os.Create(kmodHOutFilename)
 	if err != nil {
 		panic(err)
 	}
-	defer cOutFile.Close()
-	cOutFile.Write(generateC(errors, shardReqResps, cdcReqResps, extras))
+	defer kmodHOutFile.Close()
+	kmodHBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelShuckleReqResps, kernelBlocksReqResps, kernelExtras)
+	kmodHOutFile.Write(kmodHBytes)
 
 	hppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd)
 	hppOutFile, err := os.Create(hppOutFilename)

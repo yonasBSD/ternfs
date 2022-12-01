@@ -187,9 +187,6 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
     case ShardMessageKind::STAT_FILE:
         out << "STAT_FILE";
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        out << "STAT_TRANSIENT_FILE";
-        break;
     case ShardMessageKind::STAT_DIRECTORY:
         out << "STAT_DIRECTORY";
         break;
@@ -217,17 +214,20 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << "SAME_DIRECTORY_RENAME";
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        out << "SET_DIRECTORY_INFO";
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        out << "ADD_INLINE_SPAN";
         break;
     case ShardMessageKind::SNAPSHOT_LOOKUP:
         out << "SNAPSHOT_LOOKUP";
         break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        out << "STAT_TRANSIENT_FILE";
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        out << "SET_DIRECTORY_INFO";
+        break;
     case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         out << "EXPIRE_TRANSIENT_FILE";
-        break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
-        out << "ADD_INLINE_SPAN";
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
         out << "VISIT_DIRECTORIES";
@@ -322,14 +322,17 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     switch (kind) {
+    case ShuckleMessageKind::SHARDS:
+        out << "SHARDS";
+        break;
+    case ShuckleMessageKind::CDC:
+        out << "CDC";
+        break;
     case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         out << "BLOCK_SERVICES_FOR_SHARD";
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << "REGISTER_BLOCK_SERVICES";
-        break;
-    case ShuckleMessageKind::SHARDS:
-        out << "SHARDS";
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << "REGISTER_SHARD";
@@ -340,9 +343,6 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::REGISTER_CDC:
         out << "REGISTER_CDC";
         break;
-    case ShuckleMessageKind::CDC:
-        out << "CDC";
-        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -352,9 +352,6 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     switch (kind) {
-    case BlocksMessageKind::ERASE_BLOCK:
-        out << "ERASE_BLOCK";
-        break;
     case BlocksMessageKind::FETCH_BLOCK:
         out << "FETCH_BLOCK";
         break;
@@ -364,6 +361,9 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::BLOCK_WRITTEN:
         out << "BLOCK_WRITTEN";
         break;
+    case BlocksMessageKind::ERASE_BLOCK:
+        out << "ERASE_BLOCK";
+        break;
     default:
         out << "BlocksMessageKind(" << ((int)kind) << ")";
         break;
@@ -371,55 +371,43 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     return out;
 }
 
-void TransientFile::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-    buf.packFixedBytes<8>(cookie);
-    deadlineTime.pack(buf);
+void DirectoryInfoEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(tag);
+    buf.packBytes(body);
 }
-void TransientFile::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-    buf.unpackFixedBytes<8>(cookie);
-    deadlineTime.unpack(buf);
+void DirectoryInfoEntry::unpack(BincodeBuf& buf) {
+    tag = buf.unpackScalar<uint8_t>();
+    buf.unpackBytes(body);
 }
-void TransientFile::clear() {
-    id = InodeId();
-    cookie.clear();
-    deadlineTime = EggsTime();
+void DirectoryInfoEntry::clear() {
+    tag = uint8_t(0);
+    body.clear();
 }
-bool TransientFile::operator==(const TransientFile& rhs) const {
-    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    if (cookie != rhs.cookie) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+bool DirectoryInfoEntry::operator==(const DirectoryInfoEntry& rhs) const {
+    if ((uint8_t)this->tag != (uint8_t)rhs.tag) { return false; };
+    if (body != rhs.body) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const TransientFile& x) {
-    out << "TransientFile(" << "Id=" << x.id << ", " << "Cookie=" << x.cookie << ", " << "DeadlineTime=" << x.deadlineTime << ")";
+std::ostream& operator<<(std::ostream& out, const DirectoryInfoEntry& x) {
+    out << "DirectoryInfoEntry(" << "Tag=" << (int)x.tag << ", " << "Body=" << x.body << ")";
     return out;
 }
 
-void FetchedBlock::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint8_t>(blockServiceIx);
-    buf.packScalar<uint64_t>(blockId);
-    crc.pack(buf);
+void DirectoryInfo::pack(BincodeBuf& buf) const {
+    buf.packList<DirectoryInfoEntry>(entries);
 }
-void FetchedBlock::unpack(BincodeBuf& buf) {
-    blockServiceIx = buf.unpackScalar<uint8_t>();
-    blockId = buf.unpackScalar<uint64_t>();
-    crc.unpack(buf);
+void DirectoryInfo::unpack(BincodeBuf& buf) {
+    buf.unpackList<DirectoryInfoEntry>(entries);
 }
-void FetchedBlock::clear() {
-    blockServiceIx = uint8_t(0);
-    blockId = uint64_t(0);
-    crc = Crc(0);
+void DirectoryInfo::clear() {
+    entries.clear();
 }
-bool FetchedBlock::operator==(const FetchedBlock& rhs) const {
-    if ((uint8_t)this->blockServiceIx != (uint8_t)rhs.blockServiceIx) { return false; };
-    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
-    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+bool DirectoryInfo::operator==(const DirectoryInfo& rhs) const {
+    if (entries != rhs.entries) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const FetchedBlock& x) {
-    out << "FetchedBlock(" << "BlockServiceIx=" << (int)x.blockServiceIx << ", " << "BlockId=" << x.blockId << ", " << "Crc=" << x.crc << ")";
+std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x) {
+    out << "DirectoryInfo(" << "Entries=" << x.entries << ")";
     return out;
 }
 
@@ -449,41 +437,7 @@ bool CurrentEdge::operator==(const CurrentEdge& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CurrentEdge& x) {
-    out << "CurrentEdge(" << "TargetId=" << x.targetId << ", " << "NameHash=" << x.nameHash << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
-    return out;
-}
-
-void Edge::pack(BincodeBuf& buf) const {
-    buf.packScalar<bool>(current);
-    targetId.pack(buf);
-    buf.packScalar<uint64_t>(nameHash);
-    buf.packBytes(name);
-    creationTime.pack(buf);
-}
-void Edge::unpack(BincodeBuf& buf) {
-    current = buf.unpackScalar<bool>();
-    targetId.unpack(buf);
-    nameHash = buf.unpackScalar<uint64_t>();
-    buf.unpackBytes(name);
-    creationTime.unpack(buf);
-}
-void Edge::clear() {
-    current = bool(0);
-    targetId = InodeIdExtra();
-    nameHash = uint64_t(0);
-    name.clear();
-    creationTime = EggsTime();
-}
-bool Edge::operator==(const Edge& rhs) const {
-    if ((bool)this->current != (bool)rhs.current) { return false; };
-    if ((InodeIdExtra)this->targetId != (InodeIdExtra)rhs.targetId) { return false; };
-    if ((uint64_t)this->nameHash != (uint64_t)rhs.nameHash) { return false; };
-    if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const Edge& x) {
-    out << "Edge(" << "Current=" << x.current << ", " << "TargetId=" << x.targetId << ", " << "NameHash=" << x.nameHash << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "CurrentEdge(" << "TargetId=" << x.targetId << ", " << "NameHash=" << x.nameHash << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -526,6 +480,202 @@ bool BlockInfo::operator==(const BlockInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const BlockInfo& x) {
     out << "BlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+    return out;
+}
+
+void BlockProof::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockId);
+    buf.packFixedBytes<8>(proof);
+}
+void BlockProof::unpack(BincodeBuf& buf) {
+    blockId = buf.unpackScalar<uint64_t>();
+    buf.unpackFixedBytes<8>(proof);
+}
+void BlockProof::clear() {
+    blockId = uint64_t(0);
+    proof.clear();
+}
+bool BlockProof::operator==(const BlockProof& rhs) const {
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if (proof != rhs.proof) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockProof& x) {
+    out << "BlockProof(" << "BlockId=" << x.blockId << ", " << "Proof=" << x.proof << ")";
+    return out;
+}
+
+void BlockService::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
+    id.pack(buf);
+    buf.packScalar<uint8_t>(flags);
+}
+void BlockService::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
+    id.unpack(buf);
+    flags = buf.unpackScalar<uint8_t>();
+}
+void BlockService::clear() {
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
+    id = BlockServiceId(0);
+    flags = uint8_t(0);
+}
+bool BlockService::operator==(const BlockService& rhs) const {
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockService& x) {
+    out << "BlockService(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "Id=" << x.id << ", " << "Flags=" << (int)x.flags << ")";
+    return out;
+}
+
+void ShardInfo::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<4>(ip);
+    buf.packScalar<uint16_t>(port);
+    lastSeen.pack(buf);
+}
+void ShardInfo::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<4>(ip);
+    port = buf.unpackScalar<uint16_t>();
+    lastSeen.unpack(buf);
+}
+void ShardInfo::clear() {
+    ip.clear();
+    port = uint16_t(0);
+    lastSeen = EggsTime();
+}
+bool ShardInfo::operator==(const ShardInfo& rhs) const {
+    if (ip != rhs.ip) { return false; };
+    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
+    out << "ShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
+    return out;
+}
+
+void BlockPolicyEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(storageClass);
+    buf.packScalar<uint32_t>(minSize);
+}
+void BlockPolicyEntry::unpack(BincodeBuf& buf) {
+    storageClass = buf.unpackScalar<uint8_t>();
+    minSize = buf.unpackScalar<uint32_t>();
+}
+void BlockPolicyEntry::clear() {
+    storageClass = uint8_t(0);
+    minSize = uint32_t(0);
+}
+bool BlockPolicyEntry::operator==(const BlockPolicyEntry& rhs) const {
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if ((uint32_t)this->minSize != (uint32_t)rhs.minSize) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockPolicyEntry& x) {
+    out << "BlockPolicyEntry(" << "StorageClass=" << (int)x.storageClass << ", " << "MinSize=" << x.minSize << ")";
+    return out;
+}
+
+void SpanPolicyEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(maxSize);
+    parity.pack(buf);
+}
+void SpanPolicyEntry::unpack(BincodeBuf& buf) {
+    maxSize = buf.unpackScalar<uint32_t>();
+    parity.unpack(buf);
+}
+void SpanPolicyEntry::clear() {
+    maxSize = uint32_t(0);
+    parity = Parity();
+}
+bool SpanPolicyEntry::operator==(const SpanPolicyEntry& rhs) const {
+    if ((uint32_t)this->maxSize != (uint32_t)rhs.maxSize) { return false; };
+    if ((Parity)this->parity != (Parity)rhs.parity) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SpanPolicyEntry& x) {
+    out << "SpanPolicyEntry(" << "MaxSize=" << x.maxSize << ", " << "Parity=" << x.parity << ")";
+    return out;
+}
+
+void StripePolicy::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(targetStripeSize);
+}
+void StripePolicy::unpack(BincodeBuf& buf) {
+    targetStripeSize = buf.unpackScalar<uint32_t>();
+}
+void StripePolicy::clear() {
+    targetStripeSize = uint32_t(0);
+}
+bool StripePolicy::operator==(const StripePolicy& rhs) const {
+    if ((uint32_t)this->targetStripeSize != (uint32_t)rhs.targetStripeSize) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const StripePolicy& x) {
+    out << "StripePolicy(" << "TargetStripeSize=" << x.targetStripeSize << ")";
+    return out;
+}
+
+void SnapshotLookupEdge::pack(BincodeBuf& buf) const {
+    targetId.pack(buf);
+    creationTime.pack(buf);
+}
+void SnapshotLookupEdge::unpack(BincodeBuf& buf) {
+    targetId.unpack(buf);
+    creationTime.unpack(buf);
+}
+void SnapshotLookupEdge::clear() {
+    targetId = InodeIdExtra();
+    creationTime = EggsTime();
+}
+bool SnapshotLookupEdge::operator==(const SnapshotLookupEdge& rhs) const {
+    if ((InodeIdExtra)this->targetId != (InodeIdExtra)rhs.targetId) { return false; };
+    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x) {
+    out << "SnapshotLookupEdge(" << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ")";
+    return out;
+}
+
+void FetchedBlock::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(blockServiceIx);
+    buf.packScalar<uint64_t>(blockId);
+    crc.pack(buf);
+}
+void FetchedBlock::unpack(BincodeBuf& buf) {
+    blockServiceIx = buf.unpackScalar<uint8_t>();
+    blockId = buf.unpackScalar<uint64_t>();
+    crc.unpack(buf);
+}
+void FetchedBlock::clear() {
+    blockServiceIx = uint8_t(0);
+    blockId = uint64_t(0);
+    crc = Crc(0);
+}
+bool FetchedBlock::operator==(const FetchedBlock& rhs) const {
+    if ((uint8_t)this->blockServiceIx != (uint8_t)rhs.blockServiceIx) { return false; };
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchedBlock& x) {
+    out << "FetchedBlock(" << "BlockServiceIx=" << (int)x.blockServiceIx << ", " << "BlockId=" << x.blockId << ", " << "Crc=" << x.crc << ")";
     return out;
 }
 
@@ -611,103 +761,63 @@ std::ostream& operator<<(std::ostream& out, const FetchedBlocksSpan& x) {
     return out;
 }
 
-void BlockProof::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(blockId);
-    buf.packFixedBytes<8>(proof);
-}
-void BlockProof::unpack(BincodeBuf& buf) {
-    blockId = buf.unpackScalar<uint64_t>();
-    buf.unpackFixedBytes<8>(proof);
-}
-void BlockProof::clear() {
-    blockId = uint64_t(0);
-    proof.clear();
-}
-bool BlockProof::operator==(const BlockProof& rhs) const {
-    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
-    if (proof != rhs.proof) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockProof& x) {
-    out << "BlockProof(" << "BlockId=" << x.blockId << ", " << "Proof=" << x.proof << ")";
-    return out;
-}
-
-void DirectoryInfoEntry::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint8_t>(tag);
-    buf.packBytes(body);
-}
-void DirectoryInfoEntry::unpack(BincodeBuf& buf) {
-    tag = buf.unpackScalar<uint8_t>();
-    buf.unpackBytes(body);
-}
-void DirectoryInfoEntry::clear() {
-    tag = uint8_t(0);
-    body.clear();
-}
-bool DirectoryInfoEntry::operator==(const DirectoryInfoEntry& rhs) const {
-    if ((uint8_t)this->tag != (uint8_t)rhs.tag) { return false; };
-    if (body != rhs.body) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const DirectoryInfoEntry& x) {
-    out << "DirectoryInfoEntry(" << "Tag=" << (int)x.tag << ", " << "Body=" << x.body << ")";
-    return out;
-}
-
-void DirectoryInfo::pack(BincodeBuf& buf) const {
-    buf.packList<DirectoryInfoEntry>(entries);
-}
-void DirectoryInfo::unpack(BincodeBuf& buf) {
-    buf.unpackList<DirectoryInfoEntry>(entries);
-}
-void DirectoryInfo::clear() {
-    entries.clear();
-}
-bool DirectoryInfo::operator==(const DirectoryInfo& rhs) const {
-    if (entries != rhs.entries) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x) {
-    out << "DirectoryInfo(" << "Entries=" << x.entries << ")";
-    return out;
-}
-
-void BlockService::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+void TransientFile::pack(BincodeBuf& buf) const {
     id.pack(buf);
-    buf.packScalar<uint8_t>(flags);
+    buf.packFixedBytes<8>(cookie);
+    deadlineTime.pack(buf);
 }
-void BlockService::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+void TransientFile::unpack(BincodeBuf& buf) {
     id.unpack(buf);
-    flags = buf.unpackScalar<uint8_t>();
+    buf.unpackFixedBytes<8>(cookie);
+    deadlineTime.unpack(buf);
 }
-void BlockService::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
-    id = BlockServiceId(0);
-    flags = uint8_t(0);
+void TransientFile::clear() {
+    id = InodeId();
+    cookie.clear();
+    deadlineTime = EggsTime();
 }
-bool BlockService::operator==(const BlockService& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
-    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
-    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
+bool TransientFile::operator==(const TransientFile& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    if (cookie != rhs.cookie) { return false; };
+    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockService& x) {
-    out << "BlockService(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "Id=" << x.id << ", " << "Flags=" << (int)x.flags << ")";
+std::ostream& operator<<(std::ostream& out, const TransientFile& x) {
+    out << "TransientFile(" << "Id=" << x.id << ", " << "Cookie=" << x.cookie << ", " << "DeadlineTime=" << x.deadlineTime << ")";
+    return out;
+}
+
+void Edge::pack(BincodeBuf& buf) const {
+    buf.packScalar<bool>(current);
+    targetId.pack(buf);
+    buf.packScalar<uint64_t>(nameHash);
+    buf.packBytes(name);
+    creationTime.pack(buf);
+}
+void Edge::unpack(BincodeBuf& buf) {
+    current = buf.unpackScalar<bool>();
+    targetId.unpack(buf);
+    nameHash = buf.unpackScalar<uint64_t>();
+    buf.unpackBytes(name);
+    creationTime.unpack(buf);
+}
+void Edge::clear() {
+    current = bool(0);
+    targetId = InodeIdExtra();
+    nameHash = uint64_t(0);
+    name.clear();
+    creationTime = EggsTime();
+}
+bool Edge::operator==(const Edge& rhs) const {
+    if ((bool)this->current != (bool)rhs.current) { return false; };
+    if ((InodeIdExtra)this->targetId != (InodeIdExtra)rhs.targetId) { return false; };
+    if ((uint64_t)this->nameHash != (uint64_t)rhs.nameHash) { return false; };
+    if (name != rhs.name) { return false; };
+    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const Edge& x) {
+    out << "Edge(" << "Current=" << x.current << ", " << "TargetId=" << x.targetId << ", " << "NameHash=" << x.nameHash << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -737,7 +847,7 @@ bool FullReadDirCursor::operator==(const FullReadDirCursor& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x) {
-    out << "FullReadDirCursor(" << "Current=" << x.current << ", " << "StartHash=" << x.startHash << ", " << "StartName=" << x.startName << ", " << "StartTime=" << x.startTime << ")";
+    out << "FullReadDirCursor(" << "Current=" << x.current << ", " << "StartHash=" << x.startHash << ", " << "StartName=" << GoLangQuotedStringFmt(x.startName.data(), x.startName.size()) << ", " << "StartTime=" << x.startTime << ")";
     return out;
 }
 
@@ -760,28 +870,6 @@ bool EntryNewBlockInfo::operator==(const EntryNewBlockInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
     out << "EntryNewBlockInfo(" << "BlockServiceId=" << x.blockServiceId << ", " << "Crc=" << x.crc << ")";
-    return out;
-}
-
-void SnapshotLookupEdge::pack(BincodeBuf& buf) const {
-    targetId.pack(buf);
-    creationTime.pack(buf);
-}
-void SnapshotLookupEdge::unpack(BincodeBuf& buf) {
-    targetId.unpack(buf);
-    creationTime.unpack(buf);
-}
-void SnapshotLookupEdge::clear() {
-    targetId = InodeIdExtra();
-    creationTime = EggsTime();
-}
-bool SnapshotLookupEdge::operator==(const SnapshotLookupEdge& rhs) const {
-    if ((InodeIdExtra)this->targetId != (InodeIdExtra)rhs.targetId) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x) {
-    out << "SnapshotLookupEdge(" << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -847,33 +935,7 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << x.path << ", " << "LastSeen=" << x.lastSeen << ")";
-    return out;
-}
-
-void ShardInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
-    lastSeen.pack(buf);
-}
-void ShardInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
-    lastSeen.unpack(buf);
-}
-void ShardInfo::clear() {
-    ip.clear();
-    port = uint16_t(0);
-    lastSeen = EggsTime();
-}
-bool ShardInfo::operator==(const ShardInfo& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
-    out << "ShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -899,28 +961,6 @@ std::ostream& operator<<(std::ostream& out, const RegisterShardInfo& x) {
     return out;
 }
 
-void SpanPolicyEntry::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint32_t>(maxSize);
-    parity.pack(buf);
-}
-void SpanPolicyEntry::unpack(BincodeBuf& buf) {
-    maxSize = buf.unpackScalar<uint32_t>();
-    parity.unpack(buf);
-}
-void SpanPolicyEntry::clear() {
-    maxSize = uint32_t(0);
-    parity = Parity();
-}
-bool SpanPolicyEntry::operator==(const SpanPolicyEntry& rhs) const {
-    if ((uint32_t)this->maxSize != (uint32_t)rhs.maxSize) { return false; };
-    if ((Parity)this->parity != (Parity)rhs.parity) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SpanPolicyEntry& x) {
-    out << "SpanPolicyEntry(" << "MaxSize=" << x.maxSize << ", " << "Parity=" << x.parity << ")";
-    return out;
-}
-
 void SpanPolicy::pack(BincodeBuf& buf) const {
     buf.packList<SpanPolicyEntry>(entries);
 }
@@ -936,28 +976,6 @@ bool SpanPolicy::operator==(const SpanPolicy& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const SpanPolicy& x) {
     out << "SpanPolicy(" << "Entries=" << x.entries << ")";
-    return out;
-}
-
-void BlockPolicyEntry::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint8_t>(storageClass);
-    buf.packScalar<uint32_t>(minSize);
-}
-void BlockPolicyEntry::unpack(BincodeBuf& buf) {
-    storageClass = buf.unpackScalar<uint8_t>();
-    minSize = buf.unpackScalar<uint32_t>();
-}
-void BlockPolicyEntry::clear() {
-    storageClass = uint8_t(0);
-    minSize = uint32_t(0);
-}
-bool BlockPolicyEntry::operator==(const BlockPolicyEntry& rhs) const {
-    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
-    if ((uint32_t)this->minSize != (uint32_t)rhs.minSize) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockPolicyEntry& x) {
-    out << "BlockPolicyEntry(" << "StorageClass=" << (int)x.storageClass << ", " << "MinSize=" << x.minSize << ")";
     return out;
 }
 
@@ -1001,24 +1019,6 @@ std::ostream& operator<<(std::ostream& out, const SnapshotPolicy& x) {
     return out;
 }
 
-void StripePolicy::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint32_t>(targetStripeSize);
-}
-void StripePolicy::unpack(BincodeBuf& buf) {
-    targetStripeSize = buf.unpackScalar<uint32_t>();
-}
-void StripePolicy::clear() {
-    targetStripeSize = uint32_t(0);
-}
-bool StripePolicy::operator==(const StripePolicy& rhs) const {
-    if ((uint32_t)this->targetStripeSize != (uint32_t)rhs.targetStripeSize) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const StripePolicy& x) {
-    out << "StripePolicy(" << "TargetStripeSize=" << x.targetStripeSize << ")";
-    return out;
-}
-
 void LookupReq::pack(BincodeBuf& buf) const {
     dirId.pack(buf);
     buf.packBytes(name);
@@ -1037,7 +1037,7 @@ bool LookupReq::operator==(const LookupReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LookupReq& x) {
-    out << "LookupReq(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ")";
+    out << "LookupReq(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -1100,50 +1100,6 @@ bool StatFileResp::operator==(const StatFileResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const StatFileResp& x) {
     out << "StatFileResp(" << "Mtime=" << x.mtime << ", " << "Size=" << x.size << ")";
-    return out;
-}
-
-void StatTransientFileReq::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-}
-void StatTransientFileReq::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-}
-void StatTransientFileReq::clear() {
-    id = InodeId();
-}
-bool StatTransientFileReq::operator==(const StatTransientFileReq& rhs) const {
-    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const StatTransientFileReq& x) {
-    out << "StatTransientFileReq(" << "Id=" << x.id << ")";
-    return out;
-}
-
-void StatTransientFileResp::pack(BincodeBuf& buf) const {
-    mtime.pack(buf);
-    buf.packScalar<uint64_t>(size);
-    buf.packBytes(note);
-}
-void StatTransientFileResp::unpack(BincodeBuf& buf) {
-    mtime.unpack(buf);
-    size = buf.unpackScalar<uint64_t>();
-    buf.unpackBytes(note);
-}
-void StatTransientFileResp::clear() {
-    mtime = EggsTime();
-    size = uint64_t(0);
-    note.clear();
-}
-bool StatTransientFileResp::operator==(const StatTransientFileResp& rhs) const {
-    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
-    if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
-    if (note != rhs.note) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const StatTransientFileResp& x) {
-    out << "StatTransientFileResp(" << "Mtime=" << x.mtime << ", " << "Size=" << x.size << ", " << "Note=" << x.note << ")";
     return out;
 }
 
@@ -1253,7 +1209,7 @@ bool ConstructFileReq::operator==(const ConstructFileReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ConstructFileReq& x) {
-    out << "ConstructFileReq(" << "Type=" << (int)x.type << ", " << "Note=" << x.note << ")";
+    out << "ConstructFileReq(" << "Type=" << (int)x.type << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
     return out;
 }
 
@@ -1425,7 +1381,7 @@ bool LinkFileReq::operator==(const LinkFileReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LinkFileReq& x) {
-    out << "LinkFileReq(" << "FileId=" << x.fileId << ", " << "Cookie=" << x.cookie << ", " << "OwnerId=" << x.ownerId << ", " << "Name=" << x.name << ")";
+    out << "LinkFileReq(" << "FileId=" << x.fileId << ", " << "Cookie=" << x.cookie << ", " << "OwnerId=" << x.ownerId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -1473,7 +1429,7 @@ bool SoftUnlinkFileReq::operator==(const SoftUnlinkFileReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileReq& x) {
-    out << "SoftUnlinkFileReq(" << "OwnerId=" << x.ownerId << ", " << "FileId=" << x.fileId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "SoftUnlinkFileReq(" << "OwnerId=" << x.ownerId << ", " << "FileId=" << x.fileId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -1494,22 +1450,26 @@ std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileResp& x) {
 void FileSpansReq::pack(BincodeBuf& buf) const {
     fileId.pack(buf);
     buf.packScalar<uint64_t>(byteOffset);
+    buf.packScalar<uint32_t>(limit);
 }
 void FileSpansReq::unpack(BincodeBuf& buf) {
     fileId.unpack(buf);
     byteOffset = buf.unpackScalar<uint64_t>();
+    limit = buf.unpackScalar<uint32_t>();
 }
 void FileSpansReq::clear() {
     fileId = InodeId();
     byteOffset = uint64_t(0);
+    limit = uint32_t(0);
 }
 bool FileSpansReq::operator==(const FileSpansReq& rhs) const {
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if ((uint32_t)this->limit != (uint32_t)rhs.limit) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FileSpansReq& x) {
-    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ")";
+    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ")";
     return out;
 }
 
@@ -1569,7 +1529,7 @@ bool SameDirectoryRenameReq::operator==(const SameDirectoryRenameReq& rhs) const
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameReq& x) {
-    out << "SameDirectoryRenameReq(" << "TargetId=" << x.targetId << ", " << "DirId=" << x.dirId << ", " << "OldName=" << x.oldName << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewName=" << x.newName << ")";
+    out << "SameDirectoryRenameReq(" << "TargetId=" << x.targetId << ", " << "DirId=" << x.dirId << ", " << "OldName=" << GoLangQuotedStringFmt(x.oldName.data(), x.oldName.size()) << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewName=" << GoLangQuotedStringFmt(x.newName.data(), x.newName.size()) << ")";
     return out;
 }
 
@@ -1588,122 +1548,6 @@ bool SameDirectoryRenameResp::operator==(const SameDirectoryRenameResp& rhs) con
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameResp& x) {
     out << "SameDirectoryRenameResp(" << "NewCreationTime=" << x.newCreationTime << ")";
-    return out;
-}
-
-void SetDirectoryInfoReq::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-    info.pack(buf);
-}
-void SetDirectoryInfoReq::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-    info.unpack(buf);
-}
-void SetDirectoryInfoReq::clear() {
-    id = InodeId();
-    info.clear();
-}
-bool SetDirectoryInfoReq::operator==(const SetDirectoryInfoReq& rhs) const {
-    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    if (info != rhs.info) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoReq& x) {
-    out << "SetDirectoryInfoReq(" << "Id=" << x.id << ", " << "Info=" << x.info << ")";
-    return out;
-}
-
-void SetDirectoryInfoResp::pack(BincodeBuf& buf) const {
-}
-void SetDirectoryInfoResp::unpack(BincodeBuf& buf) {
-}
-void SetDirectoryInfoResp::clear() {
-}
-bool SetDirectoryInfoResp::operator==(const SetDirectoryInfoResp& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x) {
-    out << "SetDirectoryInfoResp(" << ")";
-    return out;
-}
-
-void SnapshotLookupReq::pack(BincodeBuf& buf) const {
-    dirId.pack(buf);
-    buf.packBytes(name);
-    startFrom.pack(buf);
-}
-void SnapshotLookupReq::unpack(BincodeBuf& buf) {
-    dirId.unpack(buf);
-    buf.unpackBytes(name);
-    startFrom.unpack(buf);
-}
-void SnapshotLookupReq::clear() {
-    dirId = InodeId();
-    name.clear();
-    startFrom = EggsTime();
-}
-bool SnapshotLookupReq::operator==(const SnapshotLookupReq& rhs) const {
-    if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
-    if (name != rhs.name) { return false; };
-    if ((EggsTime)this->startFrom != (EggsTime)rhs.startFrom) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x) {
-    out << "SnapshotLookupReq(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "StartFrom=" << x.startFrom << ")";
-    return out;
-}
-
-void SnapshotLookupResp::pack(BincodeBuf& buf) const {
-    nextTime.pack(buf);
-    buf.packList<SnapshotLookupEdge>(edges);
-}
-void SnapshotLookupResp::unpack(BincodeBuf& buf) {
-    nextTime.unpack(buf);
-    buf.unpackList<SnapshotLookupEdge>(edges);
-}
-void SnapshotLookupResp::clear() {
-    nextTime = EggsTime();
-    edges.clear();
-}
-bool SnapshotLookupResp::operator==(const SnapshotLookupResp& rhs) const {
-    if ((EggsTime)this->nextTime != (EggsTime)rhs.nextTime) { return false; };
-    if (edges != rhs.edges) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x) {
-    out << "SnapshotLookupResp(" << "NextTime=" << x.nextTime << ", " << "Edges=" << x.edges << ")";
-    return out;
-}
-
-void ExpireTransientFileReq::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-}
-void ExpireTransientFileReq::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-}
-void ExpireTransientFileReq::clear() {
-    id = InodeId();
-}
-bool ExpireTransientFileReq::operator==(const ExpireTransientFileReq& rhs) const {
-    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileReq& x) {
-    out << "ExpireTransientFileReq(" << "Id=" << x.id << ")";
-    return out;
-}
-
-void ExpireTransientFileResp::pack(BincodeBuf& buf) const {
-}
-void ExpireTransientFileResp::unpack(BincodeBuf& buf) {
-}
-void ExpireTransientFileResp::clear() {
-}
-bool ExpireTransientFileResp::operator==(const ExpireTransientFileResp& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x) {
-    out << "ExpireTransientFileResp(" << ")";
     return out;
 }
 
@@ -1760,6 +1604,166 @@ bool AddInlineSpanResp::operator==(const AddInlineSpanResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanResp& x) {
     out << "AddInlineSpanResp(" << ")";
+    return out;
+}
+
+void SnapshotLookupReq::pack(BincodeBuf& buf) const {
+    dirId.pack(buf);
+    buf.packBytes(name);
+    startFrom.pack(buf);
+}
+void SnapshotLookupReq::unpack(BincodeBuf& buf) {
+    dirId.unpack(buf);
+    buf.unpackBytes(name);
+    startFrom.unpack(buf);
+}
+void SnapshotLookupReq::clear() {
+    dirId = InodeId();
+    name.clear();
+    startFrom = EggsTime();
+}
+bool SnapshotLookupReq::operator==(const SnapshotLookupReq& rhs) const {
+    if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
+    if (name != rhs.name) { return false; };
+    if ((EggsTime)this->startFrom != (EggsTime)rhs.startFrom) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x) {
+    out << "SnapshotLookupReq(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "StartFrom=" << x.startFrom << ")";
+    return out;
+}
+
+void SnapshotLookupResp::pack(BincodeBuf& buf) const {
+    nextTime.pack(buf);
+    buf.packList<SnapshotLookupEdge>(edges);
+}
+void SnapshotLookupResp::unpack(BincodeBuf& buf) {
+    nextTime.unpack(buf);
+    buf.unpackList<SnapshotLookupEdge>(edges);
+}
+void SnapshotLookupResp::clear() {
+    nextTime = EggsTime();
+    edges.clear();
+}
+bool SnapshotLookupResp::operator==(const SnapshotLookupResp& rhs) const {
+    if ((EggsTime)this->nextTime != (EggsTime)rhs.nextTime) { return false; };
+    if (edges != rhs.edges) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x) {
+    out << "SnapshotLookupResp(" << "NextTime=" << x.nextTime << ", " << "Edges=" << x.edges << ")";
+    return out;
+}
+
+void StatTransientFileReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+}
+void StatTransientFileReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+}
+void StatTransientFileReq::clear() {
+    id = InodeId();
+}
+bool StatTransientFileReq::operator==(const StatTransientFileReq& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const StatTransientFileReq& x) {
+    out << "StatTransientFileReq(" << "Id=" << x.id << ")";
+    return out;
+}
+
+void StatTransientFileResp::pack(BincodeBuf& buf) const {
+    mtime.pack(buf);
+    buf.packScalar<uint64_t>(size);
+    buf.packBytes(note);
+}
+void StatTransientFileResp::unpack(BincodeBuf& buf) {
+    mtime.unpack(buf);
+    size = buf.unpackScalar<uint64_t>();
+    buf.unpackBytes(note);
+}
+void StatTransientFileResp::clear() {
+    mtime = EggsTime();
+    size = uint64_t(0);
+    note.clear();
+}
+bool StatTransientFileResp::operator==(const StatTransientFileResp& rhs) const {
+    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
+    if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
+    if (note != rhs.note) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const StatTransientFileResp& x) {
+    out << "StatTransientFileResp(" << "Mtime=" << x.mtime << ", " << "Size=" << x.size << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
+    return out;
+}
+
+void SetDirectoryInfoReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    info.pack(buf);
+}
+void SetDirectoryInfoReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    info.unpack(buf);
+}
+void SetDirectoryInfoReq::clear() {
+    id = InodeId();
+    info.clear();
+}
+bool SetDirectoryInfoReq::operator==(const SetDirectoryInfoReq& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    if (info != rhs.info) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoReq& x) {
+    out << "SetDirectoryInfoReq(" << "Id=" << x.id << ", " << "Info=" << x.info << ")";
+    return out;
+}
+
+void SetDirectoryInfoResp::pack(BincodeBuf& buf) const {
+}
+void SetDirectoryInfoResp::unpack(BincodeBuf& buf) {
+}
+void SetDirectoryInfoResp::clear() {
+}
+bool SetDirectoryInfoResp::operator==(const SetDirectoryInfoResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x) {
+    out << "SetDirectoryInfoResp(" << ")";
+    return out;
+}
+
+void ExpireTransientFileReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+}
+void ExpireTransientFileReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+}
+void ExpireTransientFileReq::clear() {
+    id = InodeId();
+}
+bool ExpireTransientFileReq::operator==(const ExpireTransientFileReq& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ExpireTransientFileReq& x) {
+    out << "ExpireTransientFileReq(" << "Id=" << x.id << ")";
+    return out;
+}
+
+void ExpireTransientFileResp::pack(BincodeBuf& buf) const {
+}
+void ExpireTransientFileResp::unpack(BincodeBuf& buf) {
+}
+void ExpireTransientFileResp::clear() {
+}
+bool ExpireTransientFileResp::operator==(const ExpireTransientFileResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x) {
+    out << "ExpireTransientFileResp(" << ")";
     return out;
 }
 
@@ -1953,7 +1957,7 @@ bool RemoveNonOwnedEdgeReq::operator==(const RemoveNonOwnedEdgeReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeReq& x) {
-    out << "RemoveNonOwnedEdgeReq(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "RemoveNonOwnedEdgeReq(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -1997,7 +2001,7 @@ bool SameShardHardFileUnlinkReq::operator==(const SameShardHardFileUnlinkReq& rh
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkReq& x) {
-    out << "SameShardHardFileUnlinkReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "SameShardHardFileUnlinkReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -2365,7 +2369,7 @@ bool CreateLockedCurrentEdgeReq::operator==(const CreateLockedCurrentEdgeReq& rh
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeReq& x) {
-    out << "CreateLockedCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "TargetId=" << x.targetId << ")";
+    out << "CreateLockedCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "TargetId=" << x.targetId << ")";
     return out;
 }
 
@@ -2413,7 +2417,7 @@ bool LockCurrentEdgeReq::operator==(const LockCurrentEdgeReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LockCurrentEdgeReq& x) {
-    out << "LockCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ", " << "Name=" << x.name << ")";
+    out << "LockCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -2461,7 +2465,7 @@ bool UnlockCurrentEdgeReq::operator==(const UnlockCurrentEdgeReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const UnlockCurrentEdgeReq& x) {
-    out << "UnlockCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ", " << "WasMoved=" << x.wasMoved << ")";
+    out << "UnlockCurrentEdgeReq(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ", " << "WasMoved=" << x.wasMoved << ")";
     return out;
 }
 
@@ -2505,7 +2509,7 @@ bool RemoveOwnedSnapshotFileEdgeReq::operator==(const RemoveOwnedSnapshotFileEdg
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeReq& x) {
-    out << "RemoveOwnedSnapshotFileEdgeReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "RemoveOwnedSnapshotFileEdgeReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -2541,7 +2545,7 @@ bool MakeFileTransientReq::operator==(const MakeFileTransientReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const MakeFileTransientReq& x) {
-    out << "MakeFileTransientReq(" << "Id=" << x.id << ", " << "Note=" << x.note << ")";
+    out << "MakeFileTransientReq(" << "Id=" << x.id << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
     return out;
 }
 
@@ -2562,26 +2566,22 @@ std::ostream& operator<<(std::ostream& out, const MakeFileTransientResp& x) {
 void MakeDirectoryReq::pack(BincodeBuf& buf) const {
     ownerId.pack(buf);
     buf.packBytes(name);
-    info.pack(buf);
 }
 void MakeDirectoryReq::unpack(BincodeBuf& buf) {
     ownerId.unpack(buf);
     buf.unpackBytes(name);
-    info.unpack(buf);
 }
 void MakeDirectoryReq::clear() {
     ownerId = InodeId();
     name.clear();
-    info.clear();
 }
 bool MakeDirectoryReq::operator==(const MakeDirectoryReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if (name != rhs.name) { return false; };
-    if (info != rhs.info) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const MakeDirectoryReq& x) {
-    out << "MakeDirectoryReq(" << "OwnerId=" << x.ownerId << ", " << "Name=" << x.name << ", " << "Info=" << x.info << ")";
+    out << "MakeDirectoryReq(" << "OwnerId=" << x.ownerId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -2641,7 +2641,7 @@ bool RenameFileReq::operator==(const RenameFileReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RenameFileReq& x) {
-    out << "RenameFileReq(" << "TargetId=" << x.targetId << ", " << "OldOwnerId=" << x.oldOwnerId << ", " << "OldName=" << x.oldName << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewOwnerId=" << x.newOwnerId << ", " << "NewName=" << x.newName << ")";
+    out << "RenameFileReq(" << "TargetId=" << x.targetId << ", " << "OldOwnerId=" << x.oldOwnerId << ", " << "OldName=" << GoLangQuotedStringFmt(x.oldName.data(), x.oldName.size()) << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewOwnerId=" << x.newOwnerId << ", " << "NewName=" << GoLangQuotedStringFmt(x.newName.data(), x.newName.size()) << ")";
     return out;
 }
 
@@ -2689,7 +2689,7 @@ bool SoftUnlinkDirectoryReq::operator==(const SoftUnlinkDirectoryReq& rhs) const
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkDirectoryReq& x) {
-    out << "SoftUnlinkDirectoryReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ", " << "Name=" << x.name << ")";
+    out << "SoftUnlinkDirectoryReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "CreationTime=" << x.creationTime << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -2741,7 +2741,7 @@ bool RenameDirectoryReq::operator==(const RenameDirectoryReq& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RenameDirectoryReq& x) {
-    out << "RenameDirectoryReq(" << "TargetId=" << x.targetId << ", " << "OldOwnerId=" << x.oldOwnerId << ", " << "OldName=" << x.oldName << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewOwnerId=" << x.newOwnerId << ", " << "NewName=" << x.newName << ")";
+    out << "RenameDirectoryReq(" << "TargetId=" << x.targetId << ", " << "OldOwnerId=" << x.oldOwnerId << ", " << "OldName=" << GoLangQuotedStringFmt(x.oldName.data(), x.oldName.size()) << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewOwnerId=" << x.newOwnerId << ", " << "NewName=" << GoLangQuotedStringFmt(x.newName.data(), x.newName.size()) << ")";
     return out;
 }
 
@@ -2821,7 +2821,7 @@ bool CrossShardHardUnlinkFileReq::operator==(const CrossShardHardUnlinkFileReq& 
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileReq& x) {
-    out << "CrossShardHardUnlinkFileReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "CrossShardHardUnlinkFileReq(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -2836,6 +2836,78 @@ bool CrossShardHardUnlinkFileResp::operator==(const CrossShardHardUnlinkFileResp
 }
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x) {
     out << "CrossShardHardUnlinkFileResp(" << ")";
+    return out;
+}
+
+void ShardsReq::pack(BincodeBuf& buf) const {
+}
+void ShardsReq::unpack(BincodeBuf& buf) {
+}
+void ShardsReq::clear() {
+}
+bool ShardsReq::operator==(const ShardsReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardsReq& x) {
+    out << "ShardsReq(" << ")";
+    return out;
+}
+
+void ShardsResp::pack(BincodeBuf& buf) const {
+    buf.packList<ShardInfo>(shards);
+}
+void ShardsResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<ShardInfo>(shards);
+}
+void ShardsResp::clear() {
+    shards.clear();
+}
+bool ShardsResp::operator==(const ShardsResp& rhs) const {
+    if (shards != rhs.shards) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardsResp& x) {
+    out << "ShardsResp(" << "Shards=" << x.shards << ")";
+    return out;
+}
+
+void CdcReq::pack(BincodeBuf& buf) const {
+}
+void CdcReq::unpack(BincodeBuf& buf) {
+}
+void CdcReq::clear() {
+}
+bool CdcReq::operator==(const CdcReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcReq& x) {
+    out << "CdcReq(" << ")";
+    return out;
+}
+
+void CdcResp::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<4>(ip);
+    buf.packScalar<uint16_t>(port);
+    lastSeen.pack(buf);
+}
+void CdcResp::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<4>(ip);
+    port = buf.unpackScalar<uint16_t>();
+    lastSeen.unpack(buf);
+}
+void CdcResp::clear() {
+    ip.clear();
+    port = uint16_t(0);
+    lastSeen = EggsTime();
+}
+bool CdcResp::operator==(const CdcResp& rhs) const {
+    if (ip != rhs.ip) { return false; };
+    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
+    out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -2904,38 +2976,6 @@ bool RegisterBlockServicesResp::operator==(const RegisterBlockServicesResp& rhs)
 }
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x) {
     out << "RegisterBlockServicesResp(" << ")";
-    return out;
-}
-
-void ShardsReq::pack(BincodeBuf& buf) const {
-}
-void ShardsReq::unpack(BincodeBuf& buf) {
-}
-void ShardsReq::clear() {
-}
-bool ShardsReq::operator==(const ShardsReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ShardsReq& x) {
-    out << "ShardsReq(" << ")";
-    return out;
-}
-
-void ShardsResp::pack(BincodeBuf& buf) const {
-    buf.packList<ShardInfo>(shards);
-}
-void ShardsResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<ShardInfo>(shards);
-}
-void ShardsResp::clear() {
-    shards.clear();
-}
-bool ShardsResp::operator==(const ShardsResp& rhs) const {
-    if (shards != rhs.shards) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ShardsResp& x) {
-    out << "ShardsResp(" << "Shards=" << x.shards << ")";
     return out;
 }
 
@@ -3055,86 +3095,6 @@ std::ostream& operator<<(std::ostream& out, const RegisterCdcResp& x) {
     return out;
 }
 
-void CdcReq::pack(BincodeBuf& buf) const {
-}
-void CdcReq::unpack(BincodeBuf& buf) {
-}
-void CdcReq::clear() {
-}
-bool CdcReq::operator==(const CdcReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const CdcReq& x) {
-    out << "CdcReq(" << ")";
-    return out;
-}
-
-void CdcResp::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
-    lastSeen.pack(buf);
-}
-void CdcResp::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
-    lastSeen.unpack(buf);
-}
-void CdcResp::clear() {
-    ip.clear();
-    port = uint16_t(0);
-    lastSeen = EggsTime();
-}
-bool CdcResp::operator==(const CdcResp& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
-    out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
-    return out;
-}
-
-void EraseBlockReq::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(blockId);
-    buf.packFixedBytes<8>(certificate);
-}
-void EraseBlockReq::unpack(BincodeBuf& buf) {
-    blockId = buf.unpackScalar<uint64_t>();
-    buf.unpackFixedBytes<8>(certificate);
-}
-void EraseBlockReq::clear() {
-    blockId = uint64_t(0);
-    certificate.clear();
-}
-bool EraseBlockReq::operator==(const EraseBlockReq& rhs) const {
-    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
-    if (certificate != rhs.certificate) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const EraseBlockReq& x) {
-    out << "EraseBlockReq(" << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
-    return out;
-}
-
-void EraseBlockResp::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<8>(proof);
-}
-void EraseBlockResp::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<8>(proof);
-}
-void EraseBlockResp::clear() {
-    proof.clear();
-}
-bool EraseBlockResp::operator==(const EraseBlockResp& rhs) const {
-    if (proof != rhs.proof) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x) {
-    out << "EraseBlockResp(" << "Proof=" << x.proof << ")";
-    return out;
-}
-
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -3251,6 +3211,46 @@ std::ostream& operator<<(std::ostream& out, const BlockWrittenResp& x) {
     return out;
 }
 
+void EraseBlockReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockId);
+    buf.packFixedBytes<8>(certificate);
+}
+void EraseBlockReq::unpack(BincodeBuf& buf) {
+    blockId = buf.unpackScalar<uint64_t>();
+    buf.unpackFixedBytes<8>(certificate);
+}
+void EraseBlockReq::clear() {
+    blockId = uint64_t(0);
+    certificate.clear();
+}
+bool EraseBlockReq::operator==(const EraseBlockReq& rhs) const {
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if (certificate != rhs.certificate) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const EraseBlockReq& x) {
+    out << "EraseBlockReq(" << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+    return out;
+}
+
+void EraseBlockResp::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<8>(proof);
+}
+void EraseBlockResp::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<8>(proof);
+}
+void EraseBlockResp::clear() {
+    proof.clear();
+}
+bool EraseBlockResp::operator==(const EraseBlockResp& rhs) const {
+    if (proof != rhs.proof) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x) {
+    out << "EraseBlockResp(" << "Proof=" << x.proof << ")";
+    return out;
+}
+
 const LookupReq& ShardReqContainer::getLookup() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOOKUP, "%s != %s", _kind, ShardMessageKind::LOOKUP);
     return std::get<0>(_data);
@@ -3271,142 +3271,142 @@ StatFileReq& ShardReqContainer::setStatFile() {
     x.clear();
     return x;
 }
-const StatTransientFileReq& ShardReqContainer::getStatTransientFile() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::STAT_TRANSIENT_FILE);
-    return std::get<2>(_data);
-}
-StatTransientFileReq& ShardReqContainer::setStatTransientFile() {
-    _kind = ShardMessageKind::STAT_TRANSIENT_FILE;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
 const StatDirectoryReq& ShardReqContainer::getStatDirectory() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_DIRECTORY, "%s != %s", _kind, ShardMessageKind::STAT_DIRECTORY);
-    return std::get<3>(_data);
+    return std::get<2>(_data);
 }
 StatDirectoryReq& ShardReqContainer::setStatDirectory() {
     _kind = ShardMessageKind::STAT_DIRECTORY;
-    auto& x = std::get<3>(_data);
+    auto& x = std::get<2>(_data);
     x.clear();
     return x;
 }
 const ReadDirReq& ShardReqContainer::getReadDir() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::READ_DIR, "%s != %s", _kind, ShardMessageKind::READ_DIR);
-    return std::get<4>(_data);
+    return std::get<3>(_data);
 }
 ReadDirReq& ShardReqContainer::setReadDir() {
     _kind = ShardMessageKind::READ_DIR;
-    auto& x = std::get<4>(_data);
+    auto& x = std::get<3>(_data);
     x.clear();
     return x;
 }
 const ConstructFileReq& ShardReqContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardMessageKind::CONSTRUCT_FILE);
-    return std::get<5>(_data);
+    return std::get<4>(_data);
 }
 ConstructFileReq& ShardReqContainer::setConstructFile() {
     _kind = ShardMessageKind::CONSTRUCT_FILE;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<4>(_data);
     x.clear();
     return x;
 }
 const AddSpanInitiateReq& ShardReqContainer::getAddSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE);
-    return std::get<6>(_data);
+    return std::get<5>(_data);
 }
 AddSpanInitiateReq& ShardReqContainer::setAddSpanInitiate() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE;
-    auto& x = std::get<6>(_data);
+    auto& x = std::get<5>(_data);
     x.clear();
     return x;
 }
 const AddSpanCertifyReq& ShardReqContainer::getAddSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_CERTIFY);
-    return std::get<7>(_data);
+    return std::get<6>(_data);
 }
 AddSpanCertifyReq& ShardReqContainer::setAddSpanCertify() {
     _kind = ShardMessageKind::ADD_SPAN_CERTIFY;
-    auto& x = std::get<7>(_data);
+    auto& x = std::get<6>(_data);
     x.clear();
     return x;
 }
 const LinkFileReq& ShardReqContainer::getLinkFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LINK_FILE, "%s != %s", _kind, ShardMessageKind::LINK_FILE);
-    return std::get<8>(_data);
+    return std::get<7>(_data);
 }
 LinkFileReq& ShardReqContainer::setLinkFile() {
     _kind = ShardMessageKind::LINK_FILE;
-    auto& x = std::get<8>(_data);
+    auto& x = std::get<7>(_data);
     x.clear();
     return x;
 }
 const SoftUnlinkFileReq& ShardReqContainer::getSoftUnlinkFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SOFT_UNLINK_FILE, "%s != %s", _kind, ShardMessageKind::SOFT_UNLINK_FILE);
-    return std::get<9>(_data);
+    return std::get<8>(_data);
 }
 SoftUnlinkFileReq& ShardReqContainer::setSoftUnlinkFile() {
     _kind = ShardMessageKind::SOFT_UNLINK_FILE;
-    auto& x = std::get<9>(_data);
+    auto& x = std::get<8>(_data);
     x.clear();
     return x;
 }
 const FileSpansReq& ShardReqContainer::getFileSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
-    return std::get<10>(_data);
+    return std::get<9>(_data);
 }
 FileSpansReq& ShardReqContainer::setFileSpans() {
     _kind = ShardMessageKind::FILE_SPANS;
-    auto& x = std::get<10>(_data);
+    auto& x = std::get<9>(_data);
     x.clear();
     return x;
 }
 const SameDirectoryRenameReq& ShardReqContainer::getSameDirectoryRename() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME);
-    return std::get<11>(_data);
+    return std::get<10>(_data);
 }
 SameDirectoryRenameReq& ShardReqContainer::setSameDirectoryRename() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME;
-    auto& x = std::get<11>(_data);
-    x.clear();
-    return x;
-}
-const SetDirectoryInfoReq& ShardReqContainer::getSetDirectoryInfo() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<12>(_data);
-}
-SetDirectoryInfoReq& ShardReqContainer::setSetDirectoryInfo() {
-    _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = std::get<12>(_data);
-    x.clear();
-    return x;
-}
-const SnapshotLookupReq& ShardReqContainer::getSnapshotLookup() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::SNAPSHOT_LOOKUP, "%s != %s", _kind, ShardMessageKind::SNAPSHOT_LOOKUP);
-    return std::get<13>(_data);
-}
-SnapshotLookupReq& ShardReqContainer::setSnapshotLookup() {
-    _kind = ShardMessageKind::SNAPSHOT_LOOKUP;
-    auto& x = std::get<13>(_data);
-    x.clear();
-    return x;
-}
-const ExpireTransientFileReq& ShardReqContainer::getExpireTransientFile() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::EXPIRE_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::EXPIRE_TRANSIENT_FILE);
-    return std::get<14>(_data);
-}
-ExpireTransientFileReq& ShardReqContainer::setExpireTransientFile() {
-    _kind = ShardMessageKind::EXPIRE_TRANSIENT_FILE;
-    auto& x = std::get<14>(_data);
+    auto& x = std::get<10>(_data);
     x.clear();
     return x;
 }
 const AddInlineSpanReq& ShardReqContainer::getAddInlineSpan() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_INLINE_SPAN, "%s != %s", _kind, ShardMessageKind::ADD_INLINE_SPAN);
-    return std::get<15>(_data);
+    return std::get<11>(_data);
 }
 AddInlineSpanReq& ShardReqContainer::setAddInlineSpan() {
     _kind = ShardMessageKind::ADD_INLINE_SPAN;
+    auto& x = std::get<11>(_data);
+    x.clear();
+    return x;
+}
+const SnapshotLookupReq& ShardReqContainer::getSnapshotLookup() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SNAPSHOT_LOOKUP, "%s != %s", _kind, ShardMessageKind::SNAPSHOT_LOOKUP);
+    return std::get<12>(_data);
+}
+SnapshotLookupReq& ShardReqContainer::setSnapshotLookup() {
+    _kind = ShardMessageKind::SNAPSHOT_LOOKUP;
+    auto& x = std::get<12>(_data);
+    x.clear();
+    return x;
+}
+const StatTransientFileReq& ShardReqContainer::getStatTransientFile() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::STAT_TRANSIENT_FILE);
+    return std::get<13>(_data);
+}
+StatTransientFileReq& ShardReqContainer::setStatTransientFile() {
+    _kind = ShardMessageKind::STAT_TRANSIENT_FILE;
+    auto& x = std::get<13>(_data);
+    x.clear();
+    return x;
+}
+const SetDirectoryInfoReq& ShardReqContainer::getSetDirectoryInfo() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
+    return std::get<14>(_data);
+}
+SetDirectoryInfoReq& ShardReqContainer::setSetDirectoryInfo() {
+    _kind = ShardMessageKind::SET_DIRECTORY_INFO;
+    auto& x = std::get<14>(_data);
+    x.clear();
+    return x;
+}
+const ExpireTransientFileReq& ShardReqContainer::getExpireTransientFile() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::EXPIRE_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::EXPIRE_TRANSIENT_FILE);
+    return std::get<15>(_data);
+}
+ExpireTransientFileReq& ShardReqContainer::setExpireTransientFile() {
+    _kind = ShardMessageKind::EXPIRE_TRANSIENT_FILE;
     auto& x = std::get<15>(_data);
     x.clear();
     return x;
@@ -3607,33 +3607,33 @@ size_t ShardReqContainer::packedSize() const {
         return std::get<0>(_data).packedSize();
     case ShardMessageKind::STAT_FILE:
         return std::get<1>(_data).packedSize();
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        return std::get<2>(_data).packedSize();
     case ShardMessageKind::STAT_DIRECTORY:
-        return std::get<3>(_data).packedSize();
+        return std::get<2>(_data).packedSize();
     case ShardMessageKind::READ_DIR:
-        return std::get<4>(_data).packedSize();
+        return std::get<3>(_data).packedSize();
     case ShardMessageKind::CONSTRUCT_FILE:
-        return std::get<5>(_data).packedSize();
+        return std::get<4>(_data).packedSize();
     case ShardMessageKind::ADD_SPAN_INITIATE:
-        return std::get<6>(_data).packedSize();
+        return std::get<5>(_data).packedSize();
     case ShardMessageKind::ADD_SPAN_CERTIFY:
-        return std::get<7>(_data).packedSize();
+        return std::get<6>(_data).packedSize();
     case ShardMessageKind::LINK_FILE:
-        return std::get<8>(_data).packedSize();
+        return std::get<7>(_data).packedSize();
     case ShardMessageKind::SOFT_UNLINK_FILE:
-        return std::get<9>(_data).packedSize();
+        return std::get<8>(_data).packedSize();
     case ShardMessageKind::FILE_SPANS:
-        return std::get<10>(_data).packedSize();
+        return std::get<9>(_data).packedSize();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
-        return std::get<11>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        return std::get<12>(_data).packedSize();
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
-        return std::get<13>(_data).packedSize();
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
-        return std::get<14>(_data).packedSize();
+        return std::get<10>(_data).packedSize();
     case ShardMessageKind::ADD_INLINE_SPAN:
+        return std::get<11>(_data).packedSize();
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
+        return std::get<12>(_data).packedSize();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return std::get<13>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return std::get<14>(_data).packedSize();
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         return std::get<15>(_data).packedSize();
     case ShardMessageKind::VISIT_DIRECTORIES:
         return std::get<16>(_data).packedSize();
@@ -3686,46 +3686,46 @@ void ShardReqContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::STAT_FILE:
         std::get<1>(_data).pack(buf);
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
+    case ShardMessageKind::STAT_DIRECTORY:
         std::get<2>(_data).pack(buf);
         break;
-    case ShardMessageKind::STAT_DIRECTORY:
+    case ShardMessageKind::READ_DIR:
         std::get<3>(_data).pack(buf);
         break;
-    case ShardMessageKind::READ_DIR:
+    case ShardMessageKind::CONSTRUCT_FILE:
         std::get<4>(_data).pack(buf);
         break;
-    case ShardMessageKind::CONSTRUCT_FILE:
+    case ShardMessageKind::ADD_SPAN_INITIATE:
         std::get<5>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE:
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
         std::get<6>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_CERTIFY:
+    case ShardMessageKind::LINK_FILE:
         std::get<7>(_data).pack(buf);
         break;
-    case ShardMessageKind::LINK_FILE:
+    case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<8>(_data).pack(buf);
         break;
-    case ShardMessageKind::SOFT_UNLINK_FILE:
+    case ShardMessageKind::FILE_SPANS:
         std::get<9>(_data).pack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
         std::get<10>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+    case ShardMessageKind::ADD_INLINE_SPAN:
         std::get<11>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
         std::get<12>(_data).pack(buf);
         break;
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<13>(_data).pack(buf);
         break;
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<14>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         std::get<15>(_data).pack(buf);
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -3799,46 +3799,46 @@ void ShardReqContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
     case ShardMessageKind::STAT_FILE:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
+    case ShardMessageKind::STAT_DIRECTORY:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShardMessageKind::STAT_DIRECTORY:
+    case ShardMessageKind::READ_DIR:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShardMessageKind::READ_DIR:
+    case ShardMessageKind::CONSTRUCT_FILE:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShardMessageKind::CONSTRUCT_FILE:
+    case ShardMessageKind::ADD_SPAN_INITIATE:
         std::get<5>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE:
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
         std::get<6>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_CERTIFY:
+    case ShardMessageKind::LINK_FILE:
         std::get<7>(_data).unpack(buf);
         break;
-    case ShardMessageKind::LINK_FILE:
+    case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<8>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SOFT_UNLINK_FILE:
+    case ShardMessageKind::FILE_SPANS:
         std::get<9>(_data).unpack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
         std::get<10>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+    case ShardMessageKind::ADD_INLINE_SPAN:
         std::get<11>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
         std::get<12>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<13>(_data).unpack(buf);
         break;
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<14>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         std::get<15>(_data).unpack(buf);
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -3911,9 +3911,6 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
     case ShardMessageKind::STAT_FILE:
         out << x.getStatFile();
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        out << x.getStatTransientFile();
-        break;
     case ShardMessageKind::STAT_DIRECTORY:
         out << x.getStatDirectory();
         break;
@@ -3941,17 +3938,20 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << x.getSameDirectoryRename();
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        out << x.getSetDirectoryInfo();
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        out << x.getAddInlineSpan();
         break;
     case ShardMessageKind::SNAPSHOT_LOOKUP:
         out << x.getSnapshotLookup();
         break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        out << x.getStatTransientFile();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        out << x.getSetDirectoryInfo();
+        break;
     case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         out << x.getExpireTransientFile();
-        break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
-        out << x.getAddInlineSpan();
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
         out << x.getVisitDirectories();
@@ -4036,142 +4036,142 @@ StatFileResp& ShardRespContainer::setStatFile() {
     x.clear();
     return x;
 }
-const StatTransientFileResp& ShardRespContainer::getStatTransientFile() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::STAT_TRANSIENT_FILE);
-    return std::get<2>(_data);
-}
-StatTransientFileResp& ShardRespContainer::setStatTransientFile() {
-    _kind = ShardMessageKind::STAT_TRANSIENT_FILE;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
 const StatDirectoryResp& ShardRespContainer::getStatDirectory() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_DIRECTORY, "%s != %s", _kind, ShardMessageKind::STAT_DIRECTORY);
-    return std::get<3>(_data);
+    return std::get<2>(_data);
 }
 StatDirectoryResp& ShardRespContainer::setStatDirectory() {
     _kind = ShardMessageKind::STAT_DIRECTORY;
-    auto& x = std::get<3>(_data);
+    auto& x = std::get<2>(_data);
     x.clear();
     return x;
 }
 const ReadDirResp& ShardRespContainer::getReadDir() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::READ_DIR, "%s != %s", _kind, ShardMessageKind::READ_DIR);
-    return std::get<4>(_data);
+    return std::get<3>(_data);
 }
 ReadDirResp& ShardRespContainer::setReadDir() {
     _kind = ShardMessageKind::READ_DIR;
-    auto& x = std::get<4>(_data);
+    auto& x = std::get<3>(_data);
     x.clear();
     return x;
 }
 const ConstructFileResp& ShardRespContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardMessageKind::CONSTRUCT_FILE);
-    return std::get<5>(_data);
+    return std::get<4>(_data);
 }
 ConstructFileResp& ShardRespContainer::setConstructFile() {
     _kind = ShardMessageKind::CONSTRUCT_FILE;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<4>(_data);
     x.clear();
     return x;
 }
 const AddSpanInitiateResp& ShardRespContainer::getAddSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE);
-    return std::get<6>(_data);
+    return std::get<5>(_data);
 }
 AddSpanInitiateResp& ShardRespContainer::setAddSpanInitiate() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE;
-    auto& x = std::get<6>(_data);
+    auto& x = std::get<5>(_data);
     x.clear();
     return x;
 }
 const AddSpanCertifyResp& ShardRespContainer::getAddSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_CERTIFY);
-    return std::get<7>(_data);
+    return std::get<6>(_data);
 }
 AddSpanCertifyResp& ShardRespContainer::setAddSpanCertify() {
     _kind = ShardMessageKind::ADD_SPAN_CERTIFY;
-    auto& x = std::get<7>(_data);
+    auto& x = std::get<6>(_data);
     x.clear();
     return x;
 }
 const LinkFileResp& ShardRespContainer::getLinkFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LINK_FILE, "%s != %s", _kind, ShardMessageKind::LINK_FILE);
-    return std::get<8>(_data);
+    return std::get<7>(_data);
 }
 LinkFileResp& ShardRespContainer::setLinkFile() {
     _kind = ShardMessageKind::LINK_FILE;
-    auto& x = std::get<8>(_data);
+    auto& x = std::get<7>(_data);
     x.clear();
     return x;
 }
 const SoftUnlinkFileResp& ShardRespContainer::getSoftUnlinkFile() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SOFT_UNLINK_FILE, "%s != %s", _kind, ShardMessageKind::SOFT_UNLINK_FILE);
-    return std::get<9>(_data);
+    return std::get<8>(_data);
 }
 SoftUnlinkFileResp& ShardRespContainer::setSoftUnlinkFile() {
     _kind = ShardMessageKind::SOFT_UNLINK_FILE;
-    auto& x = std::get<9>(_data);
+    auto& x = std::get<8>(_data);
     x.clear();
     return x;
 }
 const FileSpansResp& ShardRespContainer::getFileSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
-    return std::get<10>(_data);
+    return std::get<9>(_data);
 }
 FileSpansResp& ShardRespContainer::setFileSpans() {
     _kind = ShardMessageKind::FILE_SPANS;
-    auto& x = std::get<10>(_data);
+    auto& x = std::get<9>(_data);
     x.clear();
     return x;
 }
 const SameDirectoryRenameResp& ShardRespContainer::getSameDirectoryRename() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME);
-    return std::get<11>(_data);
+    return std::get<10>(_data);
 }
 SameDirectoryRenameResp& ShardRespContainer::setSameDirectoryRename() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME;
-    auto& x = std::get<11>(_data);
-    x.clear();
-    return x;
-}
-const SetDirectoryInfoResp& ShardRespContainer::getSetDirectoryInfo() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<12>(_data);
-}
-SetDirectoryInfoResp& ShardRespContainer::setSetDirectoryInfo() {
-    _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = std::get<12>(_data);
-    x.clear();
-    return x;
-}
-const SnapshotLookupResp& ShardRespContainer::getSnapshotLookup() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::SNAPSHOT_LOOKUP, "%s != %s", _kind, ShardMessageKind::SNAPSHOT_LOOKUP);
-    return std::get<13>(_data);
-}
-SnapshotLookupResp& ShardRespContainer::setSnapshotLookup() {
-    _kind = ShardMessageKind::SNAPSHOT_LOOKUP;
-    auto& x = std::get<13>(_data);
-    x.clear();
-    return x;
-}
-const ExpireTransientFileResp& ShardRespContainer::getExpireTransientFile() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::EXPIRE_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::EXPIRE_TRANSIENT_FILE);
-    return std::get<14>(_data);
-}
-ExpireTransientFileResp& ShardRespContainer::setExpireTransientFile() {
-    _kind = ShardMessageKind::EXPIRE_TRANSIENT_FILE;
-    auto& x = std::get<14>(_data);
+    auto& x = std::get<10>(_data);
     x.clear();
     return x;
 }
 const AddInlineSpanResp& ShardRespContainer::getAddInlineSpan() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_INLINE_SPAN, "%s != %s", _kind, ShardMessageKind::ADD_INLINE_SPAN);
-    return std::get<15>(_data);
+    return std::get<11>(_data);
 }
 AddInlineSpanResp& ShardRespContainer::setAddInlineSpan() {
     _kind = ShardMessageKind::ADD_INLINE_SPAN;
+    auto& x = std::get<11>(_data);
+    x.clear();
+    return x;
+}
+const SnapshotLookupResp& ShardRespContainer::getSnapshotLookup() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SNAPSHOT_LOOKUP, "%s != %s", _kind, ShardMessageKind::SNAPSHOT_LOOKUP);
+    return std::get<12>(_data);
+}
+SnapshotLookupResp& ShardRespContainer::setSnapshotLookup() {
+    _kind = ShardMessageKind::SNAPSHOT_LOOKUP;
+    auto& x = std::get<12>(_data);
+    x.clear();
+    return x;
+}
+const StatTransientFileResp& ShardRespContainer::getStatTransientFile() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::STAT_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::STAT_TRANSIENT_FILE);
+    return std::get<13>(_data);
+}
+StatTransientFileResp& ShardRespContainer::setStatTransientFile() {
+    _kind = ShardMessageKind::STAT_TRANSIENT_FILE;
+    auto& x = std::get<13>(_data);
+    x.clear();
+    return x;
+}
+const SetDirectoryInfoResp& ShardRespContainer::getSetDirectoryInfo() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
+    return std::get<14>(_data);
+}
+SetDirectoryInfoResp& ShardRespContainer::setSetDirectoryInfo() {
+    _kind = ShardMessageKind::SET_DIRECTORY_INFO;
+    auto& x = std::get<14>(_data);
+    x.clear();
+    return x;
+}
+const ExpireTransientFileResp& ShardRespContainer::getExpireTransientFile() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::EXPIRE_TRANSIENT_FILE, "%s != %s", _kind, ShardMessageKind::EXPIRE_TRANSIENT_FILE);
+    return std::get<15>(_data);
+}
+ExpireTransientFileResp& ShardRespContainer::setExpireTransientFile() {
+    _kind = ShardMessageKind::EXPIRE_TRANSIENT_FILE;
     auto& x = std::get<15>(_data);
     x.clear();
     return x;
@@ -4372,33 +4372,33 @@ size_t ShardRespContainer::packedSize() const {
         return std::get<0>(_data).packedSize();
     case ShardMessageKind::STAT_FILE:
         return std::get<1>(_data).packedSize();
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        return std::get<2>(_data).packedSize();
     case ShardMessageKind::STAT_DIRECTORY:
-        return std::get<3>(_data).packedSize();
+        return std::get<2>(_data).packedSize();
     case ShardMessageKind::READ_DIR:
-        return std::get<4>(_data).packedSize();
+        return std::get<3>(_data).packedSize();
     case ShardMessageKind::CONSTRUCT_FILE:
-        return std::get<5>(_data).packedSize();
+        return std::get<4>(_data).packedSize();
     case ShardMessageKind::ADD_SPAN_INITIATE:
-        return std::get<6>(_data).packedSize();
+        return std::get<5>(_data).packedSize();
     case ShardMessageKind::ADD_SPAN_CERTIFY:
-        return std::get<7>(_data).packedSize();
+        return std::get<6>(_data).packedSize();
     case ShardMessageKind::LINK_FILE:
-        return std::get<8>(_data).packedSize();
+        return std::get<7>(_data).packedSize();
     case ShardMessageKind::SOFT_UNLINK_FILE:
-        return std::get<9>(_data).packedSize();
+        return std::get<8>(_data).packedSize();
     case ShardMessageKind::FILE_SPANS:
-        return std::get<10>(_data).packedSize();
+        return std::get<9>(_data).packedSize();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
-        return std::get<11>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        return std::get<12>(_data).packedSize();
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
-        return std::get<13>(_data).packedSize();
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
-        return std::get<14>(_data).packedSize();
+        return std::get<10>(_data).packedSize();
     case ShardMessageKind::ADD_INLINE_SPAN:
+        return std::get<11>(_data).packedSize();
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
+        return std::get<12>(_data).packedSize();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return std::get<13>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return std::get<14>(_data).packedSize();
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         return std::get<15>(_data).packedSize();
     case ShardMessageKind::VISIT_DIRECTORIES:
         return std::get<16>(_data).packedSize();
@@ -4451,46 +4451,46 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::STAT_FILE:
         std::get<1>(_data).pack(buf);
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
+    case ShardMessageKind::STAT_DIRECTORY:
         std::get<2>(_data).pack(buf);
         break;
-    case ShardMessageKind::STAT_DIRECTORY:
+    case ShardMessageKind::READ_DIR:
         std::get<3>(_data).pack(buf);
         break;
-    case ShardMessageKind::READ_DIR:
+    case ShardMessageKind::CONSTRUCT_FILE:
         std::get<4>(_data).pack(buf);
         break;
-    case ShardMessageKind::CONSTRUCT_FILE:
+    case ShardMessageKind::ADD_SPAN_INITIATE:
         std::get<5>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE:
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
         std::get<6>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_CERTIFY:
+    case ShardMessageKind::LINK_FILE:
         std::get<7>(_data).pack(buf);
         break;
-    case ShardMessageKind::LINK_FILE:
+    case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<8>(_data).pack(buf);
         break;
-    case ShardMessageKind::SOFT_UNLINK_FILE:
+    case ShardMessageKind::FILE_SPANS:
         std::get<9>(_data).pack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
         std::get<10>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+    case ShardMessageKind::ADD_INLINE_SPAN:
         std::get<11>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
         std::get<12>(_data).pack(buf);
         break;
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<13>(_data).pack(buf);
         break;
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<14>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         std::get<15>(_data).pack(buf);
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -4564,46 +4564,46 @@ void ShardRespContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
     case ShardMessageKind::STAT_FILE:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
+    case ShardMessageKind::STAT_DIRECTORY:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShardMessageKind::STAT_DIRECTORY:
+    case ShardMessageKind::READ_DIR:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShardMessageKind::READ_DIR:
+    case ShardMessageKind::CONSTRUCT_FILE:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShardMessageKind::CONSTRUCT_FILE:
+    case ShardMessageKind::ADD_SPAN_INITIATE:
         std::get<5>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE:
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
         std::get<6>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_CERTIFY:
+    case ShardMessageKind::LINK_FILE:
         std::get<7>(_data).unpack(buf);
         break;
-    case ShardMessageKind::LINK_FILE:
+    case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<8>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SOFT_UNLINK_FILE:
+    case ShardMessageKind::FILE_SPANS:
         std::get<9>(_data).unpack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
         std::get<10>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+    case ShardMessageKind::ADD_INLINE_SPAN:
         std::get<11>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
         std::get<12>(_data).unpack(buf);
         break;
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<13>(_data).unpack(buf);
         break;
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<14>(_data).unpack(buf);
         break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         std::get<15>(_data).unpack(buf);
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -4676,9 +4676,6 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     case ShardMessageKind::STAT_FILE:
         out << x.getStatFile();
         break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        out << x.getStatTransientFile();
-        break;
     case ShardMessageKind::STAT_DIRECTORY:
         out << x.getStatDirectory();
         break;
@@ -4706,17 +4703,20 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << x.getSameDirectoryRename();
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        out << x.getSetDirectoryInfo();
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        out << x.getAddInlineSpan();
         break;
     case ShardMessageKind::SNAPSHOT_LOOKUP:
         out << x.getSnapshotLookup();
         break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        out << x.getStatTransientFile();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        out << x.getSetDirectoryInfo();
+        break;
     case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         out << x.getExpireTransientFile();
-        break;
-    case ShardMessageKind::ADD_INLINE_SPAN:
-        out << x.getAddInlineSpan();
         break;
     case ShardMessageKind::VISIT_DIRECTORIES:
         out << x.getVisitDirectories();
@@ -5093,91 +5093,91 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
     return out;
 }
 
-const BlockServicesForShardReq& ShuckleReqContainer::getBlockServicesForShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
-    return std::get<0>(_data);
-}
-BlockServicesForShardReq& ShuckleReqContainer::setBlockServicesForShard() {
-    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
-    auto& x = std::get<0>(_data);
-    x.clear();
-    return x;
-}
-const RegisterBlockServicesReq& ShuckleReqContainer::getRegisterBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<1>(_data);
-}
-RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = std::get<1>(_data);
-    x.clear();
-    return x;
-}
 const ShardsReq& ShuckleReqContainer::getShards() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS, "%s != %s", _kind, ShuckleMessageKind::SHARDS);
-    return std::get<2>(_data);
+    return std::get<0>(_data);
 }
 ShardsReq& ShuckleReqContainer::setShards() {
     _kind = ShuckleMessageKind::SHARDS;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
-const RegisterShardReq& ShuckleReqContainer::getRegisterShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<3>(_data);
-}
-RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
-    _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = std::get<3>(_data);
-    x.clear();
-    return x;
-}
-const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<4>(_data);
-}
-AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = std::get<4>(_data);
-    x.clear();
-    return x;
-}
-const RegisterCdcReq& ShuckleReqContainer::getRegisterCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<5>(_data);
-}
-RegisterCdcReq& ShuckleReqContainer::setRegisterCdc() {
-    _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<0>(_data);
     x.clear();
     return x;
 }
 const CdcReq& ShuckleReqContainer::getCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC, "%s != %s", _kind, ShuckleMessageKind::CDC);
-    return std::get<6>(_data);
+    return std::get<1>(_data);
 }
 CdcReq& ShuckleReqContainer::setCdc() {
     _kind = ShuckleMessageKind::CDC;
+    auto& x = std::get<1>(_data);
+    x.clear();
+    return x;
+}
+const BlockServicesForShardReq& ShuckleReqContainer::getBlockServicesForShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
+    return std::get<2>(_data);
+}
+BlockServicesForShardReq& ShuckleReqContainer::setBlockServicesForShard() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
+    auto& x = std::get<2>(_data);
+    x.clear();
+    return x;
+}
+const RegisterBlockServicesReq& ShuckleReqContainer::getRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
+    return std::get<3>(_data);
+}
+RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
+    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
+    auto& x = std::get<3>(_data);
+    x.clear();
+    return x;
+}
+const RegisterShardReq& ShuckleReqContainer::getRegisterShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
+    return std::get<4>(_data);
+}
+RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
+    _kind = ShuckleMessageKind::REGISTER_SHARD;
+    auto& x = std::get<4>(_data);
+    x.clear();
+    return x;
+}
+const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+    return std::get<5>(_data);
+}
+AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+    auto& x = std::get<5>(_data);
+    x.clear();
+    return x;
+}
+const RegisterCdcReq& ShuckleReqContainer::getRegisterCdc() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
+    return std::get<6>(_data);
+}
+RegisterCdcReq& ShuckleReqContainer::setRegisterCdc() {
+    _kind = ShuckleMessageKind::REGISTER_CDC;
     auto& x = std::get<6>(_data);
     x.clear();
     return x;
 }
 size_t ShuckleReqContainer::packedSize() const {
     switch (_kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        return std::get<0>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return std::get<1>(_data).packedSize();
     case ShuckleMessageKind::SHARDS:
-        return std::get<2>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
-        return std::get<3>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
-        return std::get<5>(_data).packedSize();
+        return std::get<0>(_data).packedSize();
     case ShuckleMessageKind::CDC:
+        return std::get<1>(_data).packedSize();
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+        return std::get<2>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        return std::get<3>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_SHARD:
+        return std::get<4>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return std::get<5>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_CDC:
         return std::get<6>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5186,25 +5186,25 @@ size_t ShuckleReqContainer::packedSize() const {
 
 void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::SHARDS:
         std::get<0>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CDC:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS:
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<6>(_data).pack(buf);
         break;
     default:
@@ -5215,25 +5215,25 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
 void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     _kind = kind;
     switch (kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::SHARDS:
         std::get<0>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CDC:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS:
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<5>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::CDC:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<6>(_data).unpack(buf);
         break;
     default:
@@ -5243,14 +5243,17 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
 
 std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     switch (x.kind()) {
+    case ShuckleMessageKind::SHARDS:
+        out << x.getShards();
+        break;
+    case ShuckleMessageKind::CDC:
+        out << x.getCdc();
+        break;
     case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         out << x.getBlockServicesForShard();
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
-        break;
-    case ShuckleMessageKind::SHARDS:
-        out << x.getShards();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
@@ -5261,100 +5264,97 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     case ShuckleMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
         break;
-    case ShuckleMessageKind::CDC:
-        out << x.getCdc();
-        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const BlockServicesForShardResp& ShuckleRespContainer::getBlockServicesForShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
-    return std::get<0>(_data);
-}
-BlockServicesForShardResp& ShuckleRespContainer::setBlockServicesForShard() {
-    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
-    auto& x = std::get<0>(_data);
-    x.clear();
-    return x;
-}
-const RegisterBlockServicesResp& ShuckleRespContainer::getRegisterBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<1>(_data);
-}
-RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = std::get<1>(_data);
-    x.clear();
-    return x;
-}
 const ShardsResp& ShuckleRespContainer::getShards() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS, "%s != %s", _kind, ShuckleMessageKind::SHARDS);
-    return std::get<2>(_data);
+    return std::get<0>(_data);
 }
 ShardsResp& ShuckleRespContainer::setShards() {
     _kind = ShuckleMessageKind::SHARDS;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
-const RegisterShardResp& ShuckleRespContainer::getRegisterShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<3>(_data);
-}
-RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
-    _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = std::get<3>(_data);
-    x.clear();
-    return x;
-}
-const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<4>(_data);
-}
-AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = std::get<4>(_data);
-    x.clear();
-    return x;
-}
-const RegisterCdcResp& ShuckleRespContainer::getRegisterCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<5>(_data);
-}
-RegisterCdcResp& ShuckleRespContainer::setRegisterCdc() {
-    _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<0>(_data);
     x.clear();
     return x;
 }
 const CdcResp& ShuckleRespContainer::getCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC, "%s != %s", _kind, ShuckleMessageKind::CDC);
-    return std::get<6>(_data);
+    return std::get<1>(_data);
 }
 CdcResp& ShuckleRespContainer::setCdc() {
     _kind = ShuckleMessageKind::CDC;
+    auto& x = std::get<1>(_data);
+    x.clear();
+    return x;
+}
+const BlockServicesForShardResp& ShuckleRespContainer::getBlockServicesForShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
+    return std::get<2>(_data);
+}
+BlockServicesForShardResp& ShuckleRespContainer::setBlockServicesForShard() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
+    auto& x = std::get<2>(_data);
+    x.clear();
+    return x;
+}
+const RegisterBlockServicesResp& ShuckleRespContainer::getRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
+    return std::get<3>(_data);
+}
+RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
+    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
+    auto& x = std::get<3>(_data);
+    x.clear();
+    return x;
+}
+const RegisterShardResp& ShuckleRespContainer::getRegisterShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
+    return std::get<4>(_data);
+}
+RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
+    _kind = ShuckleMessageKind::REGISTER_SHARD;
+    auto& x = std::get<4>(_data);
+    x.clear();
+    return x;
+}
+const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+    return std::get<5>(_data);
+}
+AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+    auto& x = std::get<5>(_data);
+    x.clear();
+    return x;
+}
+const RegisterCdcResp& ShuckleRespContainer::getRegisterCdc() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
+    return std::get<6>(_data);
+}
+RegisterCdcResp& ShuckleRespContainer::setRegisterCdc() {
+    _kind = ShuckleMessageKind::REGISTER_CDC;
     auto& x = std::get<6>(_data);
     x.clear();
     return x;
 }
 size_t ShuckleRespContainer::packedSize() const {
     switch (_kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        return std::get<0>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return std::get<1>(_data).packedSize();
     case ShuckleMessageKind::SHARDS:
-        return std::get<2>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
-        return std::get<3>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
-        return std::get<5>(_data).packedSize();
+        return std::get<0>(_data).packedSize();
     case ShuckleMessageKind::CDC:
+        return std::get<1>(_data).packedSize();
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+        return std::get<2>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        return std::get<3>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_SHARD:
+        return std::get<4>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return std::get<5>(_data).packedSize();
+    case ShuckleMessageKind::REGISTER_CDC:
         return std::get<6>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5363,25 +5363,25 @@ size_t ShuckleRespContainer::packedSize() const {
 
 void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::SHARDS:
         std::get<0>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CDC:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS:
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<6>(_data).pack(buf);
         break;
     default:
@@ -5392,25 +5392,25 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
 void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     _kind = kind;
     switch (kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::SHARDS:
         std::get<0>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CDC:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS:
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<5>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::CDC:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<6>(_data).unpack(buf);
         break;
     default:
@@ -5420,14 +5420,17 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
 
 std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     switch (x.kind()) {
+    case ShuckleMessageKind::SHARDS:
+        out << x.getShards();
+        break;
+    case ShuckleMessageKind::CDC:
+        out << x.getCdc();
+        break;
     case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
         out << x.getBlockServicesForShard();
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
-        break;
-    case ShuckleMessageKind::SHARDS:
-        out << x.getShards();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
@@ -5437,9 +5440,6 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
-        break;
-    case ShuckleMessageKind::CDC:
-        out << x.getCdc();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -5550,7 +5550,7 @@ bool ConstructFileEntry::operator==(const ConstructFileEntry& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ConstructFileEntry& x) {
-    out << "ConstructFileEntry(" << "Type=" << (int)x.type << ", " << "DeadlineTime=" << x.deadlineTime << ", " << "Note=" << x.note << ")";
+    out << "ConstructFileEntry(" << "Type=" << (int)x.type << ", " << "DeadlineTime=" << x.deadlineTime << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
     return out;
 }
 
@@ -5576,7 +5576,7 @@ bool LinkFileEntry::operator==(const LinkFileEntry& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LinkFileEntry& x) {
-    out << "LinkFileEntry(" << "FileId=" << x.fileId << ", " << "OwnerId=" << x.ownerId << ", " << "Name=" << x.name << ")";
+    out << "LinkFileEntry(" << "FileId=" << x.fileId << ", " << "OwnerId=" << x.ownerId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -5610,7 +5610,7 @@ bool SameDirectoryRenameEntry::operator==(const SameDirectoryRenameEntry& rhs) c
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameEntry& x) {
-    out << "SameDirectoryRenameEntry(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "OldName=" << x.oldName << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewName=" << x.newName << ")";
+    out << "SameDirectoryRenameEntry(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "OldName=" << GoLangQuotedStringFmt(x.oldName.data(), x.oldName.size()) << ", " << "OldCreationTime=" << x.oldCreationTime << ", " << "NewName=" << GoLangQuotedStringFmt(x.newName.data(), x.newName.size()) << ")";
     return out;
 }
 
@@ -5640,7 +5640,7 @@ bool SoftUnlinkFileEntry::operator==(const SoftUnlinkFileEntry& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileEntry& x) {
-    out << "SoftUnlinkFileEntry(" << "OwnerId=" << x.ownerId << ", " << "FileId=" << x.fileId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "SoftUnlinkFileEntry(" << "OwnerId=" << x.ownerId << ", " << "FileId=" << x.fileId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -5692,7 +5692,7 @@ bool CreateLockedCurrentEdgeEntry::operator==(const CreateLockedCurrentEdgeEntry
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeEntry& x) {
-    out << "CreateLockedCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "TargetId=" << x.targetId << ")";
+    out << "CreateLockedCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "TargetId=" << x.targetId << ")";
     return out;
 }
 
@@ -5726,7 +5726,7 @@ bool UnlockCurrentEdgeEntry::operator==(const UnlockCurrentEdgeEntry& rhs) const
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const UnlockCurrentEdgeEntry& x) {
-    out << "UnlockCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ", " << "WasMoved=" << x.wasMoved << ")";
+    out << "UnlockCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ", " << "WasMoved=" << x.wasMoved << ")";
     return out;
 }
 
@@ -5756,7 +5756,7 @@ bool LockCurrentEdgeEntry::operator==(const LockCurrentEdgeEntry& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LockCurrentEdgeEntry& x) {
-    out << "LockCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ")";
+    out << "LockCurrentEdgeEntry(" << "DirId=" << x.dirId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ", " << "TargetId=" << x.targetId << ")";
     return out;
 }
 
@@ -5870,7 +5870,7 @@ bool RemoveNonOwnedEdgeEntry::operator==(const RemoveNonOwnedEdgeEntry& rhs) con
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x) {
-    out << "RemoveNonOwnedEdgeEntry(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "RemoveNonOwnedEdgeEntry(" << "DirId=" << x.dirId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -5900,7 +5900,7 @@ bool SameShardHardFileUnlinkEntry::operator==(const SameShardHardFileUnlinkEntry
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x) {
-    out << "SameShardHardFileUnlinkEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "SameShardHardFileUnlinkEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -6076,7 +6076,7 @@ bool MakeFileTransientEntry::operator==(const MakeFileTransientEntry& rhs) const
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x) {
-    out << "MakeFileTransientEntry(" << "Id=" << x.id << ", " << "Note=" << x.note << ")";
+    out << "MakeFileTransientEntry(" << "Id=" << x.id << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
     return out;
 }
 
@@ -6132,7 +6132,7 @@ bool RemoveOwnedSnapshotFileEdgeEntry::operator==(const RemoveOwnedSnapshotFileE
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEntry& x) {
-    out << "RemoveOwnedSnapshotFileEdgeEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    out << "RemoveOwnedSnapshotFileEdgeEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 

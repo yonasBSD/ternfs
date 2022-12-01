@@ -149,13 +149,8 @@ func registerPeriodically(
 }
 
 func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) msgs.ErrCode {
-	// compute mac
-	w := bytes.NewBuffer([]byte{})
-	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
-	w.Write([]byte{'e'})
-	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
-	expectedMac := lib.CBCMAC(cipher, w.Bytes())
-	if expectedMac != req.Certificate {
+	expectedMac, good := lib.CheckBlockEraseCertificate(blockServiceId, cipher, req)
+	if !good {
 		log.RaiseAlert(fmt.Errorf("bad MAC, got %v, expected %v", req.Certificate, expectedMac))
 		return msgs.BAD_CERTIFICATE
 	}
@@ -221,17 +216,10 @@ func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePat
 }
 
 func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) msgs.ErrCode {
-	// Compute mac
-	w := bytes.NewBuffer([]byte{})
-	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
-	w.Write([]byte{'w'})
-	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
-	binary.Write(w, binary.LittleEndian, uint32(req.Crc))
-	binary.Write(w, binary.LittleEndian, uint32(req.Size))
-	expectedMac := lib.CBCMAC(cipher, w.Bytes())
-	if expectedMac != req.Certificate {
-		log.Debug("mac computed for %v %v %v %v", uint64(blockServiceId), uint64(req.BlockId), uint32(req.Crc), uint32(req.Size))
-		log.RaiseAlert(fmt.Errorf("bad MAC for %v, got %v, expected %v", w.Bytes(), req.Certificate, expectedMac))
+	expectedMac, good := lib.CheckBlockWriteCertificate(cipher, blockServiceId, req)
+	if !good {
+		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
+		log.RaiseAlert(fmt.Errorf("bad MAC, got %v, expected %v", req.Certificate, expectedMac))
 		return msgs.BAD_CERTIFICATE
 	}
 	return 0
@@ -349,6 +337,7 @@ NextRequest:
 			continue
 		}
 		log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
+		log.Trace("req %+v", req)
 		switch whichReq := req.(type) {
 		case *msgs.EraseBlockReq:
 			if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != 0 {
@@ -647,6 +636,7 @@ func main() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
 		for {
 			conn, err := listener1.Accept()
+			log.Trace("new conn %+v", conn)
 			if err != nil {
 				terminateChan <- err
 				return
@@ -662,6 +652,7 @@ func main() {
 			defer func() { handleRecover(log, terminateChan, recover()) }()
 			for {
 				conn, err := listener2.Accept()
+				log.Trace("new conn %+v", conn)
 				if err != nil {
 					terminateChan <- err
 					return

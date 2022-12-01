@@ -1,11 +1,29 @@
+#ifndef __KERNEL__
+
 #include "crc32c.h"
 
 #include <immintrin.h>
 #include <stdint.h>
 #include <string.h>
 
+#define kernel_static
+
+typedef uint8_t u8;
+typedef uint32_t u32;
+
+#else
+
+#define kernel_static static
+
+#endif
+
+#ifdef __clang__
 __attribute__((no_sanitize("integer")))
-static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_blocks) {
+#endif
+#ifdef __KERNEL__
+__attribute__((target("crc32,pclmul")))
+#endif
+static u32 crc32_fusion_kernel(u32 acc_a, const char* buf, size_t n_blocks) {
     size_t stride = n_blocks * 24 + 8;
     // Four chunks:
     //  Chunk A: 0 through stride
@@ -18,8 +36,8 @@ static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_bl
     __m128i x2 = _mm_loadu_si128((__m128i*)(buf2 + 16));
     __m128i x3 = _mm_loadu_si128((__m128i*)(buf2 + 32));
     __m128i x4 = _mm_loadu_si128((__m128i*)(buf2 + 48));
-    uint32_t acc_b = 0;
-    uint32_t acc_c = 0;
+    u32 acc_b = 0;
+    u32 acc_c = 0;
     // Parallel fold remaining blocks of 64 from D, and 24 from each of A/B/C.
     // k1 == magic(4*128+32-1)
     // k2 == magic(4*128-32-1)
@@ -100,16 +118,16 @@ static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_bl
     stack_a = ~stack_a;
     stack_b = ~stack_b;
     stack_c = ~stack_c;
-    uint32_t magic_a = ((uint32_t)0x80000000) >> (bits_a & 31); bits_a >>= 5;
-    uint32_t magic_b = ((uint32_t)0x80000000) >> (bits_b & 31); bits_b >>= 5;
-    uint32_t magic_c = ((uint32_t)0x80000000) >> (bits_c & 31); bits_c >>= 5;
+    u32 magic_a = ((u32)0x80000000) >> (bits_a & 31); bits_a >>= 5;
+    u32 magic_b = ((u32)0x80000000) >> (bits_b & 31); bits_b >>= 5;
+    u32 magic_c = ((u32)0x80000000) >> (bits_c & 31); bits_c >>= 5;
     bits_a -= bits_b;
     bits_b -= bits_c;
     for (; bits_c; --bits_c) magic_a = _mm_crc32_u32(magic_a, 0), magic_b = _mm_crc32_u32(magic_b, 0), magic_c = _mm_crc32_u32(magic_c, 0);
     for (; bits_b; --bits_b) magic_a = _mm_crc32_u32(magic_a, 0), magic_b = _mm_crc32_u32(magic_b, 0);
     for (; bits_a; --bits_a) magic_a = _mm_crc32_u32(magic_a, 0);
     for (;;) {
-        uint32_t low = stack_a & 1;
+        u32 low = stack_a & 1;
         if (!(stack_a >>= 1)) break;
         __m128i x = _mm_cvtsi32_si128(magic_a);
         uint64_t y = _mm_cvtsi128_si64(_mm_clmulepi64_si128(x, x, 0));
@@ -130,13 +148,18 @@ static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_bl
     x1 = _mm_xor_si128(x1, x5);
     uint64_t abc = _mm_cvtsi128_si64(_mm_xor_si128(_mm_xor_si128(vec_c, vec_a), vec_b));
     // Apply missing <<32 and fold down to 32-bits.
-    uint32_t crc = _mm_crc32_u64(0, _mm_extract_epi64(x1, 0));
+    u32 crc = _mm_crc32_u64(0, _mm_extract_epi64(x1, 0));
     crc = _mm_crc32_u64(crc, abc ^ _mm_extract_epi64(x1, 1));
     return crc;
 }
 
+#ifdef __clang__
 __attribute__((no_sanitize("integer")))
-uint32_t crc32c(uint32_t crc, const char* buf, size_t length) {
+#endif
+#ifdef __KERNEL__
+__attribute__((target("crc32")))
+#endif
+kernel_static u32 crc32c(u32 crc, const char* buf, size_t length) {
     crc = ~crc; // preset to -1 (distinguish leading zeros)
     if (length >= 31) {
         size_t n_blocks = (length - 16) / 136;
@@ -149,7 +172,7 @@ uint32_t crc32c(uint32_t crc, const char* buf, size_t length) {
         const char* kernel_start = kernel_end - kernel_length;
         length -= kernel_start - buf;
         for (; buf != kernel_start; ++buf) {
-            crc = _mm_crc32_u8(crc, *(const uint8_t*)buf);
+            crc = _mm_crc32_u8(crc, *(const u8*)buf);
         }
         if (n_blocks) {
             length -= kernel_length;
@@ -161,17 +184,34 @@ uint32_t crc32c(uint32_t crc, const char* buf, size_t length) {
         crc = _mm_crc32_u64(crc, *(const uint64_t*)buf);
     }
     for (; length; --length, ++buf) {
-        crc = _mm_crc32_u8(crc, *(const uint8_t*)buf);
+        crc = _mm_crc32_u8(crc, *(const u8*)buf);
     }
     return ~crc; // post-invert -- distinguish scaled multiples
 }
 
-#include "iscsi.hpp"
+#ifdef __clang__
+__attribute__((no_sanitize("integer")))
+#endif
+#ifdef __KERNEL__
+__attribute__((target("crc32")))
+#endif
+kernel_static u32 crc32c_simple(u32 crc, const char* buf, size_t length) {
+    crc = ~crc; // preset to -1 (distinguish leading zeros)
+    for (; length >= 8; length -= 8, buf += 8) {
+        crc = _mm_crc32_u64(crc, *(const uint64_t*)buf);
+    }
+    for (; length; --length, ++buf) {
+        crc = _mm_crc32_u8(crc, *(const u8*)buf);
+    }
+    return ~crc; // post-invert -- distinguish scaled multiples
+}
+
+#include "iscsi.h"
 
 // In the comments below, multiplication is meant to be modulo ISCSI_POLY.
 
 // Stores x^2^0, ..., x^2^31. Can be generated with `mult_mod_p`, see tables.cpp.
-static uint32_t CRC_POWER_TABLE[31] = {
+static u32 CRC_POWER_TABLE[31] = {
     0x40000000, 0x20000000, 0x08000000, 0x00800000, 0x00008000, 
     0x82f63b78, 0x6ea2d55c, 0x18b8ea18, 0x510ac59a, 0xb82be955, 
     0xb8fdb1e7, 0x88e56f72, 0x74c360a4, 0xe4172b16, 0x0d65762a, 
@@ -182,7 +222,7 @@ static uint32_t CRC_POWER_TABLE[31] = {
 };
 
 // Stores x^-(2^0), ..., x^-(2^31). Can be generated with `mult_mod_p`, see tables.cpp.
-static uint32_t CRC_INVERSE_POWER_TABLE[31] = {
+static u32 CRC_INVERSE_POWER_TABLE[31] = {
     0x05ec76f1, 0x0bd8ede2, 0x2f63b788, 0xfde39562, 0xbef0965e, 
     0xd610d67e, 0xe67cce65, 0xa268b79e, 0x134fb088, 0x32998d96, 
     0xcedac2cc, 0x70118575, 0x0e004a40, 0xa7864c8b, 0xbc7be916, 
@@ -193,7 +233,7 @@ static uint32_t CRC_INVERSE_POWER_TABLE[31] = {
 };
 
 // Return x^(n * 2^k), or in other words, the factor to use to extend a CRC with zeros.
-static uint32_t x2n_mod_p(size_t n, uint32_t k) {
+static u32 x2n_mod_p(size_t n, u32 k) {
     // CRC_POWER_TABLE has all powers of two can multiply combinations
     // of these to achieve any power.
 
@@ -210,7 +250,7 @@ static uint32_t x2n_mod_p(size_t n, uint32_t k) {
     // We walk along the p_is above and keep adding to the result.
     //
     // Note that 2^2^(31 + k) = 2^2^k TODO clarify
-    uint32_t p = 1u << 31;
+    u32 p = 1u << 31;
     for (; n != 0; n >>= 1, k++) {
         if (n & 1) {
             // p(x) = p(x) * 2^(k % 31)
@@ -221,8 +261,8 @@ static uint32_t x2n_mod_p(size_t n, uint32_t k) {
 }
 
 // Return x^-(n * 2^k), or in other words, the factor to use to extend a CRC with zeros.
-static uint32_t x2n_mod_p_inv(size_t n, uint32_t k) {
-    uint32_t p = 1u << 31;
+static u32 x2n_mod_p_inv(size_t n, u32 k) {
+    u32 p = 1u << 31;
     for (; n != 0; n >>= 1, k++) {
         if (n & 1) {
             p = crc32c_mult_mod_p(CRC_INVERSE_POWER_TABLE[k & 0x1F], p);
@@ -231,7 +271,7 @@ static uint32_t x2n_mod_p_inv(size_t n, uint32_t k) {
     return p;
 }
 
-uint32_t crc32c_zero_extend(uint32_t crc, ssize_t zeros) {
+kernel_static u32 crc32c_zero_extend(u32 crc, ssize_t zeros) {
     if (zeros > 0) {
         return ~crc32c_mult_mod_p(x2n_mod_p(zeros, 3), ~crc);
     } else {
@@ -239,17 +279,17 @@ uint32_t crc32c_zero_extend(uint32_t crc, ssize_t zeros) {
     }
 }
 
-uint32_t crc32c_append(uint32_t crc_a, uint32_t crc_b, size_t len_b) {
+kernel_static u32 crc32c_append(u32 crc_a, u32 crc_b, size_t len_b) {
     // We need to extend crc_a with len_b*8 zeros (len_b is the number
     // of bytes) (without the inversion).
     // This amounts to performing `crc_a * x^(len_b*8)`.
     return crc32c_mult_mod_p(x2n_mod_p(len_b, 3), crc_a) ^ crc_b;
 }
 
-uint32_t crc32c_xor(uint32_t crc_a, uint32_t crc_b, size_t len) {
+kernel_static u32 crc32c_xor(u32 crc_a, u32 crc_b, size_t len) {
     // We need to to extend crc_a with the crc of len*8 bits.
     // We could do this in 32 steps rather than 32+32 with a dedicated
     // table, but probably doesn't matter.
-    uint32_t crc_0 = ~crc32c_mult_mod_p(~(uint32_t)0, x2n_mod_p(len, 3));
+    u32 crc_0 = ~crc32c_mult_mod_p(~(u32)0, x2n_mod_p(len, 3));
     return crc_a ^ crc_b ^ crc_0;
 }

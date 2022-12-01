@@ -1,15 +1,18 @@
 package main
 
 import (
+	"crypto/aes"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -339,6 +342,44 @@ func main() {
 	commands["cp-outof"] = commandSpec{
 		flags: cpOutofCmd,
 		run:   cpOutofRun,
+	}
+
+	blockReqCmd := flag.NewFlagSet("write-block-req", flag.ExitOnError)
+	blockReqBlockId := blockReqCmd.Uint64("b", 0, "Block id")
+	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
+	blockReqFile := blockReqCmd.String("file", "", "")
+	blockReqRun := func() {
+		resp, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			panic(err)
+		}
+		blockServices := resp.(*msgs.AllBlockServicesResp)
+		var blockServiceInfo msgs.BlockServiceInfo
+		for _, bsInfo := range blockServices.BlockServices {
+			if bsInfo.Id == msgs.BlockServiceId(*blockReqBlockService) {
+				blockServiceInfo = bsInfo
+				break
+			}
+		}
+		cipher, err := aes.NewCipher(blockServiceInfo.SecretKey[:])
+		if err != nil {
+			panic(err)
+		}
+		fileContents, err := ioutil.ReadFile(*blockReqFile)
+		if err != nil {
+			panic(err)
+		}
+		req := msgs.WriteBlockReq{
+			BlockId: msgs.BlockId(*blockReqBlockId),
+			Crc:     msgs.Crc(crc32c.Sum(0, fileContents)),
+			Size:    uint32(len(fileContents)),
+		}
+		req.Certificate = lib.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
+		log.Info("request: %+v", req)
+	}
+	commands["write-block-req"] = commandSpec{
+		flags: blockReqCmd,
+		run:   blockReqRun,
 	}
 
 	flag.Parse()

@@ -30,6 +30,7 @@ int main() {
     for (int i = 0; i < 1000; i++) {
         auto s1 = randString(1 + wyhash64(&rand)%100);
         uint32_t crc1 = crc32c(0, (const char*)s1.data(), s1.size());
+        ASSERT(crc1 == crc32c_append(0, crc1, s1.size()));
         auto s2 = randString(1 + wyhash64(&rand)%100);
         uint32_t crc2 = crc32c(0, (const char*)s2.data(), s2.size());
         std::vector<uint8_t> s = s1;

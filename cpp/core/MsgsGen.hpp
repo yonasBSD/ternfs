@@ -68,7 +68,6 @@ enum class ShardMessageKind : uint8_t {
     ERROR = 0,
     LOOKUP = 1,
     STAT_FILE = 2,
-    STAT_TRANSIENT_FILE = 3,
     STAT_DIRECTORY = 4,
     READ_DIR = 5,
     CONSTRUCT_FILE = 6,
@@ -78,10 +77,11 @@ enum class ShardMessageKind : uint8_t {
     SOFT_UNLINK_FILE = 10,
     FILE_SPANS = 11,
     SAME_DIRECTORY_RENAME = 12,
-    SET_DIRECTORY_INFO = 13,
-    SNAPSHOT_LOOKUP = 14,
-    EXPIRE_TRANSIENT_FILE = 15,
     ADD_INLINE_SPAN = 16,
+    SNAPSHOT_LOOKUP = 14,
+    STAT_TRANSIENT_FILE = 3,
+    SET_DIRECTORY_INFO = 13,
+    EXPIRE_TRANSIENT_FILE = 15,
     VISIT_DIRECTORIES = 112,
     VISIT_FILES = 113,
     VISIT_TRANSIENT_FILES = 114,
@@ -119,72 +119,66 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
 
 enum class ShuckleMessageKind : uint8_t {
     ERROR = 0,
+    SHARDS = 3,
+    CDC = 7,
     BLOCK_SERVICES_FOR_SHARD = 1,
     REGISTER_BLOCK_SERVICES = 2,
-    SHARDS = 3,
     REGISTER_SHARD = 4,
     ALL_BLOCK_SERVICES = 5,
     REGISTER_CDC = 6,
-    CDC = 7,
 };
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
 enum class BlocksMessageKind : uint8_t {
     ERROR = 0,
-    ERASE_BLOCK = 1,
     FETCH_BLOCK = 2,
     WRITE_BLOCK = 3,
     BLOCK_WRITTEN = 4,
+    ERASE_BLOCK = 1,
 };
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
 
-struct TransientFile {
-    InodeId id;
-    BincodeFixedBytes<8> cookie;
-    EggsTime deadlineTime;
+struct DirectoryInfoEntry {
+    uint8_t tag;
+    BincodeBytes body;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
+    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // tag + body
 
-    TransientFile() { clear(); }
+    DirectoryInfoEntry() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += 8; // id
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // cookie
-        _size += 8; // deadlineTime
+        _size += 1; // tag
+        _size += body.packedSize(); // body
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const TransientFile&rhs) const;
+    bool operator==(const DirectoryInfoEntry&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const TransientFile& x);
+std::ostream& operator<<(std::ostream& out, const DirectoryInfoEntry& x);
 
-struct FetchedBlock {
-    uint8_t blockServiceIx;
-    uint64_t blockId;
-    Crc crc;
+struct DirectoryInfo {
+    BincodeList<DirectoryInfoEntry> entries;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 4; // blockServiceIx + blockId + crc
+    static constexpr uint16_t STATIC_SIZE = BincodeList<DirectoryInfoEntry>::STATIC_SIZE; // entries
 
-    FetchedBlock() { clear(); }
+    DirectoryInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += 1; // blockServiceIx
-        _size += 8; // blockId
-        _size += 4; // crc
+        _size += entries.packedSize(); // entries
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const FetchedBlock&rhs) const;
+    bool operator==(const DirectoryInfo&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const FetchedBlock& x);
+std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x);
 
 struct CurrentEdge {
     InodeId targetId;
@@ -210,33 +204,6 @@ struct CurrentEdge {
 };
 
 std::ostream& operator<<(std::ostream& out, const CurrentEdge& x);
-
-struct Edge {
-    bool current;
-    InodeIdExtra targetId;
-    uint64_t nameHash;
-    BincodeBytes name;
-    EggsTime creationTime;
-
-    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + targetId + nameHash + name + creationTime
-
-    Edge() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 1; // current
-        _size += 8; // targetId
-        _size += 8; // nameHash
-        _size += name.packedSize(); // name
-        _size += 8; // creationTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const Edge&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const Edge& x);
 
 struct BlockInfo {
     BincodeFixedBytes<4> blockServiceIp1;
@@ -268,6 +235,184 @@ struct BlockInfo {
 };
 
 std::ostream& operator<<(std::ostream& out, const BlockInfo& x);
+
+struct BlockProof {
+    uint64_t blockId;
+    BincodeFixedBytes<8> proof;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + proof
+
+    BlockProof() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // blockId
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlockProof&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlockProof& x);
+
+struct BlockService {
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
+    BlockServiceId id;
+    uint8_t flags;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip1 + port1 + ip2 + port2 + id + flags
+
+    BlockService() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
+        _size += 8; // id
+        _size += 1; // flags
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlockService&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlockService& x);
+
+struct ShardInfo {
+    BincodeFixedBytes<4> ip;
+    uint16_t port;
+    EggsTime lastSeen;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
+
+    ShardInfo() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
+        _size += 2; // port
+        _size += 8; // lastSeen
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardInfo& x);
+
+struct BlockPolicyEntry {
+    uint8_t storageClass;
+    uint32_t minSize;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 4; // storageClass + minSize
+
+    BlockPolicyEntry() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 1; // storageClass
+        _size += 4; // minSize
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlockPolicyEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlockPolicyEntry& x);
+
+struct SpanPolicyEntry {
+    uint32_t maxSize;
+    Parity parity;
+
+    static constexpr uint16_t STATIC_SIZE = 4 + 1; // maxSize + parity
+
+    SpanPolicyEntry() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 4; // maxSize
+        _size += 1; // parity
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SpanPolicyEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SpanPolicyEntry& x);
+
+struct StripePolicy {
+    uint32_t targetStripeSize;
+
+    static constexpr uint16_t STATIC_SIZE = 4; // targetStripeSize
+
+    StripePolicy() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 4; // targetStripeSize
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const StripePolicy&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const StripePolicy& x);
+
+struct SnapshotLookupEdge {
+    InodeIdExtra targetId;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
+
+    SnapshotLookupEdge() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // targetId
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupEdge&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
+
+struct FetchedBlock {
+    uint8_t blockServiceIx;
+    uint64_t blockId;
+    Crc crc;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 4; // blockServiceIx + blockId + crc
+
+    FetchedBlock() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 1; // blockServiceIx
+        _size += 8; // blockId
+        _size += 4; // crc
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FetchedBlock&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FetchedBlock& x);
 
 struct FetchedSpanHeader {
     uint64_t byteOffset;
@@ -448,95 +593,55 @@ static std::ostream& operator<<(std::ostream& out, const FetchedSpan& span) {
     out << ")";
     return out;
 }
-struct BlockProof {
-    uint64_t blockId;
-    BincodeFixedBytes<8> proof;
+struct TransientFile {
+    InodeId id;
+    BincodeFixedBytes<8> cookie;
+    EggsTime deadlineTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + proof
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
 
-    BlockProof() { clear(); }
+    TransientFile() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += 8; // blockId
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockProof&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockProof& x);
-
-struct DirectoryInfoEntry {
-    uint8_t tag;
-    BincodeBytes body;
-
-    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // tag + body
-
-    DirectoryInfoEntry() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 1; // tag
-        _size += body.packedSize(); // body
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const DirectoryInfoEntry&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const DirectoryInfoEntry& x);
-
-struct DirectoryInfo {
-    BincodeList<DirectoryInfoEntry> entries;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeList<DirectoryInfoEntry>::STATIC_SIZE; // entries
-
-    DirectoryInfo() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += entries.packedSize(); // entries
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const DirectoryInfo&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x);
-
-struct BlockService {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
-    BlockServiceId id;
-    uint8_t flags;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip1 + port1 + ip2 + port2 + id + flags
-
-    BlockService() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
         _size += 8; // id
-        _size += 1; // flags
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // cookie
+        _size += 8; // deadlineTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockService&rhs) const;
+    bool operator==(const TransientFile&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockService& x);
+std::ostream& operator<<(std::ostream& out, const TransientFile& x);
+
+struct Edge {
+    bool current;
+    InodeIdExtra targetId;
+    uint64_t nameHash;
+    BincodeBytes name;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + targetId + nameHash + name + creationTime
+
+    Edge() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 1; // current
+        _size += 8; // targetId
+        _size += 8; // nameHash
+        _size += name.packedSize(); // name
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const Edge&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const Edge& x);
 
 struct FullReadDirCursor {
     bool current;
@@ -584,27 +689,6 @@ struct EntryNewBlockInfo {
 
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
-struct SnapshotLookupEdge {
-    InodeIdExtra targetId;
-    EggsTime creationTime;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
-
-    SnapshotLookupEdge() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // targetId
-        _size += 8; // creationTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupEdge&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
-
 struct BlockServiceInfo {
     BlockServiceId id;
     BincodeFixedBytes<4> ip1;
@@ -648,29 +732,6 @@ struct BlockServiceInfo {
 
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x);
 
-struct ShardInfo {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
-    EggsTime lastSeen;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
-
-    ShardInfo() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
-        _size += 8; // lastSeen
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ShardInfo&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ShardInfo& x);
-
 struct RegisterShardInfo {
     BincodeFixedBytes<4> ip;
     uint16_t port;
@@ -692,27 +753,6 @@ struct RegisterShardInfo {
 
 std::ostream& operator<<(std::ostream& out, const RegisterShardInfo& x);
 
-struct SpanPolicyEntry {
-    uint32_t maxSize;
-    Parity parity;
-
-    static constexpr uint16_t STATIC_SIZE = 4 + 1; // maxSize + parity
-
-    SpanPolicyEntry() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 4; // maxSize
-        _size += 1; // parity
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SpanPolicyEntry&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SpanPolicyEntry& x);
-
 struct SpanPolicy {
     BincodeList<SpanPolicyEntry> entries;
 
@@ -731,27 +771,6 @@ struct SpanPolicy {
 };
 
 std::ostream& operator<<(std::ostream& out, const SpanPolicy& x);
-
-struct BlockPolicyEntry {
-    uint8_t storageClass;
-    uint32_t minSize;
-
-    static constexpr uint16_t STATIC_SIZE = 1 + 4; // storageClass + minSize
-
-    BlockPolicyEntry() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 1; // storageClass
-        _size += 4; // minSize
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockPolicyEntry&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockPolicyEntry& x);
 
 struct BlockPolicy {
     BincodeList<BlockPolicyEntry> entries;
@@ -792,25 +811,6 @@ struct SnapshotPolicy {
 };
 
 std::ostream& operator<<(std::ostream& out, const SnapshotPolicy& x);
-
-struct StripePolicy {
-    uint32_t targetStripeSize;
-
-    static constexpr uint16_t STATIC_SIZE = 4; // targetStripeSize
-
-    StripePolicy() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 4; // targetStripeSize
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const StripePolicy&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const StripePolicy& x);
 
 struct LookupReq {
     InodeId dirId;
@@ -893,48 +893,6 @@ struct StatFileResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const StatFileResp& x);
-
-struct StatTransientFileReq {
-    InodeId id;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // id
-
-    StatTransientFileReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const StatTransientFileReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const StatTransientFileReq& x);
-
-struct StatTransientFileResp {
-    EggsTime mtime;
-    uint64_t size;
-    BincodeBytes note;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // mtime + size + note
-
-    StatTransientFileResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // mtime
-        _size += 8; // size
-        _size += note.packedSize(); // note
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const StatTransientFileResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const StatTransientFileResp& x);
 
 struct StatDirectoryReq {
     InodeId id;
@@ -1251,14 +1209,16 @@ std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileResp& x);
 struct FileSpansReq {
     InodeId fileId;
     uint64_t byteOffset;
+    uint32_t limit;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8; // fileId + byteOffset
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4; // fileId + byteOffset + limit
 
     FileSpansReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
         _size += 8; // byteOffset
+        _size += 4; // limit
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1338,124 +1298,6 @@ struct SameDirectoryRenameResp {
 
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameResp& x);
 
-struct SetDirectoryInfoReq {
-    InodeId id;
-    DirectoryInfo info;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // id + info
-
-    SetDirectoryInfoReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // id
-        _size += info.packedSize(); // info
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SetDirectoryInfoReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoReq& x);
-
-struct SetDirectoryInfoResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    SetDirectoryInfoResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SetDirectoryInfoResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x);
-
-struct SnapshotLookupReq {
-    InodeId dirId;
-    BincodeBytes name;
-    EggsTime startFrom;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + startFrom
-
-    SnapshotLookupReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // dirId
-        _size += name.packedSize(); // name
-        _size += 8; // startFrom
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x);
-
-struct SnapshotLookupResp {
-    EggsTime nextTime;
-    BincodeList<SnapshotLookupEdge> edges;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<SnapshotLookupEdge>::STATIC_SIZE; // nextTime + edges
-
-    SnapshotLookupResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // nextTime
-        _size += edges.packedSize(); // edges
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x);
-
-struct ExpireTransientFileReq {
-    InodeId id;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // id
-
-    ExpireTransientFileReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ExpireTransientFileReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileReq& x);
-
-struct ExpireTransientFileResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    ExpireTransientFileResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ExpireTransientFileResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x);
-
 struct AddInlineSpanReq {
     InodeId fileId;
     BincodeFixedBytes<8> cookie;
@@ -1503,6 +1345,166 @@ struct AddInlineSpanResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanResp& x);
+
+struct SnapshotLookupReq {
+    InodeId dirId;
+    BincodeBytes name;
+    EggsTime startFrom;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + startFrom
+
+    SnapshotLookupReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // dirId
+        _size += name.packedSize(); // name
+        _size += 8; // startFrom
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x);
+
+struct SnapshotLookupResp {
+    EggsTime nextTime;
+    BincodeList<SnapshotLookupEdge> edges;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<SnapshotLookupEdge>::STATIC_SIZE; // nextTime + edges
+
+    SnapshotLookupResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // nextTime
+        _size += edges.packedSize(); // edges
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x);
+
+struct StatTransientFileReq {
+    InodeId id;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // id
+
+    StatTransientFileReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const StatTransientFileReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const StatTransientFileReq& x);
+
+struct StatTransientFileResp {
+    EggsTime mtime;
+    uint64_t size;
+    BincodeBytes note;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // mtime + size + note
+
+    StatTransientFileResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // mtime
+        _size += 8; // size
+        _size += note.packedSize(); // note
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const StatTransientFileResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const StatTransientFileResp& x);
+
+struct SetDirectoryInfoReq {
+    InodeId id;
+    DirectoryInfo info;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // id + info
+
+    SetDirectoryInfoReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += info.packedSize(); // info
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetDirectoryInfoReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoReq& x);
+
+struct SetDirectoryInfoResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    SetDirectoryInfoResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetDirectoryInfoResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x);
+
+struct ExpireTransientFileReq {
+    InodeId id;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // id
+
+    ExpireTransientFileReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ExpireTransientFileReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ExpireTransientFileReq& x);
+
+struct ExpireTransientFileResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    ExpireTransientFileResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ExpireTransientFileResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x);
 
 struct VisitDirectoriesReq {
     InodeId beginId;
@@ -2285,16 +2287,14 @@ std::ostream& operator<<(std::ostream& out, const MakeFileTransientResp& x);
 struct MakeDirectoryReq {
     InodeId ownerId;
     BincodeBytes name;
-    DirectoryInfo info;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + DirectoryInfo::STATIC_SIZE; // ownerId + name + info
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // ownerId + name
 
     MakeDirectoryReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
         _size += name.packedSize(); // name
-        _size += info.packedSize(); // info
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2542,6 +2542,82 @@ struct CrossShardHardUnlinkFileResp {
 
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x);
 
+struct ShardsReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    ShardsReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardsReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardsReq& x);
+
+struct ShardsResp {
+    BincodeList<ShardInfo> shards;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
+
+    ShardsResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += shards.packedSize(); // shards
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardsResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardsResp& x);
+
+struct CdcReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    CdcReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CdcReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CdcReq& x);
+
+struct CdcResp {
+    BincodeFixedBytes<4> ip;
+    uint16_t port;
+    EggsTime lastSeen;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
+
+    CdcResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
+        _size += 2; // port
+        _size += 8; // lastSeen
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CdcResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CdcResp& x);
+
 struct BlockServicesForShardReq {
     ShardId shard;
 
@@ -2615,42 +2691,6 @@ struct RegisterBlockServicesResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x);
-
-struct ShardsReq {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    ShardsReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ShardsReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ShardsReq& x);
-
-struct ShardsResp {
-    BincodeList<ShardInfo> shards;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
-
-    ShardsResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += shards.packedSize(); // shards
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ShardsResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ShardsResp& x);
 
 struct RegisterShardReq {
     ShardId id;
@@ -2770,86 +2810,6 @@ struct RegisterCdcResp {
 
 std::ostream& operator<<(std::ostream& out, const RegisterCdcResp& x);
 
-struct CdcReq {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    CdcReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const CdcReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const CdcReq& x);
-
-struct CdcResp {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
-    EggsTime lastSeen;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
-
-    CdcResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
-        _size += 8; // lastSeen
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const CdcResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const CdcResp& x);
-
-struct EraseBlockReq {
-    uint64_t blockId;
-    BincodeFixedBytes<8> certificate;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + certificate
-
-    EraseBlockReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // blockId
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // certificate
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const EraseBlockReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const EraseBlockReq& x);
-
-struct EraseBlockResp {
-    BincodeFixedBytes<8> proof;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
-
-    EraseBlockResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const EraseBlockResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x);
-
 struct FetchBlockReq {
     uint64_t blockId;
     uint32_t offset;
@@ -2968,18 +2928,56 @@ struct BlockWrittenResp {
 
 std::ostream& operator<<(std::ostream& out, const BlockWrittenResp& x);
 
+struct EraseBlockReq {
+    uint64_t blockId;
+    BincodeFixedBytes<8> certificate;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + certificate
+
+    EraseBlockReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // blockId
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // certificate
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const EraseBlockReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const EraseBlockReq& x);
+
+struct EraseBlockResp {
+    BincodeFixedBytes<8> proof;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
+
+    EraseBlockResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const EraseBlockResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x);
+
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, SnapshotLookupReq, ExpireTransientFileReq, AddInlineSpanReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SnapshotLookupReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
     LookupReq& setLookup();
     const StatFileReq& getStatFile() const;
     StatFileReq& setStatFile();
-    const StatTransientFileReq& getStatTransientFile() const;
-    StatTransientFileReq& setStatTransientFile();
     const StatDirectoryReq& getStatDirectory() const;
     StatDirectoryReq& setStatDirectory();
     const ReadDirReq& getReadDir() const;
@@ -2998,14 +2996,16 @@ public:
     FileSpansReq& setFileSpans();
     const SameDirectoryRenameReq& getSameDirectoryRename() const;
     SameDirectoryRenameReq& setSameDirectoryRename();
-    const SetDirectoryInfoReq& getSetDirectoryInfo() const;
-    SetDirectoryInfoReq& setSetDirectoryInfo();
-    const SnapshotLookupReq& getSnapshotLookup() const;
-    SnapshotLookupReq& setSnapshotLookup();
-    const ExpireTransientFileReq& getExpireTransientFile() const;
-    ExpireTransientFileReq& setExpireTransientFile();
     const AddInlineSpanReq& getAddInlineSpan() const;
     AddInlineSpanReq& setAddInlineSpan();
+    const SnapshotLookupReq& getSnapshotLookup() const;
+    SnapshotLookupReq& setSnapshotLookup();
+    const StatTransientFileReq& getStatTransientFile() const;
+    StatTransientFileReq& setStatTransientFile();
+    const SetDirectoryInfoReq& getSetDirectoryInfo() const;
+    SetDirectoryInfoReq& setSetDirectoryInfo();
+    const ExpireTransientFileReq& getExpireTransientFile() const;
+    ExpireTransientFileReq& setExpireTransientFile();
     const VisitDirectoriesReq& getVisitDirectories() const;
     VisitDirectoriesReq& setVisitDirectories();
     const VisitFilesReq& getVisitFiles() const;
@@ -3057,15 +3057,13 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, SnapshotLookupResp, ExpireTransientFileResp, AddInlineSpanResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SnapshotLookupResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
     LookupResp& setLookup();
     const StatFileResp& getStatFile() const;
     StatFileResp& setStatFile();
-    const StatTransientFileResp& getStatTransientFile() const;
-    StatTransientFileResp& setStatTransientFile();
     const StatDirectoryResp& getStatDirectory() const;
     StatDirectoryResp& setStatDirectory();
     const ReadDirResp& getReadDir() const;
@@ -3084,14 +3082,16 @@ public:
     FileSpansResp& setFileSpans();
     const SameDirectoryRenameResp& getSameDirectoryRename() const;
     SameDirectoryRenameResp& setSameDirectoryRename();
-    const SetDirectoryInfoResp& getSetDirectoryInfo() const;
-    SetDirectoryInfoResp& setSetDirectoryInfo();
-    const SnapshotLookupResp& getSnapshotLookup() const;
-    SnapshotLookupResp& setSnapshotLookup();
-    const ExpireTransientFileResp& getExpireTransientFile() const;
-    ExpireTransientFileResp& setExpireTransientFile();
     const AddInlineSpanResp& getAddInlineSpan() const;
     AddInlineSpanResp& setAddInlineSpan();
+    const SnapshotLookupResp& getSnapshotLookup() const;
+    SnapshotLookupResp& setSnapshotLookup();
+    const StatTransientFileResp& getStatTransientFile() const;
+    StatTransientFileResp& setStatTransientFile();
+    const SetDirectoryInfoResp& getSetDirectoryInfo() const;
+    SetDirectoryInfoResp& setSetDirectoryInfo();
+    const ExpireTransientFileResp& getExpireTransientFile() const;
+    ExpireTransientFileResp& setExpireTransientFile();
     const VisitDirectoriesResp& getVisitDirectories() const;
     VisitDirectoriesResp& setVisitDirectories();
     const VisitFilesResp& getVisitFiles() const;
@@ -3199,23 +3199,23 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<BlockServicesForShardReq, RegisterBlockServicesReq, ShardsReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, CdcReq> _data;
+    std::tuple<ShardsReq, CdcReq, BlockServicesForShardReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
+    const ShardsReq& getShards() const;
+    ShardsReq& setShards();
+    const CdcReq& getCdc() const;
+    CdcReq& setCdc();
     const BlockServicesForShardReq& getBlockServicesForShard() const;
     BlockServicesForShardReq& setBlockServicesForShard();
     const RegisterBlockServicesReq& getRegisterBlockServices() const;
     RegisterBlockServicesReq& setRegisterBlockServices();
-    const ShardsReq& getShards() const;
-    ShardsReq& setShards();
     const RegisterShardReq& getRegisterShard() const;
     RegisterShardReq& setRegisterShard();
     const AllBlockServicesReq& getAllBlockServices() const;
     AllBlockServicesReq& setAllBlockServices();
     const RegisterCdcReq& getRegisterCdc() const;
     RegisterCdcReq& setRegisterCdc();
-    const CdcReq& getCdc() const;
-    CdcReq& setCdc();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
@@ -3229,23 +3229,23 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<BlockServicesForShardResp, RegisterBlockServicesResp, ShardsResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, CdcResp> _data;
+    std::tuple<ShardsResp, CdcResp, BlockServicesForShardResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
+    const ShardsResp& getShards() const;
+    ShardsResp& setShards();
+    const CdcResp& getCdc() const;
+    CdcResp& setCdc();
     const BlockServicesForShardResp& getBlockServicesForShard() const;
     BlockServicesForShardResp& setBlockServicesForShard();
     const RegisterBlockServicesResp& getRegisterBlockServices() const;
     RegisterBlockServicesResp& setRegisterBlockServices();
-    const ShardsResp& getShards() const;
-    ShardsResp& setShards();
     const RegisterShardResp& getRegisterShard() const;
     RegisterShardResp& setRegisterShard();
     const AllBlockServicesResp& getAllBlockServices() const;
     AllBlockServicesResp& setAllBlockServices();
     const RegisterCdcResp& getRegisterCdc() const;
     RegisterCdcResp& setRegisterCdc();
-    const CdcResp& getCdc() const;
-    CdcResp& setCdc();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 

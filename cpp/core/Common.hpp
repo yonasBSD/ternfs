@@ -53,3 +53,14 @@ struct GoLangBytesFmt {
 };
 
 std::ostream& operator<<(std::ostream& out, const GoLangBytesFmt& bytes);
+
+std::ostream& goLangQuotedStringFmt(std::ostream& out, const char* str, size_t len);
+
+struct GoLangQuotedStringFmt {
+    const char* str;
+    size_t len;
+
+    GoLangQuotedStringFmt(const char* str_, size_t len_) : str(str_), len(len_) {}
+};
+
+std::ostream& operator<<(std::ostream& out, const GoLangQuotedStringFmt& bytes);

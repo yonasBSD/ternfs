@@ -1,0 +1,41 @@
+#include "err.h"
+
+// Safe to use with non-error `err`
+int eggsfs_error_to_linux(int err) {
+    if (err == 0) { return 0; }
+    switch (err) {
+    case EGGSFS_ERR_INTERNAL_ERROR: return -EIO;
+    case EGGSFS_ERR_FATAL_ERROR: return -EIO;
+    case EGGSFS_ERR_TIMEOUT: return -ETIMEDOUT;
+    case EGGSFS_ERR_NOT_AUTHORISED: return -EPERM;
+    case EGGSFS_ERR_UNRECOGNIZED_REQUEST: return -EIO;
+    case EGGSFS_ERR_FILE_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_DIRECTORY_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_NAME_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_TYPE_IS_DIRECTORY: return -EISDIR;
+    case EGGSFS_ERR_TYPE_IS_NOT_DIRECTORY: return -ENOTDIR;
+    case EGGSFS_ERR_BAD_COOKIE: return -EBADCOOKIE;
+    case EGGSFS_ERR_INCONSISTENT_STORAGE_CLASS_PARITY: return -EIO;
+    case EGGSFS_ERR_LAST_SPAN_STATE_NOT_CLEAN: return -EIO;
+    case EGGSFS_ERR_COULD_NOT_PICK_BLOCK_SERVICES: return -EIO;
+    case EGGSFS_ERR_BAD_SPAN_BODY: return -EIO;
+    case EGGSFS_ERR_SPAN_NOT_FOUND: return -EIO;
+    case EGGSFS_ERR_BLOCK_SERVICE_NOT_FOUND: return -EIO;
+    case EGGSFS_ERR_CANNOT_CERTIFY_BLOCKLESS_SPAN: return -EIO;
+    case EGGSFS_ERR_BAD_NUMBER_OF_BLOCKS_PROOFS: return -EIO;
+    case EGGSFS_ERR_BAD_BLOCK_PROOF: return -EIO;
+    case EGGSFS_ERR_CANNOT_OVERRIDE_NAME: return -EEXIST;
+    case EGGSFS_ERR_NAME_IS_LOCKED: return -EIO;
+    case EGGSFS_ERR_MISMATCHING_TARGET: return -EIO;
+    case EGGSFS_ERR_MISMATCHING_OWNER: return -EIO;
+    case EGGSFS_ERR_DIRECTORY_NOT_EMPTY: return -ENOTEMPTY;
+    case EGGSFS_ERR_FILE_IS_TRANSIENT: return -EIO;
+    case EGGSFS_ERR_OLD_DIRECTORY_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_NEW_DIRECTORY_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_LOOP_IN_DIRECTORY_RENAME: return -ELOOP;
+    case EGGSFS_ERR_MALFORMED_REQUEST: return -EIO;
+    case EGGSFS_ERR_MALFORMED_RESPONSE: return -EIO;
+    }
+    return -EIO;
+}
+

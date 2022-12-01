@@ -4,17 +4,20 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"regexp"
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/rs"
 
 	"golang.org/x/exp/constraints"
 )
@@ -123,12 +126,65 @@ func runTest(
 	}
 }
 
-func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fuseMountPoint string, short bool, filter *regexp.Regexp) {
-	defer func() { handleRecover(log, terminateChan, recover()) }()
+func getKmodDirRefreshTime() uint64 {
+	bs, err := os.ReadFile("/proc/sys/fs/eggsfs/dir_refresh_time_ms")
+	if err != nil {
+		panic(err)
+	}
+	ms, err := strconv.ParseUint(strings.TrimSpace(string(bs)), 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return ms
+}
 
-	// We want to immediately clean up everything when we run the GC manually
+func setKmodDirRefreshTime(ms uint64) {
+	out, err := exec.Command("sudo", "sh", "-c", fmt.Sprintf("echo %v > /proc/sys/fs/eggsfs/dir_refresh_time_ms", ms)).CombinedOutput()
+	if err != nil {
+		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
+	}
+}
+
+type cfgOverrides map[string]string
+
+func (i *cfgOverrides) Set(value string) error {
+	parts := strings.Split(value, "=")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid cfg override %q", value)
+	}
+	(*i)[parts[0]] = parts[1]
+	return nil
+}
+
+func (i *cfgOverrides) String() string {
+	pairs := []string{}
+	for k, v := range *i {
+		pairs = append(pairs, fmt.Sprintf("%s=%s", k, v))
+	}
+	return strings.Join(pairs, ",")
+}
+
+func (i *cfgOverrides) int(k string, def int) int {
+	s, present := (*i)[k]
+	if !present {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleAddress string, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
+	defer func() { handleRecover(log, terminateChan, recover()) }()
+	client, err := lib.NewClient(log, shuckleAddress, nil, nil, nil)
+	defer client.Close()
+
+	defaultSpanPolicy := &msgs.SpanPolicy{}
+	defaultStripePolicy := &msgs.StripePolicy{}
 	{
-		client, err := lib.NewClient(log, shuckleAddress, nil, nil, nil)
+		// We want to immediately clean up everything when we run the GC manually
 		if err != nil {
 			panic(err)
 		}
@@ -136,6 +192,44 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 			DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0),
 		}
 		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
+			panic(err)
+		}
+		dirInfoCache := lib.NewDirInfoCache()
+		_, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, defaultSpanPolicy)
+		if err != nil {
+			panic(err)
+		}
+		// We also want to stimulate many spans while not writing huge files.
+		// This is the same as the default but the second and third policy are
+		/// 500KiB and 1MiB
+		spanPolicy := &msgs.SpanPolicy{
+			Entries: []msgs.SpanPolicyEntry{
+				{
+					MaxSize: 1 << 16,
+					Parity:  rs.MkParity(1, 4),
+				},
+				{
+					MaxSize: 500 << 10,
+					Parity:  rs.MkParity(4, 4),
+				},
+				{
+					MaxSize: 1 << 20,
+					Parity:  rs.MkParity(10, 4),
+				},
+			},
+		}
+		// Also reduce stripe size to get many stripes
+		_, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, defaultStripePolicy)
+		if err != nil {
+			panic(err)
+		}
+		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, spanPolicy); err != nil {
+			panic(err)
+		}
+		stripePolicy := &msgs.StripePolicy{
+			TargetStripeSize: 4096 * 5,
+		}
+		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, stripePolicy); err != nil {
 			panic(err)
 		}
 	}
@@ -162,21 +256,25 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 	)
 
 	fsTestOpts := fsTestOpts{
-		numDirs:  1 * 1000,  // we need at least 256 directories, to have at least one dir per shard
-		numFiles: 20 * 1000, // around 20 files per dir
-		depth:    4,
-		// 0.03 * 20*1000 * 5MiB = ~3GiB of file data
-		emptyFileProb:  0.8,
-		inlineFileProb: 0.17,
-		maxFileSize:    10 << 20, // 10MiB
-		spanSize:       1 << 20,  // 1MiB
+		depth:        4,
+		maxFileSize:  overrides.int("fsTest.maxFileSize", 10<<20), // 10MiB
+		spanSize:     1 << 20,                                     // 1MiB
+		checkThreads: overrides.int("fsTest.checkThreads", 5),
 	}
+
+	// 0.03 * 20*1000 * 5MiB = ~3GiB of file data
 	if short {
-		fsTestOpts.numDirs = 200
-		fsTestOpts.numFiles = 10 * 200
+		fsTestOpts.numDirs = overrides.int("fsTest.numDirs", 200)
+		fsTestOpts.numFiles = overrides.int("fsTest.numFiles", 10*200)
 		fsTestOpts.emptyFileProb = 0.1
 		fsTestOpts.inlineFileProb = 0.3
+	} else {
+		fsTestOpts.numDirs = overrides.int("fsTest.numDirs", 1*1000)    // we need at least 256 directories, to have at least one dir per shard
+		fsTestOpts.numFiles = overrides.int("fsTest.numFiles", 20*1000) // around 20 files per dir
+		fsTestOpts.emptyFileProb = 0.8
+		fsTestOpts.inlineFileProb = 0.17
 	}
+
 	runTest(
 		log,
 		shuckleAddress,
@@ -188,16 +286,64 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		},
 	)
 
+	if kmod {
+		originalDirRefreshTime := getKmodDirRefreshTime()
+		defer setKmodDirRefreshTime(originalDirRefreshTime)
+
+		setKmodDirRefreshTime(0)
+	}
+
+	if kmod {
+		preadddirOpts := preadddirOpts{
+			numDirs:     1000,
+			filesPerDir: 100,
+			loops:       1000,
+			threads:     10,
+		}
+		runTest(
+			log,
+			shuckleAddress,
+			filter,
+			"parallel readdir",
+			fmt.Sprintf("%v dirs, %v files per dir, %v loops, %v threads", preadddirOpts.numDirs, preadddirOpts.filesPerDir, preadddirOpts.loops, preadddirOpts.threads),
+			func(counters *lib.ClientCounters) {
+				preaddirTest(log, mountPoint, &preadddirOpts)
+			},
+		)
+	}
+
 	runTest(
 		log,
 		shuckleAddress,
 		filter,
-		"fuse fs",
+		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, fuseMountPoint)
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, mountPoint)
 		},
 	)
+
+	if kmod {
+		setKmodDirRefreshTime(1000) // 1 sec
+		runTest(
+			log,
+			shuckleAddress,
+			filter,
+			"mounted fs (1s dir refresh)",
+			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+			func(counters *lib.ClientCounters) {
+				fsTest(log, shuckleAddress, &fsTestOpts, counters, mountPoint)
+			},
+		)
+	}
+
+	// Restore default values for policies, otherwise things will be unduly slow below
+	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultSpanPolicy); err != nil {
+		panic(err)
+	}
+	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultStripePolicy); err != nil {
+		panic(err)
+	}
 
 	largeFileOpts := largeFileTestOpts{
 		fileSize: 1 << 30, // 1GiB
@@ -209,7 +355,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		"large file",
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
 		func(counters *lib.ClientCounters) {
-			largeFileTest(log, &largeFileOpts, fuseMountPoint)
+			largeFileTest(log, &largeFileOpts, mountPoint)
 		},
 	)
 
@@ -225,7 +371,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		"rsync large files",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
-			rsyncTest(log, &rsyncOpts, fuseMountPoint)
+			rsyncTest(log, &rsyncOpts, mountPoint)
 		},
 	)
 
@@ -241,7 +387,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		"rsync small files",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
-			rsyncTest(log, &rsyncOpts, fuseMountPoint)
+			rsyncTest(log, &rsyncOpts, mountPoint)
 		},
 	)
 
@@ -256,6 +402,8 @@ func noRunawayArgs() {
 }
 
 func main() {
+	overrides := make(cfgOverrides)
+
 	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
@@ -269,6 +417,8 @@ func main() {
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
+	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
+	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -438,11 +588,32 @@ func main() {
 		Profile:        *profile,
 	})
 
+	var mountPoint string
+	if *kmod {
+		mountPoint = path.Join(*dataDir, "kmod", "mnt")
+		err := os.MkdirAll(mountPoint, 0777)
+		if err != nil {
+			panic(err)
+		}
+		out, err := exec.Command("sudo", "mount", "-t", "eggsfs", fmt.Sprintf("127.0.0.1:%v", shucklePort), mountPoint).CombinedOutput()
+		if err != nil {
+			panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
+		}
+		defer func() {
+			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
+			if err != nil {
+				fmt.Printf("could not umount fs (%v): %s", err, out)
+			}
+		}()
+	} else {
+		mountPoint = fuseMountPoint
+	}
+
 	fmt.Printf("operational 🤖\n")
 
 	// start tests
 	go func() {
-		runTests(terminateChan, log, shuckleAddress, fuseMountPoint, *short, filterRe)
+		runTests(terminateChan, log, &overrides, shuckleAddress, mountPoint, fuseMountPoint, *kmod, *short, filterRe)
 	}()
 
 	// wait for things to finish

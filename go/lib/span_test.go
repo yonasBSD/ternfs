@@ -37,7 +37,9 @@ func (c *mockedBlockConn) Close() error {
 	return nil
 }
 
-func (*mockedBlockConn) Taint() {}
+func (c *mockedBlockConn) Put() {
+	c.Close()
+}
 
 func testSpan(
 	t *testing.T,
@@ -142,7 +144,7 @@ func testSpan(
 	openBlockConns := int64(0)
 	spanReader, err := readSpanFromBlocks(
 		bufPool, sizeWithZeros, req.Crc, req.Parity, req.Stripes, req.CellSize, blocksCrcs, stripesCrcs,
-		func(i int, offset uint32, size uint32) (TaintableReadCloser, error) {
+		func(i int, offset uint32, size uint32) (PuttableReadCloser, error) {
 			for _, b := range badConnections {
 				if int(b) == i {
 					return nil, nil

@@ -135,6 +135,7 @@ func ReadBlocksResponse(
 }
 
 func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) error {
+	log.Trace("writing response %T %+v", resp, resp)
 	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}
@@ -148,6 +149,7 @@ func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) err
 }
 
 func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error {
+	log.Debug("writing blocks error %v", err)
 	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}

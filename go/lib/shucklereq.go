@@ -17,10 +17,10 @@ func ReadShuckleRequest(
 ) (msgs.ShuckleRequest, error) {
 	var protocol uint32
 	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
-		return nil, fmt.Errorf("could not read protocol: %w", err)
+		return nil, err
 	}
 	if protocol != msgs.SHUCKLE_REQ_PROTOCOL_VERSION {
-		return nil, fmt.Errorf("bad shuckle protocol, expected %v, got %v", msgs.SHUCKLE_REQ_PROTOCOL_VERSION, protocol)
+		return nil, fmt.Errorf("bad shuckle protocol, expected %08x, got %08x", msgs.SHUCKLE_REQ_PROTOCOL_VERSION, protocol)
 	}
 	var len uint32
 	if err := binary.Read(r, binary.LittleEndian, &len); err != nil {
@@ -28,7 +28,7 @@ func ReadShuckleRequest(
 	}
 	data := make([]byte, len)
 	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not read response body: %w", err)
 	}
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest

@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <unistd.h>
+#include <iomanip>
 
 // Throwing in static initialization is nasty, and there is no useful stacktrace
 // Also use direct syscalls to write the error as iostream might not be initialized
@@ -48,4 +49,27 @@ std::ostream& goLangBytesFmt(std::ostream& out, const char* str, size_t len) {
 
 std::ostream& operator<<(std::ostream& out, const GoLangBytesFmt& bytes) {
     return goLangBytesFmt(out, bytes.str, bytes.len);
+}
+
+std::ostream& goLangQuotedStringFmt(std::ostream& out, const char* data, size_t len) {
+    out << "\"";
+    for (int i = 0; i < len; i++) {
+        uint8_t ch = data[i];
+        if (isprint(ch)) {
+            out << ch;
+        } else if (ch == 0) {
+            out << "\\0";
+        } else {
+            const char cfill = out.fill();
+            out << std::hex << std::setfill('0');
+            out << "\\x" << std::setw(2) << (int)ch;
+            out << std::setfill(cfill) << std::dec;
+        }
+    }
+    out << "\"";
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const GoLangQuotedStringFmt& bytes) {
+    return goLangQuotedStringFmt(out, bytes.str, bytes.len);
 }

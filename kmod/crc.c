@@ -1,0 +1,26 @@
+#include "crc.h"
+
+#include "intrshims.h"
+
+#include "common.h"
+#include "crc32c.c"
+
+u32 eggsfs_crc32c(u32 crc, const char* buf, size_t len) {
+    return crc32c(crc, buf, len);
+}
+
+u32 eggsfs_crc32c_simple(u32 crc, const char* buf, size_t len) {
+    return crc32c_simple(crc, buf, len);
+}
+
+u32 eggsfs_crc32c_xor(u32 crc1, u32 crc2, size_t len) {
+    return crc32c_xor(crc1, crc2, len);
+}
+
+u32 eggsfs_crc32c_append(u32 crc1, u32 crc2, size_t len2) {
+    return crc32c_append(crc1, crc2, len2);
+}
+
+u32 eggsfs_crc32c_zero_extend(u32 crc, ssize_t zeros) {
+    return crc32c_zero_extend(crc, zeros);
+}

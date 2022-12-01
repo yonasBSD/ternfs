@@ -6,6 +6,7 @@ set -eu -o pipefail
 
 # build C++, all variants
 ./cpp/build.py alpine
+./cpp/build.py alpine-debug
 ./cpp/build.py release
 ./cpp/build.py debug
 ./cpp/build.py sanitized

@@ -530,18 +530,22 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, nil
 }
 
-type Taintable interface {
-	Taint()
+// Some connection we can reuse
+type Puttable interface {
+	// Note: this can only be called if the current request (usually for blocks)
+	// has been _fully consumed without errors_. If it hasn't, then you should
+	// just close the connection.
+	Put()
 }
 
-type TaintableReadCloser interface {
+type PuttableReadCloser interface {
 	io.ReadCloser
-	Taintable
+	Puttable
 }
 
-type TaintableCloser interface {
+type PuttableCloser interface {
 	io.Closer
-	Taintable
+	Puttable
 }
 
 type BlocksConn interface {
@@ -549,51 +553,34 @@ type BlocksConn interface {
 	io.Reader
 	io.ReaderFrom
 	io.Closer
-	Taintable
+	Puttable
 }
 
 type trackedBlocksConn struct {
 	blockService msgs.BlockServiceId
 	conn         *net.TCPConn
-	tainted      bool
 	factory      *blocksConnFactory
 }
 
 func (c *trackedBlocksConn) Read(p []byte) (int, error) {
-	read, err := c.conn.Read(p)
-	if err != nil {
-		c.tainted = true
-	}
-	return read, err
+	return c.conn.Read(p)
 }
 
 func (c *trackedBlocksConn) Write(p []byte) (int, error) {
-	written, err := c.conn.Write(p)
-	if err != nil {
-		c.tainted = true
-	}
-	return written, err
+	return c.conn.Write(p)
 }
 
 func (c *trackedBlocksConn) ReadFrom(r io.Reader) (int64, error) {
-	n, err := c.conn.ReadFrom(r)
-	if err != nil {
-		c.tainted = true
-	}
-	return n, err
+	return c.conn.ReadFrom(r)
 }
 
 func (c *trackedBlocksConn) Close() error {
-	if c.tainted {
-		return c.conn.Close()
-	} else {
-		c.factory.put(c.blockService, time.Now(), c.conn)
-		return nil
-	}
+	return c.conn.Close()
 }
 
-func (c *trackedBlocksConn) Taint() {
-	c.tainted = true
+func (c *trackedBlocksConn) Put() {
+	c.factory.put(c.blockService, time.Now(), c.conn)
+	c.conn = nil
 }
 
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
@@ -614,7 +601,6 @@ func (c *Client) GetBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, 
 	return &trackedBlocksConn{
 		blockService: blockServiceId,
 		conn:         conn.(*net.TCPConn),
-		tainted:      false,
 		factory:      &c.blocksConns,
 	}, nil
 }

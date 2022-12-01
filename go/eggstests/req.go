@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
+	"io"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -65,7 +65,7 @@ func createFile(
 	name string,
 	size uint64,
 	dataSeed uint64,
-	buf *[]byte,
+	bufPool *lib.ReadSpanBufPool,
 ) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	// construct
 	constructReq := msgs.ConstructFileReq{
@@ -94,13 +94,11 @@ func createFile(
 			if uint32(size-offset) < thisSpanSize {
 				thisSpanSize = uint32(size - offset)
 			}
-			if len(*buf) < int(thisSpanSize) {
-				*buf = append(*buf, make([]byte, int(thisSpanSize)-len(*buf))...)
-			}
-			spanBuf := (*buf)[:thisSpanSize]
-			rand.Read(spanBuf)
+			spanBuf := bufPool.Get(int(thisSpanSize))
+			rand.Read(*spanBuf)
 			var err error
-			*buf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
+			*spanBuf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), *spanBuf)
+			bufPool.Put(spanBuf)
 			if err != nil {
 				panic(err)
 			}
@@ -118,11 +116,11 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client, id msgs.InodeId, buf *[]byte) []byte {
+func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client, id msgs.InodeId, buf []byte) []byte {
 	statResp := msgs.StatFileResp{}
 	shardReq(log, client, id.Shard(), &msgs.StatFileReq{Id: id}, &statResp)
-	if len(*buf) < int(statResp.Size) {
-		*buf = append(*buf, make([]byte, int(statResp.Size)-len(*buf))...)
+	if len(buf) < int(statResp.Size) {
+		buf = append(buf, make([]byte, int(statResp.Size)-len(buf))...)
 	}
 	spansReq := msgs.FileSpansReq{
 		FileId: id,
@@ -138,16 +136,27 @@ func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client,
 			if err != nil {
 				panic(err)
 			}
-			read, err := bytes.NewBuffer((*buf)[readSoFar:readSoFar]).ReadFrom(spanR)
-			spanR.Close()
+			spanRead := 0
+			for {
+				r, err := spanR.Read(buf[readSoFar+spanRead:])
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					spanR.Close()
+					panic(err)
+				}
+				spanRead += r
+			}
+			spanR.Close() // TODO replace with Put?
 			if err != nil {
 				panic(err)
 			}
-			spanCrc := msgs.Crc(crc32c.Sum(0, (*buf)[readSoFar:readSoFar+int(read)]))
+			spanCrc := msgs.Crc(crc32c.Sum(0, buf[readSoFar:readSoFar+spanRead]))
 			if spanCrc != span.Header.Crc {
 				panic(fmt.Errorf("expected crc %v for span, but got %v", span.Header.Crc, spanCrc))
 			}
-			readSoFar += int(read)
+			readSoFar += spanRead
 		}
 		if spansResp.NextOffset == 0 {
 			break
@@ -157,7 +166,7 @@ func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client,
 	if readSoFar != int(statResp.Size) {
 		panic(fmt.Errorf("readSoFar=%v != statResp.Size=%v", readSoFar, statResp.Size))
 	}
-	return (*buf)[:readSoFar]
+	return buf[:readSoFar]
 }
 
 func readDir(log *lib.Logger, client *lib.Client, dir msgs.InodeId) []edge {

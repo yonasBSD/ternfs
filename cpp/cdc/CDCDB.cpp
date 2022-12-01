@@ -264,7 +264,6 @@ struct MakeDirectoryStateMachine {
     void createDirectoryInode() {
         auto& shardReq = env.needsShard(MAKE_DIRECTORY_CREATE_DIR, state.dirId().shard()).setCreateDirectoryInode();
         shardReq.id = state.dirId();
-        shardReq.info = req.info;
         shardReq.ownerId = req.ownerId;
     }
 
@@ -738,6 +737,7 @@ struct SoftUnlinkDirectoryStateMachine {
         shardReq.name = req.name;
         shardReq.targetId = req.targetId;
         shardReq.wasMoved = false;
+        shardReq.creationTime = req.creationTime;
     }
 
     void afterRollback(EggsError err, const ShardRespContainer* resp) {

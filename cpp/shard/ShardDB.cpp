@@ -156,6 +156,8 @@
 // 
 // TODO fill in results
 
+static constexpr uint64_t EGGSFS_PAGE_SIZE = 4096;
+
 static auto wrappedSnapshot(rocksdb::DB* db) {
     auto deleter = [db](const rocksdb::Snapshot* snapshot) {
         db->ReleaseSnapshot(snapshot);
@@ -726,7 +728,11 @@ struct ShardDBImpl {
         beginKey().setOffset(req.byteOffset);
         {
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _spansCf));
-            for (it->SeekForPrev(beginKey.toSlice()); it->Valid(); it->Next()) {
+            for (
+                it->SeekForPrev(beginKey.toSlice());
+                it->Valid() && (req.limit == 0 || resp.spans.els.size() < req.limit);
+                it->Next()
+            ) {
                 auto key = ExternalValue<SpanKey>::FromSlice(it->key());
                 if (key().fileId() != req.fileId) {
                     break;
@@ -1258,6 +1264,11 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "inline span has bad storage class %s", req.storageClass);
             return EggsError::BAD_SPAN_BODY;
         }
+    
+        if (req.byteOffset%EGGSFS_PAGE_SIZE != 0) {
+            LOG_DEBUG(_env, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
+            return EggsError::BAD_SPAN_BODY;
+        }
 
         uint32_t expectedCrc = crc32c(0, req.body.data(), req.body.size());
         expectedCrc = crc32c_zero_extend(expectedCrc, req.size - req.body.size());
@@ -1293,10 +1304,14 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "bad storage class %s for blocks span", (int)req.storageClass);
             return EggsError::BAD_SPAN_BODY;
         }
+        if (req.byteOffset%EGGSFS_PAGE_SIZE != 0 || req.cellSize%EGGSFS_PAGE_SIZE != 0) {
+            LOG_DEBUG(_env, "req.byteOffset=%s or cellSize=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, req.cellSize, EGGSFS_PAGE_SIZE);
+            return EggsError::BAD_SPAN_BODY;
+        }
         if (!_checkSpanBody(req)) {
             return EggsError::BAD_SPAN_BODY;
         }
-    
+
         // start filling in entry
         entry.fileId = req.fileId;
         entry.byteOffset = req.byteOffset;
@@ -1888,6 +1903,7 @@ struct ShardDBImpl {
             return EggsError::MISMATCHING_TARGET;
         }
         if (edgeBody().creationTime() != creationTime) {
+            LOG_DEBUG(_env, "expected time %s, got %s", edgeBody().creationTime(), creationTime);
             return EggsError::MISMATCHING_CREATION_TIME;
         }
         if (edgeBody().targetIdWithLocked().extra()) { // locked
@@ -1992,6 +2008,7 @@ struct ShardDBImpl {
         }
         ExternalValue<CurrentEdgeBody> edge(edgeValue);
         if (edge().creationTime() != entry.creationTime) {
+            LOG_DEBUG(_env, "expected time %s, got %s", edge().creationTime(), entry.creationTime);
             return EggsError::MISMATCHING_CREATION_TIME;
         }
         if (edge().locked()) {
@@ -2046,6 +2063,7 @@ struct ShardDBImpl {
         }
         ExternalValue<CurrentEdgeBody> edge(edgeValue);
         if (edge().creationTime() != entry.creationTime) {
+            LOG_DEBUG(_env, "expected time %s, got %s", edge().creationTime(), entry.creationTime);
             return EggsError::MISMATCHING_CREATION_TIME;
         }
         if (!edge().locked()) {
@@ -2732,7 +2750,13 @@ struct ShardDBImpl {
         const auto& cache = _blockServicesCache.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
-        return proof.proof == expectedProof;
+        bool good = proof.proof == expectedProof;
+
+        if (!good) {
+            LOG_DEBUG(_env, "bad block write proof, expected %s, got %s", BincodeFixedBytes<8>(expectedProof), proof);
+        }
+
+        return good;
     }
 
     std::array<uint8_t, 8> _blockEraseCertificate(uint32_t blockSize, const BlockBody block, const AES128Key& secretKey) {
@@ -3335,8 +3359,16 @@ DirectoryInfo defaultDirectoryInfo() {
     hddBlocks.storageClass = storageClassByName("HDD");
     addSegment(BLOCK_POLICY_TAG, blockPolicy);
 
-    // Span policy: up to 10MiB: RS(4,4), up to 100MiB (max span size): RS(10,4)
+    // Span policy:
+    // * up to 64KiB: RS(1,4). This mirroring span simplifies things in the kernel (so that we
+    //     we never have cell sizes that are not multiple of span sizes). We still set things
+    //     up so that we can lose 4 copies and still be fine.
+    // * up to 10MiB: RS(4,4).
+    // * up to 100MiB (max span size): RS(10,4).
     SpanPolicy spanPolicy;
+    auto& tinySpans = spanPolicy.entries.els.emplace_back();
+    tinySpans.maxSize = 1 << 16;
+    tinySpans.parity = Parity(1, 4);
     auto& smallSpans = spanPolicy.entries.els.emplace_back();
     smallSpans.maxSize = 10 << 20;
     smallSpans.parity = Parity(4, 4);

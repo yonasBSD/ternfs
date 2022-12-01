@@ -1,0 +1,10 @@
+*.qcow2
+compile_commands.json
+*.o
+*.d
+*.cmd
+Module.symvers
+modules.order
+*.ko
+*.mod
+*.mod.c

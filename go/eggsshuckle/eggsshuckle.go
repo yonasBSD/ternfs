@@ -164,35 +164,40 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	conn.SetLinger(0) // poor man error handling for now
 	defer conn.Close()
 
-	req, err := lib.ReadShuckleRequest(log, conn)
-	if err != nil {
-		log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
-		return
-	}
-	log.Debug("handling request %T %+v", req, req)
-	var resp msgs.ShuckleResponse
+	for {
+		req, err := lib.ReadShuckleRequest(log, conn)
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
+			return
+		}
+		log.Debug("handling request %T %+v", req, req)
+		var resp msgs.ShuckleResponse
 
-	switch whichReq := req.(type) {
-	case *msgs.BlockServicesForShardReq:
-		resp = handleBlockServicesForShard(log, s, conn, whichReq)
-	case *msgs.RegisterBlockServicesReq:
-		resp = handleRegisterBlockServices(log, s, conn, whichReq)
-	case *msgs.ShardsReq:
-		resp = handleShards(log, s, conn, whichReq)
-	case *msgs.RegisterShardReq:
-		resp = handleRegisterShard(log, s, conn, whichReq)
-	case *msgs.AllBlockServicesReq:
-		resp = handleAllBlockServicesReq(log, s, conn, whichReq)
-	case *msgs.CdcReq:
-		resp = handleCdcReq(log, s, conn, whichReq)
-	case *msgs.RegisterCdcReq:
-		resp = handleRegisterCdcReq(log, s, conn, whichReq)
-	default:
-		log.RaiseAlert(fmt.Errorf("bad req type %T", req))
-	}
-	log.Debug("sending back response %T", resp)
-	if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
-		log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
+		switch whichReq := req.(type) {
+		case *msgs.BlockServicesForShardReq:
+			resp = handleBlockServicesForShard(log, s, conn, whichReq)
+		case *msgs.RegisterBlockServicesReq:
+			resp = handleRegisterBlockServices(log, s, conn, whichReq)
+		case *msgs.ShardsReq:
+			resp = handleShards(log, s, conn, whichReq)
+		case *msgs.RegisterShardReq:
+			resp = handleRegisterShard(log, s, conn, whichReq)
+		case *msgs.AllBlockServicesReq:
+			resp = handleAllBlockServicesReq(log, s, conn, whichReq)
+		case *msgs.CdcReq:
+			resp = handleCdcReq(log, s, conn, whichReq)
+		case *msgs.RegisterCdcReq:
+			resp = handleRegisterCdcReq(log, s, conn, whichReq)
+		default:
+			log.RaiseAlert(fmt.Errorf("bad req type %T", req))
+		}
+		log.Debug("sending back response %T", resp)
+		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
+			log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
+		}
 	}
 }
 
@@ -436,7 +441,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 			for _, bs := range state.blockServices {
 				data.BlockServices = append(data.BlockServices, indexBlockService{
 					Id:             bs.Id,
-					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port2),
+					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port1),
 					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
 					StorageClass:   bs.StorageClass,
 					FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),

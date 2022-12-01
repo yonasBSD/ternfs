@@ -112,6 +112,10 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &ids); err != nil {
 		return err
 	}
+	if ids == "ROOT" {
+		*id = ROOT_DIR_INODE_ID
+		return nil
+	}
 	idu, err := strconv.ParseUint(ids, 0, 63)
 	if err != nil {
 		return err
@@ -506,6 +510,8 @@ type SoftUnlinkFileResp struct{}
 type FileSpansReq struct {
 	FileId     InodeId
 	ByteOffset uint64
+	// if 0, no limit.
+	Limit uint32
 }
 
 type FetchedBlock struct {
@@ -838,7 +844,6 @@ type ExpireTransientFileResp struct{}
 type MakeDirectoryReq struct {
 	OwnerId InodeId
 	Name    string
-	Info    DirectoryInfo
 }
 
 type MakeDirectoryResp struct {

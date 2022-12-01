@@ -11,5 +11,12 @@
         "go/runeggs/runeggs": true,
         "go/gcdaemon/gcdaemon": true,
         "go/cli/cli": true,
+        "kmod/*.cmd": true,
+        "kmod/*.o": true,
+        "kmod/*.ko": true,
+        "kmod/*.mod": true,
+        "kmod/*.mod.c": true,
+        "kmod/Module.symvers": true,
+        "kmod/modules.order": true,
     }
 }

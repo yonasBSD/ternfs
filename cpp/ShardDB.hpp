@@ -18,16 +18,6 @@ struct ShardLogEntry {
     void unpack(BincodeBuf& buf);
 };
 
-struct ShardLogEntryWithIndex {
-    uint64_t index;
-    ShardLogEntry entry;
-
-    void clear() {
-        index = 0;
-        entry.clear();
-    }
-};
-
 bool readOnlyShardReq(const ShardMessageKind kind);
 
 BincodeBytes defaultDirectoryInfo(char (&buf)[255]);
@@ -41,8 +31,10 @@ public:
 
     // init/teardown
     ShardDB(Env& env, ShardId shid, const std::string& path);
-    void close();
     ~ShardDB();
+
+    // Stuff which might throw, and therefore not well suited to destructor.
+    void close();
 
     // In the functions below `scratch` is used to write BincodeBytes that the response/logEntry
     // needs.
@@ -51,40 +43,57 @@ public:
     // the contents of `resp` should be ignored.
     EggsError read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
 
-    // Prepares and persists a log entry to be applied. Morally this always succeeds,
-    // the error checking is all done at application time. The reasoning here is that
-    // log preparation is not reading from the latest state anyway, since we write the
-    // log before we apply to the state (because we might do distributed consensus in
-    // the meantime), and so we must do the error checking when writing. We are still
-    // allowed to read from the state at log preparation time
-    // (e.g. to gather needed info about block services), but knowing that we might
-    // lag a bit behind.
+    // Prepares and persists a log entry to be applied.
     //
-    // However we still reserve the right to return errors for some corner cases (e.g.
-    // if we cannot allocate block services for some span request or something like
-    // that). We might also reject requests that are clearly wrong (e.g. bad
-    // inode id type or "type error" of that sorts, transient files cookies).
+    // This function will fail if called concurrently. We do write to the database
+    // to prepare the log entry, to generate fresh file/block ids.
     //
-    // This function will fail if called concurrently -- we rely on having a single
-    // writer.
+    // The log entry is not persisted in any way -- the idea is that a consensus module
+    // can be built on top of this to first persist the log entry across a consensus
+    // of machines, and then the log entries can be applied.
     //
-    // The log entry is written atomically -- you can never witness a half-written
-    // log entry.
+    // Note that while we write to the database to produce log entries, we do so in a
+    // way that allows log entries to be dropped without damaging the consistency of
+    // the system (again we just need to do fresh generation of)
     //
-    // The log entry is returned so that the caller can implement distributed consensus
-    // at some point (also with the help of this class, since some raft state updates
-    // will have to be atomic).
-    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntryWithIndex& logEntry);
+    // Morally this function always succeeds, the "real" error checking is all done at
+    // log application time. The reasoning here is that
+    // log preparation is not reading from the latest state anyway, since there might
+    // be many log entries in flight which we have prepared but not applied, and therefore
+    // this function does not have the latest view of the state. We are still
+    // allowed to read from the state at log preparation time (e.g. to gather needed info
+    // about block services), but knowing that we might lag a bit behind.
+    //
+    // However we still do some "type checking" here (e.g. we have ids in the right
+    // shard and of the right type, good transient file cookies), and we might still
+    // return errors for some corner cases (e.g. if we cannot allocate block services
+    // for some span request or something like that).
+    //
+    // As usual, if an error is returned, the contents of `logEntry` should be ignored.
+    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry);
+
+    // The index of the last log entry persisted to the 
+    uint64_t lastAppliedLogEntry();
 
     // Applies the log entry at the given index, and fills in the client response.
-    // The log entry index should be the next in line to be applied to the state.
+    // The log entry index should be the next in line to be applied to the state --
+    // `lastAppliedLogEntry() + 1`.
+    //
+    // It is the job of the caller to keep track of indices, this state machine  only
+    // remembers which index it last applied.
     //
     // This function will fail if called concurrently -- like `prepareLogEntry` we
-    // rely on having a single writer.
+    // rely on having a single writer, and here it's actually a lot more important.
     //
     // The state is written atomically (you can never witness an half-applied log entry).
-    EggsError applyLogEntry(uint64_t logEntryIx, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
+    //
+    // The `sync` parameter determines whether `fsync` is called when persisting the
+    // state. If the log entry is persisted before `applyLogEntry` is applied, this might
+    // not be necessary. If it is not, then it is certainly necessary.
+    //
+    // As usual, if an error is returned, the contents of `resp` should be ignored.
+    EggsError applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
 
-    // Miscellanea
+    // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;
 };

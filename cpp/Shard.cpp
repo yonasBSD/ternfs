@@ -30,6 +30,7 @@ void Shard::run() {
     LOG_INFO(*_env, "will run shard %s with DB dir %s", _shid, _dbDir);
 
     _db = std::make_unique<ShardDB>(*_env, _shid, _dbDir);
+    uint64_t currentLogIndex = _db->lastAppliedLogEntry();
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
@@ -64,7 +65,7 @@ void Shard::run() {
     BincodeBytesScratchpad respScratch;
     auto reqContainer = std::make_unique<ShardReqContainer>();
     auto respContainer = std::make_unique<ShardRespContainer>();
-    auto logEntry = std::make_unique<ShardLogEntryWithIndex>();
+    auto logEntry = std::make_unique<ShardLogEntry>();
 
     for (;;) {
         if (_stop.load()) {
@@ -136,7 +137,8 @@ void Shard::run() {
             } else {
                 err = _db->prepareLogEntry(*reqContainer, respScratch, *logEntry);
                 if (err == NO_ERROR) {
-                    err = _db->applyLogEntry(logEntry->index, respScratch, *respContainer);
+                    err = _db->applyLogEntry(true, currentLogIndex+1, *logEntry, respScratch, *respContainer);
+                    currentLogIndex++;
                 }
             }
         }

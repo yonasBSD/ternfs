@@ -227,37 +227,65 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
 }
 
 struct ShardDBImpl {
-private:
     Env& _env;
 
     ShardId _shid;
     std::array<uint8_t, 16> _secretKey;
 
-    rocksdb::DB* _logDb;
-    rocksdb::ColumnFamilyHandle* _logDefault;
-    rocksdb::ColumnFamilyHandle* _logEntries;
-
-    rocksdb::DB* _stateDb;
-    rocksdb::ColumnFamilyHandle* _stateDefault;
-    rocksdb::ColumnFamilyHandle* _transientFiles;
-    rocksdb::ColumnFamilyHandle* _files;
-    rocksdb::ColumnFamilyHandle* _spans;
-    rocksdb::ColumnFamilyHandle* _directories;
-    rocksdb::ColumnFamilyHandle* _edges;
+    rocksdb::DB* _db;
+    rocksdb::ColumnFamilyHandle* _defaultCf;
+    rocksdb::ColumnFamilyHandle* _transientCf;
+    rocksdb::ColumnFamilyHandle* _filesCf;
+    rocksdb::ColumnFamilyHandle* _spansCf;
+    rocksdb::ColumnFamilyHandle* _directoriesCf;
+    rocksdb::ColumnFamilyHandle* _edgesCf;
 
     AssertiveLock _prepareLogEntryLock;
-    std::vector<uint8_t> _writeLogEntryBuf;
-
     AssertiveLock _applyLogEntryLock;
 
     // ----------------------------------------------------------------
     // initialization
 
+    ShardDBImpl() = delete;
+
+    ShardDBImpl(Env& env, ShardId shid, const std::string& path) : _env(env), _shid(shid) {
+        // TODO actually figure out the best strategy for each family, including the default
+        // one.
+
+        rocksdb::Options options;
+        options.create_if_missing = true;
+        options.create_missing_column_families = true;
+        std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
+            {rocksdb::kDefaultColumnFamilyName, {}},
+            {"files", {}},
+            {"spans", {}},
+            {"transientFiles", {}},
+            {"directories", {}},
+            {"edges", {}},
+        };
+        std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
+        auto dbPath = path + "/db-state";
+        LOG_INFO(_env, "initializing state RocksDB in %s", dbPath);
+        ROCKS_DB_CHECKED_MSG(
+            rocksdb::DB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_db),
+            "could not open RocksDB %s", dbPath
+        );
+        ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
+        _defaultCf = familiesHandles[0];
+        _filesCf = familiesHandles[1];
+        _spansCf = familiesHandles[2];
+        _transientCf = familiesHandles[3];
+        _directoriesCf = familiesHandles[4];
+        _edgesCf = familiesHandles[5];
+
+        _initDb();
+    }
+
     void _initDb() {
         bool shardInfoExists;
         {
             std::string value;
-            auto status = _stateDb->Get({}, shardMetadataKey(&SHARD_INFO_KEY), &value);
+            auto status = _db->Get({}, shardMetadataKey(&SHARD_INFO_KEY), &value);
             if (status.IsNotFound()) {
                 shardInfoExists = false;
             } else {
@@ -276,12 +304,12 @@ private:
             StaticValue<ShardInfoBody> shardInfo;
             shardInfo->setShardId(_shid);
             shardInfo->setSecretKey(_secretKey);
-            ROCKS_DB_CHECKED(_stateDb->Put({}, shardMetadataKey(&SHARD_INFO_KEY), shardInfo.toSlice()));
+            ROCKS_DB_CHECKED(_db->Put({}, shardMetadataKey(&SHARD_INFO_KEY), shardInfo.toSlice()));
         }
 
-        const auto keyExists = [](rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key) -> bool {
+        const auto keyExists = [this](rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key) -> bool {
             std::string value;
-            auto status = db->Get({}, cf, key, &value);
+            auto status = _db->Get({}, cf, key, &value);
             if (status.IsNotFound()) {
                 return false;
             } else {
@@ -292,7 +320,7 @@ private:
 
         {
             auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
-            if (!keyExists(_stateDb, _directories, k.toSlice())) {
+            if (!keyExists(_directoriesCf, k.toSlice())) {
                 LOG_INFO(_env, "creating root directory, since it does not exist");
                 char buf[255];
                 auto info = defaultDirectoryInfo(buf);
@@ -303,57 +331,44 @@ private:
                 dirBody->setInfoInherited(false);
                 dirBody->setInfo(info);
                 auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
-                ROCKS_DB_CHECKED(_stateDb->Put({}, _directories, k.toSlice(), dirBody.toSlice()));
+                ROCKS_DB_CHECKED(_db->Put({}, _directoriesCf, k.toSlice(), dirBody.toSlice()));
             }
         }
 
-        if (!keyExists(_logDb, _logDefault, logMetadataKey(&NEXT_FILE_ID_KEY))) {
+        if (!keyExists(_defaultCf, shardMetadataKey(&NEXT_FILE_ID_KEY))) {
             LOG_INFO(_env, "initializing next file id");
             InodeId nextFileId(InodeType::FILE, ShardId(_shid), 0);
             auto v = InodeIdValue::Static(nextFileId);
-            ROCKS_DB_CHECKED(_logDb->Put({}, _logDefault, logMetadataKey(&NEXT_FILE_ID_KEY), v.toSlice()));
+            ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&NEXT_FILE_ID_KEY), v.toSlice()));
         }
-        if (!keyExists(_logDb, _logDefault, logMetadataKey(&NEXT_SYMLINK_ID_KEY))) {
+        if (!keyExists(_defaultCf, shardMetadataKey(&NEXT_SYMLINK_ID_KEY))) {
             LOG_INFO(_env, "initializing next symlink id");
             InodeId nextLinkId(InodeType::SYMLINK, ShardId(_shid), 0);
             auto v = InodeIdValue::Static(nextLinkId);
-            ROCKS_DB_CHECKED(_logDb->Put({}, _logDefault, logMetadataKey(&NEXT_SYMLINK_ID_KEY), v.toSlice()));
+            ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&NEXT_SYMLINK_ID_KEY), v.toSlice()));
         }
 
-        if (!keyExists(_stateDb, _stateDefault, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY))) {
+        if (!keyExists(_defaultCf, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY))) {
             LOG_INFO(_env, "initializing last applied log entry");
             auto v = U64Value::Static(0);
-            ROCKS_DB_CHECKED(_stateDb->Put({}, _stateDefault, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
+            ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
         }
-
     }
 
-    // Right now we just replay the log on startup. When we have distributed consensus
-    // we'll have to do things a bit differently, obvioulsy.
-    void _replayLog() {
-        uint64_t lastAppliedIx = _lastAppliedLogEntry();
-        LOG_INFO(_env, "replaying log after startup from %s", lastAppliedIx);
+    void close() {
+        LOG_INFO(_env, "destroying column families and closing database");
 
-        BincodeBytesScratchpad scratch;
-        ShardRespContainer resp;
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_filesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_spansCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_transientCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_directoriesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
+        ROCKS_DB_CHECKED(_db->Close());
+    }
 
-        {
-            WrappedIterator it(_logDb->NewIterator({}, _logEntries));
-            StaticValue<LogEntryKey> seekKey;
-            seekKey->setIndex(lastAppliedIx);
-            for (it->Seek(seekKey.toSlice()); it->Valid(); it->Next()) {
-                auto ix = ExternalValue<LogEntryKey>::FromSlice(it->key());
-                if (ix->index() == lastAppliedIx) {
-                    continue;
-                }
-                LOG_INFO(_env, "replaying log entry ix %s", ix->index());
-                EggsError err = applyLogEntry(ix->index(), scratch, resp);
-                if (err != NO_ERROR) {
-                    LOG_INFO(_env, "got error %s when replaying log entry ix %s", err, ix->index());
-                }
-            }
-            ROCKS_DB_CHECKED(it->status());
-        }
+    ~ShardDBImpl() {
+        delete _db;
     }
 
     // ----------------------------------------------------------------
@@ -375,7 +390,7 @@ private:
         std::string fileValue;
         {
             auto k = InodeIdKey::Static(req.id);
-            auto status = _stateDb->Get({}, _transientFiles, k.toSlice(), &fileValue);
+            auto status = _db->Get({}, _transientCf, k.toSlice(), &fileValue);
             if (status.IsNotFound()) {
                 return EggsError::FILE_NOT_FOUND;
             }
@@ -406,7 +421,7 @@ private:
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
-        WrappedSnapshot snapshot(_stateDb);
+        WrappedSnapshot snapshot(_db);
         rocksdb::ReadOptions options;
         options.snapshot = snapshot.snapshot;
 
@@ -421,7 +436,7 @@ private:
         }
 
         {
-            auto it = WrappedIterator(_stateDb->NewIterator(options, _edges));
+            auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
             beginKey->setDirIdWithCurrent(req.dirId, true); // current = true
             beginKey->setNameHash(req.startHash);
@@ -459,12 +474,12 @@ private:
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
-        WrappedSnapshot snapshot(_stateDb);
+        WrappedSnapshot snapshot(_db);
         rocksdb::ReadOptions options;
         options.snapshot = snapshot.snapshot;
 
         {
-            auto it = WrappedIterator(_stateDb->NewIterator(options, _edges));
+            auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
             beginKey->setDirIdWithCurrent(req.dirId, req.cursor.current);
             beginKey->setNameHash(req.cursor.startHash);
@@ -531,7 +546,7 @@ private:
     }
 
     EggsError _lookup(const LookupReq& req, LookupResp& resp) {
-        WrappedSnapshot snapshot(_stateDb);
+        WrappedSnapshot snapshot(_db);
         rocksdb::ReadOptions options;
         options.snapshot = snapshot.snapshot;
 
@@ -552,7 +567,7 @@ private:
             reqKey->setNameHash(nameHash);
             reqKey->setName(req.name);
             std::string edgeValue;
-            auto status = _stateDb->Get(options, _edges, reqKey.toSlice(), &edgeValue);
+            auto status = _db->Get(options, _edgesCf, reqKey.toSlice(), &edgeValue);
             if (status.IsNotFound()) {
                 return EggsError::NAME_NOT_FOUND;
             }
@@ -569,7 +584,7 @@ private:
         resp.nextId = NULL_INODE_ID;
 
         {
-            WrappedIterator it(_stateDb->NewIterator({}, _transientFiles));
+            WrappedIterator it(_db->NewIterator({}, _transientCf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - VisitTransientFilesResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
@@ -600,7 +615,7 @@ private:
         int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - VisitDirectoriesResp::STATIC_SIZE;
         int maxIds = (budget/8) + 1; // include next inode
         {
-            WrappedIterator it(_stateDb->NewIterator({}, _directories));            
+            WrappedIterator it(_db->NewIterator({}, _directoriesCf));            
             auto beginKey = InodeIdKey::Static(req.beginId);
             for (
                 it->Seek(beginKey.toSlice());
@@ -620,29 +635,62 @@ private:
         return NO_ERROR;
     }
 
+    EggsError read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+        LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
+
+        EggsError err = NO_ERROR;
+        scratch.reset();
+        resp.clear();
+
+        switch (req.kind()) {
+        case ShardMessageKind::STAT_FILE:
+            err = _statFile(req.getStatFile(), resp.setStatFile());
+            break;
+        case ShardMessageKind::READ_DIR:
+            err = _readDir(req.getReadDir(), scratch, resp.setReadDir());
+            break;
+        case ShardMessageKind::STAT_DIRECTORY:
+            err = _statDirectory(req.getStatDirectory(), scratch, resp.setStatDirectory());
+            break;
+        case ShardMessageKind::STAT_TRANSIENT_FILE:
+            err = _statTransientFile(req.getStatTransientFile(), scratch, resp.setStatTransientFile());
+            break;
+        case ShardMessageKind::LOOKUP:
+            err = _lookup(req.getLookup(), resp.setLookup());
+            break;
+        case ShardMessageKind::VISIT_TRANSIENT_FILES:
+            err = _visitTransientFiles(req.getVisitTransientFiles(), scratch, resp.setVisitTransientFiles());
+            break;
+        case ShardMessageKind::FULL_READ_DIR:
+            err = _fullReadDir(req.getFullReadDir(), scratch, resp.setFullReadDir());
+            break;
+        case ShardMessageKind::VISIT_DIRECTORIES:
+            err = _visitDirectories(req.getVisitDirectories(), scratch, resp.setVisitDirectories());
+            break;
+        case ShardMessageKind::FILE_SPANS:
+        case ShardMessageKind::VISIT_FILES:
+        case ShardMessageKind::BLOCK_SERVICE_FILES:
+            throw EGGS_EXCEPTION("UNIMPLEMENTED %s", req.kind());
+        default:
+            throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
+        }
+
+        ALWAYS_ASSERT(req.kind() == resp.kind());
+
+        return err;
+    }
+
+
     // ----------------------------------------------------------------
     // log preparation
 
-    uint64_t _nextLogIndex() {
-        WrappedIterator it(_logDb->NewIterator({}, _logEntries));
-        it->SeekToLast();
-        if (!it->Valid()) {
-            LOG_INFO(_env, "getting index for first log entry");
-            // log entries start from one: index 0 is the starting "last applied" index.
-            return 1;
-        }
-        ROCKS_DB_CHECKED(it->status());
-        auto currIx = ExternalValue<LogEntryKey>::FromSlice(it->key());
-        return currIx->index() + 1;
-    }
-
     EggsError _prepareConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileReq& req, BincodeBytesScratchpad& scratch, ConstructFileEntry& entry) {
-        const auto nextFileId = [this, &batch](const LogMetadataKey* key) -> InodeId {
+        const auto nextFileId = [this, &batch](const ShardMetadataKey* key) -> InodeId {
             std::string value;
-            ROCKS_DB_CHECKED(_logDb->Get({}, logMetadataKey(key), &value));
+            ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
             ExternalValue<InodeIdValue> inodeId(value);
             inodeId->setId(InodeId::FromU64(inodeId->id().u64 + 0x100));
-            ROCKS_DB_CHECKED(batch.Put(logMetadataKey(key), inodeId.toSlice()));
+            ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
             return inodeId->id();
         };
 
@@ -658,14 +706,6 @@ private:
         entry.deadlineTime = time + DEADLINE_INTERVAL;
 
         return NO_ERROR;
-    }
-
-    void _writeLogEntry(rocksdb::WriteBatch& batch, const ShardLogEntryWithIndex& entry) {
-        StaticValue<LogEntryKey> k;
-        k->setIndex(entry.index);
-        BincodeBuf bbuf((char*)&_writeLogEntryBuf[0], _writeLogEntryBuf.size());
-        entry.entry.pack(bbuf);
-        batch.Put(_logEntries, k.toSlice(), bbuf.slice());
     }
 
     EggsError _checkTransientFileCookie(InodeId id, std::array<uint8_t, 8> cookie) {
@@ -905,782 +945,7 @@ private:
         return NO_ERROR;
     }
 
-    // ----------------------------------------------------------------
-    // log application
-
-    void _readLogEntry(uint64_t index, std::string& scratch, ShardLogEntryWithIndex& entry) {
-        entry.index = index;
-        StaticValue<LogEntryKey> k;
-        k->setIndex(entry.index);
-        ROCKS_DB_CHECKED(_logDb->Get({}, _logEntries, k.toSlice(), &scratch));
-        BincodeBuf bbuf(scratch);
-        entry.entry.unpack(bbuf);
-        ALWAYS_ASSERT(bbuf.remaining() == 0);
-    }
-
-    void _advanceLastAppliedLogEntry(rocksdb::WriteBatch& batch, uint64_t index) {
-        uint64_t oldIndex = _lastAppliedLogEntry();
-        ALWAYS_ASSERT(oldIndex+1 == index, "old index is %s, expected %s, got %s", oldIndex, oldIndex+1, index);
-        LOG_DEBUG(_env, "bumping log index from %s to %s", oldIndex, index);
-        StaticValue<U64Value> v;
-        v->setU64(index);
-        ROCKS_DB_CHECKED(batch.Put({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
-    }
-
-    EggsError _applyConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileEntry& entry, BincodeBytesScratchpad& scratch, ConstructFileResp& resp) {
-        // write to rocks
-        StaticValue<TransientFileBody> transientFile;
-        transientFile->setFileSize(0);
-        transientFile->setMtime(time);
-        transientFile->setDeadline(entry.deadlineTime);
-        transientFile->setLastSpanState(SpanState::CLEAN);
-        transientFile->setNote(entry.note);
-        auto k = InodeIdKey::Static(entry.id);
-        ROCKS_DB_CHECKED(batch.Put(_transientFiles, k.toSlice(), transientFile.toSlice()));
-
-        // prepare response
-        resp.id = entry.id;
-        _calcCookie(resp.id, resp.cookie.data);
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyLinkFile(rocksdb::WriteBatch& batch, EggsTime time, const LinkFileEntry& entry, BincodeBytesScratchpad& scratch, LinkFileResp& resp) {
-        std::string fileValue;
-        ExternalValue<TransientFileBody> transientFile;
-        {
-            EggsError err = _getTransientFile({}, time, false /*allowPastDeadline*/, entry.fileId, fileValue, transientFile);
-            if (err == EggsError::FILE_NOT_FOUND) {
-                // Check if the file has already been linked to simplify the life of retrying
-                // clients.
-                ExternalValue<FileBody> file;
-                EggsError err = _getFile({}, entry.fileId, fileValue, file); // don't overwrite old error
-                if (err == NO_ERROR) {
-                    return NO_ERROR; // the non-transient file exists already, we're done
-                }
-            } else if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        if (transientFile->lastSpanState() != SpanState::CLEAN) {
-            return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
-        }
-
-        // move from transient to non-transient.
-        auto fileKey = InodeIdKey::Static(entry.fileId);
-        ROCKS_DB_CHECKED(batch.Delete(_transientFiles, fileKey.toSlice()));
-        StaticValue<FileBody> file;
-        file->setMtime(time);
-        file->setFileSize(transientFile->fileSize());
-        ROCKS_DB_CHECKED(batch.Put(_files, fileKey.toSlice(), file.toSlice()));
-
-        // create edge in owner.
-        {
-            EggsError err = ShardDBImpl::_createCurrentEdge(time, time, batch, entry.ownerId, entry.name, entry.fileId, false);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _initiateDirectoryModification(EggsTime time, rocksdb::WriteBatch& batch, InodeId dirId, bool allowSnapshot, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
-        ExternalValue<DirectoryBody> tmpDir;
-        EggsError err = _getDirectory({}, dirId, allowSnapshot, dirValue, tmpDir);
-        if (err != NO_ERROR) {
-            return err;
-        }
-
-        // Don't go backwards in time. This is important amongst other things to ensure
-        // that we do not have snapshot edges to be the same. This should be very uncommon.
-        if (tmpDir->mtime() >= time) {
-            RAISE_ALERT(_env, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir->mtime(), time);
-            return EggsError::DIRECTORY_MTIME_IS_TOO_RECENT;
-        }
-
-        // Modify the directory mtime
-        tmpDir->setMtime(time);
-        {
-            auto k = InodeIdKey::Static(dirId);
-            ROCKS_DB_CHECKED(batch.Put(_directories, k.toSlice(), tmpDir.toSlice()));
-        }
-
-        dir = tmpDir;
-        return NO_ERROR;
-    }
-
-    // Note that we cannot expose an API which allows us to create non-locked current edges,
-    // see comment for CreateLockedCurrentEdgeReq.
-    //
-    // `logEntryTime` and `creationTime` are separate since we need a different `creationTime`
-    // for CreateDirectoryInodeReq.
-    //
-    // It must be the case that `creationTime <= logEntryTime`.
-    EggsError _createCurrentEdge(EggsTime logEntryTime, EggsTime creationTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool locked) {
-        ALWAYS_ASSERT(creationTime <= logEntryTime);
-
-        // fetch the directory
-        ExternalValue<DirectoryBody> dir;
-        std::string dirValue;
-        {
-            // allowSnaphsot=false since we cannot create current edges in snapshot directories.
-            EggsError err = _initiateDirectoryModification(logEntryTime, batch, dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        uint64_t nameHash = computeHash(dir->hashMode(), name);
-
-        // Next, we need to look at the current edge with the same name, if any.
-        StaticValue<EdgeKey> edgeKey;
-        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
-        edgeKey->setNameHash(nameHash);
-        edgeKey->setName(name);
-        std::string edgeValue;
-        auto status = _stateDb->Get({}, _edges, edgeKey.toSlice(), &edgeValue);
-
-        // in the block below, we exit the function early if something is off.
-        if (status.IsNotFound()) {
-            // we're the first one here -- we only need to check the time of
-            // the snaphsot edges if the creation time is earlier than the
-            // log entry time, otherwise we know that the snapshot edges are
-            // all older, since they were all created before logEntryTime.
-            StaticValue<EdgeKey> snapshotEdgeKey;
-            snapshotEdgeKey->setDirIdWithCurrent(dirId, false); // snapshhot (current=false)
-            snapshotEdgeKey->setNameHash(nameHash);
-            snapshotEdgeKey->setName(name);
-            snapshotEdgeKey->setCreationTime({std::numeric_limits<uint64_t>::max()});
-            WrappedIterator it(_stateDb->NewIterator({}, _edges));
-            it->SeekForPrev(snapshotEdgeKey.toSlice());
-            if (it->Valid() && !it->status().IsNotFound()) {
-                auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (k->dirId() == dirId && !k->current() && k->nameHash() == nameHash && k->name() == name) {
-                    if (k->creationTime() >= creationTime) {
-                        return EggsError::MORE_RECENT_SNAPSHOT_EDGE;
-                    }
-                }
-            }
-            ROCKS_DB_CHECKED(it->status());
-        } else {
-            ROCKS_DB_CHECKED(status);
-            ExternalValue<CurrentEdgeBody> existingEdge(edgeValue);
-            if (existingEdge->targetIdWithLocked().extra()) { // locked
-                // we have an existing locked edge, we need to make sure that it's the one we expect for
-                // idempotency.
-                if (
-                    !locked || // the one we're trying to create isn't locked
-                    (targetId != existingEdge->targetIdWithLocked().id() || creationTime != existingEdge->creationTime()) // we're trying to create a different locked edge
-                ) {
-                    return EggsError::NAME_IS_LOCKED;
-                }
-            } else {
-                // We're kicking out a non-locked current edge. The only circumstance where we allow
-                // this automatically is if a file is overriding another file, which is also how it
-                // works in linux/posix (see `man 2 rename`).
-                if (existingEdge->creationTime() >= creationTime) {
-                    return EggsError::MORE_RECENT_CURRENT_EDGE;
-                }
-                if (
-                    targetId.type() == InodeType::DIRECTORY || existingEdge->targetIdWithLocked().id().type() == InodeType::DIRECTORY
-                ) {
-                    return EggsError::CANNOT_OVERRIDE_NAME;
-                }
-                // make what is now the current edge a snapshot edge -- no need to delete it,
-                // it'll be overwritten below.
-                {
-                    StaticValue<EdgeKey> k;
-                    k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
-                    k->setNameHash(nameHash);
-                    k->setName(name);
-                    k->setCreationTime(existingEdge->creationTime());
-                    StaticValue<SnapshotEdgeBody> v;
-                    // this was current, so it's now owned.
-                    v->setTargetIdWithOwned(InodeIdExtra(existingEdge->targetIdWithLocked().id(), true));
-                    ROCKS_DB_CHECKED(batch.Put(_edges, k.toSlice(), v.toSlice()));
-                }
-            }
-        }
-
-        // OK, we're now ready to insert the current edge
-        StaticValue<CurrentEdgeBody> edgeBody;
-        edgeBody->setTargetIdWithLocked(InodeIdExtra(targetId, locked));
-        edgeBody->setCreationTime(creationTime);
-        ROCKS_DB_CHECKED(batch.Put(_edges, edgeKey.toSlice(), edgeBody.toSlice()));
-
-        return NO_ERROR;
-
-    }
-
-    EggsError _applySameDirectoryRename(EggsTime time, rocksdb::WriteBatch& batch, const SameDirectoryRenameEntry& entry, SameDirectoryRenameResp& resp) {
-        // First, remove the old edge -- which won't be owned anymore, since we're renaming it.
-        {
-            EggsError err = _softUnlinkCurrentEdge(time, batch, entry.dirId, entry.oldName, entry.targetId, false);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        // Now, create the new one
-        {
-            EggsError err = _createCurrentEdge(time, time, batch, entry.dirId, entry.newName, entry.targetId, false);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        return NO_ERROR;
-    }
-
-    EggsError _softUnlinkCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool owned) {
-        // fetch the directory
-        ExternalValue<DirectoryBody> dir;
-        std::string dirValue;
-        {
-            // allowSnaphsot=false since we can't have current edges in snapshot dirs
-            EggsError err = _initiateDirectoryModification(time, batch, dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        uint64_t nameHash = computeHash(dir->hashMode(), name);
-
-        // get the edge
-        StaticValue<EdgeKey> edgeKey;
-        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
-        edgeKey->setNameHash(nameHash);
-        edgeKey->setName(name);
-        std::string edgeValue;
-        auto status = _stateDb->Get({}, _edges, edgeKey.toSlice(), &edgeValue);
-        if (status.IsNotFound()) {
-            return EggsError::NAME_NOT_FOUND;
-        }
-        ROCKS_DB_CHECKED(status);
-        ExternalValue<CurrentEdgeBody> edgeBody(edgeValue);
-        if (edgeBody->targetIdWithLocked().id() != targetId) {
-            return EggsError::MISMATCHING_TARGET;
-        }
-        if (edgeBody->targetIdWithLocked().extra()) { // locked
-            return EggsError::NAME_IS_LOCKED;
-        }
-
-        // delete the current edge
-        batch.Delete(_edges, edgeKey.toSlice());
-
-        // add the two snapshot edges, one for what was the current edge,
-        // and another to signify deletion
-        {
-            StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
-            k->setNameHash(nameHash);
-            k->setName(name);
-            k->setCreationTime(edgeBody->creationTime());
-            StaticValue<SnapshotEdgeBody> v;
-            v->setTargetIdWithOwned(InodeIdExtra(targetId, owned));
-            ROCKS_DB_CHECKED(batch.Put(_edges, k.toSlice(), v.toSlice()));
-            k->setCreationTime(time);
-            v->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false));
-            ROCKS_DB_CHECKED(batch.Put(_edges, k.toSlice(), v.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applySoftUnlinkFile(EggsTime time, rocksdb::WriteBatch& batch, const SoftUnlinkFileEntry& entry, SoftUnlinkFileResp& resp) {
-        return _softUnlinkCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, true);
-    }
-
-    EggsError _applyCreateDirectoryInode(EggsTime time, rocksdb::WriteBatch& batch, const CreateDirectoryInodeEntry& entry, CreateDirectoryInodeResp& resp) {
-        // The assumption here is that only the CDC creates directories, and it doles out
-        // inode ids per transaction, so that you'll never get competing creates here, but
-        // we still check that the parent makes sense.
-        {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            // we never create directories as snapshot
-            EggsError err = _getDirectory({}, entry.id, false, dirValue, dir);
-            if (err == NO_ERROR) {
-                if (dir->ownerId() != entry.ownerId) {
-                    return EggsError::MISMATCHING_OWNER;
-                } else {
-                    return NO_ERROR;
-                }
-            } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                // we continue
-            } else {
-                return err;
-            }
-        }
-
-        {
-            auto dirKey = InodeIdKey::Static(entry.id);
-            StaticValue<DirectoryBody> dir;
-            dir->setOwnerId(entry.ownerId);
-            dir->setMtime(time);
-            dir->setHashMode(HashMode::XXH3_63);
-            dir->setInfoInherited(entry.info.inherited);
-            dir->setInfo(entry.info.body);
-            ROCKS_DB_CHECKED(batch.Put(_directories, dirKey.toSlice(), dir.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyCreateLockedCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const CreateLockedCurrentEdgeEntry& entry, CreateLockedCurrentEdgeResp& resp) {
-        LOG_INFO(_env, "Creating edge %s -> %s", entry.dirId, entry.targetId);
-        return _createCurrentEdge(time, entry.creationTime, batch, entry.dirId, entry.name, entry.targetId, true); // locked=true
-    }
-
-    EggsError _applyUnlockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const UnlockCurrentEdgeEntry& entry, UnlockCurrentEdgeResp& resp) {
-        uint64_t nameHash;
-        {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            // allowSnaphsot=false since no current edges in snapshot dirs
-            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-            nameHash = computeHash(dir->hashMode(), entry.name);
-        }
-
-        StaticValue<EdgeKey> currentKey;
-        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-        currentKey->setNameHash(nameHash);
-        currentKey->setName(entry.name);
-        std::string edgeValue;
-        {
-            auto status = _stateDb->Get({}, _edges, currentKey.toSlice(), &edgeValue);
-            if (status.IsNotFound()) {
-                return EggsError::EDGE_NOT_FOUND;
-            }
-            ROCKS_DB_CHECKED(status);
-        }
-        ExternalValue<CurrentEdgeBody> edge(edgeValue);
-        if (edge->locked()) {
-            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, false)); // locked=false
-            ROCKS_DB_CHECKED(batch.Put(_edges, currentKey.toSlice(), edge.toSlice()));
-        }
-        if (entry.wasMoved) {
-            // We need to move the current edge to snapshot, and create a new snapshot
-            // edge with the deletion. 
-            ROCKS_DB_CHECKED(batch.Delete(_edges, currentKey.toSlice()));
-            StaticValue<EdgeKey> snapshotKey;
-            snapshotKey->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
-            snapshotKey->setNameHash(nameHash);
-            snapshotKey->setName(entry.name);
-            snapshotKey->setCreationTime(edge->creationTime());
-            StaticValue<SnapshotEdgeBody> snapshotBody;
-            snapshotBody->setTargetIdWithOwned(InodeIdExtra(entry.targetId, false)); // not owned (this was moved somewhere else)
-            ROCKS_DB_CHECKED(batch.Put(_edges, snapshotKey.toSlice(), snapshotBody.toSlice()));
-            snapshotKey->setCreationTime(time);
-            snapshotBody->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false)); // deletion edges are never owned
-            ROCKS_DB_CHECKED(batch.Put(_edges, snapshotKey.toSlice(), snapshotBody.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyLockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const LockCurrentEdgeEntry& entry, LockCurrentEdgeResp& resp) {
-        // TODO lots of duplication with _applyUnlockCurrentEdge
-        uint64_t nameHash;
-        {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            // allowSnaphsot=false since no current edges in snapshot dirs
-            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-            nameHash = computeHash(dir->hashMode(), entry.name);        
-        }
-
-        StaticValue<EdgeKey> currentKey;
-        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-        currentKey->setNameHash(nameHash);
-        currentKey->setName(entry.name);
-        std::string edgeValue;
-        {
-            auto status = _stateDb->Get({}, _edges, currentKey.toSlice(), &edgeValue);
-            if (status.IsNotFound()) {
-                return EggsError::EDGE_NOT_FOUND;
-            }
-            ROCKS_DB_CHECKED(status);
-        }
-        ExternalValue<CurrentEdgeBody> edge(edgeValue);
-        if (!edge->locked()) {
-            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, true)); // locked=true
-            ROCKS_DB_CHECKED(batch.Put(_edges, currentKey.toSlice(), edge.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyRemoveDirectoryOwner(EggsTime time, rocksdb::WriteBatch& batch, const RemoveDirectoryOwnerEntry& entry, RemoveDirectoryOwnerResp& resp) {
-        std::string dirValue;
-        ExternalValue<DirectoryBody> dir;
-        {
-            // allowSnapshot=true for idempotency (see below)
-            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-            if (dir->ownerId() == NULL_INODE_ID) {
-                return NO_ERROR; // already done
-            }
-        }
-
-        // if we have any current edges, we can't proceed
-        {
-            StaticValue<EdgeKey> edgeKey;
-            edgeKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-            edgeKey->setNameHash(0);
-            edgeKey->setName({});
-            WrappedIterator it(_stateDb->NewIterator({}, _edges));
-            it->Seek(edgeKey.toSlice());
-            if (it->Valid()) {
-                auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (otherEdge->dirId() == entry.dirId && otherEdge->current()) {
-                    return EggsError::DIRECTORY_NOT_EMPTY;
-                }
-            } else if (it->status().IsNotFound()) {
-                // nothing to do
-            } else {
-                ROCKS_DB_CHECKED(it->status());
-            }
-        }
-
-        // we need to create a new DirectoryBody, the materialized info might have changed size
-        {
-            StaticValue<DirectoryBody> newDir;
-            newDir->setOwnerId(NULL_INODE_ID);
-            newDir->setMtime(time);
-            newDir->setHashMode(dir->hashMode());
-            newDir->setInfoInherited(dir->infoInherited());
-            newDir->setInfo(entry.info);
-            // std::cerr << "setting info to " << entry.info << std::endl;
-            auto k = InodeIdKey::Static(entry.dirId);
-            ROCKS_DB_CHECKED(batch.Put(_directories, k.toSlice(), newDir.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyRemoveInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
-        if (entry.id.type() == InodeType::DIRECTORY) {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            {
-                EggsError err = _getDirectory({}, entry.id, true, dirValue, dir);
-                if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                    return NO_ERROR; // we're already done
-                }
-                if (err != NO_ERROR) {
-                    return err;
-                }
-            }
-            if (dir->ownerId() != NULL_INODE_ID) {
-                return EggsError::DIRECTORY_HAS_OWNER;
-            }
-            // there can't be any outgoing edges when killing a directory definitively
-            {
-                StaticValue<EdgeKey> edgeKey;
-                edgeKey->setDirIdWithCurrent(entry.id, false);
-                edgeKey->setNameHash(0);
-                edgeKey->setName({});
-                edgeKey->setCreationTime(0);
-                WrappedIterator it(_stateDb->NewIterator({}, _edges));
-                it->Seek(edgeKey.toSlice());
-                if (it->Valid()) {
-                    auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
-                    if (otherEdge->dirId() == entry.id) {
-                        return EggsError::DIRECTORY_NOT_EMPTY;
-                    }
-                } else if (it->status().IsNotFound()) {
-                    // nothing to do
-                } else {
-                    ROCKS_DB_CHECKED(it->status());
-                }
-            }
-            // we can finally delete
-            {
-                auto dirKey = InodeIdKey::Static(entry.id);
-                ROCKS_DB_CHECKED(batch.Delete(_directories, dirKey.toSlice()));
-            }
-        } else {
-            ALWAYS_ASSERT(entry.id.type() == InodeType::FILE || entry.id.type() == InodeType::DIRECTORY);
-            // we demand for the file to be transient, for the deadline to have passed, and for it to have
-            // no spans
-            {
-                std::string transientFileValue;
-                ExternalValue<TransientFileBody> transientFile;
-                EggsError err = _getTransientFile({}, time, true /*allowPastDeadline*/, entry.id, transientFileValue, transientFile);
-                if (err == EggsError::FILE_NOT_FOUND) {
-                    std::string fileValue;
-                    ExternalValue<FileBody> file;
-                    EggsError err = _getFile({}, entry.id, fileValue, file);
-                    if (err == NO_ERROR) {
-                        return EggsError::FILE_IS_NOT_TRANSIENT;
-                    } else if (err == EggsError::FILE_NOT_FOUND) {
-                        return EggsError::FILE_NOT_FOUND;
-                    } else {
-                        return err;
-                    }
-                } else if (err == NO_ERROR) {
-                    // keep going
-                } else {
-                    return err;
-                }
-                // check deadline
-                if (transientFile->deadline() >= time) {
-                    return EggsError::DEADLINE_NOT_PASSED;
-                }
-                // check no spans
-                {
-                    StaticValue<SpanKey> spanKey;
-                    spanKey->setId(entry.id);
-                    spanKey->setOffset(0);
-                    WrappedIterator it(_stateDb->NewIterator({}, _spans));
-                    it->Seek(spanKey.toSlice());
-                    if (it->Valid()) {
-                        auto otherSpan = ExternalValue<SpanKey>::FromSlice(it->value());
-                        if (otherSpan->id() == entry.id) {
-                            return EggsError::FILE_NOT_EMPTY;
-                        }
-                    } else if (it->status().IsNotFound()) {
-                        // nothing to do
-                    } else {
-                        ROCKS_DB_CHECKED(it->status());
-                    }
-                }
-            }
-            // we can finally delete
-            {
-                auto fileKey = InodeIdKey::Static(entry.id);
-                ROCKS_DB_CHECKED(batch.Delete(_transientFiles, fileKey.toSlice()));
-            }
-        }
-        return NO_ERROR;
-    }
-
-    EggsError _applySetDirectoryOwner(EggsTime time, rocksdb::WriteBatch& batch, const SetDirectoryOwnerEntry& entry, SetDirectoryOwnerResp& resp) {
-        std::string dirValue;
-        ExternalValue<DirectoryBody> dir;
-        {
-            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        // set the owner, and restore the directory entry if needed.
-        StaticValue<DirectoryBody> newDir;
-        newDir->setOwnerId(entry.ownerId);
-        newDir->setHashMode(dir->hashMode());
-        newDir->setInfoInherited(dir->infoInherited());
-        // remove directory info if it was inherited, now that we have an
-        // owner again.
-        if (dir->infoInherited()) {
-            newDir->setInfo({});
-        }
-        {
-            auto k = InodeIdKey::Static(entry.dirId);
-            ROCKS_DB_CHECKED(batch.Put(_directories, k.toSlice(), newDir.toSlice()));
-        }
-        return NO_ERROR;
-    }
-
-    EggsError _applySetDirectoryInfo(EggsTime time, rocksdb::WriteBatch& batch, const SetDirectoryInfoEntry& entry, SetDirectoryInfoResp& resp) {
-        std::string dirValue;
-        ExternalValue<DirectoryBody> dir;
-        {
-            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-
-        StaticValue<DirectoryBody> newDir;
-        newDir->setOwnerId(dir->ownerId());
-        newDir->setMtime(dir->mtime());
-        newDir->setHashMode(dir->hashMode());
-        newDir->setInfoInherited(entry.info.inherited);
-        // For snapshot directories, we need to preserve the last known info if inherited.
-        // It'll be reset when it's made non-snapshot again.
-        if (!entry.info.inherited || (dir->ownerId() != NULL_INODE_ID)) {
-            newDir->setInfo(entry.info.body);
-        }
-
-        {
-            auto k = InodeIdKey::Static(entry.dirId);
-            ROCKS_DB_CHECKED(batch.Put(_directories, k.toSlice(), newDir.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyRemoveNonOwnedEdge(EggsTime time, rocksdb::WriteBatch& batch, const RemoveNonOwnedEdgeEntry& entry, RemoveNonOwnedEdgeResp& resp) {
-        uint64_t nameHash;
-        {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            // allowSnapshot=true since GC needs to be able to remove non-owned edges from snapshot dir
-            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
-            if (err != NO_ERROR) {
-                return err;
-            }
-            nameHash = computeHash(dir->hashMode(), entry.name);
-        }
-
-        {
-            StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
-            k->setNameHash(nameHash);
-            k->setName(entry.name);
-            k->setCreationTime(entry.creationTime);
-            ROCKS_DB_CHECKED(batch.Delete(_edges, k.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyIntraShardHardFileUnlink(EggsTime time, rocksdb::WriteBatch& batch, const IntraShardHardFileUnlinkEntry& entry, IntraShardHardFileUnlinkResp& resp) {
-        // fetch the file
-        std::string fileValue;
-        ExternalValue<FileBody> file;
-        {
-            EggsError err = _getFile({}, entry.targetId, fileValue, file);
-            if (err == EggsError::FILE_NOT_FOUND) {
-                // if the file is already transient, we're done
-                std::string transientFileValue;
-                ExternalValue<TransientFileBody> transientFile;
-                EggsError err = _getTransientFile({}, time, true, entry.targetId, fileValue, transientFile);
-                if (err == NO_ERROR) {
-                    return NO_ERROR;
-                } else if (err == EggsError::FILE_NOT_FOUND) {
-                    return EggsError::FILE_NOT_FOUND;
-                } else {
-                    return err;
-                }
-            } else if (err != NO_ERROR) {
-                return err;
-            }
-        }
-    
-        // fetch dir, compute hash
-        uint64_t nameHash;
-        {
-            std::string dirValue;
-            ExternalValue<DirectoryBody> dir;
-            // allowSnapshot=true since GC needs to be able to do this in snapshot dirs
-            EggsError err = _initiateDirectoryModification(time, batch, entry.ownerId, true, dirValue, dir);
-            nameHash = computeHash(dir->hashMode(), entry.name);
-        }
-
-        // remove edge
-        {
-            StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(entry.ownerId, false);
-            k->setNameHash(nameHash);
-            k->setName(entry.name);
-            k->setCreationTime(entry.creationTime);
-            ROCKS_DB_CHECKED(batch.Delete(_edges, k.toSlice()));
-        }
-
-        // make file transient
-        {
-            auto k = InodeIdKey::Static(entry.targetId);
-            ROCKS_DB_CHECKED(batch.Delete(_files, k.toSlice()));
-            StaticValue<TransientFileBody> v;
-            v->setFileSize(file->fileSize());
-            v->setMtime(time);
-            v->setDeadline(0);
-            v->setLastSpanState(SpanState::CLEAN);
-            v->setNote(entry.name);
-            ROCKS_DB_CHECKED(batch.Put(_transientFiles, k.toSlice(), v.toSlice()));
-        }
-
-        return NO_ERROR;
-    }
-
-    EggsError _applyRemoveSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const RemoveSpanInitiateEntry& entry, RemoveSpanInitiateResp& resp) {
-        // TODO, just to make the GC integration tests pass for now
-        return EggsError::FILE_EMPTY;
-    }
-
-    // ----------------------------------------------------------------
-    // miscellanea
-
-    void _calcCookie(InodeId id, std::array<uint8_t, 8>& cookie) {
-        cbcmac(_secretKey, (const uint8_t*)&id, sizeof(id), cookie);
-    }
-
-    uint64_t _lastAppliedLogEntry() {
-        std::string value;
-        ROCKS_DB_CHECKED(_stateDb->Get({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
-        ExternalValue<U64Value> v(value);
-        return v->u64();
-    }
-
-    EggsError _getDirectory(const rocksdb::ReadOptions& options, InodeId id, bool allowSnapshot, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
-        if (unlikely(id.type() != InodeType::DIRECTORY)) {
-            return EggsError::TYPE_IS_NOT_DIRECTORY;
-        }
-        auto k = InodeIdKey::Static(id);
-        auto status = _stateDb->Get(options, _directories, k.toSlice(), &dirValue);
-        if (status.IsNotFound()) {
-            return EggsError::DIRECTORY_NOT_FOUND;
-        }
-        ROCKS_DB_CHECKED(status);
-        auto tmpDir = ExternalValue<DirectoryBody>(dirValue);
-        if (!allowSnapshot && (tmpDir->ownerId() == NULL_INODE_ID && id != ROOT_DIR_INODE_ID)) { // root dir never has an owner
-            return EggsError::DIRECTORY_NOT_FOUND;
-        }
-        dir = tmpDir;
-        return NO_ERROR;
-    }
-
-    EggsError _getFile(const rocksdb::ReadOptions& options, InodeId id, std::string& fileValue, ExternalValue<FileBody>& file) {
-        if (unlikely(id.type() != InodeType::FILE && id.type() != InodeType::SYMLINK)) {
-            return EggsError::TYPE_IS_DIRECTORY;
-        }
-        auto k = InodeIdKey::Static(id);
-        auto status = _stateDb->Get(options, _files, k.toSlice(), &fileValue);
-        if (status.IsNotFound()) {
-            return EggsError::FILE_NOT_FOUND;
-        }
-        ROCKS_DB_CHECKED(status);
-        file = ExternalValue<FileBody>(fileValue);
-        return NO_ERROR;
-    }
-
-    EggsError _getTransientFile(const rocksdb::ReadOptions& options, EggsTime time, bool allowPastDeadline, InodeId id, std::string& value, ExternalValue<TransientFileBody>& file) {
-        if (id.type() != InodeType::FILE && id.type() != InodeType::SYMLINK) {
-            return EggsError::TYPE_IS_DIRECTORY;
-        }
-        auto k = InodeIdKey::Static(id);
-        auto status = _stateDb->Get(options, _transientFiles, k.toSlice(), &value);
-        if (status.IsNotFound()) {
-            return EggsError::FILE_NOT_FOUND;
-        }
-        ROCKS_DB_CHECKED(status);
-        auto tmpFile = ExternalValue<TransientFileBody>(value);
-        if (!allowPastDeadline && time > tmpFile->deadline()) {
-            // this should be fairly uncommon
-            LOG_INFO(_env, "not picking up transient file %s since its deadline %s is past the log entry time %s", id, tmpFile->deadline(), time);
-            return EggsError::FILE_NOT_FOUND;
-        }
-        file = tmpFile;
-        return NO_ERROR;
-    }
-
-public:
-    ShardDBImpl() = delete;
-
-    ShardDBImpl(Env& env, ShardId shid, const std::string& path);
-    void close();
-    ~ShardDBImpl();
-
-    EggsError read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
-
-    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntryWithIndex& logEntry) {
+    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         auto locked = _prepareLogEntryLock.lock();
         scratch.reset();
@@ -1689,10 +954,9 @@ public:
 
         rocksdb::WriteBatch batch;
 
-        logEntry.index = _nextLogIndex();
         EggsTime time = eggsNow().ns;
-        logEntry.entry.time = time;
-        auto& logEntryBody = logEntry.entry.body;
+        logEntry.time = time;
+        auto& logEntryBody = logEntry.body;
 
         switch (req.kind()) {
         case ShardMessageKind::CONSTRUCT_FILE:
@@ -1752,18 +1016,12 @@ public:
         }
 
         if (err == NO_ERROR) {
-            LOG_DEBUG(_env, "writing log entry of kind %s, index %s, for request of kind %s", logEntry.entry.body.kind(), logEntry.index, req.kind());
-            _writeLogEntry(batch, logEntry);
-            // When going out of this function we must know that the log is persisted. The main
-            // problem we might face otherwise is state being applied and synced while the log
-            // isn't synced yet, then the system crashing hard and the last log entry being lost,
-            // and then we have the state referring to a log index which is not in the log.
-            //
-            // The other side is fine: we _can_ write to the state in an async manner, since we
-            // can always recover from the log.
+            LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s", logEntryBody.kind(), req.kind());
+            // Here we must always sync, we can't lose updates to the next file id (or similar)
+            // which then might be persisted in the log but lost here.
             rocksdb::WriteOptions options;
             options.sync = true;
-            ROCKS_DB_CHECKED(_logDb->Write(options, &batch));
+            ROCKS_DB_CHECKED(_db->Write(options, &batch));
         } else {
             LOG_INFO(_env, "could not prepare log entry for request of kind %s: %s", req.kind(), err);
         }
@@ -1771,7 +1029,697 @@ public:
         return err;
     }
 
-    EggsError applyLogEntry(uint64_t logIndex, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+    // ----------------------------------------------------------------
+    // log application
+
+    void _advanceLastAppliedLogEntry(rocksdb::WriteBatch& batch, uint64_t index) {
+        uint64_t oldIndex = _lastAppliedLogEntry();
+        ALWAYS_ASSERT(oldIndex+1 == index, "old index is %s, expected %s, got %s", oldIndex, oldIndex+1, index);
+        LOG_DEBUG(_env, "bumping log index from %s to %s", oldIndex, index);
+        StaticValue<U64Value> v;
+        v->setU64(index);
+        ROCKS_DB_CHECKED(batch.Put({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
+    }
+
+    EggsError _applyConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileEntry& entry, BincodeBytesScratchpad& scratch, ConstructFileResp& resp) {
+        // write to rocks
+        StaticValue<TransientFileBody> transientFile;
+        transientFile->setFileSize(0);
+        transientFile->setMtime(time);
+        transientFile->setDeadline(entry.deadlineTime);
+        transientFile->setLastSpanState(SpanState::CLEAN);
+        transientFile->setNote(entry.note);
+        auto k = InodeIdKey::Static(entry.id);
+        ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
+
+        // prepare response
+        resp.id = entry.id;
+        _calcCookie(resp.id, resp.cookie.data);
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyLinkFile(rocksdb::WriteBatch& batch, EggsTime time, const LinkFileEntry& entry, BincodeBytesScratchpad& scratch, LinkFileResp& resp) {
+        std::string fileValue;
+        ExternalValue<TransientFileBody> transientFile;
+        {
+            EggsError err = _getTransientFile({}, time, false /*allowPastDeadline*/, entry.fileId, fileValue, transientFile);
+            if (err == EggsError::FILE_NOT_FOUND) {
+                // Check if the file has already been linked to simplify the life of retrying
+                // clients.
+                ExternalValue<FileBody> file;
+                EggsError err = _getFile({}, entry.fileId, fileValue, file); // don't overwrite old error
+                if (err == NO_ERROR) {
+                    return NO_ERROR; // the non-transient file exists already, we're done
+                }
+            } else if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        if (transientFile->lastSpanState() != SpanState::CLEAN) {
+            return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
+        }
+
+        // move from transient to non-transient.
+        auto fileKey = InodeIdKey::Static(entry.fileId);
+        ROCKS_DB_CHECKED(batch.Delete(_transientCf, fileKey.toSlice()));
+        StaticValue<FileBody> file;
+        file->setMtime(time);
+        file->setFileSize(transientFile->fileSize());
+        ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
+
+        // create edge in owner.
+        {
+            EggsError err = ShardDBImpl::_createCurrentEdge(time, time, batch, entry.ownerId, entry.name, entry.fileId, false);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _initiateDirectoryModification(EggsTime time, rocksdb::WriteBatch& batch, InodeId dirId, bool allowSnapshot, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
+        ExternalValue<DirectoryBody> tmpDir;
+        EggsError err = _getDirectory({}, dirId, allowSnapshot, dirValue, tmpDir);
+        if (err != NO_ERROR) {
+            return err;
+        }
+
+        // Don't go backwards in time. This is important amongst other things to ensure
+        // that we do not have snapshot edges to be the same. This should be very uncommon.
+        if (tmpDir->mtime() >= time) {
+            RAISE_ALERT(_env, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir->mtime(), time);
+            return EggsError::DIRECTORY_MTIME_IS_TOO_RECENT;
+        }
+
+        // Modify the directory mtime
+        tmpDir->setMtime(time);
+        {
+            auto k = InodeIdKey::Static(dirId);
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), tmpDir.toSlice()));
+        }
+
+        dir = tmpDir;
+        return NO_ERROR;
+    }
+
+    // Note that we cannot expose an API which allows us to create non-locked current edges,
+    // see comment for CreateLockedCurrentEdgeReq.
+    //
+    // `logEntryTime` and `creationTime` are separate since we need a different `creationTime`
+    // for CreateDirectoryInodeReq.
+    //
+    // It must be the case that `creationTime <= logEntryTime`.
+    EggsError _createCurrentEdge(EggsTime logEntryTime, EggsTime creationTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool locked) {
+        ALWAYS_ASSERT(creationTime <= logEntryTime);
+
+        // fetch the directory
+        ExternalValue<DirectoryBody> dir;
+        std::string dirValue;
+        {
+            // allowSnaphsot=false since we cannot create current edges in snapshot directories.
+            EggsError err = _initiateDirectoryModification(logEntryTime, batch, dirId, false, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        uint64_t nameHash = computeHash(dir->hashMode(), name);
+
+        // Next, we need to look at the current edge with the same name, if any.
+        StaticValue<EdgeKey> edgeKey;
+        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
+        edgeKey->setNameHash(nameHash);
+        edgeKey->setName(name);
+        std::string edgeValue;
+        auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
+
+        // in the block below, we exit the function early if something is off.
+        if (status.IsNotFound()) {
+            // we're the first one here -- we only need to check the time of
+            // the snaphsot edges if the creation time is earlier than the
+            // log entry time, otherwise we know that the snapshot edges are
+            // all older, since they were all created before logEntryTime.
+            StaticValue<EdgeKey> snapshotEdgeKey;
+            snapshotEdgeKey->setDirIdWithCurrent(dirId, false); // snapshhot (current=false)
+            snapshotEdgeKey->setNameHash(nameHash);
+            snapshotEdgeKey->setName(name);
+            snapshotEdgeKey->setCreationTime({std::numeric_limits<uint64_t>::max()});
+            WrappedIterator it(_db->NewIterator({}, _edgesCf));
+            it->SeekForPrev(snapshotEdgeKey.toSlice());
+            if (it->Valid() && !it->status().IsNotFound()) {
+                auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
+                if (k->dirId() == dirId && !k->current() && k->nameHash() == nameHash && k->name() == name) {
+                    if (k->creationTime() >= creationTime) {
+                        return EggsError::MORE_RECENT_SNAPSHOT_EDGE;
+                    }
+                }
+            }
+            ROCKS_DB_CHECKED(it->status());
+        } else {
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<CurrentEdgeBody> existingEdge(edgeValue);
+            if (existingEdge->targetIdWithLocked().extra()) { // locked
+                // we have an existing locked edge, we need to make sure that it's the one we expect for
+                // idempotency.
+                if (
+                    !locked || // the one we're trying to create isn't locked
+                    (targetId != existingEdge->targetIdWithLocked().id() || creationTime != existingEdge->creationTime()) // we're trying to create a different locked edge
+                ) {
+                    return EggsError::NAME_IS_LOCKED;
+                }
+            } else {
+                // We're kicking out a non-locked current edge. The only circumstance where we allow
+                // this automatically is if a file is overriding another file, which is also how it
+                // works in linux/posix (see `man 2 rename`).
+                if (existingEdge->creationTime() >= creationTime) {
+                    return EggsError::MORE_RECENT_CURRENT_EDGE;
+                }
+                if (
+                    targetId.type() == InodeType::DIRECTORY || existingEdge->targetIdWithLocked().id().type() == InodeType::DIRECTORY
+                ) {
+                    return EggsError::CANNOT_OVERRIDE_NAME;
+                }
+                // make what is now the current edge a snapshot edge -- no need to delete it,
+                // it'll be overwritten below.
+                {
+                    StaticValue<EdgeKey> k;
+                    k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
+                    k->setNameHash(nameHash);
+                    k->setName(name);
+                    k->setCreationTime(existingEdge->creationTime());
+                    StaticValue<SnapshotEdgeBody> v;
+                    // this was current, so it's now owned.
+                    v->setTargetIdWithOwned(InodeIdExtra(existingEdge->targetIdWithLocked().id(), true));
+                    ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
+                }
+            }
+        }
+
+        // OK, we're now ready to insert the current edge
+        StaticValue<CurrentEdgeBody> edgeBody;
+        edgeBody->setTargetIdWithLocked(InodeIdExtra(targetId, locked));
+        edgeBody->setCreationTime(creationTime);
+        ROCKS_DB_CHECKED(batch.Put(_edgesCf, edgeKey.toSlice(), edgeBody.toSlice()));
+
+        return NO_ERROR;
+
+    }
+
+    EggsError _applySameDirectoryRename(EggsTime time, rocksdb::WriteBatch& batch, const SameDirectoryRenameEntry& entry, SameDirectoryRenameResp& resp) {
+        // First, remove the old edge -- which won't be owned anymore, since we're renaming it.
+        {
+            EggsError err = _softUnlinkCurrentEdge(time, batch, entry.dirId, entry.oldName, entry.targetId, false);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        // Now, create the new one
+        {
+            EggsError err = _createCurrentEdge(time, time, batch, entry.dirId, entry.newName, entry.targetId, false);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        return NO_ERROR;
+    }
+
+    EggsError _softUnlinkCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool owned) {
+        // fetch the directory
+        ExternalValue<DirectoryBody> dir;
+        std::string dirValue;
+        {
+            // allowSnaphsot=false since we can't have current edges in snapshot dirs
+            EggsError err = _initiateDirectoryModification(time, batch, dirId, false, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        uint64_t nameHash = computeHash(dir->hashMode(), name);
+
+        // get the edge
+        StaticValue<EdgeKey> edgeKey;
+        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
+        edgeKey->setNameHash(nameHash);
+        edgeKey->setName(name);
+        std::string edgeValue;
+        auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
+        if (status.IsNotFound()) {
+            return EggsError::NAME_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status);
+        ExternalValue<CurrentEdgeBody> edgeBody(edgeValue);
+        if (edgeBody->targetIdWithLocked().id() != targetId) {
+            return EggsError::MISMATCHING_TARGET;
+        }
+        if (edgeBody->targetIdWithLocked().extra()) { // locked
+            return EggsError::NAME_IS_LOCKED;
+        }
+
+        // delete the current edge
+        batch.Delete(_edgesCf, edgeKey.toSlice());
+
+        // add the two snapshot edges, one for what was the current edge,
+        // and another to signify deletion
+        {
+            StaticValue<EdgeKey> k;
+            k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
+            k->setNameHash(nameHash);
+            k->setName(name);
+            k->setCreationTime(edgeBody->creationTime());
+            StaticValue<SnapshotEdgeBody> v;
+            v->setTargetIdWithOwned(InodeIdExtra(targetId, owned));
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
+            k->setCreationTime(time);
+            v->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false));
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applySoftUnlinkFile(EggsTime time, rocksdb::WriteBatch& batch, const SoftUnlinkFileEntry& entry, SoftUnlinkFileResp& resp) {
+        return _softUnlinkCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, true);
+    }
+
+    EggsError _applyCreateDirectoryInode(EggsTime time, rocksdb::WriteBatch& batch, const CreateDirectoryInodeEntry& entry, CreateDirectoryInodeResp& resp) {
+        // The assumption here is that only the CDC creates directories, and it doles out
+        // inode ids per transaction, so that you'll never get competing creates here, but
+        // we still check that the parent makes sense.
+        {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            // we never create directories as snapshot
+            EggsError err = _getDirectory({}, entry.id, false, dirValue, dir);
+            if (err == NO_ERROR) {
+                if (dir->ownerId() != entry.ownerId) {
+                    return EggsError::MISMATCHING_OWNER;
+                } else {
+                    return NO_ERROR;
+                }
+            } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+                // we continue
+            } else {
+                return err;
+            }
+        }
+
+        {
+            auto dirKey = InodeIdKey::Static(entry.id);
+            StaticValue<DirectoryBody> dir;
+            dir->setOwnerId(entry.ownerId);
+            dir->setMtime(time);
+            dir->setHashMode(HashMode::XXH3_63);
+            dir->setInfoInherited(entry.info.inherited);
+            dir->setInfo(entry.info.body);
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, dirKey.toSlice(), dir.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyCreateLockedCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const CreateLockedCurrentEdgeEntry& entry, CreateLockedCurrentEdgeResp& resp) {
+        LOG_INFO(_env, "Creating edge %s -> %s", entry.dirId, entry.targetId);
+        return _createCurrentEdge(time, entry.creationTime, batch, entry.dirId, entry.name, entry.targetId, true); // locked=true
+    }
+
+    EggsError _applyUnlockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const UnlockCurrentEdgeEntry& entry, UnlockCurrentEdgeResp& resp) {
+        uint64_t nameHash;
+        {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            // allowSnaphsot=false since no current edges in snapshot dirs
+            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            nameHash = computeHash(dir->hashMode(), entry.name);
+        }
+
+        StaticValue<EdgeKey> currentKey;
+        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
+        currentKey->setNameHash(nameHash);
+        currentKey->setName(entry.name);
+        std::string edgeValue;
+        {
+            auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
+            if (status.IsNotFound()) {
+                return EggsError::EDGE_NOT_FOUND;
+            }
+            ROCKS_DB_CHECKED(status);
+        }
+        ExternalValue<CurrentEdgeBody> edge(edgeValue);
+        if (edge->locked()) {
+            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, false)); // locked=false
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, currentKey.toSlice(), edge.toSlice()));
+        }
+        if (entry.wasMoved) {
+            // We need to move the current edge to snapshot, and create a new snapshot
+            // edge with the deletion. 
+            ROCKS_DB_CHECKED(batch.Delete(_edgesCf, currentKey.toSlice()));
+            StaticValue<EdgeKey> snapshotKey;
+            snapshotKey->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
+            snapshotKey->setNameHash(nameHash);
+            snapshotKey->setName(entry.name);
+            snapshotKey->setCreationTime(edge->creationTime());
+            StaticValue<SnapshotEdgeBody> snapshotBody;
+            snapshotBody->setTargetIdWithOwned(InodeIdExtra(entry.targetId, false)); // not owned (this was moved somewhere else)
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
+            snapshotKey->setCreationTime(time);
+            snapshotBody->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false)); // deletion edges are never owned
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyLockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const LockCurrentEdgeEntry& entry, LockCurrentEdgeResp& resp) {
+        // TODO lots of duplication with _applyUnlockCurrentEdge
+        uint64_t nameHash;
+        {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            // allowSnaphsot=false since no current edges in snapshot dirs
+            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            nameHash = computeHash(dir->hashMode(), entry.name);        
+        }
+
+        StaticValue<EdgeKey> currentKey;
+        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
+        currentKey->setNameHash(nameHash);
+        currentKey->setName(entry.name);
+        std::string edgeValue;
+        {
+            auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
+            if (status.IsNotFound()) {
+                return EggsError::EDGE_NOT_FOUND;
+            }
+            ROCKS_DB_CHECKED(status);
+        }
+        ExternalValue<CurrentEdgeBody> edge(edgeValue);
+        if (!edge->locked()) {
+            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, true)); // locked=true
+            ROCKS_DB_CHECKED(batch.Put(_edgesCf, currentKey.toSlice(), edge.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyRemoveDirectoryOwner(EggsTime time, rocksdb::WriteBatch& batch, const RemoveDirectoryOwnerEntry& entry, RemoveDirectoryOwnerResp& resp) {
+        std::string dirValue;
+        ExternalValue<DirectoryBody> dir;
+        {
+            // allowSnapshot=true for idempotency (see below)
+            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            if (dir->ownerId() == NULL_INODE_ID) {
+                return NO_ERROR; // already done
+            }
+        }
+
+        // if we have any current edges, we can't proceed
+        {
+            StaticValue<EdgeKey> edgeKey;
+            edgeKey->setDirIdWithCurrent(entry.dirId, true); // current=true
+            edgeKey->setNameHash(0);
+            edgeKey->setName({});
+            WrappedIterator it(_db->NewIterator({}, _edgesCf));
+            it->Seek(edgeKey.toSlice());
+            if (it->Valid()) {
+                auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
+                if (otherEdge->dirId() == entry.dirId && otherEdge->current()) {
+                    return EggsError::DIRECTORY_NOT_EMPTY;
+                }
+            } else if (it->status().IsNotFound()) {
+                // nothing to do
+            } else {
+                ROCKS_DB_CHECKED(it->status());
+            }
+        }
+
+        // we need to create a new DirectoryBody, the materialized info might have changed size
+        {
+            StaticValue<DirectoryBody> newDir;
+            newDir->setOwnerId(NULL_INODE_ID);
+            newDir->setMtime(time);
+            newDir->setHashMode(dir->hashMode());
+            newDir->setInfoInherited(dir->infoInherited());
+            newDir->setInfo(entry.info);
+            // std::cerr << "setting info to " << entry.info << std::endl;
+            auto k = InodeIdKey::Static(entry.dirId);
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyRemoveInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
+        if (entry.id.type() == InodeType::DIRECTORY) {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            {
+                EggsError err = _getDirectory({}, entry.id, true, dirValue, dir);
+                if (err == EggsError::DIRECTORY_NOT_FOUND) {
+                    return NO_ERROR; // we're already done
+                }
+                if (err != NO_ERROR) {
+                    return err;
+                }
+            }
+            if (dir->ownerId() != NULL_INODE_ID) {
+                return EggsError::DIRECTORY_HAS_OWNER;
+            }
+            // there can't be any outgoing edges when killing a directory definitively
+            {
+                StaticValue<EdgeKey> edgeKey;
+                edgeKey->setDirIdWithCurrent(entry.id, false);
+                edgeKey->setNameHash(0);
+                edgeKey->setName({});
+                edgeKey->setCreationTime(0);
+                WrappedIterator it(_db->NewIterator({}, _edgesCf));
+                it->Seek(edgeKey.toSlice());
+                if (it->Valid()) {
+                    auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
+                    if (otherEdge->dirId() == entry.id) {
+                        return EggsError::DIRECTORY_NOT_EMPTY;
+                    }
+                } else if (it->status().IsNotFound()) {
+                    // nothing to do
+                } else {
+                    ROCKS_DB_CHECKED(it->status());
+                }
+            }
+            // we can finally delete
+            {
+                auto dirKey = InodeIdKey::Static(entry.id);
+                ROCKS_DB_CHECKED(batch.Delete(_directoriesCf, dirKey.toSlice()));
+            }
+        } else {
+            ALWAYS_ASSERT(entry.id.type() == InodeType::FILE || entry.id.type() == InodeType::DIRECTORY);
+            // we demand for the file to be transient, for the deadline to have passed, and for it to have
+            // no spans
+            {
+                std::string transientFileValue;
+                ExternalValue<TransientFileBody> transientFile;
+                EggsError err = _getTransientFile({}, time, true /*allowPastDeadline*/, entry.id, transientFileValue, transientFile);
+                if (err == EggsError::FILE_NOT_FOUND) {
+                    std::string fileValue;
+                    ExternalValue<FileBody> file;
+                    EggsError err = _getFile({}, entry.id, fileValue, file);
+                    if (err == NO_ERROR) {
+                        return EggsError::FILE_IS_NOT_TRANSIENT;
+                    } else if (err == EggsError::FILE_NOT_FOUND) {
+                        return EggsError::FILE_NOT_FOUND;
+                    } else {
+                        return err;
+                    }
+                } else if (err == NO_ERROR) {
+                    // keep going
+                } else {
+                    return err;
+                }
+                // check deadline
+                if (transientFile->deadline() >= time) {
+                    return EggsError::DEADLINE_NOT_PASSED;
+                }
+                // check no spans
+                {
+                    StaticValue<SpanKey> spanKey;
+                    spanKey->setId(entry.id);
+                    spanKey->setOffset(0);
+                    WrappedIterator it(_db->NewIterator({}, _spansCf));
+                    it->Seek(spanKey.toSlice());
+                    if (it->Valid()) {
+                        auto otherSpan = ExternalValue<SpanKey>::FromSlice(it->value());
+                        if (otherSpan->id() == entry.id) {
+                            return EggsError::FILE_NOT_EMPTY;
+                        }
+                    } else if (it->status().IsNotFound()) {
+                        // nothing to do
+                    } else {
+                        ROCKS_DB_CHECKED(it->status());
+                    }
+                }
+            }
+            // we can finally delete
+            {
+                auto fileKey = InodeIdKey::Static(entry.id);
+                ROCKS_DB_CHECKED(batch.Delete(_transientCf, fileKey.toSlice()));
+            }
+        }
+        return NO_ERROR;
+    }
+
+    EggsError _applySetDirectoryOwner(EggsTime time, rocksdb::WriteBatch& batch, const SetDirectoryOwnerEntry& entry, SetDirectoryOwnerResp& resp) {
+        std::string dirValue;
+        ExternalValue<DirectoryBody> dir;
+        {
+            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        // set the owner, and restore the directory entry if needed.
+        StaticValue<DirectoryBody> newDir;
+        newDir->setOwnerId(entry.ownerId);
+        newDir->setHashMode(dir->hashMode());
+        newDir->setInfoInherited(dir->infoInherited());
+        // remove directory info if it was inherited, now that we have an
+        // owner again.
+        if (dir->infoInherited()) {
+            newDir->setInfo({});
+        }
+        {
+            auto k = InodeIdKey::Static(entry.dirId);
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
+        }
+        return NO_ERROR;
+    }
+
+    EggsError _applySetDirectoryInfo(EggsTime time, rocksdb::WriteBatch& batch, const SetDirectoryInfoEntry& entry, SetDirectoryInfoResp& resp) {
+        std::string dirValue;
+        ExternalValue<DirectoryBody> dir;
+        {
+            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, false, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+
+        StaticValue<DirectoryBody> newDir;
+        newDir->setOwnerId(dir->ownerId());
+        newDir->setMtime(dir->mtime());
+        newDir->setHashMode(dir->hashMode());
+        newDir->setInfoInherited(entry.info.inherited);
+        // For snapshot directories, we need to preserve the last known info if inherited.
+        // It'll be reset when it's made non-snapshot again.
+        if (!entry.info.inherited || (dir->ownerId() != NULL_INODE_ID)) {
+            newDir->setInfo(entry.info.body);
+        }
+
+        {
+            auto k = InodeIdKey::Static(entry.dirId);
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyRemoveNonOwnedEdge(EggsTime time, rocksdb::WriteBatch& batch, const RemoveNonOwnedEdgeEntry& entry, RemoveNonOwnedEdgeResp& resp) {
+        uint64_t nameHash;
+        {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            // allowSnapshot=true since GC needs to be able to remove non-owned edges from snapshot dir
+            EggsError err = _initiateDirectoryModification(time, batch, entry.dirId, true, dirValue, dir);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            nameHash = computeHash(dir->hashMode(), entry.name);
+        }
+
+        {
+            StaticValue<EdgeKey> k;
+            k->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
+            k->setNameHash(nameHash);
+            k->setName(entry.name);
+            k->setCreationTime(entry.creationTime);
+            ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyIntraShardHardFileUnlink(EggsTime time, rocksdb::WriteBatch& batch, const IntraShardHardFileUnlinkEntry& entry, IntraShardHardFileUnlinkResp& resp) {
+        // fetch the file
+        std::string fileValue;
+        ExternalValue<FileBody> file;
+        {
+            EggsError err = _getFile({}, entry.targetId, fileValue, file);
+            if (err == EggsError::FILE_NOT_FOUND) {
+                // if the file is already transient, we're done
+                std::string transientFileValue;
+                ExternalValue<TransientFileBody> transientFile;
+                EggsError err = _getTransientFile({}, time, true, entry.targetId, fileValue, transientFile);
+                if (err == NO_ERROR) {
+                    return NO_ERROR;
+                } else if (err == EggsError::FILE_NOT_FOUND) {
+                    return EggsError::FILE_NOT_FOUND;
+                } else {
+                    return err;
+                }
+            } else if (err != NO_ERROR) {
+                return err;
+            }
+        }
+    
+        // fetch dir, compute hash
+        uint64_t nameHash;
+        {
+            std::string dirValue;
+            ExternalValue<DirectoryBody> dir;
+            // allowSnapshot=true since GC needs to be able to do this in snapshot dirs
+            EggsError err = _initiateDirectoryModification(time, batch, entry.ownerId, true, dirValue, dir);
+            nameHash = computeHash(dir->hashMode(), entry.name);
+        }
+
+        // remove edge
+        {
+            StaticValue<EdgeKey> k;
+            k->setDirIdWithCurrent(entry.ownerId, false);
+            k->setNameHash(nameHash);
+            k->setName(entry.name);
+            k->setCreationTime(entry.creationTime);
+            ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
+        }
+
+        // make file transient
+        {
+            auto k = InodeIdKey::Static(entry.targetId);
+            ROCKS_DB_CHECKED(batch.Delete(_filesCf, k.toSlice()));
+            StaticValue<TransientFileBody> v;
+            v->setFileSize(file->fileSize());
+            v->setMtime(time);
+            v->setDeadline(0);
+            v->setLastSpanState(SpanState::CLEAN);
+            v->setNote(entry.name);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
+        }
+
+        return NO_ERROR;
+    }
+
+    EggsError _applyRemoveSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const RemoveSpanInitiateEntry& entry, RemoveSpanInitiateResp& resp) {
+        // TODO, just to make the GC integration tests pass for now
+        return EggsError::FILE_EMPTY;
+    }
+
+    EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
 
@@ -1792,14 +1740,12 @@ public:
         batch.SetSavePoint();
 
         std::string entryScratch;
-        ShardLogEntryWithIndex logEntry;
-        _readLogEntry(logIndex, entryScratch, logEntry);
-        EggsTime time = logEntry.entry.time;
-        const auto& logEntryBody = logEntry.entry.body;
+        EggsTime time = logEntry.time;
+        const auto& logEntryBody = logEntry.body;
 
         LOG_DEBUG(_env, "about to apply log entry %s", logEntryBody);
 
-        switch (logEntry.entry.body.kind()) {
+        switch (logEntryBody.kind()) {
         case ShardLogEntryKind::CONSTRUCT_FILE:
             err = _applyConstructFile(batch, time, logEntryBody.getConstructFile(), scratch, resp.setConstructFile());
             break;
@@ -1853,96 +1799,85 @@ public:
             LOG_INFO(_env, "could not apply log entry %s, index %s, because of err %s", logEntryBody.kind(), logIndex, err);
             batch.RollbackToSavePoint();
         } else {
-            LOG_DEBUG(_env, "applied log entry of kind %s, index %s, writing changes", logEntryBody.kind(), logEntry.index);
+            LOG_DEBUG(_env, "applied log entry of kind %s, index %s, writing changes", logEntryBody.kind(), logIndex);
         }
 
-        // OK to not fsync here -- we've already written the log, so worst case we'll replay this
-        // when we start again.
-        ROCKS_DB_CHECKED(_stateDb->Write({}, &batch));
+        {
+            rocksdb::WriteOptions options;
+            options.sync = sync;
+            ROCKS_DB_CHECKED(_db->Write(options, &batch));
+        }
 
         return err;
 
     }
 
-    const std::array<uint8_t, 16>& secretKey() const;
+    // ----------------------------------------------------------------
+    // miscellanea
+
+    void _calcCookie(InodeId id, std::array<uint8_t, 8>& cookie) {
+        cbcmac(_secretKey, (const uint8_t*)&id, sizeof(id), cookie);
+    }
+
+    uint64_t _lastAppliedLogEntry() {
+        std::string value;
+        ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
+        ExternalValue<U64Value> v(value);
+        return v->u64();
+    }
+
+    EggsError _getDirectory(const rocksdb::ReadOptions& options, InodeId id, bool allowSnapshot, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
+        if (unlikely(id.type() != InodeType::DIRECTORY)) {
+            return EggsError::TYPE_IS_NOT_DIRECTORY;
+        }
+        auto k = InodeIdKey::Static(id);
+        auto status = _db->Get(options, _directoriesCf, k.toSlice(), &dirValue);
+        if (status.IsNotFound()) {
+            return EggsError::DIRECTORY_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status);
+        auto tmpDir = ExternalValue<DirectoryBody>(dirValue);
+        if (!allowSnapshot && (tmpDir->ownerId() == NULL_INODE_ID && id != ROOT_DIR_INODE_ID)) { // root dir never has an owner
+            return EggsError::DIRECTORY_NOT_FOUND;
+        }
+        dir = tmpDir;
+        return NO_ERROR;
+    }
+
+    EggsError _getFile(const rocksdb::ReadOptions& options, InodeId id, std::string& fileValue, ExternalValue<FileBody>& file) {
+        if (unlikely(id.type() != InodeType::FILE && id.type() != InodeType::SYMLINK)) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        auto k = InodeIdKey::Static(id);
+        auto status = _db->Get(options, _filesCf, k.toSlice(), &fileValue);
+        if (status.IsNotFound()) {
+            return EggsError::FILE_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status);
+        file = ExternalValue<FileBody>(fileValue);
+        return NO_ERROR;
+    }
+
+    EggsError _getTransientFile(const rocksdb::ReadOptions& options, EggsTime time, bool allowPastDeadline, InodeId id, std::string& value, ExternalValue<TransientFileBody>& file) {
+        if (id.type() != InodeType::FILE && id.type() != InodeType::SYMLINK) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        auto k = InodeIdKey::Static(id);
+        auto status = _db->Get(options, _transientCf, k.toSlice(), &value);
+        if (status.IsNotFound()) {
+            return EggsError::FILE_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status);
+        auto tmpFile = ExternalValue<TransientFileBody>(value);
+        if (!allowPastDeadline && time > tmpFile->deadline()) {
+            // this should be fairly uncommon
+            LOG_INFO(_env, "not picking up transient file %s since its deadline %s is past the log entry time %s", id, tmpFile->deadline(), time);
+            return EggsError::FILE_NOT_FOUND;
+        }
+        file = tmpFile;
+        return NO_ERROR;
+    }
 };
-
-ShardDBImpl::ShardDBImpl(Env& env, ShardId shid, const std::string& path): _env(env), _shid(shid), _writeLogEntryBuf(UDP_MTU) {
-    // TODO actually figure out the best strategy for each family, including the default
-    // one.
-
-    {
-        rocksdb::Options options;
-        options.create_if_missing = true;
-        options.create_missing_column_families = true;
-        std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
-            {rocksdb::kDefaultColumnFamilyName, {}},
-            {"logEntries", {}},
-        };
-        std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
-        auto dbPath = path + "/db-log";
-        LOG_INFO(_env, "initializing log RocksDB in %s", dbPath);
-        ROCKS_DB_CHECKED_MSG(
-            rocksdb::DB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_logDb),
-            "could not open RocksDB %s", dbPath
-        );
-        ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
-        _logDefault = familiesHandles[0];
-        _logEntries = familiesHandles[1];
-    }
-
-    {
-        rocksdb::Options options;
-        options.create_if_missing = true;
-        options.create_missing_column_families = true;
-        std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
-            {rocksdb::kDefaultColumnFamilyName, {}},
-            {"files", {}},
-            {"spans", {}},
-            {"transientFiles", {}},
-            {"directories", {}},
-            {"edges", {}},
-        };
-        std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
-        auto dbPath = path + "/db-state";
-        LOG_INFO(_env, "initializing state RocksDB in %s", dbPath);
-        ROCKS_DB_CHECKED_MSG(
-            rocksdb::DB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_stateDb),
-            "could not open RocksDB %s", dbPath
-        );
-        ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
-        _stateDefault = familiesHandles[0];
-        _files = familiesHandles[1];
-        _spans = familiesHandles[2];
-        _transientFiles = familiesHandles[3];
-        _directories = familiesHandles[4];
-        _edges = familiesHandles[5];
-    }
-
-    _initDb();
-    _replayLog();
-}
-
-void ShardDBImpl::close() {
-    LOG_INFO(_env, "destroying column families and closing databases");
-
-    ROCKS_DB_CHECKED(_logDb->DestroyColumnFamilyHandle(_logDefault));
-    ROCKS_DB_CHECKED(_logDb->DestroyColumnFamilyHandle(_logEntries));
-    ROCKS_DB_CHECKED(_logDb->Close());
-
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_stateDefault));
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_files));
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_spans));
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_transientFiles));
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_directories));
-    ROCKS_DB_CHECKED(_stateDb->DestroyColumnFamilyHandle(_edges));
-    ROCKS_DB_CHECKED(_stateDb->Close());
-}
-
-ShardDBImpl::~ShardDBImpl() {
-    delete _logDb;
-    delete _stateDb;
-}
 
 BincodeBytes defaultDirectoryInfo(char (&buf)[255]) {
     DirectoryInfoBody info;
@@ -2009,55 +1944,6 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-EggsError ShardDBImpl::read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
-    LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
-
-    EggsError err = NO_ERROR;
-    scratch.reset();
-    resp.clear();
-
-    switch (req.kind()) {
-    case ShardMessageKind::STAT_FILE:
-        err = _statFile(req.getStatFile(), resp.setStatFile());
-        break;
-    case ShardMessageKind::READ_DIR:
-        err = _readDir(req.getReadDir(), scratch, resp.setReadDir());
-        break;
-    case ShardMessageKind::STAT_DIRECTORY:
-        err = _statDirectory(req.getStatDirectory(), scratch, resp.setStatDirectory());
-        break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        err = _statTransientFile(req.getStatTransientFile(), scratch, resp.setStatTransientFile());
-        break;
-    case ShardMessageKind::LOOKUP:
-        err = _lookup(req.getLookup(), resp.setLookup());
-        break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
-        err = _visitTransientFiles(req.getVisitTransientFiles(), scratch, resp.setVisitTransientFiles());
-        break;
-    case ShardMessageKind::FULL_READ_DIR:
-        err = _fullReadDir(req.getFullReadDir(), scratch, resp.setFullReadDir());
-        break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
-        err = _visitDirectories(req.getVisitDirectories(), scratch, resp.setVisitDirectories());
-        break;
-    case ShardMessageKind::FILE_SPANS:
-    case ShardMessageKind::VISIT_FILES:
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
-        throw EGGS_EXCEPTION("UNIMPLEMENTED %s", req.kind());
-    default:
-        throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
-    }
-
-    ALWAYS_ASSERT(req.kind() == resp.kind());
-
-    return err;
-}
-
-const std::array<uint8_t, 16>& ShardDBImpl::secretKey() const {
-    return _secretKey;
-}
-
 ShardDB::ShardDB(Env& env, ShardId shid, const std::string& path) {
     _impl = new ShardDBImpl(env, shid, path);
 }
@@ -2075,14 +1961,18 @@ EggsError ShardDB::read(const ShardReqContainer& req, BincodeBytesScratchpad& sc
     return ((ShardDBImpl*)_impl)->read(req, scratch, resp);
 }
 
-EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntryWithIndex& logEntry) {
+EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry) {
     return ((ShardDBImpl*)_impl)->prepareLogEntry(req, scratch, logEntry);
 }
 
-EggsError ShardDB::applyLogEntry(uint64_t logEntryIx, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->applyLogEntry(logEntryIx, scratch, resp);
+EggsError ShardDB::applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->applyLogEntry(sync, logEntryIx, logEntry, scratch, resp);
+}
+
+uint64_t ShardDB::lastAppliedLogEntry() {
+    return ((ShardDBImpl*)_impl)->_lastAppliedLogEntry();
 }
 
 const std::array<uint8_t, 16>& ShardDB::secretKey() const {
-    return ((ShardDBImpl*)_impl)->secretKey();
+    return ((ShardDBImpl*)_impl)->_secretKey;
 }

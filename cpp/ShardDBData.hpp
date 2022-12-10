@@ -89,19 +89,6 @@ public:
     }
 };
 
-enum struct LogMetadataKey : uint8_t {
-    NEXT_FILE_ID = 0,
-    NEXT_SYMLINK_ID = 1,
-    NEXT_BLOCK_ID = 2,
-};
-constexpr LogMetadataKey NEXT_FILE_ID_KEY = LogMetadataKey::NEXT_FILE_ID;
-constexpr LogMetadataKey NEXT_SYMLINK_ID_KEY = LogMetadataKey::NEXT_SYMLINK_ID;
-constexpr LogMetadataKey NEXT_BLOCK_ID_KEY = LogMetadataKey::NEXT_BLOCK_ID;
-
-inline rocksdb::Slice logMetadataKey(const LogMetadataKey* k) {
-    return rocksdb::Slice((const char*)k, sizeof(*k));
-}
-
 #define LE_VAL(type, name, setName, offset) \
     static_assert(sizeof(type) > 1); \
     type name() const { \
@@ -161,7 +148,6 @@ inline rocksdb::Slice logMetadataKey(const LogMetadataKey* k) {
         memcpy(data+offset, &x, sizeof(x)); \
     }
 
-// When we need a simple u64 value
 struct InodeIdValue {
     char* data;
 
@@ -178,6 +164,7 @@ struct InodeIdValue {
     }
 };
 
+// When we need a simple u64 value (e.g. log index)
 struct U64Value {
     char* data;
 
@@ -194,24 +181,19 @@ struct U64Value {
     }
 };
 
-struct LogEntryKey {
-    char* data;
-
-    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    BE64_VAL(uint64_t, index, setIndex, 0)
-};
-
-// The log entry values are bincoded
-
 enum class ShardMetadataKey : uint8_t {
     INFO = 0,
     LAST_APPLIED_LOG_ENTRY = 1,
+    NEXT_FILE_ID = 2,
+    NEXT_SYMLINK_ID = 3,
+    NEXT_BLOCK_ID = 4,
+
 };
 constexpr ShardMetadataKey SHARD_INFO_KEY = ShardMetadataKey::INFO;
 constexpr ShardMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = ShardMetadataKey::LAST_APPLIED_LOG_ENTRY;
+constexpr ShardMetadataKey NEXT_FILE_ID_KEY = ShardMetadataKey::NEXT_FILE_ID;
+constexpr ShardMetadataKey NEXT_SYMLINK_ID_KEY = ShardMetadataKey::NEXT_SYMLINK_ID;
+constexpr ShardMetadataKey NEXT_BLOCK_ID_KEY = ShardMetadataKey::NEXT_BLOCK_ID;
 
 inline rocksdb::Slice shardMetadataKey(const ShardMetadataKey* k) {
     return rocksdb::Slice((const char*)k, sizeof(*k));

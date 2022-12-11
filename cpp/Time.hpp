@@ -38,6 +38,10 @@ struct EggsTime {
     EggsTime operator+(uint64_t delta) {
         return EggsTime(ns + delta);
     }
+
+    uint64_t operator-(EggsTime t) {
+        return ns - t.ns;
+    }
 };
 
 std::ostream& operator<<(std::ostream& out, EggsTime t);

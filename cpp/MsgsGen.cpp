@@ -82,8 +82,8 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::NEW_NAME_IS_LOCKED:
         out << "NEW_NAME_IS_LOCKED";
         break;
-    case EggsError::DIRECTORY_MTIME_IS_TOO_RECENT:
-        out << "DIRECTORY_MTIME_IS_TOO_RECENT";
+    case EggsError::MTIME_IS_TOO_RECENT:
+        out << "MTIME_IS_TOO_RECENT";
         break;
     case EggsError::MISMATCHING_TARGET:
         out << "MISMATCHING_TARGET";
@@ -552,6 +552,66 @@ bool FullReadDirCursor::operator==(const FullReadDirCursor& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x) {
     out << "FullReadDirCursor(" << "Current=" << x.current << ", " << "StartHash=" << x.startHash << ", " << "StartName=" << x.startName << ", " << "StartTime=" << x.startTime << ")";
+    return out;
+}
+
+void EntryBlockService::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(id);
+    buf.packFixedBytes<4>(ip);
+    buf.packScalar<uint16_t>(port);
+    buf.packScalar<uint8_t>(storageClass);
+    buf.packFixedBytes<16>(failureDomain);
+    buf.packFixedBytes<16>(secretKey);
+}
+void EntryBlockService::unpack(BincodeBuf& buf) {
+    id = buf.unpackScalar<uint64_t>();
+    buf.unpackFixedBytes<4>(ip);
+    port = buf.unpackScalar<uint16_t>();
+    storageClass = buf.unpackScalar<uint8_t>();
+    buf.unpackFixedBytes<16>(failureDomain);
+    buf.unpackFixedBytes<16>(secretKey);
+}
+void EntryBlockService::clear() {
+    id = uint64_t(0);
+    ip.clear();
+    port = uint16_t(0);
+    storageClass = uint8_t(0);
+    failureDomain.clear();
+    secretKey.clear();
+}
+bool EntryBlockService::operator==(const EntryBlockService& rhs) const {
+    if ((uint64_t)this->id != (uint64_t)rhs.id) { return false; };
+    if (ip != rhs.ip) { return false; };
+    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if (failureDomain != rhs.failureDomain) { return false; };
+    if (secretKey != rhs.secretKey) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const EntryBlockService& x) {
+    out << "EntryBlockService(" << "Id=" << x.id << ", " << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ")";
+    return out;
+}
+
+void EntryNewBlockInfo::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockServiceId);
+    buf.packFixedBytes<4>(crc32);
+}
+void EntryNewBlockInfo::unpack(BincodeBuf& buf) {
+    blockServiceId = buf.unpackScalar<uint64_t>();
+    buf.unpackFixedBytes<4>(crc32);
+}
+void EntryNewBlockInfo::clear() {
+    blockServiceId = uint64_t(0);
+    crc32.clear();
+}
+bool EntryNewBlockInfo::operator==(const EntryNewBlockInfo& rhs) const {
+    if ((uint64_t)this->blockServiceId != (uint64_t)rhs.blockServiceId) { return false; };
+    if (crc32 != rhs.crc32) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
+    out << "EntryNewBlockInfo(" << "BlockServiceId=" << x.blockServiceId << ", " << "Crc32=" << x.crc32 << ")";
     return out;
 }
 
@@ -3902,6 +3962,15 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << "REMOVE_SPAN_INITIATE";
         break;
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        out << "UPDATE_BLOCK_SERVICES";
+        break;
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        out << "ADD_SPAN_INITIATE";
+        break;
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        out << "ADD_SPAN_CERTIFY";
+        break;
     default:
         out << "ShardLogEntryKind(" << ((int)err) << ")";
         break;
@@ -4291,6 +4360,100 @@ std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x) {
     return out;
 }
 
+void UpdateBlockServicesEntry::pack(BincodeBuf& buf) const {
+    buf.packList<EntryBlockService>(blockServices);
+}
+void UpdateBlockServicesEntry::unpack(BincodeBuf& buf) {
+    buf.unpackList<EntryBlockService>(blockServices);
+}
+void UpdateBlockServicesEntry::clear() {
+    blockServices.clear();
+}
+bool UpdateBlockServicesEntry::operator==(const UpdateBlockServicesEntry& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x) {
+    out << "UpdateBlockServicesEntry(" << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
+void AddSpanInitiateEntry::pack(BincodeBuf& buf) const {
+    fileId.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packScalar<uint8_t>(storageClass);
+    parity.pack(buf);
+    buf.packFixedBytes<4>(crc32);
+    buf.packScalar<uint32_t>(size);
+    buf.packScalar<uint32_t>(blockSize);
+    buf.packBytes(bodyBytes);
+    buf.packList<EntryNewBlockInfo>(bodyBlocks);
+}
+void AddSpanInitiateEntry::unpack(BincodeBuf& buf) {
+    fileId.unpack(buf);
+    byteOffset = buf.unpackScalar<uint64_t>();
+    storageClass = buf.unpackScalar<uint8_t>();
+    parity.unpack(buf);
+    buf.unpackFixedBytes<4>(crc32);
+    size = buf.unpackScalar<uint32_t>();
+    blockSize = buf.unpackScalar<uint32_t>();
+    buf.unpackBytes(bodyBytes);
+    buf.unpackList<EntryNewBlockInfo>(bodyBlocks);
+}
+void AddSpanInitiateEntry::clear() {
+    fileId = InodeId();
+    byteOffset = uint64_t(0);
+    storageClass = uint8_t(0);
+    parity = Parity();
+    crc32.clear();
+    size = uint32_t(0);
+    blockSize = uint32_t(0);
+    bodyBytes.clear();
+    bodyBlocks.clear();
+}
+bool AddSpanInitiateEntry::operator==(const AddSpanInitiateEntry& rhs) const {
+    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if ((Parity)this->parity != (Parity)rhs.parity) { return false; };
+    if (crc32 != rhs.crc32) { return false; };
+    if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
+    if ((uint32_t)this->blockSize != (uint32_t)rhs.blockSize) { return false; };
+    if (bodyBytes != rhs.bodyBytes) { return false; };
+    if (bodyBlocks != rhs.bodyBlocks) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateEntry& x) {
+    out << "AddSpanInitiateEntry(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "StorageClass=" << (int)x.storageClass << ", " << "Parity=" << x.parity << ", " << "Crc32=" << x.crc32 << ", " << "Size=" << x.size << ", " << "BlockSize=" << x.blockSize << ", " << "BodyBytes=" << x.bodyBytes << ", " << "BodyBlocks=" << x.bodyBlocks << ")";
+    return out;
+}
+
+void AddSpanCertifyEntry::pack(BincodeBuf& buf) const {
+    fileId.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packList<BlockProof>(proofs);
+}
+void AddSpanCertifyEntry::unpack(BincodeBuf& buf) {
+    fileId.unpack(buf);
+    byteOffset = buf.unpackScalar<uint64_t>();
+    buf.unpackList<BlockProof>(proofs);
+}
+void AddSpanCertifyEntry::clear() {
+    fileId = InodeId();
+    byteOffset = uint64_t(0);
+    proofs.clear();
+}
+bool AddSpanCertifyEntry::operator==(const AddSpanCertifyEntry& rhs) const {
+    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if (proofs != rhs.proofs) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanCertifyEntry& x) {
+    out << "AddSpanCertifyEntry(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Proofs=" << x.proofs << ")";
+    return out;
+}
+
 const ConstructFileEntry& ShardLogEntryContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardLogEntryKind::CONSTRUCT_FILE);
     return std::get<0>(_data);
@@ -4441,6 +4604,36 @@ RemoveSpanInitiateEntry& ShardLogEntryContainer::setRemoveSpanInitiate() {
     x.clear();
     return x;
 }
+const UpdateBlockServicesEntry& ShardLogEntryContainer::getUpdateBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::UPDATE_BLOCK_SERVICES, "%s != %s", _kind, ShardLogEntryKind::UPDATE_BLOCK_SERVICES);
+    return std::get<15>(_data);
+}
+UpdateBlockServicesEntry& ShardLogEntryContainer::setUpdateBlockServices() {
+    _kind = ShardLogEntryKind::UPDATE_BLOCK_SERVICES;
+    auto& x = std::get<15>(_data);
+    x.clear();
+    return x;
+}
+const AddSpanInitiateEntry& ShardLogEntryContainer::getAddSpanInitiate() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_INITIATE, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_INITIATE);
+    return std::get<16>(_data);
+}
+AddSpanInitiateEntry& ShardLogEntryContainer::setAddSpanInitiate() {
+    _kind = ShardLogEntryKind::ADD_SPAN_INITIATE;
+    auto& x = std::get<16>(_data);
+    x.clear();
+    return x;
+}
+const AddSpanCertifyEntry& ShardLogEntryContainer::getAddSpanCertify() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_CERTIFY, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_CERTIFY);
+    return std::get<17>(_data);
+}
+AddSpanCertifyEntry& ShardLogEntryContainer::setAddSpanCertify() {
+    _kind = ShardLogEntryKind::ADD_SPAN_CERTIFY;
+    auto& x = std::get<17>(_data);
+    x.clear();
+    return x;
+}
 void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -4487,6 +4680,15 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         std::get<14>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        std::get<15>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        std::get<16>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        std::get<17>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -4541,6 +4743,15 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf, ShardLogEntryKind kind) {
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         std::get<14>(_data).unpack(buf);
         break;
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        std::get<15>(_data).unpack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        std::get<16>(_data).unpack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        std::get<17>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", kind);
     }
@@ -4592,6 +4803,15 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << x.getRemoveSpanInitiate();
+        break;
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        out << x.getUpdateBlockServices();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        out << x.getAddSpanInitiate();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        out << x.getAddSpanCertify();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", x.kind());

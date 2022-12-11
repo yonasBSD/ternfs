@@ -1080,6 +1080,9 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
 			reflect.TypeOf(msgs.IntraShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
+			reflect.TypeOf(msgs.UpdateBlockServicesEntry{}),
+			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
+			reflect.TypeOf(msgs.AddSpanCertifyEntry{}),
 		},
 	)
 
@@ -1128,7 +1131,7 @@ func main() {
 		"NAME_IS_LOCKED",
 		"OLD_NAME_IS_LOCKED",
 		"NEW_NAME_IS_LOCKED",
-		"DIRECTORY_MTIME_IS_TOO_RECENT",
+		"MTIME_IS_TOO_RECENT",
 		"MISMATCHING_TARGET",
 		"MISMATCHING_OWNER",
 		"DIRECTORY_NOT_EMPTY",
@@ -1366,6 +1369,8 @@ func main() {
 		reflect.TypeOf(msgs.BlockServiceBlacklist{}),
 		reflect.TypeOf(msgs.BlockService{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
+		reflect.TypeOf(msgs.EntryBlockService{}),
+		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)

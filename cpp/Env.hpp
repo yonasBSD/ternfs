@@ -18,20 +18,25 @@ std::ostream& operator<<(std::ostream& out, LogLevel ll);
 
 struct Logger {
 private:
+    LogLevel _logLevel;
     std::ostream& _out;
     std::mutex _mutex;
 public:
-    Logger(std::ostream& out): _out(out) {}
+    Logger(LogLevel logLevel, std::ostream& out): _logLevel(logLevel), _out(out) {}
 
     template<typename ...Args>
-    void _log(LogLevel level, const char* fmt, Args... args) {
+    void _log(LogLevel level, const std::string& prefix, const char* fmt, Args... args) {
+        if (level < _logLevel) {
+            return;
+        }
+
         std::scoped_lock lock(_mutex);
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
         auto t = eggsNow();
         while (std::getline(ss, line)) {
-            _out << t << " [" << level << "] " << line << std::endl;
+            _out << t << " " << prefix << " [" << level << "] " << line << std::endl;
         }
     }
 
@@ -44,17 +49,13 @@ public:
 struct Env {
 private:
     Logger& _logger;
-    LogLevel _logLevel;
+    std::string _prefix;
 public:
-    Env(Logger& logger, LogLevel logLevel): _logger(logger), _logLevel(logLevel) {}
+    Env(Logger& logger, const std::string& prefix): _logger(logger), _prefix(prefix) {}
 
     template<typename ...Args>
     void _log(LogLevel level, const char* fmt, Args... args) {
-        if (level < _logLevel) {
-            return;
-        }
-
-        _logger._log(level, fmt, args...);
+        _logger._log(level, _prefix, fmt, args...);
     }
 
     template<typename ...Args>

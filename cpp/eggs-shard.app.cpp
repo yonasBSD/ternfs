@@ -1,29 +1,19 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <filesystem>
-#include <unordered_set>
-#include <fstream>
 
 #include "Shard.hpp"
-#include "Env.hpp"
-#include "Undertaker.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
-
-static void* runShard(void* shard) {
-    ((Shard*)shard)->run();
-    return nullptr;
-}
 
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const auto dieWithUsage = [&argv]() {
-        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] db_dir shard_id\n", argv[0]);
+        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-shuckle] db_dir shard_id\n", argv[0]);
     };
 
-    LogLevel level = LogLevel::LOG_INFO;
-    std::string logFile;
+    ShardOptions options;
     std::vector<std::string> args;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
@@ -38,20 +28,22 @@ int main(int argc, char** argv) {
         if (arg == "-h" || arg == "--help") {
             dieWithUsage();
         } else if (arg == "-v" || arg == "--verbose") {
-            level = std::min<LogLevel>(LogLevel::LOG_DEBUG, level);
+            options.level = std::min<LogLevel>(LogLevel::LOG_DEBUG, options.level);
         } else if (arg == "--log-level") {
             std::string logLevel = getNextArg();
             if (logLevel == "debug") {
-                level = LogLevel::LOG_DEBUG;
+                options.level = LogLevel::LOG_DEBUG;
             } else if (logLevel == "info") {
-                level = LogLevel::LOG_INFO;
-            } else if (logLevel == "erro") {
-                level = LogLevel::LOG_ERROR;
+                options.level = LogLevel::LOG_INFO;
+            } else if (logLevel == "error") {
+                options.level = LogLevel::LOG_ERROR;
             } else {
                 die("Bad log level `%s'", logLevel.c_str());
             }
         } else if (arg == "--log-file") {
-            logFile = getNextArg();
+            options.logFile = getNextArg();
+        } else if (arg == "--wait-for-shuckle") {
+            options.waitForShuckle = true;
         } else {
             args.emplace_back(std::move(arg));
         }
@@ -77,29 +69,7 @@ int main(int argc, char** argv) {
     }
     ShardId shid(shardId);
 
-    auto undertaker = Undertaker::acquireUndertaker();
-
-    std::ostream* logOut = &std::cout;
-    std::ofstream fileOut;
-    if (!logFile.empty()) {
-        fileOut = std::ofstream(logFile, std::ios::out | std::ios::app);
-        if (!fileOut.is_open()) {
-            die("Could not open log file `%s'\n", logFile.c_str());
-        }
-        logOut = &fileOut;
-    }
-    Logger logger(*logOut);
-
-    {
-        auto shard = std::make_unique<Shard>(logger, level, shid, dbDir);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runShard, &*shard) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(shard), tid, "shard");
-    }
-
-    undertaker->reap();
+    runShard(shid, dbDir, options);
 
     return 0;
 }

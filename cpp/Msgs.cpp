@@ -29,8 +29,8 @@ std::ostream& operator<<(std::ostream& out, Parity parity) {
 }
 
 static const std::unordered_map<std::string, uint8_t> STORAGE_CLASSES_BY_NAME = {
-    {"FLASH", 2},
-    {"HDD", 3},
+    {"HDD", 2},
+    {"FLASH", 3},
 };
 
 uint8_t storageClassByName(const char* name) {

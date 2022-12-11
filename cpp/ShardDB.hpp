@@ -29,7 +29,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Env& env, ShardId shid, const std::string& path);
+    ShardDB(Logger& logger, ShardId shid, const std::string& path);
     ~ShardDB();
 
     // Stuff which might throw, and therefore not well suited to destructor.
@@ -79,8 +79,8 @@ public:
     // It is the job of the caller to keep track of indices, this state machine  only
     // remembers which index it last applied.
     //
-    // This function will fail if called concurrently -- like `prepareLogEntry` we
-    // rely on having a single writer, and here it's actually a lot more important.
+    // This function will fail if called concurrently -- we rely on having a single
+    // writer for easy of synchronization.
     //
     // The state is written atomically (you can never witness an half-applied log entry).
     //

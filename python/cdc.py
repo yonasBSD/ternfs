@@ -352,12 +352,12 @@ class SoftUnlinkDirectory(Transaction):
     def stat_resp(self, cur: sqlite3.Cursor, req: SoftUnlinkDirectoryReq, resp: ExpectedShardResp[StatDirectoryResp]) -> CDCStepInternal:
         if isinstance(resp, EggsError):
             return self._init_rollback(req, resp.error_code) # we need to unlock what we locked
-        if resp.info.body:
+        if len(resp.info) > 0:
             # if we get a directory info body, we're done finding the directory info
             return CDCNeedsShard(
                 next_step='remove_owner_resp',
                 shard=inode_id_shard(req.target_id),
-                request=RemoveDirectoryOwnerReq(dir_id=req.target_id, info=resp.info.body[0]),
+                request=RemoveDirectoryOwnerReq(dir_id=req.target_id, info=resp.info),
                 critical=False,
             )
         else:

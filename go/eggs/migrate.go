@@ -104,7 +104,7 @@ func (env *DaemonEnv) MigrateBlocksInFile(stats *MigrateStats, blockServiceId ms
 					req := msgs.AddSpanInitiateReq{
 						FileId:       scratchFile.id,
 						Cookie:       scratchFile.cookie,
-						StorageClass: msgs.ZERO_STORAGE,
+						StorageClass: msgs.EMPTY_STORAGE,
 					}
 					if err := env.ShardRequest(&req, &msgs.AddSpanInitiateResp{}); err != nil {
 						env.RaiseAlert(fmt.Errorf("could not bump scratch file deadline when migrating blocks: %w", err))

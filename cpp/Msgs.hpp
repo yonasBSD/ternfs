@@ -182,7 +182,7 @@ std::ostream& operator<<(std::ostream& out, Parity parity);
 
 constexpr Parity NO_PARITY(0);
 
-constexpr uint8_t ZERO_FILL_STORAGE = 0;
+constexpr uint8_t EMPTY_STORAGE = 0;
 constexpr uint8_t INLINE_STORAGE = 1;
 
 uint8_t storageClassByName(const char* name);

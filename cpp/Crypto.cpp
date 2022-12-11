@@ -36,7 +36,7 @@ void generateSecretKey(std::array<uint8_t, 16>& key) {
     }
 }
 
-void cbcmac(const std::array<uint8_t, 16>& key, const uint8_t* data, size_t len, std::array<uint8_t, 8>& mac) {
+std::array<uint8_t, 8> cbcmac(const std::array<uint8_t, 16>& key, const uint8_t* data, size_t len) {
     AES_KEY expandedKey;
     ALWAYS_ASSERT(
         AES_set_encrypt_key(&key[0], sizeof(key)*8, &expandedKey) == 0
@@ -51,5 +51,7 @@ void cbcmac(const std::array<uint8_t, 16>& key, const uint8_t* data, size_t len,
         memcpy(&in, data+i, std::min<size_t>(sizeof(in), len-i));
         AES_cbc_encrypt(in, out, sizeof(in), &expandedKey, ivec, AES_ENCRYPT);
     }
+    std::array<uint8_t, 8> mac;
     memcpy(&mac[0], out, sizeof(mac));
+    return mac;
 }

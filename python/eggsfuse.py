@@ -229,11 +229,7 @@ class Operations(pyfuse3.Operations):
             for span in spans.spans:
                 span_data: bytes
                 if len(data) >= size: break
-                if span.storage_class == ZERO_FILL_STORAGE:
-                    assert not span.body_bytes
-                    assert not span.body_blocks
-                    span_data = b'\0' * span.size
-                elif span.storage_class == INLINE_STORAGE:
+                if span.storage_class == INLINE_STORAGE:
                     assert not span.body_blocks
                     span_data = span.body_bytes
                 else:
@@ -260,8 +256,8 @@ class Operations(pyfuse3.Operations):
 
     async def _resolve_directory_info(self, dir_id: int) -> DirectoryInfoBody:
         resp = cast(StatDirectoryResp, await self._send_shard_req(inode_id_shard(dir_id), StatDirectoryReq(dir_id)))
-        if resp.info.body:
-            return resp.info.body[0]
+        if resp.info:
+            return bincode.unpack(DirectoryInfoBody, resp.info)
         return await self._resolve_directory_info(resp.owner)
 
     async def _create(self, dir_id: int, type: InodeType, name: bytes):
@@ -328,7 +324,7 @@ class Operations(pyfuse3.Operations):
             parity=0,
             crc32=crc32,
             size=len(data),
-            block_size=len(data),
+            block_size=0,
             body_blocks=[],
             body_bytes=data,
             blacklist=[],

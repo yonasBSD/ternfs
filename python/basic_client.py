@@ -87,7 +87,6 @@ def send_shard_request(shard: int, req_body: ShardRequestBody, key: Optional[cry
 def send_shard_request_or_raise(shard: int, req_body: ShardRequestBody, key: Optional[crypto.ExpandedKey] = None, timeout_secs: float = 2.0) -> ShardResponseBody:
     resp = send_shard_request(shard, req_body, key, timeout_secs)
     if isinstance(resp, EggsError):
-        print('XXX', req_body)
         raise resp
     return resp
 
@@ -128,7 +127,8 @@ def lookup_raw(dir_id: int, name: str):
     print(f'type:        {repr(inode_id_type(inode))}')
     print(f'shard:       {inode_id_shard(inode)}')
 
-def print_dir_info(info: DirectoryInfoBody):
+def print_dir_info(bytes: bytes):
+    info = bincode.unpack(DirectoryInfoBody, bytes)
     print(f'  delete_after_time:      {timedelta(microseconds=info.delete_after_time/1000)}')
     print(f'  delete_after_versions:  {info.delete_after_versions}')
     print(f'  span policies:')
@@ -136,11 +136,11 @@ def print_dir_info(info: DirectoryInfoBody):
     for policy in info.span_policies:
         print(f'    {span_size_str(policy.max_size)}: {STORAGE_CLASSES.get(policy.storage_class, policy.storage_class)}, {parity_str(policy.parity)}')
 
-def resolve_dir_info(id) -> Tuple[int, DirectoryInfoBody]:
+def resolve_dir_info(id) -> Tuple[int, bytes]:
     resp = send_shard_request_or_raise(inode_id_shard(id), StatDirectoryReq(id))
     assert isinstance(resp, StatDirectoryResp)
-    if resp.info.body:
-        return id, resp.info.body[0]
+    if len(resp.info) > 0:
+        return id, resp.info
     else:
         return resolve_dir_info(resp.owner)
 
@@ -151,9 +151,9 @@ def stat_raw(id: int):
         assert isinstance(resp, StatDirectoryResp)
         print(f'mtime:       {eggs_time_str(resp.mtime)}')
         print(f'owner:       0x{resp.owner:016X}')
-        if resp.info.body:
+        if resp.info:
             print(f'info:')
-            print_dir_info(resp.info.body[0])
+            print_dir_info(resp.info)
         else:
             print(f'info (inherited):')
             print(resp.info)
@@ -165,9 +165,6 @@ def stat_raw(id: int):
         assert isinstance(resp, StatFileResp)
         print(f'mtime:       {eggs_time_str(resp.mtime)}')
         print(f'size:        {resp.size}')
-        print(f'transient:   {resp.transient}')
-        if resp.transient:
-            print(f'note:        {resp.note!r}')
 
 @command('stat')
 def do_stat(path: Path):
@@ -397,7 +394,7 @@ def write_block(*, block: BlockInfo, data: bytes, crc32: bytes) -> bytes:
     with socket.create_connection((socket.inet_ntoa(block.block_service_ip), block.block_service_port)) as conn:
         conn.send(header + data)
         resp = conn.recv(8 + 17)
-        assert len(resp) == 8 + 17
+        assert len(resp) == 8 + 17, f'Expected resp of len {8+17} from {socket.inet_ntoa(block.block_service_ip)}:{block.block_service_port}, got {len(resp)} instead: {resp}'
     proof: bytes
     block_service_id, rkind, rblock_id, proof = struct.unpack('<QcQ8s', resp)
     assert block_service_id == block.block_service_id

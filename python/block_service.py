@@ -185,8 +185,8 @@ async def handle_client(*, reader: asyncio.StreamReader, writer: asyncio.StreamW
                 # check that block_id is inside expected range
                 # this ensures we don't have "reply attack"-esque issues
                 now = common.eggs_time()
-                if time_check and (not (now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF)):
-                    logging.error(f'Block {block_id} in the past')
+                if time_check and not ((now - PAST_CUTOFF) <= block_id <= (now + FUTURE_CUTOFF)):
+                    logging.error(f'Block {block_id} in the past (now={now})')
                     return
                 assert size <= MAX_OBJECT_SIZE
                 data = await reader.readexactly(size)

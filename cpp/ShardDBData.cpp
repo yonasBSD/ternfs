@@ -26,3 +26,16 @@ std::ostream& operator<<(std::ostream& out, const EdgeKey& edgeKey) {
     out << ")";
     return out;
 }
+
+void blockServicesToValue(const BincodeList<EntryBlockService>& entries, std::string& buf) {
+    buf.resize(entries.packedSize());
+    BincodeBuf bbuf(buf);
+    bbuf.packList(entries);
+    ALWAYS_ASSERT(bbuf.remaining() == 0);
+}
+
+void blockServicesFromValue(const rocksdb::Slice& value, BincodeList<EntryBlockService>& entries) {
+    BincodeBuf bbuf((char*)value.data(), value.size());
+    bbuf.unpackList(entries);
+    ALWAYS_ASSERT(bbuf.remaining() == 0);
+}

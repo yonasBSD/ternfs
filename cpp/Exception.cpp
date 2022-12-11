@@ -3,6 +3,9 @@
 #include <sys/syscall.h>
 #include <atomic>
 #include <fcntl.h>
+#include <cxxabi.h>
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
 
 #include "Common.hpp"
 #include "BinaryFormatter.hpp"
@@ -177,7 +180,6 @@ std::string removeTemplates(const std::string & s) {
     return r;
 
 }
-
 
 AbstractException::AbstractException() {
     generateBacktrace(_stacktrace, sizeof(_stacktrace));

@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "Common.hpp"
 #include "SBRMUnix.hpp"
@@ -71,7 +72,16 @@ DynamicMMapHolder<char*> MMapProgramInfo(const char *exePath, bool required) noe
             nullptr,
         };
 
-        const char *argv[] = {"/proc/self/exe", nullptr};
+        // valgrind doesn't like us executing /proc/self/exe
+        char exe[1024];
+        {
+            ssize_t written = readlink("/proc/self/exe", exe, sizeof(exe));
+            if (written < 0 || written == sizeof(exe)) {
+                dieWithError("readlink");
+            }
+            exe[written] = '\0';
+        }
+        const char *argv[] = {exe, nullptr};
 
         pid_t childPid = vfork();
         if (childPid == -1) dieWithError("vfork");

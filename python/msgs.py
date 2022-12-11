@@ -34,7 +34,7 @@ class ErrCode(enum.IntEnum):
     NAME_IS_LOCKED = 33
     OLD_NAME_IS_LOCKED = 34
     NEW_NAME_IS_LOCKED = 35
-    DIRECTORY_MTIME_IS_TOO_RECENT = 36
+    MTIME_IS_TOO_RECENT = 36
     MISMATCHING_TARGET = 37
     MISMATCHING_OWNER = 38
     DIRECTORY_NOT_EMPTY = 39
@@ -528,6 +528,68 @@ class FullReadDirCursor(bincode.Packable):
         _size += 1 # len(start_name)
         _size += len(self.start_name) # start_name contents
         _size += 8 # start_time
+        return _size
+
+@dataclass
+class EntryBlockService(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 # id + ip + port + storage_class + failure_domain + secret_key
+    id: int
+    ip: bytes
+    port: int
+    storage_class: int
+    failure_domain: bytes
+    secret_key: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.id, b)
+        bincode.pack_fixed_into(self.ip, 4, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u8_into(self.storage_class, b)
+        bincode.pack_fixed_into(self.failure_domain, 16, b)
+        bincode.pack_fixed_into(self.secret_key, 16, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'EntryBlockService':
+        id = bincode.unpack_u64(u)
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        storage_class = bincode.unpack_u8(u)
+        failure_domain = bincode.unpack_fixed(u, 16)
+        secret_key = bincode.unpack_fixed(u, 16)
+        return EntryBlockService(id, ip, port, storage_class, failure_domain, secret_key)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # id
+        _size += 4 # ip
+        _size += 2 # port
+        _size += 1 # storage_class
+        _size += 16 # failure_domain
+        _size += 16 # secret_key
+        return _size
+
+@dataclass
+class EntryNewBlockInfo(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 8 + 4 # block_service_id + crc32
+    block_service_id: int
+    crc32: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.block_service_id, b)
+        bincode.pack_fixed_into(self.crc32, 4, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'EntryNewBlockInfo':
+        block_service_id = bincode.unpack_u64(u)
+        crc32 = bincode.unpack_fixed(u, 4)
+        return EntryNewBlockInfo(block_service_id, crc32)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # block_service_id
+        _size += 4 # crc32
         return _size
 
 @dataclass

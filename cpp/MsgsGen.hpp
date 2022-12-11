@@ -30,7 +30,7 @@ enum class EggsError : uint16_t {
     NAME_IS_LOCKED = 33,
     OLD_NAME_IS_LOCKED = 34,
     NEW_NAME_IS_LOCKED = 35,
-    DIRECTORY_MTIME_IS_TOO_RECENT = 36,
+    MTIME_IS_TOO_RECENT = 36,
     MISMATCHING_TARGET = 37,
     MISMATCHING_OWNER = 38,
     DIRECTORY_NOT_EMPTY = 39,
@@ -409,6 +409,58 @@ struct FullReadDirCursor {
 };
 
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x);
+
+struct EntryBlockService {
+    uint64_t id;
+    BincodeFixedBytes<4> ip;
+    uint16_t port;
+    uint8_t storageClass;
+    BincodeFixedBytes<16> failureDomain;
+    BincodeFixedBytes<16> secretKey;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE; // id + ip + port + storageClass + failureDomain + secretKey
+
+    EntryBlockService() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
+        _size += 2; // port
+        _size += 1; // storageClass
+        _size += BincodeFixedBytes<16>::STATIC_SIZE; // failureDomain
+        _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const EntryBlockService&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const EntryBlockService& x);
+
+struct EntryNewBlockInfo {
+    uint64_t blockServiceId;
+    BincodeFixedBytes<4> crc32;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceId + crc32
+
+    EntryNewBlockInfo() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // blockServiceId
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // crc32
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const EntryNewBlockInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
 struct LookupReq {
     InodeId dirId;
@@ -2340,6 +2392,9 @@ enum class ShardLogEntryKind : uint16_t {
     REMOVE_NON_OWNED_EDGE = 13,
     INTRA_SHARD_HARD_FILE_UNLINK = 14,
     REMOVE_SPAN_INITIATE = 15,
+    UPDATE_BLOCK_SERVICES = 16,
+    ADD_SPAN_INITIATE = 17,
+    ADD_SPAN_CERTIFY = 18,
 };
 
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
@@ -2700,10 +2755,90 @@ struct RemoveSpanInitiateEntry {
 
 std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x);
 
+struct UpdateBlockServicesEntry {
+    BincodeList<EntryBlockService> blockServices;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<EntryBlockService>::STATIC_SIZE; // blockServices
+
+    UpdateBlockServicesEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += blockServices.packedSize(); // blockServices
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const UpdateBlockServicesEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x);
+
+struct AddSpanInitiateEntry {
+    InodeId fileId;
+    uint64_t byteOffset;
+    uint8_t storageClass;
+    Parity parity;
+    BincodeFixedBytes<4> crc32;
+    uint32_t size;
+    uint32_t blockSize;
+    BincodeBytes bodyBytes;
+    BincodeList<EntryNewBlockInfo> bodyBlocks;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 1 + 1 + BincodeFixedBytes<4>::STATIC_SIZE + 4 + 4 + BincodeBytes::STATIC_SIZE + BincodeList<EntryNewBlockInfo>::STATIC_SIZE; // fileId + byteOffset + storageClass + parity + crc32 + size + blockSize + bodyBytes + bodyBlocks
+
+    AddSpanInitiateEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // fileId
+        _size += 8; // byteOffset
+        _size += 1; // storageClass
+        _size += 1; // parity
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // crc32
+        _size += 4; // size
+        _size += 4; // blockSize
+        _size += bodyBytes.packedSize(); // bodyBytes
+        _size += bodyBlocks.packedSize(); // bodyBlocks
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AddSpanInitiateEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateEntry& x);
+
+struct AddSpanCertifyEntry {
+    InodeId fileId;
+    uint64_t byteOffset;
+    BincodeList<BlockProof> proofs;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
+
+    AddSpanCertifyEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // fileId
+        _size += 8; // byteOffset
+        _size += proofs.packedSize(); // proofs
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AddSpanCertifyEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AddSpanCertifyEntry& x);
+
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, IntraShardHardFileUnlinkEntry, RemoveSpanInitiateEntry> _data;
+    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, IntraShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry> _data;
 public:
     ShardLogEntryKind kind() const { return _kind; }
     const ConstructFileEntry& getConstructFile() const;
@@ -2736,6 +2871,12 @@ public:
     IntraShardHardFileUnlinkEntry& setIntraShardHardFileUnlink();
     const RemoveSpanInitiateEntry& getRemoveSpanInitiate() const;
     RemoveSpanInitiateEntry& setRemoveSpanInitiate();
+    const UpdateBlockServicesEntry& getUpdateBlockServices() const;
+    UpdateBlockServicesEntry& setUpdateBlockServices();
+    const AddSpanInitiateEntry& getAddSpanInitiate() const;
+    AddSpanInitiateEntry& setAddSpanInitiate();
+    const AddSpanCertifyEntry& getAddSpanCertify() const;
+    AddSpanCertifyEntry& setAddSpanCertify();
 
     void clear() { _kind = (ShardLogEntryKind)0; };
 

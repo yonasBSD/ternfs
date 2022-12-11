@@ -5,7 +5,7 @@ verbose ?= no
 coverage ?= no
 time_trace ?= no
 
-libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash openssl
+libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash openssl libcurl
 
 # TODO Go over the pkg-config --cflags output for rocksdb
 CXX = clang++
@@ -79,7 +79,7 @@ ifeq ($(time_trace),yes)
     LDFLAGS += -ftime-trace
 else
     ifneq ($(time_trace),no)
-        $(error valgrind should be either yes or no)
+        $(error time_trace should be either yes or no)
     endif
 endif
 
@@ -111,7 +111,6 @@ $(build_dir)%.o: %.cpp
 compile_commands.json: $(sources) Makefile
 	make debug=yes clean
 	bear -- make debug=yes
-	# sed -i 's/\/data\/home/\/home/g' compile_commands.json
 
 clean:
 	rm -rf $(build_dir) $(binaries_links)

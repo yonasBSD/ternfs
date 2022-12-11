@@ -144,6 +144,7 @@ public:
         size_t sz = T::calcSize(std::forward<Args>(args)...);
         _val._data = (char*)malloc(sz);
         ALWAYS_ASSERT(_val._data);
+        _val.afterAlloc(std::forward<Args>(args)...);
     }
 
     ~OwnedValue() {
@@ -194,8 +195,10 @@ public:
     }
 
 #define FBYTES_VAL(sz, getName, setName, offset) \
-    void getName(std::array<uint8_t, sz>& bs) const { \
+    std::array<uint8_t, sz> getName() const { \
+        std::array<uint8_t, sz> bs; \
         memcpy(&bs[0], _data+offset, sz); \
+        return bs; \
     } \
     void setName(const std::array<uint8_t, sz>& bs) { \
         memcpy(_data+offset, &bs[0], sz); \

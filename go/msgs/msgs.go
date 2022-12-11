@@ -199,7 +199,7 @@ func (parity Parity) ParityBlocks() int {
 // Shard requests/responses
 
 const (
-	ZERO_STORAGE   StorageClass = 0
+	EMPTY_STORAGE  StorageClass = 0
 	INLINE_STORAGE StorageClass = 1
 )
 
@@ -328,13 +328,11 @@ type BlockServiceBlacklist struct {
 // * The span size can be greater than the sum of data blocks, in which case trailing
 //     zeros are added. This is to support cheap creation of gaps in the file.
 //
-// The zero storage class (ZERO_STORAGE) is not strictly needed -- we could just use
-// a span size with no data blocks at all. But it's still nice to distinguish it explicitly
-// -- otherwise you'd have to specify some dummy storage class for such spans, and you would
-// not be able to check that there _is_ some data when you expect it to.
+// The empty storage class (EMPTY_STORAGE) is only used for heartbeats -- it never produces
+// spans in the file. So all spans you can read will be with storage class > 0.
 //
-// The inline storage class allows small files (< 256 bytes) to be stored directly
-// in the metadata.
+// The inline storage class (INLINE_STORAGE) allows small files (< 256 bytes) to be stored
+// directly in the metadata.
 type AddSpanInitiateReq struct {
 	FileId       InodeId
 	Cookie       [8]byte
@@ -897,4 +895,42 @@ type IntraShardHardFileUnlinkEntry struct {
 
 type RemoveSpanInitiateEntry struct {
 	FileId InodeId
+}
+
+type EntryBlockService struct {
+	Id            uint64
+	Ip            [4]byte
+	Port          uint16
+	StorageClass  uint8
+	FailureDomain [16]byte
+	SecretKey     [16]byte
+}
+
+type UpdateBlockServicesEntry struct {
+	BlockServices []EntryBlockService
+}
+
+type EntryNewBlockInfo struct {
+	BlockServiceId uint64
+	Crc32          [4]byte
+}
+
+type AddSpanInitiateEntry struct {
+	FileId       InodeId
+	ByteOffset   uint64
+	StorageClass StorageClass
+	Parity       Parity
+	Crc32        [4]byte
+	Size         uint32
+	BlockSize    uint32
+	// empty unless StorageClass == INLINE_STORAGE
+	BodyBytes []byte
+	// empty unless StorageClass not in (EMPTY_STORAGE, INLINE_STORAGE)
+	BodyBlocks []EntryNewBlockInfo
+}
+
+type AddSpanCertifyEntry struct {
+	FileId     InodeId
+	ByteOffset uint64
+	Proofs     []BlockProof
 }

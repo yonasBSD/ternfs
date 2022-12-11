@@ -32,7 +32,7 @@ const (
 	NAME_IS_LOCKED ErrCode = 33
 	OLD_NAME_IS_LOCKED ErrCode = 34
 	NEW_NAME_IS_LOCKED ErrCode = 35
-	DIRECTORY_MTIME_IS_TOO_RECENT ErrCode = 36
+	MTIME_IS_TOO_RECENT ErrCode = 36
 	MISMATCHING_TARGET ErrCode = 37
 	MISMATCHING_OWNER ErrCode = 38
 	DIRECTORY_NOT_EMPTY ErrCode = 39
@@ -111,7 +111,7 @@ func (err ErrCode) String() string {
 	case 35:
 		return "NEW_NAME_IS_LOCKED"
 	case 36:
-		return "DIRECTORY_MTIME_IS_TOO_RECENT"
+		return "MTIME_IS_TOO_RECENT"
 	case 37:
 		return "MISMATCHING_TARGET"
 	case 38:
@@ -1872,6 +1872,52 @@ func (v *FullReadDirCursor) Unpack(buf *bincode.Buf) error {
 		return err
 	}
 	if err := buf.UnpackU64((*uint64)(&v.StartTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *EntryBlockService) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.Id))
+	buf.PackFixedBytes(4, v.Ip[:])
+	buf.PackU16(uint16(v.Port))
+	buf.PackU8(uint8(v.StorageClass))
+	buf.PackFixedBytes(16, v.FailureDomain[:])
+	buf.PackFixedBytes(16, v.SecretKey[:])
+}
+
+func (v *EntryBlockService) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := buf.UnpackFixedBytes(4, v.Ip[:]); err != nil {
+		return err
+	}
+	if err := buf.UnpackU16((*uint16)(&v.Port)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU8((*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	if err := buf.UnpackFixedBytes(16, v.FailureDomain[:]); err != nil {
+		return err
+	}
+	if err := buf.UnpackFixedBytes(16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *EntryNewBlockInfo) Pack(buf *bincode.Buf) {
+	buf.PackU64(uint64(v.BlockServiceId))
+	buf.PackFixedBytes(4, v.Crc32[:])
+}
+
+func (v *EntryNewBlockInfo) Unpack(buf *bincode.Buf) error {
+	if err := buf.UnpackU64((*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackFixedBytes(4, v.Crc32[:]); err != nil {
 		return err
 	}
 	return nil

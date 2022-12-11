@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"path"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -60,7 +61,7 @@ func main() {
 			storageClass = "FLASH"
 		}
 		procs.StartBlockService(&eggs.BlockServiceOpts{
-			Path:          fmt.Sprintf("%s/bs_%d", *dataDir, i),
+			Path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			Port:          40000 + uint16(i),
 			StorageClass:  storageClass,
 			FailureDomain: fmt.Sprintf("%d", i),
@@ -69,19 +70,20 @@ func main() {
 	}
 
 	// Start shuckle
-	// procs = append(procs, startShuckle(terminateChan, fmt.Sprintf("%s/shuckle", *dataDir), *verbose))
+	procs.StartShuckle(path.Join(*dataDir, "shuckle"), *verbose)
 
 	// Start CDC
-	procs.StartCDC(fmt.Sprintf("%s/cdc", *dataDir), *verbose)
+	procs.StartCDC(path.Join(*dataDir, "cdc"), *verbose)
 
 	// Start shards
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		procs.StartShard(&eggs.ShardOpts{
-			Exe:     *shardExe,
-			Dir:     fmt.Sprintf("%s/shard_%03d", *dataDir, i),
-			Verbose: *verbose,
-			Shid:    shid,
+			Exe:      *shardExe,
+			Dir:      path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			Verbose:  *verbose,
+			Shid:     shid,
+			Valgrind: *valgrind,
 		})
 	}
 

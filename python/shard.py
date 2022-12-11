@@ -55,7 +55,8 @@ def init_db(shard: int, db: sqlite3.Connection):
         create table if not exists shard (
             shard integer primary key not null check (shard = {shard}),
             secret_key blob not null,
-            next_file_id integer not null,
+            
+            file_id integer not null,
             next_symlink_id integer not null,
             next_block_id integer not null
         )

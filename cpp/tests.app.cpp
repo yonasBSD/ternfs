@@ -15,6 +15,7 @@
 #include "Time.hpp"
 #include "Undertaker.hpp"
 #include "CDCKey.hpp"
+#include "crc32c.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -341,9 +342,7 @@ TEST_CASE("CBC MAC") {
     std::array<uint8_t, 16> key;
     memcpy(&key[0], "\x2b\x7e\x15\x16\x28\xae\xd2\xa6\xab\xf7\x15\x88\x09\xcf\x4f\x3c", sizeof(key));
     const auto test = [&key](const std::vector<uint8_t>& plaintext, const std::array<uint8_t, 8>& expectedMac) {
-        std::array<uint8_t, 8> mac;
-        cbcmac(key, &plaintext[0], plaintext.size(), mac);
-        CHECK(mac == expectedMac);
+        CHECK(cbcmac(key, &plaintext[0], plaintext.size()) == expectedMac);
     };
     test(
         {68,235,81,75,124,255,47,151,1,176},
@@ -362,9 +361,7 @@ TEST_CASE("CBC MAC") {
         {85,212,198,154,164,248,20,252}
     );
     const auto testCDC = [](const std::vector<uint8_t>& plaintext, const std::array<uint8_t, 8>& expectedMac) {
-        std::array<uint8_t, 8> mac;
-        cbcmac(CDCKey, &plaintext[0], plaintext.size(), mac);
-        CHECK(mac == expectedMac);
+        CHECK(cbcmac(CDCKey, &plaintext[0], plaintext.size()) == expectedMac);
     };
     testCDC(
         {30,150,143,64,165,93,232,5,86,160,21,239,228,49,121,199,214,95,153,152,37,35,188,167,111,6,253,215,180,215,85,201},
@@ -383,19 +380,18 @@ struct TempShardDB {
     ShardId shid;
     std::unique_ptr<ShardDB> db;
 
-    TempShardDB(LogLevel level, ShardId shid_): logger(std::cerr), shid(shid_) {
+    TempShardDB(LogLevel level, ShardId shid_): logger(level, std::cerr), shid(shid_) {
         dbDir = std::string("temp-shard-db.XXXXXX");
         if (mkdtemp(dbDir.data()) == nullptr) {
             throw SYSCALL_EXCEPTION("mkdtemp");
         }
-        env = std::make_unique<Env>(logger, level);
-        db = std::make_unique<ShardDB>(*env, shid, dbDir);
+        db = std::make_unique<ShardDB>(logger, shid, dbDir);
     }
 
     // useful to test recovery
     void restart() {
         db->close();
-        db = std::make_unique<ShardDB>(*env, shid, dbDir);
+        db = std::make_unique<ShardDB>(logger, shid, dbDir);
     }
 
     ~TempShardDB() {
@@ -620,4 +616,10 @@ TEST_CASE("make/rm directory") {
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
         NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
     }
+}
+
+TEST_CASE("crc32c") {
+    std::array<uint8_t, 4> expectedCrc32{0x68, 0xc0, 0x0e, 0x6c};
+    const char* str = "bazzer\n";
+    CHECK(expectedCrc32 == crc32c(str, strlen(str)));
 }

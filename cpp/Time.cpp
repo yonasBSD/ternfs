@@ -13,7 +13,7 @@ EggsTime eggsNow() {
         throw SYSCALL_EXCEPTION("clock_gettime");
     }
 
-    return EggsTime(now.tv_nsec + (now.tv_sec * 1'000'000'000ull));
+    return EggsTime(((uint64_t)now.tv_nsec + ((uint64_t)now.tv_sec * 1'000'000'000ull)) - EGGS_EPOCH);
 }
 
 std::ostream& operator<<(std::ostream& out, EggsTime eggst) {

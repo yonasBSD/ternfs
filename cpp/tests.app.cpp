@@ -426,7 +426,8 @@ TEST_CASE("touch file") {
 
     auto reqContainer = std::make_unique<ShardReqContainer>();
     auto respContainer = std::make_unique<ShardRespContainer>();
-    auto logEntry = std::make_unique<ShardLogEntryWithIndex>();
+    auto logEntry = std::make_unique<ShardLogEntry>();
+    uint64_t logEntryIndex = 0;
     BincodeBytesScratchpad dbScratch;
     BincodeBytesScratchpad ourScratch;
 
@@ -440,8 +441,8 @@ TEST_CASE("touch file") {
         req.type = (uint8_t)InodeType::FILE;
         ourScratch.copyTo("test note", req.note);
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        constructTime = logEntry->entry.time;
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        constructTime = logEntry->time;
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
         auto& resp = respContainer->getConstructFile();
         id = resp.id;
         cookie = resp.cookie;
@@ -463,8 +464,8 @@ TEST_CASE("touch file") {
         req.ownerId = ROOT_DIR_INODE_ID;
         ourScratch.copyTo(name, req.name);
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        linkTime = logEntry->entry.time;
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        linkTime = logEntry->time;
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
     }
     {
         ourScratch.reset();
@@ -499,50 +500,13 @@ TEST_CASE("touch file") {
     }
 }
 
-TEST_CASE("log replay") {
-    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
-
-    auto reqContainer = std::make_unique<ShardReqContainer>();
-    auto respContainer = std::make_unique<ShardRespContainer>();
-    auto logEntry = std::make_unique<ShardLogEntryWithIndex>();
-    BincodeBytesScratchpad dbScratch;
-    BincodeBytesScratchpad ourScratch;
-
-    // first just try a simple restart
-    std::array<uint8_t, 16> secretKeyBefore = db.db->secretKey();
-    db.restart();
-    REQUIRE(secretKeyBefore == db.db->secretKey());
-
-    for (int i = 0; i < 2; i++) {
-        // create log entry, but don't apply
-        {
-            ourScratch.reset();
-            auto& req = reqContainer->setConstructFile();
-            req.type = (uint8_t)InodeType::FILE;
-            ourScratch.copyTo("test note", req.note);
-            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        }
-
-        // now restart, the log above will be automatically replayed
-        db.restart();
-        
-        // verify that it is
-        {
-            auto& req = reqContainer->setVisitTransientFiles();
-            NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
-            auto& resp = respContainer->getVisitTransientFiles();
-            REQUIRE(resp.nextId == NULL_INODE_ID);
-            REQUIRE(resp.files.els.size() == i+1);
-        }
-    }
-}
-
 TEST_CASE("override") {
     TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
 
     auto reqContainer = std::make_unique<ShardReqContainer>();
     auto respContainer = std::make_unique<ShardRespContainer>();
-    auto logEntry = std::make_unique<ShardLogEntryWithIndex>();
+    auto logEntry = std::make_unique<ShardLogEntry>();
+    uint64_t logEntryIndex = 0;
     BincodeBytesScratchpad dbScratch;
     BincodeBytesScratchpad ourScratch;
 
@@ -555,7 +519,7 @@ TEST_CASE("override") {
             req.type = (uint8_t)InodeType::FILE;
             ourScratch.copyTo("test note", req.note);
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
             auto& resp = respContainer->getConstructFile();
             id = resp.id;
             cookie = resp.cookie;
@@ -572,7 +536,7 @@ TEST_CASE("override") {
             req.ownerId = ROOT_DIR_INODE_ID;
             ourScratch.copyTo(name, req.name);
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
         }
         return id;
     };
@@ -588,7 +552,7 @@ TEST_CASE("override") {
         ourScratch.copyTo("foo", req.oldName);
         ourScratch.copyTo("bar", req.newName);
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
     }
     {
         auto& req = reqContainer->setFullReadDir();
@@ -617,7 +581,8 @@ TEST_CASE("make/rm directory") {
 
     auto reqContainer = std::make_unique<ShardReqContainer>();
     auto respContainer = std::make_unique<ShardRespContainer>();
-    auto logEntry = std::make_unique<ShardLogEntryWithIndex>();
+    auto logEntry = std::make_unique<ShardLogEntry>();
+    uint64_t logEntryIndex = 0;
     BincodeBytesScratchpad dbScratch;
     BincodeBytesScratchpad ourScratch;
 
@@ -631,7 +596,7 @@ TEST_CASE("make/rm directory") {
         req.info.inherited = true;
         req.ownerId = ROOT_DIR_INODE_ID;
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
         respContainer->getCreateDirectoryInode();
     }
     {
@@ -639,7 +604,7 @@ TEST_CASE("make/rm directory") {
         req.dirId = id;
         req.info = defaultInfo;
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
     }
     {
         auto& req = reqContainer->setStatDirectory();
@@ -653,6 +618,6 @@ TEST_CASE("make/rm directory") {
         req.dirId = id;
         req.ownerId = ROOT_DIR_INODE_ID;
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(logEntry->index, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
     }
 }

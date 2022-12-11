@@ -79,3 +79,142 @@ public:
         return snapshot;
     }
 };
+
+
+// We use byteswap to go from LE to BE, and vice-versa.
+static_assert(std::endian::native == std::endian::little);
+inline uint64_t byteswapU64(uint64_t x) {
+    return __builtin_bswap64(x);
+}
+
+template<typename T>
+struct StaticValue {
+private:
+    std::array<char, T::MAX_SIZE> _data;
+    T _val;
+public:
+    StaticValue() {
+        _val._data = &_data[0];
+    }
+
+    rocksdb::Slice toSlice() const {
+        return rocksdb::Slice(&_data[0], _val.size());
+    }
+
+    T* operator->() {
+        return &_val;
+    }
+};
+
+template<typename T>
+struct ExternalValue {
+private:
+    T _val;
+public:
+    ExternalValue() {
+        _val._data = nullptr;
+    }
+    ExternalValue(char* data, size_t size) {
+        _val._data = data;
+        _val.checkSize(size);
+    }
+    ExternalValue(std::string& s): ExternalValue(s.data(), s.size()) {}
+
+    static const ExternalValue<T> FromSlice(const rocksdb::Slice& slice) {
+        return ExternalValue((char*)slice.data(), slice.size());
+    }
+
+    T* operator->() {
+        return &_val;
+    }
+
+    rocksdb::Slice toSlice() {
+        return rocksdb::Slice(_val._data, _val.size());
+    }
+};
+
+template<typename T>
+struct OwnedValue {
+    T _val;
+public:
+    OwnedValue() = delete;
+
+    template<typename ...Args>
+    OwnedValue(Args&&... args) {
+        size_t sz = T::calcSize(std::forward<Args>(args)...);
+        _val._data = (char*)malloc(sz);
+        ALWAYS_ASSERT(_val._data);
+    }
+
+    ~OwnedValue() {
+        free(_val._data);
+    }
+
+    rocksdb::Slice toSlice() const {
+        return rocksdb::Slice(_val._data, _val.size());
+    }
+
+    T* operator->() {
+        return &_val;
+    }
+};
+
+#define LE_VAL(type, name, setName, offset) \
+    static_assert(sizeof(type) > 1); \
+    type name() const { \
+        type x; \
+        memcpy(&x, _data+offset, sizeof(x)); \
+        return x; \
+    } \
+    void setName(type x) { \
+        memcpy(_data+offset, &x, sizeof(x)); \
+    }
+
+#define U8_VAL(type, name, setName, offset) \
+    static_assert(sizeof(type) == sizeof(uint8_t)); \
+    type name() const { \
+        type x; \
+        memcpy(&x, _data+offset, sizeof(x)); \
+        return x; \
+    } \
+    void setName(type x) { \
+        memcpy(_data+offset, &x, sizeof(x)); \
+    }
+
+#define BYTES_VAL(name, setName, offset) \
+    const BincodeBytes name() const { \
+        BincodeBytes bs; \
+        bs.length = (uint8_t)(int)*(_data+offset); \
+        bs.data = (const uint8_t*)(_data+offset+1); \
+        return bs; \
+    } \
+    void setName(const BincodeBytes& bs) { \
+        *(_data+offset) = (char)(int)bs.length; \
+        memcpy(_data+offset+1, bs.data, bs.length); \
+    }
+
+#define FBYTES_VAL(sz, getName, setName, offset) \
+    void getName(std::array<uint8_t, sz>& bs) const { \
+        memcpy(&bs[0], _data+offset, sz); \
+    } \
+    void setName(const std::array<uint8_t, sz>& bs) { \
+        memcpy(_data+offset, &bs[0], sz); \
+    }
+
+#define BE64_VAL(type, name, setName, offset) \
+    static_assert(sizeof(type) == sizeof(uint64_t)); \
+    type name() const { \
+        uint64_t x; \
+        memcpy(&x, _data+offset, sizeof(x)); \
+        x = byteswapU64(x); /* BE -> LE */ \
+        type v; \
+        memcpy(&v, &x, sizeof(uint64_t)); \
+        return v; \
+    } \
+    void setName(type v) { \
+        uint64_t x; \
+        memcpy(&x, &v, sizeof(uint64_t)); \
+        x = byteswapU64(x); /* LE -> BE */ \
+        memcpy(_data+offset, &x, sizeof(x)); \
+    }
+

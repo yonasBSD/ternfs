@@ -802,7 +802,7 @@ type DirectoryInfoBody struct {
 }
 
 // --------------------------------------------------------------------
-// log entries
+// shard log entries
 //
 // these are only used internally, but we define them here for codegen
 // simplicity.
@@ -812,7 +812,6 @@ type DirectoryInfoBody struct {
 // and the index, so we don't also store it here.
 
 type ConstructFileEntry struct {
-	Id           InodeId
 	Type         InodeType
 	DeadlineTime EggsTime
 	Note         string

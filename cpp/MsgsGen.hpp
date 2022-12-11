@@ -2258,6 +2258,72 @@ public:
 
 std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x);
 
+enum class CDCMessageKind : uint8_t {
+    ERROR = 0,
+    MAKE_DIRECTORY = 1,
+    RENAME_FILE = 2,
+    SOFT_UNLINK_DIRECTORY = 3,
+    RENAME_DIRECTORY = 4,
+    HARD_UNLINK_DIRECTORY = 5,
+    HARD_UNLINK_FILE = 6,
+};
+
+std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
+
+struct CDCReqContainer {
+private:
+    CDCMessageKind _kind = (CDCMessageKind)0;
+    std::tuple<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, HardUnlinkFileReq> _data;
+public:
+    CDCMessageKind kind() const { return _kind; }
+    const MakeDirectoryReq& getMakeDirectory() const;
+    MakeDirectoryReq& setMakeDirectory();
+    const RenameFileReq& getRenameFile() const;
+    RenameFileReq& setRenameFile();
+    const SoftUnlinkDirectoryReq& getSoftUnlinkDirectory() const;
+    SoftUnlinkDirectoryReq& setSoftUnlinkDirectory();
+    const RenameDirectoryReq& getRenameDirectory() const;
+    RenameDirectoryReq& setRenameDirectory();
+    const HardUnlinkDirectoryReq& getHardUnlinkDirectory() const;
+    HardUnlinkDirectoryReq& setHardUnlinkDirectory();
+    const HardUnlinkFileReq& getHardUnlinkFile() const;
+    HardUnlinkFileReq& setHardUnlinkFile();
+
+    void clear() { _kind = (CDCMessageKind)0; };
+
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf, CDCMessageKind kind);
+};
+
+std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
+
+struct CDCRespContainer {
+private:
+    CDCMessageKind _kind = (CDCMessageKind)0;
+    std::tuple<MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, HardUnlinkFileResp> _data;
+public:
+    CDCMessageKind kind() const { return _kind; }
+    const MakeDirectoryResp& getMakeDirectory() const;
+    MakeDirectoryResp& setMakeDirectory();
+    const RenameFileResp& getRenameFile() const;
+    RenameFileResp& setRenameFile();
+    const SoftUnlinkDirectoryResp& getSoftUnlinkDirectory() const;
+    SoftUnlinkDirectoryResp& setSoftUnlinkDirectory();
+    const RenameDirectoryResp& getRenameDirectory() const;
+    RenameDirectoryResp& setRenameDirectory();
+    const HardUnlinkDirectoryResp& getHardUnlinkDirectory() const;
+    HardUnlinkDirectoryResp& setHardUnlinkDirectory();
+    const HardUnlinkFileResp& getHardUnlinkFile() const;
+    HardUnlinkFileResp& setHardUnlinkFile();
+
+    void clear() { _kind = (CDCMessageKind)0; };
+
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf, CDCMessageKind kind);
+};
+
+std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
+
 enum class ShardLogEntryKind : uint16_t {
     CONSTRUCT_FILE = 1,
     LINK_FILE = 2,
@@ -2279,18 +2345,16 @@ enum class ShardLogEntryKind : uint16_t {
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
 
 struct ConstructFileEntry {
-    InodeId id;
     uint8_t type;
     EggsTime deadlineTime;
     BincodeBytes note;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 1 + 8 + BincodeBytes::STATIC_SIZE; // id + type + deadlineTime + note
+    static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE; // type + deadlineTime + note
 
     ConstructFileEntry() { clear(); }
 
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += 8; // id
         _size += 1; // type
         _size += 8; // deadlineTime
         _size += note.packedSize(); // note

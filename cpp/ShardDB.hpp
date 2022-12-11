@@ -2,7 +2,6 @@
 
 #include "Common.hpp"
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "Env.hpp"
 
 struct ShardLogEntry {
@@ -45,24 +44,22 @@ public:
 
     // Prepares and persists a log entry to be applied.
     //
-    // This function will fail if called concurrently. We do write to the database
-    // to prepare the log entry, to generate fresh file/block ids.
+    // This function can be called concurrently. We only read from the database to
+    // do this. Note that the reading is limited to data which is OK to be a bit
+    // stale, such as block service information, and which is not used in a way
+    // which relies on the log entries being successfully applied.
     //
     // The log entry is not persisted in any way -- the idea is that a consensus module
     // can be built on top of this to first persist the log entry across a consensus
     // of machines, and then the log entries can be applied.
     //
-    // Note that while we write to the database to produce log entries, we do so in a
-    // way that allows log entries to be dropped without damaging the consistency of
-    // the system (again we just need to do fresh generation of)
-    //
     // Morally this function always succeeds, the "real" error checking is all done at
-    // log application time. The reasoning here is that
-    // log preparation is not reading from the latest state anyway, since there might
-    // be many log entries in flight which we have prepared but not applied, and therefore
-    // this function does not have the latest view of the state. We are still
-    // allowed to read from the state at log preparation time (e.g. to gather needed info
-    // about block services), but knowing that we might lag a bit behind.
+    // log application time. The reasoning here is that log preparation is not reading
+    // from the latest state anyway, since there might be many log entries in flight which
+    // we have prepared but not applied, and therefore this function does not have the latest
+    // view of the state. We are still allowed to read from the state at log preparation time
+    // (e.g. to gather needed info about block services), but knowing that we might lag a bit
+    // behind.
     //
     // However we still do some "type checking" here (e.g. we have ids in the right
     // shard and of the right type, good transient file cookies), and we might still

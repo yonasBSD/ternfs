@@ -954,9 +954,9 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "}\n\n")
 }
 
-func generateCppLogEntries(hpp io.Writer, cpp io.Writer, types []reflect.Type) {
+func generateCppLogEntries(hpp io.Writer, cpp io.Writer, what string, types []reflect.Type) {
 	containerTypes := make([]containerType, len(types))
-	fmt.Fprintf(hpp, "enum class ShardLogEntryKind : uint16_t {\n")
+	fmt.Fprintf(hpp, "enum class %sLogEntryKind : uint16_t {\n", what)
 	for i, typ := range types {
 		fmt.Fprintf(hpp, "    %s = %d,\n", enumName(typ), i+1) // skip 0 since we use it as an empty value
 		containerTypes[i].typ = typ
@@ -967,16 +967,16 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, types []reflect.Type) {
 		containerTypes[i].name = string([]byte(types[i].Name())[:len(types[i].Name())-len("Entry")])
 	}
 	fmt.Fprintf(hpp, "};\n\n")
-	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);\n\n")
-	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {\n")
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, %sLogEntryKind err);\n\n", what)
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, %sLogEntryKind err) {\n", what)
 	fmt.Fprintf(cpp, "    switch (err) {\n")
 	for _, typ := range containerTypes {
-		fmt.Fprintf(cpp, "    case ShardLogEntryKind::%s:\n", typ.enum)
+		fmt.Fprintf(cpp, "    case %sLogEntryKind::%s:\n", what, typ.enum)
 		fmt.Fprintf(cpp, "        out << \"%s\";\n", typ.enum)
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        out << \"ShardLogEntryKind(\" << ((int)err) << \")\";\n")
+	fmt.Fprintf(cpp, "        out << \"%sLogEntryKind(\" << ((int)err) << \")\";\n", what)
 	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "    return out;\n")
@@ -985,7 +985,29 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, types []reflect.Type) {
 	for _, typ := range types {
 		generateCppSingle(hpp, cpp, typ)
 	}
-	generateCppContainer(hpp, cpp, "ShardLogEntryContainer", "ShardLogEntryKind", containerTypes)
+	generateCppContainer(hpp, cpp, what+"LogEntryContainer", what+"LogEntryKind", containerTypes)
+}
+
+func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []reqRespType) {
+	generateCppKind(hpp, cpp, what, reqResps)
+	reqContainerTypes := make([]containerType, len(reqResps))
+	for i, reqResp := range reqResps {
+		reqContainerTypes[i] = containerType{
+			name: string([]byte(reqResp.req.Name())[:len(reqResp.req.Name())-len("Req")]),
+			enum: reqRespEnum(reqResp),
+			typ:  reqResp.req,
+		}
+	}
+	generateCppContainer(hpp, cpp, what+"ReqContainer", what+"MessageKind", reqContainerTypes)
+	respContainerTypes := make([]containerType, len(reqResps))
+	for i, reqResp := range reqResps {
+		respContainerTypes[i] = containerType{
+			name: string([]byte(reqResp.resp.Name())[:len(reqResp.resp.Name())-len("Resp")]),
+			enum: reqRespEnum(reqResp),
+			typ:  reqResp.resp,
+		}
+	}
+	generateCppContainer(hpp, cpp, what+"RespContainer", what+"MessageKind", respContainerTypes)
 }
 
 func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
@@ -1035,29 +1057,13 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
 
-	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
-	reqContainerTypes := make([]containerType, len(shardReqResps))
-	for i, reqResp := range shardReqResps {
-		reqContainerTypes[i] = containerType{
-			name: string([]byte(reqResp.req.Name())[:len(reqResp.req.Name())-len("Req")]),
-			enum: reqRespEnum(reqResp),
-			typ:  reqResp.req,
-		}
-	}
-	generateCppContainer(hppOut, cppOut, "ShardReqContainer", "ShardMessageKind", reqContainerTypes)
-	respContainerTypes := make([]containerType, len(shardReqResps))
-	for i, reqResp := range shardReqResps {
-		respContainerTypes[i] = containerType{
-			name: string([]byte(reqResp.resp.Name())[:len(reqResp.resp.Name())-len("Resp")]),
-			enum: reqRespEnum(reqResp),
-			typ:  reqResp.resp,
-		}
-	}
-	generateCppContainer(hppOut, cppOut, "ShardRespContainer", "ShardMessageKind", respContainerTypes)
+	generateCppReqResp(hppOut, cppOut, "Shard", shardReqResps)
+	generateCppReqResp(hppOut, cppOut, "CDC", cdcReqResps)
 
 	generateCppLogEntries(
 		hppOut,
 		cppOut,
+		"Shard",
 		[]reflect.Type{
 			reflect.TypeOf(msgs.ConstructFileEntry{}),
 			reflect.TypeOf(msgs.LinkFileEntry{}),
@@ -1076,6 +1082,15 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
 		},
 	)
+
+	/*
+		generateCppLogEntries(
+			hppOut,
+			cppOut,
+			"CDC",
+			[]reflect.Type{},
+		)
+	*/
 
 	return hppOut.Bytes(), cppOut.Bytes()
 }

@@ -10,146 +10,10 @@
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Time.hpp"
-
-// We use byteswap to go from LE to BE.
-static_assert(std::endian::native == std::endian::little);
-inline uint64_t byteswapU64(uint64_t x) {
-    return __builtin_bswap64(x);
-}
-
-template<typename T>
-struct StaticValue {
-private:
-    std::array<char, T::MAX_SIZE> _data;
-    T _val;
-public:
-    StaticValue() {
-        _val.data = &_data[0];
-    }
-
-    rocksdb::Slice toSlice() const {
-        return rocksdb::Slice(&_data[0], _val.size());
-    }
-
-    T* operator->() {
-        return &_val;
-    }
-};
-
-template<typename T>
-struct ExternalValue {
-private:
-    T _val;
-public:
-    ExternalValue() {
-        _val.data = nullptr;
-    }
-    ExternalValue(char* data, size_t size) {
-        _val.data = data;
-        _val.checkSize(size);
-    }
-    ExternalValue(std::string& s): ExternalValue(s.data(), s.size()) {}
-
-    static const ExternalValue<T> FromSlice(const rocksdb::Slice& slice) {
-        return ExternalValue((char*)slice.data(), slice.size());
-    }
-
-    T* operator->() {
-        return &_val;
-    }
-
-    rocksdb::Slice toSlice() {
-        return rocksdb::Slice(_val.data, _val.size());
-    }
-};
-
-template<typename T>
-struct OwnedValue {
-    T _val;
-public:
-    OwnedValue() = delete;
-
-    template<typename ...Args>
-    OwnedValue(Args&&... args) {
-        size_t sz = T::calcSize(std::forward<Args>(args)...);
-        _val.data = (char*)malloc(sz);
-        ALWAYS_ASSERT(_val.data);
-    }
-
-    ~OwnedValue() {
-        free(_val.data);
-    }
-
-    rocksdb::Slice toSlice() const {
-        return rocksdb::Slice(_val.data, _val.size());
-    }
-
-    T* operator->() {
-        return &_val;
-    }
-};
-
-#define LE_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) > 1); \
-    type name() const { \
-        type x; \
-        memcpy(&x, data+offset, sizeof(x)); \
-        return x; \
-    } \
-    void setName(type x) { \
-        memcpy(data+offset, &x, sizeof(x)); \
-    }
-
-#define U8_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) == sizeof(uint8_t)); \
-    type name() const { \
-        type x; \
-        memcpy(&x, data+offset, sizeof(x)); \
-        return x; \
-    } \
-    void setName(type x) { \
-        memcpy(data+offset, &x, sizeof(x)); \
-    }
-
-#define BYTES_VAL(name, setName, offset) \
-    const BincodeBytes name() const { \
-        BincodeBytes bs; \
-        bs.length = (uint8_t)(int)*(data+offset); \
-        bs.data = (const uint8_t*)(data+offset+1); \
-        return bs; \
-    } \
-    void setName(const BincodeBytes& bs) { \
-        *(data+offset) = (char)(int)bs.length; \
-        memcpy(data+offset+1, bs.data, bs.length); \
-    }
-
-#define FBYTES_VAL(sz, getName, setName, offset) \
-    void getName(std::array<uint8_t, sz>& bs) const { \
-        memcpy(&bs[0], data+offset, sz); \
-    } \
-    void setName(const std::array<uint8_t, sz>& bs) { \
-        memcpy(data+offset, &bs[0], sz); \
-    }
-
-#define BE64_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) == sizeof(uint64_t)); \
-    type name() const { \
-        uint64_t x; \
-        memcpy(&x, data+offset, sizeof(x)); \
-        x = byteswapU64(x); /* BE -> LE */ \
-        type v; \
-        memcpy(&v, &x, sizeof(uint64_t)); \
-        return v; \
-    } \
-    void setName(type v) { \
-        uint64_t x; \
-        memcpy(&x, &v, sizeof(uint64_t)); \
-        x = byteswapU64(x); /* LE -> BE */ \
-        memcpy(data+offset, &x, sizeof(x)); \
-    }
+#include "RocksDBUtils.hpp"
 
 struct InodeIdValue {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE = sizeof(InodeId);
     size_t size() const { return MAX_SIZE; }
@@ -166,7 +30,7 @@ struct InodeIdValue {
 
 // When we need a simple u64 value (e.g. log index)
 struct U64Value {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE = sizeof(uint64_t);
     size_t size() const { return MAX_SIZE; }
@@ -200,7 +64,7 @@ inline rocksdb::Slice shardMetadataKey(const ShardMetadataKey* k) {
 }
 
 struct ShardInfoBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE =
         sizeof(ShardId) + // shardId
@@ -217,7 +81,7 @@ struct ShardInfoBody {
 // (and therefore BE), but it does make it a bit nicer to be able to traverse
 // them like that.
 struct InodeIdKey {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE = sizeof(InodeId);
     size_t size() const { return MAX_SIZE; }
@@ -241,7 +105,7 @@ enum class SpanState : uint8_t {
 std::ostream& operator<<(std::ostream& out, SpanState state);
 
 struct TransientFileBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MIN_SIZE =
         sizeof(uint64_t) + // size
@@ -268,7 +132,7 @@ struct TransientFileBody {
 };
 
 struct FileBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE =
         sizeof(uint64_t) + // size
@@ -281,7 +145,7 @@ struct FileBody {
 };
 
 struct SpanKey {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE =
         sizeof(InodeId) + // id
@@ -299,7 +163,7 @@ struct PACKED BlockBody {
 };
 
 struct SpanBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MIN_SIZE =
         sizeof(uint64_t) +               // size
@@ -340,7 +204,7 @@ struct SpanBody {
         if (storageClass() == ZERO_FILL_STORAGE) {
             // no-op
         } else if (storageClass() == INLINE_STORAGE) {
-            sz += 1 + (uint8_t)(int)*(data + MIN_SIZE);
+            sz += 1 + (uint8_t)(int)*(_data + MIN_SIZE);
         } else {
             sz += BLOCK_BODY_SIZE * parity().blocks();
         }
@@ -356,26 +220,26 @@ struct SpanBody {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
         size_t offset = MIN_SIZE;
         BincodeBytes bs;
-        bs.length = (uint8_t)(int)*(data+offset);
-        bs.data = (const uint8_t*)(data+offset+1);
+        bs.length = (uint8_t)(int)*(_data+offset);
+        bs.data = (const uint8_t*)(_data+offset+1);
         return bs;
     }
     void setInlineBody(const BincodeBytes& bs) {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
         size_t offset = MIN_SIZE;
-        *(data+offset) = (char)(int)bs.length;
-        memcpy(data+offset+1, bs.data, bs.length);
+        *(_data+offset) = (char)(int)bs.length;
+        memcpy(_data+offset+1, bs.data, bs.length);
     }
 
     void block(uint64_t ix, BlockBody& b) const {
         ALWAYS_ASSERT(storageClass() != ZERO_FILL_STORAGE && storageClass() != INLINE_STORAGE);
         ALWAYS_ASSERT(ix < parity().blocks());
-        memcpy(&b, data + MIN_SIZE + ix * sizeof(BlockBody), sizeof(BlockBody));
+        memcpy(&b, _data + MIN_SIZE + ix * sizeof(BlockBody), sizeof(BlockBody));
     }
     void setBlock(uint64_t ix, const BlockBody& b) {
         ALWAYS_ASSERT(storageClass() != ZERO_FILL_STORAGE && storageClass() != INLINE_STORAGE);
         ALWAYS_ASSERT(ix < parity().blocks());
-        memcpy(data + MIN_SIZE + ix * sizeof(BlockBody), &b, sizeof(BlockBody));
+        memcpy(_data + MIN_SIZE + ix * sizeof(BlockBody), &b, sizeof(BlockBody));
     }
 };
 
@@ -385,7 +249,7 @@ enum class HashMode : uint8_t {
 };
 
 struct DirectoryBody {
-    char* data;
+    char* _data;
 
     // `infoInherited` tells us whether we should inherit the info from the
     // parent directory. Moreover, we might have a directory with no owner
@@ -436,7 +300,7 @@ struct DirectoryBody {
 };
 
 struct EdgeKey {
-    char* data;
+    char* _data;
 
     static constexpr size_t MIN_SIZE =
         sizeof(uint64_t) +  // first 63 bits: dirId, then whether the edge is current
@@ -493,7 +357,7 @@ struct EdgeKey {
 std::ostream& operator<<(std::ostream& out, const EdgeKey& edgeKey);
 
 struct SnapshotEdgeBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE =
         sizeof(InodeIdExtra); // target, and if owned
@@ -504,7 +368,7 @@ struct SnapshotEdgeBody {
 };
 
 struct CurrentEdgeBody {
-    char* data;
+    char* _data;
 
     static constexpr size_t MAX_SIZE =
         sizeof(InodeIdExtra) + // target, and if locked

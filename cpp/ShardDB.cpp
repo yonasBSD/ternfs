@@ -20,6 +20,7 @@
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
+#include "AssertiveLock.hpp"
 
 // TODO maybe revisit all those ALWAYS_ASSERTs
 // TODO can we pre-allocate the value strings rather than allocating each stupid time?
@@ -29,11 +30,13 @@
 // Right now, we're not implementing distributed consensus, but we want to prepare
 // for this as best we can, since we need it for HA.
 //
-// We use two RocksDB database: one for the log entries, one for the state. When
-// a request comes in, we first generate and persist a log entry for it. The log
-// entry can then be applied to the state when consensus has been reached on it.
-// After the log entry has been applied to the state, a response is sent to the
-// client.
+// This class implements the state storage, assuming that log entries will be persisted
+// separatedly (if at all). The state storage is also used to prepare the log entries --
+// e.g. there's a tiny bit of state that we read/write to without regards for the
+// distributed consensus.
+//
+// Specifically, we allocate fresh ids, and we read info about block services, when
+// preparing log entries.
 //
 // One question is how we write transactions concurrently, given that we rely on
 // applying first one log entry and then the next in that order. We could be smart
@@ -41,28 +44,7 @@
 // that it's probably not worth doing this, at least since the beginning, and that
 // it's better to just serialize the transactions manually with a mutex here in C++.
 //
-// ## RocksDB schema (log)
-//
-// Two column families: the default one storing metadata (e.g. the Raft state,
-// at some point), and the "log" column family storing the log entries. Separate
-// column families since we'll keep deleting large ranges from the beginning of
-// the log CF, and therefore seeking at the beginning of that won't be nice, so
-// we don't want to put stuff at the beginning, but we also want to easily know
-// when we're done, so we don't want to put stuff at the end either.
-//
-// The log CF is just uint64_t log index to serialized log entry.
-//
-// For now, in a pre-raft word, the default CF needs:
-//
-// * LogMetadataKey::NEXT_FILE_ID: the next available file id
-// * LogMetadataKey::NEXT_SYMLINK_ID: the next available symlink id
-// * LogMetadataKey::NEXT_BLOCK_ID: the next available block id
-//
-// When preparing log entries we also allocate blocks, and the blocks are stored
-// in the state db, but we never modify the block state when adding a log entry,
-// so we can safely read them.
-//
-// ## RocksDB schema (state)
+// ## RocksDB schema
 //
 // Overview of the column families we use. Assumptions from the document:
 //
@@ -156,39 +138,6 @@
 // 
 // TODO fill in results
 
-struct AssertiveLocked {
-private:
-    std::atomic<bool>& _held;
-public:
-    AssertiveLocked(std::atomic<bool>& held): _held(held) {
-        bool expected = false;
-        if (!_held.compare_exchange_strong(expected, true)) {
-            throw EGGS_EXCEPTION("could not aquire lock for applyLogEntry, are you using this function concurrently?");
-        }
-    }
-
-    AssertiveLocked(const AssertiveLocked&) = delete;
-    AssertiveLocked& operator=(AssertiveLocked&) = delete;
-
-    ~AssertiveLocked() {
-        _held.store(false);
-    }
-};
-
-struct AssertiveLock {
-private:
-    std::atomic<bool> _held;
-public:
-    AssertiveLock(): _held(false) {}
-
-    AssertiveLock(const AssertiveLock&) = delete;
-    AssertiveLock& operator=(AssertiveLock&) = delete;
-
-    AssertiveLocked lock() {
-        return AssertiveLocked(_held);
-    }
-};
-
 static uint64_t computeHash(HashMode mode, const BincodeBytes& bytes) {
     switch (mode) {
     case HashMode::XXH3_63:
@@ -221,7 +170,7 @@ void ShardLogEntry::pack(BincodeBuf& buf) const {
 }
 
 void ShardLogEntry::unpack(BincodeBuf& buf) {
-    time = buf.unpackScalar<uint64_t>();
+    time.unpack(buf);
     ShardLogEntryKind kind = (ShardLogEntryKind)buf.unpackScalar<uint16_t>();
     body.unpack(buf, kind);
 }
@@ -240,7 +189,6 @@ struct ShardDBImpl {
     rocksdb::ColumnFamilyHandle* _directoriesCf;
     rocksdb::ColumnFamilyHandle* _edgesCf;
 
-    AssertiveLock _prepareLogEntryLock;
     AssertiveLock _applyLogEntryLock;
 
     // ----------------------------------------------------------------
@@ -264,8 +212,8 @@ struct ShardDBImpl {
             {"edges", {}},
         };
         std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
-        auto dbPath = path + "/db-state";
-        LOG_INFO(_env, "initializing state RocksDB in %s", dbPath);
+        auto dbPath = path + "/db";
+        LOG_INFO(_env, "initializing shard %s RocksDB in %s", _shid, dbPath);
         ROCKS_DB_CHECKED_MSG(
             rocksdb::DB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_db),
             "could not open RocksDB %s", dbPath
@@ -279,6 +227,22 @@ struct ShardDBImpl {
         _edgesCf = familiesHandles[5];
 
         _initDb();
+    }
+
+    void close() {
+        LOG_INFO(_env, "destroying column families and closing database");
+
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_filesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_spansCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_transientCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_directoriesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
+        ROCKS_DB_CHECKED(_db->Close());
+    }
+
+    ~ShardDBImpl() {
+        delete _db;
     }
 
     void _initDb() {
@@ -353,22 +317,6 @@ struct ShardDBImpl {
             auto v = U64Value::Static(0);
             ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
         }
-    }
-
-    void close() {
-        LOG_INFO(_env, "destroying column families and closing database");
-
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_filesCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_spansCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_transientCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_directoriesCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
-        ROCKS_DB_CHECKED(_db->Close());
-    }
-
-    ~ShardDBImpl() {
-        delete _db;
     }
 
     // ----------------------------------------------------------------
@@ -684,21 +632,8 @@ struct ShardDBImpl {
     // ----------------------------------------------------------------
     // log preparation
 
-    EggsError _prepareConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileReq& req, BincodeBytesScratchpad& scratch, ConstructFileEntry& entry) {
-        const auto nextFileId = [this, &batch](const ShardMetadataKey* key) -> InodeId {
-            std::string value;
-            ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
-            ExternalValue<InodeIdValue> inodeId(value);
-            inodeId->setId(InodeId::FromU64(inodeId->id().u64 + 0x100));
-            ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
-            return inodeId->id();
-        };
-
-        if (req.type == (uint8_t)InodeType::FILE) {
-            entry.id = nextFileId(&NEXT_FILE_ID_KEY);
-        } else if (req.type == (uint8_t)InodeType::SYMLINK) {
-            entry.id = nextFileId(&NEXT_SYMLINK_ID_KEY);
-        } else {
+    EggsError _prepareConstructFile(EggsTime time, const ConstructFileReq& req, BincodeBytesScratchpad& scratch, ConstructFileEntry& entry) {
+        if (req.type != (uint8_t)InodeType::FILE && req.type != (uint8_t)InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
         entry.type = req.type;
@@ -947,20 +882,17 @@ struct ShardDBImpl {
 
     EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
-        auto locked = _prepareLogEntryLock.lock();
         scratch.reset();
         logEntry.clear();
         EggsError err = NO_ERROR;
 
-        rocksdb::WriteBatch batch;
-
-        EggsTime time = eggsNow().ns;
+        EggsTime time = eggsNow();
         logEntry.time = time;
         auto& logEntryBody = logEntry.body;
 
         switch (req.kind()) {
         case ShardMessageKind::CONSTRUCT_FILE:
-            err = _prepareConstructFile(batch, time, req.getConstructFile(), scratch, logEntryBody.setConstructFile());
+            err = _prepareConstructFile(time, req.getConstructFile(), scratch, logEntryBody.setConstructFile());
             break;
         case ShardMessageKind::LINK_FILE:
             err = _prepareLinkFile(time, req.getLinkFile(), scratch, logEntryBody.setLinkFile());
@@ -1017,11 +949,6 @@ struct ShardDBImpl {
 
         if (err == NO_ERROR) {
             LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s", logEntryBody.kind(), req.kind());
-            // Here we must always sync, we can't lose updates to the next file id (or similar)
-            // which then might be persisted in the log but lost here.
-            rocksdb::WriteOptions options;
-            options.sync = true;
-            ROCKS_DB_CHECKED(_db->Write(options, &batch));
         } else {
             LOG_INFO(_env, "could not prepare log entry for request of kind %s: %s", req.kind(), err);
         }
@@ -1042,6 +969,23 @@ struct ShardDBImpl {
     }
 
     EggsError _applyConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileEntry& entry, BincodeBytesScratchpad& scratch, ConstructFileResp& resp) {
+        const auto nextFileId = [this, &batch](const ShardMetadataKey* key) -> InodeId {
+            std::string value;
+            ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
+            ExternalValue<InodeIdValue> inodeId(value);
+            inodeId->setId(InodeId::FromU64(inodeId->id().u64 + 0x100));
+            ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
+            return inodeId->id();
+        };
+        InodeId id;
+        if (entry.type == (uint8_t)InodeType::FILE) {
+            id = nextFileId(&NEXT_FILE_ID_KEY);
+        } else if (entry.type == (uint8_t)InodeType::SYMLINK) {
+            id = nextFileId(&NEXT_SYMLINK_ID_KEY);
+        } else {
+            ALWAYS_ASSERT(false, "Bad type %s", (int)entry.type);
+        }
+
         // write to rocks
         StaticValue<TransientFileBody> transientFile;
         transientFile->setFileSize(0);
@@ -1049,11 +993,11 @@ struct ShardDBImpl {
         transientFile->setDeadline(entry.deadlineTime);
         transientFile->setLastSpanState(SpanState::CLEAN);
         transientFile->setNote(entry.note);
-        auto k = InodeIdKey::Static(entry.id);
+        auto k = InodeIdKey::Static(id);
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
         // prepare response
-        resp.id = entry.id;
+        resp.id = id;
         _calcCookie(resp.id, resp.cookie.data);
 
         return NO_ERROR;
@@ -1587,6 +1531,7 @@ struct ShardDBImpl {
         // set the owner, and restore the directory entry if needed.
         StaticValue<DirectoryBody> newDir;
         newDir->setOwnerId(entry.ownerId);
+        newDir->setMtime(dir->mtime());
         newDir->setHashMode(dir->hashMode());
         newDir->setInfoInherited(dir->infoInherited());
         // remove directory info if it was inherited, now that we have an
@@ -1953,7 +1898,7 @@ void ShardDB::close() {
 }
 
 ShardDB::~ShardDB() {
-    delete ((ShardDBImpl*)_impl);
+    delete (ShardDBImpl*)_impl;
     _impl = nullptr;
 }
 

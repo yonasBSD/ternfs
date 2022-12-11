@@ -3554,6 +3554,307 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
+    switch (kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        out << "MAKE_DIRECTORY";
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        out << "RENAME_FILE";
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        out << "SOFT_UNLINK_DIRECTORY";
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        out << "RENAME_DIRECTORY";
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << "HARD_UNLINK_DIRECTORY";
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        out << "HARD_UNLINK_FILE";
+        break;
+    default:
+        out << "CDCMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
+const MakeDirectoryReq& CDCReqContainer::getMakeDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::MAKE_DIRECTORY, "%s != %s", _kind, CDCMessageKind::MAKE_DIRECTORY);
+    return std::get<0>(_data);
+}
+MakeDirectoryReq& CDCReqContainer::setMakeDirectory() {
+    _kind = CDCMessageKind::MAKE_DIRECTORY;
+    auto& x = std::get<0>(_data);
+    x.clear();
+    return x;
+}
+const RenameFileReq& CDCReqContainer::getRenameFile() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::RENAME_FILE, "%s != %s", _kind, CDCMessageKind::RENAME_FILE);
+    return std::get<1>(_data);
+}
+RenameFileReq& CDCReqContainer::setRenameFile() {
+    _kind = CDCMessageKind::RENAME_FILE;
+    auto& x = std::get<1>(_data);
+    x.clear();
+    return x;
+}
+const SoftUnlinkDirectoryReq& CDCReqContainer::getSoftUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::SOFT_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::SOFT_UNLINK_DIRECTORY);
+    return std::get<2>(_data);
+}
+SoftUnlinkDirectoryReq& CDCReqContainer::setSoftUnlinkDirectory() {
+    _kind = CDCMessageKind::SOFT_UNLINK_DIRECTORY;
+    auto& x = std::get<2>(_data);
+    x.clear();
+    return x;
+}
+const RenameDirectoryReq& CDCReqContainer::getRenameDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::RENAME_DIRECTORY, "%s != %s", _kind, CDCMessageKind::RENAME_DIRECTORY);
+    return std::get<3>(_data);
+}
+RenameDirectoryReq& CDCReqContainer::setRenameDirectory() {
+    _kind = CDCMessageKind::RENAME_DIRECTORY;
+    auto& x = std::get<3>(_data);
+    x.clear();
+    return x;
+}
+const HardUnlinkDirectoryReq& CDCReqContainer::getHardUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
+    return std::get<4>(_data);
+}
+HardUnlinkDirectoryReq& CDCReqContainer::setHardUnlinkDirectory() {
+    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
+    auto& x = std::get<4>(_data);
+    x.clear();
+    return x;
+}
+const HardUnlinkFileReq& CDCReqContainer::getHardUnlinkFile() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_FILE, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_FILE);
+    return std::get<5>(_data);
+}
+HardUnlinkFileReq& CDCReqContainer::setHardUnlinkFile() {
+    _kind = CDCMessageKind::HARD_UNLINK_FILE;
+    auto& x = std::get<5>(_data);
+    x.clear();
+    return x;
+}
+void CDCReqContainer::pack(BincodeBuf& buf) const {
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        std::get<0>(_data).pack(buf);
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        std::get<1>(_data).pack(buf);
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        std::get<2>(_data).pack(buf);
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        std::get<3>(_data).pack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        std::get<4>(_data).pack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        std::get<5>(_data).pack(buf);
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+    }
+}
+
+void CDCReqContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
+    _kind = kind;
+    switch (kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        std::get<0>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        std::get<1>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        std::get<2>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        std::get<3>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        std::get<4>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        std::get<5>(_data).unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x) {
+    switch (x.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        out << x.getMakeDirectory();
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        out << x.getRenameFile();
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        out << x.getSoftUnlinkDirectory();
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        out << x.getRenameDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << x.getHardUnlinkDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        out << x.getHardUnlinkFile();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
+const MakeDirectoryResp& CDCRespContainer::getMakeDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::MAKE_DIRECTORY, "%s != %s", _kind, CDCMessageKind::MAKE_DIRECTORY);
+    return std::get<0>(_data);
+}
+MakeDirectoryResp& CDCRespContainer::setMakeDirectory() {
+    _kind = CDCMessageKind::MAKE_DIRECTORY;
+    auto& x = std::get<0>(_data);
+    x.clear();
+    return x;
+}
+const RenameFileResp& CDCRespContainer::getRenameFile() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::RENAME_FILE, "%s != %s", _kind, CDCMessageKind::RENAME_FILE);
+    return std::get<1>(_data);
+}
+RenameFileResp& CDCRespContainer::setRenameFile() {
+    _kind = CDCMessageKind::RENAME_FILE;
+    auto& x = std::get<1>(_data);
+    x.clear();
+    return x;
+}
+const SoftUnlinkDirectoryResp& CDCRespContainer::getSoftUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::SOFT_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::SOFT_UNLINK_DIRECTORY);
+    return std::get<2>(_data);
+}
+SoftUnlinkDirectoryResp& CDCRespContainer::setSoftUnlinkDirectory() {
+    _kind = CDCMessageKind::SOFT_UNLINK_DIRECTORY;
+    auto& x = std::get<2>(_data);
+    x.clear();
+    return x;
+}
+const RenameDirectoryResp& CDCRespContainer::getRenameDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::RENAME_DIRECTORY, "%s != %s", _kind, CDCMessageKind::RENAME_DIRECTORY);
+    return std::get<3>(_data);
+}
+RenameDirectoryResp& CDCRespContainer::setRenameDirectory() {
+    _kind = CDCMessageKind::RENAME_DIRECTORY;
+    auto& x = std::get<3>(_data);
+    x.clear();
+    return x;
+}
+const HardUnlinkDirectoryResp& CDCRespContainer::getHardUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
+    return std::get<4>(_data);
+}
+HardUnlinkDirectoryResp& CDCRespContainer::setHardUnlinkDirectory() {
+    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
+    auto& x = std::get<4>(_data);
+    x.clear();
+    return x;
+}
+const HardUnlinkFileResp& CDCRespContainer::getHardUnlinkFile() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_FILE, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_FILE);
+    return std::get<5>(_data);
+}
+HardUnlinkFileResp& CDCRespContainer::setHardUnlinkFile() {
+    _kind = CDCMessageKind::HARD_UNLINK_FILE;
+    auto& x = std::get<5>(_data);
+    x.clear();
+    return x;
+}
+void CDCRespContainer::pack(BincodeBuf& buf) const {
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        std::get<0>(_data).pack(buf);
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        std::get<1>(_data).pack(buf);
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        std::get<2>(_data).pack(buf);
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        std::get<3>(_data).pack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        std::get<4>(_data).pack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        std::get<5>(_data).pack(buf);
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+    }
+}
+
+void CDCRespContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
+    _kind = kind;
+    switch (kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        std::get<0>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        std::get<1>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        std::get<2>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        std::get<3>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        std::get<4>(_data).unpack(buf);
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        std::get<5>(_data).unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
+    switch (x.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        out << x.getMakeDirectory();
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        out << x.getRenameFile();
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        out << x.getSoftUnlinkDirectory();
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        out << x.getRenameDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << x.getHardUnlinkDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        out << x.getHardUnlinkFile();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     switch (err) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -3609,32 +3910,28 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
 }
 
 void ConstructFileEntry::pack(BincodeBuf& buf) const {
-    id.pack(buf);
     buf.packScalar<uint8_t>(type);
     deadlineTime.pack(buf);
     buf.packBytes(note);
 }
 void ConstructFileEntry::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
     type = buf.unpackScalar<uint8_t>();
     deadlineTime.unpack(buf);
     buf.unpackBytes(note);
 }
 void ConstructFileEntry::clear() {
-    id = InodeId();
     type = uint8_t(0);
     deadlineTime = EggsTime();
     note.clear();
 }
 bool ConstructFileEntry::operator==(const ConstructFileEntry& rhs) const {
-    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
     if ((uint8_t)this->type != (uint8_t)rhs.type) { return false; };
     if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
     if (note != rhs.note) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ConstructFileEntry& x) {
-    out << "ConstructFileEntry(" << "Id=" << x.id << ", " << "Type=" << (int)x.type << ", " << "DeadlineTime=" << x.deadlineTime << ", " << "Note=" << x.note << ")";
+    out << "ConstructFileEntry(" << "Type=" << (int)x.type << ", " << "DeadlineTime=" << x.deadlineTime << ", " << "Note=" << x.note << ")";
     return out;
 }
 

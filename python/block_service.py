@@ -16,6 +16,9 @@ import sys
 import logging
 import traceback
 import logging.config
+import log_format
+import http.client
+import json
 
 import common
 from shard_msgs import STORAGE_CLASSES_BY_NAME
@@ -234,16 +237,44 @@ def block_service_id(secret_key: bytes) -> int:
     # Also, we remove the highest bit for the sake of SQLite, at least for now
     return struct.unpack('<Q', secret_key[:8])[0] & 0x7FFFFFFFFFFFFFFF
 
-async def periodically_register(*, key: bytes, port: int, storage_class: int, failure_domain: str) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    failure_domain_bs = failure_domain.encode('ascii')
-    m = struct.pack('<Q16sHB16s', block_service_id(key), key, port, storage_class, failure_domain_bs)
-    shuckle = ('localhost', 5000)
+async def periodically_register(*, key: bytes, port: int, storage_class: int, failure_domain: str, shuckle_host: str) -> None:
+    req = json.dumps({
+        'id': block_service_id(key),
+        'ip': '127.0.0.1',
+        'secret_key': key.hex(),
+        'port': port,
+        'storage_class': storage_class,
+        'failure_domain': failure_domain,
+    }).encode('ascii')
+    reached_once = False
     while True:
-        sock.sendto(m, socket.MSG_DONTWAIT, shuckle)
-        await asyncio.sleep(1)
+        logging.debug(f'About to register ourselves with {shuckle_host}')
+        wait_for = 60.0 # a minute by default
+        status = None
+        try:
+            conn = http.client.HTTPConnection(shuckle_host)
+            conn.request(
+                'POST', '/register_block_service',
+                headers={'content-type': 'application/json'},
+                body=req,
+            )
+            resp = conn.getresponse()
+            status = resp.status
+        except (http.client.HTTPException, ConnectionError) as e:
+            logging.error(f'Could not register to shuckle {shuckle_host}: {e}')
+            if not reached_once:
+                wait_for = 10.0/1000.0 # 10 ms
+        if status is not None:
+            if status != 200:
+                logging.error(f'Bad status when registering to shuckle {shuckle_host}: {status}')
+                if not reached_once:
+                    wait_for = 10.0/1000.0 # 10 ms
+            else:
+                logging.debug(f'Successfully registered ourselves with {shuckle_host}')
+                reached_once = True
+        await asyncio.sleep(wait_for)
 
-async def async_main(*, path: str, port: int, failure_domain: str, storage_class_str: str, time_check: bool) -> None:
+async def async_main(*, path: str, port: int, failure_domain: str, storage_class_str: str, time_check: bool, shuckle_host: str) -> None:
     storage_class = STORAGE_CLASSES_BY_NAME[storage_class_str]
     assert (2 <= storage_class <= 255), f'Storage class {storage_class} out of range'
 
@@ -277,11 +308,11 @@ async def async_main(*, path: str, port: int, failure_domain: str, storage_class
 
     # run forever
     await asyncio.gather(
-        periodically_register(key=key, port=port, storage_class=storage_class, failure_domain=failure_domain),
+        periodically_register(key=key, port=port, storage_class=storage_class, failure_domain=failure_domain, shuckle_host=shuckle_host),
         server.serve_forever())
 
-def main(*, path: str, port: int, storage_class: str, failure_domain: str, time_check: bool) -> None:
-    asyncio.run(async_main(path=path, port=port, failure_domain=failure_domain, storage_class_str=storage_class, time_check=time_check))
+def main(*, path: str, port: int, storage_class: str, failure_domain: str, time_check: bool, shuckle_host: str) -> None:
+    asyncio.run(async_main(path=path, port=port, failure_domain=failure_domain, storage_class_str=storage_class, time_check=time_check, shuckle_host=shuckle_host))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Block service')
@@ -292,12 +323,13 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--log_file', type=Path)
+    parser.add_argument('--shuckle_host', type=str, default='localhost:5000')
     config = parser.parse_args()
 
     log_level = logging.DEBUG if config.verbose else logging.WARNING
     if config.log_file:
-        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level, format=log_format.FORMAT)
     else:
-        logging.basicConfig(level=log_level)
+        logging.basicConfig(level=log_level, format=log_format.FORMAT)
 
-    main(path=config.path, port=config.port, storage_class=config.storage_class, failure_domain=config.failure_domain, time_check=not (config.no_time_check))
+    main(path=config.path, port=config.port, storage_class=config.storage_class, failure_domain=config.failure_domain, time_check=not (config.no_time_check), shuckle_host=config.shuckle_host)

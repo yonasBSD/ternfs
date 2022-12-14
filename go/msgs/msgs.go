@@ -656,7 +656,7 @@ type IntraShardHardFileUnlinkReq struct {
 
 type IntraShardHardFileUnlinkResp struct{}
 
-// This is needed to implemente inter-shard hard file unlinking, and it is unsafe, since
+// This is needed to implement inter-shard hard file unlinking, and it is unsafe, since
 // we must make sure that the owned file is made transient in its shard.
 type RemoveOwnedSnapshotFileEdgeReq struct {
 	OwnerId      InodeId
@@ -698,6 +698,11 @@ type SwapBlocksResp struct{}
 
 type BlockServiceFilesReq struct {
 	BlockServiceId BlockServiceId
+	// Not strictly needed, since the migration process usually fetches some file ids
+	// and then purges all blocks with that block service id. So we can just keep asking
+	// from the beginning. However, it can be useful due to the problems listed
+	// here <https://github.com/facebook/rocksdb/wiki/Implement-Queue-Service-Using-RocksDB>.
+	StartFrom InodeId
 }
 
 type BlockServiceFilesResp struct {
@@ -933,4 +938,22 @@ type AddSpanCertifyEntry struct {
 	FileId     InodeId
 	ByteOffset uint64
 	Proofs     []BlockProof
+}
+
+type MakeFileTransientEntry struct {
+	Id   InodeId
+	Note string
+}
+
+type RemoveSpanCertifyEntry struct {
+	FileId     InodeId
+	ByteOffset uint64
+	Proofs     []BlockProof
+}
+
+type RemoveOwnedSnapshotFileEdgeEntry struct {
+	OwnerId      InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
 }

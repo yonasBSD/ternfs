@@ -1756,21 +1756,25 @@ class SwapBlocksResp(bincode.Packable):
 @dataclass
 class BlockServiceFilesReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.BLOCK_SERVICE_FILES
-    STATIC_SIZE: ClassVar[int] = 8 # block_service_id
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # block_service_id + start_from
     block_service_id: int
+    start_from: int
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.block_service_id, b)
+        bincode.pack_u64_into(self.start_from, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceFilesReq':
         block_service_id = bincode.unpack_u64(u)
-        return BlockServiceFilesReq(block_service_id)
+        start_from = bincode.unpack_u64(u)
+        return BlockServiceFilesReq(block_service_id, start_from)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # block_service_id
+        _size += 8 # start_from
         return _size
 
 @dataclass

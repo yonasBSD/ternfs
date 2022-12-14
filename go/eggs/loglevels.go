@@ -2,6 +2,7 @@ package eggs
 
 import (
 	"fmt"
+	"io"
 	"log"
 )
 
@@ -45,18 +46,26 @@ func (s *LogToStdout) RaiseAlert(err error) {
 	fmt.Printf("ALERT %s\n", err)
 }
 
+// Creates a logger with the formatting we want
+func NewLogger(out io.Writer) *log.Logger {
+	return log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+}
+
 type LogLogger struct {
 	Verbose bool
 	Logger  *log.Logger
 }
 
 func (l *LogLogger) Info(format string, v ...any) {
-	l.Logger.Printf(format, v...)
-	l.Logger.Println()
+	l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
 }
 
 func (l *LogLogger) Debug(format string, v ...any) {
 	if l.Verbose {
-		l.Info(format, v...)
+		l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
 	}
+}
+
+func (l *LogLogger) RaiseAlert(err error) {
+	l.Logger.Printf("ALERT %s\n", err)
 }

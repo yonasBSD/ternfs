@@ -55,7 +55,9 @@ public:
         _shid(shid),
         _stop(false),
         _waitForShuckle(options.waitForShuckle)
-    {}
+    {
+        std::cerr << "Running Server with waitForShuckle=" << ((int)_waitForShuckle) << std::endl;
+    }
 
     virtual ~Server() = default;
 
@@ -242,6 +244,7 @@ public:
         EggsTime t0 = eggsNow();
         EggsTime lastRequestT = 0;
         bool lastRequestSuccessful = false;
+        bool reachedButEmpty = false;
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();
         BincodeBytesScratchpad scratch;
@@ -259,7 +262,11 @@ public:
             if (_waitForShuckle && !_shared.shuckleReached.load() && (eggsNow() - t0) > 5'000'000'000) {
                 // if we refuse to start the server and we haven't reached shuckle within 5 secs,
                 // fail hard
-                throw EGGS_EXCEPTION("could not reach shuckle in time, and _waitForShuckle=true, terminating");
+                if (reachedButEmpty) {
+                    throw EGGS_EXCEPTION("reached shuckle, but got no block services, and _waitForShuckle=true, terminating");
+                } else {
+                    throw EGGS_EXCEPTION("could not reach shuckle in time, and _waitForShuckle=true, terminating");
+                }
             }
 
             EggsTime t = eggsNow();
@@ -272,15 +279,18 @@ public:
                 GO_TO_NEXT_ITERATION
             }
 
-            std::string errString;
             logEntry->time = eggsNow();
             LOG_INFO(_env, "about to perform shuckle request to %s", _shuckleHost);
-            // Right now we wait for 10 seconds because shuckle is so, so slow
-            // but this should be lowered TODO
-            lastRequestSuccessful = fetchBlockServices(_shuckleHost, 10000 /* timeoutMs */, errString, logEntry->body.setUpdateBlockServices());
+            std::string err;
+            lastRequestSuccessful = fetchBlockServices(_shuckleHost, 100 /* timeoutMs */, err, logEntry->body.setUpdateBlockServices());
+            if (lastRequestSuccessful && logEntry->body.getUpdateBlockServices().blockServices.els.empty()) {
+                lastRequestSuccessful = false;
+                reachedButEmpty = true;
+                err = "no block services";
+            }
             lastRequestT = t;
             if (!lastRequestSuccessful) {
-                RAISE_ALERT(_env, "could not reach shuckle: %s", errString);
+                RAISE_ALERT(_env, "could not reach shuckle: %s", err);
                 GO_TO_NEXT_ITERATION
             }
             

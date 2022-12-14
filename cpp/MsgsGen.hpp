@@ -1440,14 +1440,16 @@ std::ostream& operator<<(std::ostream& out, const SwapBlocksResp& x);
 
 struct BlockServiceFilesReq {
     uint64_t blockServiceId;
+    InodeId startFrom;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // blockServiceId
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // blockServiceId + startFrom
 
     BlockServiceFilesReq() { clear(); }
 
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // blockServiceId
+        _size += 8; // startFrom
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2395,6 +2397,9 @@ enum class ShardLogEntryKind : uint16_t {
     UPDATE_BLOCK_SERVICES = 16,
     ADD_SPAN_INITIATE = 17,
     ADD_SPAN_CERTIFY = 18,
+    MAKE_FILE_TRANSIENT = 19,
+    REMOVE_SPAN_CERTIFY = 20,
+    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 21,
 };
 
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
@@ -2835,10 +2840,82 @@ struct AddSpanCertifyEntry {
 
 std::ostream& operator<<(std::ostream& out, const AddSpanCertifyEntry& x);
 
+struct MakeFileTransientEntry {
+    InodeId id;
+    BincodeBytes note;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
+
+    MakeFileTransientEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += note.packedSize(); // note
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const MakeFileTransientEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x);
+
+struct RemoveSpanCertifyEntry {
+    InodeId fileId;
+    uint64_t byteOffset;
+    BincodeList<BlockProof> proofs;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
+
+    RemoveSpanCertifyEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // fileId
+        _size += 8; // byteOffset
+        _size += proofs.packedSize(); // proofs
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RemoveSpanCertifyEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RemoveSpanCertifyEntry& x);
+
+struct RemoveOwnedSnapshotFileEdgeEntry {
+    InodeId ownerId;
+    InodeId targetId;
+    BincodeBytes name;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
+
+    RemoveOwnedSnapshotFileEdgeEntry() { clear(); }
+
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // ownerId
+        _size += 8; // targetId
+        _size += name.packedSize(); // name
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RemoveOwnedSnapshotFileEdgeEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEntry& x);
+
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, IntraShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry> _data;
+    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, IntraShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry> _data;
 public:
     ShardLogEntryKind kind() const { return _kind; }
     const ConstructFileEntry& getConstructFile() const;
@@ -2877,6 +2954,12 @@ public:
     AddSpanInitiateEntry& setAddSpanInitiate();
     const AddSpanCertifyEntry& getAddSpanCertify() const;
     AddSpanCertifyEntry& setAddSpanCertify();
+    const MakeFileTransientEntry& getMakeFileTransient() const;
+    MakeFileTransientEntry& setMakeFileTransient();
+    const RemoveSpanCertifyEntry& getRemoveSpanCertify() const;
+    RemoveSpanCertifyEntry& setRemoveSpanCertify();
+    const RemoveOwnedSnapshotFileEdgeEntry& getRemoveOwnedSnapshotFileEdge() const;
+    RemoveOwnedSnapshotFileEdgeEntry& setRemoveOwnedSnapshotFileEdge();
 
     void clear() { _kind = (ShardLogEntryKind)0; };
 

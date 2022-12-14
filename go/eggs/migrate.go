@@ -204,5 +204,6 @@ func (env *DaemonEnv) MigrateBlocks(stats *MigrateStats, blockServiceId msgs.Blo
 				return err
 			}
 		}
+		filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1
 	}
 }

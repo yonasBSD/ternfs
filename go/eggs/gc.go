@@ -17,6 +17,7 @@ type DestructionStats struct {
 func DestructFile(
 	log LogLevels,
 	client Client,
+	blockServicesKeys map[msgs.BlockServiceId][16]byte,
 	stats *DestructionStats,
 	id msgs.InodeId, deadline msgs.EggsTime, cookie [8]byte,
 ) error {
@@ -50,9 +51,18 @@ func DestructFile(
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
-				proof, err := EraseBlock(log, block)
-				if err != nil {
-					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+				var proof [8]byte
+				if blockServicesKeys == nil {
+					proof, err = EraseBlock(log, block)
+					if err != nil {
+						return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+					}
+				} else {
+					key, wasPresent := blockServicesKeys[block.BlockServiceId]
+					if !wasPresent {
+						panic(fmt.Errorf("could not find key for block service %v", block.BlockServiceId))
+					}
+					proof = BlockDeleteProof(block.BlockServiceId, block.BlockId, key)
 				}
 				stats.DestructedBlocks++
 				certifyReq.Proofs[i].BlockId = block.BlockId
@@ -78,8 +88,12 @@ func DestructFile(
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
+//
+// If `blockServicesKeys` is present, spans won't be actually removed --
+// we'll just generate the proof ourselves and certify. This is only useful
+// for testing, obviously.
 func DestructFiles(
-	log LogLevels, shid msgs.ShardId,
+	log LogLevels, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) error {
 	client, err := NewShardSpecificClient(shid)
 	if err != nil {
@@ -90,13 +104,18 @@ func DestructFiles(
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
 	for {
+		/*
+			if stats.VisitedFiles%100 == 0 {
+				log.Info("%v visited files, %v destructed files, %v destructed spans, %v destructed blocks", stats.VisitedFiles, stats.DestructedFiles, stats.DestructedSpans, stats.DestructedBlocks)
+			}
+		*/
 		err := client.ShardRequest(log, shid, &req, &resp)
 		if err != nil {
 			return fmt.Errorf("could not visit transient files: %w", err)
 		}
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
-			if err := DestructFile(log, client, &stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+			if err := DestructFile(log, client, blockServicesKeys, &stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
 			}
 		}

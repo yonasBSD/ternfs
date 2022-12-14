@@ -1120,10 +1120,14 @@ func (v *SwapBlocksResp) Unpack(buf *bincode.Buf) error {
 
 func (v *BlockServiceFilesReq) Pack(buf *bincode.Buf) {
 	buf.PackU64(uint64(v.BlockServiceId))
+	buf.PackU64(uint64(v.StartFrom))
 }
 
 func (v *BlockServiceFilesReq) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := buf.UnpackU64((*uint64)(&v.StartFrom)); err != nil {
 		return err
 	}
 	return nil

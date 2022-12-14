@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
             options.logFile = getNextArg();
         } else if (arg == "--wait-for-shuckle") {
             options.waitForShuckle = true;
+            std::cerr << "Setting waitForShuckle=true" << std::endl;
         } else {
             args.emplace_back(std::move(arg));
         }

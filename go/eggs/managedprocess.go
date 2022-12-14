@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +22,30 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+func pythonDir() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("no caller information")
+	}
+	return path.Join(path.Dir(path.Dir(path.Dir(filename))), "python")
+}
+
+func goDir() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("no caller information")
+	}
+	return path.Dir(path.Dir(filename))
+}
+
+func cppDir() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("no caller information")
+	}
+	return path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
+}
+
 type managedProcess struct {
 	cmd        *exec.Cmd
 	name       string
@@ -31,6 +56,7 @@ type ManagedProcesses struct {
 	terminateChan  chan any
 	processes      []managedProcess
 	closeInitiated uint32
+	printLock      sync.Mutex
 }
 
 // This function will take over signals in a possibly surprising way!
@@ -129,11 +155,13 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) {
 				default:
 				}
 			} else {
+				procs.printLock.Lock()
 				fmt.Printf("%s crashed: %v\n", args.Name, err)
 				fmt.Printf("cmdline: %s %s\n", args.Exe, strings.Join(args.Args, " "))
 				printOut("stdout", os.Stdout, proc.cmd.Stdout)
 				printOut("stderr", os.Stderr, proc.cmd.Stderr)
 				fmt.Println()
+				procs.printLock.Unlock()
 				select {
 				case procs.terminateChan <- fmt.Errorf("%s crashed: %w", proc.name, err):
 				default:
@@ -189,15 +217,10 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 func (procs *ManagedProcesses) StartPythonScript(
 	name string, script string, args []string, mpArgs *ManagedProcessArgs,
 ) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("no caller information")
-	}
-	pythonDir := path.Join(path.Dir(path.Dir(path.Dir(filename))), "python")
 	mpArgs.Name = name
 	mpArgs.Exe = "python"
 	mpArgs.Args = append([]string{script}, args...)
-	mpArgs.Dir = pythonDir
+	mpArgs.Dir = pythonDir()
 	procs.Start(mpArgs)
 }
 
@@ -208,6 +231,7 @@ type BlockServiceOpts struct {
 	FailureDomain string
 	NoTimeCheck   bool
 	Verbose       bool
+	ShuckleHost   string
 }
 
 func createDataDir(dir string) {
@@ -233,6 +257,9 @@ func (procs *ManagedProcesses) StartBlockService(opts *BlockServiceOpts) {
 	if opts.Verbose {
 		args = append(args, "--verbose")
 	}
+	if opts.ShuckleHost != "" {
+		args = append(args, "--shuckle_host", opts.ShuckleHost)
+	}
 	mpArgs := ManagedProcessArgs{
 		StdoutFile: path.Join(opts.Path, "stdout"),
 		StderrFile: path.Join(opts.Path, "stderr"),
@@ -243,19 +270,6 @@ func (procs *ManagedProcesses) StartBlockService(opts *BlockServiceOpts) {
 		args,
 		&mpArgs,
 	)
-}
-
-func (procs *ManagedProcesses) StartShuckle(dir string, verbose bool) {
-	createDataDir(dir)
-	args := []string{
-		"--port", "39999",
-		"--log_file", path.Join(dir, "log"),
-		dir,
-	}
-	if verbose {
-		args = append(args, "--verbose")
-	}
-	procs.StartPythonScript("shuckle", "shuckle.py", args, &ManagedProcessArgs{})
 }
 
 func (procs *ManagedProcesses) StartCDC(dir string, verbose bool) {
@@ -270,12 +284,73 @@ func (procs *ManagedProcesses) StartCDC(dir string, verbose bool) {
 	procs.StartPythonScript("cdc", "cdc.py", args, &ManagedProcessArgs{})
 }
 
+type ShuckleOpts struct {
+	Exe     string
+	Dir     string
+	Verbose bool
+	Port    uint16
+}
+
+func (procs *ManagedProcesses) StartShuckle(opts *ShuckleOpts) {
+	createDataDir(opts.Dir)
+	args := []string{
+		"-port", fmt.Sprintf("%d", opts.Port),
+		"-log-file", path.Join(opts.Dir, "log"),
+	}
+	if opts.Verbose {
+		args = append(args, "-verbose")
+	}
+	procs.Start(&ManagedProcessArgs{
+		Name:       "shuckle",
+		Exe:        opts.Exe,
+		Args:       args,
+		StdoutFile: path.Join(opts.Dir, "stdout"),
+		StderrFile: path.Join(opts.Dir, "stderr"),
+	})
+}
+
+func BuildShuckleExe(ll LogLevels) string {
+	buildCmd := exec.Command("go", "build", ".")
+	buildCmd.Dir = path.Join(goDir(), "shuckle")
+	ll.Info("building shuckle")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Printf("build output:\n")
+		os.Stdout.Write(out)
+		panic(fmt.Errorf("could not build shard: %w", err))
+	}
+	return path.Join(buildCmd.Dir, "shuckle")
+}
+
+func WaitForShuckle(shuckleHost string, expectedBlockServices int, timeout time.Duration) []BlockService {
+	t0 := time.Now()
+	var err error
+	var bss []BlockService
+	for {
+		t := time.Now()
+		if t.Sub(t0) > timeout {
+			panic(fmt.Errorf("giving up waiting for shuckle, last error: %w", err))
+		}
+		bss, err = GetAllBlockServices(shuckleHost)
+		if err == nil && len(bss) == expectedBlockServices {
+			return bss
+		}
+		if err == nil && len(bss) > expectedBlockServices {
+			panic(fmt.Errorf("got more block services than expected (%v > %v)", len(bss), expectedBlockServices))
+		}
+		if err == nil {
+			err = fmt.Errorf("expecting %v block services, got %v", expectedBlockServices, len(bss))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 type ShardOpts struct {
-	Exe      string
-	Dir      string
-	Verbose  bool
-	Shid     msgs.ShardId
-	Valgrind bool
+	Exe            string
+	Dir            string
+	Verbose        bool
+	Shid           msgs.ShardId
+	Valgrind       bool
+	WaitForShuckle bool
 }
 
 func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
@@ -288,6 +363,9 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 	if opts.Verbose {
 		args = append(args, "--verbose")
 	}
+	if opts.WaitForShuckle {
+		args = append(args, "--wait-for-shuckle")
+	}
 	mpArgs := ManagedProcessArgs{
 		Name:       fmt.Sprintf("shard %v", opts.Shid),
 		Exe:        opts.Exe,
@@ -296,17 +374,12 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 		StderrFile: path.Join(opts.Dir, "stderr"),
 	}
 	if opts.Valgrind {
-		_, filename, _, ok := runtime.Caller(0)
-		if !ok {
-			panic("no caller information")
-		}
-		cppDir := path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)
 		mpArgs.Exe = "valgrind"
 		mpArgs.Args = append(
 			[]string{
 				"-q",
-				fmt.Sprintf("--suppressions=%s/valgrind-suppressions", cppDir),
+				fmt.Sprintf("--suppressions=%s", path.Join(cppDir(), "valgrind-suppressions")),
 				"--error-exitcode=1",
 				opts.Exe,
 			},
@@ -316,4 +389,70 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 	} else {
 		procs.Start(&mpArgs)
 	}
+}
+
+func WaitForShard(shid msgs.ShardId, timeout time.Duration) {
+	t0 := time.Now()
+	var err error
+	var sock *net.UDPConn
+	for {
+		t := time.Now()
+		if t.Sub(t0) > timeout {
+			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
+		}
+		sock, err = ShardSocket(shid)
+		if err != nil {
+			sock.Close()
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		err = ShardRequestSocket(
+			LogBlackHole{},
+			nil,
+			sock,
+			time.Second,
+			&msgs.StatDirectoryReq{Id: msgs.ROOT_DIR_INODE_ID},
+			&msgs.StatDirectoryResp{},
+		)
+		sock.Close()
+		if err != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		break
+	}
+}
+
+type BuildShardOpts struct {
+	Valgrind bool
+	Sanitize bool
+	Debug    bool
+}
+
+func BuildShardExe(ll LogLevels, opts *BuildShardOpts) string {
+	buildArgs := []string{"-j"}
+	if opts.Valgrind {
+		buildArgs = append(buildArgs, "valgrind=yes")
+	}
+	if opts.Sanitize {
+		buildArgs = append(buildArgs, "sanitize=yes")
+	}
+	if opts.Debug {
+		buildArgs = append(buildArgs, "debug=yes")
+	}
+	buildArgs = append(buildArgs, "eggs-shard")
+	buildCmd := exec.Command("make", buildArgs...)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("no caller information")
+	}
+	cppDir := path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
+	buildCmd.Dir = cppDir
+	ll.Info("building eggs-shard with `make %s'", strings.Join(buildArgs, " "))
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Printf("build output:\n")
+		os.Stdout.Write(out)
+		panic(fmt.Errorf("could not build shard: %w", err))
+	}
+	return path.Join(cppDir, "eggs-shard")
 }

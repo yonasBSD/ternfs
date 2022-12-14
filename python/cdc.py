@@ -13,6 +13,7 @@ import argparse
 import socket
 import logging
 from pathlib import Path
+import log_format
 
 from cdc_msgs import *
 from cdc_key import *
@@ -1101,8 +1102,8 @@ if __name__ == '__main__':
 
     log_level = logging.DEBUG if config.verbose else logging.WARNING
     if config.log_file:
-        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level, format=log_format.FORMAT)
     else:
-        logging.basicConfig(level=log_level)
+        logging.basicConfig(level=log_level, format=log_format.FORMAT)
 
     main(config.db_dir)

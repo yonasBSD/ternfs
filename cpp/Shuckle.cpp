@@ -75,7 +75,7 @@ static size_t curlWriteCallback(char* contents, size_t size, size_t nmemb, void*
 bool fetchBlockServices(const std::string& host, uint64_t timeout, std::string& errString, UpdateBlockServicesEntry& blocks) {
     WrappedCurl curl(curl_easy_init());
 
-    std::string url = host + "/show_me_what_you_got";
+    std::string url = host + "/block_services_for_shard";
     CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_URL, url.c_str()));
     CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_WRITEFUNCTION, curlWriteCallback));
     std::string responseBody;

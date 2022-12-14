@@ -229,7 +229,7 @@ struct SpanKey {
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
 
-    BE64_VAL(InodeId,  id,     setId,     0)
+    BE64_VAL(InodeId,  fileId, setFileId, 0)
     BE64_VAL(uint64_t, offset, setOffset, 8)
 };
 
@@ -459,7 +459,7 @@ struct CurrentEdgeBody {
 
     static constexpr size_t MAX_SIZE =
         sizeof(InodeIdExtra) + // target, and if locked
-        sizeof(EggsTime);  // creationTime
+        sizeof(EggsTime);      // creationTime
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
 
@@ -473,4 +473,17 @@ struct CurrentEdgeBody {
     InodeId targetId() const {
         return targetIdWithLocked().id();
     }
+};
+
+struct BlockServiceToFileKey {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE =
+        sizeof(uint64_t) + // block service id
+        sizeof(InodeId);   // file id
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
+
+    BE64_VAL(uint64_t, blockServiceId, setBlockServiceId, 0)
+    BE64_VAL(InodeId,  fileId,         setFileId,         8)
 };

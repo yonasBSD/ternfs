@@ -1,10 +1,12 @@
 package eggs
 
 import (
+	"crypto/aes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
@@ -240,4 +242,38 @@ func CopyBlock(
 	writeResp.finished()
 	// we're finally done
 	return proof, nil
+}
+
+// This is used to mock the block service in test
+func BlockAddProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, secretKey [16]byte) [8]byte {
+	var buf [32]byte
+	bbuf := bincode.Buf(buf[:])
+	// struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
+	bbuf.PackU64(uint64(blockServiceId))
+	bbuf.PackU8(uint8('W'))
+	bbuf.PackU64(uint64(blockId))
+
+	cipher, err := aes.NewCipher(secretKey[:])
+	if err != nil {
+		panic(fmt.Errorf("could not create AES-128 key: %w", err))
+	}
+
+	return CBCMAC(cipher, buf[:])
+}
+
+// This is used to mock the block service in test
+func BlockDeleteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, secretKey [16]byte) [8]byte {
+	var buf [32]byte
+	bbuf := bincode.Buf(buf[:])
+	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
+	bbuf.PackU64(uint64(blockServiceId))
+	bbuf.PackU8(uint8('E'))
+	bbuf.PackU64(uint64(blockId))
+
+	cipher, err := aes.NewCipher(secretKey[:])
+	if err != nil {
+		panic(fmt.Errorf("could not create AES-128 key: %w", err))
+	}
+
+	return CBCMAC(cipher, buf[:])
 }

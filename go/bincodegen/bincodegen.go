@@ -1083,6 +1083,9 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.UpdateBlockServicesEntry{}),
 			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanCertifyEntry{}),
+			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
+			reflect.TypeOf(msgs.RemoveSpanCertifyEntry{}),
+			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 		},
 	)
 

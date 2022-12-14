@@ -1601,19 +1601,23 @@ std::ostream& operator<<(std::ostream& out, const SwapBlocksResp& x) {
 
 void BlockServiceFilesReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockServiceId);
+    startFrom.pack(buf);
 }
 void BlockServiceFilesReq::unpack(BincodeBuf& buf) {
     blockServiceId = buf.unpackScalar<uint64_t>();
+    startFrom.unpack(buf);
 }
 void BlockServiceFilesReq::clear() {
     blockServiceId = uint64_t(0);
+    startFrom = InodeId();
 }
 bool BlockServiceFilesReq::operator==(const BlockServiceFilesReq& rhs) const {
     if ((uint64_t)this->blockServiceId != (uint64_t)rhs.blockServiceId) { return false; };
+    if ((InodeId)this->startFrom != (InodeId)rhs.startFrom) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceFilesReq& x) {
-    out << "BlockServiceFilesReq(" << "BlockServiceId=" << x.blockServiceId << ")";
+    out << "BlockServiceFilesReq(" << "BlockServiceId=" << x.blockServiceId << ", " << "StartFrom=" << x.startFrom << ")";
     return out;
 }
 
@@ -3971,6 +3975,15 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         out << "ADD_SPAN_CERTIFY";
         break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        out << "MAKE_FILE_TRANSIENT";
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        out << "REMOVE_SPAN_CERTIFY";
+        break;
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        out << "REMOVE_OWNED_SNAPSHOT_FILE_EDGE";
+        break;
     default:
         out << "ShardLogEntryKind(" << ((int)err) << ")";
         break;
@@ -4454,6 +4467,84 @@ std::ostream& operator<<(std::ostream& out, const AddSpanCertifyEntry& x) {
     return out;
 }
 
+void MakeFileTransientEntry::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    buf.packBytes(note);
+}
+void MakeFileTransientEntry::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    buf.unpackBytes(note);
+}
+void MakeFileTransientEntry::clear() {
+    id = InodeId();
+    note.clear();
+}
+bool MakeFileTransientEntry::operator==(const MakeFileTransientEntry& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    if (note != rhs.note) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x) {
+    out << "MakeFileTransientEntry(" << "Id=" << x.id << ", " << "Note=" << x.note << ")";
+    return out;
+}
+
+void RemoveSpanCertifyEntry::pack(BincodeBuf& buf) const {
+    fileId.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packList<BlockProof>(proofs);
+}
+void RemoveSpanCertifyEntry::unpack(BincodeBuf& buf) {
+    fileId.unpack(buf);
+    byteOffset = buf.unpackScalar<uint64_t>();
+    buf.unpackList<BlockProof>(proofs);
+}
+void RemoveSpanCertifyEntry::clear() {
+    fileId = InodeId();
+    byteOffset = uint64_t(0);
+    proofs.clear();
+}
+bool RemoveSpanCertifyEntry::operator==(const RemoveSpanCertifyEntry& rhs) const {
+    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if (proofs != rhs.proofs) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const RemoveSpanCertifyEntry& x) {
+    out << "RemoveSpanCertifyEntry(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Proofs=" << x.proofs << ")";
+    return out;
+}
+
+void RemoveOwnedSnapshotFileEdgeEntry::pack(BincodeBuf& buf) const {
+    ownerId.pack(buf);
+    targetId.pack(buf);
+    buf.packBytes(name);
+    creationTime.pack(buf);
+}
+void RemoveOwnedSnapshotFileEdgeEntry::unpack(BincodeBuf& buf) {
+    ownerId.unpack(buf);
+    targetId.unpack(buf);
+    buf.unpackBytes(name);
+    creationTime.unpack(buf);
+}
+void RemoveOwnedSnapshotFileEdgeEntry::clear() {
+    ownerId = InodeId();
+    targetId = InodeId();
+    name.clear();
+    creationTime = EggsTime();
+}
+bool RemoveOwnedSnapshotFileEdgeEntry::operator==(const RemoveOwnedSnapshotFileEdgeEntry& rhs) const {
+    if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
+    if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
+    if (name != rhs.name) { return false; };
+    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEntry& x) {
+    out << "RemoveOwnedSnapshotFileEdgeEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << x.name << ", " << "CreationTime=" << x.creationTime << ")";
+    return out;
+}
+
 const ConstructFileEntry& ShardLogEntryContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardLogEntryKind::CONSTRUCT_FILE);
     return std::get<0>(_data);
@@ -4634,6 +4725,36 @@ AddSpanCertifyEntry& ShardLogEntryContainer::setAddSpanCertify() {
     x.clear();
     return x;
 }
+const MakeFileTransientEntry& ShardLogEntryContainer::getMakeFileTransient() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardLogEntryKind::MAKE_FILE_TRANSIENT);
+    return std::get<18>(_data);
+}
+MakeFileTransientEntry& ShardLogEntryContainer::setMakeFileTransient() {
+    _kind = ShardLogEntryKind::MAKE_FILE_TRANSIENT;
+    auto& x = std::get<18>(_data);
+    x.clear();
+    return x;
+}
+const RemoveSpanCertifyEntry& ShardLogEntryContainer::getRemoveSpanCertify() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardLogEntryKind::REMOVE_SPAN_CERTIFY);
+    return std::get<19>(_data);
+}
+RemoveSpanCertifyEntry& ShardLogEntryContainer::setRemoveSpanCertify() {
+    _kind = ShardLogEntryKind::REMOVE_SPAN_CERTIFY;
+    auto& x = std::get<19>(_data);
+    x.clear();
+    return x;
+}
+const RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::getRemoveOwnedSnapshotFileEdge() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
+    return std::get<20>(_data);
+}
+RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::setRemoveOwnedSnapshotFileEdge() {
+    _kind = ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
+    auto& x = std::get<20>(_data);
+    x.clear();
+    return x;
+}
 void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -4689,6 +4810,15 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         break;
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         std::get<17>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        std::get<18>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        std::get<19>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        std::get<20>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -4752,6 +4882,15 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf, ShardLogEntryKind kind) {
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         std::get<17>(_data).unpack(buf);
         break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        std::get<18>(_data).unpack(buf);
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        std::get<19>(_data).unpack(buf);
+        break;
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        std::get<20>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", kind);
     }
@@ -4812,6 +4951,15 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         out << x.getAddSpanCertify();
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        out << x.getMakeFileTransient();
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        out << x.getRemoveSpanCertify();
+        break;
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        out << x.getRemoveOwnedSnapshotFileEdge();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", x.kind());

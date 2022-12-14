@@ -6,17 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"path"
+	"time"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
 
 func main() {
 	dataDir := flag.String("dir", "", "Directory where to store all the databases. Must be provided.")
-	build := flag.Bool("build", false, "Whether to build the shard executable ourselves. Otherwise -shard-exe must be provided.")
-	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind. Has no effect if specified without -build.")
-	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize. Has no effect if specified without -build.")
-	debug := flag.Bool("debug", false, "Whether to build without optimizations. Has no effect if specified without -build.")
-	shardExe := flag.String("shard-exe", "", "The shard executable. If not present, -build must be set.")
+	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind.")
+	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
+	debug := flag.Bool("debug", false, "Whether to build without optimizations.")
 	verbose := flag.Bool("verbose", false, "Whether to run the tools as verbose. Note that all the logs will be written to files anyway.")
 	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 10).")
 	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 5).")
@@ -26,26 +25,16 @@ func main() {
 		panic("-dir must be provided.")
 	}
 
-	if (*build && *shardExe != "") || (!*build && *shardExe == "") {
-		panic("Exactly one out of -build and -shard-exe must be provided.")
-	}
-
-	if *sanitize && *valgrind {
-		panic("Cannot use -sanitize and -valgrind at the same time.")
-	}
-
-	if *build && *verbose && !*debug {
+	if *verbose && !*debug {
 		panic("You asked me to build without -debug, and with -verbose. This is almost certainly wrong.")
 	}
 
-	if *build {
-		buildOpts := eggs.BuildShardOpts{
-			Valgrind: *valgrind,
-			Sanitize: *sanitize,
-			Debug:    *debug,
-		}
-		*shardExe = eggs.BuildShardExe(&eggs.LogToStdout{}, &buildOpts)
-	}
+	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &eggs.BuildShardOpts{
+		Valgrind: *valgrind,
+		Sanitize: *sanitize,
+		Debug:    *debug,
+	})
+	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})
 
 	terminateChan := make(chan any, 1)
 
@@ -53,6 +42,15 @@ func main() {
 	defer procs.Close()
 
 	fmt.Printf("starting components\n")
+
+	// Start shuckle
+	shucklePort := uint16(39999)
+	procs.StartShuckle(&eggs.ShuckleOpts{
+		Exe:     shuckleExe,
+		Port:    shucklePort,
+		Verbose: *verbose,
+		Dir:     path.Join(*dataDir, "shuckle"),
+	})
 
 	// Start block services
 	for i := uint(0); i < *hddBlockServices+*flashBlockServices; i++ {
@@ -66,25 +64,32 @@ func main() {
 			StorageClass:  storageClass,
 			FailureDomain: fmt.Sprintf("%d", i),
 			Verbose:       *verbose,
+			ShuckleHost:   fmt.Sprintf("localhost:%d", shucklePort),
 		})
 	}
 
-	// Start shuckle
-	procs.StartShuckle(path.Join(*dataDir, "shuckle"), *verbose)
-
 	// Start CDC
 	procs.StartCDC(path.Join(*dataDir, "cdc"), *verbose)
+
+	fmt.Printf("waiting for shuckle for 10 seconds...\n")
+	eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), int(*hddBlockServices+*flashBlockServices), 10*time.Second)
 
 	// Start shards
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		procs.StartShard(&eggs.ShardOpts{
-			Exe:      *shardExe,
-			Dir:      path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:  *verbose,
-			Shid:     shid,
-			Valgrind: *valgrind,
+			Exe:            shardExe,
+			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			Verbose:        *verbose,
+			Shid:           shid,
+			Valgrind:       *valgrind,
+			WaitForShuckle: true,
 		})
+	}
+
+	fmt.Printf("waiting for shards for 10 seconds...\n")
+	for i := 0; i < 256; i++ {
+		eggs.WaitForShard(msgs.ShardId(i), 10*time.Second)
 	}
 
 	fmt.Printf("operational 🤖\n")

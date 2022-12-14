@@ -18,6 +18,7 @@ import sys
 import os
 import logging
 from pathlib import Path
+import log_format
 
 from shard_msgs import STORAGE_CLASSES
 
@@ -90,7 +91,6 @@ async def check_one_device(id: int, secret_key: bytes, ip: str, port: int, sc: i
         KEYS_TO_CHECK.append(secret_key) # it's brand new
     KEY_TO_IP_PORT_SC[secret_key] = (ip, port, sc, failure_domain)
 
-
 async def check_devices_forever() -> None:
     global DB
 
@@ -109,31 +109,6 @@ async def check_devices_forever() -> None:
                 app.logger.error(f'Failed to check device at {ip_port}: {e}', exc_info=True)
                 pass
         await asyncio.sleep(60)
-
-async def listen_for_registrations() -> None:
-    # open a udp socket and listen for registration messages
-    # if it's a new device or and ip/port change then we need to check it immediately
-    loop = asyncio.get_running_loop()
-    q: asyncio.Queue[Tuple[bytes, Tuple[str, int]]] = asyncio.Queue()
-    class UdpTransport(asyncio.BaseProtocol):
-        def connection_made(self, transport: asyncio.BaseTransport) -> None:
-            pass
-        def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
-            q.put_nowait((data, addr))
-    transport, protocol = await loop.create_datagram_endpoint(lambda: UdpTransport(), local_addr=('localhost', 5000))
-    while True:
-        try:
-            data, (ip, port) = await q.get()
-            id, key, tcp_port, sc, failure_domain = struct.unpack('<Q16sHB16s', data)
-            failure_domain = failure_domain.decode('ascii').rstrip('\x00')
-            if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (ip, tcp_port, sc, failure_domain):
-                # it's new or changed ip - need to check it
-                await check_one_device(id, key, ip, tcp_port, sc, failure_domain)
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            app.logger.error(f'Error processing registration for {ip}:{tcp_port}: {e}', exc_info=True) # type: ignore
-
 
 ###########################################
 # web ui
@@ -260,6 +235,17 @@ async def list_devices() -> Response:
         })
     return jsonify(ret)
 
+@app.route('/register', methods=['POST'])
+async def register() -> Response:
+    global DB
+
+    body = await request.json
+    key = bytes.fromhex(body['key'])
+    if key not in KEYS_TO_CHECK or KEY_TO_IP_PORT_SC[key] != (body['ip'], body['port'], body['storage_class'], body['failure_domain']):
+        # it's new or changed ip -- need to check it
+        await check_one_device(body['id'], key, body['ip'], body['port'], body['storage_class'], body['failure_domain'])
+
+    return jsonify({})
 
 ###########################################
 # initialization
@@ -296,18 +282,13 @@ LISTEN_FOR_REGISTRATIONS_TASK: Optional['asyncio.Task[None]'] = None
 @app.before_serving
 async def startup() -> None:
     global CHECK_DEVICES_FOREVER_TASK
-    global LISTEN_FOR_REGISTRATIONS_TASK
     assert CHECK_DEVICES_FOREVER_TASK is None
-    assert LISTEN_FOR_REGISTRATIONS_TASK is None
     CHECK_DEVICES_FOREVER_TASK = asyncio.create_task(check_devices_forever())
-    LISTEN_FOR_REGISTRATIONS_TASK = asyncio.create_task(listen_for_registrations())
 
 @app.after_serving
 async def shutdown() -> None:
     assert CHECK_DEVICES_FOREVER_TASK is not None
-    assert LISTEN_FOR_REGISTRATIONS_TASK is not None
     CHECK_DEVICES_FOREVER_TASK.cancel()
-    LISTEN_FOR_REGISTRATIONS_TASK.cancel()
 
 def main(db_path: str, port: int):
     init_db(db_path)
@@ -324,8 +305,8 @@ if __name__ == '__main__':
 
     log_level = logging.DEBUG if config.verbose else logging.WARNING
     if config.log_file:
-        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level)
+        logging.basicConfig(filename=config.log_file, encoding='utf-8', level=log_level, format=log_format.FORMAT)
     else:
-        logging.basicConfig(level=log_level)
+        logging.basicConfig(level=log_level, format=log_format.FORMAT)
 
     main(config.db_dir, config.port)

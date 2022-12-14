@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -29,7 +31,7 @@ type fullEdge struct {
 
 // The idea here is that we'd run some parts of the test also directly hitting the filesystem.
 type harness interface {
-	touchFile(name string) msgs.InodeId
+	createFile(name string, size uint64) msgs.InodeId
 	deleteFile(name string, id msgs.InodeId)
 	renameFile(targetId msgs.InodeId, oldName string, newName string)
 	statDir() msgs.EggsTime
@@ -38,9 +40,12 @@ type harness interface {
 }
 
 type harnessStats struct {
-	reqs              int64
-	fileCreates       int64
-	fileCreatesNanos  int64
+	reqs int64
+	/*
+		fileCreates        int64
+		fileConstructNanos int64
+		fileLinkNanos      int64
+	*/
 	fileDeletes       int64
 	fileDeletesNanos  int64
 	fileRenames       int64
@@ -54,9 +59,10 @@ type harnessStats struct {
 }
 
 type directHarness struct {
-	shid   msgs.ShardId
-	client eggs.Client
-	stats  *harnessStats
+	shid              msgs.ShardId
+	client            eggs.Client
+	stats             *harnessStats
+	blockServicesKeys map[msgs.BlockServiceId][16]byte
 }
 
 func (h *directHarness) shardReq(
@@ -70,15 +76,55 @@ func (h *directHarness) shardReq(
 	}
 }
 
-func (h *directHarness) touchFile(name string) msgs.InodeId {
-	atomic.AddInt64(&h.stats.fileCreates, 1)
+func (h *directHarness) createFile(name string, size uint64) msgs.InodeId {
+	// construct
 	constructReq := msgs.ConstructFileReq{
 		Type: msgs.FILE,
 		Note: "",
 	}
 	constructResp := msgs.ConstructFileResp{}
-	t0 := time.Now()
 	h.shardReq(&constructReq, &constructResp)
+	// add spans
+	spanSize := uint64(10) << 20 // 10MiB
+	for offset := uint64(0); offset < size; offset += spanSize {
+		thisSpanSize := eggs.Min(spanSize, size-offset)
+		addSpanReq := msgs.AddSpanInitiateReq{
+			FileId:       constructResp.Id,
+			Cookie:       constructResp.Cookie,
+			ByteOffset:   offset,
+			StorageClass: 2,
+			Parity:       msgs.MkParity(1, 0),
+			Crc32:        [4]byte{0, 0, 0, 0},
+			Size:         thisSpanSize,
+			BlockSize:    thisSpanSize,
+			BodyBlocks: []msgs.NewBlockInfo{
+				{
+					Crc32: [4]byte{0, 0, 0, 0},
+				},
+			},
+		}
+		addSpanResp := msgs.AddSpanInitiateResp{}
+		h.shardReq(&addSpanReq, &addSpanResp)
+		block := &addSpanResp.Blocks[0]
+		blockServiceKey, blockServiceFound := h.blockServicesKeys[block.BlockServiceId]
+		if !blockServiceFound {
+			panic(fmt.Errorf("could not find block service %v", block.BlockServiceId))
+		}
+		certifySpanReq := msgs.AddSpanCertifyReq{
+			FileId:     constructResp.Id,
+			Cookie:     constructResp.Cookie,
+			ByteOffset: offset,
+			Proofs: []msgs.BlockProof{
+				{
+					BlockId: block.BlockId,
+					Proof:   eggs.BlockAddProof(block.BlockServiceId, block.BlockId, blockServiceKey),
+				},
+			},
+		}
+		certifySpanResp := msgs.AddSpanCertifyResp{}
+		h.shardReq(&certifySpanReq, &certifySpanResp)
+	}
+	// link
 	linkReq := msgs.LinkFileReq{
 		FileId:  constructResp.Id,
 		Cookie:  constructResp.Cookie,
@@ -86,7 +132,6 @@ func (h *directHarness) touchFile(name string) msgs.InodeId {
 		Name:    name,
 	}
 	h.shardReq(&linkReq, &msgs.LinkFileResp{})
-	atomic.AddInt64(&h.stats.fileCreatesNanos, time.Since(t0).Nanoseconds())
 	return constructResp.Id
 }
 
@@ -180,15 +225,16 @@ func (h *directHarness) fullReadDir() []fullEdge {
 	return edges
 }
 
-func newDirectHarness(shid msgs.ShardId, stats *harnessStats) *directHarness {
+func newDirectHarness(shid msgs.ShardId, stats *harnessStats, blockServicesKeys map[msgs.BlockServiceId][16]byte) *directHarness {
 	client, err := eggs.NewShardSpecificClient(shid)
 	if err != nil {
 		panic(err)
 	}
 	return &directHarness{
-		shid:   shid,
-		client: client,
-		stats:  stats,
+		shid:              shid,
+		client:            client,
+		stats:             stats,
+		blockServicesKeys: blockServicesKeys,
 	}
 }
 
@@ -198,6 +244,7 @@ const shid = msgs.ShardId(0) // hardcoded for now
 
 type createFile struct {
 	name string
+	size uint64
 }
 
 type createdFile struct {
@@ -266,7 +313,11 @@ func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile 
 		_, wasPresent := files.byName[name]
 		if !wasPresent {
 			delete(files.byName, name)
-			return createFile{name: name}
+			size := rand.Uint64() % (uint64(100) << 20) // up to 20MiB
+			return createFile{
+				name: name,
+				size: size,
+			}
 		}
 	}
 }
@@ -323,7 +374,7 @@ func runCheckpoint(harness harness, prefix string, files *files) checkpoint {
 func runStep(harness harness, files *files, stepAny any) any {
 	switch step := stepAny.(type) {
 	case createFile:
-		id := harness.touchFile(step.name)
+		id := harness.createFile(step.name, step.size)
 		files.addFile(step.name, id)
 		return createdFile{
 			name: step.name,
@@ -469,7 +520,21 @@ func handleRecover(terminateChan chan any, err any) {
 	}
 }
 
-func spawnTests(terminateChan chan any) {
+func spawnTests(terminateChan chan any, blockServices []eggs.BlockService) {
+	blockServicesKeys := make(map[msgs.BlockServiceId][16]byte)
+	for _, blockService := range blockServices {
+		key, err := hex.DecodeString(blockService.SecretKey)
+		if err != nil {
+			panic(fmt.Errorf("could not decode key for block service %v: %w", blockService.Id, err))
+		}
+		if len(key) != 16 {
+			panic(fmt.Errorf("unexpected length for secret key for block service %v -- expected %v, got %v", blockService.Id, 16, len(key)))
+		}
+		var fixedKey [16]byte
+		copy(fixedKey[:], key)
+		blockServicesKeys[blockService.Id] = fixedKey
+	}
+
 	go func() {
 		defer func() { handleRecover(terminateChan, recover()) }()
 		numTests := uint8(5)
@@ -486,7 +551,7 @@ func spawnTests(terminateChan chan any) {
 			seed := int64(i)
 			go func() {
 				defer func() { handleRecover(terminateChan, recover()) }()
-				harness := newDirectHarness(shid, &stats)
+				harness := newDirectHarness(shid, &stats, blockServicesKeys)
 				defer harness.client.Close()
 				runTestSingle(harness, seed, prefix)
 				wait.Done()
@@ -495,7 +560,7 @@ func spawnTests(terminateChan chan any) {
 		wait.Wait()
 		elapsed := time.Since(t0)
 		fmt.Printf("ran test in %.2fs, %v requests performed, %.2f reqs/sec\n", float32(elapsed.Milliseconds())/100.0, stats.reqs, 1000.0*float32(stats.reqs/elapsed.Milliseconds()))
-		fmt.Printf("fileCreates:\t%v\t%v\n", stats.fileCreates, time.Duration(stats.fileCreatesNanos/stats.fileCreates))
+		// fmt.Printf("fileCreates:\t%v\t%v\n", stats.fileCreates, time.Duration(stats.fileLinkNanos/stats.fileCreates))
 		fmt.Printf("fileDeletes:\t%v\t%v\n", stats.fileDeletes, time.Duration(stats.fileDeletesNanos/stats.fileDeletes))
 		fmt.Printf("fileRenames:\t%v\t%v\n", stats.fileRenames, time.Duration(stats.fileRenamesNanos/stats.fileRenames))
 		fmt.Printf("statDirs:\t%v\t%v\n", stats.statDirs, time.Duration(stats.statDirsNanos/stats.statDirs))
@@ -518,7 +583,7 @@ func spawnTests(terminateChan chan any) {
 		if err != nil {
 			panic(err)
 		}
-		err = eggs.DestructFiles(&eggs.LogToStdout{}, shid)
+		err = eggs.DestructFiles(&eggs.LogToStdout{}, shid, blockServicesKeys)
 		if err != nil {
 			panic(err)
 		}
@@ -527,84 +592,44 @@ func spawnTests(terminateChan chan any) {
 	}()
 }
 
-func waitForShard() {
-	t0 := time.Now()
-	for {
-		t := time.Now()
-		if t.Sub(t0) > 10*time.Second {
-			panic(fmt.Errorf("giving up waiting for shard"))
-		}
-		sock, err := eggs.ShardSocket(shid)
-		if err != nil {
-			sock.Close()
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-		err = eggs.ShardRequestSocket(
-			eggs.LogBlackHole{},
-			nil,
-			sock,
-			time.Second,
-			&msgs.StatDirectoryReq{Id: msgs.ROOT_DIR_INODE_ID},
-			&msgs.StatDirectoryResp{},
-		)
-		if err != nil {
-			sock.Close()
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-		break
-	}
-}
-
 func main() {
-	build := flag.Bool("build", false, "Whether to build the shard executable ourselves. Otherwise -shard-exe must be provided.")
-	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind. Has no effect if specified without -build.")
-	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize. Has no effect if specified without -build.")
-	debug := flag.Bool("debug", false, "Whether to build without optimizations. Has no effect if specified without -build.")
-	shardExe := flag.String("shard-exe", "", "The shard executable. If not present, -build must be set.")
-	verboseShard := flag.Bool("verbose-shard", false, "Whether to run the shard with -v. Note that verbose won't do much unless you build with debug.")
-	dbDir := flag.String("db-dir", "", "Directory where to store the shard database. If not present a temporary directory will be used.")
-	preserveDbDir := flag.Bool("preserve-db-dir", false, "Whether to preserve the temp db dir (if we're using a temp db dir).")
+	valgrind := flag.Bool("valgrind", false, "Whether to build for and run with valgrind.")
+	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
+	debug := flag.Bool("debug", false, "Whether to build without optimizations.")
+	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
+	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
+	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	flag.Parse()
 
-	if (*build && *shardExe != "") || (!*build && *shardExe == "") {
-		panic("Exactly one out of -build and -shard-exe must be provided.")
-	}
-
-	if *sanitize && *valgrind {
-		panic("Cannot use -sanitize and -valgrind at the same time.")
-	}
-
-	if *build && *verboseShard && !*debug {
+	if *verbose && !*debug {
 		panic("You asked me to build without -debug, and with -verbose-shard. This is almost certainly wrong.")
 	}
 
-	if *build {
-		buildOpts := eggs.BuildShardOpts{
-			Valgrind: *valgrind,
-			Sanitize: *sanitize,
-			Debug:    *debug,
-		}
-		*shardExe = eggs.BuildShardExe(&eggs.LogToStdout{}, &buildOpts)
+	buildOpts := eggs.BuildShardOpts{
+		Valgrind: *valgrind,
+		Sanitize: *sanitize,
+		Debug:    *debug,
 	}
+	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &buildOpts)
+	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})
 
 	cleanupDbDir := false
-	tmpDbDir := *dbDir == ""
-	if tmpDbDir {
+	tmpDataDir := *dataDir == ""
+	if tmpDataDir {
 		cleanupDbDir = !*preserveDbDir
 		dir, err := os.MkdirTemp("", "eggs-integrationtest.")
-		*dbDir = dir
+		*dataDir = dir
 		if err != nil {
-			panic(fmt.Errorf("could not create tmp db: %w", err))
+			panic(fmt.Errorf("could not create tmp data dir: %w", err))
 		}
+		fmt.Printf("running with temp data dir %v\n", *dataDir)
 	}
 	defer func() {
 		if cleanupDbDir {
-			fmt.Printf("cleaning up temp db dir %v\n", *dbDir)
-			os.RemoveAll(*dbDir)
-		} else if tmpDbDir {
-			fmt.Printf("preserved temp db dir %v\n", *dbDir)
+			fmt.Printf("cleaning up temp data dir %v\n", *dataDir)
+			os.RemoveAll(*dataDir)
+		} else if tmpDataDir {
+			fmt.Printf("preserved temp data dir %v\n", *dataDir)
 		}
 	}()
 
@@ -613,16 +638,50 @@ func main() {
 	procs := eggs.NewManagedProcesses(terminateChan)
 	defer procs.Close()
 
-	procs.StartShard(&eggs.ShardOpts{
-		Exe:      *shardExe,
-		Dir:      *dbDir,
-		Verbose:  *verboseShard,
-		Shid:     shid,
-		Valgrind: *valgrind,
+	// Start shuckle
+	shucklePort := uint16(39999)
+	procs.StartShuckle(&eggs.ShuckleOpts{
+		Exe:     shuckleExe,
+		Port:    shucklePort,
+		Verbose: *verbose,
+		Dir:     path.Join(*dataDir, "shuckle"),
 	})
-	waitForShard()
 
-	spawnTests(terminateChan)
+	// Start block services. Right now this is just used for shuckle to
+	// get block services, since we don't actually write to the block services
+	// yet (it's just too slow).
+	hddBlockServices := 10
+	flashBlockServices := 5
+	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
+		storageClass := "HDD"
+		if i >= hddBlockServices {
+			storageClass = "FLASH"
+		}
+		procs.StartBlockService(&eggs.BlockServiceOpts{
+			Path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
+			Port:          40000 + uint16(i),
+			StorageClass:  storageClass,
+			FailureDomain: fmt.Sprintf("%d", i),
+			Verbose:       *verbose,
+			ShuckleHost:   fmt.Sprintf("localhost:%d", shucklePort),
+		})
+	}
+
+	blockServices := eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, 10*time.Second)
+
+	// Start shard
+	procs.StartShard(&eggs.ShardOpts{
+		Exe:            shardExe,
+		Dir:            path.Join(*dataDir, "shard"),
+		Verbose:        *verbose,
+		Shid:           shid,
+		Valgrind:       *valgrind,
+		WaitForShuckle: true,
+	})
+
+	eggs.WaitForShard(shid, 10*time.Second)
+
+	spawnTests(terminateChan, blockServices)
 
 	// wait for things to finish
 	err := <-terminateChan

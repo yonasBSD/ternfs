@@ -5,12 +5,13 @@ import pyfuse3
 import socket
 import argparse
 import logging
-from typing import cast
+from typing import cast, OrderedDict
 import errno
 import os
 import struct
 import bisect
 import operator
+import collections
 
 from common import *
 from shard_msgs import *
@@ -157,12 +158,33 @@ class FileUnderConstruction:
     offset: int
     current_span: bytearray
 
+class BlockCache:
+    def __init__(self):
+        self._blocks = collections.OrderedDict()
+        self._current_size = 0
+
+    def get_block(self, block_id):
+        res = self._blocks.get(block_id)
+        if res is not None:
+            self._blocks.move_to_end(block_id)
+        return res
+    
+    def store_block(self, block_id, bytes):
+        self._blocks[block_id] = bytes
+        self._current_size += len(bytes)
+        while len(self._blocks) > 2 and self._current_size > (500 << 20): # store at most 500MiB
+            removed_block_id, removed_bytes = self._blocks.popitem(last=False)
+            self._current_size -= len(removed_bytes)
+
 class Operations(pyfuse3.Operations):
     # From inode, to eventual destination.
     _files_under_construction: Dict[int, FileUnderConstruction] = {}
+    _current_block: Optional[Tuple[int, int]] = None
+    _block_cache: BlockCache
 
     def __init__(self):
         super().__init__()
+        self._block_cache = BlockCache()
 
     async def _send_shard_req(self, shard: int, req: ShardRequestBody) -> ShardResponseBody:
         resp = await send_shard_request(shard, req)
@@ -239,7 +261,11 @@ class Operations(pyfuse3.Operations):
                     block_service = spans.block_services[data_block.block_service_ix]
                     if block_service.flags & (BlockFlags.STALE | BlockFlags.TERMINAL):
                         raise pyfuse3.FUSEError(errno.EIO) # TODO better error code?
-                    span_data = await read_block(block_services=spans.block_services, block_size=span.block_size, block=span.body_blocks[0])
+                    block_id = span.body_blocks[0].block_id
+                    span_data = self._block_cache.get_block(block_id)
+                    if span_data is None:
+                        span_data = await read_block(block_services=spans.block_services, block_size=span.block_size, block=span.body_blocks[0])
+                        self._block_cache.store_block(block_id, span_data)
                 # we might be in the middle of a span
                 data += span_data[max(0, offset-span.byte_offset):]
             offset = spans.next_offset

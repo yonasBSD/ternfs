@@ -911,12 +911,23 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    void clear() { _kind = (%s)0; };\n\n", kindTypeName)
+	fmt.Fprintf(hpp, "    size_t packedSize() const;\n")
 	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
 	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf, %s kind);\n", kindTypeName)
 	fmt.Fprintf(hpp, "};\n\n")
 
 	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, const %s& x);\n\n", name)
 
+	fmt.Fprintf(cpp, "size_t %s::packedSize() const {\n", name)
+	fmt.Fprintf(cpp, "    switch (_kind) {\n")
+	for i, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        return std::get<%d>(_data).packedSize();\n", i)
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
 	fmt.Fprintf(cpp, "void %s::pack(BincodeBuf& buf) const {\n", name)
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {

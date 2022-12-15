@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <filesystem>
 
-#include "Shard.hpp"
+#include "CDC.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
@@ -10,10 +10,10 @@ int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const auto dieWithUsage = [&argv]() {
-        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-shuckle] db_dir shard_id\n", argv[0]);
+        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] db_dir\n", argv[0]);
     };
 
-    ShardOptions options;
+    CDCOptions options;
     std::vector<std::string> args;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
@@ -42,14 +42,12 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--log-file") {
             options.logFile = getNextArg();
-        } else if (arg == "--wait-for-shuckle") {
-            options.waitForShuckle = true;
         } else {
             args.emplace_back(std::move(arg));
         }
     }
 
-    if (args.size() != 2) {
+    if (args.size() != 1) {
         dieWithUsage();
     }
 
@@ -62,14 +60,7 @@ int main(int argc, char** argv) {
         die("DB directory `%s' is not a directory.\n", dbDir.c_str());
     }
 
-    size_t processed;
-    int shardId = std::stoi(args.at(1), &processed);
-    if (processed != args.at(1).size() || shardId < 0 || shardId > 255) {
-        die("Invalid shard `%s', expecting a number between 0 and 255.\n", args.at(1).c_str());
-    }
-    ShardId shid(shardId);
-
-    runShard(shid, dbDir, options);
+    runCDC(dbDir, options);
 
     return 0;
 }

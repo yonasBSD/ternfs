@@ -93,22 +93,26 @@ func (h *directHarness) createFile(name string, size uint64) msgs.InodeId {
 			Cookie:       constructResp.Cookie,
 			ByteOffset:   offset,
 			StorageClass: 2,
-			Parity:       msgs.MkParity(1, 0),
+			Parity:       msgs.MkParity(1, 1),
 			Crc32:        [4]byte{0, 0, 0, 0},
 			Size:         thisSpanSize,
 			BlockSize:    thisSpanSize,
 			BodyBlocks: []msgs.NewBlockInfo{
-				{
-					Crc32: [4]byte{0, 0, 0, 0},
-				},
+				{Crc32: [4]byte{0, 0, 0, 0}},
+				{Crc32: [4]byte{0, 0, 0, 0}},
 			},
 		}
 		addSpanResp := msgs.AddSpanInitiateResp{}
 		h.shardReq(&addSpanReq, &addSpanResp)
-		block := &addSpanResp.Blocks[0]
-		blockServiceKey, blockServiceFound := h.blockServicesKeys[block.BlockServiceId]
-		if !blockServiceFound {
-			panic(fmt.Errorf("could not find block service %v", block.BlockServiceId))
+		block0 := &addSpanResp.Blocks[0]
+		block1 := &addSpanResp.Blocks[1]
+		blockServiceKey0, blockServiceFound0 := h.blockServicesKeys[block0.BlockServiceId]
+		if !blockServiceFound0 {
+			panic(fmt.Errorf("could not find block service %v", block0.BlockServiceId))
+		}
+		blockServiceKey1, blockServiceFound1 := h.blockServicesKeys[block1.BlockServiceId]
+		if !blockServiceFound1 {
+			panic(fmt.Errorf("could not find block service %v", block1.BlockServiceId))
 		}
 		certifySpanReq := msgs.AddSpanCertifyReq{
 			FileId:     constructResp.Id,
@@ -116,8 +120,12 @@ func (h *directHarness) createFile(name string, size uint64) msgs.InodeId {
 			ByteOffset: offset,
 			Proofs: []msgs.BlockProof{
 				{
-					BlockId: block.BlockId,
-					Proof:   eggs.BlockAddProof(block.BlockServiceId, block.BlockId, blockServiceKey),
+					BlockId: block0.BlockId,
+					Proof:   eggs.BlockAddProof(block0.BlockServiceId, block0.BlockId, blockServiceKey0),
+				},
+				{
+					BlockId: block1.BlockId,
+					Proof:   eggs.BlockAddProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1),
 				},
 			},
 		}
@@ -599,6 +607,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
+	coverage := flag.Bool("coverage", false, "Whether to build with coverage support. Right now applies only to the C++ shard code.")
 	flag.Parse()
 
 	if *verbose && !*debug {
@@ -609,6 +618,7 @@ func main() {
 		Valgrind: *valgrind,
 		Sanitize: *sanitize,
 		Debug:    *debug,
+		Coverage: *coverage,
 	}
 	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &buildOpts)
 	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})

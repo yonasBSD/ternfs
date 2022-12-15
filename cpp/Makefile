@@ -95,8 +95,14 @@ all: $(binaries_links)
 
 -include $(deps)
 
-%: $(build_dir)%
-	ln -sf $^ $@
+eggs-shard: $(build_dir)eggs-shard
+	ln -sf $(build_dir)$@ $@
+
+eggs-cdc: $(build_dir)eggs-cdc
+	ln -sf $(build_dir)$@ $@
+
+tests: $(build_dir)tests
+	ln -sf $(build_dir)$@ $@
 
 $(build_dir)%: $(build_dir)%.app.o $(filter-out $(build_dir)%.app.o, $(objects))
 	@ echo ld $@
@@ -115,5 +121,5 @@ compile_commands.json: $(sources) Makefile
 clean:
 	rm -rf $(build_dir) $(binaries_links)
 
-.PHONY: clean all
+.PHONY: clean all $(binaries_links)
 .NOTINTERMEDIATE: $(objects) $(binaries) 

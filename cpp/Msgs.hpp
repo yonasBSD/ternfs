@@ -221,7 +221,6 @@ struct ShardRequestHeader {
     ShardMessageKind kind;
 
     void unpack(BincodeBuf& buf) {
-        // TODO MAC
         uint32_t version = buf.unpackScalar<uint32_t>();
         if (version != SHARD_REQ_PROTOCOL_VERSION) {
             throw BINCODE_EXCEPTION("bad shard req protocol version %s, expected %s", version, SHARD_REQ_PROTOCOL_VERSION);
@@ -242,6 +241,40 @@ struct ShardResponseHeader {
 
     void pack(BincodeBuf& buf) {
         buf.packScalar<uint32_t>(SHARD_RESP_PROTOCOL_VERSION);
+        buf.packScalar<uint64_t>(requestId);
+        buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+};
+
+// If this doesn't parse, no point in continuing attempting to parse
+// the request.
+struct CDCRequestHeader {
+    uint64_t requestId;
+    // This is not guaranteed to be a valid shard request kind yet.
+    // The caller will have to validate.
+    CDCMessageKind kind;
+
+    void unpack(BincodeBuf& buf) {
+        uint32_t version = buf.unpackScalar<uint32_t>();
+        if (version != CDC_REQ_PROTOCOL_VERSION) {
+            throw BINCODE_EXCEPTION("bad shard req protocol version %s, expected %s", version, CDC_REQ_PROTOCOL_VERSION);
+        }
+        requestId = buf.unpackScalar<uint64_t>();
+        kind = (CDCMessageKind)buf.unpackScalar<uint8_t>();
+    }
+};
+
+struct CDCResponseHeader {
+    uint64_t requestId;
+    CDCMessageKind kind;
+
+    // protocol + requestId + kind
+    static constexpr uint16_t STATIC_SIZE = 4 + 8 + 1;
+
+    CDCResponseHeader(uint64_t requestId_, CDCMessageKind kind_): requestId(requestId_), kind(kind_) {}
+
+    void pack(BincodeBuf& buf) {
+        buf.packScalar<uint32_t>(CDC_RESP_PROTOCOL_VERSION);
         buf.packScalar<uint64_t>(requestId);
         buf.packScalar<uint8_t>((uint8_t)kind);
     }

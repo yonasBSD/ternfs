@@ -2676,6 +2676,77 @@ MakeFileTransientReq& ShardReqContainer::setMakeFileTransient() {
     x.clear();
     return x;
 }
+size_t ShardReqContainer::packedSize() const {
+    switch (_kind) {
+    case ShardMessageKind::LOOKUP:
+        return std::get<0>(_data).packedSize();
+    case ShardMessageKind::STAT_FILE:
+        return std::get<1>(_data).packedSize();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return std::get<2>(_data).packedSize();
+    case ShardMessageKind::STAT_DIRECTORY:
+        return std::get<3>(_data).packedSize();
+    case ShardMessageKind::READ_DIR:
+        return std::get<4>(_data).packedSize();
+    case ShardMessageKind::CONSTRUCT_FILE:
+        return std::get<5>(_data).packedSize();
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        return std::get<6>(_data).packedSize();
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        return std::get<7>(_data).packedSize();
+    case ShardMessageKind::LINK_FILE:
+        return std::get<8>(_data).packedSize();
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        return std::get<9>(_data).packedSize();
+    case ShardMessageKind::FILE_SPANS:
+        return std::get<10>(_data).packedSize();
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        return std::get<11>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return std::get<12>(_data).packedSize();
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        return std::get<13>(_data).packedSize();
+    case ShardMessageKind::VISIT_FILES:
+        return std::get<14>(_data).packedSize();
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        return std::get<15>(_data).packedSize();
+    case ShardMessageKind::FULL_READ_DIR:
+        return std::get<16>(_data).packedSize();
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        return std::get<17>(_data).packedSize();
+    case ShardMessageKind::INTRA_SHARD_HARD_FILE_UNLINK:
+        return std::get<18>(_data).packedSize();
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        return std::get<19>(_data).packedSize();
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        return std::get<20>(_data).packedSize();
+    case ShardMessageKind::SWAP_BLOCKS:
+        return std::get<21>(_data).packedSize();
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        return std::get<22>(_data).packedSize();
+    case ShardMessageKind::REMOVE_INODE:
+        return std::get<23>(_data).packedSize();
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        return std::get<24>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        return std::get<25>(_data).packedSize();
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        return std::get<26>(_data).packedSize();
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        return std::get<27>(_data).packedSize();
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        return std::get<28>(_data).packedSize();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return std::get<29>(_data).packedSize();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return std::get<30>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return std::get<31>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+    }
+}
+
 void ShardReqContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case ShardMessageKind::LOOKUP:
@@ -3307,6 +3378,77 @@ MakeFileTransientResp& ShardRespContainer::setMakeFileTransient() {
     x.clear();
     return x;
 }
+size_t ShardRespContainer::packedSize() const {
+    switch (_kind) {
+    case ShardMessageKind::LOOKUP:
+        return std::get<0>(_data).packedSize();
+    case ShardMessageKind::STAT_FILE:
+        return std::get<1>(_data).packedSize();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return std::get<2>(_data).packedSize();
+    case ShardMessageKind::STAT_DIRECTORY:
+        return std::get<3>(_data).packedSize();
+    case ShardMessageKind::READ_DIR:
+        return std::get<4>(_data).packedSize();
+    case ShardMessageKind::CONSTRUCT_FILE:
+        return std::get<5>(_data).packedSize();
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        return std::get<6>(_data).packedSize();
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        return std::get<7>(_data).packedSize();
+    case ShardMessageKind::LINK_FILE:
+        return std::get<8>(_data).packedSize();
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        return std::get<9>(_data).packedSize();
+    case ShardMessageKind::FILE_SPANS:
+        return std::get<10>(_data).packedSize();
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        return std::get<11>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return std::get<12>(_data).packedSize();
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        return std::get<13>(_data).packedSize();
+    case ShardMessageKind::VISIT_FILES:
+        return std::get<14>(_data).packedSize();
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        return std::get<15>(_data).packedSize();
+    case ShardMessageKind::FULL_READ_DIR:
+        return std::get<16>(_data).packedSize();
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        return std::get<17>(_data).packedSize();
+    case ShardMessageKind::INTRA_SHARD_HARD_FILE_UNLINK:
+        return std::get<18>(_data).packedSize();
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        return std::get<19>(_data).packedSize();
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        return std::get<20>(_data).packedSize();
+    case ShardMessageKind::SWAP_BLOCKS:
+        return std::get<21>(_data).packedSize();
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        return std::get<22>(_data).packedSize();
+    case ShardMessageKind::REMOVE_INODE:
+        return std::get<23>(_data).packedSize();
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        return std::get<24>(_data).packedSize();
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        return std::get<25>(_data).packedSize();
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        return std::get<26>(_data).packedSize();
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        return std::get<27>(_data).packedSize();
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        return std::get<28>(_data).packedSize();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return std::get<29>(_data).packedSize();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return std::get<30>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return std::get<31>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+    }
+}
+
 void ShardRespContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case ShardMessageKind::LOOKUP:
@@ -3705,6 +3847,25 @@ HardUnlinkFileReq& CDCReqContainer::setHardUnlinkFile() {
     x.clear();
     return x;
 }
+size_t CDCReqContainer::packedSize() const {
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        return std::get<0>(_data).packedSize();
+    case CDCMessageKind::RENAME_FILE:
+        return std::get<1>(_data).packedSize();
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        return std::get<2>(_data).packedSize();
+    case CDCMessageKind::RENAME_DIRECTORY:
+        return std::get<3>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return std::get<4>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        return std::get<5>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+    }
+}
+
 void CDCReqContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case CDCMessageKind::MAKE_DIRECTORY:
@@ -3842,6 +4003,25 @@ HardUnlinkFileResp& CDCRespContainer::setHardUnlinkFile() {
     x.clear();
     return x;
 }
+size_t CDCRespContainer::packedSize() const {
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        return std::get<0>(_data).packedSize();
+    case CDCMessageKind::RENAME_FILE:
+        return std::get<1>(_data).packedSize();
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        return std::get<2>(_data).packedSize();
+    case CDCMessageKind::RENAME_DIRECTORY:
+        return std::get<3>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return std::get<4>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_FILE:
+        return std::get<5>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+    }
+}
+
 void CDCRespContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case CDCMessageKind::MAKE_DIRECTORY:
@@ -4755,6 +4935,55 @@ RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::setRemoveOwnedSnapshot
     x.clear();
     return x;
 }
+size_t ShardLogEntryContainer::packedSize() const {
+    switch (_kind) {
+    case ShardLogEntryKind::CONSTRUCT_FILE:
+        return std::get<0>(_data).packedSize();
+    case ShardLogEntryKind::LINK_FILE:
+        return std::get<1>(_data).packedSize();
+    case ShardLogEntryKind::SAME_DIRECTORY_RENAME:
+        return std::get<2>(_data).packedSize();
+    case ShardLogEntryKind::SOFT_UNLINK_FILE:
+        return std::get<3>(_data).packedSize();
+    case ShardLogEntryKind::CREATE_DIRECTORY_INODE:
+        return std::get<4>(_data).packedSize();
+    case ShardLogEntryKind::CREATE_LOCKED_CURRENT_EDGE:
+        return std::get<5>(_data).packedSize();
+    case ShardLogEntryKind::UNLOCK_CURRENT_EDGE:
+        return std::get<6>(_data).packedSize();
+    case ShardLogEntryKind::LOCK_CURRENT_EDGE:
+        return std::get<7>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_DIRECTORY_OWNER:
+        return std::get<8>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_INODE:
+        return std::get<9>(_data).packedSize();
+    case ShardLogEntryKind::SET_DIRECTORY_OWNER:
+        return std::get<10>(_data).packedSize();
+    case ShardLogEntryKind::SET_DIRECTORY_INFO:
+        return std::get<11>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
+        return std::get<12>(_data).packedSize();
+    case ShardLogEntryKind::INTRA_SHARD_HARD_FILE_UNLINK:
+        return std::get<13>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
+        return std::get<14>(_data).packedSize();
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        return std::get<15>(_data).packedSize();
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        return std::get<16>(_data).packedSize();
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        return std::get<17>(_data).packedSize();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        return std::get<18>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        return std::get<19>(_data).packedSize();
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return std::get<20>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
+    }
+}
+
 void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     switch (_kind) {
     case ShardLogEntryKind::CONSTRUCT_FILE:

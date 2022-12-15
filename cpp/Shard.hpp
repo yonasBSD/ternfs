@@ -1,11 +1,7 @@
 #pragma once
 
-#include <atomic>
-
 #include "Msgs.hpp"
 #include "Env.hpp"
-#include "ShardDB.hpp"
-#include "Undertaker.hpp"
 
 struct ShardOptions {
     bool waitForShuckle = false;

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -46,15 +47,23 @@ func cppDir() string {
 	return path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
 }
 
-type managedProcess struct {
-	cmd        *exec.Cmd
-	name       string
-	exitedChan chan struct{}
+type ManagedProcess struct {
+	cmd             *exec.Cmd
+	name            string
+	terminateOnExit bool
+	exitedChan      chan struct{}
+}
+
+// Returns no error because `terminateChan` is used to propagate errors
+// upwards anyway.
+func (proc *ManagedProcess) Wait() {
+	<-proc.exitedChan
+	proc.exitedChan <- struct{}{} // continue other waiters
 }
 
 type ManagedProcesses struct {
 	terminateChan  chan any
-	processes      []managedProcess
+	processes      []ManagedProcess
 	closeInitiated uint32
 	printLock      sync.Mutex
 }
@@ -77,6 +86,11 @@ type ManagedProcessArgs struct {
 	StdoutFile string
 	StderrFile string
 	Env        []string
+	// If `TerminateOnExit` is true, then `terminateChan` will be
+	// filled in with an error if the process terminates without
+	// an error. Useful for background process that are supposed
+	// to be up the whole time.
+	TerminateOnExit bool
 }
 
 type ManagedProcessTerminated struct{}
@@ -119,10 +133,10 @@ func closeOut(out io.Writer) {
 	}
 }
 
-func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) {
+func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) *ManagedProcess {
 	exitedChan := make(chan struct{}, 1)
 
-	procs.processes = append(procs.processes, managedProcess{
+	procs.processes = append(procs.processes, ManagedProcess{
 		cmd:        exec.Command(args.Exe, args.Args...),
 		name:       args.Name,
 		exitedChan: exitedChan,
@@ -137,6 +151,8 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) {
 		Setpgid: true, // do not propagate SIGINT, we do our own signal handling
 	}
 
+	proc.terminateOnExit = args.TerminateOnExit
+
 	if args.Env != nil {
 		proc.cmd.Env = args.Env
 	}
@@ -150,9 +166,11 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) {
 
 		if atomic.LoadUint32(&procs.closeInitiated) == 0 {
 			if err == nil {
-				select {
-				case procs.terminateChan <- fmt.Errorf("%s died", proc.name):
-				default:
+				if proc.terminateOnExit {
+					select {
+					case procs.terminateChan <- fmt.Errorf("%s died", proc.name):
+					default:
+					}
 				}
 			} else {
 				procs.printLock.Lock()
@@ -174,6 +192,8 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) {
 
 		exitedChan <- struct{}{}
 	}()
+
+	return proc
 }
 
 func (procs *ManagedProcesses) Close() {
@@ -194,6 +214,7 @@ func (procs *ManagedProcesses) Close() {
 				proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
 			}()
 			<-proc.exitedChan
+			proc.exitedChan <- struct{}{}
 			wait.Done()
 		}()
 	}
@@ -261,8 +282,9 @@ func (procs *ManagedProcesses) StartBlockService(opts *BlockServiceOpts) {
 		args = append(args, "--shuckle_host", opts.ShuckleHost)
 	}
 	mpArgs := ManagedProcessArgs{
-		StdoutFile: path.Join(opts.Path, "stdout"),
-		StderrFile: path.Join(opts.Path, "stderr"),
+		TerminateOnExit: true,
+		StdoutFile:      path.Join(opts.Path, "stdout"),
+		StderrFile:      path.Join(opts.Path, "stderr"),
 	}
 	procs.StartPythonScript(
 		fmt.Sprintf("block service (port %d)", opts.Port),
@@ -281,7 +303,7 @@ func (procs *ManagedProcesses) StartCDC(dir string, verbose bool) {
 	if verbose {
 		args = append(args, "--verbose")
 	}
-	procs.StartPythonScript("cdc", "cdc.py", args, &ManagedProcessArgs{})
+	procs.StartPythonScript("cdc", "cdc.py", args, &ManagedProcessArgs{TerminateOnExit: true})
 }
 
 type ShuckleOpts struct {
@@ -301,11 +323,12 @@ func (procs *ManagedProcesses) StartShuckle(opts *ShuckleOpts) {
 		args = append(args, "-verbose")
 	}
 	procs.Start(&ManagedProcessArgs{
-		Name:       "shuckle",
-		Exe:        opts.Exe,
-		Args:       args,
-		StdoutFile: path.Join(opts.Dir, "stdout"),
-		StderrFile: path.Join(opts.Dir, "stderr"),
+		Name:            "shuckle",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Dir, "stdout"),
+		StderrFile:      path.Join(opts.Dir, "stderr"),
+		TerminateOnExit: true,
 	})
 }
 
@@ -367,11 +390,12 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 		args = append(args, "--wait-for-shuckle")
 	}
 	mpArgs := ManagedProcessArgs{
-		Name:       fmt.Sprintf("shard %v", opts.Shid),
-		Exe:        opts.Exe,
-		Args:       args,
-		StdoutFile: path.Join(opts.Dir, "stdout"),
-		StderrFile: path.Join(opts.Dir, "stderr"),
+		Name:            fmt.Sprintf("shard %v", opts.Shid),
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Dir, "stdout"),
+		StderrFile:      path.Join(opts.Dir, "stderr"),
+		TerminateOnExit: true,
 	}
 	if opts.Valgrind {
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)
@@ -427,6 +451,7 @@ type BuildShardOpts struct {
 	Valgrind bool
 	Sanitize bool
 	Debug    bool
+	Coverage bool
 }
 
 func BuildShardExe(ll LogLevels, opts *BuildShardOpts) string {
@@ -439,6 +464,9 @@ func BuildShardExe(ll LogLevels, opts *BuildShardOpts) string {
 	}
 	if opts.Debug {
 		buildArgs = append(buildArgs, "debug=yes")
+	}
+	if opts.Coverage {
+		buildArgs = append(buildArgs, "coverage=yes")
 	}
 	buildArgs = append(buildArgs, "eggs-shard")
 	buildCmd := exec.Command("make", buildArgs...)
@@ -454,5 +482,10 @@ func BuildShardExe(ll LogLevels, opts *BuildShardOpts) string {
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build shard: %w", err))
 	}
-	return path.Join(cppDir, "eggs-shard")
+	// Nicer for stuff like coverage files
+	exe, err := filepath.EvalSymlinks(path.Join(cppDir, "eggs-shard"))
+	if err != nil {
+		panic(fmt.Errorf("could not resolve symlink: %w", err))
+	}
+	return exe
 }

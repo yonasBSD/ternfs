@@ -32,9 +32,14 @@ func loop(log eggs.LogLevels, panicChan chan error, body func()) {
 }
 
 func main() {
-	verbose := flag.Bool("verbose", false, "enables debug logging")
-	shards := flag.String("shards", "", "specific shards to collect on, comma-separated")
+	verbose := flag.Bool("verbose", false, "Enables debug logging.")
+	shard := flag.Int("shard", -1, "Which shard to collect on.")
+	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
+	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	flag.Parse()
+
+	logger := eggs.NewLogger()
+	ll := eggs.LogLogger
 
 	logger := log.New(os.Stderr, "", log.Lshortfile)
 

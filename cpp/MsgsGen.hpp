@@ -2227,6 +2227,7 @@ public:
 
     void clear() { _kind = (ShardMessageKind)0; };
 
+    size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
 };
@@ -2306,6 +2307,7 @@ public:
 
     void clear() { _kind = (ShardMessageKind)0; };
 
+    size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
 };
@@ -2345,6 +2347,7 @@ public:
 
     void clear() { _kind = (CDCMessageKind)0; };
 
+    size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
 };
@@ -2372,6 +2375,7 @@ public:
 
     void clear() { _kind = (CDCMessageKind)0; };
 
+    size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
 };
@@ -2963,6 +2967,7 @@ public:
 
     void clear() { _kind = (ShardLogEntryKind)0; };
 
+    size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardLogEntryKind kind);
 };

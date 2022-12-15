@@ -18,6 +18,7 @@
 #include "CDCKey.hpp"
 #include "Shuckle.hpp"
 #include "Time.hpp"
+#include "Undertaker.hpp"
 
 // Data needed to synchronize between the different threads
 struct Shared {
@@ -55,9 +56,7 @@ public:
         _shid(shid),
         _stop(false),
         _waitForShuckle(options.waitForShuckle)
-    {
-        std::cerr << "Running Server with waitForShuckle=" << ((int)_waitForShuckle) << std::endl;
-    }
+    {}
 
     virtual ~Server() = default;
 

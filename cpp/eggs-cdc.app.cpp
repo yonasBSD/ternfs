@@ -51,6 +51,12 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
+#ifndef EGGS_DEBUG
+    if (options.level <= LogLevel::LOG_DEBUG) {
+        die("Cannot use --verbose for non-debug builds (it won't work).");
+    }
+#endif
+
     fs::path dbDir(args.at(0));
     auto dbDirStatus = fs::status(dbDir);
     if (dbDirStatus.type() == fs::file_type::not_found) {

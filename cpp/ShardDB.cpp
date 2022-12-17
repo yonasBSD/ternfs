@@ -24,7 +24,6 @@
 #include "splitmix64.hpp"
 
 // TODO maybe revisit all those ALWAYS_ASSERTs
-// TODO can we pre-allocate the value strings rather than allocating each stupid time?
 
 // ## High level design
 //
@@ -152,23 +151,26 @@
 // 
 // TODO fill in results
 
-static uint64_t computeHash(HashMode mode, const BincodeBytes& bytes) {
+static uint64_t computeHash(HashMode mode, const BincodeBytesRef& bytes) {
     switch (mode) {
     case HashMode::XXH3_63:
         // TODO remove this chopping, pyfuse3 doesn't currently like
         // full 64-bit hashes.
-        return XXH3_64bits(bytes.data, bytes.length) & ~(1ull<<63);
+        return XXH3_64bits(bytes.data(), bytes.size()) & ~(1ull<<63);
     default:
         throw EGGS_EXCEPTION("bad hash mode %s", (int)mode);
     }
 }
 
-static bool validName(const BincodeBytes& name) {
-    if (name == BincodeBytes(".") || name == BincodeBytes("..")) {
+static bool validName(const BincodeBytesRef& name) {
+    if (name.size() == 0) {
         return false;
     }
-    for (int i = 0; i < name.length; i++) {
-        if (name.data[i] == (uint8_t)'/') {
+    if (name == BincodeBytesRef(".") || name == BincodeBytesRef("..")) {
+        return false;
+    }
+    for (int i = 0; i < name.size(); i++) {
+        if (name.data()[i] == (uint8_t)'/' || name.data()[i] == 0) {
             return false;
         }
     }
@@ -201,6 +203,10 @@ struct ShardDBImpl {
 
     ShardId _shid;
     std::array<uint8_t, 16> _secretKey;
+    
+    // TODO it would be good to store basically all of the metadata in memory,
+    // so that we'd just read from it, but this requires a bit of care when writing
+    // since we rollback on error.
 
     // These two block services things change infrequently, and are used to add spans
     // -- keep them in memory.
@@ -288,18 +294,18 @@ struct ShardDBImpl {
                 ROCKS_DB_CHECKED(status);
                 shardInfoExists = true;
                 auto shardInfo = ExternalValue<ShardInfoBody>::FromSlice(value);
-                if (shardInfo->shardId() != _shid) {
-                    throw EGGS_EXCEPTION("expected shard id %s, but found %s in DB", _shid, shardInfo->shardId());
+                if (shardInfo().shardId() != _shid) {
+                    throw EGGS_EXCEPTION("expected shard id %s, but found %s in DB", _shid, shardInfo().shardId());
                 }
-                _secretKey = shardInfo->secretKey();
+                _secretKey = shardInfo().secretKey();
             }
         }
         if (!shardInfoExists) {
             LOG_INFO(_env, "creating shard info, since it does not exist");
             generateSecretKey(_secretKey);
             StaticValue<ShardInfoBody> shardInfo;
-            shardInfo->setShardId(_shid);
-            shardInfo->setSecretKey(_secretKey);
+            shardInfo().setShardId(_shid);
+            shardInfo().setSecretKey(_secretKey);
             ROCKS_DB_CHECKED(_db->Put({}, shardMetadataKey(&SHARD_INFO_KEY), shardInfo.toSlice()));
         }
 
@@ -318,14 +324,13 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
             if (!keyExists(_directoriesCf, k.toSlice())) {
                 LOG_INFO(_env, "creating root directory, since it does not exist");
-                char buf[255];
-                auto info = defaultDirectoryInfo(buf);
+                auto info = defaultDirectoryInfo();
                 StaticValue<DirectoryBody> dirBody;
-                dirBody->setOwnerId(NULL_INODE_ID);
-                dirBody->setMtime({});
-                dirBody->setHashMode(HashMode::XXH3_63);
-                dirBody->setInfoInherited(false);
-                dirBody->setInfo(info);
+                dirBody().setOwnerId(NULL_INODE_ID);
+                dirBody().setMtime({});
+                dirBody().setHashMode(HashMode::XXH3_63);
+                dirBody().setInfoInherited(false);
+                dirBody().setInfo(info);
                 auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
                 ROCKS_DB_CHECKED(_db->Put({}, _directoriesCf, k.toSlice(), dirBody.toSlice()));
             }
@@ -346,7 +351,7 @@ struct ShardDBImpl {
         if (!keyExists(_defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY))) {
             LOG_INFO(_env, "initializing next block id");
             StaticValue<U64Value> v;
-            v->setU64(_shid.u8);
+            v().setU64(_shid.u8);
             ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), v.toSlice()));
         }
 
@@ -359,16 +364,16 @@ struct ShardDBImpl {
         if (!keyExists(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY))) {
             LOG_INFO(_env, "initializing current block services (as empty)");
             OwnedValue<CurrentBlockServicesBody> v(0);
-            v->setLength(0);
+            v().setLength(0);
             ROCKS_DB_CHECKED(_db->Put({}, _defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), v.toSlice()));
         } else {
             LOG_INFO(_env, "initializing block services cache (from db)");
             std::string buf;
             ROCKS_DB_CHECKED(_db->Get({}, _defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), &buf));
             ExternalValue<CurrentBlockServicesBody> v(buf);
-            _currentBlockServices.resize(v->length());
-            for (int i = 0; i < v->length(); i++) {
-                _currentBlockServices[i] = v->at(i);
+            _currentBlockServices.resize(v().length());
+            for (int i = 0; i < v().length(); i++) {
+                _currentBlockServices[i] = v().at(i);
             }
             {
                 rocksdb::ReadOptions options;
@@ -378,17 +383,17 @@ struct ShardDBImpl {
                 options.iterate_upper_bound = &upperBoundSlice;
                 WrappedIterator it(_db->NewIterator(options, _defaultCf));
                 StaticValue<BlockServiceKey> beginKey;
-                beginKey->setKey(BLOCK_SERVICE_KEY);
-                beginKey->setBlockServiceId(0);
+                beginKey().setKey(BLOCK_SERVICE_KEY);
+                beginKey().setBlockServiceId(0);
                 for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                     auto k = ExternalValue<BlockServiceKey>::FromSlice(it->key());
-                    ALWAYS_ASSERT(k->key() == BLOCK_SERVICE_KEY);
+                    ALWAYS_ASSERT(k().key() == BLOCK_SERVICE_KEY);
                     auto v = ExternalValue<BlockServiceBody>::FromSlice(it->value());
-                    auto& cache = _blockServicesCache[k->blockServiceId()];
-                    cache.ip = v->ip();
-                    cache.port = v->port();
-                    cache.secretKey = v->secretKey();
-                    cache.storageClass = v->storageClass();
+                    auto& cache = _blockServicesCache[k().blockServiceId()];
+                    cache.ip = v().ip();
+                    cache.port = v().port();
+                    cache.secretKey = v().secretKey();
+                    cache.storageClass = v().storageClass();
                 }
             }
         }
@@ -404,12 +409,12 @@ struct ShardDBImpl {
         if (err != NO_ERROR) {
             return err;
         }
-        resp.mtime = file->mtime();
-        resp.size = file->fileSize();
+        resp.mtime = file().mtime();
+        resp.size = file().fileSize();
         return NO_ERROR;
     }
 
-    EggsError _statTransientFile(const StatTransientFileReq& req, BincodeBytesScratchpad& scratch, StatTransientFileResp& resp) {
+    EggsError _statTransientFile(const StatTransientFileReq& req, StatTransientFileResp& resp) {
         std::string fileValue;
         {
             auto k = InodeIdKey::Static(req.id);
@@ -420,13 +425,13 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(status);
         }
         auto body = ExternalValue<TransientFileBody>::FromSlice(fileValue);
-        resp.mtime = body->mtime();
-        resp.size = body->fileSize();
-        scratch.copyTo(body->note(), resp.note);
+        resp.mtime = body().mtime();
+        resp.size = body().fileSize();
+        resp.note = body().note();
         return NO_ERROR;
     }
 
-    EggsError _statDirectory(const StatDirectoryReq& req, BincodeBytesScratchpad& scratch, StatDirectoryResp& resp) {
+    EggsError _statDirectory(const StatDirectoryReq& req, StatDirectoryResp& resp) {
         std::string dirValue;
         ExternalValue<DirectoryBody> dir;
         // allowSnapshot=true, the caller can very easily detect if it's snapshot or not
@@ -434,13 +439,13 @@ struct ShardDBImpl {
         if (err != NO_ERROR) {
             return err;
         }
-        resp.mtime = dir->mtime();
-        resp.owner = dir->ownerId();
-        scratch.copyTo(dir->info(), resp.info);
+        resp.mtime = dir().mtime();
+        resp.owner = dir().ownerId();
+        resp.info = dir().info();
         return NO_ERROR;
     }
 
-    EggsError _readDir(const ReadDirReq& req, BincodeBytesScratchpad& scratch, ReadDirResp& resp) {
+    EggsError _readDir(const ReadDirReq& req, ReadDirResp& resp) {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
@@ -461,27 +466,27 @@ struct ShardDBImpl {
         {
             auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
-            beginKey->setDirIdWithCurrent(req.dirId, true); // current = true
-            beginKey->setNameHash(req.startHash);
-            beginKey->setName({});
+            beginKey().setDirIdWithCurrent(req.dirId, true); // current = true
+            beginKey().setNameHash(req.startHash);
+            beginKey().setName({});
             int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - ReadDirResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (key->dirId() != req.dirId || !key->current()) {
+                if (key().dirId() != req.dirId || !key().current()) {
                     resp.nextHash = 0; // we've ran out of edges
                     break;
                 }
                 auto edge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
                 CurrentEdge& respEdge = resp.results.els.emplace_back();
-                respEdge.targetId = edge->targetIdWithLocked().id();
-                respEdge.nameHash = key->nameHash();
-                scratch.copyTo(key->name(), respEdge.name);
-                respEdge.creationTime = edge->creationTime();
+                respEdge.targetId = edge().targetIdWithLocked().id();
+                respEdge.nameHash = key().nameHash();
+                respEdge.name = key().name();
+                respEdge.creationTime = edge().creationTime();
                 budget -= respEdge.packedSize();
                 if (budget < 0) {
-                    resp.nextHash = key->nameHash();
+                    resp.nextHash = key().nameHash();
                     // remove the current element, and also, do not have straddling hashes
-                    while (!resp.results.els.empty() && resp.results.els.back().nameHash == key->nameHash()) {
+                    while (!resp.results.els.empty() && resp.results.els.back().nameHash == key().nameHash()) {
                         resp.results.els.pop_back();
                     }
                     break;
@@ -493,7 +498,7 @@ struct ShardDBImpl {
         return NO_ERROR;   
     }
 
-    EggsError _fullReadDir(const FullReadDirReq& req, BincodeBytesScratchpad& scratch, FullReadDirResp& resp) {
+    EggsError _fullReadDir(const FullReadDirReq& req, FullReadDirResp& resp) {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
@@ -504,35 +509,35 @@ struct ShardDBImpl {
         {
             auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
-            beginKey->setDirIdWithCurrent(req.dirId, req.cursor.current);
-            beginKey->setNameHash(req.cursor.startHash);
-            beginKey->setName(req.cursor.startName);
+            beginKey().setDirIdWithCurrent(req.dirId, req.cursor.current);
+            beginKey().setNameHash(req.cursor.startHash);
+            beginKey().setName(req.cursor.startName);
             if (!req.cursor.current) {
-                beginKey->setCreationTime(req.cursor.startTime);
+                beginKey().setCreationTime(req.cursor.startTime);
             } else {
                 ALWAYS_ASSERT(req.cursor.startTime == 0); // TODO proper error at validation time
             }
             int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (key->dirId() != req.dirId) {
+                if (key().dirId() != req.dirId) {
                     break;
                 }
                 auto& respEdge = resp.results.els.emplace_back();
-                if (key->current()) {
+                if (key().current()) {
                     auto edge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
-                    respEdge.current = key->current();
-                    respEdge.targetId = edge->targetIdWithLocked();
-                    respEdge.nameHash = key->nameHash();
-                    scratch.copyTo(key->name(), respEdge.name);
-                    respEdge.creationTime = edge->creationTime();
+                    respEdge.current = key().current();
+                    respEdge.targetId = edge().targetIdWithLocked();
+                    respEdge.nameHash = key().nameHash();
+                    respEdge.name = key().name();
+                    respEdge.creationTime = edge().creationTime();
                 } else {
                     auto edge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
-                    respEdge.current = key->current();
-                    respEdge.targetId = edge->targetIdWithOwned();
-                    respEdge.nameHash = key->nameHash();
-                    scratch.copyTo(key->name(), respEdge.name);
-                    respEdge.creationTime = key->creationTime();
+                    respEdge.current = key().current();
+                    respEdge.targetId = edge().targetIdWithOwned();
+                    respEdge.nameHash = key().nameHash();
+                    respEdge.name = key().name();
+                    respEdge.creationTime = key().creationTime();
                 }
                 budget -= respEdge.packedSize();
                 if (budget < 0) {
@@ -542,7 +547,7 @@ struct ShardDBImpl {
                         budget += last.packedSize();
                         resp.next.current = last.current;
                         resp.next.startHash = last.nameHash;
-                        scratch.copyTo(last.name, resp.next.startName);
+                        resp.next.startName = last.name;
                         resp.next.startTime = last.current ? 0 : last.creationTime;
                         resp.results.els.pop_back();
                         budget += prevCursorSize;
@@ -581,14 +586,14 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir->hashMode(), req.name);
+            nameHash = computeHash(dir().hashMode(), req.name);
         }
 
         {
             StaticValue<EdgeKey> reqKey;
-            reqKey->setDirIdWithCurrent(req.dirId, true); // current=true
-            reqKey->setNameHash(nameHash);
-            reqKey->setName(req.name);
+            reqKey().setDirIdWithCurrent(req.dirId, true); // current=true
+            reqKey().setNameHash(nameHash);
+            reqKey().setName(req.name);
             std::string edgeValue;
             auto status = _db->Get(options, _edgesCf, reqKey.toSlice(), &edgeValue);
             if (status.IsNotFound()) {
@@ -596,14 +601,14 @@ struct ShardDBImpl {
             }
             ROCKS_DB_CHECKED(status);
             ExternalValue<CurrentEdgeBody> edge(edgeValue);
-            resp.creationTime = edge->creationTime();
-            resp.targetId = edge->targetIdWithLocked().id();
+            resp.creationTime = edge().creationTime();
+            resp.targetId = edge().targetIdWithLocked().id();
         }
 
         return NO_ERROR;        
     }
 
-    EggsError _visitTransientFiles(const VisitTransientFilesReq& req, BincodeBytesScratchpad& scratch, VisitTransientFilesResp& resp) {
+    EggsError _visitTransientFiles(const VisitTransientFilesReq& req, VisitTransientFilesResp& resp) {
         resp.nextId = NULL_INODE_ID;
 
         {
@@ -615,9 +620,9 @@ struct ShardDBImpl {
                 auto file = ExternalValue<TransientFileBody>::FromSlice(it->value());
 
                 auto& respFile = resp.files.els.emplace_back();
-                respFile.id = id->id();
+                respFile.id = id().id();
                 respFile.cookie.data = _calcCookie(respFile.id);
-                respFile.deadlineTime = file->deadline();
+                respFile.deadlineTime = file().deadline();
 
                 budget -= respFile.packedSize();
                 if (budget <= 0) {
@@ -632,7 +637,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _visitDirectories(const VisitDirectoriesReq& req, BincodeBytesScratchpad& scratch, VisitDirectoriesResp& resp) {
+    EggsError _visitDirectories(const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
         resp.nextId = NULL_INODE_ID;
 
         int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - VisitDirectoriesResp::STATIC_SIZE;
@@ -646,7 +651,7 @@ struct ShardDBImpl {
                 it->Next()
             ) {
                 auto id = ExternalValue<InodeIdKey>::FromSlice(it->key());
-                resp.ids.els.emplace_back(id->id());
+                resp.ids.els.emplace_back(id().id());
             }
         }
 
@@ -658,7 +663,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
     
-    EggsError _fileSpans(const FileSpansReq& req, BincodeBytesScratchpad& scratch, FileSpansResp& resp) {
+    EggsError _fileSpans(const FileSpansReq& req, FileSpansResp& resp) {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
@@ -690,29 +695,29 @@ struct ShardDBImpl {
         };
 
         StaticValue<SpanKey> beginKey;
-        beginKey->setFileId(req.fileId);
-        beginKey->setOffset(req.byteOffset);
+        beginKey().setFileId(req.fileId);
+        beginKey().setOffset(req.byteOffset);
         {
             WrappedIterator it(_db->NewIterator(options, _spansCf));
             for (it->SeekForPrev(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<SpanKey>::FromSlice(it->key());
-                if (key->fileId() != req.fileId) {
+                if (key().fileId() != req.fileId) {
                     break;
                 }
                 auto value = ExternalValue<SpanBody>::FromSlice(it->value());
                 auto& respSpan = resp.spans.els.emplace_back();
-                respSpan.byteOffset = key->offset();
-                respSpan.parity = value->parity();
-                respSpan.storageClass = value->storageClass();
-                respSpan.crc32 = value->crc32();
-                respSpan.size = value->spanSize();
-                respSpan.blockSize = value->blockSize();
-                if (value->storageClass() == INLINE_STORAGE) {
-                    scratch.copyTo(value->inlineBody(), respSpan.bodyBytes);
+                respSpan.byteOffset = key().offset();
+                respSpan.parity = value().parity();
+                respSpan.storageClass = value().storageClass();
+                respSpan.crc32 = value().crc32();
+                respSpan.size = value().spanSize();
+                respSpan.blockSize = value().blockSize();
+                if (value().storageClass() == INLINE_STORAGE) {
+                    respSpan.bodyBytes = value().inlineBody();
                 } else {
-                    respSpan.bodyBytes = BincodeBytes();
-                    for (int i = 0; i < value->parity().blocks(); i++) {
-                        auto block = value->block(i);
+                    respSpan.bodyBytes.clear();
+                    for (int i = 0; i < value().parity().blocks(); i++) {
+                        auto block = value().block(i);
                         int blockServiceIx = addBlockService(block.blockServiceId);
                         if (blockServiceIx < 0) {
                             break; // no need to break in outer loop -- we will break out anyway because budget < 0
@@ -746,16 +751,16 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _blockServiceFiles(const BlockServiceFilesReq& req, BincodeBytesScratchpad& scratch, BlockServiceFilesResp& resp) {
+    EggsError _blockServiceFiles(const BlockServiceFilesReq& req, BlockServiceFilesResp& resp) {
         int maxFiles = (UDP_MTU - ShardResponseHeader::STATIC_SIZE - BlockServiceFilesResp::STATIC_SIZE) / 8;
         resp.fileIds.els.reserve(maxFiles);
 
         StaticValue<BlockServiceToFileKey> beginKey;
-        beginKey->setBlockServiceId(req.blockServiceId);
-        beginKey->setFileId(req.startFrom);
+        beginKey().setBlockServiceId(req.blockServiceId);
+        beginKey().setFileId(req.startFrom);
         StaticValue<BlockServiceToFileKey> endKey;
-        beginKey->setBlockServiceId(req.blockServiceId+1);
-        beginKey->setFileId(NULL_INODE_ID);
+        beginKey().setBlockServiceId(req.blockServiceId+1);
+        beginKey().setFileId(NULL_INODE_ID);
         auto endKeySlice = endKey.toSlice();
 
         rocksdb::ReadOptions options;
@@ -768,17 +773,16 @@ struct ShardDBImpl {
             it->Next(), i++
         ) {
             auto key = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
-            resp.fileIds.els.emplace_back(key->fileId());
+            resp.fileIds.els.emplace_back(key().fileId());
         }
         ROCKS_DB_CHECKED(it->status());
         return NO_ERROR;
     }
 
-    EggsError read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+    EggsError read(const ShardReqContainer& req, ShardRespContainer& resp) {
         LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
 
         EggsError err = NO_ERROR;
-        scratch.reset();
         resp.clear();
 
         switch (req.kind()) {
@@ -786,31 +790,31 @@ struct ShardDBImpl {
             err = _statFile(req.getStatFile(), resp.setStatFile());
             break;
         case ShardMessageKind::READ_DIR:
-            err = _readDir(req.getReadDir(), scratch, resp.setReadDir());
+            err = _readDir(req.getReadDir(), resp.setReadDir());
             break;
         case ShardMessageKind::STAT_DIRECTORY:
-            err = _statDirectory(req.getStatDirectory(), scratch, resp.setStatDirectory());
+            err = _statDirectory(req.getStatDirectory(), resp.setStatDirectory());
             break;
         case ShardMessageKind::STAT_TRANSIENT_FILE:
-            err = _statTransientFile(req.getStatTransientFile(), scratch, resp.setStatTransientFile());
+            err = _statTransientFile(req.getStatTransientFile(), resp.setStatTransientFile());
             break;
         case ShardMessageKind::LOOKUP:
             err = _lookup(req.getLookup(), resp.setLookup());
             break;
         case ShardMessageKind::VISIT_TRANSIENT_FILES:
-            err = _visitTransientFiles(req.getVisitTransientFiles(), scratch, resp.setVisitTransientFiles());
+            err = _visitTransientFiles(req.getVisitTransientFiles(), resp.setVisitTransientFiles());
             break;
         case ShardMessageKind::FULL_READ_DIR:
-            err = _fullReadDir(req.getFullReadDir(), scratch, resp.setFullReadDir());
+            err = _fullReadDir(req.getFullReadDir(), resp.setFullReadDir());
             break;
         case ShardMessageKind::VISIT_DIRECTORIES:
-            err = _visitDirectories(req.getVisitDirectories(), scratch, resp.setVisitDirectories());
+            err = _visitDirectories(req.getVisitDirectories(), resp.setVisitDirectories());
             break;
         case ShardMessageKind::FILE_SPANS:
-            err = _fileSpans(req.getFileSpans(), scratch, resp.setFileSpans());
+            err = _fileSpans(req.getFileSpans(), resp.setFileSpans());
             break;
         case ShardMessageKind::BLOCK_SERVICE_FILES:
-            err = _blockServiceFiles(req.getBlockServiceFiles(), scratch, resp.setBlockServiceFiles());
+            err = _blockServiceFiles(req.getBlockServiceFiles(), resp.setBlockServiceFiles());
             break;
         case ShardMessageKind::VISIT_FILES:
             throw EGGS_EXCEPTION("UNIMPLEMENTED %s", req.kind());
@@ -827,12 +831,12 @@ struct ShardDBImpl {
     // ----------------------------------------------------------------
     // log preparation
 
-    EggsError _prepareConstructFile(EggsTime time, const ConstructFileReq& req, BincodeBytesScratchpad& scratch, ConstructFileEntry& entry) {
+    EggsError _prepareConstructFile(EggsTime time, const ConstructFileReq& req, ConstructFileEntry& entry) {
         if (req.type != (uint8_t)InodeType::FILE && req.type != (uint8_t)InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
         entry.type = req.type;
-        scratch.copyTo(req.note, entry.note);
+        entry.note = req.note;
         entry.deadlineTime = time + DEADLINE_INTERVAL;
 
         return NO_ERROR;
@@ -849,7 +853,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareLinkFile(EggsTime time, const LinkFileReq& req, BincodeBytesScratchpad& scratch, LinkFileEntry& entry) {
+    EggsError _prepareLinkFile(EggsTime time, const LinkFileReq& req, LinkFileEntry& entry) {
         // some early, preliminary checks
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
@@ -863,13 +867,13 @@ struct ShardDBImpl {
         }
 
         entry.fileId = req.fileId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         entry.ownerId = req.ownerId;
 
         return NO_ERROR;
     }
 
-    EggsError _prepareSameDirectoryRename(EggsTime time, const SameDirectoryRenameReq& req, BincodeBytesScratchpad& scratch, SameDirectoryRenameEntry& entry) {
+    EggsError _prepareSameDirectoryRename(EggsTime time, const SameDirectoryRenameReq& req, SameDirectoryRenameEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -880,13 +884,13 @@ struct ShardDBImpl {
             return EggsError::BAD_SHARD;
         }
         entry.dirId = req.dirId;
-        scratch.copyTo(req.oldName, entry.oldName);
-        scratch.copyTo(req.newName, entry.newName);
+        entry.oldName = req.oldName;
+        entry.newName = req.newName;
         entry.targetId = req.targetId;
         return NO_ERROR;
     }
 
-    EggsError _prepareSoftUnlinkFile(EggsTime time, const SoftUnlinkFileReq& req, BincodeBytesScratchpad& scratch, SoftUnlinkFileEntry& entry) {
+    EggsError _prepareSoftUnlinkFile(EggsTime time, const SoftUnlinkFileReq& req, SoftUnlinkFileEntry& entry) {
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -898,28 +902,28 @@ struct ShardDBImpl {
         }
         entry.ownerId = req.ownerId;
         entry.fileId = req.fileId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         return NO_ERROR;
     }
 
-    EggsError _prepareCreateDirectoryInode(EggsTime time, const CreateDirectoryInodeReq& req, BincodeBytesScratchpad& scratch, CreateDirectoryInodeEntry& entry) {
+    EggsError _prepareCreateDirectoryInode(EggsTime time, const CreateDirectoryInodeReq& req, CreateDirectoryInodeEntry& entry) {
         if (req.id.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
         if (req.id.type() != InodeType::DIRECTORY || req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
-        if (req.info.inherited != (req.info.body.length == 0)) {
+        if (req.info.inherited != (req.info.body.size() == 0)) {
             return EggsError::BAD_DIRECTORY_INFO;
         }
         entry.id = req.id;
         entry.ownerId = req.ownerId;
         entry.info.inherited = req.info.inherited;
-        scratch.copyTo(req.info.body, entry.info.body);
+        entry.info.body = req.info.body;
         return NO_ERROR;
     }
 
-    EggsError _prepareCreateLockedCurrentEdge(EggsTime time, const CreateLockedCurrentEdgeReq& req, BincodeBytesScratchpad& scratch, CreateLockedCurrentEdgeEntry& entry) {
+    EggsError _prepareCreateLockedCurrentEdge(EggsTime time, const CreateLockedCurrentEdgeReq& req, CreateLockedCurrentEdgeEntry& entry) {
         if (entry.creationTime >= time) {
             return EggsError::CREATION_TIME_TOO_RECENT;
         }
@@ -936,11 +940,11 @@ struct ShardDBImpl {
         entry.dirId = req.dirId;
         entry.creationTime = req.creationTime;
         entry.targetId = req.targetId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         return NO_ERROR;
     }
 
-    EggsError _prepareUnlockCurrentEdge(EggsTime time, const UnlockCurrentEdgeReq& req, BincodeBytesScratchpad& scratch, UnlockCurrentEdgeEntry& entry) {
+    EggsError _prepareUnlockCurrentEdge(EggsTime time, const UnlockCurrentEdgeReq& req, UnlockCurrentEdgeEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -949,12 +953,12 @@ struct ShardDBImpl {
         }
         entry.dirId = req.dirId;
         entry.targetId = req.targetId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         entry.wasMoved = req.wasMoved;
         return NO_ERROR;
     }
 
-    EggsError _prepareLockCurrentEdge(EggsTime time, const LockCurrentEdgeReq& req, BincodeBytesScratchpad& scratch, LockCurrentEdgeEntry& entry) {
+    EggsError _prepareLockCurrentEdge(EggsTime time, const LockCurrentEdgeReq& req, LockCurrentEdgeEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -962,28 +966,28 @@ struct ShardDBImpl {
             return EggsError::BAD_SHARD;
         }
         entry.dirId = req.dirId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         entry.targetId = req.targetId;
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveDirectoryOwner(EggsTime time, const RemoveDirectoryOwnerReq& req, BincodeBytesScratchpad& scratch, RemoveDirectoryOwnerEntry& entry) {
+    EggsError _prepareRemoveDirectoryOwner(EggsTime time, const RemoveDirectoryOwnerReq& req, RemoveDirectoryOwnerEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
         if (req.dirId.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
-        if (req.info.length == 0) {
+        if (req.info.size() == 0) {
             return EggsError::BAD_DIRECTORY_INFO;
         }
         ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID); // TODO proper error
         entry.dirId = req.dirId;
-        scratch.copyTo(req.info, entry.info);
+        entry.info = req.info;
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveInode(EggsTime time, const RemoveInodeReq& req, BincodeBytesScratchpad& scratch, RemoveInodeEntry& entry) {
+    EggsError _prepareRemoveInode(EggsTime time, const RemoveInodeReq& req, RemoveInodeEntry& entry) {
         if (req.id.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
@@ -994,7 +998,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareSetDirectoryOwner(EggsTime time, const SetDirectoryOwnerReq& req, BincodeBytesScratchpad& scratch, SetDirectoryOwnerEntry& entry) {
+    EggsError _prepareSetDirectoryOwner(EggsTime time, const SetDirectoryOwnerReq& req, SetDirectoryOwnerEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1009,7 +1013,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareSetDirectoryInfo(EggsTime time, const SetDirectoryInfoReq& req, BincodeBytesScratchpad& scratch, SetDirectoryInfoEntry& entry) {
+    EggsError _prepareSetDirectoryInfo(EggsTime time, const SetDirectoryInfoReq& req, SetDirectoryInfoEntry& entry) {
         if (req.id.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1019,15 +1023,16 @@ struct ShardDBImpl {
         if (req.info.inherited && req.id == ROOT_DIR_INODE_ID) {
             return EggsError::BAD_DIRECTORY_INFO;
         }
-        if (req.info.inherited != (req.info.body.length == 0)) {
+        if (req.info.inherited != (req.info.body.size() == 0)) {
             return EggsError::BAD_DIRECTORY_INFO;
         }
         entry.dirId = req.id;
-        entry.info = req.info;
+        entry.info.inherited = req.info.inherited;
+        entry.info.body = req.info.body;
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveNonOwnedEdge(EggsTime time, const RemoveNonOwnedEdgeReq& req, BincodeBytesScratchpad& scratch, RemoveNonOwnedEdgeEntry& entry) {
+    EggsError _prepareRemoveNonOwnedEdge(EggsTime time, const RemoveNonOwnedEdgeReq& req, RemoveNonOwnedEdgeEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1036,11 +1041,11 @@ struct ShardDBImpl {
         }
         entry.dirId = req.dirId;
         entry.creationTime = req.creationTime;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         return NO_ERROR;
     }
 
-    EggsError _prepareIntraShardHardFileUnlink(EggsTime time, const IntraShardHardFileUnlinkReq& req, BincodeBytesScratchpad& scratch, IntraShardHardFileUnlinkEntry& entry) {
+    EggsError _prepareIntraShardHardFileUnlink(EggsTime time, const IntraShardHardFileUnlinkReq& req, IntraShardHardFileUnlinkEntry& entry) {
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1052,12 +1057,12 @@ struct ShardDBImpl {
         }
         entry.ownerId = req.ownerId;
         entry.targetId = req.targetId;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         entry.creationTime = req.creationTime;
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveSpanInitiate(EggsTime time, const RemoveSpanInitiateReq& req, BincodeBytesScratchpad& scratch, RemoveSpanInitiateEntry& entry) {
+    EggsError _prepareRemoveSpanInitiate(EggsTime time, const RemoveSpanInitiateReq& req, RemoveSpanInitiateEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1081,7 +1086,7 @@ struct ShardDBImpl {
 
         // The two special cases
         if (req.storageClass == EMPTY_STORAGE) {
-            if (req.bodyBytes.length != 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != 0 || req.blockSize != 0) {
+            if (req.bodyBytes.size() != 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != 0 || req.blockSize != 0) {
                 return false;
             }
             if (req.crc32.data != crc32c("", 0)) {
@@ -1090,10 +1095,10 @@ struct ShardDBImpl {
             return true;
         }
         if (req.storageClass == INLINE_STORAGE) {
-            if (req.bodyBytes.length == 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != req.bodyBytes.length || req.blockSize != 0) {
+            if (req.bodyBytes.size() == 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != req.bodyBytes.size() || req.blockSize != 0) {
                 return false;
             }
-            auto expectedCrc32 = crc32c((const char*)req.bodyBytes.data, req.bodyBytes.length);
+            auto expectedCrc32 = crc32c(req.bodyBytes.data(), req.bodyBytes.size());
             if (req.crc32.data != expectedCrc32) {
                 return false;
             }
@@ -1144,7 +1149,7 @@ struct ShardDBImpl {
         return false;
     }
 
-    EggsError _prepareAddSpanInitiate(EggsTime time, const AddSpanInitiateReq& req, BincodeBytesScratchpad& scratch, AddSpanInitiateEntry& entry) {
+    EggsError _prepareAddSpanInitiate(EggsTime time, const AddSpanInitiateReq& req, AddSpanInitiateEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1169,7 +1174,7 @@ struct ShardDBImpl {
         entry.crc32 = req.crc32;
         entry.size = req.size;
         entry.blockSize = req.blockSize;
-        scratch.copyTo(req.bodyBytes, entry.bodyBytes);
+        entry.bodyBytes = req.bodyBytes;
     
         // Now fill in the block services. Generally we want to try to keep them the same
         // throughout the file, if possible, so that the likelihood of data loss is minimized.
@@ -1198,8 +1203,8 @@ struct ShardDBImpl {
             // very common case past the first span.
             {
                 StaticValue<SpanKey> k;
-                k->setFileId(req.fileId);
-                k->setOffset(0);
+                k().setFileId(req.fileId);
+                k().setOffset(0);
                 std::string v;
                 auto status = _db->Get({}, _spansCf, k.toSlice(), &v);
                 if (status.IsNotFound()) {
@@ -1209,10 +1214,10 @@ struct ShardDBImpl {
                     ExternalValue<SpanBody> span(v);
                     for (
                         int i = 0;
-                        i < span->parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
+                        i < span().parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
                         i++
                     ) {
-                        BlockBody spanBlock = span->block(i);
+                        BlockBody spanBlock = span().block(i);
                         auto isCandidate = std::find(candidateBlockServices.begin(), candidateBlockServices.end(), spanBlock.blockServiceId);
                         if (isCandidate == candidateBlockServices.end()) {
                             continue;
@@ -1225,7 +1230,7 @@ struct ShardDBImpl {
                 }
             }
             // Fill in whatever remains. We don't need to be deterministic here (we would have to
-            // if we were in log appliation), but we might as well.
+            // if we were in log application), but we might as well.
             {
                 uint64_t rand = time.ns;
                 while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
@@ -1253,7 +1258,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareAddSpanCertify(EggsTime time, const AddSpanCertifyReq& req, BincodeBytesScratchpad& scratch, AddSpanCertifyEntry& entry) {
+    EggsError _prepareAddSpanCertify(EggsTime time, const AddSpanCertifyReq& req, AddSpanCertifyEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1272,7 +1277,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, BincodeBytesScratchpad& scratch, MakeFileTransientEntry& entry) {
+    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientEntry& entry) {
         if (req.id.type() != InodeType::FILE && req.id.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1280,11 +1285,11 @@ struct ShardDBImpl {
             return EggsError::BAD_SHARD;
         }
         entry.id = req.id;
-        scratch.copyTo(req.note, entry.note);
+        entry.note = req.note;
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveSpanCertify(EggsTime time, const RemoveSpanCertifyReq& req, BincodeBytesScratchpad& scratch, RemoveSpanCertifyEntry& entry) {
+    EggsError _prepareRemoveSpanCertify(EggsTime time, const RemoveSpanCertifyReq& req, RemoveSpanCertifyEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1303,7 +1308,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareRemoveOwnedSnapshotFileEdge(EggsTime time, const RemoveOwnedSnapshotFileEdgeReq& req, BincodeBytesScratchpad& scratch, RemoveOwnedSnapshotFileEdgeEntry& entry) {
+    EggsError _prepareRemoveOwnedSnapshotFileEdge(EggsTime time, const RemoveOwnedSnapshotFileEdgeReq& req, RemoveOwnedSnapshotFileEdgeEntry& entry) {
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1316,13 +1321,12 @@ struct ShardDBImpl {
         entry.ownerId = req.ownerId;
         entry.targetId = req.targetId;
         entry.creationTime = req.creationTime;
-        scratch.copyTo(req.name, entry.name);
+        entry.name = req.name;
         return NO_ERROR;
     }
 
-    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry) {
+    EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
-        scratch.reset();
         logEntry.clear();
         EggsError err = NO_ERROR;
 
@@ -1332,64 +1336,64 @@ struct ShardDBImpl {
 
         switch (req.kind()) {
         case ShardMessageKind::CONSTRUCT_FILE:
-            err = _prepareConstructFile(time, req.getConstructFile(), scratch, logEntryBody.setConstructFile());
+            err = _prepareConstructFile(time, req.getConstructFile(), logEntryBody.setConstructFile());
             break;
         case ShardMessageKind::LINK_FILE:
-            err = _prepareLinkFile(time, req.getLinkFile(), scratch, logEntryBody.setLinkFile());
+            err = _prepareLinkFile(time, req.getLinkFile(), logEntryBody.setLinkFile());
             break;
         case ShardMessageKind::SAME_DIRECTORY_RENAME:
-            err = _prepareSameDirectoryRename(time, req.getSameDirectoryRename(), scratch, logEntryBody.setSameDirectoryRename());
+            err = _prepareSameDirectoryRename(time, req.getSameDirectoryRename(), logEntryBody.setSameDirectoryRename());
             break;
         case ShardMessageKind::SOFT_UNLINK_FILE:
-            err = _prepareSoftUnlinkFile(time, req.getSoftUnlinkFile(), scratch, logEntryBody.setSoftUnlinkFile());
+            err = _prepareSoftUnlinkFile(time, req.getSoftUnlinkFile(), logEntryBody.setSoftUnlinkFile());
             break;
         case ShardMessageKind::CREATE_DIRECTORY_INODE:
-            err = _prepareCreateDirectoryInode(time, req.getCreateDirectoryInode(), scratch, logEntryBody.setCreateDirectoryInode());
+            err = _prepareCreateDirectoryInode(time, req.getCreateDirectoryInode(), logEntryBody.setCreateDirectoryInode());
             break;
         case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
-            err = _prepareCreateLockedCurrentEdge(time, req.getCreateLockedCurrentEdge(), scratch, logEntryBody.setCreateLockedCurrentEdge());
+            err = _prepareCreateLockedCurrentEdge(time, req.getCreateLockedCurrentEdge(), logEntryBody.setCreateLockedCurrentEdge());
             break;
         case ShardMessageKind::UNLOCK_CURRENT_EDGE:
-            err = _prepareUnlockCurrentEdge(time, req.getUnlockCurrentEdge(), scratch, logEntryBody.setUnlockCurrentEdge());
+            err = _prepareUnlockCurrentEdge(time, req.getUnlockCurrentEdge(), logEntryBody.setUnlockCurrentEdge());
             break;
         case ShardMessageKind::LOCK_CURRENT_EDGE:
-            err = _prepareLockCurrentEdge(time, req.getLockCurrentEdge(), scratch, logEntryBody.setLockCurrentEdge());
+            err = _prepareLockCurrentEdge(time, req.getLockCurrentEdge(), logEntryBody.setLockCurrentEdge());
             break;
         case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
-            err = _prepareRemoveDirectoryOwner(time, req.getRemoveDirectoryOwner(), scratch, logEntryBody.setRemoveDirectoryOwner());
+            err = _prepareRemoveDirectoryOwner(time, req.getRemoveDirectoryOwner(), logEntryBody.setRemoveDirectoryOwner());
             break;
         case ShardMessageKind::REMOVE_INODE:
-            err = _prepareRemoveInode(time, req.getRemoveInode(), scratch, logEntryBody.setRemoveInode());
+            err = _prepareRemoveInode(time, req.getRemoveInode(), logEntryBody.setRemoveInode());
             break;
         case ShardMessageKind::SET_DIRECTORY_OWNER:
-            err = _prepareSetDirectoryOwner(time, req.getSetDirectoryOwner(), scratch, logEntryBody.setSetDirectoryOwner());
+            err = _prepareSetDirectoryOwner(time, req.getSetDirectoryOwner(), logEntryBody.setSetDirectoryOwner());
             break;
         case ShardMessageKind::SET_DIRECTORY_INFO:
-            err = _prepareSetDirectoryInfo(time, req.getSetDirectoryInfo(), scratch, logEntryBody.setSetDirectoryInfo());
+            err = _prepareSetDirectoryInfo(time, req.getSetDirectoryInfo(), logEntryBody.setSetDirectoryInfo());
             break;
         case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
-            err = _prepareRemoveNonOwnedEdge(time, req.getRemoveNonOwnedEdge(), scratch, logEntryBody.setRemoveNonOwnedEdge());
+            err = _prepareRemoveNonOwnedEdge(time, req.getRemoveNonOwnedEdge(), logEntryBody.setRemoveNonOwnedEdge());
             break;
         case ShardMessageKind::INTRA_SHARD_HARD_FILE_UNLINK:
-            err = _prepareIntraShardHardFileUnlink(time, req.getIntraShardHardFileUnlink(), scratch, logEntryBody.setIntraShardHardFileUnlink());
+            err = _prepareIntraShardHardFileUnlink(time, req.getIntraShardHardFileUnlink(), logEntryBody.setIntraShardHardFileUnlink());
             break;
         case ShardMessageKind::REMOVE_SPAN_INITIATE:
-            err = _prepareRemoveSpanInitiate(time, req.getRemoveSpanInitiate(), scratch, logEntryBody.setRemoveSpanInitiate());
+            err = _prepareRemoveSpanInitiate(time, req.getRemoveSpanInitiate(), logEntryBody.setRemoveSpanInitiate());
             break;
         case ShardMessageKind::ADD_SPAN_INITIATE:
-            err = _prepareAddSpanInitiate(time, req.getAddSpanInitiate(), scratch, logEntryBody.setAddSpanInitiate());
+            err = _prepareAddSpanInitiate(time, req.getAddSpanInitiate(), logEntryBody.setAddSpanInitiate());
             break;
         case ShardMessageKind::ADD_SPAN_CERTIFY:
-            err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), scratch, logEntryBody.setAddSpanCertify());
+            err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
             break;
         case ShardMessageKind::MAKE_FILE_TRANSIENT:
-            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), scratch, logEntryBody.setMakeFileTransient());
+            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransient());
             break;
         case ShardMessageKind::REMOVE_SPAN_CERTIFY:
-            err = _prepareRemoveSpanCertify(time, req.getRemoveSpanCertify(), scratch, logEntryBody.setRemoveSpanCertify());
+            err = _prepareRemoveSpanCertify(time, req.getRemoveSpanCertify(), logEntryBody.setRemoveSpanCertify());
             break;
         case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
-            err = _prepareRemoveOwnedSnapshotFileEdge(time, req.getRemoveOwnedSnapshotFileEdge(), scratch, logEntryBody.setRemoveOwnedSnapshotFileEdge());
+            err = _prepareRemoveOwnedSnapshotFileEdge(time, req.getRemoveOwnedSnapshotFileEdge(), logEntryBody.setRemoveOwnedSnapshotFileEdge());
             break;
         case ShardMessageKind::SWAP_BLOCKS:
             throw EGGS_EXCEPTION("UNIMPLEMENTED");
@@ -1414,18 +1418,18 @@ struct ShardDBImpl {
         ALWAYS_ASSERT(oldIndex+1 == index, "old index is %s, expected %s, got %s", oldIndex, oldIndex+1, index);
         LOG_DEBUG(_env, "bumping log index from %s to %s", oldIndex, index);
         StaticValue<U64Value> v;
-        v->setU64(index);
+        v().setU64(index);
         ROCKS_DB_CHECKED(batch.Put({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
     }
 
-    EggsError _applyConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileEntry& entry, BincodeBytesScratchpad& scratch, ConstructFileResp& resp) {
+    EggsError _applyConstructFile(rocksdb::WriteBatch& batch, EggsTime time, const ConstructFileEntry& entry, ConstructFileResp& resp) {
         const auto nextFileId = [this, &batch](const ShardMetadataKey* key) -> InodeId {
             std::string value;
             ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
             ExternalValue<InodeIdValue> inodeId(value);
-            inodeId->setId(InodeId::FromU64(inodeId->id().u64 + 0x100));
+            inodeId().setId(InodeId::FromU64(inodeId().id().u64 + 0x100));
             ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
-            return inodeId->id();
+            return inodeId().id();
         };
         InodeId id;
         if (entry.type == (uint8_t)InodeType::FILE) {
@@ -1438,11 +1442,11 @@ struct ShardDBImpl {
 
         // write to rocks
         StaticValue<TransientFileBody> transientFile;
-        transientFile->setFileSize(0);
-        transientFile->setMtime(time);
-        transientFile->setDeadline(entry.deadlineTime);
-        transientFile->setLastSpanState(SpanState::CLEAN);
-        transientFile->setNote(entry.note);
+        transientFile().setFileSize(0);
+        transientFile().setMtime(time);
+        transientFile().setDeadline(entry.deadlineTime);
+        transientFile().setLastSpanState(SpanState::CLEAN);
+        transientFile().setNote(entry.note);
         auto k = InodeIdKey::Static(id);
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
@@ -1453,7 +1457,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _applyLinkFile(rocksdb::WriteBatch& batch, EggsTime time, const LinkFileEntry& entry, BincodeBytesScratchpad& scratch, LinkFileResp& resp) {
+    EggsError _applyLinkFile(rocksdb::WriteBatch& batch, EggsTime time, const LinkFileEntry& entry, LinkFileResp& resp) {
         std::string fileValue;
         ExternalValue<TransientFileBody> transientFile;
         {
@@ -1470,7 +1474,7 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        if (transientFile->lastSpanState() != SpanState::CLEAN) {
+        if (transientFile().lastSpanState() != SpanState::CLEAN) {
             return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
         }
 
@@ -1478,8 +1482,8 @@ struct ShardDBImpl {
         auto fileKey = InodeIdKey::Static(entry.fileId);
         ROCKS_DB_CHECKED(batch.Delete(_transientCf, fileKey.toSlice()));
         StaticValue<FileBody> file;
-        file->setMtime(time);
-        file->setFileSize(transientFile->fileSize());
+        file().setMtime(time);
+        file().setFileSize(transientFile().fileSize());
         ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
 
         // create edge in owner.
@@ -1502,13 +1506,13 @@ struct ShardDBImpl {
 
         // Don't go backwards in time. This is important amongst other things to ensure
         // that we do not have snapshot edges to be the same. This should be very uncommon.
-        if (tmpDir->mtime() >= time) {
-            RAISE_ALERT(_env, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir->mtime(), time);
+        if (tmpDir().mtime() >= time) {
+            RAISE_ALERT(_env, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir().mtime(), time);
             return EggsError::MTIME_IS_TOO_RECENT;
         }
 
         // Modify the directory mtime
-        tmpDir->setMtime(time);
+        tmpDir().setMtime(time);
         {
             auto k = InodeIdKey::Static(dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), tmpDir.toSlice()));
@@ -1538,13 +1542,13 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        uint64_t nameHash = computeHash(dir->hashMode(), name);
+        uint64_t nameHash = computeHash(dir().hashMode(), name);
 
         // Next, we need to look at the current edge with the same name, if any.
         StaticValue<EdgeKey> edgeKey;
-        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
-        edgeKey->setNameHash(nameHash);
-        edgeKey->setName(name);
+        edgeKey().setDirIdWithCurrent(dirId, true); // current=true
+        edgeKey().setNameHash(nameHash);
+        edgeKey().setName(name);
         std::string edgeValue;
         auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
 
@@ -1555,16 +1559,16 @@ struct ShardDBImpl {
             // log entry time, otherwise we know that the snapshot edges are
             // all older, since they were all created before logEntryTime.
             StaticValue<EdgeKey> snapshotEdgeKey;
-            snapshotEdgeKey->setDirIdWithCurrent(dirId, false); // snapshhot (current=false)
-            snapshotEdgeKey->setNameHash(nameHash);
-            snapshotEdgeKey->setName(name);
-            snapshotEdgeKey->setCreationTime({std::numeric_limits<uint64_t>::max()});
+            snapshotEdgeKey().setDirIdWithCurrent(dirId, false); // snapshhot (current=false)
+            snapshotEdgeKey().setNameHash(nameHash);
+            snapshotEdgeKey().setName(name);
+            snapshotEdgeKey().setCreationTime({std::numeric_limits<uint64_t>::max()});
             WrappedIterator it(_db->NewIterator({}, _edgesCf));
             it->SeekForPrev(snapshotEdgeKey.toSlice());
             if (it->Valid() && !it->status().IsNotFound()) {
                 auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (k->dirId() == dirId && !k->current() && k->nameHash() == nameHash && k->name() == name) {
-                    if (k->creationTime() >= creationTime) {
+                if (k().dirId() == dirId && !k().current() && k().nameHash() == nameHash && k().name() == name.ref()) {
+                    if (k().creationTime() >= creationTime) {
                         return EggsError::MORE_RECENT_SNAPSHOT_EDGE;
                     }
                 }
@@ -1573,12 +1577,12 @@ struct ShardDBImpl {
         } else {
             ROCKS_DB_CHECKED(status);
             ExternalValue<CurrentEdgeBody> existingEdge(edgeValue);
-            if (existingEdge->targetIdWithLocked().extra()) { // locked
+            if (existingEdge().targetIdWithLocked().extra()) { // locked
                 // we have an existing locked edge, we need to make sure that it's the one we expect for
                 // idempotency.
                 if (
                     !locked || // the one we're trying to create isn't locked
-                    (targetId != existingEdge->targetIdWithLocked().id() || creationTime != existingEdge->creationTime()) // we're trying to create a different locked edge
+                    (targetId != existingEdge().targetIdWithLocked().id() || creationTime != existingEdge().creationTime()) // we're trying to create a different locked edge
                 ) {
                     return EggsError::NAME_IS_LOCKED;
                 }
@@ -1586,11 +1590,11 @@ struct ShardDBImpl {
                 // We're kicking out a non-locked current edge. The only circumstance where we allow
                 // this automatically is if a file is overriding another file, which is also how it
                 // works in linux/posix (see `man 2 rename`).
-                if (existingEdge->creationTime() >= creationTime) {
+                if (existingEdge().creationTime() >= creationTime) {
                     return EggsError::MORE_RECENT_CURRENT_EDGE;
                 }
                 if (
-                    targetId.type() == InodeType::DIRECTORY || existingEdge->targetIdWithLocked().id().type() == InodeType::DIRECTORY
+                    targetId.type() == InodeType::DIRECTORY || existingEdge().targetIdWithLocked().id().type() == InodeType::DIRECTORY
                 ) {
                     return EggsError::CANNOT_OVERRIDE_NAME;
                 }
@@ -1598,13 +1602,13 @@ struct ShardDBImpl {
                 // it'll be overwritten below.
                 {
                     StaticValue<EdgeKey> k;
-                    k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
-                    k->setNameHash(nameHash);
-                    k->setName(name);
-                    k->setCreationTime(existingEdge->creationTime());
+                    k().setDirIdWithCurrent(dirId, false); // snapshot (current=false)
+                    k().setNameHash(nameHash);
+                    k().setName(name);
+                    k().setCreationTime(existingEdge().creationTime());
                     StaticValue<SnapshotEdgeBody> v;
                     // this was current, so it's now owned.
-                    v->setTargetIdWithOwned(InodeIdExtra(existingEdge->targetIdWithLocked().id(), true));
+                    v().setTargetIdWithOwned(InodeIdExtra(existingEdge().targetIdWithLocked().id(), true));
                     ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
                 }
             }
@@ -1612,8 +1616,8 @@ struct ShardDBImpl {
 
         // OK, we're now ready to insert the current edge
         StaticValue<CurrentEdgeBody> edgeBody;
-        edgeBody->setTargetIdWithLocked(InodeIdExtra(targetId, locked));
-        edgeBody->setCreationTime(creationTime);
+        edgeBody().setTargetIdWithLocked(InodeIdExtra(targetId, locked));
+        edgeBody().setCreationTime(creationTime);
         ROCKS_DB_CHECKED(batch.Put(_edgesCf, edgeKey.toSlice(), edgeBody.toSlice()));
 
         return NO_ERROR;
@@ -1649,13 +1653,13 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        uint64_t nameHash = computeHash(dir->hashMode(), name);
+        uint64_t nameHash = computeHash(dir().hashMode(), name);
 
         // get the edge
         StaticValue<EdgeKey> edgeKey;
-        edgeKey->setDirIdWithCurrent(dirId, true); // current=true
-        edgeKey->setNameHash(nameHash);
-        edgeKey->setName(name);
+        edgeKey().setDirIdWithCurrent(dirId, true); // current=true
+        edgeKey().setNameHash(nameHash);
+        edgeKey().setName(name);
         std::string edgeValue;
         auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
         if (status.IsNotFound()) {
@@ -1663,10 +1667,10 @@ struct ShardDBImpl {
         }
         ROCKS_DB_CHECKED(status);
         ExternalValue<CurrentEdgeBody> edgeBody(edgeValue);
-        if (edgeBody->targetIdWithLocked().id() != targetId) {
+        if (edgeBody().targetIdWithLocked().id() != targetId) {
             return EggsError::MISMATCHING_TARGET;
         }
-        if (edgeBody->targetIdWithLocked().extra()) { // locked
+        if (edgeBody().targetIdWithLocked().extra()) { // locked
             return EggsError::NAME_IS_LOCKED;
         }
 
@@ -1677,15 +1681,15 @@ struct ShardDBImpl {
         // and another to signify deletion
         {
             StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(dirId, false); // snapshot (current=false)
-            k->setNameHash(nameHash);
-            k->setName(name);
-            k->setCreationTime(edgeBody->creationTime());
+            k().setDirIdWithCurrent(dirId, false); // snapshot (current=false)
+            k().setNameHash(nameHash);
+            k().setName(name);
+            k().setCreationTime(edgeBody().creationTime());
             StaticValue<SnapshotEdgeBody> v;
-            v->setTargetIdWithOwned(InodeIdExtra(targetId, owned));
+            v().setTargetIdWithOwned(InodeIdExtra(targetId, owned));
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
-            k->setCreationTime(time);
-            v->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false));
+            k().setCreationTime(time);
+            v().setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false));
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
         }
 
@@ -1706,7 +1710,7 @@ struct ShardDBImpl {
             // we never create directories as snapshot
             EggsError err = _getDirectory({}, entry.id, false, dirValue, dir);
             if (err == NO_ERROR) {
-                if (dir->ownerId() != entry.ownerId) {
+                if (dir().ownerId() != entry.ownerId) {
                     return EggsError::MISMATCHING_OWNER;
                 } else {
                     return NO_ERROR;
@@ -1721,13 +1725,15 @@ struct ShardDBImpl {
         {
             auto dirKey = InodeIdKey::Static(entry.id);
             StaticValue<DirectoryBody> dir;
-            dir->setOwnerId(entry.ownerId);
-            dir->setMtime(time);
-            dir->setHashMode(HashMode::XXH3_63);
-            dir->setInfoInherited(entry.info.inherited);
-            dir->setInfo(entry.info.body);
+            dir().setOwnerId(entry.ownerId);
+            dir().setMtime(time);
+            dir().setHashMode(HashMode::XXH3_63);
+            dir().setInfoInherited(entry.info.inherited);
+            dir().setInfo(entry.info.body);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, dirKey.toSlice(), dir.toSlice()));
         }
+
+        resp.mtime = time;
 
         return NO_ERROR;
     }
@@ -1747,13 +1753,13 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir->hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name);
         }
 
         StaticValue<EdgeKey> currentKey;
-        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-        currentKey->setNameHash(nameHash);
-        currentKey->setName(entry.name);
+        currentKey().setDirIdWithCurrent(entry.dirId, true); // current=true
+        currentKey().setNameHash(nameHash);
+        currentKey().setName(entry.name);
         std::string edgeValue;
         {
             auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
@@ -1763,8 +1769,8 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(status);
         }
         ExternalValue<CurrentEdgeBody> edge(edgeValue);
-        if (edge->locked()) {
-            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, false)); // locked=false
+        if (edge().locked()) {
+            edge().setTargetIdWithLocked(InodeIdExtra(entry.targetId, false)); // locked=false
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, currentKey.toSlice(), edge.toSlice()));
         }
         if (entry.wasMoved) {
@@ -1772,15 +1778,15 @@ struct ShardDBImpl {
             // edge with the deletion. 
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, currentKey.toSlice()));
             StaticValue<EdgeKey> snapshotKey;
-            snapshotKey->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
-            snapshotKey->setNameHash(nameHash);
-            snapshotKey->setName(entry.name);
-            snapshotKey->setCreationTime(edge->creationTime());
+            snapshotKey().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
+            snapshotKey().setNameHash(nameHash);
+            snapshotKey().setName(entry.name);
+            snapshotKey().setCreationTime(edge().creationTime());
             StaticValue<SnapshotEdgeBody> snapshotBody;
-            snapshotBody->setTargetIdWithOwned(InodeIdExtra(entry.targetId, false)); // not owned (this was moved somewhere else)
+            snapshotBody().setTargetIdWithOwned(InodeIdExtra(entry.targetId, false)); // not owned (this was moved somewhere else)
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
-            snapshotKey->setCreationTime(time);
-            snapshotBody->setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false)); // deletion edges are never owned
+            snapshotKey().setCreationTime(time);
+            snapshotBody().setTargetIdWithOwned(InodeIdExtra(NULL_INODE_ID, false)); // deletion edges are never owned
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
         }
 
@@ -1798,13 +1804,13 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir->hashMode(), entry.name);        
+            nameHash = computeHash(dir().hashMode(), entry.name);        
         }
 
         StaticValue<EdgeKey> currentKey;
-        currentKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-        currentKey->setNameHash(nameHash);
-        currentKey->setName(entry.name);
+        currentKey().setDirIdWithCurrent(entry.dirId, true); // current=true
+        currentKey().setNameHash(nameHash);
+        currentKey().setName(entry.name);
         std::string edgeValue;
         {
             auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
@@ -1814,8 +1820,8 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(status);
         }
         ExternalValue<CurrentEdgeBody> edge(edgeValue);
-        if (!edge->locked()) {
-            edge->setTargetIdWithLocked(InodeIdExtra(entry.targetId, true)); // locked=true
+        if (!edge().locked()) {
+            edge().setTargetIdWithLocked(InodeIdExtra(entry.targetId, true)); // locked=true
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, currentKey.toSlice(), edge.toSlice()));
         }
 
@@ -1831,7 +1837,7 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            if (dir->ownerId() == NULL_INODE_ID) {
+            if (dir().ownerId() == NULL_INODE_ID) {
                 return NO_ERROR; // already done
             }
         }
@@ -1839,14 +1845,14 @@ struct ShardDBImpl {
         // if we have any current edges, we can't proceed
         {
             StaticValue<EdgeKey> edgeKey;
-            edgeKey->setDirIdWithCurrent(entry.dirId, true); // current=true
-            edgeKey->setNameHash(0);
-            edgeKey->setName({});
+            edgeKey().setDirIdWithCurrent(entry.dirId, true); // current=true
+            edgeKey().setNameHash(0);
+            edgeKey().setName({});
             WrappedIterator it(_db->NewIterator({}, _edgesCf));
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (otherEdge->dirId() == entry.dirId && otherEdge->current()) {
+                if (otherEdge().dirId() == entry.dirId && otherEdge().current()) {
                     return EggsError::DIRECTORY_NOT_EMPTY;
                 }
             } else if (it->status().IsNotFound()) {
@@ -1859,11 +1865,11 @@ struct ShardDBImpl {
         // we need to create a new DirectoryBody, the materialized info might have changed size
         {
             StaticValue<DirectoryBody> newDir;
-            newDir->setOwnerId(NULL_INODE_ID);
-            newDir->setMtime(time);
-            newDir->setHashMode(dir->hashMode());
-            newDir->setInfoInherited(dir->infoInherited());
-            newDir->setInfo(entry.info);
+            newDir().setOwnerId(NULL_INODE_ID);
+            newDir().setMtime(time);
+            newDir().setHashMode(dir().hashMode());
+            newDir().setInfoInherited(dir().infoInherited());
+            newDir().setInfo(entry.info);
             auto k = InodeIdKey::Static(entry.dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
         }
@@ -1885,21 +1891,21 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        if (dir->ownerId() != NULL_INODE_ID) {
+        if (dir().ownerId() != NULL_INODE_ID) {
             return EggsError::DIRECTORY_HAS_OWNER;
         }
         // there can't be any outgoing edges when killing a directory definitively
         {
             StaticValue<EdgeKey> edgeKey;
-            edgeKey->setDirIdWithCurrent(entry.id, false);
-            edgeKey->setNameHash(0);
-            edgeKey->setName({});
-            edgeKey->setCreationTime(0);
+            edgeKey().setDirIdWithCurrent(entry.id, false);
+            edgeKey().setNameHash(0);
+            edgeKey().setName({});
+            edgeKey().setCreationTime(0);
             WrappedIterator it(_db->NewIterator({}, _edgesCf));
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (otherEdge->dirId() == entry.id) {
+                if (otherEdge().dirId() == entry.id) {
                     return EggsError::DIRECTORY_NOT_EMPTY;
                 }
             } else if (it->status().IsNotFound()) {
@@ -1943,19 +1949,19 @@ struct ShardDBImpl {
                 return err;
             }
             // check deadline
-            if (transientFile->deadline() >= time) {
+            if (transientFile().deadline() >= time) {
                 return EggsError::DEADLINE_NOT_PASSED;
             }
             // check no spans
             {
                 StaticValue<SpanKey> spanKey;
-                spanKey->setFileId(entry.id);
-                spanKey->setOffset(0);
+                spanKey().setFileId(entry.id);
+                spanKey().setOffset(0);
                 WrappedIterator it(_db->NewIterator({}, _spansCf));
                 it->Seek(spanKey.toSlice());
                 if (it->Valid()) {
                     auto otherSpan = ExternalValue<SpanKey>::FromSlice(it->key());
-                    if (otherSpan->fileId() == entry.id) {
+                    if (otherSpan().fileId() == entry.id) {
                         return EggsError::FILE_NOT_EMPTY;
                     }
                 } else {
@@ -1990,14 +1996,14 @@ struct ShardDBImpl {
         }
         // set the owner, and restore the directory entry if needed.
         StaticValue<DirectoryBody> newDir;
-        newDir->setOwnerId(entry.ownerId);
-        newDir->setMtime(dir->mtime());
-        newDir->setHashMode(dir->hashMode());
-        newDir->setInfoInherited(dir->infoInherited());
+        newDir().setOwnerId(entry.ownerId);
+        newDir().setMtime(dir().mtime());
+        newDir().setHashMode(dir().hashMode());
+        newDir().setInfoInherited(dir().infoInherited());
         // remove directory info if it was inherited, now that we have an
         // owner again.
-        if (dir->infoInherited()) {
-            newDir->setInfo({});
+        if (dir().infoInherited()) {
+            newDir().setInfo({});
         }
         {
             auto k = InodeIdKey::Static(entry.dirId);
@@ -2017,14 +2023,14 @@ struct ShardDBImpl {
         }
 
         StaticValue<DirectoryBody> newDir;
-        newDir->setOwnerId(dir->ownerId());
-        newDir->setMtime(dir->mtime());
-        newDir->setHashMode(dir->hashMode());
-        newDir->setInfoInherited(entry.info.inherited);
+        newDir().setOwnerId(dir().ownerId());
+        newDir().setMtime(dir().mtime());
+        newDir().setHashMode(dir().hashMode());
+        newDir().setInfoInherited(entry.info.inherited);
         // For snapshot directories, we need to preserve the last known info if inherited.
         // It'll be reset when it's made non-snapshot again.
-        if (!entry.info.inherited || (dir->ownerId() != NULL_INODE_ID)) {
-            newDir->setInfo(entry.info.body);
+        if (!entry.info.inherited || (dir().ownerId() != NULL_INODE_ID)) {
+            newDir().setInfo(entry.info.body);
         }
 
         {
@@ -2045,15 +2051,15 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir->hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name);
         }
 
         {
             StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
-            k->setNameHash(nameHash);
-            k->setName(entry.name);
-            k->setCreationTime(entry.creationTime);
+            k().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
+            k().setNameHash(nameHash);
+            k().setName(entry.name);
+            k().setCreationTime(entry.creationTime);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
 
@@ -2090,16 +2096,16 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnapshot=true since GC needs to be able to do this in snapshot dirs
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.ownerId, dirValue, dir);
-            nameHash = computeHash(dir->hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name);
         }
 
         // remove edge
         {
             StaticValue<EdgeKey> k;
-            k->setDirIdWithCurrent(entry.ownerId, false);
-            k->setNameHash(nameHash);
-            k->setName(entry.name);
-            k->setCreationTime(entry.creationTime);
+            k().setDirIdWithCurrent(entry.ownerId, false);
+            k().setNameHash(nameHash);
+            k().setName(entry.name);
+            k().setCreationTime(entry.creationTime);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
 
@@ -2108,11 +2114,11 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(entry.targetId);
             ROCKS_DB_CHECKED(batch.Delete(_filesCf, k.toSlice()));
             StaticValue<TransientFileBody> v;
-            v->setFileSize(file->fileSize());
-            v->setMtime(time);
-            v->setDeadline(0);
-            v->setLastSpanState(SpanState::CLEAN);
-            v->setNote(entry.name);
+            v().setFileSize(file().fileSize());
+            v().setMtime(time);
+            v().setDeadline(0);
+            v().setLastSpanState(SpanState::CLEAN);
+            v().setNote(entry.name);
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
         }
 
@@ -2135,26 +2141,26 @@ struct ShardDBImpl {
         ExternalValue<SpanBody> span;
         {
             StaticValue<SpanKey> endKey;
-            endKey->setFileId(entry.fileId);
-            endKey->setOffset(file->fileSize());
+            endKey().setFileId(entry.fileId);
+            endKey().setOffset(file().fileSize());
             spanIt->SeekForPrev(endKey.toSlice());
             if (!spanIt->Valid()) {
                 return EggsError::FILE_EMPTY;
             }
             ROCKS_DB_CHECKED(spanIt->status());
             spanKey = ExternalValue<SpanKey>::FromSlice(spanIt->key());
-            if (spanKey->fileId() != entry.fileId) {
+            if (spanKey().fileId() != entry.fileId) {
                 return EggsError::FILE_EMPTY;
             }
             span = ExternalValue<SpanBody>::FromSlice(spanIt->value());
         }
-        ALWAYS_ASSERT(span->storageClass() != EMPTY_STORAGE);
-        resp.byteOffset = spanKey->offset();
+        ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
+        resp.byteOffset = spanKey().offset();
     
         // If the span is blockless, the only thing we need to to do is remove it
-        if (span->storageClass() == INLINE_STORAGE) {
+        if (span().storageClass() == INLINE_STORAGE) {
             ROCKS_DB_CHECKED(batch.Delete(_spansCf, spanKey.toSlice()));
-            file->setFileSize(spanKey->offset());
+            file().setFileSize(spanKey().offset());
             {
                 auto k = InodeIdKey::Static(entry.fileId);
                 ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
@@ -2165,29 +2171,32 @@ struct ShardDBImpl {
         // Otherwise, we need to condemn it first, and then certify the deletion.
         // Note that we allow to remove dirty spans -- this is important to deal well with
         // the case where a writer dies in the middle of adding a span.
-        file->setLastSpanState(SpanState::CONDEMNED);
+        file().setLastSpanState(SpanState::CONDEMNED);
         {
             auto k = InodeIdKey::Static(entry.fileId);
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
         }
 
         // Fill in the response blocks
-        resp.blocks.els.reserve(span->parity().blocks());
-        for (int i = 0; i < span->parity().blocks(); i++) {
-            const auto& block = span->block(i);
+        resp.blocks.els.reserve(span().parity().blocks());
+        for (int i = 0; i < span().parity().blocks(); i++) {
+            const auto& block = span().block(i);
             const auto& cache = _blockServicesCache.at(block.blockServiceId);
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceIp = cache.ip;
             respBlock.blockServicePort = cache.port;
             respBlock.blockServiceId = block.blockServiceId;
             respBlock.blockId = block.blockId;
-            respBlock.certificate = _blockDeleteCertificate(span->blockSize(), block, cache.secretKey);
+            respBlock.certificate = _blockDeleteCertificate(span().blockSize(), block, cache.secretKey);
         }
 
         return NO_ERROR;
     }
 
-    EggsError _applyUpdateBlockServices(EggsTime time, rocksdb::WriteBatch& batch, const UpdateBlockServicesEntry& entry) {
+    // Important for this to never error: we rely on the write to go through since 
+    // we write _currentBlockServices/_blockServicesCache, which we rely to be in
+    // sync with RocksDB.
+    void _applyUpdateBlockServices(EggsTime time, rocksdb::WriteBatch& batch, const UpdateBlockServicesEntry& entry) {
         // The idea here is that we ask for some block services to use to shuckle once a minute,
         // and then just pick at random within them. We shouldn't have many to pick from at any
         // given point.
@@ -2195,19 +2204,19 @@ struct ShardDBImpl {
         OwnedValue<CurrentBlockServicesBody> currentBody(entry.blockServices.els.size());
         _currentBlockServices.resize(entry.blockServices.els.size());
         StaticValue<BlockServiceKey> blockKey;
-        blockKey->setKey(BLOCK_SERVICE_KEY);
+        blockKey().setKey(BLOCK_SERVICE_KEY);
         StaticValue<BlockServiceBody> blockBody;
         for (int i = 0; i < entry.blockServices.els.size(); i++) {
             const auto& entryBlock = entry.blockServices.els[i];
-            currentBody->set(i, entryBlock.id);
+            currentBody().set(i, entryBlock.id);
             _currentBlockServices[i] = entryBlock.id;
-            blockKey->setBlockServiceId(entryBlock.id);
-            blockBody->setId(entryBlock.id);
-            blockBody->setIp(entryBlock.ip.data);
-            blockBody->setPort(entryBlock.port);
-            blockBody->setStorageClass(entryBlock.storageClass);
-            blockBody->setFailureDomain(entryBlock.failureDomain.data);
-            blockBody->setSecretKey(entryBlock.secretKey.data);
+            blockKey().setBlockServiceId(entryBlock.id);
+            blockBody().setId(entryBlock.id);
+            blockBody().setIp(entryBlock.ip.data);
+            blockBody().setPort(entryBlock.port);
+            blockBody().setStorageClass(entryBlock.storageClass);
+            blockBody().setFailureDomain(entryBlock.failureDomain.data);
+            blockBody().setSecretKey(entryBlock.secretKey.data);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
             auto& cache = _blockServicesCache[entryBlock.id];
             cache.secretKey = entryBlock.secretKey.data;
@@ -2216,13 +2225,12 @@ struct ShardDBImpl {
             cache.storageClass = entryBlock.storageClass;
         }
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
-        return NO_ERROR;
     }
 
     uint64_t _getNextBlockId() {
         std::string v;
         ROCKS_DB_CHECKED(_db->Get({}, _defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), &v));
-        return ExternalValue<U64Value>(v)->u64();
+        return ExternalValue<U64Value>(v)().u64();
     }
 
     uint64_t _updateNextBlockId(EggsTime time, uint64_t& nextBlockId) {
@@ -2233,7 +2241,7 @@ struct ShardDBImpl {
 
     void _writeNextBlockId(rocksdb::WriteBatch& batch, uint64_t nextBlockId) {
         StaticValue<U64Value> v;
-        v->setU64(nextBlockId);
+        v().setU64(nextBlockId);
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), v.toSlice()));
     }
 
@@ -2253,11 +2261,11 @@ struct ShardDBImpl {
         }
 
         StaticValue<SpanKey> spanKey;
-        spanKey->setFileId(entry.fileId);
-        spanKey->setOffset(entry.byteOffset);
+        spanKey().setFileId(entry.fileId);
+        spanKey().setOffset(entry.byteOffset);
 
         // Check that the file is where where we expect it
-        if (file->fileSize() != entry.byteOffset) {
+        if (file().fileSize() != entry.byteOffset) {
             // Special case: we're trying to add the same span again. This is acceptable
             // in the name of idempotency, but we return the blocks we've previously
             // computed.
@@ -2267,7 +2275,7 @@ struct ShardDBImpl {
             //
             // This is since we need to be certain that we don't leak blocks. So either
             // the client needs to migrate the blocks, or just throw away the file.
-            if (file->fileSize() == entry.byteOffset+entry.size) {
+            if (file().fileSize() == entry.byteOffset+entry.size) {
                 std::string spanValue;
                 auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
                 if (status.IsNotFound()) {
@@ -2277,30 +2285,30 @@ struct ShardDBImpl {
                 ROCKS_DB_CHECKED(status);
                 ExternalValue<SpanBody> existingSpan(spanValue);
                 if (
-                    existingSpan->spanSize() != entry.size ||
-                    existingSpan->blockSize() != entry.blockSize ||
-                    existingSpan->parity() != entry.parity ||
-                    existingSpan->crc32() != entry.crc32
+                    existingSpan().spanSize() != entry.size ||
+                    existingSpan().blockSize() != entry.blockSize ||
+                    existingSpan().parity() != entry.parity ||
+                    existingSpan().crc32() != entry.crc32
                 ) {
                     LOG_DEBUG(_env, "file size does not match, and existing span does not match");
                     return EggsError::SPAN_NOT_FOUND;
                 }
                 return NO_ERROR;
             }
-            LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file->fileSize());
+            LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
             return EggsError::SPAN_NOT_FOUND;
         }
 
         // We're actually adding a new span -- the span state must be clean.
-        if (file->lastSpanState() != SpanState::CLEAN) {
+        if (file().lastSpanState() != SpanState::CLEAN) {
             return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
         }
 
         // Update the file with the new file size and set the last span state to dirty, 
         // if we're not blockless
-        file->setFileSize(entry.byteOffset+entry.size);
+        file().setFileSize(entry.byteOffset+entry.size);
         if (entry.storageClass != EMPTY_STORAGE && entry.storageClass != INLINE_STORAGE) {
-            file->setLastSpanState(SpanState::DIRTY);
+            file().setLastSpanState(SpanState::DIRTY);
         }
         {
             auto k = InodeIdKey::Static(entry.fileId);
@@ -2311,9 +2319,9 @@ struct ShardDBImpl {
         // in the block service -> files index.
         OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.bodyBytes);
         {
-            spanBody->setSpanSize(entry.size);
-            spanBody->setBlockSize(entry.blockSize);
-            spanBody->setCrc32(entry.crc32.data);
+            spanBody().setSpanSize(entry.size);
+            spanBody().setBlockSize(entry.blockSize);
+            spanBody().setCrc32(entry.crc32.data);
             uint64_t nextBlockId = _getNextBlockId();
             BlockBody block;
             for (int i = 0; i < entry.parity.blocks(); i++) {
@@ -2321,11 +2329,11 @@ struct ShardDBImpl {
                 block.blockId = _updateNextBlockId(time, nextBlockId);
                 block.blockServiceId = entryBlock.blockServiceId;
                 block.crc32 = entryBlock.crc32.data;
-                spanBody->setBlock(i, block);
+                spanBody().setBlock(i, block);
                 {
                     StaticValue<BlockServiceToFileKey> k;
-                    k->setBlockServiceId(entryBlock.blockServiceId);
-                    k->setFileId(entry.fileId);
+                    k().setBlockServiceId(entryBlock.blockServiceId);
+                    k().setFileId(entry.fileId);
                     ROCKS_DB_CHECKED(batch.Put(_blockServicesToFilesCf, k.toSlice(), {}));
                 }
             }
@@ -2334,17 +2342,17 @@ struct ShardDBImpl {
         }
 
         // Fill in the response
-        resp.blocks.els.reserve(spanBody->parity().blocks());
+        resp.blocks.els.reserve(spanBody().parity().blocks());
         BlockBody block;
-        for (int i = 0; i < spanBody->parity().blocks(); i++) {
-            BlockBody block = spanBody->block(i);
+        for (int i = 0; i < spanBody().parity().blocks(); i++) {
+            BlockBody block = spanBody().block(i);
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceId = block.blockServiceId;
             respBlock.blockId = block.blockId;
             const auto& cache = _blockServicesCache.at(block.blockServiceId);
             respBlock.blockServiceIp = cache.ip;
             respBlock.blockServicePort = cache.port;
-            respBlock.certificate.data = _blockAddCertificate(spanBody->blockSize(), block, cache.secretKey);
+            respBlock.certificate.data = _blockAddCertificate(spanBody().blockSize(), block, cache.secretKey);
         }
 
         return NO_ERROR;
@@ -2421,8 +2429,8 @@ struct ShardDBImpl {
         }
 
         StaticValue<SpanKey> spanKey;
-        spanKey->setFileId(entry.fileId);
-        spanKey->setOffset(entry.byteOffset);
+        spanKey().setFileId(entry.fileId);
+        spanKey().setOffset(entry.byteOffset);
 
         // Make sure the existing span exists, exit early if we're already done with
         // it, verify the proofs.
@@ -2435,26 +2443,26 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(status);
             ExternalValue<SpanBody> span(spanValue);
             // "Is the span still there"
-            if (file->size() > entry.byteOffset+span->spanSize()) {
+            if (file().size() > entry.byteOffset+span().spanSize()) {
                 return NO_ERROR; // already certified (we're past it)
             }
-            if (file->lastSpanState() == SpanState::CLEAN) {
+            if (file().lastSpanState() == SpanState::CLEAN) {
                 return NO_ERROR; // already certified
             }
-            if (file->lastSpanState() == SpanState::CONDEMNED) {
+            if (file().lastSpanState() == SpanState::CONDEMNED) {
                 return EggsError::SPAN_NOT_FOUND; // we could probably have a better error here
             }
-            ALWAYS_ASSERT(file->lastSpanState() == SpanState::DIRTY);
+            ALWAYS_ASSERT(file().lastSpanState() == SpanState::DIRTY);
             // Now verify the proofs
-            if (span->storageClass() == INLINE_STORAGE) {
+            if (span().storageClass() == INLINE_STORAGE) {
                 return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
             }
-            if (span->parity().blocks() != entry.proofs.els.size()) {
+            if (span().parity().blocks() != entry.proofs.els.size()) {
                 return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
             }
             BlockBody block;
-            for (int i = 0; i < span->parity().blocks(); i++) {
-                BlockBody block = span->block(i);
+            for (int i = 0; i < span().parity().blocks(); i++) {
+                BlockBody block = span().block(i);
                 if (!_checkBlockAddProof(block.blockServiceId, entry.proofs.els[i])) {
                     return EggsError::BAD_BLOCK_PROOF;
                 }
@@ -2462,7 +2470,7 @@ struct ShardDBImpl {
         }
         
         // Okay, now we can update the file to mark the last span as clean
-        file->setLastSpanState(SpanState::CLEAN);
+        file().setLastSpanState(SpanState::CLEAN);
         {
             auto k = InodeIdKey::Static(entry.fileId);
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
@@ -2497,11 +2505,11 @@ struct ShardDBImpl {
 
         // make a transient one
         StaticValue<TransientFileBody> transientFile;
-        transientFile->setFileSize(file->fileSize());
-        transientFile->setMtime(time);
-        transientFile->setDeadline(0);
-        transientFile->setLastSpanState(SpanState::CLEAN);
-        transientFile->setNote(entry.note);
+        transientFile().setFileSize(file().fileSize());
+        transientFile().setMtime(time);
+        transientFile().setDeadline(0);
+        transientFile().setLastSpanState(SpanState::CLEAN);
+        transientFile().setNote(entry.note);
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
         return NO_ERROR;
@@ -2519,8 +2527,8 @@ struct ShardDBImpl {
 
         // Fetch span
         StaticValue<SpanKey> spanKey;
-        spanKey->setFileId(entry.fileId);
-        spanKey->setOffset(entry.byteOffset);
+        spanKey().setFileId(entry.fileId);
+        spanKey().setOffset(entry.byteOffset);
         std::string spanValue;
         ExternalValue<SpanBody> span;
         {
@@ -2533,22 +2541,22 @@ struct ShardDBImpl {
             span = ExternalValue<SpanBody>(spanValue);
         }
 
-        ALWAYS_ASSERT(span->storageClass() != EMPTY_STORAGE);
-        if (span->storageClass() == INLINE_STORAGE) {
+        ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
+        if (span().storageClass() == INLINE_STORAGE) {
             return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
         }
 
         // Make sure we're condemned
-        if (file->lastSpanState() != SpanState::CONDEMNED) {
+        if (file().lastSpanState() != SpanState::CONDEMNED) {
             return EggsError::SPAN_NOT_FOUND; // TODO maybe better error?
         }
 
         // Verify proofs
-        if (entry.proofs.els.size() != span->parity().blocks()) {
+        if (entry.proofs.els.size() != span().parity().blocks()) {
             return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
         }
-        for (int i = 0; i < span->parity().blocks(); i++) {
-            const auto& block = span->block(i);
+        for (int i = 0; i < span().parity().blocks(); i++) {
+            const auto& block = span().block(i);
             const auto& proof = entry.proofs.els[i];
             if (block.blockId != proof.blockId) {
                 RAISE_ALERT(_env, "bad block proof id, expected %s, got %s", block.blockId, proof.blockId);
@@ -2564,8 +2572,8 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Delete(_spansCf, spanKey.toSlice()));
         {
             auto k = InodeIdKey::Static(entry.fileId);
-            file->setLastSpanState(SpanState::CLEAN);
-            file->setFileSize(spanKey->offset());
+            file().setLastSpanState(SpanState::CLEAN);
+            file().setFileSize(spanKey().offset());
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
         }
 
@@ -2582,28 +2590,27 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir->hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name);
         }
 
         {
             StaticValue<EdgeKey> edgeKey;
-            edgeKey->setDirIdWithCurrent(entry.ownerId, false); // snapshot (current=false)
-            edgeKey->setNameHash(nameHash);
-            edgeKey->setName(entry.name);
-            edgeKey->setCreationTime(time);
+            edgeKey().setDirIdWithCurrent(entry.ownerId, false); // snapshot (current=false)
+            edgeKey().setNameHash(nameHash);
+            edgeKey().setName(entry.name);
+            edgeKey().setCreationTime(time);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, edgeKey.toSlice()));
         }
 
         return NO_ERROR;
     }
 
-    EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+    EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
 
         LOG_DEBUG(_env, "applying log at index %s", logIndex);
         auto locked = _applyLogEntryLock.lock();
-        scratch.reset();
         resp.clear();
         EggsError err = NO_ERROR;
 
@@ -2625,10 +2632,10 @@ struct ShardDBImpl {
 
         switch (logEntryBody.kind()) {
         case ShardLogEntryKind::CONSTRUCT_FILE:
-            err = _applyConstructFile(batch, time, logEntryBody.getConstructFile(), scratch, resp.setConstructFile());
+            err = _applyConstructFile(batch, time, logEntryBody.getConstructFile(), resp.setConstructFile());
             break;
         case ShardLogEntryKind::LINK_FILE:
-            err = _applyLinkFile(batch, time, logEntryBody.getLinkFile(), scratch, resp.setLinkFile());
+            err = _applyLinkFile(batch, time, logEntryBody.getLinkFile(), resp.setLinkFile());
             break;
         case ShardLogEntryKind::SAME_DIRECTORY_RENAME:
             err = _applySameDirectoryRename(time, batch, logEntryBody.getSameDirectoryRename(), resp.setSameDirectoryRename());
@@ -2671,7 +2678,7 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
             // no resp here -- the callers are internal
-            err = _applyUpdateBlockServices(time, batch, logEntryBody.getUpdateBlockServices());
+            _applyUpdateBlockServices(time, batch, logEntryBody.getUpdateBlockServices());
             break;
         case ShardLogEntryKind::ADD_SPAN_INITIATE:
             err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), resp.setAddSpanInitiate());
@@ -2706,7 +2713,6 @@ struct ShardDBImpl {
         }
 
         return err;
-
     }
 
     // ----------------------------------------------------------------
@@ -2720,7 +2726,7 @@ struct ShardDBImpl {
         std::string value;
         ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
         ExternalValue<U64Value> v(value);
-        return v->u64();
+        return v().u64();
     }
 
     EggsError _getDirectory(const rocksdb::ReadOptions& options, InodeId id, bool allowSnapshot, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
@@ -2734,7 +2740,7 @@ struct ShardDBImpl {
         }
         ROCKS_DB_CHECKED(status);
         auto tmpDir = ExternalValue<DirectoryBody>(dirValue);
-        if (!allowSnapshot && (tmpDir->ownerId() == NULL_INODE_ID && id != ROOT_DIR_INODE_ID)) { // root dir never has an owner
+        if (!allowSnapshot && (tmpDir().ownerId() == NULL_INODE_ID && id != ROOT_DIR_INODE_ID)) { // root dir never has an owner
             return EggsError::DIRECTORY_NOT_FOUND;
         }
         dir = tmpDir;
@@ -2766,9 +2772,9 @@ struct ShardDBImpl {
         }
         ROCKS_DB_CHECKED(status);
         auto tmpFile = ExternalValue<TransientFileBody>(value);
-        if (!allowPastDeadline && time > tmpFile->deadline()) {
+        if (!allowPastDeadline && time > tmpFile().deadline()) {
             // this should be fairly uncommon
-            LOG_INFO(_env, "not picking up transient file %s since its deadline %s is past the log entry time %s", id, tmpFile->deadline(), time);
+            LOG_INFO(_env, "not picking up transient file %s since its deadline %s is past the log entry time %s", id, tmpFile().deadline(), time);
             return EggsError::FILE_NOT_FOUND;
         }
         file = tmpFile;
@@ -2784,14 +2790,14 @@ struct ShardDBImpl {
 
         // Like with dirs, don't go backwards in time. This is possibly less needed than
         // with directories, but still seems good hygiene.
-        if (tmpTf->mtime() >= time) {
-            RAISE_ALERT(_env, "trying to modify transient file %s going backwards in time, file mtime is %s, log entry time is %s", id, tmpTf->mtime(), time);
+        if (tmpTf().mtime() >= time) {
+            RAISE_ALERT(_env, "trying to modify transient file %s going backwards in time, file mtime is %s, log entry time is %s", id, tmpTf().mtime(), time);
             return EggsError::MTIME_IS_TOO_RECENT;
         }
 
-        tmpTf->setMtime(time);
+        tmpTf().setMtime(time);
         if (!allowPastDeadline) {
-            tmpTf->setDeadline(time + DEADLINE_INTERVAL);
+            tmpTf().setDeadline(time + DEADLINE_INTERVAL);
         }
         {
             auto k = InodeIdKey::Static(id);
@@ -2803,7 +2809,8 @@ struct ShardDBImpl {
     }
 };
 
-BincodeBytes defaultDirectoryInfo(char (&buf)[255]) {
+BincodeBytes defaultDirectoryInfo() {
+    char buf[255];
     DirectoryInfoBody info;
     // delete after 30 days
     info.deleteAfterTime = 30ull /*days*/ * 24 /*hours*/ * 60 /*minutes*/ * 60 /*seconds*/ * 1'000'000'000 /*ns*/;
@@ -2881,16 +2888,16 @@ ShardDB::~ShardDB() {
     _impl = nullptr;
 }
 
-EggsError ShardDB::read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->read(req, scratch, resp);
+EggsError ShardDB::read(const ShardReqContainer& req, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->read(req, resp);
 }
 
-EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry) {
-    return ((ShardDBImpl*)_impl)->prepareLogEntry(req, scratch, logEntry);
+EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
+    return ((ShardDBImpl*)_impl)->prepareLogEntry(req, logEntry);
 }
 
-EggsError ShardDB::applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->applyLogEntry(sync, logEntryIx, logEntry, scratch, resp);
+EggsError ShardDB::applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->applyLogEntry(sync, logEntryIx, logEntry, resp);
 }
 
 uint64_t ShardDB::lastAppliedLogEntry() {

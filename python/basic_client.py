@@ -187,7 +187,7 @@ def lookup(path: Path) -> int:
     return inode
 
 def mkdir_raw(owner_id: int, name: str) -> None:
-    send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii'), info=INHERIT_DIRECTORY_INFO))
+    send_cdc_request_or_raise(MakeDirectoryReq(owner_id=owner_id, name=name.encode('ascii'), info=SetDirectoryInfo(inherited=True, body=b'')))
 
 @command('mkdir')
 def mkdir(path: Path) -> None:

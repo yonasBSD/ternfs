@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"path"
 	"time"
 	"xtx/eggsfs/eggs"
@@ -12,7 +13,7 @@ import (
 )
 
 func main() {
-	dataDir := flag.String("dir", "", "Directory where to store all the databases. Must be provided.")
+	dataDir := flag.String("dir", "", "Directory where to store all the databases. If not present a tmp dir will be used.")
 	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind.")
 	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
 	debug := flag.Bool("debug", false, "Whether to build without optimizations.")
@@ -21,19 +22,26 @@ func main() {
 	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 5).")
 	flag.Parse()
 
-	if *dataDir == "" {
-		panic("-dir must be provided.")
-	}
-
 	if *verbose && !*debug {
 		panic("You asked me to build without -debug, and with -verbose. This is almost certainly wrong.")
 	}
 
-	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &eggs.BuildShardOpts{
+	if *dataDir == "" {
+		dir, err := os.MkdirTemp("", "runeggs.")
+		if err != nil {
+			panic(fmt.Errorf("could not create tmp data dir: %w", err))
+		}
+		*dataDir = dir
+		fmt.Printf("running with temp data dir %v\n", *dataDir)
+	}
+
+	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,
 		Sanitize: *sanitize,
 		Debug:    *debug,
-	})
+	}
+	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &cppBuildOpts)
+	cdcExe := eggs.BuildCDCExe(&eggs.LogToStdout{}, &cppBuildOpts)
 	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})
 
 	terminateChan := make(chan any, 1)
@@ -69,10 +77,16 @@ func main() {
 	}
 
 	// Start CDC
-	procs.StartCDC(path.Join(*dataDir, "cdc"), *verbose)
+	procs.StartCDC(&eggs.CDCOpts{
+		Exe:      cdcExe,
+		Dir:      path.Join(*dataDir, "cdc"),
+		Verbose:  *verbose,
+		Valgrind: *valgrind,
+	})
 
-	fmt.Printf("waiting for shuckle for 10 seconds...\n")
-	eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), int(*hddBlockServices+*flashBlockServices), 10*time.Second)
+	waitShuckleFor := 10 * time.Second
+	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
+	eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
 
 	// Start shards
 	for i := 0; i < 256; i++ {
@@ -87,9 +101,10 @@ func main() {
 		})
 	}
 
-	fmt.Printf("waiting for shards for 10 seconds...\n")
+	waitShardFor := 20 * time.Second
+	fmt.Printf("waiting for shards for %v...\n", waitShardFor)
 	for i := 0; i < 256; i++ {
-		eggs.WaitForShard(msgs.ShardId(i), 10*time.Second)
+		eggs.WaitForShard(msgs.ShardId(i), waitShardFor)
 	}
 
 	fmt.Printf("operational 🤖\n")

@@ -21,7 +21,7 @@
 #include "Undertaker.hpp"
 
 // Data needed to synchronize between the different threads
-struct Shared {
+struct ShardShared {
 private:
     uint64_t _currentLogIndex;
     std::mutex _applyLock;
@@ -29,28 +29,28 @@ public:
     ShardDB& db;
     std::atomic<bool> shuckleReached;
 
-    Shared() = delete;
-    Shared(ShardDB& db_): db(db_), shuckleReached(false) {
+    ShardShared() = delete;
+    ShardShared(ShardDB& db_): db(db_), shuckleReached(false) {
         _currentLogIndex = db.lastAppliedLogEntry();
     }
 
-    EggsError applyLogEntry(const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp) {
+    EggsError applyLogEntry(const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         std::lock_guard<std::mutex> lock(_applyLock);
-        auto res = db.applyLogEntry(true, _currentLogIndex+1, logEntry, scratch, resp);
+        auto res = db.applyLogEntry(true, _currentLogIndex+1, logEntry, resp);
         _currentLogIndex++;
         return res;
     }
 };
 
-struct Server : Undertaker::Reapable {
+struct ShardServer : Undertaker::Reapable {
 private:
     Env _env;
-    Shared& _shared;
+    ShardShared& _shared;
     ShardId _shid;
     std::atomic<bool> _stop;
     bool _waitForShuckle;
 public:
-    Server(Logger& logger, Shared& shared, ShardId shid, const ShardOptions& options):
+    ShardServer(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
         _env(logger, "server"),
         _shared(shared),
         _shid(shid),
@@ -58,7 +58,7 @@ public:
         _waitForShuckle(options.waitForShuckle)
     {}
 
-    virtual ~Server() = default;
+    virtual ~ShardServer() = default;
 
     virtual void terminate() override {
         _env.flush();
@@ -92,7 +92,6 @@ public:
             if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
                 throw SYSCALL_EXCEPTION("setsockopt");
             }
-
         }
 
         LOG_INFO(_env, "running on port %s", _shid.port());
@@ -100,7 +99,6 @@ public:
         struct sockaddr_in clientAddr;
         std::vector<char> recvBuf(UDP_MTU);
         std::vector<char> sendBuf(UDP_MTU);
-        BincodeBytesScratchpad respScratch;
         auto reqContainer = std::make_unique<ShardReqContainer>();
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();
@@ -168,7 +166,7 @@ public:
             }
 
             // Make sure nothing is left
-            if (reqBbuf.remaining() != 0) {
+            if (err == NO_ERROR && reqBbuf.remaining() != 0) {
                 RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", reqBbuf.remaining(), reqHeader.kind, clientAddr);
                 err = EggsError::MALFORMED_REQUEST;
             }
@@ -176,11 +174,11 @@ public:
             // Actually process the request
             if (err == NO_ERROR) {
                 if (readOnlyShardReq(reqContainer->kind())) {
-                    err = _shared.db.read(*reqContainer, respScratch, *respContainer);
+                    err = _shared.db.read(*reqContainer, *respContainer);
                 } else {
-                    err = _shared.db.prepareLogEntry(*reqContainer, respScratch, *logEntry);
+                    err = _shared.db.prepareLogEntry(*reqContainer, *logEntry);
                     if (err == NO_ERROR) {
-                        err = _shared.applyLogEntry(*logEntry, respScratch, *respContainer);
+                        err = _shared.applyLogEntry(*logEntry, *respContainer);
                     }
                 }
             }
@@ -207,20 +205,20 @@ public:
     }    
 };
 
-static void* runServer(void* server) {
-    ((Server*)server)->run();
+static void* runShardServer(void* server) {
+    ((ShardServer*)server)->run();
     return nullptr;
 }
 
 struct BlockServiceUpdater : Undertaker::Reapable {
 private:
     Env _env;
-    Shared& _shared;
+    ShardShared& _shared;
     std::atomic<bool> _stop;
     std::string _shuckleHost;
     bool _waitForShuckle;
 public:
-    BlockServiceUpdater(Logger& logger, Shared& shared, const ShardOptions& options):
+    BlockServiceUpdater(Logger& logger, ShardShared& shared, const ShardOptions& options):
         _env(logger, "block_service_updater"),
         _shared(shared),
         _stop(false),
@@ -246,7 +244,6 @@ public:
         bool reachedButEmpty = false;
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();
-        BincodeBytesScratchpad scratch;
 
         #define GO_TO_NEXT_ITERATION \
             std::this_thread::sleep_for(std::chrono::milliseconds(10)); \
@@ -294,7 +291,7 @@ public:
             }
             
             {
-                EggsError err = _shared.applyLogEntry(*logEntry, scratch, *respContainer);
+                EggsError err = _shared.applyLogEntry(*logEntry, *respContainer);
                 if (err != NO_ERROR) {
                     RAISE_ALERT(_env, "unexpected failure when trying to update block services: %s", err);
                     lastRequestSuccessful = false;
@@ -329,12 +326,12 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     ShardDB db(logger, shid, dbDir);
 
-    Shared shared(db);
+    ShardShared shared(db);
 
     {
-        auto server = std::make_unique<Server>(logger, shared, shid, options);
+        auto server = std::make_unique<ShardServer>(logger, shared, shid, options);
         pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runServer, &*server) != 0) {
+        if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(server), tid, "shard");

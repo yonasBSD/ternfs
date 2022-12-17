@@ -1,9 +1,11 @@
 #include "Bincode.hpp"
 
-std::ostream& operator<<(std::ostream& out, const BincodeBytes& x) {
+std::ostream& operator<<(std::ostream& out, const BincodeBytesRef& x) {
     out << "b\"";
-    for (int i = 0; i < x.length; i++) {
-        uint8_t ch = x.data[i];
+    uint8_t len = x.size();
+    const uint8_t* data = (const uint8_t*)x.data();
+    for (int i = 0; i < len; i++) {
+        uint8_t ch = data[i];
         if (isprint(ch)) {
             out << ch;
         } else if (ch == 0) {
@@ -11,12 +13,16 @@ std::ostream& operator<<(std::ostream& out, const BincodeBytes& x) {
         } else {
             const char cfill = out.fill();
             out << std::hex << std::setfill('0');
-            out << "\\x" << std::setw(2) << ((int)ch);
+            out << "\\x" << std::setw(2) << (int)ch;
             out << std::setfill(cfill) << std::dec;
         }
     }
     out << "\"";
     return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const BincodeBytes& x) {
+    return out << x.ref();
 }
 
 const char* BincodeException::what() const noexcept {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include <string.h>
 #include <sys/types.h>
 #include <exception>
@@ -12,45 +13,130 @@
 #include "Common.hpp"
 #include "Assert.hpp"
 
-// We rely on this when casting from/to scalars here. If we ever run this on big endian
-// systems, the whole bincode code will have to be looked at closely.
-static_assert(std::endian::native == std::endian::little);
+struct BincodeBytesRef {
+private:
+    const char* _data;
+    const uint8_t _length;
 
-// These are not owned -- they'll point to some other buffer (e.g.
-// the buffer we received the message in, or some scratchpad).
+public:
+    BincodeBytesRef(): _data(""), _length(0) {}
+    BincodeBytesRef(const char* data, size_t length): _data(data), _length(length) {
+        ALWAYS_ASSERT(length < 256);
+    }
+    BincodeBytesRef(const char* str): BincodeBytesRef(str, strlen(str)) {}
+
+    const char* data() const {
+        return _data;
+    }
+
+    uint8_t size() const {
+        return _length;
+    }
+
+    bool operator==(const BincodeBytesRef& rhs) const {
+        if (size() != rhs.size()) {
+            return false;
+        }
+        return strncmp(data(), rhs.data(), size()) == 0;
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, const BincodeBytesRef& x);
+
+// Owned strings of at most 255 length. We could get away with references
+// to existing strings most of the times, but considering how much allocation
+// happens anyway it's not worth the hassle.
 struct BincodeBytes {
-    uint8_t length;
-    const uint8_t* data;
-
+private:
+    // We store the length in the most significant byte of the pointer.
+    // If the length is < 8, then the string is in the remaining 7 bytes.
+    // Otherwise, the rest of the bytes are to be interpreted as a pointer
+    // to the data.
+    uintptr_t _data;
+    static_assert(sizeof(uintptr_t) == 8);
+    static_assert(std::endian::native == std::endian::little);
+public:
     static constexpr uint16_t STATIC_SIZE = 1; // length
 
-    BincodeBytes(): BincodeBytes("", 0) {}
-    BincodeBytes(const char* data_, size_t length_): length(length_), data((const uint8_t*)data_) {
-        ALWAYS_ASSERT(length_ < 256);
-    }
-    BincodeBytes(const rocksdb::Slice& slice): length(slice.size()), data((const uint8_t*)slice.data()) {
-        ALWAYS_ASSERT(slice.size() < 256);
-    }
-
-    BincodeBytes(const char* str) {
-        size_t length = strlen(str);
-        ALWAYS_ASSERT(length < 256);
-        this->length = length;
-        this->data = (const uint8_t*)str;
-    }
+    BincodeBytes(): _data(0) {}
+    BincodeBytes(const char* data, size_t length): _data(0) { copy(data, length); }
+    BincodeBytes(const rocksdb::Slice& slice): BincodeBytes(slice.data(), slice.size()) {}
+    BincodeBytes(const BincodeBytesRef& ref): BincodeBytes(ref.data(), ref.size()) {}
+    BincodeBytes(const char* str): BincodeBytes(str, strlen(str)) {}
 
     void clear() {
-        length = 0;
-        data = (const uint8_t*)"";
+        if (size() >= 8) {
+            ::free(data());
+        }
+        _data = 0;
+    }
+
+    void copy(const char* data, size_t length) {
+        clear();
+        ALWAYS_ASSERT(length < 256);
+        _data = (uintptr_t)length << (64-8);
+        if (length < 8) {
+            memcpy(&_data, data, length);
+        } else {
+            char* buf = (char*)malloc(length);
+            ALWAYS_ASSERT(buf != nullptr);
+            ALWAYS_ASSERT(((uintptr_t)buf >> (64-8)) == 0);
+            memcpy(buf, data, length);
+            _data |= (uintptr_t)buf;
+        }
+    }
+
+    ~BincodeBytes() {
+        clear();
+    }
+
+    uint8_t size() const {
+        return _data >> (64-8);
+    }
+
+    char* data() {
+        if (size() < 8) {
+            return (char*)&_data;
+        } else {
+            return (char*)(_data & ~(0xFFull << (64-8)));
+        }
+    }
+
+    const char* data() const {
+        return (const char*)((BincodeBytes*)this)->data();
+    }
+
+    BincodeBytes(const BincodeBytes& bs): BincodeBytes(bs.data(), bs.size()) {}
+
+    BincodeBytes& operator=(const BincodeBytes& other) {
+        if (this == &other) {
+            return *this;
+        }
+        copy(other.data(), other.size());
+        return *this;
+    }
+
+    BincodeBytes(BincodeBytes&& other): _data(other._data) {
+        other._data = 0;
     }
 
     uint8_t packedSize() const {
-        return 1 + length;
+        return 1 + size();
     }
 
     bool operator==(const BincodeBytes& rhs) const {
-        return length == rhs.length && (strncmp((const char*)data, (const char*)rhs.data, length) == 0);
+        if (size() != rhs.size()) {
+            return false;
+        }
+        return strncmp(data(), rhs.data(), size()) == 0;
     }
+
+    BincodeBytesRef ref() const {
+        return BincodeBytesRef(data(), size());
+    }
+
+    // TODO remove, right now I'm being lazy but it's just confusing
+    operator BincodeBytesRef() const { return ref(); }
 };
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytes& x);
@@ -181,7 +267,8 @@ struct BincodeBuf {
 
     template<typename A>
     void packScalar(A x) {
-        static_assert(std::is_integral_v<A>);
+        static_assert(std::is_integral_v<A> || std::is_enum_v<A>);
+        static_assert(std::endian::native == std::endian::little);
         ensureSizeOrPanic(sizeof(A));
         memcpy(cursor, &x, sizeof(x));
         cursor += sizeof(A);
@@ -203,10 +290,10 @@ struct BincodeBuf {
     }
 
     void packBytes(const BincodeBytes& x) {
-        ensureSizeOrPanic(1+x.length);
-        packScalar<uint8_t>(x.length);
-        memcpy(cursor, x.data, x.length);
-        cursor += x.length;
+        ensureSizeOrPanic(1+x.size());
+        packScalar<uint8_t>(x.size());
+        memcpy(cursor, x.data(), x.size());
+        cursor += x.size();
     }
 
     template<typename A>
@@ -220,7 +307,8 @@ struct BincodeBuf {
 
     template<typename A>
     A unpackScalar() {
-        static_assert(std::is_integral_v<A>);
+        static_assert(std::is_integral_v<A> || std::is_enum_v<A>);
+        static_assert(std::endian::native == std::endian::little);
         if (unlikely(remaining() < sizeof(A))) {
             throw BINCODE_EXCEPTION("not enough bytes to unpack scalar (need %s, got %s)", sizeof(A), remaining());
         }
@@ -252,12 +340,12 @@ struct BincodeBuf {
     }
 
     void unpackBytes(BincodeBytes& x) {
-        x.length = unpackScalar<uint8_t>();
-        if (unlikely(remaining() < x.length)) {
-            throw BINCODE_EXCEPTION("not enough bytes to unpack bytes (need %s, got %s)", (int)x.length, remaining());
+        size_t len = unpackScalar<uint8_t>();
+        if (unlikely(remaining() < len)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack bytes (need %s, got %s)", (int)len, remaining());
         }
-        x.data = cursor;
-        cursor += x.length;
+        x.copy((char*)cursor, len);
+        cursor += len;
     }
 
     template<typename A>
@@ -274,40 +362,3 @@ struct BincodeBuf {
 };
 
 constexpr size_t UDP_MTU = 1472;
-
-struct BincodeBytesScratchpad {
-private:
-    std::vector<uint8_t> _buf;
-    uint16_t _cursor;
-public:
-    BincodeBytesScratchpad(): _buf(UDP_MTU), _cursor(0) {}
-
-    void allocate(uint8_t length, BincodeBytes& bytes) {
-        ALWAYS_ASSERT(_cursor + length <= UDP_MTU);
-        bytes.length = length;
-        bytes.data = &_buf[0] + _cursor;
-        memset((uint8_t*)bytes.data, 0, bytes.length);
-        _cursor += length;
-    }
-
-    void copyTo(const BincodeBytes& from, BincodeBytes& to) {
-        allocate(from.length, to);
-        memcpy((uint8_t*)to.data, from.data, from.length);
-    }
-
-    void copyTo(const char* from, BincodeBytes& to) {
-        allocate(strlen(from), to);
-        memcpy((uint8_t*)to.data, from, to.length);
-    }
-
-    BincodeBytes copy(const BincodeBytes& from) {
-        BincodeBytes b;
-        allocate(from.length, b);
-        copyTo(from, b);
-        return b;
-    }
-
-    void reset() {
-        _cursor = 0;
-    }
-};

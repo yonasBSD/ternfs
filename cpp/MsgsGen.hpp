@@ -64,7 +64,6 @@ struct TransientFile {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
 
     TransientFile() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -88,7 +87,6 @@ struct FetchedBlock {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIx + blockId + crc32
 
     FetchedBlock() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // blockServiceIx
@@ -113,7 +111,6 @@ struct CurrentEdge {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // targetId + nameHash + name + creationTime
 
     CurrentEdge() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -140,7 +137,6 @@ struct Edge {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + targetId + nameHash + name + creationTime
 
     Edge() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // current
@@ -171,7 +167,6 @@ struct FetchedSpan {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + BincodeFixedBytes<4>::STATIC_SIZE + BincodeBytes::STATIC_SIZE + BincodeList<FetchedBlock>::STATIC_SIZE; // parity + storageClass + crc32 + bodyBytes + bodyBlocks
 
     FetchedSpan() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += varU61Size(byteOffset); // byteOffset
@@ -202,7 +197,6 @@ struct BlockInfo {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp + blockServicePort + blockServiceId + blockId + certificate
 
     BlockInfo() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp
@@ -226,7 +220,6 @@ struct NewBlockInfo {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE; // crc32
 
     NewBlockInfo() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // crc32
@@ -247,7 +240,6 @@ struct BlockProof {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + proof
 
     BlockProof() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // blockId
@@ -270,7 +262,6 @@ struct SpanPolicy {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + 1; // maxSize + storageClass + parity
 
     SpanPolicy() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // maxSize
@@ -295,7 +286,6 @@ struct DirectoryInfoBody {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 1 + BincodeList<SpanPolicy>::STATIC_SIZE; // version + deleteAfterTime + deleteAfterVersions + spanPolicies
 
     DirectoryInfoBody() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // version
@@ -319,7 +309,6 @@ struct SetDirectoryInfo {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // inherited + body
 
     SetDirectoryInfo() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // inherited
@@ -342,7 +331,6 @@ struct BlockServiceBlacklist {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + id
 
     BlockServiceBlacklist() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
@@ -367,7 +355,6 @@ struct BlockService {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip + port + id + flags
 
     BlockService() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
@@ -393,7 +380,6 @@ struct FullReadDirCursor {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + startHash + startName + startTime
 
     FullReadDirCursor() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // current
@@ -421,7 +407,6 @@ struct EntryBlockService {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE; // id + ip + port + storageClass + failureDomain + secretKey
 
     EntryBlockService() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -447,7 +432,6 @@ struct EntryNewBlockInfo {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceId + crc32
 
     EntryNewBlockInfo() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // blockServiceId
@@ -469,7 +453,6 @@ struct LookupReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // dirId + name
 
     LookupReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -491,7 +474,6 @@ struct LookupResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
 
     LookupResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -512,7 +494,6 @@ struct StatFileReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -533,7 +514,6 @@ struct StatFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // mtime + size
 
     StatFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // mtime
@@ -554,7 +534,6 @@ struct StatTransientFileReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatTransientFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -576,7 +555,6 @@ struct StatTransientFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // mtime + size + note
 
     StatTransientFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // mtime
@@ -598,7 +576,6 @@ struct StatDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatDirectoryReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -620,7 +597,6 @@ struct StatDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // mtime + owner + info
 
     StatDirectoryResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // mtime
@@ -643,7 +619,6 @@ struct ReadDirReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + startHash
 
     ReadDirReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -665,7 +640,6 @@ struct ReadDirResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<CurrentEdge>::STATIC_SIZE; // nextHash + results
 
     ReadDirResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // nextHash
@@ -687,7 +661,6 @@ struct ConstructFileReq {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // type + note
 
     ConstructFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // type
@@ -709,7 +682,6 @@ struct ConstructFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // id + cookie
 
     ConstructFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -740,7 +712,6 @@ struct AddSpanInitiateReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 1 + BincodeList<BlockServiceBlacklist>::STATIC_SIZE + 1 + BincodeFixedBytes<4>::STATIC_SIZE + BincodeBytes::STATIC_SIZE + BincodeList<NewBlockInfo>::STATIC_SIZE; // fileId + cookie + storageClass + blacklist + parity + crc32 + bodyBytes + bodyBlocks
 
     AddSpanInitiateReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -770,7 +741,6 @@ struct AddSpanInitiateResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockInfo>::STATIC_SIZE; // blocks
 
     AddSpanInitiateResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += blocks.packedSize(); // blocks
@@ -793,7 +763,6 @@ struct AddSpanCertifyReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + BincodeList<BlockProof>::STATIC_SIZE; // fileId + cookie + proofs
 
     AddSpanCertifyReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -815,7 +784,6 @@ struct AddSpanCertifyResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AddSpanCertifyResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -837,7 +805,6 @@ struct LinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // fileId + cookie + ownerId + name
 
     LinkFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -859,7 +826,6 @@ struct LinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LinkFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -880,7 +846,6 @@ struct SoftUnlinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + fileId + name
 
     SoftUnlinkFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -901,7 +866,6 @@ struct SoftUnlinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SoftUnlinkFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -921,7 +885,6 @@ struct FileSpansReq {
     static constexpr uint16_t STATIC_SIZE = 8; // fileId
 
     FileSpansReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -944,7 +907,6 @@ struct FileSpansResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockService>::STATIC_SIZE + BincodeList<FetchedSpan>::STATIC_SIZE; // blockServices + spans
 
     FileSpansResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += varU61Size(nextOffset); // nextOffset
@@ -969,7 +931,6 @@ struct SameDirectoryRenameReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + newName
 
     SameDirectoryRenameReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -991,7 +952,6 @@ struct SameDirectoryRenameResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SameDirectoryRenameResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1011,7 +971,6 @@ struct SetDirectoryInfoReq {
     static constexpr uint16_t STATIC_SIZE = 8 + SetDirectoryInfo::STATIC_SIZE; // id + info
 
     SetDirectoryInfoReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -1031,7 +990,6 @@ struct SetDirectoryInfoResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetDirectoryInfoResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1050,7 +1008,6 @@ struct VisitDirectoriesReq {
     static constexpr uint16_t STATIC_SIZE = 8; // beginId
 
     VisitDirectoriesReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
@@ -1071,7 +1028,6 @@ struct VisitDirectoriesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<InodeId>::STATIC_SIZE; // nextId + ids
 
     VisitDirectoriesResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // nextId
@@ -1092,7 +1048,6 @@ struct VisitFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8; // beginId
 
     VisitFilesReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
@@ -1113,7 +1068,6 @@ struct VisitFilesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<InodeId>::STATIC_SIZE; // nextId + ids
 
     VisitFilesResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // nextId
@@ -1134,7 +1088,6 @@ struct VisitTransientFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8; // beginId
 
     VisitTransientFilesReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
@@ -1155,7 +1108,6 @@ struct VisitTransientFilesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<TransientFile>::STATIC_SIZE; // nextId + files
 
     VisitTransientFilesResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // nextId
@@ -1177,7 +1129,6 @@ struct FullReadDirReq {
     static constexpr uint16_t STATIC_SIZE = 8 + FullReadDirCursor::STATIC_SIZE; // dirId + cursor
 
     FullReadDirReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1199,7 +1150,6 @@ struct FullReadDirResp {
     static constexpr uint16_t STATIC_SIZE = FullReadDirCursor::STATIC_SIZE + BincodeList<Edge>::STATIC_SIZE; // next + results
 
     FullReadDirResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += next.packedSize(); // next
@@ -1223,7 +1173,6 @@ struct RemoveNonOwnedEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
     RemoveNonOwnedEdgeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1245,7 +1194,6 @@ struct RemoveNonOwnedEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveNonOwnedEdgeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1267,7 +1215,6 @@ struct IntraShardHardFileUnlinkReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     IntraShardHardFileUnlinkReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -1289,7 +1236,6 @@ struct IntraShardHardFileUnlinkResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     IntraShardHardFileUnlinkResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1309,7 +1255,6 @@ struct RemoveSpanInitiateReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // fileId + cookie
 
     RemoveSpanInitiateReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -1331,7 +1276,6 @@ struct RemoveSpanInitiateResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockInfo>::STATIC_SIZE; // blocks
 
     RemoveSpanInitiateResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += varU61Size(byteOffset); // byteOffset
@@ -1355,7 +1299,6 @@ struct RemoveSpanCertifyReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + BincodeList<BlockProof>::STATIC_SIZE; // fileId + cookie + proofs
 
     RemoveSpanCertifyReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -1377,7 +1320,6 @@ struct RemoveSpanCertifyResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveSpanCertifyResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1401,7 +1343,6 @@ struct SwapBlocksReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + 8 + 8 + 8; // fileId1 + byteOffset1 + blockId1 + fileId2 + byteOffset2 + blockId2
 
     SwapBlocksReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId1
@@ -1425,7 +1366,6 @@ struct SwapBlocksResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SwapBlocksResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1445,7 +1385,6 @@ struct BlockServiceFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // blockServiceId + startFrom
 
     BlockServiceFilesReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // blockServiceId
@@ -1466,7 +1405,6 @@ struct BlockServiceFilesResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<InodeId>::STATIC_SIZE; // fileIds
 
     BlockServiceFilesResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += fileIds.packedSize(); // fileIds
@@ -1486,7 +1424,6 @@ struct RemoveInodeReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     RemoveInodeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -1505,7 +1442,6 @@ struct RemoveInodeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveInodeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1526,7 +1462,6 @@ struct CreateDirectoryInodeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + SetDirectoryInfo::STATIC_SIZE; // id + ownerId + info
 
     CreateDirectoryInodeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -1548,7 +1483,6 @@ struct CreateDirectoryInodeResp {
     static constexpr uint16_t STATIC_SIZE = 8; // mtime
 
     CreateDirectoryInodeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // mtime
@@ -1569,7 +1503,6 @@ struct SetDirectoryOwnerReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + ownerId
 
     SetDirectoryOwnerReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1589,7 +1522,6 @@ struct SetDirectoryOwnerResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetDirectoryOwnerResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1609,7 +1541,6 @@ struct RemoveDirectoryOwnerReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // dirId + info
 
     RemoveDirectoryOwnerReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1629,7 +1560,6 @@ struct RemoveDirectoryOwnerResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveDirectoryOwnerResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1651,7 +1581,6 @@ struct CreateLockedCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + creationTime
 
     CreateLockedCurrentEdgeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1673,7 +1602,6 @@ struct CreateLockedCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CreateLockedCurrentEdgeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1694,7 +1622,6 @@ struct LockCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
 
     LockCurrentEdgeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1715,7 +1642,6 @@ struct LockCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LockCurrentEdgeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1737,7 +1663,6 @@ struct UnlockCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // dirId + name + targetId + wasMoved
 
     UnlockCurrentEdgeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -1759,7 +1684,6 @@ struct UnlockCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     UnlockCurrentEdgeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1781,7 +1705,6 @@ struct RemoveOwnedSnapshotFileEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     RemoveOwnedSnapshotFileEdgeReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -1803,7 +1726,6 @@ struct RemoveOwnedSnapshotFileEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveOwnedSnapshotFileEdgeResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1823,7 +1745,6 @@ struct MakeFileTransientReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
 
     MakeFileTransientReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -1843,7 +1764,6 @@ struct MakeFileTransientResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     MakeFileTransientResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1864,7 +1784,6 @@ struct MakeDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + SetDirectoryInfo::STATIC_SIZE; // ownerId + name + info
 
     MakeDirectoryReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -1886,7 +1805,6 @@ struct MakeDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     MakeDirectoryResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -1910,7 +1828,6 @@ struct RenameFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + newOwnerId + newName
 
     RenameFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -1933,7 +1850,6 @@ struct RenameFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RenameFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1954,7 +1870,6 @@ struct SoftUnlinkDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + targetId + name
 
     SoftUnlinkDirectoryReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -1975,7 +1890,6 @@ struct SoftUnlinkDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SoftUnlinkDirectoryResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1998,7 +1912,6 @@ struct RenameDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + newOwnerId + newName
 
     RenameDirectoryReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -2021,7 +1934,6 @@ struct RenameDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RenameDirectoryResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -2040,7 +1952,6 @@ struct HardUnlinkDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8; // dirId
 
     HardUnlinkDirectoryReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2059,7 +1970,6 @@ struct HardUnlinkDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     HardUnlinkDirectoryResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -2081,7 +1991,6 @@ struct HardUnlinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     HardUnlinkFileReq() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -2103,7 +2012,6 @@ struct HardUnlinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     HardUnlinkFileResp() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -2416,7 +2324,6 @@ struct ConstructFileEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE; // type + deadlineTime + note
 
     ConstructFileEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // type
@@ -2440,7 +2347,6 @@ struct LinkFileEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // fileId + ownerId + name
 
     LinkFileEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -2465,7 +2371,6 @@ struct SameDirectoryRenameEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + newName
 
     SameDirectoryRenameEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // targetId
@@ -2490,7 +2395,6 @@ struct SoftUnlinkFileEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + fileId + name
 
     SoftUnlinkFileEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -2514,7 +2418,6 @@ struct CreateDirectoryInodeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + SetDirectoryInfo::STATIC_SIZE; // id + ownerId + info
 
     CreateDirectoryInodeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -2539,7 +2442,6 @@ struct CreateLockedCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + creationTime
 
     CreateLockedCurrentEdgeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2565,7 +2467,6 @@ struct UnlockCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // dirId + name + targetId + wasMoved
 
     UnlockCurrentEdgeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2590,7 +2491,6 @@ struct LockCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
 
     LockCurrentEdgeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2613,7 +2513,6 @@ struct RemoveDirectoryOwnerEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // dirId + info
 
     RemoveDirectoryOwnerEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2634,7 +2533,6 @@ struct RemoveInodeEntry {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     RemoveInodeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -2655,7 +2553,6 @@ struct SetDirectoryOwnerEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + ownerId
 
     SetDirectoryOwnerEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2677,7 +2574,6 @@ struct SetDirectoryInfoEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + SetDirectoryInfo::STATIC_SIZE; // dirId + info
 
     SetDirectoryInfoEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2701,7 +2597,6 @@ struct RemoveNonOwnedEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
     RemoveNonOwnedEdgeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
@@ -2727,7 +2622,6 @@ struct IntraShardHardFileUnlinkEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     IntraShardHardFileUnlinkEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -2750,7 +2644,6 @@ struct RemoveSpanInitiateEntry {
     static constexpr uint16_t STATIC_SIZE = 8; // fileId
 
     RemoveSpanInitiateEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -2770,7 +2663,6 @@ struct UpdateBlockServicesEntry {
     static constexpr uint16_t STATIC_SIZE = BincodeList<EntryBlockService>::STATIC_SIZE; // blockServices
 
     UpdateBlockServicesEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -2798,7 +2690,6 @@ struct AddSpanInitiateEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 1 + 1 + BincodeFixedBytes<4>::STATIC_SIZE + 4 + 4 + BincodeBytes::STATIC_SIZE + BincodeList<EntryNewBlockInfo>::STATIC_SIZE; // fileId + byteOffset + storageClass + parity + crc32 + size + blockSize + bodyBytes + bodyBlocks
 
     AddSpanInitiateEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -2828,7 +2719,6 @@ struct AddSpanCertifyEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
 
     AddSpanCertifyEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -2851,7 +2741,6 @@ struct MakeFileTransientEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
 
     MakeFileTransientEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
@@ -2874,7 +2763,6 @@ struct RemoveSpanCertifyEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
 
     RemoveSpanCertifyEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // fileId
@@ -2899,7 +2787,6 @@ struct RemoveOwnedSnapshotFileEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     RemoveOwnedSnapshotFileEdgeEntry() { clear(); }
-
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId

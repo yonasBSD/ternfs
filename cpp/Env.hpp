@@ -25,7 +25,7 @@ public:
     Logger(LogLevel logLevel, std::ostream& out): _logLevel(logLevel), _out(out) {}
 
     template<typename ...Args>
-    void _log(LogLevel level, const std::string& prefix, const char* fmt, Args... args) {
+    void _log(LogLevel level, const std::string& prefix, const char* fmt, Args&&... args) {
         if (level < _logLevel) {
             return;
         }
@@ -54,13 +54,13 @@ public:
     Env(Logger& logger, const std::string& prefix): _logger(logger), _prefix(prefix) {}
 
     template<typename ...Args>
-    void _log(LogLevel level, const char* fmt, Args... args) {
-        _logger._log(level, _prefix, fmt, args...);
+    void _log(LogLevel level, const char* fmt, Args&&... args) {
+        _logger._log(level, _prefix, fmt, std::forward<Args>(args)...);
     }
 
     template<typename ...Args>
-    void _raiseAlert(const char* fmt, Args... args) {
-        _log(LogLevel::LOG_ERROR, fmt, args...);
+    void _raiseAlert(const char* fmt, Args&&... args) {
+        _log(LogLevel::LOG_ERROR, fmt, std::forward<Args>(args)...);
     }
 
     void flush() {
@@ -87,6 +87,9 @@ public:
         (env)._log(LogLevel::LOG_ERROR, VALIDATE_FORMAT(__VA_ARGS__)); \
     } while (false)
 
+// The interface for this will be different -- we want some kind of alert object
+// like the rest of the C++ codebase. But for now use this as a marker to find
+// where alerts are needed.
 #define RAISE_ALERT(env, ...) \
     do { \
         (env)._raiseAlert(VALIDATE_FORMAT(__VA_ARGS__)); \

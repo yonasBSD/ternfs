@@ -803,7 +803,8 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    static constexpr uint16_t STATIC_SIZE = %s; // %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
 	fmt.Fprintf(hpp, "\n")
-	fmt.Fprintf(hpp, "    %s() { clear(); }\n\n", t.Name())
+	fmt.Fprintf(hpp, "    %s() { clear(); }\n", t.Name())
+
 	fmt.Fprintf(hpp, "    uint16_t packedSize() const {\n")
 	fmt.Fprintf(hpp, "        uint16_t _size = 0;\n")
 	hpp.Write(cg.size.Bytes())

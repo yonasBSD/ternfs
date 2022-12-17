@@ -1,8 +1,11 @@
 #pragma once
 
 #include <rocksdb/db.h>
+#include <rocksdb/utilities/transaction.h>
 
 #include "Assert.hpp"
+#include "Bincode.hpp"
+#include "Msgs.hpp"
 
 #define ROCKS_DB_CHECKED_MSG(status, ...) \
     do { \
@@ -59,6 +62,28 @@ private:
     rocksdb::Iterator* _it;
 };
 
+// Just to avoid having to call delete manually
+struct WrappedTransaction {
+    WrappedTransaction(rocksdb::Transaction* txn): _txn(txn) {
+        ALWAYS_ASSERT(_txn);
+    }
+
+    ~WrappedTransaction() {
+        delete _txn;
+    }
+
+    rocksdb::Transaction* operator->() {
+        return _txn;
+    }
+
+    rocksdb::Transaction& operator*() {
+        return *_txn;
+    }
+
+private:
+    rocksdb::Transaction* _txn;
+};
+
 // Just to avoid having to call release manually. `db` must outlive the snapshot.
 struct WrappedSnapshot {
 private:
@@ -90,25 +115,32 @@ inline uint64_t byteswapU64(uint64_t x) {
 template<typename T>
 struct StaticValue {
 private:
+    static_assert(sizeof(T) == sizeof(char*));
+    static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     std::array<char, T::MAX_SIZE> _data;
-    T _val;
 public:
-    StaticValue() {
-        _val._data = &_data[0];
-    }
-
     rocksdb::Slice toSlice() const {
-        return rocksdb::Slice(&_data[0], _val.size());
+        return rocksdb::Slice(&_data[0], operator()().size());
     }
 
-    T* operator->() {
-        return &_val;
+    T operator()() {
+        T val;
+        val._data = &_data[0];
+        return val;
+    }
+
+    const T operator()() const {
+        T val;
+        val._data = (char*)&_data[0];
+        return val;
     }
 };
 
 template<typename T>
 struct ExternalValue {
 private:
+    static_assert(sizeof(T) == sizeof(char*));
+    static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     T _val;
 public:
     ExternalValue() {
@@ -124,8 +156,8 @@ public:
         return ExternalValue((char*)slice.data(), slice.size());
     }
 
-    T* operator->() {
-        return &_val;
+    T operator()() {
+        return _val;
     }
 
     rocksdb::Slice toSlice() {
@@ -135,9 +167,12 @@ public:
 
 template<typename T>
 struct OwnedValue {
+    static_assert(sizeof(T) == sizeof(char*));
+    static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     T _val;
 public:
     OwnedValue() = delete;
+    OwnedValue<T>& operator=(const OwnedValue<T>&) = delete;
 
     template<typename ...Args>
     OwnedValue(Args&&... args) {
@@ -155,8 +190,8 @@ public:
         return rocksdb::Slice(_val._data, _val.size());
     }
 
-    T* operator->() {
-        return &_val;
+    T operator()() {
+        return _val;
     }
 };
 
@@ -183,15 +218,12 @@ public:
     }
 
 #define BYTES_VAL(name, setName, offset) \
-    const BincodeBytes name() const { \
-        BincodeBytes bs; \
-        bs.length = (uint8_t)(int)*(_data+offset); \
-        bs.data = (const uint8_t*)(_data+offset+1); \
-        return bs; \
+    BincodeBytesRef name() const { \
+        return BincodeBytesRef((const char*)(_data+offset+1), (uint8_t)(int)*(_data+offset)); \
     } \
-    void setName(const BincodeBytes& bs) { \
-        *(_data+offset) = (char)(int)bs.length; \
-        memcpy(_data+offset+1, bs.data, bs.length); \
+    void setName(const BincodeBytesRef& bytes) { \
+        *(_data+offset) = (char)(int)bytes.size(); \
+        memcpy(_data+offset+1, bytes.data(), bytes.size()); \
     }
 
 #define FBYTES_VAL(sz, getName, setName, offset) \
@@ -221,3 +253,88 @@ public:
         memcpy(_data+offset, &x, sizeof(x)); \
     }
 
+// When we need a simple u64 value (e.g. log index)
+struct U64Value {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+
+    LE_VAL(uint64_t, u64, setU64, 0)
+
+    static StaticValue<U64Value> Static(uint64_t x) {
+        auto v = StaticValue<U64Value>();
+        v().setU64(x);
+        return v;
+    }
+};
+
+// When we need a simple u64 key (e.g. log index)
+struct U64Key {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+
+    BE64_VAL(uint64_t, u64, setU64, 0)
+
+    static StaticValue<U64Key> Static(uint64_t x) {
+        auto v = StaticValue<U64Key>();
+        v().setU64(x);
+        return v;
+    }
+};
+
+// When we need an InodeId key. We mostly do not need them to be ordered
+// (and therefore BE), but it does make it a bit nicer to be able to traverse
+// them like that.
+struct InodeIdKey {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE = sizeof(InodeId);
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+
+    BE64_VAL(InodeId, id, setId, 0)
+
+    static StaticValue<InodeIdKey> Static(InodeId id) {
+        auto x = StaticValue<InodeIdKey>();
+        x().setId(id);
+        return x;
+    }
+};
+
+template<typename A>
+std::string bincodeToRocksValue(const A& v) {
+    std::string buf;
+    buf.resize(v.packedSize());
+    BincodeBuf bbuf(buf);
+    v.pack(bbuf);
+    ALWAYS_ASSERT(bbuf.remaining() == 0, "expected no remaining bytes, got %s", bbuf.remaining());
+    return buf;
+}
+
+template<typename A>
+void bincodeFromRocksValue(const rocksdb::Slice& value, A& v) {
+    BincodeBuf bbuf((char*)value.data(), value.size());
+    v.unpack(bbuf);
+    ALWAYS_ASSERT(bbuf.remaining() == 0);
+}
+
+struct InodeIdValue {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE = sizeof(InodeId);
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+
+    LE_VAL(InodeId, id, setId, 0)
+
+    static StaticValue<InodeIdValue> Static(InodeId id) {
+        auto x = StaticValue<InodeIdValue>();
+        x().setId(id);
+        return x;
+    }
+};

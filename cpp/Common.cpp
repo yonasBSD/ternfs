@@ -1,6 +1,7 @@
 #include "Common.hpp"
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "Backtrace.hpp"
 
@@ -50,6 +51,6 @@ Globals _globals;
 std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr) {
     char buf[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
-    out << buf << ":" << addr.sin_port;
+    out << buf << ":" << ntohs(addr.sin_port);
     return out;
 }

@@ -458,7 +458,7 @@ func replayStep(prefix string, files *files, fullEdges []fullEdge, stepAny any) 
 }
 
 func runTestSingle(harness harness, seed int64, filePrefix string) {
-	steps := 10 * 1000     // perform 100k actions
+	steps := 10 * 1000     // perform 10k actions
 	checkpointEvery := 100 // get times every 100 actions
 	targetFiles := 1000    // how many files we want
 	lowFiles := 500
@@ -614,13 +614,13 @@ func main() {
 		panic("You asked me to build without -debug, and with -verbose-shard. This is almost certainly wrong.")
 	}
 
-	buildOpts := eggs.BuildShardOpts{
+	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,
 		Sanitize: *sanitize,
 		Debug:    *debug,
 		Coverage: *coverage,
 	}
-	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &buildOpts)
+	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &cppBuildOpts)
 	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})
 
 	cleanupDbDir := false
@@ -628,10 +628,10 @@ func main() {
 	if tmpDataDir {
 		cleanupDbDir = !*preserveDbDir
 		dir, err := os.MkdirTemp("", "eggs-integrationtest.")
-		*dataDir = dir
 		if err != nil {
 			panic(fmt.Errorf("could not create tmp data dir: %w", err))
 		}
+		*dataDir = dir
 		fmt.Printf("running with temp data dir %v\n", *dataDir)
 	}
 	defer func() {

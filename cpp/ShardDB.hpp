@@ -19,7 +19,7 @@ struct ShardLogEntry {
 
 bool readOnlyShardReq(const ShardMessageKind kind);
 
-BincodeBytes defaultDirectoryInfo(char (&buf)[255]);
+BincodeBytes defaultDirectoryInfo();
 
 struct ShardDB {
 private:
@@ -35,12 +35,9 @@ public:
     // Stuff which might throw, and therefore not well suited to destructor.
     void close();
 
-    // In the functions below `scratch` is used to write BincodeBytes that the response/logEntry
-    // needs.
-
     // Performs a read-only request, responding immediately. If an error is returned,
     // the contents of `resp` should be ignored.
-    EggsError read(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
+    EggsError read(const ShardReqContainer& req, ShardRespContainer& resp);
 
     // Prepares and persists a log entry to be applied.
     //
@@ -67,9 +64,9 @@ public:
     // for some span request or something like that).
     //
     // As usual, if an error is returned, the contents of `logEntry` should be ignored.
-    EggsError prepareLogEntry(const ShardReqContainer& req, BincodeBytesScratchpad& scratch, ShardLogEntry& logEntry);
+    EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry);
 
-    // The index of the last log entry persisted to the 
+    // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
 
     // Applies the log entry at the given index, and fills in the client response.
@@ -89,7 +86,7 @@ public:
     // not be necessary. If it is not, then it is certainly necessary.
     //
     // As usual, if an error is returned, the contents of `resp` should be ignored.
-    EggsError applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, BincodeBytesScratchpad& scratch, ShardRespContainer& resp);
+    EggsError applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
 
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;

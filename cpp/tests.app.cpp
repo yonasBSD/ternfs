@@ -16,6 +16,7 @@
 #include "Undertaker.hpp"
 #include "CDCKey.hpp"
 #include "crc32c.hpp"
+#include "splitmix64.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -62,6 +63,22 @@ TEST_CASE("bincode u61 varint") {
     }
 }
 
+TEST_CASE("BincodeBytes") {
+    BincodeBytes bytes;
+    CHECK(bytes.size() == 0);
+    CHECK(strncmp(bytes.data(), "", bytes.size()) == 0);
+    uint8_t buf[255];
+    uint64_t rand = 0;
+    for (int i = 0; i < 10; i++) {
+        for (int j = 0; j < i; j++) {
+            buf[j] = splitmix64(rand) % 256;
+        }
+        bytes = BincodeBytes((const char*)buf, i);
+        CHECK(bytes.size() == i);
+        CHECK(strncmp(bytes.data(), (const char*)buf, bytes.size()) == 0);
+    }
+}
+
 struct TempRocksDB {
     rocksdb::DB* db;
     std::string dbDir;
@@ -104,11 +121,11 @@ TEST_CASE("ShardDB data") {
         auto transientFileId = InodeIdKey::Static({InodeType::FILE, ShardId(), 0});
         BincodeBytes transientFileBodyNote("hello world");
         StaticValue<TransientFileBody> transientFileBody;
-        transientFileBody->setFileSize(123);
-        transientFileBody->setMtime({456});
-        transientFileBody->setDeadline({789});
-        transientFileBody->setLastSpanState(SpanState::CLEAN);
-        transientFileBody->setNote(transientFileBodyNote);
+        transientFileBody().setFileSize(123);
+        transientFileBody().setMtime({456});
+        transientFileBody().setDeadline({789});
+        transientFileBody().setLastSpanState(SpanState::CLEAN);
+        transientFileBody().setNote(transientFileBodyNote);
 
         ROCKS_DB_CHECKED(
             db.db->Put({}, transientFileId.toSlice(), transientFileBody.toSlice())
@@ -121,17 +138,17 @@ TEST_CASE("ShardDB data") {
 
         ExternalValue<TransientFileBody> readTransientFileBody(transientFileValue);
 
-        CHECK(transientFileBody->mtime() == readTransientFileBody->mtime());
-        CHECK(transientFileBody->fileSize() == readTransientFileBody->fileSize());
-        CHECK(transientFileBody->deadline() == readTransientFileBody->deadline()); 
-        CHECK(transientFileBody->note() == readTransientFileBody->note());
+        CHECK(transientFileBody().mtime() == readTransientFileBody().mtime());
+        CHECK(transientFileBody().fileSize() == readTransientFileBody().fileSize());
+        CHECK(transientFileBody().deadline() == readTransientFileBody().deadline()); 
+        CHECK(transientFileBody().note() == readTransientFileBody().note());
     }
 
     SUBCASE("File") {
         auto fileId = InodeIdKey::Static({InodeType::FILE, ShardId(), 0});
         StaticValue<FileBody> fileBody;
-        fileBody->setMtime(123);
-        fileBody->setFileSize(456);
+        fileBody().setMtime(123);
+        fileBody().setFileSize(456);
 
         ROCKS_DB_CHECKED(db.db->Put({}, fileId.toSlice(), fileBody.toSlice()));
         std::string fileValue;
@@ -140,8 +157,8 @@ TEST_CASE("ShardDB data") {
 
         ExternalValue<FileBody> readFileBody(fileValue);
 
-        CHECK(fileBody->mtime() == readFileBody->mtime());
-        CHECK(fileBody->fileSize() == readFileBody->fileSize());
+        CHECK(fileBody().mtime() == readFileBody().mtime());
+        CHECK(fileBody().fileSize() == readFileBody().fileSize());
     }
 
     /*
@@ -247,11 +264,11 @@ TEST_CASE("ShardDB data") {
         InodeId id(InodeType::DIRECTORY, ShardId(3), 5);
 
         StaticValue<DirectoryBody> dir;
-        dir->setOwnerId(ROOT_DIR_INODE_ID);
-        dir->setMtime(123);
-        dir->setHashMode(HashMode::XXH3_63);
-        dir->setInfoInherited(true);
-        dir->setInfo({});
+        dir().setOwnerId(ROOT_DIR_INODE_ID);
+        dir().setMtime(123);
+        dir().setHashMode(HashMode::XXH3_63);
+        dir().setInfoInherited(true);
+        dir().setInfo({});
 
         auto slice = dir.toSlice();
 
@@ -264,10 +281,10 @@ TEST_CASE("ShardDB data") {
 
         ExternalValue<DirectoryBody> readDir(dirValue);
 
-        CHECK(readDir->mtime() == dir->mtime());
-        CHECK(readDir->ownerId() == dir->ownerId());
-        CHECK(readDir->hashMode() == dir->hashMode());
-        CHECK(readDir->infoInherited() == dir->infoInherited());
+        CHECK(readDir().mtime() == dir().mtime());
+        CHECK(readDir().ownerId() == dir().ownerId());
+        CHECK(readDir().hashMode() == dir().hashMode());
+        CHECK(readDir().infoInherited() == dir().infoInherited());
     }
 
     /*
@@ -424,28 +441,25 @@ TEST_CASE("touch file") {
     auto respContainer = std::make_unique<ShardRespContainer>();
     auto logEntry = std::make_unique<ShardLogEntry>();
     uint64_t logEntryIndex = 0;
-    BincodeBytesScratchpad dbScratch;
-    BincodeBytesScratchpad ourScratch;
 
     InodeId id;
     BincodeFixedBytes<8> cookie;
     EggsTime constructTime, linkTime;
     BincodeBytes name("filename");
     {
-        ourScratch.reset();
         auto& req = reqContainer->setConstructFile();
         req.type = (uint8_t)InodeType::FILE;
-        ourScratch.copyTo("test note", req.note);
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
+        req.note = "test note";
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         constructTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
         auto& resp = respContainer->getConstructFile();
         id = resp.id;
         cookie = resp.cookie;
     }
     {
         auto& req = reqContainer->setVisitTransientFiles();
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getVisitTransientFiles();
         REQUIRE(resp.nextId == NULL_INODE_ID);
         REQUIRE(resp.files.els.size() == 1);
@@ -453,22 +467,20 @@ TEST_CASE("touch file") {
         REQUIRE(resp.files.els[0].cookie == cookie);
     }
     {
-        ourScratch.reset();
         auto& req = reqContainer->setLinkFile();
         req.fileId = id;
         req.cookie = cookie;
         req.ownerId = ROOT_DIR_INODE_ID;
-        ourScratch.copyTo(name, req.name);
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
+        req.name = name;
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         linkTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
-        ourScratch.reset();
         auto& req = reqContainer->setReadDir();
         req.dirId = ROOT_DIR_INODE_ID;
         req.startHash = 0;
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getReadDir();
         REQUIRE(resp.nextHash == 0);
         REQUIRE(resp.results.els.size() == 1);
@@ -478,18 +490,17 @@ TEST_CASE("touch file") {
         REQUIRE(res.creationTime == linkTime);
     }
     {
-        ourScratch.reset();
         auto& req = reqContainer->setLookup();
         req.dirId = ROOT_DIR_INODE_ID;
-        ourScratch.copyTo(name, req.name);
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        req.name = name;
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getLookup();
         REQUIRE(resp.targetId == id);
     }
     {
         auto& req = reqContainer->setStatFile();
         req.id = id;
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getStatFile();
         REQUIRE(resp.size == 0);
         REQUIRE(resp.mtime == linkTime);
@@ -503,36 +514,32 @@ TEST_CASE("override") {
     auto respContainer = std::make_unique<ShardRespContainer>();
     auto logEntry = std::make_unique<ShardLogEntry>();
     uint64_t logEntryIndex = 0;
-    BincodeBytesScratchpad dbScratch;
-    BincodeBytesScratchpad ourScratch;
 
     const auto createFile = [&](const char* name) {
         InodeId id;
         BincodeFixedBytes<8> cookie;
         {
-            ourScratch.reset();
             auto& req = reqContainer->setConstructFile();
             req.type = (uint8_t)InodeType::FILE;
-            ourScratch.copyTo("test note", req.note);
-            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+            req.note = "test note";
+            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
             auto& resp = respContainer->getConstructFile();
             id = resp.id;
             cookie = resp.cookie;
         }
         {
             auto& req = reqContainer->setVisitTransientFiles();
-            NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+            NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         }
         {
-            ourScratch.reset();
             auto& req = reqContainer->setLinkFile();
             req.fileId = id;
             req.cookie = cookie;
             req.ownerId = ROOT_DIR_INODE_ID;
-            ourScratch.copyTo(name, req.name);
-            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+            req.name = name;
+            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
         }
         return id;
     };
@@ -541,19 +548,18 @@ TEST_CASE("override") {
     auto bar = createFile("bar");
 
     {
-        ourScratch.reset();
         auto& req = reqContainer->setSameDirectoryRename();
         req.dirId = ROOT_DIR_INODE_ID;
         req.targetId = foo;
-        ourScratch.copyTo("foo", req.oldName);
-        ourScratch.copyTo("bar", req.newName);
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        req.oldName = "foo";
+        req.newName = "bar";
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
         auto& req = reqContainer->setFullReadDir();
         req.dirId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getFullReadDir();
         REQUIRE(
             resp.results.els.size() ==
@@ -579,11 +585,8 @@ TEST_CASE("make/rm directory") {
     auto respContainer = std::make_unique<ShardRespContainer>();
     auto logEntry = std::make_unique<ShardLogEntry>();
     uint64_t logEntryIndex = 0;
-    BincodeBytesScratchpad dbScratch;
-    BincodeBytesScratchpad ourScratch;
 
-    char infoBuf[255];
-    BincodeBytes defaultInfo = defaultDirectoryInfo(infoBuf);
+    BincodeBytes defaultInfo = defaultDirectoryInfo();
     InodeId id(InodeType::DIRECTORY, ShardId(0), 1);
 
     {
@@ -591,21 +594,21 @@ TEST_CASE("make/rm directory") {
         req.id = id;
         req.info.inherited = true;
         req.ownerId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
         respContainer->getCreateDirectoryInode();
     }
     {
         auto& req = reqContainer->setRemoveDirectoryOwner();
         req.dirId = id;
         req.info = defaultInfo;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
         auto& req = reqContainer->setStatDirectory();
         req.id = id;
-        NO_EGGS_ERROR(db->read(*reqContainer, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         const auto& resp = respContainer->getStatDirectory();
         CHECK(resp.info == defaultInfo);
     }
@@ -613,8 +616,8 @@ TEST_CASE("make/rm directory") {
         auto& req = reqContainer->setSetDirectoryOwner();
         req.dirId = id;
         req.ownerId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, dbScratch, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, dbScratch, *respContainer));
+        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
 }
 

@@ -220,6 +220,12 @@ struct ShardRequestHeader {
     // The caller will have to validate.
     ShardMessageKind kind;
 
+    void pack(BincodeBuf& buf) {
+        buf.packScalar<uint32_t>(SHARD_REQ_PROTOCOL_VERSION);
+        buf.packScalar<uint64_t>(requestId);
+        buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+
     void unpack(BincodeBuf& buf) {
         uint32_t version = buf.unpackScalar<uint32_t>();
         if (version != SHARD_REQ_PROTOCOL_VERSION) {
@@ -237,12 +243,22 @@ struct ShardResponseHeader {
     // protocol + requestId + kind
     static constexpr uint16_t STATIC_SIZE = 4 + 8 + 1;
 
+    ShardResponseHeader() = default;
     ShardResponseHeader(uint64_t requestId_, ShardMessageKind kind_): requestId(requestId_), kind(kind_) {}
 
     void pack(BincodeBuf& buf) {
         buf.packScalar<uint32_t>(SHARD_RESP_PROTOCOL_VERSION);
         buf.packScalar<uint64_t>(requestId);
         buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        uint32_t version = buf.unpackScalar<uint32_t>();
+        if (version != SHARD_RESP_PROTOCOL_VERSION) {
+            throw BINCODE_EXCEPTION("bad shard resp protocol version %s, expected %s", version, SHARD_RESP_PROTOCOL_VERSION);
+        }
+        requestId = buf.unpackScalar<uint64_t>();
+        kind = (ShardMessageKind)buf.unpackScalar<uint8_t>();
     }
 };
 

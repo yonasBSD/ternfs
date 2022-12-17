@@ -7,63 +7,60 @@
 #include "Env.hpp"
 #include "MsgsGen.hpp"
 
-struct CDCReqDestination {
-    uint64_t requestId;
-    char destIp[4];
-    uint16_t destPort;
-
-    void clear() {
-        memset(this, 0, sizeof(*this));
-    }
-
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += sizeof(uint64_t); // requestId
-        _size += sizeof(char[4]);  // destIp
-        _size += sizeof(uint16_t); // destPort
-        return _size;
-    }
-
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-};
-
-/*
-struct CDCReqWithDestination {
-    CDCReqDestination dest;
-    CDCRespContainer resp;
-
-    void clear() {
-        dest.clear();
-        resp.clear();
-    }
-
-    uint16_t packedSize() const {
-        return dest.packedSize() + resp.packedSize();
-    }
-
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-};
-
-struct CDCRespWithDestination {
-    CDCReqDestination dest;
-    CDCRespContainer resp;
-};
-*/
-
-struct CDCNeedsShard {
+struct CDCShardReq {
     ShardId shid;
-    uint64_t requestId;
     ShardReqContainer req;
+
+    void clear() {
+        shid = ShardId(0);
+        req.clear();
+    }
 };
+
+std::ostream& operator<<(std::ostream& out, const CDCShardReq& x);
 
 struct CDCStep {
-    // If `finished`, `resp` is to be read. Otherwise `needsShard`.
-    bool finished;
+    // If non-zero, a transaction has just finished, and here we have
+    // the response (whether an error or a response).
+    uint64_t txnFinished;
+    EggsError err; // if NO_ERROR, resp is contains the response.
     CDCRespContainer resp;
-    CDCNeedsShard needsShard;
+    // If non-zero, a transaction is running, but we need something
+    // from a shard to have it proceed.
+    //
+    // We have !((finishedTxn != 0) && (runningTxn != 0)) as an invariant
+    // -- we can't have finished and be running a thing in the same step.
+    uint64_t txnNeedsShard;
+    CDCShardReq shardReq;
+    // If non-zero, there is a transaction after the current one waiting
+    // to be executed. Only filled in if `runningTxn == 0`.
+    // Useful to decide when to call `startNextTransaction` (although
+    // calling it is safe in any case).
+    uint64_t nextTxn = 0;
+
+    void clear() {
+        txnFinished = 0;
+        txnNeedsShard = 0;
+        nextTxn = 0;
+    }
+
+    /*
+    void setFinishedTxnErr(uint64_t txnId, EggsError err) {
+        ALWAYS_ASSERT(err != NO_ERROR);
+        finishedTxn = txnId;
+        this->err = err;
+        runningTxn = 0;
+    }
+
+    CDCRespContainer& setFinishedTxn(uint64_t txnId) {
+        finishedTxn = txnId;
+        runningTxn = 0;
+        return resp;
+    }
+    */
 };
+
+std::ostream& operator<<(std::ostream& out, const CDCStep& x);
 
 struct CDCDB {
 private:
@@ -71,6 +68,7 @@ private:
 
 public:
     CDCDB() = delete;
+    CDCDB& operator=(const CDCDB&) = delete;
 
     CDCDB(Logger& env, const std::string& path);
     ~CDCDB();
@@ -80,31 +78,49 @@ public:
     // because at least for now logs are simply either CDC requests, or shard
     // responses.
     //
-    // Neither of the two functions below can be called concurrently, however
-    // there can be two writers, one doing `processCDCReq`, and one doing
-    // `processShardResp`.
+    // The functions below cannot be called concurrently.
+    //
+    // TODO one thing that we'd like to do (outside the deterministic state
+    // machine) is apply backpressure when too many txns are enqueued. It's
+    // not good to do it inside the state machine, because then we'd be marrying
+    // the deterministic state update function to such heuristics, which seems
+    // imprudent. So we'd like some function returning the length of the queue.
 
-    // If an error is returned, the contents of `step` are undefined.
-    EggsError processCDCReq(
+    // Enqueues a cdc request, and immediately starts it if the system is currently
+    // idle.
+    uint64_t processCDCReq(
+        bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
         uint64_t logIndex,
-        const CDCReqDestination& dest,
         const CDCReqContainer& req,
-        BincodeBytesScratchpad& scratch,
         CDCStep& step
     );
 
-    // If an error is returned, the contents of `step` are undefined,
-    // _but the contents of 
-    /*
-    EggsError processShardResp(
+    // Advances the CDC state using the given shard response.
+    //
+    // This function crashes hard if the caller passes it a response it's not expecting.
+    void processShardResp(
+        bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
         uint64_t logIndex,
-        uint64_t requestId,
-        const ShardRespContainer& req,
-        BincodeBytesScratchpad& scratch,
-        CDCReqDestination& dest,
+        // (err == NO_ERROR) == (req != nullptr)
+        EggsError err,
+        const ShardRespContainer* req,
         CDCStep& step
     );
-    */
+
+    // Starts the next transaction in line (if any).
+    //
+    // It's fine to call this function even if there's nothing to do -- and in fact
+    // you should do that when starting up the CDC, to make sure to finish
+    // in-flight CDC transactions.
+    void startNextTransaction(
+        bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
+        EggsTime time,
+        uint64_t logIndex,
+        CDCStep& step
+    );
+
+    // The index of the last log entry persisted to the DB
+    uint64_t lastAppliedLogEntry();
 };

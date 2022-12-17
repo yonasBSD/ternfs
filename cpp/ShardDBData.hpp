@@ -12,39 +12,6 @@
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
 
-struct InodeIdValue {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(InodeId);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(InodeId, id, setId, 0)
-
-    static StaticValue<InodeIdValue> Static(InodeId id) {
-        auto x = StaticValue<InodeIdValue>();
-        x->setId(id);
-        return x;
-    }
-};
-
-// When we need a simple u64 value (e.g. log index)
-struct U64Value {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(uint64_t, u64, setU64, 0)
-
-    static StaticValue<U64Value> Static(uint64_t x) {
-        auto v = StaticValue<U64Value>();
-        v->setU64(x);
-        return v;
-    }
-};
-
 enum class ShardMetadataKey : uint8_t {
     INFO = 0,
     LAST_APPLIED_LOG_ENTRY = 1,
@@ -153,25 +120,6 @@ struct CurrentBlockServicesBody {
     }
 };
 
-// When we need an InodeId key. We mostly do not need them to be ordered
-// (and therefore BE), but it does make it a bit nicer to be able to traverse
-// them like that.
-struct InodeIdKey {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(InodeId);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    BE64_VAL(InodeId, id, setId, 0)
-
-    static StaticValue<InodeIdKey> Static(InodeId id) {
-        auto x = StaticValue<InodeIdKey>();
-        x->setId(id);
-        return x;
-    }
-};
-
 enum class SpanState : uint8_t {
     CLEAN = 0,
     DIRTY = 1,
@@ -192,7 +140,7 @@ struct TransientFileBody {
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255; // max note size
 
     size_t size() const {
-        return MIN_SIZE + note().length;
+        return MIN_SIZE + note().size();
     }
 
     void checkSize(size_t sz) {
@@ -200,11 +148,11 @@ struct TransientFileBody {
         ALWAYS_ASSERT(sz == size());
     }
 
-    LE_VAL(uint64_t,  fileSize,      setFileSize,   0)
-    LE_VAL(EggsTime,  mtime,         setMtime,      8)
-    LE_VAL(EggsTime,  deadline,      setDeadline,  16)
+    LE_VAL(uint64_t,  fileSize,      setFileSize,       0)
+    LE_VAL(EggsTime,  mtime,         setMtime,          8)
+    LE_VAL(EggsTime,  deadline,      setDeadline,      16)
     U8_VAL(SpanState, lastSpanState, setLastSpanState, 24)
-    BYTES_VAL(        note,          setNote,      25)
+    BYTES_VAL(note, setNote,                           25)
 };
 
 struct FileBody {
@@ -267,10 +215,10 @@ struct SpanBody {
         ALWAYS_ASSERT(storageClass != EMPTY_STORAGE);
         if (storageClass == INLINE_STORAGE) {
             ALWAYS_ASSERT(parity == Parity());
-            ALWAYS_ASSERT(inlineBody.length > 0);
-            return MIN_SIZE + 1 + inlineBody.length;
+            ALWAYS_ASSERT(inlineBody.size() > 0);
+            return MIN_SIZE + 1 + inlineBody.size();
         } else {
-            ALWAYS_ASSERT(inlineBody.length == 0);
+            ALWAYS_ASSERT(inlineBody.size() == 0);
             ALWAYS_ASSERT(parity.blocks() > 0);
             return MIN_SIZE + BLOCK_BODY_SIZE*parity.blocks();
         }
@@ -301,19 +249,16 @@ struct SpanBody {
     U8_VAL(uint8_t,  storageClass, setStorageClass, 12)
     U8_VAL(Parity,   parity,       setParity,       13)
 
-    const BincodeBytes inlineBody() const {
+    BincodeBytesRef inlineBody() const {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
-        size_t offset = MIN_SIZE;
-        BincodeBytes bs;
-        bs.length = (uint8_t)(int)*(_data+offset);
-        bs.data = (const uint8_t*)(_data+offset+1);
-        return bs;
+        return BincodeBytes((const char*)(_data+MIN_SIZE+1), (uint8_t)(int)*(_data+MIN_SIZE));
     }
-    void setInlineBody(const BincodeBytes& bs) {
+
+    void setInlineBody(const BincodeBytesRef& body) {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
         size_t offset = MIN_SIZE;
-        *(_data+offset) = (char)(int)bs.length;
-        memcpy(_data+offset+1, bs.data, bs.length);
+        *(_data+offset) = (char)(int)body.size();
+        memcpy(_data+offset+1, body.data(), body.size());
     }
 
     BlockBody block(uint64_t ix) const {
@@ -361,10 +306,10 @@ struct DirectoryBody {
     LE_VAL(EggsTime, mtime,            setMtime,             8)
     U8_VAL(HashMode, hashMode,         setHashMode,         16)
     U8_VAL(bool,     infoInherited,    setInfoInherited,    17)
-    BYTES_VAL(       infoUnchecked,    setInfoUnchecked,    18)
+    BYTES_VAL(infoUnchecked, setInfoUnchecked,              18)
 
     size_t size() const {
-        return MIN_SIZE + infoUnchecked().length;
+        return MIN_SIZE + infoUnchecked().size();
     }
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE);
@@ -375,13 +320,13 @@ struct DirectoryBody {
         return ownerId() == NULL_INODE_ID || !infoInherited();
     }
 
-    BincodeBytes info() const {
-        ALWAYS_ASSERT(hasInfo() == (infoUnchecked().length > 0));
+    BincodeBytesRef info() const {
+        ALWAYS_ASSERT(hasInfo() == (infoUnchecked().size() > 0));
         return infoUnchecked();
     }
 
-    void setInfo(const BincodeBytes& bytes) {
-        ALWAYS_ASSERT(hasInfo() == (bytes.length > 0));
+    void setInfo(const BincodeBytesRef& bytes) {
+        ALWAYS_ASSERT(hasInfo() == (bytes.size() > 0));
         setInfoUnchecked(bytes);
     }
 };
@@ -397,7 +342,7 @@ struct EdgeKey {
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255 + sizeof(EggsTime);
 
     size_t size() const {
-        size_t sz = MIN_SIZE + name().length;
+        size_t sz = MIN_SIZE + name().size();
         if (snapshot()) {
             sz += sizeof(EggsTime);
         }
@@ -411,8 +356,8 @@ struct EdgeKey {
 
     BE64_VAL(uint64_t,  dirIdWithCurrentU64,   setDirIdWithCurrentU64,    0)
     BE64_VAL(uint64_t,  nameHash,              setNameHash,               8)
-    BYTES_VAL(          name,                  setName,                  16)
-    BE64_VAL(EggsTime,  creationTimeUnchecked, setCreationTimeUnchecked, (16+1+name().length))
+    BYTES_VAL(name, setName,                                             16)
+    BE64_VAL(EggsTime,  creationTimeUnchecked, setCreationTimeUnchecked, (16+1+name().size()))
 
     void setDirIdWithCurrent(InodeId id, bool current) {
         setDirIdWithCurrentU64((id.u64 << 1) | current);

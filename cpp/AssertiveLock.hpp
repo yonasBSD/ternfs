@@ -16,8 +16,8 @@ public:
         }
     }
 
-    AssertiveLocked(const AssertiveLocked&) = delete;
-    AssertiveLocked& operator=(AssertiveLocked&) = delete;
+    AssertiveLocked() = delete;
+    AssertiveLocked& operator=(const AssertiveLocked&) = delete;
 
     ~AssertiveLocked() {
         _held.store(false);
@@ -31,7 +31,7 @@ public:
     AssertiveLock(): _held(false) {}
 
     AssertiveLock(const AssertiveLock&) = delete;
-    AssertiveLock& operator=(AssertiveLock&) = delete;
+    AssertiveLock& operator=(const AssertiveLock&) = delete;
 
     AssertiveLocked lock() {
         return AssertiveLocked(_held);

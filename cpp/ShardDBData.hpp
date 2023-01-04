@@ -224,7 +224,7 @@ struct SpanBody {
         }
     }
 
-    void afterAlloc(uint8_t storageClass, Parity parity, const BincodeBytes& inlineBody) {
+    void afterAlloc(uint8_t storageClass, Parity parity, const BincodeBytesRef& inlineBody) {
         setStorageClass(storageClass);
         setParity(parity);
         if (storageClass == INLINE_STORAGE) {
@@ -251,7 +251,7 @@ struct SpanBody {
 
     BincodeBytesRef inlineBody() const {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
-        return BincodeBytes((const char*)(_data+MIN_SIZE+1), (uint8_t)(int)*(_data+MIN_SIZE));
+        return BincodeBytesRef((const char*)(_data+MIN_SIZE+1), (uint8_t)(int)*(_data+MIN_SIZE));
     }
 
     void setInlineBody(const BincodeBytesRef& body) {

@@ -330,7 +330,7 @@ struct ShardDBImpl {
                 dirBody().setMtime({});
                 dirBody().setHashMode(HashMode::XXH3_63);
                 dirBody().setInfoInherited(false);
-                dirBody().setInfo(info);
+                dirBody().setInfo(info.ref());
                 auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
                 ROCKS_DB_CHECKED(_db->Put({}, _directoriesCf, k.toSlice(), dirBody.toSlice()));
             }
@@ -511,7 +511,7 @@ struct ShardDBImpl {
             StaticValue<EdgeKey> beginKey;
             beginKey().setDirIdWithCurrent(req.dirId, req.cursor.current);
             beginKey().setNameHash(req.cursor.startHash);
-            beginKey().setName(req.cursor.startName);
+            beginKey().setName(req.cursor.startName.ref());
             if (!req.cursor.current) {
                 beginKey().setCreationTime(req.cursor.startTime);
             } else {
@@ -586,14 +586,14 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), req.name);
+            nameHash = computeHash(dir().hashMode(), req.name.ref());
         }
 
         {
             StaticValue<EdgeKey> reqKey;
             reqKey().setDirIdWithCurrent(req.dirId, true); // current=true
             reqKey().setNameHash(nameHash);
-            reqKey().setName(req.name);
+            reqKey().setName(req.name.ref());
             std::string edgeValue;
             auto status = _db->Get(options, _edgesCf, reqKey.toSlice(), &edgeValue);
             if (status.IsNotFound()) {
@@ -877,7 +877,7 @@ struct ShardDBImpl {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
-        if (!validName(req.newName)) {
+        if (!validName(req.newName.ref())) {
             return EggsError::BAD_NAME;
         }
         if (req.dirId.shard() != _shid) {
@@ -933,7 +933,7 @@ struct ShardDBImpl {
         if (req.dirId.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
-        if (!validName(req.name)) {
+        if (!validName(req.name.ref())) {
             return EggsError::BAD_NAME;
         }
         ALWAYS_ASSERT(req.targetId != NULL_INODE_ID); // proper error
@@ -1175,7 +1175,7 @@ struct ShardDBImpl {
         entry.size = req.size;
         entry.blockSize = req.blockSize;
         entry.bodyBytes = req.bodyBytes;
-    
+
         // Now fill in the block services. Generally we want to try to keep them the same
         // throughout the file, if possible, so that the likelihood of data loss is minimized.
         //
@@ -1446,7 +1446,7 @@ struct ShardDBImpl {
         transientFile().setMtime(time);
         transientFile().setDeadline(entry.deadlineTime);
         transientFile().setLastSpanState(SpanState::CLEAN);
-        transientFile().setNote(entry.note);
+        transientFile().setNote(entry.note.ref());
         auto k = InodeIdKey::Static(id);
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
@@ -1542,13 +1542,13 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        uint64_t nameHash = computeHash(dir().hashMode(), name);
+        uint64_t nameHash = computeHash(dir().hashMode(), name.ref());
 
         // Next, we need to look at the current edge with the same name, if any.
         StaticValue<EdgeKey> edgeKey;
         edgeKey().setDirIdWithCurrent(dirId, true); // current=true
         edgeKey().setNameHash(nameHash);
-        edgeKey().setName(name);
+        edgeKey().setName(name.ref());
         std::string edgeValue;
         auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
 
@@ -1561,7 +1561,7 @@ struct ShardDBImpl {
             StaticValue<EdgeKey> snapshotEdgeKey;
             snapshotEdgeKey().setDirIdWithCurrent(dirId, false); // snapshhot (current=false)
             snapshotEdgeKey().setNameHash(nameHash);
-            snapshotEdgeKey().setName(name);
+            snapshotEdgeKey().setName(name.ref());
             snapshotEdgeKey().setCreationTime({std::numeric_limits<uint64_t>::max()});
             WrappedIterator it(_db->NewIterator({}, _edgesCf));
             it->SeekForPrev(snapshotEdgeKey.toSlice());
@@ -1604,7 +1604,7 @@ struct ShardDBImpl {
                     StaticValue<EdgeKey> k;
                     k().setDirIdWithCurrent(dirId, false); // snapshot (current=false)
                     k().setNameHash(nameHash);
-                    k().setName(name);
+                    k().setName(name.ref());
                     k().setCreationTime(existingEdge().creationTime());
                     StaticValue<SnapshotEdgeBody> v;
                     // this was current, so it's now owned.
@@ -1653,13 +1653,13 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        uint64_t nameHash = computeHash(dir().hashMode(), name);
+        uint64_t nameHash = computeHash(dir().hashMode(), name.ref());
 
         // get the edge
         StaticValue<EdgeKey> edgeKey;
         edgeKey().setDirIdWithCurrent(dirId, true); // current=true
         edgeKey().setNameHash(nameHash);
-        edgeKey().setName(name);
+        edgeKey().setName(name.ref());
         std::string edgeValue;
         auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
         if (status.IsNotFound()) {
@@ -1683,7 +1683,7 @@ struct ShardDBImpl {
             StaticValue<EdgeKey> k;
             k().setDirIdWithCurrent(dirId, false); // snapshot (current=false)
             k().setNameHash(nameHash);
-            k().setName(name);
+            k().setName(name.ref());
             k().setCreationTime(edgeBody().creationTime());
             StaticValue<SnapshotEdgeBody> v;
             v().setTargetIdWithOwned(InodeIdExtra(targetId, owned));
@@ -1729,7 +1729,7 @@ struct ShardDBImpl {
             dir().setMtime(time);
             dir().setHashMode(HashMode::XXH3_63);
             dir().setInfoInherited(entry.info.inherited);
-            dir().setInfo(entry.info.body);
+            dir().setInfo(entry.info.body.ref());
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, dirKey.toSlice(), dir.toSlice()));
         }
 
@@ -1753,13 +1753,13 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
         StaticValue<EdgeKey> currentKey;
         currentKey().setDirIdWithCurrent(entry.dirId, true); // current=true
         currentKey().setNameHash(nameHash);
-        currentKey().setName(entry.name);
+        currentKey().setName(entry.name.ref());
         std::string edgeValue;
         {
             auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
@@ -1780,7 +1780,7 @@ struct ShardDBImpl {
             StaticValue<EdgeKey> snapshotKey;
             snapshotKey().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
             snapshotKey().setNameHash(nameHash);
-            snapshotKey().setName(entry.name);
+            snapshotKey().setName(entry.name.ref());
             snapshotKey().setCreationTime(edge().creationTime());
             StaticValue<SnapshotEdgeBody> snapshotBody;
             snapshotBody().setTargetIdWithOwned(InodeIdExtra(entry.targetId, false)); // not owned (this was moved somewhere else)
@@ -1804,13 +1804,13 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name);        
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());        
         }
 
         StaticValue<EdgeKey> currentKey;
         currentKey().setDirIdWithCurrent(entry.dirId, true); // current=true
         currentKey().setNameHash(nameHash);
-        currentKey().setName(entry.name);
+        currentKey().setName(entry.name.ref());
         std::string edgeValue;
         {
             auto status = _db->Get({}, _edgesCf, currentKey.toSlice(), &edgeValue);
@@ -1869,7 +1869,7 @@ struct ShardDBImpl {
             newDir().setMtime(time);
             newDir().setHashMode(dir().hashMode());
             newDir().setInfoInherited(dir().infoInherited());
-            newDir().setInfo(entry.info);
+            newDir().setInfo(entry.info.ref());
             auto k = InodeIdKey::Static(entry.dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
         }
@@ -2030,7 +2030,7 @@ struct ShardDBImpl {
         // For snapshot directories, we need to preserve the last known info if inherited.
         // It'll be reset when it's made non-snapshot again.
         if (!entry.info.inherited || (dir().ownerId() != NULL_INODE_ID)) {
-            newDir().setInfo(entry.info.body);
+            newDir().setInfo(entry.info.body.ref());
         }
 
         {
@@ -2051,14 +2051,14 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
         {
             StaticValue<EdgeKey> k;
             k().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
             k().setNameHash(nameHash);
-            k().setName(entry.name);
+            k().setName(entry.name.ref());
             k().setCreationTime(entry.creationTime);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
@@ -2096,7 +2096,7 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnapshot=true since GC needs to be able to do this in snapshot dirs
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.ownerId, dirValue, dir);
-            nameHash = computeHash(dir().hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
         // remove edge
@@ -2104,7 +2104,7 @@ struct ShardDBImpl {
             StaticValue<EdgeKey> k;
             k().setDirIdWithCurrent(entry.ownerId, false);
             k().setNameHash(nameHash);
-            k().setName(entry.name);
+            k().setName(entry.name.ref());
             k().setCreationTime(entry.creationTime);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
@@ -2118,7 +2118,7 @@ struct ShardDBImpl {
             v().setMtime(time);
             v().setDeadline(0);
             v().setLastSpanState(SpanState::CLEAN);
-            v().setNote(entry.name);
+            v().setNote(entry.name.ref());
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
         }
 
@@ -2317,7 +2317,7 @@ struct ShardDBImpl {
 
         // Now manufacture and add the span, also recording the blocks
         // in the block service -> files index.
-        OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.bodyBytes);
+        OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.bodyBytes.ref());
         {
             spanBody().setSpanSize(entry.size);
             spanBody().setBlockSize(entry.blockSize);
@@ -2509,7 +2509,7 @@ struct ShardDBImpl {
         transientFile().setMtime(time);
         transientFile().setDeadline(0);
         transientFile().setLastSpanState(SpanState::CLEAN);
-        transientFile().setNote(entry.note);
+        transientFile().setNote(entry.note.ref());
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
         return NO_ERROR;
@@ -2590,14 +2590,14 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name);
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
         {
             StaticValue<EdgeKey> edgeKey;
             edgeKey().setDirIdWithCurrent(entry.ownerId, false); // snapshot (current=false)
             edgeKey().setNameHash(nameHash);
-            edgeKey().setName(entry.name);
+            edgeKey().setName(entry.name.ref());
             edgeKey().setCreationTime(time);
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, edgeKey.toSlice()));
         }

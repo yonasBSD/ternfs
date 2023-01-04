@@ -134,9 +134,6 @@ public:
     BincodeBytesRef ref() const {
         return BincodeBytesRef(data(), size());
     }
-
-    // TODO remove, right now I'm being lazy but it's just confusing
-    operator BincodeBytesRef() const { return ref(); }
 };
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytes& x);

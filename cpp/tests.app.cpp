@@ -125,7 +125,7 @@ TEST_CASE("ShardDB data") {
         transientFileBody().setMtime({456});
         transientFileBody().setDeadline({789});
         transientFileBody().setLastSpanState(SpanState::CLEAN);
-        transientFileBody().setNote(transientFileBodyNote);
+        transientFileBody().setNote(transientFileBodyNote.ref());
 
         ROCKS_DB_CHECKED(
             db.db->Put({}, transientFileId.toSlice(), transientFileBody.toSlice())

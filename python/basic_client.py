@@ -573,6 +573,20 @@ def block_service_files(block_service_id: int):
     for f in fs:
         print(f'- 0x{f:016X}')
 
+@command('visit_files')
+def visit_files():
+    for shard in range(256):
+        begin_id = 0
+        while True:
+            resp = send_shard_request_or_raise(shard, VisitFilesReq(begin_id))
+            assert isinstance(resp, VisitFilesResp)
+            for i in resp.ids:
+                print(f'inode id:    0x{i:016X}')
+                print(f'shard:       {inode_id_shard(i)}')
+            begin_id = resp.next_id
+            if begin_id == 0:
+                break
+
 def main() -> None:
     args = sys.argv[1:]
 

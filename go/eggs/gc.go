@@ -2,7 +2,6 @@ package eggs
 
 import (
 	"fmt"
-	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
@@ -86,6 +85,31 @@ func DestructFile(
 	return nil
 }
 
+func destructFilesInternal(
+	log LogLevels, client Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+) error {
+	req := msgs.VisitTransientFilesReq{}
+	resp := msgs.VisitTransientFilesResp{}
+	for {
+		log.Debug("visiting files with %+v", req)
+		err := client.ShardRequest(log, shid, &req, &resp)
+		if err != nil {
+			return fmt.Errorf("could not visit transient files: %w", err)
+		}
+		for ix := range resp.Files {
+			file := &resp.Files[ix]
+			if err := DestructFile(log, client, blockServicesKeys, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
+			}
+		}
+		req.BeginId = resp.NextId
+		if resp.NextId == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
 //
@@ -101,30 +125,29 @@ func DestructFiles(
 	}
 	defer client.Close()
 	stats := DestructionStats{}
-	req := msgs.VisitTransientFilesReq{}
-	resp := msgs.VisitTransientFilesResp{}
-	for {
-		/*
-			if stats.VisitedFiles%100 == 0 {
-				log.Info("%v visited files, %v destructed files, %v destructed spans, %v destructed blocks", stats.VisitedFiles, stats.DestructedFiles, stats.DestructedSpans, stats.DestructedBlocks)
-			}
-		*/
-		err := client.ShardRequest(log, shid, &req, &resp)
-		if err != nil {
-			return fmt.Errorf("could not visit transient files: %w", err)
-		}
-		for ix := range resp.Files {
-			file := &resp.Files[ix]
-			if err := DestructFile(log, client, blockServicesKeys, &stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
-			}
-		}
-		req.BeginId = resp.NextId
-		if resp.NextId == 0 {
-			break
-		}
+	if err := destructFilesInternal(log, client, shid, &stats, blockServicesKeys); err != nil {
+		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
+	return nil
+}
+
+func DestructFilesInAllShards(
+	log LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+) error {
+	client, err := NewAllShardsClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	stats := DestructionStats{}
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		if err := destructFilesInternal(log, client, shid, &stats, blockServicesKeys); err != nil {
+			return err
+		}
+	}
+	log.Info("stats after one destruct files iteration in all shards: %+v", stats)
 	return nil
 }
 
@@ -141,8 +164,8 @@ func applyPolicy(
 	dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody, edges []msgs.Edge,
 ) (bool, error) {
 	policy := SnapshotPolicy{
-		DeleteAfterTime:     time.Duration(dirInfo.DeleteAfterTime),
-		DeleteAfterVersions: int(dirInfo.DeleteAfterVersions),
+		DeleteAfterTime:     dirInfo.DeleteAfterTime,
+		DeleteAfterVersions: dirInfo.DeleteAfterVersions,
 	}
 	log.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
 	stats.VisitedEdges = stats.VisitedEdges + uint64(len(edges))
@@ -314,13 +337,7 @@ func CollectDirectory(log LogLevels, client Client, dirInfoCache *DirInfoCache, 
 	return nil
 }
 
-func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
-	client, err := NewShardSpecificClient(shid)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	stats := CollectStats{}
+func collectDirectoriesInternal(log LogLevels, client Client, stats *CollectStats, shid msgs.ShardId) error {
 	dirInfoCache := NewDirInfoCache()
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
@@ -333,7 +350,10 @@ func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
 			if id.Type() != msgs.DIRECTORY {
 				panic(fmt.Errorf("bad directory inode %v", id))
 			}
-			if err := CollectDirectory(log, client, dirInfoCache, &stats, id); err != nil {
+			if id.Shard() != shid {
+				panic("bad shard")
+			}
+			if err := CollectDirectory(log, client, dirInfoCache, stats, id); err != nil {
 				return fmt.Errorf("error while collecting inode %v: %w", id, err)
 			}
 		}
@@ -342,6 +362,35 @@ func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
 			break
 		}
 	}
+	return nil
+}
+
+func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
+	client, err := NewShardSpecificClient(shid)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	stats := CollectStats{}
+	if err := collectDirectoriesInternal(log, client, &stats, shid); err != nil {
+		return err
+	}
 	log.Info("stats after one collect directories iteration: %+v", stats)
+	return nil
+}
+
+func CollectDirectoriesInAllShards(log LogLevels) error {
+	client, err := NewAllShardsClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	stats := CollectStats{}
+	for i := 0; i < 256; i++ {
+		if err := collectDirectoriesInternal(log, client, &stats, msgs.ShardId(i)); err != nil {
+			return err
+		}
+	}
+	log.Info("stats after one all shards collect directories iteration: %+v", stats)
 	return nil
 }

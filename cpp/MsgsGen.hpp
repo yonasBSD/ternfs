@@ -52,6 +52,8 @@ enum class EggsError : uint16_t {
     BAD_DIRECTORY_INFO = 55,
     CREATION_TIME_TOO_RECENT = 56,
     DEADLINE_NOT_PASSED = 57,
+    SAME_SOURCE_AND_DESTINATION = 58,
+    SAME_DIRECTORIES = 59,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -280,17 +282,17 @@ std::ostream& operator<<(std::ostream& out, const SpanPolicy& x);
 struct DirectoryInfoBody {
     uint8_t version;
     uint64_t deleteAfterTime;
-    uint8_t deleteAfterVersions;
+    uint16_t deleteAfterVersions;
     BincodeList<SpanPolicy> spanPolicies;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 1 + BincodeList<SpanPolicy>::STATIC_SIZE; // version + deleteAfterTime + deleteAfterVersions + spanPolicies
+    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 2 + BincodeList<SpanPolicy>::STATIC_SIZE; // version + deleteAfterTime + deleteAfterVersions + spanPolicies
 
     DirectoryInfoBody() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // version
         _size += 8; // deleteAfterTime
-        _size += 1; // deleteAfterVersions
+        _size += 2; // deleteAfterVersions
         _size += spanPolicies.packedSize(); // spanPolicies
         return _size;
     }

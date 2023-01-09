@@ -56,6 +56,8 @@ class ErrCode(enum.IntEnum):
     BAD_DIRECTORY_INFO = 55
     CREATION_TIME_TOO_RECENT = 56
     DEADLINE_NOT_PASSED = 57
+    SAME_SOURCE_AND_DESTINATION = 58
+    SAME_DIRECTORIES = 59
 
 class ShardMessageKind(enum.IntEnum):
     LOOKUP = 0x1
@@ -381,7 +383,7 @@ class SpanPolicy(bincode.Packable):
 
 @dataclass
 class DirectoryInfoBody(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 1 + 8 + 1 + 2 # version + delete_after_time + delete_after_versions + len(span_policies)
+    STATIC_SIZE: ClassVar[int] = 1 + 8 + 2 + 2 # version + delete_after_time + delete_after_versions + len(span_policies)
     version: int
     delete_after_time: int
     delete_after_versions: int
@@ -390,7 +392,7 @@ class DirectoryInfoBody(bincode.Packable):
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u8_into(self.version, b)
         bincode.pack_u64_into(self.delete_after_time, b)
-        bincode.pack_u8_into(self.delete_after_versions, b)
+        bincode.pack_u16_into(self.delete_after_versions, b)
         bincode.pack_u16_into(len(self.span_policies), b)
         for i in range(len(self.span_policies)):
             self.span_policies[i].pack_into(b)
@@ -400,7 +402,7 @@ class DirectoryInfoBody(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'DirectoryInfoBody':
         version = bincode.unpack_u8(u)
         delete_after_time = bincode.unpack_u64(u)
-        delete_after_versions = bincode.unpack_u8(u)
+        delete_after_versions = bincode.unpack_u16(u)
         span_policies: List[Any] = [None]*bincode.unpack_u16(u)
         for i in range(len(span_policies)):
             span_policies[i] = SpanPolicy.unpack(u)
@@ -410,7 +412,7 @@ class DirectoryInfoBody(bincode.Packable):
         _size = 0
         _size += 1 # version
         _size += 8 # delete_after_time
-        _size += 1 # delete_after_versions
+        _size += 2 # delete_after_versions
         _size += 2 # len(span_policies)
         for i in range(len(self.span_policies)):
             _size += self.span_policies[i].calc_packed_size() # span_policies[i]

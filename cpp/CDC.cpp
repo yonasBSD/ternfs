@@ -313,7 +313,7 @@ private:
     void _processStep(const CDCStep& step) {
         LOG_DEBUG(_env, "processing step %s", step);
         if (step.txnFinished != 0) {
-            LOG_DEBUG(_env, "txn %s finished, err %s, resp %s", step.txnFinished, step.err, step.resp);
+            LOG_DEBUG(_env, "txn %s finished", step.txnFinished);
             // we need to send the response back to the client
             auto inFlight = _inFlightTxns.find(step.txnFinished);
             if (inFlight == _inFlightTxns.end()) {

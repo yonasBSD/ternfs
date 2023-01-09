@@ -102,12 +102,15 @@ func CDCRequest(
 	// are made regarding the contents of `respBody`.
 	respBody bincode.Unpackable,
 ) error {
+	if msgs.GetCDCMessageKind(reqBody) != msgs.GetCDCMessageKind(respBody) {
+		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
+	}
 	req := cdcRequest{
 		RequestId: requestId,
 		Body:      reqBody,
 	}
 	buffer := make([]byte, msgs.UDP_MTU)
-	logger.Debug("about to send request %T to CDC", reqBody)
+	// logger.Debug("about to send request %T to CDC", reqBody)
 	reqBytes := buffer
 	bincode.PackIntoBytes(&reqBytes, &req)
 	written, err := writer.Write(reqBytes)

@@ -148,6 +148,12 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::DEADLINE_NOT_PASSED:
         out << "DEADLINE_NOT_PASSED";
         break;
+    case EggsError::SAME_SOURCE_AND_DESTINATION:
+        out << "SAME_SOURCE_AND_DESTINATION";
+        break;
+    case EggsError::SAME_DIRECTORIES:
+        out << "SAME_DIRECTORIES";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;
@@ -420,30 +426,30 @@ std::ostream& operator<<(std::ostream& out, const SpanPolicy& x) {
 void DirectoryInfoBody::pack(BincodeBuf& buf) const {
     buf.packScalar<uint8_t>(version);
     buf.packScalar<uint64_t>(deleteAfterTime);
-    buf.packScalar<uint8_t>(deleteAfterVersions);
+    buf.packScalar<uint16_t>(deleteAfterVersions);
     buf.packList<SpanPolicy>(spanPolicies);
 }
 void DirectoryInfoBody::unpack(BincodeBuf& buf) {
     version = buf.unpackScalar<uint8_t>();
     deleteAfterTime = buf.unpackScalar<uint64_t>();
-    deleteAfterVersions = buf.unpackScalar<uint8_t>();
+    deleteAfterVersions = buf.unpackScalar<uint16_t>();
     buf.unpackList<SpanPolicy>(spanPolicies);
 }
 void DirectoryInfoBody::clear() {
     version = uint8_t(0);
     deleteAfterTime = uint64_t(0);
-    deleteAfterVersions = uint8_t(0);
+    deleteAfterVersions = uint16_t(0);
     spanPolicies.clear();
 }
 bool DirectoryInfoBody::operator==(const DirectoryInfoBody& rhs) const {
     if ((uint8_t)this->version != (uint8_t)rhs.version) { return false; };
     if ((uint64_t)this->deleteAfterTime != (uint64_t)rhs.deleteAfterTime) { return false; };
-    if ((uint8_t)this->deleteAfterVersions != (uint8_t)rhs.deleteAfterVersions) { return false; };
+    if ((uint16_t)this->deleteAfterVersions != (uint16_t)rhs.deleteAfterVersions) { return false; };
     if (spanPolicies != rhs.spanPolicies) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const DirectoryInfoBody& x) {
-    out << "DirectoryInfoBody(" << "Version=" << (int)x.version << ", " << "DeleteAfterTime=" << x.deleteAfterTime << ", " << "DeleteAfterVersions=" << (int)x.deleteAfterVersions << ", " << "SpanPolicies=" << x.spanPolicies << ")";
+    out << "DirectoryInfoBody(" << "Version=" << (int)x.version << ", " << "DeleteAfterTime=" << x.deleteAfterTime << ", " << "DeleteAfterVersions=" << x.deleteAfterVersions << ", " << "SpanPolicies=" << x.spanPolicies << ")";
     return out;
 }
 

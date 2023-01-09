@@ -298,7 +298,7 @@ struct DirectoryBody {
         sizeof(InodeId) +  // ownerId
         sizeof(EggsTime) + // mtime
         sizeof(HashMode) + // hashMode
-        sizeof(bool)+      // infoInherited
+        sizeof(bool) +     // infoInherited
         sizeof(uint8_t);   // infoLength
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255;
 
@@ -316,17 +316,17 @@ struct DirectoryBody {
         ALWAYS_ASSERT(sz == size());
     }
     
-    bool hasInfo() const {
-        return ownerId() == NULL_INODE_ID || !infoInherited();
+    bool mustHaveInfo() const {
+        return !infoInherited();
     }
 
     BincodeBytesRef info() const {
-        ALWAYS_ASSERT(hasInfo() == (infoUnchecked().size() > 0));
+        ALWAYS_ASSERT(!mustHaveInfo() || (infoUnchecked().size() > 0));
         return infoUnchecked();
     }
 
     void setInfo(const BincodeBytesRef& bytes) {
-        ALWAYS_ASSERT(hasInfo() == (bytes.size() > 0));
+        ALWAYS_ASSERT(!mustHaveInfo() || (bytes.size() > 0));
         setInfoUnchecked(bytes);
     }
 };

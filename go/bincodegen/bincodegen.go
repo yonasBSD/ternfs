@@ -233,6 +233,17 @@ func generateGoMsgKind(out io.Writer, typeName string, funName string, reqResps 
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 
+	fmt.Fprintf(out, "func (k %s) String() string {\n", typeName)
+	fmt.Fprintf(out, "\tswitch k {\n")
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "\tcase %v:\n", reqResp.kind)
+		fmt.Fprintf(out, "\t\treturn \"%s\"\n", reqRespEnum(reqResp))
+	}
+	fmt.Fprintf(out, "\tdefault:\n")
+	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"%s(%%d)\", k)\n", typeName)
+	fmt.Fprintf(out, "\t}\n")
+	fmt.Fprintf(out, "}\n\n")
+
 	fmt.Fprintf(out, "\n")
 
 	fmt.Fprintf(out, "const (\n")
@@ -1168,6 +1179,8 @@ func main() {
 		"BAD_DIRECTORY_INFO",
 		"CREATION_TIME_TOO_RECENT",
 		"DEADLINE_NOT_PASSED",
+		"SAME_SOURCE_AND_DESTINATION",
+		"SAME_DIRECTORIES",
 	}
 
 	shardReqResps := []reqRespType{

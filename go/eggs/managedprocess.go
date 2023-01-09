@@ -467,8 +467,8 @@ func WaitForShard(shid msgs.ShardId, timeout time.Duration) {
 			nil,
 			sock,
 			time.Second,
-			&msgs.StatDirectoryReq{Id: msgs.ROOT_DIR_INODE_ID},
-			&msgs.StatDirectoryResp{},
+			&msgs.VisitDirectoriesReq{},
+			&msgs.VisitDirectoriesResp{},
 		)
 		sock.Close()
 		if err != nil {

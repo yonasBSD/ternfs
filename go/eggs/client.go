@@ -11,7 +11,54 @@ import (
 type Client interface {
 	ShardRequest(log LogLevels, shid msgs.ShardId, req bincode.Packable, resp bincode.Unpackable) error
 	CDCRequest(log LogLevels, req bincode.Packable, resp bincode.Unpackable) error
-	Close() error
+}
+
+// Holds sockets to all 256 shards
+type AllShardsClient struct {
+	timeout    time.Duration
+	shardSocks []*net.UDPConn
+	cdcSock    *net.UDPConn
+}
+
+func NewAllShardsClient() (*AllShardsClient, error) {
+	var err error
+	c := AllShardsClient{
+		timeout: 10 * time.Second,
+	}
+	c.shardSocks = make([]*net.UDPConn, 256)
+	for i := 0; i < 256; i++ {
+		c.shardSocks[msgs.ShardId(i)], err = ShardSocket(msgs.ShardId(i))
+		if err != nil {
+			return nil, err
+		}
+	}
+	c.cdcSock, err = CDCSocket()
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// TODO probably convert these errors to stderr, we can't do much with them usually
+// but they'd be worth knowing about
+func (c *AllShardsClient) Close() error {
+	for _, sock := range c.shardSocks {
+		if err := sock.Close(); err != nil {
+			return err
+		}
+	}
+	if err := c.cdcSock.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *AllShardsClient) ShardRequest(log LogLevels, shid msgs.ShardId, req bincode.Packable, resp bincode.Unpackable) error {
+	return ShardRequestSocket(log, nil, c.shardSocks[shid], c.timeout, req, resp)
+}
+
+func (c *AllShardsClient) CDCRequest(log LogLevels, req bincode.Packable, resp bincode.Unpackable) error {
+	return CDCRequestSocket(log, c.cdcSock, c.timeout, req, resp)
 }
 
 // For when you almost always do requests to a single shard (e.g. in GC).
@@ -70,6 +117,7 @@ func (c *ShardSpecificClient) CDCRequest(log LogLevels, req bincode.Packable, re
 	return CDCRequestSocket(log, c.cdcSock, c.timeout, req, resp)
 }
 
+// nil if the directory has no directory info (i.e. if it is inherited)
 func GetDirectoryInfo(log LogLevels, c Client, id msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
 	req := msgs.StatDirectoryReq{
 		Id: id,
@@ -83,7 +131,7 @@ func GetDirectoryInfo(log LogLevels, c Client, id msgs.InodeId) (*msgs.Directory
 		return nil, err
 	}
 	if len(resp.Info) == 0 {
-		panic(fmt.Errorf("empty info"))
+		return nil, nil
 	}
 	return &info, nil
 }

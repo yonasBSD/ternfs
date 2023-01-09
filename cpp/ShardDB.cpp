@@ -320,7 +320,7 @@ struct ShardDBImpl {
             }
         };
 
-        {
+        if (_shid == ROOT_DIR_INODE_ID.shard()) {
             auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
             if (!keyExists(_directoriesCf, k.toSlice())) {
                 LOG_INFO(_env, "creating root directory, since it does not exist");
@@ -637,13 +637,14 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _visitDirectories(const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
+    template<typename Req, typename Resp>
+    EggsError _visitInodes(rocksdb::ColumnFamilyHandle* cf, const Req& req, Resp& resp) {
         resp.nextId = NULL_INODE_ID;
 
-        int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - VisitDirectoriesResp::STATIC_SIZE;
+        int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - Resp::STATIC_SIZE;
         int maxIds = (budget/8) + 1; // include next inode
         {
-            WrappedIterator it(_db->NewIterator({}, _directoriesCf));            
+            WrappedIterator it(_db->NewIterator({}, cf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             for (
                 it->Seek(beginKey.toSlice());
@@ -661,6 +662,10 @@ struct ShardDBImpl {
         }
 
         return NO_ERROR;
+    }
+
+    EggsError _visitDirectories(const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
+        return _visitInodes(_directoriesCf, req, resp);
     }
     
     EggsError _fileSpans(const FileSpansReq& req, FileSpansResp& resp) {
@@ -779,6 +784,10 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _visitFiles(const VisitFilesReq& req, VisitFilesResp& resp) {
+        return _visitInodes(_filesCf, req, resp);
+    }
+
     EggsError read(const ShardReqContainer& req, ShardRespContainer& resp) {
         LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
 
@@ -817,7 +826,8 @@ struct ShardDBImpl {
             err = _blockServiceFiles(req.getBlockServiceFiles(), resp.setBlockServiceFiles());
             break;
         case ShardMessageKind::VISIT_FILES:
-            throw EGGS_EXCEPTION("UNIMPLEMENTED %s", req.kind());
+            err = _visitFiles(req.getVisitFiles(), resp.setVisitFiles());
+            break;
         default:
             throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
         }
@@ -876,6 +886,9 @@ struct ShardDBImpl {
     EggsError _prepareSameDirectoryRename(EggsTime time, const SameDirectoryRenameReq& req, SameDirectoryRenameEntry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
+        }
+        if (req.oldName == req.newName) {
+            return EggsError::SAME_SOURCE_AND_DESTINATION;
         }
         if (!validName(req.newName.ref())) {
             return EggsError::BAD_NAME;
@@ -1729,6 +1742,7 @@ struct ShardDBImpl {
             dir().setMtime(time);
             dir().setHashMode(HashMode::XXH3_63);
             dir().setInfoInherited(entry.info.inherited);
+            LOG_DEBUG(_env, "inherited: %s, hasInfo: %s, body: %s", entry.info.inherited, dir().mustHaveInfo(), entry.info.body.ref());
             dir().setInfo(entry.info.body.ref());
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, dirKey.toSlice(), dir.toSlice()));
         }
@@ -2016,7 +2030,9 @@ struct ShardDBImpl {
         std::string dirValue;
         ExternalValue<DirectoryBody> dir;
         {
-            EggsError err = _initiateDirectoryModification(time, false, batch, entry.dirId, dirValue, dir);
+            // allowSnapshot=true since we might want to influence deletion policies for already deleted
+            // directories.
+            EggsError err = _initiateDirectoryModification(time, true, batch, entry.dirId, dirValue, dir);
             if (err != NO_ERROR) {
                 return err;
             }
@@ -2054,12 +2070,25 @@ struct ShardDBImpl {
             nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
+        // We check that edge is still not owned -- otherwise we might orphan a file.
         {
             StaticValue<EdgeKey> k;
             k().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false), we're deleting a non owned snapshot edge
             k().setNameHash(nameHash);
             k().setName(entry.name.ref());
             k().setCreationTime(entry.creationTime);
+            std::string edgeValue;
+            auto status = _db->Get({}, _edgesCf, k.toSlice(), &edgeValue);
+            if (status.IsNotFound()) {
+                return NO_ERROR; // make the client's life easier
+            }
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<SnapshotEdgeBody> edge(edgeValue);
+            if (edge().targetIdWithOwned().extra()) {
+                // TODO better error here?
+                return EggsError::EDGE_NOT_FOUND; // unexpectedly owned
+            }
+            // we can go ahead and safely delete
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
 
@@ -2099,13 +2128,27 @@ struct ShardDBImpl {
             nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
-        // remove edge
+        // We need to check that the edge is still there, and that it still owns the
+        // file. Maybe the file was re-owned by someone else in the meantime, in which case
+        // we can't proceed making the file transient.
         {
             StaticValue<EdgeKey> k;
+            // current=false since we can only delete
             k().setDirIdWithCurrent(entry.ownerId, false);
             k().setNameHash(nameHash);
             k().setName(entry.name.ref());
             k().setCreationTime(entry.creationTime);
+            std::string edgeValue;
+            auto status = _db->Get({}, _edgesCf, k.toSlice(), &edgeValue);
+            if (status.IsNotFound()) {
+                return EggsError::EDGE_NOT_FOUND; // can't return NO_ERROR, since the transient file still exists
+            }
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<SnapshotEdgeBody> edge(edgeValue);
+            if (!edge().targetIdWithOwned().extra()) { // not owned
+                return EggsError::EDGE_NOT_FOUND;
+            }
+            // we can proceed
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
 
@@ -2135,6 +2178,15 @@ struct ShardDBImpl {
             }
         }
 
+        // Exit early if file is empty. Crucial to do this with the size,
+        // otherwise we might spend a lot of time poring through the SSTs
+        // making sure there are no spans.
+        if (file().fileSize() == 0) {
+            return EggsError::FILE_EMPTY;
+        }
+        
+        LOG_DEBUG(_env, "deleting span from file %s of size %s", entry.fileId, file().fileSize());
+
         // Fetch the last span
         WrappedIterator spanIt(_db->NewIterator({}, _spansCf));
         ExternalValue<SpanKey> spanKey;
@@ -2144,14 +2196,10 @@ struct ShardDBImpl {
             endKey().setFileId(entry.fileId);
             endKey().setOffset(file().fileSize());
             spanIt->SeekForPrev(endKey.toSlice());
-            if (!spanIt->Valid()) {
-                return EggsError::FILE_EMPTY;
-            }
             ROCKS_DB_CHECKED(spanIt->status());
+            ALWAYS_ASSERT(spanIt->Valid()); // we know the file isn't empty, we must have a span
             spanKey = ExternalValue<SpanKey>::FromSlice(spanIt->key());
-            if (spanKey().fileId() != entry.fileId) {
-                return EggsError::FILE_EMPTY;
-            }
+            ALWAYS_ASSERT(spanKey().fileId() == entry.fileId); // again, we know the file isn't empty
             span = ExternalValue<SpanBody>::FromSlice(spanIt->value());
         }
         ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
@@ -2443,7 +2491,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(status);
             ExternalValue<SpanBody> span(spanValue);
             // "Is the span still there"
-            if (file().size() > entry.byteOffset+span().spanSize()) {
+            if (file().fileSize() > entry.byteOffset+span().spanSize()) {
                 return NO_ERROR; // already certified (we're past it)
             }
             if (file().lastSpanState() == SpanState::CLEAN) {
@@ -2781,7 +2829,9 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _initiateTransientFileModification(EggsTime time, bool allowPastDeadline, rocksdb::WriteBatch& batch, InodeId id, std::string& tfValue, ExternalValue<TransientFileBody>& tf) {
+    EggsError _initiateTransientFileModification(
+        EggsTime time, bool allowPastDeadline, rocksdb::WriteBatch& batch, InodeId id, std::string& tfValue, ExternalValue<TransientFileBody>& tf
+    ) {
         ExternalValue<TransientFileBody> tmpTf;
         EggsError err = _getTransientFile({}, time, allowPastDeadline, id, tfValue, tmpTf);
         if (err != NO_ERROR) {
@@ -2812,8 +2862,9 @@ struct ShardDBImpl {
 BincodeBytes defaultDirectoryInfo() {
     char buf[255];
     DirectoryInfoBody info;
+    info.version = 0;
     // delete after 30 days
-    info.deleteAfterTime = 30ull /*days*/ * 24 /*hours*/ * 60 /*minutes*/ * 60 /*seconds*/ * 1'000'000'000 /*ns*/;
+    info.deleteAfterTime = (30ull /*days*/ * 24 /*hours*/ * 60 /*minutes*/ * 60 /*seconds*/ * 1'000'000'000 /*ns*/) | (1ull<<63);
     // do not delete after N versions
     info.deleteAfterVersions = 0;
     // up to 1MiB flash, up to 10MiB HDD (should be 100MiB really, it's nicer to test with smaller

@@ -117,12 +117,16 @@ func ShardRequest(
 	// are made regarding the contents of `respBody`.
 	respBody bincode.Unpackable,
 ) error {
+	if msgs.GetShardMessageKind(reqBody) != msgs.GetShardMessageKind(respBody) {
+		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
+	}
 	req := shardRequest{
 		requestId: requestId,
 		body:      reqBody,
 	}
 	buffer := make([]byte, msgs.UDP_MTU)
 	reqBytes := buffer
+	t0 := time.Now()
 	logger.Debug("about to send request %T to shard", reqBody)
 	packShardRequest(&reqBytes, &req, cdcKey)
 	written, err := writer.Write(reqBytes)
@@ -157,10 +161,10 @@ func ShardRequest(
 		}
 		// we managed to decode, we just need to check that it's not an error
 		if resp.Error != nil {
-			logger.Debug("got error %v from shard", resp.Error)
+			logger.Debug("got error %v from shard (took %v)", resp.Error, time.Since(t0))
 			return resp.Error
 		}
-		logger.Debug("got response %T from shard", respBody)
+		logger.Debug("got response %T from shard (took %v)", respBody, time.Since(t0))
 		return nil
 	}
 }

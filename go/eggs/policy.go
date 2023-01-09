@@ -1,28 +1,28 @@
 package eggs
 
 import (
-	"time"
 	"xtx/eggsfs/msgs"
 )
 
 // If multiple policies are present, the file will be deleted if
-// any of the policies are not respected. If neither policy is present,
-// snapshots will never be deleted.
+// any of the policies are not respected.
+//
+// If neither policies are active, then snapshots will be kept forever.
+//
+// Also note that you can use either policy to delete all snapshots, by
+// setting either to zero.
 type SnapshotPolicy struct {
-	// Keep all files/directories versions with a certain name within this time window.
-	// If zero, this kind of policy is inactive.
-	DeleteAfterTime time.Duration
-	// Keep last N file/directory versions with a certain name. If 0, this
-	// kind of policy is inactive.
-	DeleteAfterVersions int
+	DeleteAfterTime     msgs.DeleteAfterTime
+	DeleteAfterVersions msgs.DeleteAfterVersions
 }
 
-// The edges are the entirety of the edges for a certain file name in a certain dir.
-// Oldest edge first.
+// Returns how many edges to remove according to the policy (as a prefix of the input).
+//
+// `edges` should be all the snapshot edges for a certain directory, oldest edge first.
 //
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
-// If it returns N, edges[N:] will be well formed too.
+// If it returns N, edges[N:] will be well formed too in the sense above.
 func (policy *SnapshotPolicy) edgesToRemove(now msgs.EggsTime, edges []msgs.Edge) int {
 	if len(edges) == 0 {
 		return 0
@@ -30,40 +30,39 @@ func (policy *SnapshotPolicy) edgesToRemove(now msgs.EggsTime, edges []msgs.Edge
 	// Index dividing edges, so that all all edges[i] i < firstGoodEdgeVersions should be
 	// removed, while all edges[i] i >= firstGoodEdgeVersions should be kept.
 	firstGoodEdgeVersions := 0
-	// Note that DeleteAfterVersions is a bit tricky: we don't know here if there even
-	// is a current edge. So depending on whether there is or not, results might differ.
+	// Note that DeleteAfterVersions only affects the snapshot edges: we don't look at the
+	// current edge at all.
 	//
-	// We delete conservative (assuming that there _is_ a current edge). This prevents us from
-	// using policy.DeleteAfterVersions=1 to immediately purge deleted versions, we might
-	// want to revise this.
-	if policy.DeleteAfterVersions > 0 {
+	// This means, for example, that if we have DeleteAfterVersions=5, after applying the policy
+	// there might be 5 or 6 edges with a certain name, depending on whether the a current
+	// edge for it exists.
+	if policy.DeleteAfterVersions.Active() {
 		versionNumber := 0
 		for firstGoodEdgeVersions = len(edges) - 1; firstGoodEdgeVersions >= 0; firstGoodEdgeVersions-- {
 			// ignore deletes, we just want to keep the last N versions.
 			if edges[firstGoodEdgeVersions].TargetId.Id() == msgs.NULL_INODE_ID {
 				continue
 			}
-			versionNumber++
-			// the latest version number is the latest to keep
-			if versionNumber >= policy.DeleteAfterVersions {
+			if versionNumber >= int(policy.DeleteAfterVersions.Versions()) {
+				firstGoodEdgeVersions++
 				break
 			}
+			versionNumber++
 		}
 	}
 	firstGoodEdgeTime := 0
-	if policy.DeleteAfterTime > time.Duration(0) {
+	if policy.DeleteAfterTime.Active() {
 		for firstGoodEdgeTime = len(edges) - 1; firstGoodEdgeTime >= 0; firstGoodEdgeTime-- {
-			// if this file was created before the cutoff, then it is the last one to
-			// matter.
 			creationTime := edges[firstGoodEdgeTime].CreationTime.Time()
-			if now.Time().Sub(creationTime) > policy.DeleteAfterTime {
+			if now.Time().Sub(creationTime) > policy.DeleteAfterTime.Time() {
+				firstGoodEdgeVersions++
 				break
 			}
 		}
 	}
 	firstGoodEdge := Max(0, Max(firstGoodEdgeVersions, firstGoodEdgeTime))
 	// if the last edge is a delete, remove that too (we can't keep a delete hanging)
-	if edges[firstGoodEdge].TargetId.Id() == msgs.NULL_INODE_ID {
+	if firstGoodEdge < len(edges) && edges[firstGoodEdge].TargetId.Id() == msgs.NULL_INODE_ID {
 		firstGoodEdge++
 	}
 	return firstGoodEdge

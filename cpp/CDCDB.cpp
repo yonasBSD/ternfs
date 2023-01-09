@@ -92,7 +92,7 @@ std::ostream& operator<<(std::ostream& out, const CDCStep& x) {
     out << "CDCStep(";
     if (x.txnFinished != 0) {
         out << "finishedTxn=" << x.txnFinished;
-        if (x.err == NO_ERROR) {
+        if (x.err != NO_ERROR) {
             out << ", err=" << x.err;
         } else {
             out << ", resp=" << x.resp;
@@ -546,6 +546,8 @@ struct CDCDBImpl {
             // and therefore we do it in another transaction type entirely.
             if (req.targetId.type() == InodeType::DIRECTORY) {
                 _finishWithError(step, txnId, EggsError::TYPE_IS_NOT_DIRECTORY);
+            } else if (req.oldOwnerId == req.newOwnerId) {
+                _finishWithError(step, txnId, EggsError::SAME_DIRECTORIES);
             } else {
                 reqStep = RenameFileStep::AFTER_LOCK_OLD_EDGE;
                 auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setLockCurrentEdge();
@@ -780,6 +782,8 @@ struct CDCDBImpl {
         case RenameDirectoryStep::START: {
             if (req.targetId.type() != InodeType::DIRECTORY) {
                 _finishWithError(step, txnId, EggsError::TYPE_IS_NOT_DIRECTORY);
+            } else if (req.oldOwnerId == req.newOwnerId) {
+                _finishWithError(step, txnId, EggsError::SAME_DIRECTORIES);
             } else if (!_loopCheck(dbTxn, req)) {
                 // First, check if we'd create a loop
                 _finishWithError(step, txnId, EggsError::LOOP_IN_DIRECTORY_RENAME);
@@ -854,6 +858,12 @@ struct CDCDBImpl {
                 ROCKS_DB_CHECKED(dbTxn.Put(_parentCf, k.toSlice(), v.toSlice()));
             }
         }
+        case RenameDirectoryStep::AFTER_ROLLBACK: {
+            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
+            _finishWithError(step, txnId, state.exitError());
+        } break;
+        default:
+            throw EGGS_EXCEPTION("bad step %s", (int)reqStep);
         }
 
         return reqStep;

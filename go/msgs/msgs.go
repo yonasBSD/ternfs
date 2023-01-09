@@ -789,6 +789,50 @@ type SpanPolicy struct {
 	Parity       Parity
 }
 
+// MSB: whether this policy is active or not. After: nanoseconds.
+type DeleteAfterTime uint64
+
+func (dat DeleteAfterTime) Active() bool {
+	return (uint64(dat) >> 63) != 0
+}
+
+func (dat DeleteAfterTime) Time() time.Duration {
+	return time.Duration(uint64(dat) & ^(uint64(1) << 63))
+}
+
+func InactiveDeleteAfterTime() DeleteAfterTime {
+	return 0
+}
+
+func ActiveDeleteAfterTime(duration time.Duration) DeleteAfterTime {
+	if duration.Nanoseconds() < 0 {
+		panic(fmt.Errorf("negative duration in DeleteAfterTime: %v", duration))
+	}
+	return DeleteAfterTime((uint64(1) << 63) | uint64(duration.Nanoseconds()))
+}
+
+// MSB: whether this policy is active or not. After: nanoseconds.
+type DeleteAfterVersions uint16
+
+func (dav DeleteAfterVersions) Active() bool {
+	return (uint16(dav) >> 15) != 0
+}
+
+func (dav DeleteAfterVersions) Versions() uint16 {
+	return uint16(dav) & ^(uint16(1) << 15)
+}
+
+func InactiveDeleteAfterVersions() DeleteAfterVersions {
+	return 0
+}
+
+func ActiveDeleteAfterVersions(versions int16) DeleteAfterVersions {
+	if versions < 0 {
+		panic(fmt.Errorf("negative versions: %v", versions))
+	}
+	return DeleteAfterVersions((uint16(1) << 15) | uint16(versions))
+}
+
 // See SnapshotPolicy for the meaning of `DeleteAfterTime` and
 // `DeleteAfterVersions`
 type DirectoryInfoBody struct {
@@ -796,8 +840,8 @@ type DirectoryInfoBody struct {
 	// since it is opaque to the server and therefore we might want
 	// to evolve it separatedly. Right now it's 1 for this data structure.
 	Version             uint8
-	DeleteAfterTime     uint64 // nanoseconds
-	DeleteAfterVersions uint8
+	DeleteAfterTime     DeleteAfterTime
+	DeleteAfterVersions DeleteAfterVersions
 	// Sorted by MaxSize. There's always an implicit policy for inline
 	// spans (max size 255). Which means that the first `MaxSize`
 	// must be > 255.

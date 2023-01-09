@@ -54,6 +54,8 @@ const (
 	BAD_DIRECTORY_INFO ErrCode = 55
 	CREATION_TIME_TOO_RECENT ErrCode = 56
 	DEADLINE_NOT_PASSED ErrCode = 57
+	SAME_SOURCE_AND_DESTINATION ErrCode = 58
+	SAME_DIRECTORIES ErrCode = 59
 )
 
 func (err ErrCode) String() string {
@@ -154,6 +156,10 @@ func (err ErrCode) String() string {
 		return "CREATION_TIME_TOO_RECENT"
 	case 57:
 		return "DEADLINE_NOT_PASSED"
+	case 58:
+		return "SAME_SOURCE_AND_DESTINATION"
+	case 59:
+		return "SAME_DIRECTORIES"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -232,6 +238,77 @@ func GetShardMessageKind(body any) ShardMessageKind {
 	}
 }
 
+func (k ShardMessageKind) String() string {
+	switch k {
+	case 1:
+		return "LOOKUP"
+	case 2:
+		return "STAT_FILE"
+	case 10:
+		return "STAT_TRANSIENT_FILE"
+	case 8:
+		return "STAT_DIRECTORY"
+	case 3:
+		return "READ_DIR"
+	case 4:
+		return "CONSTRUCT_FILE"
+	case 5:
+		return "ADD_SPAN_INITIATE"
+	case 6:
+		return "ADD_SPAN_CERTIFY"
+	case 7:
+		return "LINK_FILE"
+	case 12:
+		return "SOFT_UNLINK_FILE"
+	case 13:
+		return "FILE_SPANS"
+	case 14:
+		return "SAME_DIRECTORY_RENAME"
+	case 15:
+		return "SET_DIRECTORY_INFO"
+	case 21:
+		return "VISIT_DIRECTORIES"
+	case 32:
+		return "VISIT_FILES"
+	case 22:
+		return "VISIT_TRANSIENT_FILES"
+	case 33:
+		return "FULL_READ_DIR"
+	case 23:
+		return "REMOVE_NON_OWNED_EDGE"
+	case 24:
+		return "INTRA_SHARD_HARD_FILE_UNLINK"
+	case 25:
+		return "REMOVE_SPAN_INITIATE"
+	case 26:
+		return "REMOVE_SPAN_CERTIFY"
+	case 34:
+		return "SWAP_BLOCKS"
+	case 35:
+		return "BLOCK_SERVICE_FILES"
+	case 36:
+		return "REMOVE_INODE"
+	case 128:
+		return "CREATE_DIRECTORY_INODE"
+	case 129:
+		return "SET_DIRECTORY_OWNER"
+	case 137:
+		return "REMOVE_DIRECTORY_OWNER"
+	case 130:
+		return "CREATE_LOCKED_CURRENT_EDGE"
+	case 131:
+		return "LOCK_CURRENT_EDGE"
+	case 132:
+		return "UNLOCK_CURRENT_EDGE"
+	case 134:
+		return "REMOVE_OWNED_SNAPSHOT_FILE_EDGE"
+	case 135:
+		return "MAKE_FILE_TRANSIENT"
+	default:
+		return fmt.Sprintf("ShardMessageKind(%d)", k)
+	}
+}
+
 
 const (
 	LOOKUP ShardMessageKind = 0x1
@@ -286,6 +363,25 @@ func GetCDCMessageKind(body any) CDCMessageKind {
 		return HARD_UNLINK_FILE
 	default:
 		panic(fmt.Sprintf("bad shard req/resp body %T", body))
+	}
+}
+
+func (k CDCMessageKind) String() string {
+	switch k {
+	case 1:
+		return "MAKE_DIRECTORY"
+	case 2:
+		return "RENAME_FILE"
+	case 3:
+		return "SOFT_UNLINK_DIRECTORY"
+	case 4:
+		return "RENAME_DIRECTORY"
+	case 5:
+		return "HARD_UNLINK_DIRECTORY"
+	case 6:
+		return "HARD_UNLINK_FILE"
+	default:
+		return fmt.Sprintf("CDCMessageKind(%d)", k)
 	}
 }
 
@@ -1770,7 +1866,7 @@ func (v *SpanPolicy) Unpack(buf *bincode.Buf) error {
 func (v *DirectoryInfoBody) Pack(buf *bincode.Buf) {
 	buf.PackU8(uint8(v.Version))
 	buf.PackU64(uint64(v.DeleteAfterTime))
-	buf.PackU8(uint8(v.DeleteAfterVersions))
+	buf.PackU16(uint16(v.DeleteAfterVersions))
 	len1 := len(v.SpanPolicies)
 	buf.PackLength(len1)
 	for i := 0; i < len1; i++ {
@@ -1785,7 +1881,7 @@ func (v *DirectoryInfoBody) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.DeleteAfterTime)); err != nil {
 		return err
 	}
-	if err := buf.UnpackU8((*uint8)(&v.DeleteAfterVersions)); err != nil {
+	if err := buf.UnpackU16((*uint16)(&v.DeleteAfterVersions)); err != nil {
 		return err
 	}
 	var len1 int

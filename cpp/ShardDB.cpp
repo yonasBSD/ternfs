@@ -192,7 +192,7 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
 }
 
 struct BlockServiceCache {
-    std::array<uint8_t, 16> secretKey;
+    AES128Key secretKey;
     std::array<uint8_t, 4> ip;
     uint16_t port;
     uint8_t storageClass;
@@ -203,6 +203,7 @@ struct ShardDBImpl {
 
     ShardId _shid;
     std::array<uint8_t, 16> _secretKey;
+    AES128Key _expandedSecretKey;
     
     // TODO it would be good to store basically all of the metadata in memory,
     // so that we'd just read from it, but this requires a bit of care when writing
@@ -284,29 +285,32 @@ struct ShardDBImpl {
     }
 
     void _initDb() {
-        bool shardInfoExists;
         {
-            std::string value;
-            auto status = _db->Get({}, shardMetadataKey(&SHARD_INFO_KEY), &value);
-            if (status.IsNotFound()) {
-                shardInfoExists = false;
-            } else {
-                ROCKS_DB_CHECKED(status);
-                shardInfoExists = true;
-                auto shardInfo = ExternalValue<ShardInfoBody>::FromSlice(value);
-                if (shardInfo().shardId() != _shid) {
-                    throw EGGS_EXCEPTION("expected shard id %s, but found %s in DB", _shid, shardInfo().shardId());
+            bool shardInfoExists;
+            {
+                std::string value;
+                auto status = _db->Get({}, shardMetadataKey(&SHARD_INFO_KEY), &value);
+                if (status.IsNotFound()) {
+                    shardInfoExists = false;
+                } else {
+                    ROCKS_DB_CHECKED(status);
+                    shardInfoExists = true;
+                    auto shardInfo = ExternalValue<ShardInfoBody>::FromSlice(value);
+                    if (shardInfo().shardId() != _shid) {
+                        throw EGGS_EXCEPTION("expected shard id %s, but found %s in DB", _shid, shardInfo().shardId());
+                    }
+                    _secretKey = shardInfo().secretKey();
                 }
-                _secretKey = shardInfo().secretKey();
             }
-        }
-        if (!shardInfoExists) {
-            LOG_INFO(_env, "creating shard info, since it does not exist");
-            generateSecretKey(_secretKey);
-            StaticValue<ShardInfoBody> shardInfo;
-            shardInfo().setShardId(_shid);
-            shardInfo().setSecretKey(_secretKey);
-            ROCKS_DB_CHECKED(_db->Put({}, shardMetadataKey(&SHARD_INFO_KEY), shardInfo.toSlice()));
+            if (!shardInfoExists) {
+                LOG_INFO(_env, "creating shard info, since it does not exist");
+                generateSecretKey(_secretKey);
+                StaticValue<ShardInfoBody> shardInfo;
+                shardInfo().setShardId(_shid);
+                shardInfo().setSecretKey(_secretKey);
+                ROCKS_DB_CHECKED(_db->Put({}, shardMetadataKey(&SHARD_INFO_KEY), shardInfo.toSlice()));
+            }
+            expandKey(_secretKey, _expandedSecretKey);
         }
 
         const auto keyExists = [this](rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key) -> bool {
@@ -392,7 +396,7 @@ struct ShardDBImpl {
                     auto& cache = _blockServicesCache[k().blockServiceId()];
                     cache.ip = v().ip();
                     cache.port = v().port();
-                    cache.secretKey = v().secretKey();
+                    expandKey(v().secretKey(), cache.secretKey);
                     cache.storageClass = v().storageClass();
                 }
             }
@@ -2267,7 +2271,7 @@ struct ShardDBImpl {
             blockBody().setSecretKey(entryBlock.secretKey.data);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
             auto& cache = _blockServicesCache[entryBlock.id];
-            cache.secretKey = entryBlock.secretKey.data;
+            expandKey(entryBlock.secretKey.data, cache.secretKey);
             cache.ip = entryBlock.ip.data;
             cache.port = entryBlock.port;
             cache.storageClass = entryBlock.storageClass;
@@ -2406,7 +2410,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    std::array<uint8_t, 8> _blockAddCertificate(uint32_t blockSize, const BlockBody& block, const std::array<uint8_t, 16>& secretKey) {
+    std::array<uint8_t, 8> _blockAddCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -2435,7 +2439,7 @@ struct ShardDBImpl {
         return proof.proof == expectedProof;
     }
 
-    std::array<uint8_t, 8> _blockDeleteCertificate(uint32_t blockSize, const BlockBody& block, const std::array<uint8_t, 16>& secretKey) {
+    std::array<uint8_t, 8> _blockDeleteCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -2767,7 +2771,7 @@ struct ShardDBImpl {
     // miscellanea
 
     std::array<uint8_t, 8> _calcCookie(InodeId id) {
-        return cbcmac(_secretKey, (const uint8_t*)&id, sizeof(id));
+        return cbcmac(_expandedSecretKey, (const uint8_t*)&id, sizeof(id));
     }
 
     uint64_t _lastAppliedLogEntry() {

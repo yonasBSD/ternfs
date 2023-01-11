@@ -356,8 +356,10 @@ TEST_CASE("ShardDB data") {
 }
 
 TEST_CASE("CBC MAC") {
-    std::array<uint8_t, 16> key;
-    memcpy(&key[0], "\x2b\x7e\x15\x16\x28\xae\xd2\xa6\xab\xf7\x15\x88\x09\xcf\x4f\x3c", sizeof(key));
+    std::array<uint8_t, 16> userKey;
+    memcpy(&userKey[0], "\x2b\x7e\x15\x16\x28\xae\xd2\xa6\xab\xf7\x15\x88\x09\xcf\x4f\x3c", sizeof(userKey));
+    AES128Key key;
+    expandKey(userKey, key);
     const auto test = [&key](const std::vector<uint8_t>& plaintext, const std::array<uint8_t, 8>& expectedMac) {
         CHECK(cbcmac(key, &plaintext[0], plaintext.size()) == expectedMac);
     };
@@ -377,8 +379,10 @@ TEST_CASE("CBC MAC") {
         {30,150,143,64,165,93,232,5,86,160,21,239,228,49,121,199,214,95,153,152,37,35,188,167,111,6,253,215,180,215,85,201},
         {85,212,198,154,164,248,20,252}
     );
-    const auto testCDC = [](const std::vector<uint8_t>& plaintext, const std::array<uint8_t, 8>& expectedMac) {
-        CHECK(cbcmac(CDCKey, &plaintext[0], plaintext.size()) == expectedMac);
+    AES128Key expandedCDCKey;
+    expandKey(CDCKey, expandedCDCKey);
+    const auto testCDC = [&expandedCDCKey](const std::vector<uint8_t>& plaintext, const std::array<uint8_t, 8>& expectedMac) {
+        CHECK(cbcmac(expandedCDCKey, &plaintext[0], plaintext.size()) == expectedMac);
     };
     testCDC(
         {30,150,143,64,165,93,232,5,86,160,21,239,228,49,121,199,214,95,153,152,37,35,188,167,111,6,253,215,180,215,85,201},

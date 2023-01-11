@@ -1,4 +1,3 @@
-
 apps := cli/cli integrationtest/integrationtest runeggs/runeggs gcdaemon/gcdaemon
 
 all: $(apps)

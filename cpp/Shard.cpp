@@ -70,6 +70,9 @@ public:
     }
 
     void run() {
+        AES128Key expandedCDCKey;
+        expandKey(CDCKey, expandedCDCKey);
+
         int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock < 0) {
             throw SYSCALL_EXCEPTION("cannot create socket");
@@ -157,7 +160,7 @@ public:
 
             // authenticate, if necessary
             if (isPrivilegedRequestKind(reqHeader.kind)) {
-                auto expectedMac = cbcmac(CDCKey, reqBbuf.data, reqBbuf.cursor - reqBbuf.data);
+                auto expectedMac = cbcmac(expandedCDCKey, reqBbuf.data, reqBbuf.cursor - reqBbuf.data);
                 BincodeFixedBytes<8> receivedMac;
                 reqBbuf.unpackFixedBytes<8>(receivedMac);
                 if (expectedMac != receivedMac.data) {

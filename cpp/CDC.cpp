@@ -49,6 +49,7 @@ private:
     ShardRespContainer _shardRespContainer;
     CDCStep _step;
     std::array<int, 257> _socks;
+    AES128Key _expandedCDCKey;
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
     std::unordered_map<uint64_t, InFlightCDCRequest> _inFlightTxns;
@@ -65,6 +66,7 @@ public:
     {
         _currentLogIndex = _db.lastAppliedLogEntry();
         memset(&_socks[0], 0, sizeof(_socks));
+        expandKey(CDCKey, _expandedCDCKey);
     }
 
     virtual ~CDCServer() = default;
@@ -346,7 +348,7 @@ private:
             step.shardReq.req.pack(bbuf);
             // MAC, if necessary
             if (isPrivilegedRequestKind(shardReqHeader.kind)) {
-                bbuf.packFixedBytes<8>({cbcmac(CDCKey, bbuf.data, bbuf.len())});
+                bbuf.packFixedBytes<8>({cbcmac(_expandedCDCKey, bbuf.data, bbuf.len())});
             }
             // Send
             struct sockaddr_in shardAddr;

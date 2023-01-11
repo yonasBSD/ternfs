@@ -5,7 +5,7 @@ verbose ?= no
 coverage ?= no
 time_trace ?= no
 
-libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash openssl libcurl
+libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash libcurl
 
 # TODO Go over the pkg-config --cflags output for rocksdb
 CXX = clang++
@@ -66,7 +66,7 @@ ifeq ($(valgrind),yes)
     endif
     # valgrind chokes on instructions used by -march=native, which is added by
     # the rocksdb --cflags, on our dev servers at least
-    CPPFLAGS += -march=haswell
+    CPPFLAGS += -march=haswell -maes
     build_dir := $(build_dir)-valgrind
 else
     ifneq ($(valgrind),no)

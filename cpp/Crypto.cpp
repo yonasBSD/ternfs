@@ -23,6 +23,9 @@ void generateSecretKey(std::array<uint8_t, 16>& key) {
         }
         soFar += x;
     }
+    if (close(fd) < 0) {
+        throw SYSCALL_EXCEPTION("close");
+    }
 }
 
 inline __m128i AES_128_ASSIST(__m128i temp1, __m128i temp2) {

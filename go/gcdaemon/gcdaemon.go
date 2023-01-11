@@ -3,83 +3,86 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"runtime/debug"
 	"strconv"
-	"strings"
-	"time"
+	"sync"
 	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/managedroutine"
 	"xtx/eggsfs/msgs"
 )
 
-func loop(log eggs.LogLevels, panicChan chan error, body func()) {
-	defer func() {
-		if err := recover(); err != nil {
-			env.RaiseAlert(fmt.Errorf("PANIC %v", err))
-			env.logMutex.Lock()
-			env.Logger.Printf("%s[%d]: PANIC %v. Stacktrace:", env.Role, env.Shid, err)
-			for _, line := range strings.Split(string(debug.Stack()), "\n") {
-				env.Logger.Printf("%s[%d]: %s", env.Role, env.Shid, line)
-			}
-			env.logMutex.Unlock()
-			panicChan <- fmt.Errorf("%s[%v]: PANIC %v", env.Role, env.Shid, err)
-		}
-	}()
-	for {
-		body()
-	}
-}
-
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
-	shard := flag.Int("shard", -1, "Which shard to collect on.")
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	flag.Parse()
 
-	logger := eggs.NewLogger()
-	ll := eggs.LogLogger
-
-	logger := log.New(os.Stderr, "", log.Lshortfile)
-
-	shardsToCollect := make(map[msgs.ShardId]bool)
-	if *shards != "" {
-		for _, shardStr := range strings.Split(*shards, ",") {
-			shardInt, err := strconv.Atoi(shardStr)
-			if err != nil || shardInt < 0 || shardInt > 255 {
-				logger.Fatal(fmt.Errorf("invalid shard string `%s'", shardStr))
-			}
-			shid := msgs.ShardId(shardInt)
-			shardsToCollect[shid] = true
+	logOut := os.Stdout
+	if *logFile != "" {
+		var err error
+		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not open file %v: %v", *logFile, err)
+			os.Exit(1)
 		}
-	} else {
-		for shid := 0; shid < 256; shid++ {
-			shardsToCollect[msgs.ShardId(shid)] = true
-		}
+		defer logOut.Close()
 	}
-
-	panicChan := make(chan error, 1)
-	env := eggs.DaemonEnv{
-		Logger:  logger,
-		Timeout: 10 * time.Second,
-		CDCKey:  eggs.CDCKey(),
+	log := &eggs.LogLogger{
 		Verbose: *verbose,
+		Logger:  eggs.NewLogger(logOut),
 	}
-	logger.Printf("starting one collector and one destructor (running on %d shards).", len(shardsToCollect))
-	for shid := 0; shid < 256; shid++ {
-		if !shardsToCollect[msgs.ShardId(shid)] {
-			continue
+
+	if flag.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Please specify at least one shard to run with using positional arguments.")
+		os.Exit(2)
+	}
+
+	shards := []msgs.ShardId{}
+	for _, shardStr := range flag.Args() {
+		shardI, err := strconv.Atoi(shardStr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid shard %v: %v", shardStr, err)
+			os.Exit(2)
 		}
-		destructor := env
-		destructor.Role = "destructor"
-		destructor.Shid = msgs.ShardId(shid)
-		go destructor.Loop(panicChan, (*eggs.DaemonEnv).DestructForever)
-		collector := env
-		collector.Role = "collector"
-		collector.Shid = msgs.ShardId(shid)
-		go collector.Loop(panicChan, (*eggs.DaemonEnv).CollectForever)
+		if shardI < 0 || shardI > 255 {
+			fmt.Fprintf(os.Stderr, "Invalid shard %v", shardStr)
+			os.Exit(2)
+		}
+		shards = append(shards, msgs.ShardId(shardI))
 	}
-	err := <-panicChan
-	logger.Fatal(fmt.Errorf("got fatal error, tearing down: %w", err))
+
+	panicChan := make(chan error)
+	finishedChan := make(chan struct{})
+	var wait sync.WaitGroup
+	wait.Add(len(shards))
+
+	managedRoutines := managedroutine.New(panicChan)
+	managedRoutines.Start(
+		"waiter",
+		func() {
+			wait.Wait()
+			finishedChan <- struct{}{}
+		},
+	)
+	for _, shard := range shards {
+		managedRoutines.Start(
+			fmt.Sprintf("shard%v", shard),
+			func() {
+				for {
+					eggs.CollectDirectories(log, shard)
+					if *singleIteration {
+						break
+					}
+				}
+				wait.Done()
+			},
+		)
+	}
+
+	select {
+	case err := <-panicChan:
+		panic(err)
+	case <-finishedChan:
+		log.Info("finished collecting on all shards, terminating")
+	}
 }

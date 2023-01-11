@@ -13,7 +13,7 @@ import (
 type fsTestOpts struct {
 	numDirs  int // how many dirs (in total) to create
 	numFiles int // how many files (in total) to create
-	maxDepth int // max directory tree depth
+	depth    int // directory tree depth
 }
 
 type fsTestDir struct {
@@ -57,35 +57,6 @@ func (s *fsTestDir) dir(path []int) *fsTestDir {
 func (s *fsTestState) dir(path []int) *fsTestDir {
 	return s.rootDir.dir(path)
 }
-
-/*
-func (s *fsTestChildren) id(path []int) msgs.InodeId {
-	fileId, fileFound := s.files[path[0]]
-	if fileFound {
-		if len(path) > 1 {
-			panic("bad path for file")
-		}
-		return fileId
-	}
-	dir, dirFound := s.directories[path[0]]
-	if dirFound {
-		if len(path) == 1 {
-			return dir.id
-		} else {
-			return dir.children.id(path[1:])
-		}
-	}
-	panic("could not find path")
-}
-
-func (s *fsTestState) id(path []int) msgs.InodeId {
-
-	if len(path) == 0 {
-		return msgs.ROOT_DIR_INODE_ID
-	}
-	return s.rootDir.id(path)
-}
-*/
 
 func (state *fsTestState) makeDir(log eggs.LogLevels, harness *harness, opts *fsTestOpts, parent []int, name int) []int {
 	if state.totalDirs >= opts.numDirs {
@@ -176,11 +147,11 @@ func fsTest(
 	state := fsTestState{
 		rootDir: newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 	}
-	branching := int(math.Log(float64(opts.numDirs)) / math.Log(float64(opts.maxDepth)))
+	branching := int(math.Log(float64(opts.numDirs)) / math.Log(float64(opts.depth)))
 	// Create directories by first creating the first n-1 levels according to branching above
 	allDirs := [][]int{}
 	lastLevelDirs := [][]int{}
-	for depth := 1; depth <= opts.maxDepth; depth++ {
+	for depth := 1; depth <= opts.depth; depth++ {
 		depthDirs := int(math.Pow(float64(branching), float64(depth)))
 		for i := 0; i < depthDirs; i++ {
 			parentPath := []int{}
@@ -191,7 +162,7 @@ func fsTest(
 			}
 			path := state.makeDir(log, harness, opts, parentPath, i)
 			allDirs = append(allDirs, path)
-			if depth == opts.maxDepth {
+			if depth == opts.depth {
 				lastLevelDirs = append(lastLevelDirs, path)
 			}
 		}

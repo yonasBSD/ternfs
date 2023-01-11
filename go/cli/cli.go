@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
@@ -16,143 +16,101 @@ func badCommand() {
 
 func main() {
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
-	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC")
+	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC. If not present, they'll all be collected.")
 
-	/*
-		destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
-		destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
-		destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
+	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
+	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
+	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 
-		migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
-		migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
-		migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
-	*/
+	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
+	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
+	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
 
 	if len(os.Args) < 2 {
 		badCommand()
 	}
 
-	logger := eggs.LogLogger{
-		Logger:  log.New(os.Stdout, "", log.Lshortfile),
+	log := &eggs.LogLogger{
+		Logger:  eggs.NewLogger(os.Stdout),
 		Verbose: true,
 	}
-	dirInfoCache := eggs.NewDirInfoCache()
-
-	/*
-		env := eggs.DaemonEnv{
-			Role:    "cli",
-			Logger:  log.New(os.Stdout, "", log.Lshortfile),
-			Timeout: 10 * time.Second,
-			CDCKey:  eggs.CDCKey(),
-			Verbose: true,
-		}
-	*/
 
 	switch os.Args[1] {
 	case "collect":
 		collectCmd.Parse(os.Args[2:])
 		if *collectDirIdU64 == 0 {
-			collectCmd.Usage()
+			if err := eggs.CollectDirectoriesInAllShards(log); err != nil {
+				panic(err)
+			}
+		} else {
+			dirId := msgs.InodeId(*collectDirIdU64)
+			if dirId.Type() != msgs.DIRECTORY {
+				panic(fmt.Errorf("inode id %v is not a directory", dirId))
+			}
+			shid := dirId.Shard()
+			client, err := eggs.NewShardSpecificClient(shid)
+			if err != nil {
+				panic(fmt.Errorf("could not create shard client: %v", err))
+			}
+			defer client.Close()
+			stats := eggs.CollectStats{}
+			dirInfoCache := eggs.NewDirInfoCache()
+			if err := eggs.CollectDirectory(log, client, dirInfoCache, &stats, dirId); err != nil {
+				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
+			}
+			log.Info("finished collecting %v, stats: %+v", dirId, stats)
+		}
+	case "destruct":
+		destructCmd.Parse(os.Args[2:])
+		if *destructFileIdU64 == 0 {
+			if err := eggs.DestructFilesInAllShards(log, nil); err != nil {
+				panic(err)
+			}
+		} else {
+			fileId := msgs.InodeId(*destructFileIdU64)
+			if fileId.Type() == msgs.DIRECTORY {
+				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
+			}
+			shid := fileId.Shard()
+			client, err := eggs.NewShardSpecificClient(shid)
+			if err != nil {
+				panic(err)
+			}
+			defer client.Close()
+			stats := eggs.DestructionStats{}
+			var destructFileCookie [8]byte
+			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
+			err = eggs.DestructFile(log, client, nil, &stats, fileId, 0, destructFileCookie)
+			if err != nil {
+				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
+			}
+			log.Info("finished destructing %v, stats: %+v", fileId, stats)
+		}
+	case "migrate":
+		migrateCmd.Parse(os.Args[2:])
+		if *migrateBlockService == 0 {
+			migrateCmd.Usage()
 			os.Exit(2)
 		}
-		dirId := msgs.InodeId(*collectDirIdU64)
-		if dirId.Type() != msgs.DIRECTORY {
-			log.Fatalf("inode id %v is not a directory\n", dirId)
-		}
-		shid := dirId.Shard()
-		client, err := eggs.NewShardSpecificClient(shid)
-		if err != nil {
-			log.Fatalf("could not create shard client: %v\n", err)
-		}
-		defer client.Close()
-		stats := eggs.CollectStats{}
-		err = eggs.CollectDirectory(&logger, client, dirInfoCache, &stats, dirId)
-		if err != nil {
-			log.Fatalf("could not collect %v, stats: %+v, err: %v", dirId, stats, err)
-		}
-		logger.Info("finished collecting %v, stats: %+v", dirId, stats)
-	/*
-		case "destruct":
-			destructCmd.Parse(os.Args[2:])
-			env.Dry = *destructDry
-			if *destructFileIdU64 == 0 {
-				stats := eggs.DestructionStats{}
-				for shid := 0; shid < 256; shid++ {
-					env.Shid = msgs.ShardId(shid)
-					socket, err := eggs.ShardSocket(env.Shid)
-					if err != nil {
-						log.Fatalf("could not create shard socket: %v", err)
-					}
-					defer socket.Close()
-					env.ShardSocket = socket
-					err = env.DestructFiles(&stats)
-					if err != nil {
-						log.Fatalf("could not destruct in shard %v, stats: %+v, err: %v", shid, stats, err)
-					}
-				}
-				env.Info("finished destructing files, stats: %+v", stats)
-			} else {
-				fileId := msgs.InodeId(*destructFileIdU64)
-				if fileId.Type() == msgs.DIRECTORY {
-					log.Fatalf("inode id %v is not a file/symlink", fileId)
-				}
-				env.Shid = fileId.Shard()
-				shardSocket, err := eggs.ShardSocket(env.Shid)
-				if err != nil {
-					log.Fatalf("could not create shard socket: %v", err)
-				}
-				defer shardSocket.Close()
-				env.ShardSocket = shardSocket
-				stats := eggs.DestructionStats{}
-				var destructFileCookie [8]byte
-				binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-				err = env.DestructFile(&stats, fileId, 0, destructFileCookie)
-				if err != nil {
-					log.Fatalf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err)
-				}
-				env.Info("finished destructing %v, stats: %+v", fileId, stats)
+		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
+		if *migrateFileIdU64 == 0 {
+			if err := eggs.MigrateBlocksInAllShards(log, blockServiceId); err != nil {
+				panic(err)
 			}
-	*/
-	/*
-		case "migrate":
-			migrateCmd.Parse(os.Args[2:])
-			env.Dry = *migrateDry
-			if *migrateBlockService == 0 {
-				migrateCmd.Usage()
-				os.Exit(2)
+		} else {
+			fileId := msgs.InodeId(*migrateFileIdU64)
+			shid := fileId.Shard()
+			client, err := eggs.NewShardSpecificClient(shid)
+			if err != nil {
+				panic(fmt.Errorf("could not create shard socket: %v", err))
 			}
-			blockServiceId := msgs.BlockServiceId(*migrateBlockService)
-			if *migrateFileIdU64 == 0 {
-				stats := eggs.MigrateStats{}
-				for shid := 0; shid < 256; shid++ {
-					env.Shid = msgs.ShardId(shid)
-					socket, err := eggs.ShardSocket(env.Shid)
-					if err != nil {
-						log.Fatalf("could not create shard socket: %v", err)
-					}
-					defer socket.Close()
-					env.ShardSocket = socket
-					if err := env.MigrateBlocks(&stats, blockServiceId); err != nil {
-						log.Fatalf("could not destruct in shard %v, stats: %+v, err: %v", shid, stats, err)
-					}
-				}
-				env.Info("finished collecting, stats: %+v", stats)
-			} else {
-				fileId := msgs.InodeId(*migrateFileIdU64)
-				env.Shid = fileId.Shard()
-				socket, err := eggs.ShardSocket(env.Shid)
-				if err != nil {
-					log.Fatalf("could not create shard socket: %v", err)
-				}
-				defer socket.Close()
-				env.ShardSocket = socket
-				stats := eggs.MigrateStats{}
-				if err := env.MigrateBlocksInFile(&stats, blockServiceId, fileId); err != nil {
-					log.Fatalf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err)
-				}
-				env.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)
+			defer client.Close()
+			stats := eggs.MigrateStats{}
+			if err := eggs.MigrateBlocksInFile(log, client, &stats, blockServiceId, fileId); err != nil {
+				panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 			}
-	*/
+			log.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)
+		}
 	default:
 		badCommand()
 	}

@@ -304,7 +304,7 @@ func fileHistoryTest(
 	terminateChan := make(chan any, 1)
 
 	go func() {
-		defer func() { handleRecover(terminateChan, recover()) }()
+		defer func() { handleRecover(log, terminateChan, recover()) }()
 		numTests := opts.threads
 		if numTests > 15 {
 			panic(fmt.Errorf("numTests %d too big for one-digit prefix", numTests))
@@ -315,7 +315,7 @@ func fileHistoryTest(
 			prefix := fmt.Sprintf("%x", i)
 			seed := int64(i)
 			go func() {
-				defer func() { handleRecover(terminateChan, recover()) }()
+				defer func() { handleRecover(log, terminateChan, recover()) }()
 				client, err := eggs.NewShardSpecificClient(msgs.ShardId(0))
 				if err != nil {
 					panic(err)

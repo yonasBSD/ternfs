@@ -1,30 +1,35 @@
 # EggsFS
 
-See the [proposal](https://xtxmarketscom.sharepoint.com/:w:/s/ECN/EdVNBAzB7klPsVw6CxkfAvwB0LGu4pbtf-Gafr0tMnWNKw?e=2LaGl8) for more info on eggsfs. Right now we have:
+See the [proposal](https://xtxmarketscom.sharepoint.com/:w:/s/ECN/EdVNBAzB7klPsVw6CxkfAvwB0LGu4pbtf-Gafr0tMnWNKw?e=2LaGl8) for more info on eggsfs.
 
-* A prototype server implementation in Python;
-* A basic command line client in Python;
-* A FUSE driver in Python;
-* Garbage collector in Go.
+This repo currently contains these components:
 
-## Starting the Python server
+* Shard implementation (`eggs-shard` Makefile target in `cpp/`);
+* CDC implementation (`eggs-cdc` Makefile target in `cpp/`);
+* Garbage collection daemon (`go/gcdaemon`);
+* A very basic shuckle prototype (`go/shuckle`);
+* FUSE driver prototype (`python/eggsfuse.py`);
+* A simple client (`python/basic_client.py`);
+* A block service prototype (`python/block_service.py`);
+* Some convenience Go code to run a full EggsFS instance easily (`go/runeggs`);
+
+We plan to purge the remaining Python code and be left with only C++ and Go.
+
+## Starting an EggsFS instance
 
 ```
-% ./python/pyeggsfs.py <data-dir>
+% cd go/runeggs
+% go run . -dir <data-dir>
 ```
-
 The above will run all the processes needed to run EggsFS. This includes:
 
 * 256 metadata shards;
 * 1 cross directory coordinator (CDC)
-* 10 block services (this is tunable with `--block_services`)
-* 1 shuckle
+* A bunch of block services (this is tunable with the `-flash-block-services` and `-hdd-block-services` flags)
+* 1 shuckle instance
 
-A multitude of SQLite databases and directories to store the blocks will be stored in `<data-dir>`.
+A multitude of directories to persist the whole thing will appear in `<data-dir>`.
 
-The services can also be started separatedly with `./shard.py`, `./cdc.py`, `./block_service.py`, and `./shuckle.py`. They are all needed to operate a filesystem, and the shard _must_ be 256.
-
-With shuckle running, you can navigate to http://localhost:5000 to see a view of all block services.
 
 ## Mounting EggsFS using FUSE
 
@@ -68,7 +73,8 @@ The reason for this is that `foobar` is created by the shell and then opened aga
 Run
 
 ```
-go run .
+% cd go/gc/gcdaemon
+% go run .
 ```
 
 in `go/gc/gcdaemon` to run the garbage collector. It'll loop through directories removing what it consider stale files and stale directories.

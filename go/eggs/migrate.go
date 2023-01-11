@@ -12,12 +12,14 @@ type scratchFile struct {
 	offset uint64
 }
 
-func (env *DaemonEnv) ensureScratchFile(migratingIn msgs.InodeId, file *scratchFile) error {
+func ensureScratchFile(log LogLevels, client Client, migratingIn msgs.InodeId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
 	resp := msgs.ConstructFileResp{}
-	err := env.ShardRequest(
+	err := client.ShardRequest(
+		log,
+		migratingIn.Shard(),
 		&msgs.ConstructFileReq{
 			Type: msgs.FILE,
 			Note: fmt.Sprintf("migrate (file %v)", migratingIn),
@@ -33,7 +35,8 @@ func (env *DaemonEnv) ensureScratchFile(migratingIn msgs.InodeId, file *scratchF
 	return nil
 }
 
-func (env *DaemonEnv) copyBlock(
+func copyBlock(
+	log LogLevels, client Client,
 	file *scratchFile, blockServices []msgs.BlockService, blockSize uint64, storageClass msgs.StorageClass, block *msgs.FetchedBlock,
 ) (msgs.BlockId, error) {
 	blockService := blockServices[block.BlockServiceIx]
@@ -50,16 +53,18 @@ func (env *DaemonEnv) copyBlock(
 		BodyBlocks:   []msgs.NewBlockInfo{{Crc32: block.Crc32}},
 	}
 	initiateSpanResp := msgs.AddSpanInitiateResp{}
-	if err := env.ShardRequest(&initiateSpanReq, &initiateSpanResp); err != nil {
+	if err := client.ShardRequest(log, file.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
 		return 0, err
 	}
 	dstBlock := &initiateSpanResp.Blocks[0]
-	proof, err := CopyBlock(env, blockServices, blockSize, block, dstBlock)
+	proof, err := CopyBlock(log, blockServices, blockSize, block, dstBlock)
 	if err != nil {
 		return 0, err
 	}
 	certifySpanResp := msgs.AddSpanCertifyResp{}
-	err = env.ShardRequest(
+	err = client.ShardRequest(
+		log,
+		file.id.Shard(),
 		&msgs.AddSpanCertifyReq{
 			FileId:     file.id,
 			Cookie:     file.cookie,
@@ -85,42 +90,40 @@ type MigrateStats struct {
 // it'll be recovered from the other. If possible, anyway.
 //
 // Returns the number of migrated blocks.
-func (env *DaemonEnv) MigrateBlocksInFile(stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
+func MigrateBlocksInFile(log LogLevels, client Client, stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
 	scratchFile := scratchFile{}
-	if !env.Dry {
-		stopHeartbeat := make(chan struct{}, 1)
-		defer func() { stopHeartbeat <- struct{}{} }()
-		go func() {
-			for {
-				select {
-				case <-stopHeartbeat:
-					return
-				default:
-				}
-				if scratchFile.id != msgs.NULL_INODE_ID {
-					// bump the deadline, makes sure the file stays alive for
-					// the duration of this function
-					env.Debug("bumping deadline for scratch file %v", scratchFile.id)
-					req := msgs.AddSpanInitiateReq{
-						FileId:       scratchFile.id,
-						Cookie:       scratchFile.cookie,
-						StorageClass: msgs.EMPTY_STORAGE,
-					}
-					if err := env.ShardRequest(&req, &msgs.AddSpanInitiateResp{}); err != nil {
-						env.RaiseAlert(fmt.Errorf("could not bump scratch file deadline when migrating blocks: %w", err))
-					}
-				}
-				time.Sleep(time.Minute)
+	stopHeartbeat := make(chan struct{}, 1)
+	defer func() { stopHeartbeat <- struct{}{} }()
+	go func() {
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			default:
 			}
-		}()
-	}
+			if scratchFile.id != msgs.NULL_INODE_ID {
+				// bump the deadline, makes sure the file stays alive for
+				// the duration of this function
+				log.Debug("bumping deadline for scratch file %v", scratchFile.id)
+				req := msgs.AddSpanInitiateReq{
+					FileId:       scratchFile.id,
+					Cookie:       scratchFile.cookie,
+					StorageClass: msgs.EMPTY_STORAGE,
+				}
+				if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddSpanInitiateResp{}); err != nil {
+					log.RaiseAlert(fmt.Errorf("could not bump scratch file deadline when migrating blocks: %w", err))
+				}
+			}
+			time.Sleep(time.Minute)
+		}
+	}()
 	fileSpansReq := msgs.FileSpansReq{
 		FileId:     fileId,
 		ByteOffset: 0,
 	}
 	fileSpansResp := msgs.FileSpansResp{}
 	for {
-		if err := env.ShardRequest(&fileSpansReq, &fileSpansResp); err != nil {
+		if err := client.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 			return err
 		}
 		for _, span := range fileSpansResp.Spans {
@@ -138,7 +141,7 @@ func (env *DaemonEnv) MigrateBlocksInFile(stats *MigrateStats, blockServiceId ms
 			if blockToMigrate == 0 {
 				continue
 			}
-			env.Debug("will migrate block %v in file %v out of block service %v", blockToMigrate, fileId, blockServiceId)
+			log.Debug("will migrate block %v in file %v out of block service %v", blockToMigrate, fileId, blockServiceId)
 			// Right now we only support mirroring, so this is pretty easy --
 			// we just get the first non-stale block.
 			replacementFound := false
@@ -147,25 +150,23 @@ func (env *DaemonEnv) MigrateBlocksInFile(stats *MigrateStats, blockServiceId ms
 				// TODO actually decide how flags work
 				if blockService.Flags == 0 {
 					replacementFound = true
-					if !env.Dry {
-						if err := env.ensureScratchFile(fileId, &scratchFile); err != nil {
-							return err
-						}
-						newBlock, err := env.copyBlock(&scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
-						if err != nil {
-							return err
-						}
-						swapReq := msgs.SwapBlocksReq{
-							FileId1:     fileId,
-							ByteOffset1: span.ByteOffset,
-							BlockId1:    blockToMigrate,
-							FileId2:     scratchFile.id,
-							ByteOffset2: scratchFile.offset,
-							BlockId2:    newBlock,
-						}
-						if err := env.ShardRequest(&swapReq, &msgs.SwapBlocksResp{}); err != nil {
-							return err
-						}
+					if err := ensureScratchFile(log, client, fileId, &scratchFile); err != nil {
+						return err
+					}
+					newBlock, err := copyBlock(log, client, &scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
+					if err != nil {
+						return err
+					}
+					swapReq := msgs.SwapBlocksReq{
+						FileId1:     fileId,
+						ByteOffset1: span.ByteOffset,
+						BlockId1:    blockToMigrate,
+						FileId2:     scratchFile.id,
+						ByteOffset2: scratchFile.offset,
+						BlockId2:    newBlock,
+					}
+					if err := client.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
+						return err
 					}
 					stats.MigratedBlocks++
 					break
@@ -183,27 +184,56 @@ func (env *DaemonEnv) MigrateBlocksInFile(stats *MigrateStats, blockServiceId ms
 	return nil
 }
 
-// Tries to migrate as many blocks as possible from that block service.
-func (env *DaemonEnv) MigrateBlocks(stats *MigrateStats, blockServiceId msgs.BlockServiceId) error {
-	if env.Dry {
-		panic("MigrateBlocks cannot work with dry -- we rely on migrating the files to get an empty BlockServiceFilesResp")
-	}
+// Tries to migrate as many blocks as possible from that block service in a certain
+// shard.
+func migrateBlocksInternal(log LogLevels, client Client, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
 	for {
-		if err := env.ShardRequest(&filesReq, &filesResp); err != nil {
+		if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
 			return fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
 		}
 		if len(filesResp.FileIds) == 0 {
-			env.Debug("could not find any file for block service %v, terminating", blockServiceId)
+			log.Debug("could not find any file for block service %v, terminating", blockServiceId)
 			return nil
 		}
-		env.Debug("will migrate %d files", len(filesResp.FileIds))
+		log.Debug("will migrate %d files", len(filesResp.FileIds))
 		for _, file := range filesResp.FileIds {
-			if err := env.MigrateBlocksInFile(stats, blockServiceId, file); err != nil {
+			if err := MigrateBlocksInFile(log, client, stats, blockServiceId, file); err != nil {
 				return err
 			}
 		}
 		filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1
 	}
+}
+
+func MigrateBlocks(log LogLevels, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
+	client, err := NewShardSpecificClient(shid)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	stats := MigrateStats{}
+	if err := migrateBlocksInternal(log, client, &stats, shid, blockServiceId); err != nil {
+		return err
+	}
+	log.Info("finished migrating blocks out of %v in shard %v, stats: %+v", blockServiceId, shid, stats)
+	return nil
+}
+
+func MigrateBlocksInAllShards(log LogLevels, blockServiceId msgs.BlockServiceId) error {
+	client, err := NewAllShardsClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	stats := MigrateStats{}
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		if err := migrateBlocksInternal(log, client, &stats, shid, blockServiceId); err != nil {
+			return err
+		}
+	}
+	log.Info("finished migrating blocks out of %v in all shards, stats: %+v", blockServiceId, stats)
+	return nil
 }

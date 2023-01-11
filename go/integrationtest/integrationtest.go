@@ -7,14 +7,19 @@ import (
 	"os"
 	"path"
 	"runtime/debug"
+	"strings"
 	"time"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
 
-func handleRecover(terminateChan chan any, err any) {
+func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
 	if err != nil {
-		fmt.Printf("PANIC %v. Stacktrace:\n", err)
+		log.RaiseAlert(err.(error))
+		log.Info("PANIC %v. Stacktrace:\n", err)
+		for _, line := range strings.Split(string(debug.Stack()), "\n") {
+			log.Info(line)
+		}
 		fmt.Print(string(debug.Stack()))
 		terminateChan <- err
 	}
@@ -64,7 +69,7 @@ func runTest(blockServicesKeys map[msgs.BlockServiceId][16]byte, what string, ru
 }
 
 func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.BlockService) {
-	defer func() { handleRecover(terminateChan, recover()) }()
+	defer func() { handleRecover(log, terminateChan, recover()) }()
 
 	blockServicesKeys := make(map[msgs.BlockServiceId][16]byte)
 	for _, blockService := range blockServices {
@@ -96,13 +101,13 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.B
 	)
 
 	fsTestOpts := fsTestOpts{
-		numDirs:  1 * 1000,
+		numDirs:  1 * 1000,   // we need at least 256 directories, to have at least one dir per shard
 		numFiles: 100 * 1000, // around 100 files per dir
-		maxDepth: 4,
+		depth:    4,
 	}
 	runTest(
 		blockServicesKeys,
-		fmt.Sprintf("simple fs test, %v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.maxDepth),
+		fmt.Sprintf("simple fs test, %v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(stats *harnessStats) {
 			fsTest(log, &fsTestOpts, stats, blockServicesKeys)
 		},

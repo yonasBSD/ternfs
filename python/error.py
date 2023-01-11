@@ -44,8 +44,6 @@ ERR_CODE_TO_ERRNO: Dict[ErrCode, int] = {
     ErrCode.BAD_BLOCK_PROOF: errno.EINVAL,
     ErrCode.CANNOT_OVERRIDE_NAME: errno.EEXIST,
     ErrCode.NAME_IS_LOCKED: errno.EEXIST,
-    ErrCode.OLD_NAME_IS_LOCKED: errno.EBUSY,
-    ErrCode.NEW_NAME_IS_LOCKED: errno.EBUSY,
     ErrCode.MTIME_IS_TOO_RECENT: errno.EBUSY, # reasonable?
     ErrCode.MISMATCHING_TARGET: errno.EINVAL,
     ErrCode.MISMATCHING_OWNER: errno.EINVAL,

@@ -29,35 +29,55 @@ type renameFile struct {
 // trace
 
 type createdFile struct {
-	name string
-	id   msgs.InodeId
+	name         string
+	id           msgs.InodeId
+	creationTime msgs.EggsTime
+}
+
+type renamedFile struct {
+	oldName         string
+	newName         string
+	newCreationTime msgs.EggsTime
 }
 
 type checkpoint struct {
 	time msgs.EggsTime
 }
 
+type file struct {
+	name         string
+	id           msgs.InodeId
+	creationTime msgs.EggsTime
+}
 type files struct {
-	names  []string
-	ids    []msgs.InodeId
+	files  []file
 	byName map[string]int
 }
 
-func (files *files) addFile(name string, id msgs.InodeId) {
+func (files *files) addFile(name string, id msgs.InodeId, creationTime msgs.EggsTime) {
 	if _, wasPresent := files.byName[name]; wasPresent {
 		panic(fmt.Errorf("unexpected overwrite of %s", name))
 	}
-	files.names = append(files.names, name)
-	files.ids = append(files.ids, id)
-	files.byName[name] = len(files.ids) - 1
+	files.files = append(files.files, file{name: name, id: id, creationTime: creationTime})
+	files.byName[name] = len(files.files) - 1
 }
 
+/*
 func (files *files) id(name string) msgs.InodeId {
 	ix, present := files.byName[name]
 	if !present {
 		panic(fmt.Errorf("name not found %v", name))
 	}
-	return files.ids[ix]
+	return files.files[ix].id
+}
+*/
+
+func (files *files) file(name string) file {
+	ix, present := files.byName[name]
+	if !present {
+		panic(fmt.Errorf("name not found %v", name))
+	}
+	return files.files[ix]
 }
 
 func (files *files) deleteFile(name string) {
@@ -65,14 +85,12 @@ func (files *files) deleteFile(name string) {
 		panic(fmt.Errorf("name not found %v", name))
 	}
 	ix := files.byName[name]
-	lastIx := len(files.ids) - 1
+	lastIx := len(files.files) - 1
 	if ix != lastIx {
-		files.ids[ix] = files.ids[lastIx]
-		files.names[ix] = files.names[lastIx]
-		files.byName[files.names[ix]] = ix
+		files.files[ix] = files.files[lastIx]
+		files.byName[files.files[ix].name] = ix
 	}
-	files.ids = files.ids[:lastIx]
-	files.names = files.names[:lastIx]
+	files.files = files.files[:lastIx]
 	delete(files.byName, name)
 }
 
@@ -93,7 +111,8 @@ func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile 
 }
 
 func genDeleteFile(filePrefix string, rand *rand.Rand, files *files) deleteFile {
-	return deleteFile{name: files.names[int(rand.Uint32())%len(files.names)]}
+	file := &files.files[int(rand.Uint32())%len(files.files)]
+	return deleteFile{name: file.name}
 }
 
 func genRenameFile(filePrefix string, rand *rand.Rand, files *files) renameFile {
@@ -125,11 +144,11 @@ func checkCheckpoint(prefix string, files *files, allEdges []edge) {
 		}
 		edges = append(edges, edge)
 	}
-	if len(edges) != len(files.names) {
-		panic(fmt.Errorf("expected %d edges, got %d", len(files.names), len(edges)))
+	if len(edges) != len(files.files) {
+		panic(fmt.Errorf("expected %d edges, got %d", len(files.files), len(edges)))
 	}
 	for _, edge := range edges {
-		id := files.id(edge.name)
+		id := files.file(edge.name).id
 		if id != edge.targetId {
 			panic(fmt.Errorf("expected targetId %v for edge %v, but got %v", id, edge.name, id))
 		}
@@ -149,31 +168,37 @@ func runCheckpoint(harness *harness, prefix string, files *files) checkpoint {
 func runStep(harness *harness, files *files, stepAny any) any {
 	switch step := stepAny.(type) {
 	case createFile:
-		id := harness.createFile(msgs.ROOT_DIR_INODE_ID, step.name, step.size)
-		files.addFile(step.name, id)
+		id, creationTime := harness.createFile(msgs.ROOT_DIR_INODE_ID, step.name, step.size)
+		files.addFile(step.name, id, creationTime)
 		return createdFile{
-			name: step.name,
-			id:   id,
+			name:         step.name,
+			id:           id,
+			creationTime: creationTime,
 		}
 	case deleteFile:
-		fileId := files.id(step.name)
-		harness.shardReq(msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.SoftUnlinkFileReq{OwnerId: msgs.ROOT_DIR_INODE_ID, FileId: fileId, Name: step.name}, &msgs.SoftUnlinkFileResp{})
+		f := files.file(step.name)
+		harness.shardReq(
+			msgs.ROOT_DIR_INODE_ID.Shard(),
+			&msgs.SoftUnlinkFileReq{OwnerId: msgs.ROOT_DIR_INODE_ID, FileId: f.id, CreationTime: f.creationTime, Name: step.name}, &msgs.SoftUnlinkFileResp{},
+		)
 		files.deleteFile(step.name)
 		return step
 	case renameFile:
-		targetId := files.id(step.oldName)
-		harness.shardReq(
-			msgs.ROOT_DIR_INODE_ID.Shard(),
-			&msgs.SameDirectoryRenameReq{DirId: msgs.ROOT_DIR_INODE_ID, TargetId: targetId, OldName: step.oldName, NewName: step.newName},
-			&msgs.SameDirectoryRenameResp{},
-		)
+		f := files.file(step.oldName)
+		req := msgs.SameDirectoryRenameReq{DirId: msgs.ROOT_DIR_INODE_ID, TargetId: f.id, OldCreationTime: f.creationTime, OldName: step.oldName, NewName: step.newName}
+		resp := msgs.SameDirectoryRenameResp{}
+		harness.shardReq(msgs.ROOT_DIR_INODE_ID.Shard(), &req, &resp)
 		files.deleteFile(step.oldName)
 		if _, wasPresent := files.byName[step.newName]; wasPresent {
 			// overwrite
 			files.deleteFile(step.newName)
 		}
-		files.addFile(step.newName, targetId)
-		return step
+		files.addFile(step.newName, f.id, resp.NewCreationTime)
+		return renamedFile{
+			oldName:         step.oldName,
+			newName:         step.newName,
+			newCreationTime: resp.NewCreationTime,
+		}
 	default:
 		panic(fmt.Errorf("bad step %T", stepAny))
 	}
@@ -211,17 +236,17 @@ func replayCheckpoint(prefix string, files *files, fullEdges []fullEdge, t msgs.
 func replayStep(prefix string, files *files, fullEdges []fullEdge, stepAny any) {
 	switch step := stepAny.(type) {
 	case createdFile:
-		files.addFile(step.name, step.id)
+		files.addFile(step.name, step.id, step.creationTime)
 	case deleteFile:
 		files.deleteFile(step.name)
-	case renameFile:
-		targetId := files.id(step.oldName)
+	case renamedFile:
+		targetId := files.file(step.oldName).id
 		files.deleteFile(step.oldName)
 		if _, wasPresent := files.byName[step.newName]; wasPresent {
 			// overwrite
 			files.deleteFile(step.newName)
 		}
-		files.addFile(step.newName, targetId)
+		files.addFile(step.newName, targetId, step.newCreationTime)
 	case checkpoint:
 		replayCheckpoint(prefix, files, fullEdges, step.time)
 	default:
@@ -229,7 +254,7 @@ func replayStep(prefix string, files *files, fullEdges []fullEdge, stepAny any) 
 	}
 }
 
-func fileHistoryStepSingle(opts *fileHistoryTestOpts, harness *harness, seed int64, filePrefix string) {
+func fileHistoryStepSingle(log eggs.LogLevels, opts *fileHistoryTestOpts, harness *harness, seed int64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -241,19 +266,19 @@ func fileHistoryStepSingle(opts *fileHistoryTestOpts, harness *harness, seed int
 
 	reachedTargetFiles := false
 	fls := files{
-		names:  []string{},
-		ids:    []msgs.InodeId{},
+		files:  []file{},
 		byName: make(map[string]int),
 	}
 	source := rand.NewSource(seed)
 	rand := rand.New(source)
 	for stepIx := 0; stepIx < opts.steps; stepIx++ {
 		if stepIx%opts.checkpointEvery == 0 {
+			log.Info("%v: reached checkpoint at step %v", filePrefix, stepIx)
 			checkpoint := runCheckpoint(harness, filePrefix, &fls)
 			trace = append(trace, checkpoint)
 		}
 		var step any
-		if len(fls.names) < opts.lowFiles {
+		if len(fls.files) < opts.lowFiles {
 			reachedTargetFiles = false
 		}
 		if !reachedTargetFiles {
@@ -273,12 +298,11 @@ func fileHistoryStepSingle(opts *fileHistoryTestOpts, harness *harness, seed int
 				panic(fmt.Errorf("bad which %d", which))
 			}
 		}
-		reachedTargetFiles = reachedTargetFiles || len(fls.names) >= opts.targetFiles
+		reachedTargetFiles = reachedTargetFiles || len(fls.files) >= opts.targetFiles
 		trace = append(trace, runStep(harness, &fls, step))
 	}
 	fls = files{
-		names:  []string{},
-		ids:    []msgs.InodeId{},
+		files:  []file{},
 		byName: make(map[string]int),
 	}
 	fullEdges := harness.fullReadDir(msgs.ROOT_DIR_INODE_ID)
@@ -298,7 +322,7 @@ type fileHistoryTestOpts struct {
 func fileHistoryTest(
 	log eggs.LogLevels,
 	opts *fileHistoryTestOpts,
-	stats *harnessStats,
+	counters *eggs.ClientCounters,
 	blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) {
 	terminateChan := make(chan any, 1)
@@ -316,13 +340,14 @@ func fileHistoryTest(
 			seed := int64(i)
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
-				client, err := eggs.NewShardSpecificClient(msgs.ShardId(0))
+				shid := msgs.ShardId(0)
+				client, err := eggs.NewClient(&shid, counters, nil)
 				if err != nil {
 					panic(err)
 				}
 				defer client.Close()
-				harness := newHarness(log, client, stats, blockServicesKeys)
-				fileHistoryStepSingle(opts, harness, seed, prefix)
+				harness := newHarness(log, client, blockServicesKeys)
+				fileHistoryStepSingle(log, opts, harness, seed, prefix)
 				wait.Done()
 			}()
 		}

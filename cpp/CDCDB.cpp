@@ -102,7 +102,7 @@ std::ostream& operator<<(std::ostream& out, const CDCStep& x) {
         out << "txnNeedsShard=" << x.txnNeedsShard << ", shardReq=" << x.shardReq;
     }
     if (x.nextTxn != 0) {
-        if (x.txnFinished != 0 && x.txnNeedsShard != 0) {
+        if (x.txnFinished != 0 || x.txnNeedsShard != 0) {
             out << ", ";
         }
         out << "nextTxn=" << x.nextTxn;
@@ -111,46 +111,850 @@ std::ostream& operator<<(std::ostream& out, const CDCStep& x) {
     return out;
 }
 
-enum class MakeDirectoryStep : uint8_t {
-    START = 0,
-    AFTER_CREATE_DIR = 1,
-    AFTER_CREATE_LOCKED_EDGE = 2,
-    AFTER_UNLOCK_EDGE = 3,
-    AFTER_ROLLBACK = 4,
+inline bool createCurrentLockedEdgeRetry(EggsError err) {
+    return
+        err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT ||
+        err == EggsError::MORE_RECENT_SNAPSHOT_EDGE || err == EggsError::MORE_RECENT_CURRENT_EDGE;
+}
+
+inline bool createCurrentLockedEdgeFatal(EggsError err) {
+    return
+        err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::CANNOT_OVERRIDE_NAME;
+}
+
+struct StateMachineEnv {
+    rocksdb::OptimisticTransactionDB* db;
+    rocksdb::ColumnFamilyHandle* defaultCf;
+    rocksdb::ColumnFamilyHandle* parentCf;
+    rocksdb::Transaction& dbTxn;
+    EggsTime time;
+    uint64_t txnId;
+    uint8_t txnStep;
+    CDCStep& cdcStep;
+
+    StateMachineEnv(
+        rocksdb::OptimisticTransactionDB* db_, rocksdb::ColumnFamilyHandle* defaultCf_, rocksdb::ColumnFamilyHandle* parentCf_, rocksdb::Transaction& dbTxn_, EggsTime time_, uint64_t txnId_, uint8_t step_, CDCStep& cdcStep_
+    ):
+        db(db_), defaultCf(defaultCf_), parentCf(parentCf_), dbTxn(dbTxn_), time(time_), txnId(txnId_), txnStep(step_), cdcStep(cdcStep_)
+    {}
+
+    InodeId nextDirectoryId() {
+        std::string v;
+        ROCKS_DB_CHECKED(db->Get({}, defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), &v));
+        ExternalValue<InodeIdValue> nextId(v);
+        InodeId id = nextId().id();
+        nextId().setId(InodeId::FromU64(id.u64 + 1));
+        ROCKS_DB_CHECKED(dbTxn.Put(defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), nextId.toSlice()));
+        return id;
+    }
+
+    ShardReqContainer& needsShard(uint8_t step, ShardId shid) {
+        txnStep = step;
+        cdcStep.txnFinished = 0;
+        cdcStep.txnNeedsShard = txnId;
+        cdcStep.shardReq.shid = shid;
+        return cdcStep.shardReq.req;
+    }
+
+    CDCRespContainer& finish() {
+        cdcStep.txnFinished = txnId;
+        cdcStep.err = NO_ERROR;
+        return cdcStep.resp;
+    }
+
+    void finishWithError(EggsError err) {
+        ALWAYS_ASSERT(err != NO_ERROR);
+        cdcStep.txnFinished = txnId;
+        cdcStep.err = err;
+        cdcStep.txnNeedsShard = 0;
+    }
 };
 
-enum class HardUnlinkDirectoryStep : uint8_t {
-    START = 0,
-    AFTER_REMOVE_INODE = 1,
+constexpr uint8_t TXN_START = 0;
+
+enum MakeDirectoryStep : uint8_t {
+    MAKE_DIRECTORY_LOOKUP = 1,
+    MAKE_DIRECTORY_CREATE_DIR = 2,
+    MAKE_DIRECTORY_CREATE_LOCKED_EDGE = 3,
+    MAKE_DIRECTORY_UNLOCK_EDGE = 4,
+    MAKE_DIRECTORY_ROLLBACK = 5,
 };
 
-enum class RenameFileStep : uint8_t {
-    START = 0,
-    AFTER_LOCK_OLD_EDGE = 1,
-    AFTER_CREATE_NEW_LOCKED_EDGE = 2,
-    AFTER_UNLOCK_NEW_EDGE = 3,
-    AFTER_UNLOCK_OLD_EDGE = 4,
-    AFTER_ROLLBACK = 5,
+// Steps:
+//
+// 1. Lookup if an existing directory exists. If it does, immediately succeed.
+// 2. Allocate inode id here in the CDC
+// 3. Create directory in shard we get from the inode   
+// 4. Create locked edge from owner to newly created directory
+// 5. Unlock the edge created in 3
+//
+// If 4 fails, 3 must be rolled back. 5 does not fail.
+//
+// 1 is necessary rather than failing on attempted override because otherwise failures
+// due to repeated calls are indistinguishable from genuine failures.
+struct MakeDirectoryStateMachine {
+    StateMachineEnv& env;
+    const MakeDirectoryReq& req;
+    MakeDirectoryState state;
+
+    MakeDirectoryStateMachine(StateMachineEnv& env_, const MakeDirectoryReq& req_, MakeDirectoryState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: start(); break;
+            case MAKE_DIRECTORY_LOOKUP: afterLookup(err, resp); break;
+            case MAKE_DIRECTORY_CREATE_DIR: afterCreateDirectoryInode(err, resp); break;
+            case MAKE_DIRECTORY_CREATE_LOCKED_EDGE: afterCreateLockedEdge(err, resp); break;
+            case MAKE_DIRECTORY_UNLOCK_EDGE: afterUnlockEdge(err, resp); break;
+            case MAKE_DIRECTORY_ROLLBACK: afterRollback(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+
+    void start() {
+        state.setDirId(env.nextDirectoryId());
+        lookup();
+    }
+
+    void lookup() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_LOOKUP, req.ownerId.shard()).setLookup();
+        shardReq.dirId = req.ownerId;
+        shardReq.name = req.name;
+    }
+
+    void afterLookup(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lookup(); // retry
+        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            env.finishWithError(err);
+        } else if (err == EggsError::NAME_NOT_FOUND) {
+            // normal case, let's proceed
+            createDirectoryInode();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            const auto& lookupResp = resp->getLookup();
+            if (lookupResp.targetId.type() == InodeType::DIRECTORY) {
+                // we're good already
+                auto& cdcResp = env.finish().setMakeDirectory();
+                cdcResp.creationTime = lookupResp.creationTime;
+                cdcResp.id = lookupResp.targetId;
+            } else {
+                env.finishWithError(EggsError::CANNOT_OVERRIDE_NAME);
+            }
+        }
+    }
+
+    void createDirectoryInode() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_CREATE_DIR, state.dirId().shard()).setCreateDirectoryInode();
+        shardReq.id = state.dirId();
+        shardReq.info.inherited = req.info.inherited;
+        shardReq.info.body = req.info.body;
+        shardReq.ownerId = req.ownerId;
+    }
+
+    void afterCreateDirectoryInode(EggsError shardRespError, const ShardRespContainer* shardResp) {
+        if (shardRespError == EggsError::TIMEOUT) {
+            // Try again -- note that the call to create directory inode is idempotent.
+            createDirectoryInode();
+        } else {
+            ALWAYS_ASSERT(shardRespError == NO_ERROR);
+            createLockedEdge();
+        }
+    }
+
+    void createLockedEdge() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_CREATE_LOCKED_EDGE, req.ownerId.shard()).setCreateLockedCurrentEdge();
+        shardReq.dirId = req.ownerId;
+        shardReq.targetId = state.dirId();
+        shardReq.name = req.name;
+    }
+
+    void afterCreateLockedEdge(EggsError err, const ShardRespContainer* resp) {
+        if (createCurrentLockedEdgeRetry(err)) {
+            createLockedEdge(); // try again
+        } else if (createCurrentLockedEdgeFatal(err)) {
+            // can't go forward
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            state.setCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
+            unlockEdge();
+        }
+    }
+
+    void unlockEdge() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_UNLOCK_EDGE, req.ownerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.ownerId;
+        shardReq.name = req.name;
+        shardReq.targetId = state.dirId();
+        shardReq.wasMoved = false;
+        shardReq.creationTime = state.creationTime();
+    }
+
+    void afterUnlockEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            // retry
+            unlockEdge();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            // We're done, record the parent relationship and finish
+            {
+                auto k = InodeIdKey::Static(state.dirId());
+                auto v = InodeIdKey::Static(req.ownerId);
+                ROCKS_DB_CHECKED(env.dbTxn.Put(env.parentCf, k.toSlice(), v.toSlice()));
+            }
+            auto& resp = env.finish().setMakeDirectory();
+            resp.id = state.dirId();
+            resp.creationTime = state.creationTime();
+        }
+    }
+
+    void rollback() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_ROLLBACK, state.dirId().shard()).setRemoveDirectoryOwner();
+        shardReq.dirId = state.dirId();
+        // we've just created this directory, it is empty, therefore the policy
+        // is irrelevant.
+        shardReq.info = defaultDirectoryInfo();
+    }
+
+    void afterRollback(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            rollback(); // retry
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            env.finishWithError(state.exitError());
+        }
+    }
 };
 
-enum class SoftUnlinkDirectoryStep : uint8_t {
-    START = 0,
-    AFTER_LOCK_EDGE = 1,
-    AFTER_STAT = 2,
-    AFTER_REMOVE_OWNER = 3,
-    AFTER_UNLOCK_EDGE = 4,
-    AFTER_ROLLBACK = 5,
+enum HardUnlinkDirectoryStep : uint8_t {
+    HARD_UNLINK_DIRECTORY_REMOVE_INODE = 1,
 };
 
-enum class RenameDirectoryStep : uint8_t {
-    START = 0,
-    AFTER_LOCK_OLD_EDGE = 1,
-    AFTER_CREATE_LOCKED_EDGE = 2,
-    AFTER_UNLOCK_NEW_EDGE = 3,
-    AFTER_UNLOCK_OLD_EDGE = 4,
-    AFTER_SET_OWNER = 5,
-    AFTER_ROLLBACK = 6,
+// The only reason we have this here is for possible conflicts with RemoveDirectoryOwner,
+// which might temporarily set the owner of a directory to NULL. Since in the current
+// implementation we only ever have one transaction in flight in the CDC, we can just
+// execute this.
+struct HardUnlinkDirectoryStateMachine {
+    StateMachineEnv& env;
+    const HardUnlinkDirectoryReq& req;
+    HardUnlinkDirectoryState state;
+
+    HardUnlinkDirectoryStateMachine(StateMachineEnv& env_, const HardUnlinkDirectoryReq& req_, HardUnlinkDirectoryState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: removeInode(); break;
+            case HARD_UNLINK_DIRECTORY_REMOVE_INODE: afterRemoveInode(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+
+    void removeInode() {
+        auto& shardReq = env.needsShard(HARD_UNLINK_DIRECTORY_REMOVE_INODE, req.dirId.shard()).setRemoveInode();
+        shardReq.id = req.dirId;
+    }
+
+    void afterRemoveInode(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            removeInode(); // try again
+        } else if (
+            err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::DIRECTORY_NOT_EMPTY
+        ) {
+            env.finishWithError(err);
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            env.finish().setHardUnlinkDirectory();
+        }
+    }
 };
+
+enum RenameFileStep : uint8_t {
+    RENAME_FILE_LOCK_OLD_EDGE = 1,
+    RENAME_FILE_CREATE_NEW_LOCKED_EDGE = 2,
+    RENAME_FILE_UNLOCK_NEW_EDGE = 3,
+    RENAME_FILE_UNLOCK_OLD_EDGE = 4,
+    RENAME_FILE_ROLLBACK = 5,
+};
+
+// Steps:
+//
+// 1. lock source current edge
+// 2. create destination locked current target edge
+// 3. unlock edge in step 2
+// 4. unlock source target current edge, and soft unlink it
+//
+// If we fail at step 2, we need to roll back step 1. Steps 3 and 4 should never fail.    
+struct RenameFileStateMachine {
+    StateMachineEnv& env;
+    const RenameFileReq& req;
+    RenameFileState state;
+
+    RenameFileStateMachine(StateMachineEnv& env_, const RenameFileReq& req_, RenameFileState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: start(); break;
+            case RENAME_FILE_LOCK_OLD_EDGE: afterLockOldEdge(err, resp); break;
+            case RENAME_FILE_CREATE_NEW_LOCKED_EDGE: afterCreateNewLockedEdge(err, resp); break;
+            case RENAME_FILE_UNLOCK_NEW_EDGE: afterUnlockNewEdge(err, resp); break;
+            case RENAME_FILE_UNLOCK_OLD_EDGE: afterUnlockOldEdge(err, resp); break;
+            case RENAME_FILE_ROLLBACK: afterRollback(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+
+    void start() {
+        // We need this explicit check here because moving directories is more complicated,
+        // and therefore we do it in another transaction type entirely.
+        if (req.targetId.type() == InodeType::DIRECTORY) {
+            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+        } else if (req.oldOwnerId == req.newOwnerId) {
+            env.finishWithError(EggsError::SAME_DIRECTORIES);
+        } else {
+            lockOldEdge();
+        }
+    }
+
+    void lockOldEdge() {
+        auto& shardReq = env.needsShard(RENAME_FILE_LOCK_OLD_EDGE, req.oldOwnerId.shard()).setLockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.name = req.oldName;
+        shardReq.targetId = req.targetId;
+        shardReq.creationTime = req.oldCreationTime;
+    }
+
+    void afterLockOldEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lockOldEdge(); // retry
+        } else if (
+            err == EggsError::EDGE_NOT_FOUND || err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::DIRECTORY_NOT_FOUND
+        ) {
+            // We failed hard and we have nothing to roll back
+            if (err == EggsError::DIRECTORY_NOT_FOUND) {
+                err = EggsError::OLD_DIRECTORY_NOT_FOUND;
+            }
+            env.finishWithError(err);
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            createNewLockedEdge();
+        }
+    }
+
+    void createNewLockedEdge() {
+        auto& shardReq = env.needsShard(RENAME_FILE_CREATE_NEW_LOCKED_EDGE, req.newOwnerId.shard()).setCreateLockedCurrentEdge();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.name = req.newName;
+        shardReq.targetId = req.targetId;
+    }
+
+    void afterCreateNewLockedEdge(EggsError err, const ShardRespContainer* resp) {
+        if (createCurrentLockedEdgeRetry(err)) {
+            createNewLockedEdge(); // retry
+        } else if (createCurrentLockedEdgeFatal(err)) {
+            if (err == EggsError::DIRECTORY_NOT_FOUND) {
+                err = EggsError::NEW_DIRECTORY_NOT_FOUND;
+            }
+            // we failed hard and we need to rollback
+            state.setExitError(err);
+            rollback();
+        } else {
+            state.setNewCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
+            unlockNewEdge();
+        }
+    }
+
+    void unlockNewEdge() {
+        auto& shardReq = env.needsShard(RENAME_FILE_UNLOCK_NEW_EDGE, req.newOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.targetId = req.targetId;
+        shardReq.name = req.newName;
+        shardReq.wasMoved = false;
+        shardReq.creationTime = state.newCreationTime();
+    }
+
+    void afterUnlockNewEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            unlockNewEdge(); // retry
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            unlockOldEdge();
+        }
+    }
+
+    void unlockOldEdge() {
+        // We're done creating the destination edge, now unlock the source, marking it as moved
+        auto& shardReq = env.needsShard(RENAME_FILE_UNLOCK_OLD_EDGE, req.oldOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.targetId = req.targetId;
+        shardReq.name = req.oldName;
+        shardReq.wasMoved = true;
+        shardReq.creationTime = req.oldCreationTime;
+    }
+    
+    void afterUnlockOldEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            unlockOldEdge(); // retry
+        } else {
+            // This can only be because of repeated calls from here: we have the edge locked,
+            // and only the CDC does changes.
+            // TODO it would be cleaner to verify this with a lookup
+            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            // we're finally done
+            auto& resp = env.finish().setRenameFile();
+            resp.creationTime = state.newCreationTime();
+        }
+    }
+
+    void rollback() {
+        auto& shardReq = env.needsShard(RENAME_FILE_ROLLBACK, req.oldOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.name = req.oldName;
+        shardReq.targetId = req.targetId;
+        shardReq.wasMoved = false;
+        shardReq.creationTime = state.newCreationTime();
+    }
+
+    void afterRollback(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            rollback(); // retry
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            env.finishWithError(state.exitError());
+        }
+    }
+};
+
+enum SoftUnlinkDirectoryStep : uint8_t {
+    SOFT_UNLINK_DIRECTORY_LOCK_EDGE = 1,
+    SOFT_UNLINK_DIRECTORY_STAT = 2,
+    SOFT_UNLINK_DIRECTORY_REMOVE_OWNER = 3,
+    SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE = 4,
+    SOFT_UNLINK_DIRECTORY_ROLLBACK = 5,
+};
+
+// Steps:
+//
+// 1. Lock edge going into the directory to remove. This prevents things making
+//     making it snapshot or similar in the meantime.
+// 2. Resolve the directory info, since we'll need to store it when we remove the directory owner.
+// 3. Remove directory owner from directory that we want to remove. This will fail if there still
+//     are current edges there.
+// 4. Unlock edge going into the directory, making it snapshot.
+//
+// If 2 or 3 fail, we need to roll back the locking, without making the edge snapshot.
+struct SoftUnlinkDirectoryStateMachine {
+    StateMachineEnv& env;
+    const SoftUnlinkDirectoryReq& req;
+    SoftUnlinkDirectoryState state;
+
+    SoftUnlinkDirectoryStateMachine(StateMachineEnv& env_, const SoftUnlinkDirectoryReq& req_, SoftUnlinkDirectoryState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: start(); break;
+            case SOFT_UNLINK_DIRECTORY_LOCK_EDGE: afterLockEdge(err, resp); break;
+            case SOFT_UNLINK_DIRECTORY_STAT: afterStat(err, resp); break;
+            case SOFT_UNLINK_DIRECTORY_REMOVE_OWNER: afterRemoveOwner(err, resp); break;
+            case SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE: afterUnlockEdge(err, resp); break;
+            case SOFT_UNLINK_DIRECTORY_ROLLBACK: afterRollback(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+
+    void start() {
+        if (req.targetId.type() != InodeType::DIRECTORY) {
+            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+        } else {
+            lockEdge();
+        }
+    }
+
+    void lockEdge() {
+        auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_LOCK_EDGE, req.ownerId.shard()).setLockCurrentEdge();
+        shardReq.dirId = req.ownerId;
+        shardReq.name = req.name;
+        shardReq.targetId = req.targetId;
+        shardReq.creationTime = req.creationTime;
+    }
+
+    void afterLockEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lockEdge();
+        } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND) {
+            env.finishWithError(err); // no rollback to be done
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            state.setStatDirId(req.targetId);
+            stat();
+        }
+    }
+
+    void stat() {
+        auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_STAT, state.statDirId().shard()).setStatDirectory();
+        shardReq.id = state.statDirId();
+    }
+
+    void afterStat(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            stat(); // retry
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            const auto& statResp = resp->getStatDirectory();
+            if (statResp.info.size() > 0) {
+                auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_REMOVE_OWNER, req.targetId.shard()).setRemoveDirectoryOwner();
+                shardReq.dirId = req.targetId;
+                shardReq.info = statResp.info;
+            } else {
+                ALWAYS_ASSERT(statResp.owner != NULL_INODE_ID);
+                // keep walking upwards
+                state.setStatDirId(statResp.owner);
+                stat();
+            }
+        }
+    }
+
+    void afterRemoveOwner(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            // we don't want to keep the dir info around start again from the last stat
+            stat();
+        } else if (err == EggsError::DIRECTORY_NOT_EMPTY) {
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            unlockEdge();
+        }
+    }
+
+    void unlockEdge() {
+        auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE, req.ownerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.ownerId;
+        shardReq.name = req.name;
+        shardReq.targetId = req.targetId;
+        // Note that here we used wasMoved even if the subsequent
+        // snapshot edge will be non-owned, since we're dealing with
+        // a directory, rather than a file.
+        shardReq.wasMoved = true;
+        shardReq.creationTime = req.creationTime;
+    }
+
+    void afterUnlockEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            unlockEdge();
+        } else {
+            // This can only be because of repeated calls from here: we have the edge locked,
+            // and only the CDC does changes.
+            // TODO it would be cleaner to verify this with a lookup 
+            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            auto& cdcResp = env.finish().setSoftUnlinkDirectory();
+            // Update parent map
+            {
+                auto k = InodeIdKey::Static(req.targetId);
+                ROCKS_DB_CHECKED(env.dbTxn.Delete(env.parentCf, k.toSlice()));
+            }
+        }
+    }
+
+    void rollback() {
+        auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_ROLLBACK, req.ownerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.ownerId;
+        shardReq.name = req.name;
+        shardReq.targetId = req.targetId;
+        shardReq.wasMoved = false;
+    }
+
+    void afterRollback(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            rollback();
+        } else {
+            // This can only be because of repeated calls from here: we have the edge locked,
+            // and only the CDC does changes.
+            // TODO it would be cleaner to verify this with a lookup 
+            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            env.finishWithError(state.exitError());
+        }
+    }
+};
+
+enum RenameDirectoryStep : uint8_t {
+    RENAME_DIRECTORY_LOCK_OLD_EDGE = 1,
+    RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE = 2,
+    RENAME_DIRECTORY_UNLOCK_NEW_EDGE = 3,
+    RENAME_DIRECTORY_UNLOCK_OLD_EDGE = 4,
+    RENAME_DIRECTORY_SET_OWNER = 5,
+    RENAME_DIRECTORY_ROLLBACK = 6,
+};
+
+// Steps:
+//
+// 1. Make sure there's no loop by traversing the parents
+// 2. Lock old edge
+// 3. Create and lock the new edge
+// 4. Unlock the new edge
+// 5. Unlock and unlink the old edge
+// 6. Update the owner of the moved directory to the new directory
+//
+// If we fail at step 3, we need to unlock the edge we locked at step 2. Step 4 and 5
+// should never fail.
+struct RenameDirectoryStateMachine {
+    StateMachineEnv& env;
+    const RenameDirectoryReq& req;
+    RenameDirectoryState state;
+
+    RenameDirectoryStateMachine(StateMachineEnv& env_, const RenameDirectoryReq& req_, RenameDirectoryState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: start(); break;
+            case RENAME_DIRECTORY_LOCK_OLD_EDGE: afterLockOldEdge(err, resp); break;
+            case RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE: afterCreateLockedEdge(err, resp); break;
+            case RENAME_DIRECTORY_UNLOCK_NEW_EDGE: afterUnlockNewEdge(err, resp); break;
+            case RENAME_DIRECTORY_UNLOCK_OLD_EDGE: afterUnlockOldEdge(err, resp); break;
+            case RENAME_DIRECTORY_SET_OWNER: afterSetOwner(err, resp); break;
+            case RENAME_DIRECTORY_ROLLBACK: afterRollback(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+    
+    bool loopCheck() {
+        return true; // TODO implement
+    }
+
+    void start() {
+        if (req.targetId.type() != InodeType::DIRECTORY) {
+            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+        } else if (req.oldOwnerId == req.newOwnerId) {
+            env.finishWithError(EggsError::SAME_DIRECTORIES);
+        } else if (!loopCheck()) {
+            // First, check if we'd create a loop
+            env.finishWithError(EggsError::LOOP_IN_DIRECTORY_RENAME);
+        } else {
+            // Now, actually start by locking the old edge
+            lockOldEdge();
+        }
+    }
+
+    void lockOldEdge() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_LOCK_OLD_EDGE, req.oldOwnerId.shard()).setLockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.name = req.oldName;
+        shardReq.targetId = req.targetId;
+        shardReq.creationTime = req.oldCreationTime;
+    }
+
+    void afterLockOldEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lockOldEdge(); // retry
+        } else if (
+            err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::MISMATCHING_CREATION_TIME
+        ) {
+            if (err == EggsError::DIRECTORY_NOT_FOUND) {
+                err = EggsError::OLD_DIRECTORY_NOT_FOUND;
+            }
+            env.finishWithError(err);
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            createLockedNewEdge();
+        }
+    }
+
+    void createLockedNewEdge() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE, req.newOwnerId.shard()).setCreateLockedCurrentEdge();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.name = req.newName;
+        shardReq.targetId = req.targetId;
+    }
+
+    void afterCreateLockedEdge(EggsError err, const ShardRespContainer* resp) {
+        if (createCurrentLockedEdgeRetry(err)) {
+            createLockedNewEdge();
+        } else if (createCurrentLockedEdgeFatal(err)) {
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            state.setNewCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
+            unlockNewEdge();
+        }
+    }
+
+    void unlockNewEdge() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_UNLOCK_NEW_EDGE, req.newOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.name = req.newName;
+        shardReq.targetId = req.targetId;
+        shardReq.wasMoved = false;
+        shardReq.creationTime = state.newCreationTime();
+    }
+
+    void afterUnlockNewEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            unlockNewEdge();
+        } else if (err == EggsError::EDGE_NOT_FOUND) {
+            // This can only be because of repeated calls from here: we have the edge locked,
+            // and only the CDC does changes.
+            // TODO it would be cleaner to verify this with a lookup
+            unlockOldEdge();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            unlockOldEdge();
+        }
+    }
+
+    void unlockOldEdge() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_UNLOCK_OLD_EDGE, req.oldOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.name = req.oldName;
+        shardReq.targetId = req.targetId;
+        shardReq.wasMoved = true;
+        shardReq.creationTime = req.oldCreationTime;
+    }
+
+    void afterUnlockOldEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            unlockOldEdge();
+        } else if (err == EggsError::EDGE_NOT_FOUND) {
+            // This can only be because of repeated calls from here: we have the edge locked,
+            // and only the CDC does changes.
+            // TODO it would be cleaner to verify this with a lookup
+            setOwner();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            setOwner();
+        }
+    }
+
+    void setOwner() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_SET_OWNER, req.targetId.shard()).setSetDirectoryOwner();
+        shardReq.ownerId = req.newOwnerId;
+        shardReq.dirId = req.targetId;
+    }
+
+    void afterSetOwner(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            setOwner();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            auto& resp = env.finish().setRenameDirectory();
+            resp.creationTime = state.newCreationTime();
+            // update cache
+            {
+                auto k = InodeIdKey::Static(req.targetId);
+                auto v = InodeIdKey::Static(req.newOwnerId);
+                ROCKS_DB_CHECKED(env.dbTxn.Put(env.parentCf, k.toSlice(), v.toSlice()));
+            }
+        }
+    }
+
+    void rollback() {
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_ROLLBACK, req.oldOwnerId.shard()).setUnlockCurrentEdge();
+        shardReq.dirId = req.oldOwnerId;
+        shardReq.name = req.oldName;
+        shardReq.targetId = req.targetId;
+        shardReq.wasMoved = false;
+        shardReq.creationTime = state.newCreationTime();
+    }
+
+    void afterRollback(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            rollback();
+        } else {
+            env.finishWithError(state.exitError());
+        }
+    }
+};
+
+enum CrossShardHardUnlinkFileStep : uint8_t {
+    CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE = 1,
+    CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT = 2,
+};
+
+struct CrossShardHardUnlinkFileStateMachine {
+    StateMachineEnv& env;
+    const CrossShardHardUnlinkFileReq& req;
+    CrossShardHardUnlinkFileState state;
+
+    CrossShardHardUnlinkFileStateMachine(StateMachineEnv& env_, const CrossShardHardUnlinkFileReq& req_, CrossShardHardUnlinkFileState state_):
+        env(env_), req(req_), state(state_)
+    {}
+
+    void resume(EggsError err, const ShardRespContainer* resp) {
+        ALWAYS_ASSERT((err == NO_ERROR && resp == nullptr) == (env.txnStep == TXN_START));
+        switch (env.txnStep) {
+            case TXN_START: start(); break;
+            case CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE: afterRemoveEdge(err, resp); break;
+            case CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT: afterMakeTransient(err, resp); break;
+            default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+        }
+    }
+
+    void start() {
+        if (req.ownerId.shard() == req.targetId.shard()) {
+            env.finishWithError(EggsError::SAME_SHARD);
+        } else {
+            removeEdge();
+        }
+    }
+
+    void removeEdge() {
+        auto& shardReq = env.needsShard(CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE, req.ownerId.shard()).setRemoveOwnedSnapshotFileEdge();
+        shardReq.ownerId = req.ownerId;
+        shardReq.targetId = req.targetId;
+        shardReq.name = req.name;
+        shardReq.creationTime = req.creationTime;
+    }
+
+    void afterRemoveEdge(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT) {
+            removeEdge();
+        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            env.finishWithError(err);
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            makeTransient();
+        }
+    }
+
+    void makeTransient() {
+        auto& shardReq = env.needsShard(CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT, req.targetId.shard()).setMakeFileTransient();
+        shardReq.id = req.targetId;
+        shardReq.note = req.name;
+    }
+
+    void afterMakeTransient(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            makeTransient();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            env.finish().setCrossShardHardUnlinkFile();
+        }
+    }
+};
+
+// Steps:
+//
+// 1. Remove owning edge in one shard
+// 2. Make file transient in other shard
+//
+// Step 2 cannot fail.
+
 
 // Wrapper types to pack/unpack with kind
 struct PackCDCReq {
@@ -352,6 +1156,7 @@ struct CDCDBImpl {
     uint64_t _reqQueuePop(rocksdb::Transaction& dbTxn) {
         uint64_t first = _firstTxnInQueue(dbTxn);
         if (first == 0) {
+            LOG_DEBUG(_env, "txn queue empty, returning 0");
             return 0;
         }
         // Update metadata
@@ -362,511 +1167,8 @@ struct CDCDBImpl {
         } else {
             _setFirstTxnInQueue(dbTxn, first+1);
         }
+        LOG_DEBUG(_env, "popped txn %s from queue", first);
         return first;
-    }
-
-    InodeId _nextDirectoryId(rocksdb::Transaction& dbTxn) {
-        std::string v;
-        ROCKS_DB_CHECKED(_db->Get({}, _defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), &v));
-        ExternalValue<InodeIdValue> nextId(v);
-        InodeId id = nextId().id();
-        nextId().setId(InodeId::FromU64(id.u64 + 1));
-        ROCKS_DB_CHECKED(dbTxn.Put(_defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), nextId.toSlice()));
-        return id;
-    }
-
-    ShardReqContainer& _needsShard(CDCStep& step, uint64_t txnId, ShardId shid) {
-        step.txnFinished = 0;
-        step.txnNeedsShard = txnId;
-        step.shardReq.shid = shid;
-        return step.shardReq.req;
-    }
-
-    void _finishWithError(CDCStep& step, uint64_t txnId, EggsError err) {
-        ALWAYS_ASSERT(err != NO_ERROR);
-        step.txnFinished = txnId;
-        step.err = err;
-        step.txnNeedsShard = 0;
-    }
-
-    CDCRespContainer& _finish(CDCStep& step, uint64_t txnId) {
-        step.txnFinished = txnId;
-        step.err = NO_ERROR;
-        return step.resp;
-    }
-
-    // Steps:
-    //
-    // 1. Allocate inode id here in the CDC
-    // 2. Create directory in shard we get from the inode   
-    // 3. Create locked edge from owner to newly created directory
-    // 4. Unlock the edge created in 3
-    //
-    // If 3 fails, 2 must be rolled back. 4 does not fail.
-    MakeDirectoryStep _advanceMakeDirectory(
-        EggsTime time,
-        rocksdb::Transaction& dbTxn,
-        uint64_t txnId,
-        const CDCReqContainer& reqContainer,
-        EggsError shardRespError,
-        const ShardRespContainer* shardResp,
-        MakeDirectoryStep mkDirStep,
-        MakeDirectoryState state,
-        CDCStep& step
-    ) {
-        ALWAYS_ASSERT((shardRespError == NO_ERROR && shardResp == nullptr) == (mkDirStep == MakeDirectoryStep::START));
-        const auto& req = reqContainer.getMakeDirectory();
-
-        switch (mkDirStep) {
-        case MakeDirectoryStep::START: {
-            mkDirStep = MakeDirectoryStep::AFTER_CREATE_DIR;
-            auto dirId = _nextDirectoryId(dbTxn);
-            state.setDirId(dirId);
-            auto& shardReq = _needsShard(step, txnId, state.dirId().shard()).setCreateDirectoryInode();
-            shardReq.id = dirId;
-            shardReq.info.inherited = req.info.inherited;
-            shardReq.info.body = req.info.body;
-            shardReq.ownerId = req.ownerId;
-        } break;
-        case MakeDirectoryStep::AFTER_CREATE_DIR: {
-            if (shardRespError != NO_ERROR) {
-                // We never expect to fail here. That said, there's nothing to roll back,
-                // so we just finish.
-                RAISE_ALERT(_env, "Unexpected error %s when creating diretory inode with id %s", shardRespError, state.dirId());
-                _finishWithError(step, txnId, EggsError::INTERNAL_ERROR);
-            } else {
-                mkDirStep = MakeDirectoryStep::AFTER_CREATE_LOCKED_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.ownerId.shard()).setCreateLockedCurrentEdge();
-                shardReq.creationTime = time;
-                shardReq.dirId = req.ownerId;
-                shardReq.targetId = state.dirId();
-                shardReq.name = req.name;
-            }
-        } break;
-        case MakeDirectoryStep::AFTER_CREATE_LOCKED_EDGE: {
-            if (shardRespError != NO_ERROR) {
-                // We've failed to link: we need to rollback the directory creation
-                LOG_INFO(_env, "Failed to create locked edge, rolling back");
-                mkDirStep = MakeDirectoryStep::AFTER_ROLLBACK;
-                state.setExitError(shardRespError);
-                auto& shardReq = _needsShard(step, txnId, state.dirId().shard()).setRemoveDirectoryOwner();
-                shardReq.dirId = state.dirId();
-                // we've just created this directory, it is empty, therefore the policy
-                // is irrelevant.
-                shardReq.info = defaultDirectoryInfo();
-            } else {
-                mkDirStep = MakeDirectoryStep::AFTER_UNLOCK_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.ownerId.shard()).setUnlockCurrentEdge();
-                shardReq.dirId = req.ownerId;
-                shardReq.name = req.name;
-                shardReq.targetId = state.dirId();
-                shardReq.wasMoved = false;
-            }
-        } break;
-        case MakeDirectoryStep::AFTER_UNLOCK_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts and similar, and possibly other stuff
-            // We're done, record the parent relationship and finish
-            {
-                auto k = InodeIdKey::Static(state.dirId());
-                auto v = InodeIdKey::Static(req.ownerId);
-                ROCKS_DB_CHECKED(dbTxn.Put(_parentCf, k.toSlice(), v.toSlice()));
-            }
-            auto& resp = _finish(step, txnId).setMakeDirectory();
-            resp.id = state.dirId();
-        } break;
-        case MakeDirectoryStep::AFTER_ROLLBACK: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO retry, handle timeouts, etc.
-            _finishWithError(step, txnId, state.exitError());
-        } break;
-        default:
-            throw EGGS_EXCEPTION("bad directory step %s", (int)mkDirStep);
-        }
-
-        return mkDirStep;
-    }
-
-    // The only reason we have this here is for possible conflicts with RemoveDirectoryOwner,
-    // which might temporarily set the owner of a directory to NULL. Since in the current
-    // implementation we only ever have one transaction in flight in the CDC, we can just
-    // execute this.
-    HardUnlinkDirectoryStep _advanceHardUnlinkDirectory(
-        uint64_t txnId,
-        const CDCReqContainer& reqContainer,
-        EggsError shardRespError,
-        const ShardRespContainer* shardResp,
-        HardUnlinkDirectoryStep reqStep,
-        HardUnlinkDirectoryState state,
-        CDCStep& step
-    ) {
-        ALWAYS_ASSERT((shardRespError == NO_ERROR && shardResp == nullptr) == (reqStep == HardUnlinkDirectoryStep::START));
-        const auto& req = reqContainer.getHardUnlinkDirectory();
-
-        switch (reqStep) {
-        case HardUnlinkDirectoryStep::START: {
-            reqStep = HardUnlinkDirectoryStep::AFTER_REMOVE_INODE;
-            auto& shardReq = _needsShard(step, txnId, req.dirId.shard()).setRemoveInode();
-            shardReq.id = req.dirId;
-        } break;
-        case HardUnlinkDirectoryStep::AFTER_REMOVE_INODE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle
-            _finish(step, txnId);
-        } break;
-        default:
-            throw EGGS_EXCEPTION("bad hard unlink directory step %s", (int)reqStep);
-        }
-
-        return reqStep;
-    }
-
-    // Steps:
-    //
-    // 1. lock source current edge
-    // 2. create destination locked current target edge
-    // 3. unlock edge in step 2
-    // 4. unlock source target current edge, and soft unlink it
-    //
-    // If we fail at step 2, we need to roll back step 1. Steps 3 and 4 should never fail.
-    RenameFileStep _advanceRenameFile(
-        EggsTime time,
-        rocksdb::Transaction& dbTxn,
-        uint64_t txnId,
-        const CDCReqContainer& reqContainer,
-        EggsError shardRespError,
-        const ShardRespContainer* shardResp,
-        RenameFileStep reqStep,
-        RenameFileState state,
-        CDCStep& step
-    ) {
-        ALWAYS_ASSERT((shardRespError == NO_ERROR && shardResp == nullptr) == (reqStep == RenameFileStep::START));
-        const auto& req = reqContainer.getRenameFile();
-
-        switch (reqStep) {
-        case RenameFileStep::START: {
-            // We need this explicit check here because moving directories is more complicated,
-            // and therefore we do it in another transaction type entirely.
-            if (req.targetId.type() == InodeType::DIRECTORY) {
-                _finishWithError(step, txnId, EggsError::TYPE_IS_NOT_DIRECTORY);
-            } else if (req.oldOwnerId == req.newOwnerId) {
-                _finishWithError(step, txnId, EggsError::SAME_DIRECTORIES);
-            } else {
-                reqStep = RenameFileStep::AFTER_LOCK_OLD_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setLockCurrentEdge();
-                shardReq.dirId = req.oldOwnerId;
-                shardReq.name = req.oldName;
-                shardReq.targetId = req.targetId;
-            }
-        } break;
-        case RenameFileStep::AFTER_LOCK_OLD_EDGE: {
-            if (shardRespError != NO_ERROR) {
-                // We couldn't acquire the lock at the source -- we can terminate immediately, there's nothing to roll back
-                if (shardRespError == EggsError::DIRECTORY_NOT_FOUND) {
-                    shardRespError = EggsError::OLD_DIRECTORY_NOT_FOUND;
-                }
-                if (shardRespError == EggsError::NAME_IS_LOCKED) {
-                    shardRespError = EggsError::OLD_NAME_IS_LOCKED;
-                }
-                _finishWithError(step, txnId, shardRespError);
-            } else {
-                reqStep = RenameFileStep::AFTER_CREATE_NEW_LOCKED_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.newOwnerId.shard()).setCreateLockedCurrentEdge();
-                shardReq.creationTime = time,
-                shardReq.dirId = req.newOwnerId;
-                shardReq.name = req.newName;
-                shardReq.targetId = req.targetId;
-            }
-        } break;
-        case RenameFileStep::AFTER_CREATE_NEW_LOCKED_EDGE: {
-            if (shardRespError != NO_ERROR) {
-                // We couldn't create the new edge, we need to unlock the old edge.
-                if (shardRespError == EggsError::DIRECTORY_NOT_FOUND) {
-                    shardRespError = EggsError::NEW_DIRECTORY_NOT_FOUND;
-                }
-                if (shardRespError == EggsError::NAME_IS_LOCKED) {
-                    shardRespError = EggsError::NEW_NAME_IS_LOCKED;
-                }
-                state.setExitError(shardRespError);
-                reqStep = RenameFileStep::AFTER_ROLLBACK;
-                auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setUnlockCurrentEdge();
-                shardReq.dirId = req.oldOwnerId;
-                shardReq.name = req.oldName;
-                shardReq.targetId = req.targetId;
-                shardReq.wasMoved = false;
-            } else {
-                reqStep = RenameFileStep::AFTER_UNLOCK_NEW_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.newOwnerId.shard()).setUnlockCurrentEdge();
-                shardReq.dirId = req.newOwnerId;
-                shardReq.targetId = req.targetId;
-                shardReq.name = req.newName;
-                shardReq.wasMoved = false;
-            }
-        } break;
-        case RenameFileStep::AFTER_UNLOCK_NEW_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO Handle timeouts etc.
-            // We're done creating the destination edge, now unlock the source, marking it as moved
-            reqStep = RenameFileStep::AFTER_UNLOCK_OLD_EDGE;
-            auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setUnlockCurrentEdge();
-            shardReq.dirId = req.oldOwnerId;
-            shardReq.targetId = req.targetId;
-            shardReq.name = req.oldName;
-            shardReq.wasMoved = true;
-        } break;
-        case RenameFileStep::AFTER_UNLOCK_OLD_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            // We're finally done
-            auto& resp = _finish(step, txnId);
-            resp.setRenameFile();
-        } break;
-        case RenameFileStep::AFTER_ROLLBACK: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            _finishWithError(step, txnId, state.exitError());
-        } break;
-        default:
-            throw EGGS_EXCEPTION("bad rename file step %s", (int)reqStep);
-        }
-
-        return reqStep;
-    }
-
-    // Steps:
-    //
-    // 1. Lock edge going into the directory to remove. This prevents things making
-    //     making it snapshot or similar in the meantime.
-    // 2. Resolve the directory info, since we'll need to store it when we remove the directory owner.
-    // 3. Remove directory owner from directory that we want to remove. This will fail if there still
-    //     are current edges there.
-    // 4. Unlock edge going into the directory, making it snapshot.
-    //
-    // If 2 or 3 fail, we need to roll back the locking, without making the edge snapshot.
-    SoftUnlinkDirectoryStep _advanceSoftUnlinkDirectory(
-        EggsTime time,
-        rocksdb::Transaction& dbTxn,
-        uint64_t txnId,
-        const CDCReqContainer& reqContainer,
-        EggsError shardRespError,
-        const ShardRespContainer* shardResp,
-        SoftUnlinkDirectoryStep reqStep,
-        SoftUnlinkDirectoryState state,
-        CDCStep& step
-    ) {
-        ALWAYS_ASSERT((shardRespError == NO_ERROR && shardResp == nullptr) == (reqStep == SoftUnlinkDirectoryStep::START));
-        const auto& req = reqContainer.getSoftUnlinkDirectory();
-
-        auto initStat = [&](InodeId dir) {
-            reqStep = SoftUnlinkDirectoryStep::AFTER_STAT;
-            auto& shardReq = _needsShard(step, txnId, dir.shard()).setStatDirectory();
-            shardReq.id = dir;
-        };
-
-        auto initRollback = [&](EggsError err) {
-            state.setExitError(err);
-            reqStep = SoftUnlinkDirectoryStep::AFTER_ROLLBACK;
-            auto& shardReq = _needsShard(step, txnId, req.ownerId.shard()).setUnlockCurrentEdge();
-            shardReq.dirId = req.ownerId;
-            shardReq.name = req.name;
-            shardReq.targetId = req.targetId;
-            shardReq.wasMoved = false;
-        };
-
-        switch (reqStep) {
-        case SoftUnlinkDirectoryStep::START: {
-            if (req.targetId.type() != InodeType::DIRECTORY) {
-                _finishWithError(step, txnId, EggsError::TYPE_IS_NOT_DIRECTORY);
-            } else {
-                reqStep = SoftUnlinkDirectoryStep::AFTER_LOCK_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.ownerId.shard()).setLockCurrentEdge();
-                shardReq.dirId = req.ownerId;
-                shardReq.name = req.name;
-                shardReq.targetId = req.targetId;
-            }
-        } break;
-        case SoftUnlinkDirectoryStep::AFTER_LOCK_EDGE: {
-            if (shardRespError != NO_ERROR) { // TODO handle timeouts etc.
-                // Nothing to roll back
-                _finishWithError(step, txnId, shardRespError); 
-            } else {
-                // Start resolving dir info
-                initStat(req.targetId);
-            }
-        } break;
-        case SoftUnlinkDirectoryStep::AFTER_STAT: {
-            if (shardRespError != NO_ERROR) { // TODO handle timeouts etc.
-                initRollback(shardRespError);
-            } else {
-                const auto& statResp = shardResp->getStatDirectory();
-                if (statResp.info.size() > 0) {
-                    // We're done for the info, we can remove the owner
-                    reqStep = SoftUnlinkDirectoryStep::AFTER_REMOVE_OWNER;
-                    auto& shardReq = _needsShard(step, txnId, req.targetId.shard()).setRemoveDirectoryOwner();
-                    shardReq.dirId = req.targetId;
-                    shardReq.info = statResp.info;
-                } else {
-                    ALWAYS_ASSERT(statResp.owner != NULL_INODE_ID); // can't be root with no info
-                    // keep walking upwards
-                    initStat(statResp.owner);
-                }
-            }
-        } break;
-        case SoftUnlinkDirectoryStep::AFTER_REMOVE_OWNER: {
-            if (shardRespError != NO_ERROR) { // TODO handle timeouts etc.
-                initRollback(shardRespError);
-            } else {
-                reqStep = SoftUnlinkDirectoryStep::AFTER_UNLOCK_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.ownerId.shard()).setUnlockCurrentEdge();
-                shardReq.dirId = req.ownerId;
-                shardReq.name = req.name;
-                shardReq.targetId = req.targetId;
-                shardReq.wasMoved = true; // make it snapshot
-            }
-        } break;
-        case SoftUnlinkDirectoryStep::AFTER_UNLOCK_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc
-            auto& resp = _finish(step, txnId).setSoftUnlinkDirectory();
-            // Update parent map
-            {
-                auto k = InodeIdKey::Static(req.targetId);
-                ROCKS_DB_CHECKED(dbTxn.Delete(_parentCf, k.toSlice()));
-            }
-        } break;
-        case SoftUnlinkDirectoryStep::AFTER_ROLLBACK: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            _finishWithError(step, txnId, state.exitError());
-        } break;
-        default:
-            throw EGGS_EXCEPTION("bad step %s", (int)reqStep);
-        }
-
-        return reqStep;
-    }
-
-    bool _loopCheck(rocksdb::Transaction& dbTxn, const RenameDirectoryReq& req) {
-        return true;
-        // throw EGGS_EXCEPTION("UNIMPLEMENTED");
-    }
-
-    // Steps:
-    //
-    // 1. Make sure there's no loop by traversing the parents
-    // 2. Lock old edge
-    // 3. Create and lock the new edge
-    // 4. Unlock the new edge
-    // 5. Unlock and unlink the old edge
-    // 6. Update the owner of the moved directory to the new directory
-    //
-    // If we fail at step 2 or 3, we need to unlock the edge we locked at step 1. Step 4 and 5
-    // should never fail.
-    RenameDirectoryStep _advanceRenameDirectory(
-        EggsTime time,
-        rocksdb::Transaction& dbTxn,
-        uint64_t txnId,
-        const CDCReqContainer& reqContainer,
-        EggsError shardRespError,
-        const ShardRespContainer* shardResp,
-        RenameDirectoryStep reqStep,
-        RenameDirectoryState state,
-        CDCStep& step
-    ) {
-        ALWAYS_ASSERT((shardRespError == NO_ERROR && shardResp == nullptr) == (reqStep == RenameDirectoryStep::START));
-        const auto& req = reqContainer.getRenameDirectory();
-
-        auto initRollback = [&](EggsError err) {
-            state.setExitError(err);
-            reqStep = RenameDirectoryStep::AFTER_ROLLBACK;
-            auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setUnlockCurrentEdge();
-            shardReq.dirId = req.oldOwnerId;
-            shardReq.name = req.oldName;
-            shardReq.targetId = req.targetId;
-            shardReq.wasMoved = false;
-        };
-
-        switch (reqStep) {
-        case RenameDirectoryStep::START: {
-            if (req.targetId.type() != InodeType::DIRECTORY) {
-                _finishWithError(step, txnId, EggsError::TYPE_IS_NOT_DIRECTORY);
-            } else if (req.oldOwnerId == req.newOwnerId) {
-                _finishWithError(step, txnId, EggsError::SAME_DIRECTORIES);
-            } else if (!_loopCheck(dbTxn, req)) {
-                // First, check if we'd create a loop
-                _finishWithError(step, txnId, EggsError::LOOP_IN_DIRECTORY_RENAME);
-            } else {
-                // Now, actually start by locking the old edge
-                reqStep = RenameDirectoryStep::AFTER_LOCK_OLD_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setLockCurrentEdge();
-                shardReq.dirId = req.oldOwnerId;
-                shardReq.name = req.oldName;
-                shardReq.targetId = req.targetId;
-            }
-        } break;
-        case RenameDirectoryStep::AFTER_LOCK_OLD_EDGE: {
-            if (shardRespError != NO_ERROR) { // TODO handle timeouts etc
-                if (shardRespError == EggsError::DIRECTORY_NOT_FOUND) {
-                    shardRespError = EggsError::OLD_DIRECTORY_NOT_FOUND;
-                }
-                if (shardRespError == EggsError::NAME_IS_LOCKED) {
-                    shardRespError = EggsError::OLD_NAME_IS_LOCKED;
-                }
-                _finishWithError(step, txnId, shardRespError);
-            } else {
-                reqStep = RenameDirectoryStep::AFTER_CREATE_LOCKED_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.newOwnerId.shard()).setCreateLockedCurrentEdge();
-                shardReq.dirId = req.newOwnerId;
-                shardReq.name = req.newName;
-                shardReq.creationTime = time;
-                shardReq.targetId = req.targetId;
-            }
-        } break;
-        case RenameDirectoryStep::AFTER_CREATE_LOCKED_EDGE: {
-            if (shardRespError != NO_ERROR) { // TODO handle timeouts etc
-                if (shardRespError == EggsError::DIRECTORY_NOT_FOUND) {
-                    shardRespError = EggsError::NEW_DIRECTORY_NOT_FOUND;
-                }
-                if (shardRespError == EggsError::NAME_IS_LOCKED) {
-                    shardRespError = EggsError::NEW_NAME_IS_LOCKED;
-                }
-                initRollback(shardRespError);
-            } else {
-                reqStep = RenameDirectoryStep::AFTER_UNLOCK_NEW_EDGE;
-                auto& shardReq = _needsShard(step, txnId, req.newOwnerId.shard()).setUnlockCurrentEdge();
-                shardReq.dirId = req.newOwnerId;
-                shardReq.name = req.newName;
-                shardReq.targetId = req.targetId;
-                shardReq.wasMoved = false;
-            }
-        } break;
-        case RenameDirectoryStep::AFTER_UNLOCK_NEW_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            reqStep = RenameDirectoryStep::AFTER_UNLOCK_OLD_EDGE;
-            auto& shardReq = _needsShard(step, txnId, req.oldOwnerId.shard()).setUnlockCurrentEdge();
-            shardReq.dirId = req.oldOwnerId;
-            shardReq.name = req.oldName;
-            shardReq.targetId = req.targetId;
-            shardReq.wasMoved = true;
-        } break;
-        case RenameDirectoryStep::AFTER_UNLOCK_OLD_EDGE: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            reqStep = RenameDirectoryStep::AFTER_SET_OWNER;
-            auto& shardReq = _needsShard(step, txnId, req.targetId.shard()).setSetDirectoryOwner();
-            shardReq.ownerId = req.newOwnerId;
-            shardReq.dirId = req.targetId;
-        } break;
-        case RenameDirectoryStep::AFTER_SET_OWNER: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            _finish(step, txnId).setRenameDirectory();
-            // update cache
-            {
-                auto k = InodeIdKey::Static(req.targetId);
-                auto v = InodeIdKey::Static(req.newOwnerId);
-                ROCKS_DB_CHECKED(dbTxn.Put(_parentCf, k.toSlice(), v.toSlice()));
-            }
-        }
-        case RenameDirectoryStep::AFTER_ROLLBACK: {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR); // TODO handle timeouts etc.
-            _finishWithError(step, txnId, state.exitError());
-        } break;
-        default:
-            throw EGGS_EXCEPTION("bad step %s", (int)reqStep);
-        }
-
-        return reqStep;
     }
 
     // Moves the state forward, filling in `step` appropriatedly, and writing
@@ -887,27 +1189,31 @@ struct CDCDBImpl {
         V<TxnState> state,
         CDCStep& step
     ) {
-        uint8_t stateStep = state().step();
+        LOG_DEBUG(_env, "advancing txn %s of kind %s", txnId, req.kind());
+        StateMachineEnv env(_db, _defaultCf, _parentCf, dbTxn, time, txnId, state().step(), step);
         switch (req.kind()) {
         case CDCMessageKind::MAKE_DIRECTORY:
-            stateStep = (uint8_t)_advanceMakeDirectory(time, dbTxn, txnId, req, shardRespError, shardResp, (MakeDirectoryStep)stateStep, state().getMakeDirectory(), step);
+            MakeDirectoryStateMachine(env, req.getMakeDirectory(), state().getMakeDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-            stateStep = (uint8_t)_advanceHardUnlinkDirectory(txnId, req, shardRespError, shardResp, (HardUnlinkDirectoryStep)stateStep, state().getHardUnlinkDirectory(), step);
+            HardUnlinkDirectoryStateMachine(env, req.getHardUnlinkDirectory(), state().getHardUnlinkDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::RENAME_FILE:
-            stateStep = (uint8_t)_advanceRenameFile(time, dbTxn, txnId, req, shardRespError, shardResp, (RenameFileStep)stateStep, state().getRenameFile(), step);
+            RenameFileStateMachine(env, req.getRenameFile(), state().getRenameFile()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
-            stateStep = (uint8_t)_advanceSoftUnlinkDirectory(time, dbTxn, txnId, req, shardRespError, shardResp, (SoftUnlinkDirectoryStep)stateStep, state().getSoftUnlinkDirectory(), step);
+            SoftUnlinkDirectoryStateMachine(env, req.getSoftUnlinkDirectory(), state().getSoftUnlinkDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::RENAME_DIRECTORY:
-            stateStep = (uint8_t)_advanceRenameDirectory(time, dbTxn, txnId, req, shardRespError, shardResp, (RenameDirectoryStep)stateStep, state().getRenameDirectory(), step);
+            RenameDirectoryStateMachine(env, req.getRenameDirectory(), state().getRenameDirectory()).resume(shardRespError, shardResp);
+            break;
+        case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+            CrossShardHardUnlinkFileStateMachine(env, req.getCrossShardHardUnlinkFile(), state().getCrossShardHardUnlinkFile()).resume(shardRespError, shardResp);
             break;
         default:
             throw EGGS_EXCEPTION("bad cdc message kind %s", req.kind());
         }
-        state().setStep(stateStep);
+        state().setStep(env.txnStep);
 
         ALWAYS_ASSERT(step.txnFinished == 0 || step.txnFinished == txnId);
         ALWAYS_ASSERT(step.txnNeedsShard == 0 || step.txnNeedsShard == txnId);
@@ -942,8 +1248,8 @@ struct CDCDBImpl {
             return;
         }
 
-        LOG_DEBUG(_env, "starting to execute txn %s", txnToExecute);
         _setExecutingTxn(dbTxn, txnToExecute);
+        LOG_DEBUG(_env, "starting to execute txn %s with req %s", txnToExecute, _cdcReq);
         StaticValue<TxnState> txnState;
         txnState().start(_cdcReq.kind());
         _advance(time, dbTxn, txnToExecute, _cdcReq, NO_ERROR, nullptr, txnState, step);
@@ -969,19 +1275,18 @@ struct CDCDBImpl {
         // Enqueue req
         uint64_t txnId;
         {
-            LOG_DEBUG(_env, "enqueueing cdc req %s", req.kind());
-
             // Generate new txn id
             txnId = _lastTxn(*dbTxn) + 1;
             _setLastTxn(*dbTxn, txnId);
-
             // Push to queue
             _reqQueuePush(*dbTxn, txnId, req);
+            LOG_DEBUG(_env, "enqueued CDC req %s with txn id %s", req.kind(), txnId);
         }
 
         // Start executing, if we can
         _startExecuting(time, *dbTxn, step);
 
+        LOG_DEBUG(_env, "committing transaction");
         dbTxn->Commit();
 
         return txnId;

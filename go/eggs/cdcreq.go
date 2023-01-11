@@ -3,40 +3,40 @@ package eggs
 
 import (
 	"fmt"
-	"io"
 	"net"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
 type cdcRequest struct {
-	RequestId uint64
-	Body      bincode.Packable
+	requestId uint64
+	body      msgs.CDCRequest
 }
 
 func (req *cdcRequest) Pack(buf *bincode.Buf) {
 	buf.PackU32(msgs.CDC_REQ_PROTOCOL_VERSION)
-	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
-	req.Body.Pack(buf)
+	buf.PackU64(req.requestId)
+	buf.PackU8(uint8(req.body.CDCRequestKind()))
+	req.body.Pack(buf)
 }
 
 type CDCResponse struct {
 	RequestId uint64
-	Body      bincode.Bincodable
+	Body      msgs.CDCResponse
 }
 
 func (req *CDCResponse) Pack(buf *bincode.Buf) {
 	buf.PackU32(msgs.CDC_RESP_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetCDCMessageKind(req.Body)))
+	buf.PackU8(uint8(req.Body.CDCResponseKind()))
 	req.Body.Pack(buf)
 }
 
-type UnpackedCDCResponse struct {
-	RequestId uint64
-	Body      bincode.Unpackable
+type unpackedCDCResponse struct {
+	requestId uint64
+	body      msgs.CDCResponse
 	// This is where we could decode as far as decoding the request id,
 	// but then errored after. We are interested in this case because
 	// we can safely drop every erroring request that is not our request
@@ -44,12 +44,12 @@ type UnpackedCDCResponse struct {
 	// the request we're interested in.
 	//
 	// If this is non-nil, the body will be set to nil.
-	Error error
+	error error
 }
 
-func (resp *UnpackedCDCResponse) Unpack(buf *bincode.Buf) error {
+func (resp *unpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	// panic immediately if we get passed a bogus body
-	expectedKind := msgs.GetCDCMessageKind(resp.Body)
+	expectedKind := resp.body.CDCResponseKind()
 	// decode message header
 	var ver uint32
 	if err := buf.UnpackU32(&ver); err != nil {
@@ -58,118 +58,209 @@ func (resp *UnpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
 		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
 	}
-	if err := buf.UnpackU64(&resp.RequestId); err != nil {
+	if err := buf.UnpackU64(&resp.requestId); err != nil {
 		return err
 	}
 	// We've made it with the request id, from now on if we fail we set
 	// the error inside the object, rather than returning an error.
-	body := resp.Body
-	resp.Body = nil
+	body := resp.body
+	resp.body = nil
 	var kind uint8
 	if err := buf.UnpackU8(&kind); err != nil {
-		resp.Error = fmt.Errorf("could not decode response kind: %w", err)
+		resp.error = fmt.Errorf("could not decode response kind: %w", err)
 		return nil
 	}
 	if kind == msgs.ERROR_KIND {
 		var errCode msgs.ErrCode
 		if err := errCode.Unpack(buf); err != nil {
-			resp.Error = fmt.Errorf("could not decode error body: %w", err)
+			resp.error = fmt.Errorf("could not decode error body: %w", err)
 			return nil
 		}
-		resp.Error = errCode
+		resp.error = errCode
 		return nil
 	}
 	if msgs.CDCMessageKind(kind) != expectedKind {
-		resp.Error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
+		resp.error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
 		return nil
 	}
 	if err := body.Unpack(buf); err != nil {
-		resp.Error = fmt.Errorf("could not decode response body: %w", err)
+		resp.error = fmt.Errorf("could not decode response body: %w", err)
 		return nil
 	}
-	resp.Body = body
-	resp.Error = nil
+	resp.body = body
+	resp.error = nil
 	return nil
 }
 
-func CDCRequest(
+const cdcSingleTimeout = 100 * time.Millisecond
+const cdcMaxElapsed = 10 * time.Second
+
+func (c *Client) checkRepeatedCDCRequestError(
 	logger LogLevels,
-	writer io.Writer,
-	reader io.Reader,
-	requestId uint64,
-	reqBody bincode.Packable,
+	// these are already filled in by now
+	req cdcRequest,
+	resp msgs.CDCResponse,
+	respErr msgs.ErrCode,
+) error {
+	switch reqBody := req.body.(type) {
+	case *msgs.RenameDirectoryReq:
+		// We repeat the request, but the previous had actually gone through:
+		// we need to check if we haven't created the thing already.
+		if respErr == msgs.EDGE_NOT_FOUND {
+			// Happens when a request succeeds, and then the response gets lost.
+			// We try to apply some heuristics to let this slide. See convo following
+			// <https://eulergamma.slack.com/archives/C03PCJMGAAC/p1673547512380409>.
+			//
+			// Specifically, check that the last snapshot edge is what we expect if
+			// we had  just moved it, and that the target edge also exists.
+			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameDirectoryReq %+v", reqBody)
+			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
+				return respErr
+			}
+			// Then we check the target edge, and update creation time
+			respBody := resp.(*msgs.RenameDirectoryResp)
+			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
+				return respErr
+			}
+			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
+			return nil
+		}
+	// in a decent language this branch and the previous could be merged
+	case *msgs.RenameFileReq:
+		if respErr == msgs.EDGE_NOT_FOUND {
+			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameFileReq %+v", reqBody)
+			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
+				return respErr
+			}
+			// Then we check the target edge, and update creation time
+			respBody := resp.(*msgs.RenameFileResp)
+			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
+				return respErr
+			}
+			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
+			return nil
+		}
+	case *msgs.SoftUnlinkDirectoryReq:
+		if respErr == msgs.EDGE_NOT_FOUND {
+			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkDirectoryReq %+v", reqBody)
+			// Note that here we expect a non-owned edge, since we're deleting a directory.
+			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.TargetId, reqBody.Name, reqBody.CreationTime, false) {
+				return respErr
+			}
+			return nil
+		}
+	}
+	return respErr
+}
+
+func (c *Client) CDCRequest(
+	logger LogLevels,
+	reqBody msgs.CDCRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.
-	respBody bincode.Unpackable,
+	respBody msgs.CDCResponse,
 ) error {
-	if msgs.GetCDCMessageKind(reqBody) != msgs.GetCDCMessageKind(respBody) {
+	if reqBody.CDCRequestKind() != respBody.CDCResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	req := cdcRequest{
-		RequestId: requestId,
-		Body:      reqBody,
-	}
+	sock := c.CDCSocket
 	buffer := make([]byte, msgs.UDP_MTU)
-	// logger.Debug("about to send request %T to CDC", reqBody)
-	reqBytes := buffer
-	bincode.PackIntoBytes(&reqBytes, &req)
-	written, err := writer.Write(reqBytes)
-	if err != nil {
-		return fmt.Errorf("couldn't send request: %w", err)
-	}
-	if written < len(reqBytes) {
-		panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
-	}
-	respBytes := buffer
-	// Keep going until we found the right request id --
-	// we can't assume that what we get isn't some other
-	// request we thought was timed out.
+	attempts := 0
+	startedAt := time.Now()
+	// will keep trying as long as we get timeouts
 	for {
-		respBytes = respBytes[:cap(respBytes)]
-		read, err := reader.Read(respBytes)
-		respBytes = respBytes[:read]
+		elapsed := time.Since(startedAt)
+		if elapsed > cdcMaxElapsed {
+			logger.RaiseAlert(fmt.Errorf("giving up on request to CDC after waiting for %v", elapsed))
+			return msgs.TIMEOUT
+		}
+		requestId := newRequestId()
+		req := cdcRequest{
+			requestId: requestId,
+			body:      reqBody,
+		}
+		reqBytes := buffer
+		bincode.PackIntoBytes(&reqBytes, &req)
+		logger.Debug("about to send request id %v (%T) to CDC, after %v attempts", requestId, reqBody, attempts)
+		written, err := sock.Write(reqBytes)
 		if err != nil {
-			// pipe is broken, terminate with this err
-			return err
+			return fmt.Errorf("couldn't send request: %w", err)
 		}
-		resp := UnpackedCDCResponse{
-			Body: respBody,
+		if written < len(reqBytes) {
+			panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
 		}
-		if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-			logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.RequestId, err))
-			continue
+		// Keep going until we found the right request id --
+		// we can't assume that what we get isn't some other
+		// request we thought was timed out.
+		sock.SetReadDeadline(time.Now().Add(cdcSingleTimeout))
+		for {
+			respBytes := buffer
+			read, err := sock.Read(respBytes)
+			respBytes = respBytes[:read]
+			if err != nil {
+				isTimeout := false
+				switch netErr := err.(type) {
+				case net.Error:
+					isTimeout = netErr.Timeout()
+				}
+				if isTimeout {
+					logger.Debug("got network timeout error %v, will try to retry", err)
+					break // keep trying
+				}
+				// pipe is broken somehow, terminate immediately with this err
+				return err
+			}
+			resp := unpackedCDCResponse{
+				body: respBody,
+			}
+			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
+				continue
+			}
+			if resp.requestId != req.requestId {
+				logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %v", resp.requestId, req.requestId, resp.body, resp.error))
+				continue
+			}
+			// we've gotten a response
+			elapsed := time.Since(startedAt)
+			if c.Counters != nil {
+				msgKind := reqBody.CDCRequestKind()
+				atomic.AddInt64(&c.Counters.CDCReqsCounts[msgKind], 1)
+				atomic.AddInt64(&c.Counters.CDCReqsNanos[msgKind], elapsed.Nanoseconds())
+			}
+			respErr := resp.error
+			if respErr != nil {
+				isTimeout := false
+				switch eggsErr := err.(type) {
+				case msgs.ErrCode:
+					isTimeout = eggsErr == msgs.TIMEOUT
+				}
+				if isTimeout {
+					logger.Debug("got resp timeout error %v, will try to retry", err)
+					break // keep trying
+				}
+			}
+			switch eggsErr := respErr.(type) {
+			case msgs.ErrCode:
+				// If we're past the first attempt, there are cases where errors are not what they
+				// seem.
+				if attempts > 0 {
+					respErr = c.checkRepeatedCDCRequestError(logger, req, respBody, eggsErr)
+				}
+			}
+			// check if it's an error or not
+			if respErr != nil {
+				logger.Debug("got error %v (%T) from CDC (took %v)", respErr, respErr, elapsed)
+				return respErr
+			}
+			logger.Debug("got response %T from CDC (took %v)", respBody, elapsed)
+			return nil
 		}
-		if resp.RequestId != req.RequestId {
-			logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.RequestId, resp.Body, resp.Error))
-			continue
-		}
-		// we managed to decode, we just need to check that it's not an error
-		if resp.Error != nil {
-			logger.Debug("got error %v from CDC", resp.Error)
-			return resp.Error
-		}
-		logger.Debug("got response %T from CDC", respBody)
-		return nil
+		attempts++
 	}
 }
 
-// This function will set the deadline for the socket.
-// TODO does the deadline persist -- i.e. are we permanently modifying this socket.
-func CDCRequestSocket(
-	logger LogLevels,
-	sock *net.UDPConn,
-	timeout time.Duration,
-	reqBody bincode.Packable,
-	respBody bincode.Unpackable,
-) error {
-	if timeout == time.Duration(0) {
-		panic("zero duration")
-	}
-	sock.SetReadDeadline(time.Now().Add(timeout))
-	return CDCRequest(logger, sock, sock, uint64(msgs.Now()), reqBody, respBody)
-}
-
-func CDCSocket() (*net.UDPConn, error) {
+func CreateCDCSocket() (*net.UDPConn, error) {
 	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: msgs.CDC_PORT})
 	if err != nil {
 		return nil, fmt.Errorf("could not create CDC socket: %w", err)

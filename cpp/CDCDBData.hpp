@@ -15,11 +15,11 @@
 enum class CDCMetadataKey : uint8_t {
     LAST_APPLIED_LOG_ENTRY = 0,
     LAST_TXN = 1,
-    FIRST_TXN_IN_QUEUE = 1,
-    LAST_TXN_IN_QUEUE = 2,
-    EXECUTING_TXN = 3,
-    EXECUTING_TXN_STATE = 4,
-    LAST_DIRECTORY_ID = 5,
+    FIRST_TXN_IN_QUEUE = 2,
+    LAST_TXN_IN_QUEUE = 3,
+    EXECUTING_TXN = 4,
+    EXECUTING_TXN_STATE = 6,
+    LAST_DIRECTORY_ID = 7,
 };
 constexpr CDCMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = CDCMetadataKey::LAST_APPLIED_LOG_ENTRY;
 constexpr CDCMetadataKey LAST_TXN_KEY = CDCMetadataKey::LAST_TXN;
@@ -38,16 +38,19 @@ struct MakeDirectoryState {
 
     static constexpr size_t MAX_SIZE =
         sizeof(InodeId) +  // dir id we've generated
+        sizeof(EggsTime) + // creation time for the edge
         sizeof(EggsError); // exit error if we're rolling back
     
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
-    LE_VAL(InodeId,   dirId,     setDirId,     0)
-    LE_VAL(EggsError, exitError, setExitError, 8)
+    LE_VAL(InodeId,   dirId,        setDirId,         0)
+    LE_VAL(EggsTime,  creationTime, setCreationTime,  8)
+    LE_VAL(EggsError, exitError,    setExitError,    16)
 
     void start() {
         setDirId(NULL_INODE_ID);
+        setCreationTime({});
         setExitError(NO_ERROR);
     }
 };
@@ -56,12 +59,14 @@ struct RenameFileState {
     char* _data;
 
     static constexpr size_t MAX_SIZE =
+        sizeof(EggsTime) + // the time at which we created the current edge
         sizeof(EggsError); // exit error if we're rolling back
     
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
-    LE_VAL(EggsError, exitError,           setExitError,           0)
+    LE_VAL(EggsTime,  newCreationTime,     setNewCreationTime,     0)
+    LE_VAL(EggsError, exitError,           setExitError,           8)
 
     void start() {
         setExitError(NO_ERROR);
@@ -72,12 +77,14 @@ struct SoftUnlinkDirectoryState {
     char* _data;
 
     static constexpr size_t MAX_SIZE =
+        sizeof(InodeId) +  // what we're currently stat'ing
         sizeof(EggsError); // exit error if we're rolling back
     
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
-    LE_VAL(EggsError, exitError,           setExitError,           0)
+    LE_VAL(InodeId,   statDirId,           setStatDirId,           0)
+    LE_VAL(EggsError, exitError,           setExitError,           8)
 
     void start() {
         setExitError(NO_ERROR);
@@ -88,22 +95,30 @@ struct RenameDirectoryState {
     char* _data;
 
     static constexpr size_t MAX_SIZE =
-        sizeof(InodeId) +  // current directory we're traversing upwards when looking for cycles
+        sizeof(EggsTime) + // time at which we created the old edge
         sizeof(EggsError); // exit error if we're rolling back
     
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
-    LE_VAL(InodeId,   currentDirectory, setCurrentDirectory, 0)
+    LE_VAL(EggsTime,  newCreationTime,  setNewCreationTime,  0)
     LE_VAL(EggsError, exitError,        setExitError,        8)
 
     void start() {
-        setCurrentDirectory(NULL_INODE_ID);
+        setNewCreationTime({});
         setExitError(NO_ERROR);
     }
 };
 
 struct HardUnlinkDirectoryState {
+    char* _data;
+    static constexpr size_t MAX_SIZE = 0;
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+    void start() {}
+};
+
+struct CrossShardHardUnlinkFileState {
     char* _data;
     static constexpr size_t MAX_SIZE = 0;
     size_t size() const { return MAX_SIZE; }
@@ -128,7 +143,7 @@ struct TxnState {
         sizeof(uint8_t);         // step
     static constexpr size_t MAX_SIZE =
         MIN_SIZE +
-        maxMaxSize<MakeDirectoryState, RenameFileState, SoftUnlinkDirectoryState, RenameDirectoryState, HardUnlinkDirectoryState>();
+        maxMaxSize<MakeDirectoryState, RenameFileState, SoftUnlinkDirectoryState, RenameDirectoryState, HardUnlinkDirectoryState, CrossShardHardUnlinkFileState>();
 
     U8_VAL(CDCMessageKind, reqKind,   setReqKind,   0);
     U8_VAL(uint8_t,        step,      setStep,      1);
@@ -146,6 +161,8 @@ struct TxnState {
             sz += RenameDirectoryState::MAX_SIZE; break;
         case CDCMessageKind::HARD_UNLINK_DIRECTORY:
             sz += RenameDirectoryState::MAX_SIZE; break;
+        case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+            sz += CrossShardHardUnlinkFileState::MAX_SIZE; break;
         default:
             throw EGGS_EXCEPTION("bad cdc message kind %s", reqKind());
         }
@@ -157,8 +174,8 @@ struct TxnState {
         ALWAYS_ASSERT(sz == size());
     }
 
-    #define TXN_STATE(kind, type, get, startName) \
-        const type get() { \
+    #define TXN_STATE(kind, type, getName, startName) \
+        type getName() { \
             ALWAYS_ASSERT(reqKind() == CDCMessageKind::kind); \
             type v; \
             v._data = _data + MIN_SIZE; \
@@ -173,11 +190,12 @@ struct TxnState {
             return v; \
         }
     
-    TXN_STATE(MAKE_DIRECTORY,        MakeDirectoryState,        getMakeDirectory,       startMakeDirectory)
-    TXN_STATE(RENAME_FILE,           RenameFileState,           getRenameFile,          startRenameFile)
-    TXN_STATE(SOFT_UNLINK_DIRECTORY, SoftUnlinkDirectoryState,  getSoftUnlinkDirectory, startSoftUnlinkDirectory)
-    TXN_STATE(RENAME_DIRECTORY,      RenameDirectoryState,      getRenameDirectory,     startRenameDirectory)
-    TXN_STATE(HARD_UNLINK_DIRECTORY, HardUnlinkDirectoryState,  getHardUnlinkDirectory, startHardUnlinkDirectory)
+    TXN_STATE(MAKE_DIRECTORY,               MakeDirectoryState,            getMakeDirectory,            startMakeDirectory)
+    TXN_STATE(RENAME_FILE,                  RenameFileState,               getRenameFile,               startRenameFile)
+    TXN_STATE(SOFT_UNLINK_DIRECTORY,        SoftUnlinkDirectoryState,      getSoftUnlinkDirectory,      startSoftUnlinkDirectory)
+    TXN_STATE(RENAME_DIRECTORY,             RenameDirectoryState,          getRenameDirectory,          startRenameDirectory)
+    TXN_STATE(HARD_UNLINK_DIRECTORY,        HardUnlinkDirectoryState,      getHardUnlinkDirectory,      startHardUnlinkDirectory)
+    TXN_STATE(CROSS_SHARD_HARD_UNLINK_FILE, CrossShardHardUnlinkFileState, getCrossShardHardUnlinkFile, startCrossShardHardUnlinkFile)
 
     #undef TXN_STATE
 
@@ -189,76 +207,9 @@ struct TxnState {
         case CDCMessageKind::SOFT_UNLINK_DIRECTORY: startSoftUnlinkDirectory(); break;
         case CDCMessageKind::RENAME_DIRECTORY: startRenameDirectory(); break;
         case CDCMessageKind::HARD_UNLINK_DIRECTORY: startHardUnlinkDirectory(); break;
+        case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE: startCrossShardHardUnlinkFile(); break;
         default:
             throw EGGS_EXCEPTION("bad cdc message kind %s", reqKind());
         }
     }
 };
-
-/*
-struct TxnIdKey {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    BE64_VAL(uint64_t, txnId, setTxnId, 0)
-
-    static StaticValue<TxnIdKey> Static(uint64_t txnId) {
-        auto x = StaticValue<TxnIdKey>();
-        x->setTxnId(txnId);
-        return x;
-    }
-};
-
-std::string cdcReqToValue(uint64_t requestId, const CDCReqContainer& req);
-vodi cdcReqFromValue()
-
-struct TxnIdKey {
-    // the txn id, in big endian
-    char* _data;
-
-    TxnIdKey(const rocksdb::Slice& slice) {
-        ALWAYS_ASSERT(slice.size() == sizeof(_data));
-        memcpy(&_data, slice.data(), sizeof(_data));
-    }
-
-    TxnIdKey(uint64_t txnId) {
-        txnId = byteswapU64(txnId); // LE -> BE
-        memcpy(&_data, &txnId, sizeof(txnId));
-    }
-
-    uint64_t txnId() const {
-        uint64_t txnId;
-        memcpy(&txnId, _data, sizeof(txnId));
-        return byteswapU64(); // BE -> LE
-    }
-
-    rocksdb::Slice toSlice() const {
-        return rocksdb::Slice((const char*)_data, sizeof(_data));
-    }
-};
-
-struct CDCReqValue {
-    
-};
-
-struct NoState {
-    NoState(CDCMessageKind kind, char* data, size_t len) {
-        ALWAYS_ASSERT(len == 0);
-    }
-};
-
-struct MakeDirectoryState {
-    char* _data;
-
-    // 0-1: step
-    // 1-9: dir id
-    MakeDirectoryState(CDCMessageKind kind, char* data, size_t len) {
-        ALWAYS_ASSERT(kind == CDCMessageKind::MAKE_DIRECTORY);
-
-    }
-
-}
-*/

@@ -6,11 +6,28 @@
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
+static double parseDouble(const std::string& arg) {
+    size_t idx;
+    double x = std::stod(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff characters in number %s", arg.c_str());
+    }
+    return x;
+}
+
+static double parseProbability(const std::string& arg) {
+    double x = parseDouble(arg);
+    if (x < 0.0 || x >= 1.0) {
+        die("Please specify a number in the interval [0.0, 1.0), rather than %f", x);
+    }
+    return x;
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const auto dieWithUsage = [&argv]() {
-        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-shuckle] db_dir shard_id\n", argv[0]);
+        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-shuckle] [--incoming-packet-drop <probability>] [--outgoing-packet-drop <probability>] db_dir shard_id\n", argv[0]);
     };
 
     ShardOptions options;
@@ -44,6 +61,10 @@ int main(int argc, char** argv) {
             options.logFile = getNextArg();
         } else if (arg == "--wait-for-shuckle") {
             options.waitForShuckle = true;
+        } else if (arg == "--incoming-packet-drop") {
+            options.simulateIncomingPacketDrop = parseProbability(getNextArg());
+        } else if (arg == "--outgoing-packet-drop") {
+            options.simulateOutgoingPacketDrop = parseProbability(getNextArg());
         } else {
             args.emplace_back(std::move(arg));
         }

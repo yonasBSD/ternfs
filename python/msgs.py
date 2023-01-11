@@ -18,31 +18,31 @@ class ErrCode(enum.IntEnum):
     FILE_NOT_FOUND = 17
     DIRECTORY_NOT_FOUND = 18
     NAME_NOT_FOUND = 19
-    TYPE_IS_DIRECTORY = 20
-    TYPE_IS_NOT_DIRECTORY = 21
-    BAD_COOKIE = 22
-    INCONSISTENT_STORAGE_CLASS_PARITY = 23
-    LAST_SPAN_STATE_NOT_CLEAN = 24
-    COULD_NOT_PICK_BLOCK_SERVICES = 25
-    BAD_SPAN_BODY = 26
-    SPAN_NOT_FOUND = 27
-    BLOCK_SERVICE_NOT_FOUND = 28
-    CANNOT_CERTIFY_BLOCKLESS_SPAN = 29
-    BAD_NUMBER_OF_BLOCKS_PROOFS = 30
-    BAD_BLOCK_PROOF = 31
-    CANNOT_OVERRIDE_NAME = 32
-    NAME_IS_LOCKED = 33
-    OLD_NAME_IS_LOCKED = 34
-    NEW_NAME_IS_LOCKED = 35
+    EDGE_NOT_FOUND = 20
+    EDGE_IS_LOCKED = 21
+    TYPE_IS_DIRECTORY = 22
+    TYPE_IS_NOT_DIRECTORY = 23
+    BAD_COOKIE = 24
+    INCONSISTENT_STORAGE_CLASS_PARITY = 25
+    LAST_SPAN_STATE_NOT_CLEAN = 26
+    COULD_NOT_PICK_BLOCK_SERVICES = 27
+    BAD_SPAN_BODY = 28
+    SPAN_NOT_FOUND = 29
+    BLOCK_SERVICE_NOT_FOUND = 30
+    CANNOT_CERTIFY_BLOCKLESS_SPAN = 31
+    BAD_NUMBER_OF_BLOCKS_PROOFS = 32
+    BAD_BLOCK_PROOF = 33
+    CANNOT_OVERRIDE_NAME = 34
+    NAME_IS_LOCKED = 35
     MTIME_IS_TOO_RECENT = 36
     MISMATCHING_TARGET = 37
     MISMATCHING_OWNER = 38
-    DIRECTORY_NOT_EMPTY = 39
-    FILE_IS_TRANSIENT = 40
-    OLD_DIRECTORY_NOT_FOUND = 41
-    NEW_DIRECTORY_NOT_FOUND = 42
-    LOOP_IN_DIRECTORY_RENAME = 43
-    EDGE_NOT_FOUND = 44
+    MISMATCHING_CREATION_TIME = 39
+    DIRECTORY_NOT_EMPTY = 40
+    FILE_IS_TRANSIENT = 41
+    OLD_DIRECTORY_NOT_FOUND = 42
+    NEW_DIRECTORY_NOT_FOUND = 43
+    LOOP_IN_DIRECTORY_RENAME = 44
     DIRECTORY_HAS_OWNER = 45
     FILE_IS_NOT_TRANSIENT = 46
     FILE_NOT_EMPTY = 47
@@ -54,10 +54,10 @@ class ErrCode(enum.IntEnum):
     MORE_RECENT_SNAPSHOT_EDGE = 53
     MORE_RECENT_CURRENT_EDGE = 54
     BAD_DIRECTORY_INFO = 55
-    CREATION_TIME_TOO_RECENT = 56
-    DEADLINE_NOT_PASSED = 57
-    SAME_SOURCE_AND_DESTINATION = 58
-    SAME_DIRECTORIES = 59
+    DEADLINE_NOT_PASSED = 56
+    SAME_SOURCE_AND_DESTINATION = 57
+    SAME_DIRECTORIES = 58
+    SAME_SHARD = 59
 
 class ShardMessageKind(enum.IntEnum):
     LOOKUP = 0x1
@@ -73,12 +73,13 @@ class ShardMessageKind(enum.IntEnum):
     FILE_SPANS = 0xD
     SAME_DIRECTORY_RENAME = 0xE
     SET_DIRECTORY_INFO = 0xF
+    SNAPSHOT_LOOKUP = 0x9
     VISIT_DIRECTORIES = 0x15
     VISIT_FILES = 0x20
     VISIT_TRANSIENT_FILES = 0x16
     FULL_READ_DIR = 0x21
     REMOVE_NON_OWNED_EDGE = 0x17
-    INTRA_SHARD_HARD_FILE_UNLINK = 0x18
+    SAME_SHARD_HARD_FILE_UNLINK = 0x18
     REMOVE_SPAN_INITIATE = 0x19
     REMOVE_SPAN_CERTIFY = 0x1A
     SWAP_BLOCKS = 0x22
@@ -99,7 +100,7 @@ class CDCMessageKind(enum.IntEnum):
     SOFT_UNLINK_DIRECTORY = 0x3
     RENAME_DIRECTORY = 0x4
     HARD_UNLINK_DIRECTORY = 0x5
-    HARD_UNLINK_FILE = 0x6
+    CROSS_SHARD_HARD_UNLINK_FILE = 0x6
 
 @dataclass
 class TransientFile(bincode.Packable):
@@ -595,6 +596,29 @@ class EntryNewBlockInfo(bincode.Packable):
         return _size
 
 @dataclass
+class SnapshotLookupEdge(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # target_id + creation_time
+    target_id: InodeIdWithExtra
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_u64_into(self.creation_time, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'SnapshotLookupEdge':
+        target_id = InodeIdWithExtra(bincode.unpack_u64(u))
+        creation_time = bincode.unpack_u64(u)
+        return SnapshotLookupEdge(target_id, creation_time)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # target_id
+        _size += 8 # creation_time
+        return _size
+
+@dataclass
 class LookupReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOOKUP
     STATIC_SIZE: ClassVar[int] = 8 + 1 # dir_id + len(name)
@@ -1077,31 +1101,37 @@ class LinkFileReq(bincode.Packable):
 @dataclass
 class LinkFileResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LINK_FILE
-    STATIC_SIZE: ClassVar[int] = 0 # 
+    STATIC_SIZE: ClassVar[int] = 8 # creation_time
+    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'LinkFileResp':
-        return LinkFileResp()
+        creation_time = bincode.unpack_u64(u)
+        return LinkFileResp(creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
+        _size += 8 # creation_time
         return _size
 
 @dataclass
 class SoftUnlinkFileReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SOFT_UNLINK_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # owner_id + file_id + len(name)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + file_id + len(name) + creation_time
     owner_id: int
     file_id: int
     name: bytes
+    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.owner_id, b)
         bincode.pack_u64_into(self.file_id, b)
         bincode.pack_bytes_into(self.name, b)
+        bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
@@ -1109,7 +1139,8 @@ class SoftUnlinkFileReq(bincode.Packable):
         owner_id = bincode.unpack_u64(u)
         file_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
-        return SoftUnlinkFileReq(owner_id, file_id, name)
+        creation_time = bincode.unpack_u64(u)
+        return SoftUnlinkFileReq(owner_id, file_id, name, creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -1117,6 +1148,7 @@ class SoftUnlinkFileReq(bincode.Packable):
         _size += 8 # file_id
         _size += 1 # len(name)
         _size += len(self.name) # name contents
+        _size += 8 # creation_time
         return _size
 
 @dataclass
@@ -1202,16 +1234,18 @@ class FileSpansResp(bincode.Packable):
 @dataclass
 class SameDirectoryRenameReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_DIRECTORY_RENAME
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 1 # target_id + dir_id + len(old_name) + len(new_name)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1 # target_id + dir_id + len(old_name) + old_creation_time + len(new_name)
     target_id: int
     dir_id: int
     old_name: bytes
+    old_creation_time: int
     new_name: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.target_id, b)
         bincode.pack_u64_into(self.dir_id, b)
         bincode.pack_bytes_into(self.old_name, b)
+        bincode.pack_u64_into(self.old_creation_time, b)
         bincode.pack_bytes_into(self.new_name, b)
         return None
 
@@ -1220,8 +1254,9 @@ class SameDirectoryRenameReq(bincode.Packable):
         target_id = bincode.unpack_u64(u)
         dir_id = bincode.unpack_u64(u)
         old_name = bincode.unpack_bytes(u)
+        old_creation_time = bincode.unpack_u64(u)
         new_name = bincode.unpack_bytes(u)
-        return SameDirectoryRenameReq(target_id, dir_id, old_name, new_name)
+        return SameDirectoryRenameReq(target_id, dir_id, old_name, old_creation_time, new_name)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -1229,6 +1264,7 @@ class SameDirectoryRenameReq(bincode.Packable):
         _size += 8 # dir_id
         _size += 1 # len(old_name)
         _size += len(self.old_name) # old_name contents
+        _size += 8 # old_creation_time
         _size += 1 # len(new_name)
         _size += len(self.new_name) # new_name contents
         return _size
@@ -1236,17 +1272,21 @@ class SameDirectoryRenameReq(bincode.Packable):
 @dataclass
 class SameDirectoryRenameResp(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_DIRECTORY_RENAME
-    STATIC_SIZE: ClassVar[int] = 0 # 
+    STATIC_SIZE: ClassVar[int] = 8 # new_creation_time
+    new_creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.new_creation_time, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'SameDirectoryRenameResp':
-        return SameDirectoryRenameResp()
+        new_creation_time = bincode.unpack_u64(u)
+        return SameDirectoryRenameResp(new_creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
+        _size += 8 # new_creation_time
         return _size
 
 @dataclass
@@ -1287,6 +1327,65 @@ class SetDirectoryInfoResp(bincode.Packable):
 
     def calc_packed_size(self) -> int:
         _size = 0
+        return _size
+
+@dataclass
+class SnapshotLookupReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SNAPSHOT_LOOKUP
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 # dir_id + len(name) + start_from
+    dir_id: int
+    name: bytes
+    start_from: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.dir_id, b)
+        bincode.pack_bytes_into(self.name, b)
+        bincode.pack_u64_into(self.start_from, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'SnapshotLookupReq':
+        dir_id = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        start_from = bincode.unpack_u64(u)
+        return SnapshotLookupReq(dir_id, name, start_from)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # dir_id
+        _size += 1 # len(name)
+        _size += len(self.name) # name contents
+        _size += 8 # start_from
+        return _size
+
+@dataclass
+class SnapshotLookupResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SNAPSHOT_LOOKUP
+    STATIC_SIZE: ClassVar[int] = 8 + 2 # next_time + len(edges)
+    next_time: int
+    edges: List[SnapshotLookupEdge]
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.next_time, b)
+        bincode.pack_u16_into(len(self.edges), b)
+        for i in range(len(self.edges)):
+            self.edges[i].pack_into(b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'SnapshotLookupResp':
+        next_time = bincode.unpack_u64(u)
+        edges: List[Any] = [None]*bincode.unpack_u16(u)
+        for i in range(len(edges)):
+            edges[i] = SnapshotLookupEdge.unpack(u)
+        return SnapshotLookupResp(next_time, edges)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # next_time
+        _size += 2 # len(edges)
+        for i in range(len(self.edges)):
+            _size += self.edges[i].calc_packed_size() # edges[i]
         return _size
 
 @dataclass
@@ -1543,8 +1642,8 @@ class RemoveNonOwnedEdgeResp(bincode.Packable):
         return _size
 
 @dataclass
-class IntraShardHardFileUnlinkReq(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK
+class SameShardHardFileUnlinkReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_SHARD_HARD_FILE_UNLINK
     STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + target_id + len(name) + creation_time
     owner_id: int
     target_id: int
@@ -1559,12 +1658,12 @@ class IntraShardHardFileUnlinkReq(bincode.Packable):
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'IntraShardHardFileUnlinkReq':
+    def unpack(u: bincode.UnpackWrapper) -> 'SameShardHardFileUnlinkReq':
         owner_id = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
         creation_time = bincode.unpack_u64(u)
-        return IntraShardHardFileUnlinkReq(owner_id, target_id, name, creation_time)
+        return SameShardHardFileUnlinkReq(owner_id, target_id, name, creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -1576,16 +1675,16 @@ class IntraShardHardFileUnlinkReq(bincode.Packable):
         return _size
 
 @dataclass
-class IntraShardHardFileUnlinkResp(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK
+class SameShardHardFileUnlinkResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.SAME_SHARD_HARD_FILE_UNLINK
     STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'IntraShardHardFileUnlinkResp':
-        return IntraShardHardFileUnlinkResp()
+    def unpack(u: bincode.UnpackWrapper) -> 'SameShardHardFileUnlinkResp':
+        return SameShardHardFileUnlinkResp()
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -1973,55 +2072,6 @@ class RemoveDirectoryOwnerResp(bincode.Packable):
 @dataclass
 class CreateLockedCurrentEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 8 # dir_id + len(name) + target_id + creation_time
-    dir_id: int
-    name: bytes
-    target_id: int
-    creation_time: int
-
-    def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.dir_id, b)
-        bincode.pack_bytes_into(self.name, b)
-        bincode.pack_u64_into(self.target_id, b)
-        bincode.pack_u64_into(self.creation_time, b)
-        return None
-
-    @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'CreateLockedCurrentEdgeReq':
-        dir_id = bincode.unpack_u64(u)
-        name = bincode.unpack_bytes(u)
-        target_id = bincode.unpack_u64(u)
-        creation_time = bincode.unpack_u64(u)
-        return CreateLockedCurrentEdgeReq(dir_id, name, target_id, creation_time)
-
-    def calc_packed_size(self) -> int:
-        _size = 0
-        _size += 8 # dir_id
-        _size += 1 # len(name)
-        _size += len(self.name) # name contents
-        _size += 8 # target_id
-        _size += 8 # creation_time
-        return _size
-
-@dataclass
-class CreateLockedCurrentEdgeResp(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 0 # 
-
-    def pack_into(self, b: bytearray) -> None:
-        return None
-
-    @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'CreateLockedCurrentEdgeResp':
-        return CreateLockedCurrentEdgeResp()
-
-    def calc_packed_size(self) -> int:
-        _size = 0
-        return _size
-
-@dataclass
-class LockCurrentEdgeReq(bincode.Packable):
-    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOCK_CURRENT_EDGE
     STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 # dir_id + len(name) + target_id
     dir_id: int
     name: bytes
@@ -2034,11 +2084,11 @@ class LockCurrentEdgeReq(bincode.Packable):
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'LockCurrentEdgeReq':
+    def unpack(u: bincode.UnpackWrapper) -> 'CreateLockedCurrentEdgeReq':
         dir_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
         target_id = bincode.unpack_u64(u)
-        return LockCurrentEdgeReq(dir_id, name, target_id)
+        return CreateLockedCurrentEdgeReq(dir_id, name, target_id)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -2046,6 +2096,59 @@ class LockCurrentEdgeReq(bincode.Packable):
         _size += 1 # len(name)
         _size += len(self.name) # name contents
         _size += 8 # target_id
+        return _size
+
+@dataclass
+class CreateLockedCurrentEdgeResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.CREATE_LOCKED_CURRENT_EDGE
+    STATIC_SIZE: ClassVar[int] = 8 # creation_time
+    creation_time: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.creation_time, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'CreateLockedCurrentEdgeResp':
+        creation_time = bincode.unpack_u64(u)
+        return CreateLockedCurrentEdgeResp(creation_time)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # creation_time
+        return _size
+
+@dataclass
+class LockCurrentEdgeReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.LOCK_CURRENT_EDGE
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 1 # dir_id + target_id + creation_time + len(name)
+    dir_id: int
+    target_id: int
+    creation_time: int
+    name: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.dir_id, b)
+        bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_u64_into(self.creation_time, b)
+        bincode.pack_bytes_into(self.name, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'LockCurrentEdgeReq':
+        dir_id = bincode.unpack_u64(u)
+        target_id = bincode.unpack_u64(u)
+        creation_time = bincode.unpack_u64(u)
+        name = bincode.unpack_bytes(u)
+        return LockCurrentEdgeReq(dir_id, target_id, creation_time, name)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # dir_id
+        _size += 8 # target_id
+        _size += 8 # creation_time
+        _size += 1 # len(name)
+        _size += len(self.name) # name contents
         return _size
 
 @dataclass
@@ -2067,15 +2170,17 @@ class LockCurrentEdgeResp(bincode.Packable):
 @dataclass
 class UnlockCurrentEdgeReq(bincode.Packable):
     KIND: ClassVar[ShardMessageKind] = ShardMessageKind.UNLOCK_CURRENT_EDGE
-    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 1 # dir_id + len(name) + target_id + was_moved
+    STATIC_SIZE: ClassVar[int] = 8 + 1 + 8 + 8 + 1 # dir_id + len(name) + creation_time + target_id + was_moved
     dir_id: int
     name: bytes
+    creation_time: int
     target_id: int
     was_moved: bool
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.dir_id, b)
         bincode.pack_bytes_into(self.name, b)
+        bincode.pack_u64_into(self.creation_time, b)
         bincode.pack_u64_into(self.target_id, b)
         bincode.pack_u8_into(self.was_moved, b)
         return None
@@ -2084,15 +2189,17 @@ class UnlockCurrentEdgeReq(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'UnlockCurrentEdgeReq':
         dir_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
+        creation_time = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
         was_moved = bool(bincode.unpack_u8(u))
-        return UnlockCurrentEdgeReq(dir_id, name, target_id, was_moved)
+        return UnlockCurrentEdgeReq(dir_id, name, creation_time, target_id, was_moved)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # dir_id
         _size += 1 # len(name)
         _size += len(self.name) # name contents
+        _size += 8 # creation_time
         _size += 8 # target_id
         _size += 1 # was_moved
         return _size
@@ -2235,30 +2342,35 @@ class MakeDirectoryReq(bincode.Packable):
 @dataclass
 class MakeDirectoryResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.MAKE_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 # id
+    STATIC_SIZE: ClassVar[int] = 8 + 8 # id + creation_time
     id: int
+    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.id, b)
+        bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'MakeDirectoryResp':
         id = bincode.unpack_u64(u)
-        return MakeDirectoryResp(id)
+        creation_time = bincode.unpack_u64(u)
+        return MakeDirectoryResp(id, creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # id
+        _size += 8 # creation_time
         return _size
 
 @dataclass
 class RenameFileReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1 # target_id + old_owner_id + len(old_name) + new_owner_id + len(new_name)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 8 + 1 # target_id + old_owner_id + len(old_name) + old_creation_time + new_owner_id + len(new_name)
     target_id: int
     old_owner_id: int
     old_name: bytes
+    old_creation_time: int
     new_owner_id: int
     new_name: bytes
 
@@ -2266,6 +2378,7 @@ class RenameFileReq(bincode.Packable):
         bincode.pack_u64_into(self.target_id, b)
         bincode.pack_u64_into(self.old_owner_id, b)
         bincode.pack_bytes_into(self.old_name, b)
+        bincode.pack_u64_into(self.old_creation_time, b)
         bincode.pack_u64_into(self.new_owner_id, b)
         bincode.pack_bytes_into(self.new_name, b)
         return None
@@ -2275,9 +2388,10 @@ class RenameFileReq(bincode.Packable):
         target_id = bincode.unpack_u64(u)
         old_owner_id = bincode.unpack_u64(u)
         old_name = bincode.unpack_bytes(u)
+        old_creation_time = bincode.unpack_u64(u)
         new_owner_id = bincode.unpack_u64(u)
         new_name = bincode.unpack_bytes(u)
-        return RenameFileReq(target_id, old_owner_id, old_name, new_owner_id, new_name)
+        return RenameFileReq(target_id, old_owner_id, old_name, old_creation_time, new_owner_id, new_name)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -2285,6 +2399,7 @@ class RenameFileReq(bincode.Packable):
         _size += 8 # old_owner_id
         _size += 1 # len(old_name)
         _size += len(self.old_name) # old_name contents
+        _size += 8 # old_creation_time
         _size += 8 # new_owner_id
         _size += 1 # len(new_name)
         _size += len(self.new_name) # new_name contents
@@ -2293,30 +2408,36 @@ class RenameFileReq(bincode.Packable):
 @dataclass
 class RenameFileResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_FILE
-    STATIC_SIZE: ClassVar[int] = 0 # 
+    STATIC_SIZE: ClassVar[int] = 8 # creation_time
+    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'RenameFileResp':
-        return RenameFileResp()
+        creation_time = bincode.unpack_u64(u)
+        return RenameFileResp(creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
+        _size += 8 # creation_time
         return _size
 
 @dataclass
 class SoftUnlinkDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.SOFT_UNLINK_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 # owner_id + target_id + len(name)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 8 + 1 # owner_id + target_id + creation_time + len(name)
     owner_id: int
     target_id: int
+    creation_time: int
     name: bytes
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.owner_id, b)
         bincode.pack_u64_into(self.target_id, b)
+        bincode.pack_u64_into(self.creation_time, b)
         bincode.pack_bytes_into(self.name, b)
         return None
 
@@ -2324,13 +2445,15 @@ class SoftUnlinkDirectoryReq(bincode.Packable):
     def unpack(u: bincode.UnpackWrapper) -> 'SoftUnlinkDirectoryReq':
         owner_id = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
+        creation_time = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
-        return SoftUnlinkDirectoryReq(owner_id, target_id, name)
+        return SoftUnlinkDirectoryReq(owner_id, target_id, creation_time, name)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # owner_id
         _size += 8 # target_id
+        _size += 8 # creation_time
         _size += 1 # len(name)
         _size += len(self.name) # name contents
         return _size
@@ -2354,10 +2477,11 @@ class SoftUnlinkDirectoryResp(bincode.Packable):
 @dataclass
 class RenameDirectoryReq(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 1 # target_id + old_owner_id + len(old_name) + new_owner_id + len(new_name)
+    STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 + 8 + 1 # target_id + old_owner_id + len(old_name) + old_creation_time + new_owner_id + len(new_name)
     target_id: int
     old_owner_id: int
     old_name: bytes
+    old_creation_time: int
     new_owner_id: int
     new_name: bytes
 
@@ -2365,6 +2489,7 @@ class RenameDirectoryReq(bincode.Packable):
         bincode.pack_u64_into(self.target_id, b)
         bincode.pack_u64_into(self.old_owner_id, b)
         bincode.pack_bytes_into(self.old_name, b)
+        bincode.pack_u64_into(self.old_creation_time, b)
         bincode.pack_u64_into(self.new_owner_id, b)
         bincode.pack_bytes_into(self.new_name, b)
         return None
@@ -2374,9 +2499,10 @@ class RenameDirectoryReq(bincode.Packable):
         target_id = bincode.unpack_u64(u)
         old_owner_id = bincode.unpack_u64(u)
         old_name = bincode.unpack_bytes(u)
+        old_creation_time = bincode.unpack_u64(u)
         new_owner_id = bincode.unpack_u64(u)
         new_name = bincode.unpack_bytes(u)
-        return RenameDirectoryReq(target_id, old_owner_id, old_name, new_owner_id, new_name)
+        return RenameDirectoryReq(target_id, old_owner_id, old_name, old_creation_time, new_owner_id, new_name)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -2384,6 +2510,7 @@ class RenameDirectoryReq(bincode.Packable):
         _size += 8 # old_owner_id
         _size += 1 # len(old_name)
         _size += len(self.old_name) # old_name contents
+        _size += 8 # old_creation_time
         _size += 8 # new_owner_id
         _size += 1 # len(new_name)
         _size += len(self.new_name) # new_name contents
@@ -2392,17 +2519,21 @@ class RenameDirectoryReq(bincode.Packable):
 @dataclass
 class RenameDirectoryResp(bincode.Packable):
     KIND: ClassVar[CDCMessageKind] = CDCMessageKind.RENAME_DIRECTORY
-    STATIC_SIZE: ClassVar[int] = 0 # 
+    STATIC_SIZE: ClassVar[int] = 8 # creation_time
+    creation_time: int
 
     def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.creation_time, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'RenameDirectoryResp':
-        return RenameDirectoryResp()
+        creation_time = bincode.unpack_u64(u)
+        return RenameDirectoryResp(creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
+        _size += 8 # creation_time
         return _size
 
 @dataclass
@@ -2442,8 +2573,8 @@ class HardUnlinkDirectoryResp(bincode.Packable):
         return _size
 
 @dataclass
-class HardUnlinkFileReq(bincode.Packable):
-    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.HARD_UNLINK_FILE
+class CrossShardHardUnlinkFileReq(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.CROSS_SHARD_HARD_UNLINK_FILE
     STATIC_SIZE: ClassVar[int] = 8 + 8 + 1 + 8 # owner_id + target_id + len(name) + creation_time
     owner_id: int
     target_id: int
@@ -2458,12 +2589,12 @@ class HardUnlinkFileReq(bincode.Packable):
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'HardUnlinkFileReq':
+    def unpack(u: bincode.UnpackWrapper) -> 'CrossShardHardUnlinkFileReq':
         owner_id = bincode.unpack_u64(u)
         target_id = bincode.unpack_u64(u)
         name = bincode.unpack_bytes(u)
         creation_time = bincode.unpack_u64(u)
-        return HardUnlinkFileReq(owner_id, target_id, name, creation_time)
+        return CrossShardHardUnlinkFileReq(owner_id, target_id, name, creation_time)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -2475,23 +2606,23 @@ class HardUnlinkFileReq(bincode.Packable):
         return _size
 
 @dataclass
-class HardUnlinkFileResp(bincode.Packable):
-    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.HARD_UNLINK_FILE
+class CrossShardHardUnlinkFileResp(bincode.Packable):
+    KIND: ClassVar[CDCMessageKind] = CDCMessageKind.CROSS_SHARD_HARD_UNLINK_FILE
     STATIC_SIZE: ClassVar[int] = 0 # 
 
     def pack_into(self, b: bytearray) -> None:
         return None
 
     @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'HardUnlinkFileResp':
-        return HardUnlinkFileResp()
+    def unpack(u: bincode.UnpackWrapper) -> 'CrossShardHardUnlinkFileResp':
+        return CrossShardHardUnlinkFileResp()
 
     def calc_packed_size(self) -> int:
         _size = 0
         return _size
 
-ShardRequestBody = Union[LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, IntraShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
-ShardResponseBody = Union[LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, IntraShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
+ShardRequestBody = Union[LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, SnapshotLookupReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
+ShardResponseBody = Union[LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, SnapshotLookupResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
 
 SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {
     ShardMessageKind.LOOKUP: (LookupReq, LookupResp),
@@ -2507,12 +2638,13 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.FILE_SPANS: (FileSpansReq, FileSpansResp),
     ShardMessageKind.SAME_DIRECTORY_RENAME: (SameDirectoryRenameReq, SameDirectoryRenameResp),
     ShardMessageKind.SET_DIRECTORY_INFO: (SetDirectoryInfoReq, SetDirectoryInfoResp),
+    ShardMessageKind.SNAPSHOT_LOOKUP: (SnapshotLookupReq, SnapshotLookupResp),
     ShardMessageKind.VISIT_DIRECTORIES: (VisitDirectoriesReq, VisitDirectoriesResp),
     ShardMessageKind.VISIT_FILES: (VisitFilesReq, VisitFilesResp),
     ShardMessageKind.VISIT_TRANSIENT_FILES: (VisitTransientFilesReq, VisitTransientFilesResp),
     ShardMessageKind.FULL_READ_DIR: (FullReadDirReq, FullReadDirResp),
     ShardMessageKind.REMOVE_NON_OWNED_EDGE: (RemoveNonOwnedEdgeReq, RemoveNonOwnedEdgeResp),
-    ShardMessageKind.INTRA_SHARD_HARD_FILE_UNLINK: (IntraShardHardFileUnlinkReq, IntraShardHardFileUnlinkResp),
+    ShardMessageKind.SAME_SHARD_HARD_FILE_UNLINK: (SameShardHardFileUnlinkReq, SameShardHardFileUnlinkResp),
     ShardMessageKind.REMOVE_SPAN_INITIATE: (RemoveSpanInitiateReq, RemoveSpanInitiateResp),
     ShardMessageKind.REMOVE_SPAN_CERTIFY: (RemoveSpanCertifyReq, RemoveSpanCertifyResp),
     ShardMessageKind.SWAP_BLOCKS: (SwapBlocksReq, SwapBlocksResp),
@@ -2528,8 +2660,8 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.MAKE_FILE_TRANSIENT: (MakeFileTransientReq, MakeFileTransientResp),
 }
 
-CDCRequestBody = Union[MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, HardUnlinkFileReq]
-CDCResponseBody = Union[MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, HardUnlinkFileResp]
+CDCRequestBody = Union[MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, CrossShardHardUnlinkFileReq]
+CDCResponseBody = Union[MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp]
 
 CDC_REQUESTS: Dict[CDCMessageKind, Tuple[Type[CDCRequestBody], Type[CDCResponseBody]]] = {
     CDCMessageKind.MAKE_DIRECTORY: (MakeDirectoryReq, MakeDirectoryResp),
@@ -2537,6 +2669,6 @@ CDC_REQUESTS: Dict[CDCMessageKind, Tuple[Type[CDCRequestBody], Type[CDCResponseB
     CDCMessageKind.SOFT_UNLINK_DIRECTORY: (SoftUnlinkDirectoryReq, SoftUnlinkDirectoryResp),
     CDCMessageKind.RENAME_DIRECTORY: (RenameDirectoryReq, RenameDirectoryResp),
     CDCMessageKind.HARD_UNLINK_DIRECTORY: (HardUnlinkDirectoryReq, HardUnlinkDirectoryResp),
-    CDCMessageKind.HARD_UNLINK_FILE: (HardUnlinkFileReq, HardUnlinkFileResp),
+    CDCMessageKind.CROSS_SHARD_HARD_UNLINK_FILE: (CrossShardHardUnlinkFileReq, CrossShardHardUnlinkFileResp),
 }
 

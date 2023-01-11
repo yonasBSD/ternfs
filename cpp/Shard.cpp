@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 
+#include "Assert.hpp"
 #include "Bincode.hpp"
 #include "Crypto.hpp"
 #include "Exception.hpp"
@@ -19,6 +20,7 @@
 #include "Shuckle.hpp"
 #include "Time.hpp"
 #include "Undertaker.hpp"
+#include "splitmix64.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -49,14 +51,30 @@ private:
     ShardId _shid;
     std::atomic<bool> _stop;
     bool _waitForShuckle;
+    uint64_t _packetDropRand;
+    uint64_t _incomingPacketDropProbability; // probability * 10,000
+    uint64_t _outgoingPacketDropProbability; // probability * 10,000
 public:
     ShardServer(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
         _env(logger, "server"),
         _shared(shared),
         _shid(shid),
         _stop(false),
-        _waitForShuckle(options.waitForShuckle)
-    {}
+        _waitForShuckle(options.waitForShuckle),
+        _packetDropRand(shid.port()),
+        _incomingPacketDropProbability(0),
+        _outgoingPacketDropProbability(0)
+    {
+        auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
+            if (prob != 0.0) {
+                LOG_INFO(_env, "Will drop %s%% of %s packets", prob*100.0, what);
+                iprob = prob * 10'000.0;
+                ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
+            }
+        };
+        convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
+        convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
+    }
 
     virtual ~ShardServer() = default;
 
@@ -91,7 +109,7 @@ public:
         {
             struct timeval tv;
             tv.tv_sec = 0;
-            tv.tv_usec = 100000;
+            tv.tv_usec = 10'000;
             if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
                 throw SYSCALL_EXCEPTION("setsockopt");
             }
@@ -139,6 +157,11 @@ public:
             } catch (BincodeException err) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
                 RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", clientAddr);
+                continue;
+            }
+
+            if (splitmix64(_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
+                LOG_DEBUG(_env, "artificially dropping request %s", reqHeader.requestId);
                 continue;
             }
 
@@ -195,6 +218,11 @@ public:
                 LOG_DEBUG(_env, "request %s failed with error %s", reqContainer->kind(), err);
                 ShardResponseHeader(reqHeader.requestId, ShardMessageKind::ERROR).pack(respBbuf);
                 respBbuf.packScalar<uint16_t>((uint16_t)err);
+            }
+
+            if (splitmix64(_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
+                LOG_DEBUG(_env, "artificially dropping response %s", reqHeader.requestId);
+                continue;
             }
 
             if (sendto(sock, respBbuf.data, respBbuf.len(), 0, (struct sockaddr*)&clientAddr, sizeof(clientAddr)) != respBbuf.len()) {

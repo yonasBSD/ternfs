@@ -12,7 +12,7 @@ type scratchFile struct {
 	offset uint64
 }
 
-func ensureScratchFile(log LogLevels, client Client, migratingIn msgs.InodeId, file *scratchFile) error {
+func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
@@ -36,7 +36,7 @@ func ensureScratchFile(log LogLevels, client Client, migratingIn msgs.InodeId, f
 }
 
 func copyBlock(
-	log LogLevels, client Client,
+	log LogLevels, client *Client,
 	file *scratchFile, blockServices []msgs.BlockService, blockSize uint64, storageClass msgs.StorageClass, block *msgs.FetchedBlock,
 ) (msgs.BlockId, error) {
 	blockService := blockServices[block.BlockServiceIx]
@@ -90,7 +90,7 @@ type MigrateStats struct {
 // it'll be recovered from the other. If possible, anyway.
 //
 // Returns the number of migrated blocks.
-func MigrateBlocksInFile(log LogLevels, client Client, stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
+func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
 	scratchFile := scratchFile{}
 	stopHeartbeat := make(chan struct{}, 1)
 	defer func() { stopHeartbeat <- struct{}{} }()
@@ -186,7 +186,7 @@ func MigrateBlocksInFile(log LogLevels, client Client, stats *MigrateStats, bloc
 
 // Tries to migrate as many blocks as possible from that block service in a certain
 // shard.
-func migrateBlocksInternal(log LogLevels, client Client, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
+func migrateBlocksInternal(log LogLevels, client *Client, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
 	for {
@@ -208,7 +208,7 @@ func migrateBlocksInternal(log LogLevels, client Client, stats *MigrateStats, sh
 }
 
 func MigrateBlocks(log LogLevels, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
-	client, err := NewShardSpecificClient(shid)
+	client, err := NewClient(&shid, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func MigrateBlocks(log LogLevels, shid msgs.ShardId, blockServiceId msgs.BlockSe
 }
 
 func MigrateBlocksInAllShards(log LogLevels, blockServiceId msgs.BlockServiceId) error {
-	client, err := NewAllShardsClient()
+	client, err := NewClient(nil, nil, nil)
 	if err != nil {
 		return err
 	}

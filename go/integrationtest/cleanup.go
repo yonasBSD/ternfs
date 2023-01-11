@@ -6,7 +6,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func deleteDir(log eggs.LogLevels, client eggs.Client, ownerId msgs.InodeId, name string, dirId msgs.InodeId) {
+func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
 		DirId: dirId,
 	}
@@ -17,10 +17,13 @@ func deleteDir(log eggs.LogLevels, client eggs.Client, ownerId msgs.InodeId, nam
 		}
 		for _, res := range readDirResp.Results {
 			if res.TargetId.Type() == msgs.DIRECTORY {
-				deleteDir(log, client, dirId, res.Name, res.TargetId)
+				deleteDir(log, client, dirId, res.Name, res.CreationTime, res.TargetId)
 			} else {
 				if err := client.ShardRequest(
-					log, res.TargetId.Shard(), &msgs.SoftUnlinkFileReq{OwnerId: dirId, FileId: res.TargetId, Name: res.Name}, &msgs.SoftUnlinkFileResp{},
+					log,
+					dirId.Shard(),
+					&msgs.SoftUnlinkFileReq{OwnerId: dirId, FileId: res.TargetId, Name: res.Name, CreationTime: res.CreationTime},
+					&msgs.SoftUnlinkFileResp{},
 				); err != nil {
 					panic(err)
 				}
@@ -32,7 +35,7 @@ func deleteDir(log eggs.LogLevels, client eggs.Client, ownerId msgs.InodeId, nam
 	}
 	if ownerId != msgs.NULL_INODE_ID {
 		if err := client.CDCRequest(
-			log, &msgs.SoftUnlinkDirectoryReq{OwnerId: ownerId, TargetId: dirId, Name: name}, &msgs.SoftUnlinkDirectoryResp{},
+			log, &msgs.SoftUnlinkDirectoryReq{OwnerId: ownerId, TargetId: dirId, Name: name, CreationTime: creationTime}, &msgs.SoftUnlinkDirectoryResp{},
 		); err != nil {
 			panic(err)
 		}
@@ -40,16 +43,17 @@ func deleteDir(log eggs.LogLevels, client eggs.Client, ownerId msgs.InodeId, nam
 }
 
 func cleanupAfterTest(
+	log eggs.LogLevels,
+	counters *eggs.ClientCounters,
 	blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) {
-	log := &eggs.LogToStdout{}
-	client, err := eggs.NewAllShardsClient()
+	client, err := eggs.NewClient(nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
 	defer client.Close()
 	// Delete all current things
-	deleteDir(log, client, msgs.NULL_INODE_ID, "", msgs.ROOT_DIR_INODE_ID)
+	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Make all historical stuff die immediately for all directories
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
@@ -78,10 +82,10 @@ func cleanupAfterTest(
 		}
 	}
 	// Collect everything
-	if err := eggs.CollectDirectoriesInAllShards(log); err != nil {
+	if err := eggs.CollectDirectoriesInAllShards(log, counters); err != nil {
 		panic(err)
 	}
-	if err := eggs.DestructFilesInAllShards(log, blockServicesKeys); err != nil {
+	if err := eggs.DestructFilesInAllShards(log, counters, blockServicesKeys); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left
@@ -103,10 +107,28 @@ func cleanupAfterTest(
 		if len(visitFilesResp.Ids) > 0 {
 			panic(fmt.Errorf("%v: unexpected files (%v) after cleanup", shid, len(visitFilesResp.Ids)))
 		}
-		// No transient files
+		// No transient files. We might have some transient files
+		// left due to repeated calls to construct file because
+		// of packet drops. We check that at least they're empty.
+		visitTransientFilesReq := msgs.VisitTransientFilesReq{}
 		visitTransientFilesResp := msgs.VisitTransientFilesResp{}
-		if err := client.ShardRequest(log, shid, &msgs.VisitTransientFilesReq{}, &visitTransientFilesResp); err != nil {
-			panic(fmt.Errorf("%v: unexpected transient files (%v) after cleanup", shid, len(visitTransientFilesResp.Files)))
+		for {
+			if err := client.ShardRequest(log, shid, &visitTransientFilesReq, &visitTransientFilesResp); err != nil {
+				panic(err)
+			}
+			for _, file := range visitTransientFilesResp.Files {
+				statResp := msgs.StatTransientFileResp{}
+				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
+					panic(err)
+				}
+				if statResp.Size > 0 {
+					panic(fmt.Errorf("unexpected non-empty transient file %v after cleanup", file))
+				}
+			}
+			if visitTransientFilesResp.NextId == 0 {
+				break
+			}
+			visitTransientFilesReq.BeginId = visitTransientFilesResp.NextId
 		}
 	}
 	// Nothing in root dir
@@ -117,5 +139,4 @@ func cleanupAfterTest(
 	if len(fullReadDirResp.Results) != 0 {
 		panic(fmt.Errorf("unexpected stuff in root directory"))
 	}
-
 }

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -207,9 +206,9 @@ func (procs *ManagedProcesses) Close() {
 				return
 			}
 			proc.cmd.Process.Signal(syscall.SIGTERM)
-			// wait at most 5 seconds for process to come down
+			// wait at most 20 seconds for process to come down
 			go func() {
-				time.Sleep(5 * time.Second)
+				time.Sleep(20 * time.Second)
 				fmt.Printf("process %s not terminating, killing it\n", proc.name)
 				proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
 			}()
@@ -356,20 +355,28 @@ func WaitForShuckle(shuckleHost string, expectedBlockServices int, timeout time.
 }
 
 type ShardOpts struct {
-	Exe            string
-	Dir            string
-	Verbose        bool
-	Shid           msgs.ShardId
-	Valgrind       bool
-	WaitForShuckle bool
+	Exe                string
+	Dir                string
+	Verbose            bool
+	Shid               msgs.ShardId
+	Valgrind           bool
+	WaitForShuckle     bool
+	Perf               bool
+	IncomingPacketDrop float64
+	OutgoingPacketDrop float64
 }
 
 func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
+	if opts.Valgrind && opts.Perf {
+		panic(fmt.Errorf("cannot do valgrind and perf together"))
+	}
 	createDataDir(opts.Dir)
 	args := []string{
 		"--log-file", path.Join(opts.Dir, "log"),
 		opts.Dir,
 		fmt.Sprintf("%d", int(opts.Shid)),
+		"--incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
+		"--outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 	}
 	if opts.Verbose {
 		args = append(args, "--verbose")
@@ -399,19 +406,37 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 			mpArgs.Args...,
 		)
 		procs.Start(&mpArgs)
+	} else if opts.Perf {
+		mpArgs.Name = fmt.Sprintf("%s (perf)", mpArgs.Name)
+		mpArgs.Exe = "perf"
+		mpArgs.Args = append(
+			[]string{
+				"record",
+				fmt.Sprintf("--output=%s", path.Join(opts.Dir, "perf.data")),
+				opts.Exe,
+			},
+			mpArgs.Args...,
+		)
+		procs.Start(&mpArgs)
 	} else {
 		procs.Start(&mpArgs)
 	}
 }
 
 type CDCOpts struct {
-	Exe      string
-	Dir      string
-	Verbose  bool
-	Valgrind bool
+	Exe                string
+	Dir                string
+	Verbose            bool
+	Valgrind           bool
+	Perf               bool
+	IncomingPacketDrop float64
+	OutgoingPacketDrop float64
 }
 
 func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
+	if opts.Valgrind && opts.Perf {
+		panic(fmt.Errorf("cannot do valgrind and perf together"))
+	}
 	createDataDir(opts.Dir)
 	args := []string{
 		"--log-file", path.Join(opts.Dir, "log"),
@@ -442,6 +467,18 @@ func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
 			mpArgs.Args...,
 		)
 		procs.Start(&mpArgs)
+	} else if opts.Perf {
+		mpArgs.Name = fmt.Sprintf("%s (perf)", mpArgs.Name)
+		mpArgs.Exe = "perf"
+		mpArgs.Args = append(
+			[]string{
+				"record",
+				fmt.Sprintf("--output=%s", path.Join(opts.Dir, "perf.data")),
+				opts.Exe,
+			},
+			mpArgs.Args...,
+		)
+		procs.Start(&mpArgs)
 	} else {
 		procs.Start(&mpArgs)
 	}
@@ -450,27 +487,24 @@ func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
 func WaitForShard(shid msgs.ShardId, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
-	var sock *net.UDPConn
+	var client *Client
 	for {
 		t := time.Now()
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
 		}
-		sock, err = ShardSocket(shid)
+		client, err = NewClient(&shid, nil, nil)
 		if err != nil {
-			sock.Close()
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		err = ShardRequestSocket(
+		err = client.ShardRequest(
 			LogBlackHole{},
-			nil,
-			sock,
-			time.Second,
+			shid,
 			&msgs.VisitDirectoriesReq{},
 			&msgs.VisitDirectoriesResp{},
 		)
-		sock.Close()
+		client.Close()
 		if err != nil {
 			time.Sleep(10 * time.Millisecond)
 			continue

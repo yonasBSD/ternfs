@@ -12,6 +12,9 @@ echo "$(tput bold)integration tests$(tput sgr0)"
 echo "$(tput bold)integration tests, sanitized$(tput sgr0)"
 (cd go/integrationtest && go run . -sanitize)
 
+echo "$(tput bold)integration tests, packet drop$(tput sgr0)"
+(cd go/integrationtest && go run . -sanitize -outgoing-packet-drop 0.1 -short)
+
 # # Both ./cpp/run-tests.sh and the integration test will write coverage info
 # 
 # rm -f ./cpp/build/debug-cov-sanitize/*.gcda ./cpp/build/debug-cov-sanitize/*.gcov

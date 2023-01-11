@@ -1,124 +1,169 @@
 package eggs
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"net"
-	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
-type Client interface {
-	ShardRequest(log LogLevels, shid msgs.ShardId, req bincode.Packable, resp bincode.Unpackable) error
-	CDCRequest(log LogLevels, req bincode.Packable, resp bincode.Unpackable) error
+type ShardSocketFactory interface {
+	GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error)
+	ReleaseShardSocket(shid msgs.ShardId)
+}
+
+type ClientCounters struct {
+	// these arrays are indexed by req type
+	ShardReqsCounts [256]int64
+	ShardReqsNanos  [256]int64
+	CDCReqsCounts   [256]int64
+	CDCReqsNanos    [256]int64
+}
+
+func (c *ClientCounters) TotalShardRequests() int64 {
+	total := int64(0)
+	for i := 0; i < 256; i++ {
+		total += c.ShardReqsCounts[i]
+	}
+	return total
+}
+
+func (c *ClientCounters) TotalCDCRequests() int64 {
+	total := int64(0)
+	for i := 0; i < 256; i++ {
+		total += c.CDCReqsCounts[i]
+	}
+	return total
+}
+
+type Client struct {
+	ShardSocketFactory ShardSocketFactory
+	CDCSocket          *net.UDPConn
+	Counters           *ClientCounters
+	CDCKey             cipher.Block
+}
+
+func NewClient(shid *msgs.ShardId, counters *ClientCounters, cdcKey cipher.Block) (*Client, error) {
+	var err error
+	c := Client{}
+	c.CDCSocket, err = CreateCDCSocket()
+	if err != nil {
+		return nil, err
+	}
+	if shid != nil {
+		c.ShardSocketFactory, err = NewShardSpecificFactory(*shid)
+		if err != nil {
+			c.CDCSocket.Close()
+			return nil, err
+		}
+	} else {
+		c.ShardSocketFactory, err = NewAllShardsFactory()
+		if err != nil {
+			c.CDCSocket.Close()
+			return nil, err
+		}
+	}
+	c.Counters = counters
+	c.CDCKey = cdcKey
+	return &c, nil
+}
+
+func (c *Client) Close() {
+	switch factory := c.ShardSocketFactory.(type) {
+	case *AllShardsFactory:
+		factory.Close()
+	case *ShardSpecificFactory:
+		factory.Close()
+	default:
+		panic(fmt.Errorf("bad factory %T", c.ShardSocketFactory))
+	}
+	if err := c.CDCSocket.Close(); err != nil {
+		panic(err)
+	}
 }
 
 // Holds sockets to all 256 shards
-type AllShardsClient struct {
-	timeout    time.Duration
-	shardSocks []*net.UDPConn
-	cdcSock    *net.UDPConn
+type AllShardsFactory struct {
+	shardSocks [256]*net.UDPConn
 }
 
-func NewAllShardsClient() (*AllShardsClient, error) {
+func NewAllShardsFactory() (*AllShardsFactory, error) {
 	var err error
-	c := AllShardsClient{
-		timeout: 10 * time.Second,
-	}
-	c.shardSocks = make([]*net.UDPConn, 256)
+	c := AllShardsFactory{}
 	for i := 0; i < 256; i++ {
-		c.shardSocks[msgs.ShardId(i)], err = ShardSocket(msgs.ShardId(i))
+		c.shardSocks[msgs.ShardId(i)], err = CreateShardSocket(msgs.ShardId(i))
 		if err != nil {
 			return nil, err
 		}
 	}
-	c.cdcSock, err = CDCSocket()
-	if err != nil {
-		return nil, err
-	}
 	return &c, nil
 }
 
-// TODO probably convert these errors to stderr, we can't do much with them usually
-// but they'd be worth knowing about
-func (c *AllShardsClient) Close() error {
+func (c *AllShardsFactory) Close() {
 	for _, sock := range c.shardSocks {
 		if err := sock.Close(); err != nil {
-			return err
+			panic(err)
 		}
 	}
-	if err := c.cdcSock.Close(); err != nil {
-		return err
-	}
-	return nil
 }
 
-func (c *AllShardsClient) ShardRequest(log LogLevels, shid msgs.ShardId, req bincode.Packable, resp bincode.Unpackable) error {
-	return ShardRequestSocket(log, nil, c.shardSocks[shid], c.timeout, req, resp)
+func (c *AllShardsFactory) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
+	return c.shardSocks[int(shid)], nil
 }
 
-func (c *AllShardsClient) CDCRequest(log LogLevels, req bincode.Packable, resp bincode.Unpackable) error {
-	return CDCRequestSocket(log, c.cdcSock, c.timeout, req, resp)
-}
+func (c *AllShardsFactory) ReleaseShardSocket(msgs.ShardId) {}
 
 // For when you almost always do requests to a single shard (e.g. in GC).
-type ShardSpecificClient struct {
-	timeout   time.Duration
+type ShardSpecificFactory struct {
 	shid      msgs.ShardId
 	shardSock *net.UDPConn
-	cdcSock   *net.UDPConn
 }
 
 // TODO probably convert these errors to stderr, we can't do much with them usually
 // but they'd be worth knowing about
-func (c *ShardSpecificClient) Close() error {
+func (c *ShardSpecificFactory) Close() error {
 	if err := c.shardSock.Close(); err != nil {
 		return err
 	}
-	if err := c.cdcSock.Close(); err != nil {
-		return err
-	}
 	return nil
 }
 
-func NewShardSpecificClient(shid msgs.ShardId) (*ShardSpecificClient, error) {
-	c := ShardSpecificClient{
-		timeout: time.Second,
-		shid:    shid,
+func NewShardSpecificFactory(shid msgs.ShardId) (*ShardSpecificFactory, error) {
+	c := ShardSpecificFactory{
+		shid: shid,
 	}
 	var err error
-	c.shardSock, err = ShardSocket(shid)
-	if err != nil {
-		return nil, err
-	}
-	c.cdcSock, err = CDCSocket()
+	c.shardSock, err = CreateShardSocket(shid)
 	if err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
 
-func (c *ShardSpecificClient) ShardRequest(log LogLevels, shid msgs.ShardId, req bincode.Packable, resp bincode.Unpackable) error {
-	var shardSock *net.UDPConn
-	var err error
+func (c *ShardSpecificFactory) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
 	if shid == c.shid {
-		shardSock = c.shardSock
+		return c.shardSock, nil
 	} else {
-		shardSock, err = ShardSocket(shid)
+		shardSock, err := CreateShardSocket(shid)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer shardSock.Close()
+		return shardSock, nil
 	}
-	return ShardRequestSocket(log, nil, shardSock, c.timeout, req, resp)
 }
 
-func (c *ShardSpecificClient) CDCRequest(log LogLevels, req bincode.Packable, resp bincode.Unpackable) error {
-	return CDCRequestSocket(log, c.cdcSock, c.timeout, req, resp)
+func (c *ShardSpecificFactory) ReleaseShardSocket(shid msgs.ShardId) {
+	if shid == c.shid {
+		return
+	}
+	if err := c.shardSock.Close(); err != nil {
+		panic(err)
+	}
 }
 
 // nil if the directory has no directory info (i.e. if it is inherited)
-func GetDirectoryInfo(log LogLevels, c Client, id msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
+func GetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
 	req := msgs.StatDirectoryReq{
 		Id: id,
 	}
@@ -136,7 +181,7 @@ func GetDirectoryInfo(log LogLevels, c Client, id msgs.InodeId) (*msgs.Directory
 	return &info, nil
 }
 
-func SetDirectoryInfo(log LogLevels, c Client, id msgs.InodeId, inherited bool, info *msgs.DirectoryInfoBody) error {
+func SetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId, inherited bool, info *msgs.DirectoryInfoBody) error {
 	var buf []byte
 	if inherited {
 		if info != nil {

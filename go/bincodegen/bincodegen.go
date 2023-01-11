@@ -191,6 +191,18 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 	out.Write(cg.unpack.Bytes())
 }
 
+func generateGoReqResp(out io.Writer, rr reqRespType, enumType string, reqKindFun string, respKindFun string) {
+	fmt.Fprintf(out, "func (v *%s) %s() %s {\n", rr.req.Name(), reqKindFun, enumType)
+	fmt.Fprintf(out, "\treturn %s\n", reqRespEnum(rr))
+	fmt.Fprintf(out, "}\n\n")
+	generateGoSingle(out, rr.req)
+
+	fmt.Fprintf(out, "func (v *%s) %s() %s {\n", rr.resp.Name(), respKindFun, enumType)
+	fmt.Fprintf(out, "\treturn %s\n", reqRespEnum(rr))
+	fmt.Fprintf(out, "}\n\n")
+	generateGoSingle(out, rr.resp)
+}
+
 func enumName(t reflect.Type) string {
 	tName := t.Name()
 	if !strings.HasSuffix(tName, "Req") && !strings.HasSuffix(tName, "Resp") && !strings.HasSuffix(tName, "Entry") {
@@ -210,32 +222,16 @@ func reqRespEnum(rr reqRespType) string {
 	return reqEnum
 }
 
-func generateGoMsgKind(out io.Writer, typeName string, funName string, reqResps []reqRespType) {
-	fmt.Fprintf(out, "func %s(body any) %s {\n", funName, typeName)
-	fmt.Fprintf(out, "\tswitch body.(type) {\n")
-	fmt.Fprintf(out, "\tcase ErrCode:\n")
-	fmt.Fprintf(out, "\t\treturn 0\n")
+func generateGoMsgKind(out io.Writer, typeName string, reqResps []reqRespType) {
 	seenKinds := map[uint8]bool{}
+
+	fmt.Fprintf(out, "func (k %s) String() string {\n", typeName)
+	fmt.Fprintf(out, "\tswitch k {\n")
 	for _, reqResp := range reqResps {
 		present := seenKinds[reqResp.kind]
 		if present {
 			panic(fmt.Errorf("duplicate kind %d for %s", reqResp.kind, typeName))
 		}
-		seenKinds[reqResp.kind] = true
-		reqName := reqResp.req.Name()
-		respName := reqResp.resp.Name()
-		kindName := reqRespEnum(reqResp)
-		fmt.Fprintf(out, "\tcase *%v, *%v:\n", reqName, respName)
-		fmt.Fprintf(out, "\t\treturn %s\n", kindName)
-	}
-	fmt.Fprintf(out, "\tdefault:\n")
-	fmt.Fprintf(out, "\t\tpanic(fmt.Sprintf(\"bad shard req/resp body %%T\", body))\n")
-	fmt.Fprintf(out, "\t}\n")
-	fmt.Fprintf(out, "}\n\n")
-
-	fmt.Fprintf(out, "func (k %s) String() string {\n", typeName)
-	fmt.Fprintf(out, "\tswitch k {\n")
-	for _, reqResp := range reqResps {
 		fmt.Fprintf(out, "\tcase %v:\n", reqResp.kind)
 		fmt.Fprintf(out, "\t\treturn \"%s\"\n", reqRespEnum(reqResp))
 	}
@@ -296,16 +292,14 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 	generateGoErrorCodes(out, errors)
 
-	generateGoMsgKind(out, "ShardMessageKind", "GetShardMessageKind", shardReqResps)
-	generateGoMsgKind(out, "CDCMessageKind", "GetCDCMessageKind", cdcReqResps)
+	generateGoMsgKind(out, "ShardMessageKind", shardReqResps)
+	generateGoMsgKind(out, "CDCMessageKind", cdcReqResps)
 
 	for _, reqResp := range shardReqResps {
-		generateGoSingle(out, reqResp.req)
-		generateGoSingle(out, reqResp.resp)
+		generateGoReqResp(out, reqResp, "ShardMessageKind", "ShardRequestKind", "ShardResponseKind")
 	}
 	for _, reqResp := range cdcReqResps {
-		generateGoSingle(out, reqResp.req)
-		generateGoSingle(out, reqResp.resp)
+		generateGoReqResp(out, reqResp, "CDCMessageKind", "CDCRequestKind", "CDCResponseKind")
 	}
 	for _, typ := range extras {
 		generateGoSingle(out, typ)
@@ -1101,7 +1095,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SetDirectoryOwnerEntry{}),
 			reflect.TypeOf(msgs.SetDirectoryInfoEntry{}),
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
-			reflect.TypeOf(msgs.IntraShardHardFileUnlinkEntry{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.UpdateBlockServicesEntry{}),
 			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
@@ -1111,15 +1105,6 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 		},
 	)
-
-	/*
-		generateCppLogEntries(
-			hppOut,
-			cppOut,
-			"CDC",
-			[]reflect.Type{},
-		)
-	*/
 
 	return hppOut.Bytes(), cppOut.Bytes()
 }
@@ -1141,6 +1126,8 @@ func main() {
 		"FILE_NOT_FOUND",
 		"DIRECTORY_NOT_FOUND",
 		"NAME_NOT_FOUND",
+		"EDGE_NOT_FOUND",
+		"EDGE_IS_LOCKED",
 		"TYPE_IS_DIRECTORY",
 		"TYPE_IS_NOT_DIRECTORY",
 		"BAD_COOKIE",
@@ -1155,17 +1142,15 @@ func main() {
 		"BAD_BLOCK_PROOF",
 		"CANNOT_OVERRIDE_NAME",
 		"NAME_IS_LOCKED",
-		"OLD_NAME_IS_LOCKED",
-		"NEW_NAME_IS_LOCKED",
 		"MTIME_IS_TOO_RECENT",
 		"MISMATCHING_TARGET",
 		"MISMATCHING_OWNER",
+		"MISMATCHING_CREATION_TIME",
 		"DIRECTORY_NOT_EMPTY",
 		"FILE_IS_TRANSIENT",
 		"OLD_DIRECTORY_NOT_FOUND",
 		"NEW_DIRECTORY_NOT_FOUND",
 		"LOOP_IN_DIRECTORY_RENAME",
-		"EDGE_NOT_FOUND",
 		"DIRECTORY_HAS_OWNER",
 		"FILE_IS_NOT_TRANSIENT",
 		"FILE_NOT_EMPTY",
@@ -1177,10 +1162,10 @@ func main() {
 		"MORE_RECENT_SNAPSHOT_EDGE",
 		"MORE_RECENT_CURRENT_EDGE",
 		"BAD_DIRECTORY_INFO",
-		"CREATION_TIME_TOO_RECENT",
 		"DEADLINE_NOT_PASSED",
 		"SAME_SOURCE_AND_DESTINATION",
 		"SAME_DIRECTORIES",
+		"SAME_SHARD",
 	}
 
 	shardReqResps := []reqRespType{
@@ -1249,6 +1234,11 @@ func main() {
 			reflect.TypeOf(msgs.SetDirectoryInfoReq{}),
 			reflect.TypeOf(msgs.SetDirectoryInfoResp{}),
 		},
+		{
+			0x09,
+			reflect.TypeOf(msgs.SnapshotLookupReq{}),
+			reflect.TypeOf(msgs.SnapshotLookupResp{}),
+		},
 		// PRIVATE OPERATIONS -- These are safe operations, but we don't want the FS client itself
 		// to perform them. TODO make privileged?
 		{
@@ -1278,8 +1268,8 @@ func main() {
 		},
 		{
 			0x18,
-			reflect.TypeOf(msgs.IntraShardHardFileUnlinkReq{}),
-			reflect.TypeOf(msgs.IntraShardHardFileUnlinkResp{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkReq{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkResp{}),
 		},
 		{
 			0x19,
@@ -1377,8 +1367,8 @@ func main() {
 		},
 		{
 			0x06,
-			reflect.TypeOf(msgs.HardUnlinkFileReq{}),
-			reflect.TypeOf(msgs.HardUnlinkFileResp{}),
+			reflect.TypeOf(msgs.CrossShardHardUnlinkFileReq{}),
+			reflect.TypeOf(msgs.CrossShardHardUnlinkFileResp{}),
 		},
 	}
 
@@ -1399,6 +1389,7 @@ func main() {
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
 		reflect.TypeOf(msgs.EntryBlockService{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
+		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)

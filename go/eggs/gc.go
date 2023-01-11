@@ -15,7 +15,7 @@ type DestructionStats struct {
 
 func DestructFile(
 	log LogLevels,
-	client Client,
+	client *Client,
 	blockServicesKeys map[msgs.BlockServiceId][16]byte,
 	stats *DestructionStats,
 	id msgs.InodeId, deadline msgs.EggsTime, cookie [8]byte,
@@ -25,6 +25,7 @@ func DestructFile(
 	now := msgs.Now()
 	if now < deadline {
 		log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", id, deadline, now)
+		return nil
 	}
 	// TODO need to think about transient files that already had dirty spans at the end.
 	// Keep destructing spans until we have nothing
@@ -86,7 +87,7 @@ func DestructFile(
 }
 
 func destructFilesInternal(
-	log LogLevels, client Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) error {
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
@@ -117,9 +118,9 @@ func destructFilesInternal(
 // we'll just generate the proof ourselves and certify. This is only useful
 // for testing, obviously.
 func DestructFiles(
-	log LogLevels, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) error {
-	client, err := NewShardSpecificClient(shid)
+	client, err := NewClient(&shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -133,9 +134,9 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, counters *ClientCounters, blockServicesKeys map[msgs.BlockServiceId][16]byte,
 ) error {
-	client, err := NewAllShardsClient()
+	client, err := NewClient(nil, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ type CollectStats struct {
 
 // returns whether all the edges were removed
 func applyPolicy(
-	log LogLevels, client Client, stats *CollectStats,
+	log LogLevels, client *Client, stats *CollectStats,
 	dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody, edges []msgs.Edge,
 ) (bool, error) {
 	policy := SnapshotPolicy{
@@ -182,23 +183,23 @@ func applyPolicy(
 				// same shard, we can delete directly. We also know that this is not a directory (it's an
 				// owned, but snapshot edge)
 				log.Debug("%v: removing owned snapshot edge %+v", dirId, edge)
-				req := msgs.IntraShardHardFileUnlinkReq{
+				req := msgs.SameShardHardFileUnlinkReq{
 					OwnerId:      dirId,
 					TargetId:     edge.TargetId.Id(),
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				err = client.ShardRequest(log, dirId.Shard(), &req, &msgs.IntraShardHardFileUnlinkResp{})
+				err = client.ShardRequest(log, dirId.Shard(), &req, &msgs.SameShardHardFileUnlinkResp{})
 			} else {
 				// different shard, we need to go through the CDC
 				log.Debug("%v: removing cross-shard owned edge %+v", dirId, edge)
-				req := msgs.HardUnlinkFileReq{
+				req := msgs.CrossShardHardUnlinkFileReq{
 					OwnerId:      dirId,
 					TargetId:     edge.TargetId.Id(),
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				err = client.CDCRequest(log, &req, &msgs.HardUnlinkFileResp{})
+				err = client.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
 			}
 		} else {
 			// non-owned edge, we can just kill it without worrying about much.
@@ -220,7 +221,7 @@ func applyPolicy(
 }
 
 func requestDirectoryInfo(
-	log LogLevels, client Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId,
+	log LogLevels, client *Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId,
 ) (*msgs.DirectoryInfoBody, error) {
 	statResp := msgs.StatDirectoryResp{}
 	err := client.ShardRequest(log, dirId.Shard(), &msgs.StatDirectoryReq{Id: dirId}, &statResp)
@@ -232,7 +233,7 @@ func requestDirectoryInfo(
 }
 
 func resolveDirectoryInfo(
-	log LogLevels, client Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId, statResp *msgs.StatDirectoryResp,
+	log LogLevels, client *Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId, statResp *msgs.StatDirectoryResp,
 ) (*msgs.DirectoryInfoBody, error) {
 	// we have the data directly in the stat response
 	if len(statResp.Info) > 0 {
@@ -260,7 +261,7 @@ func resolveDirectoryInfo(
 	return dirInfoBody, nil
 }
 
-func CollectDirectory(log LogLevels, client Client, dirInfoCache *DirInfoCache, stats *CollectStats, dirId msgs.InodeId) error {
+func CollectDirectory(log LogLevels, client *Client, dirInfoCache *DirInfoCache, stats *CollectStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	stats.VisitedDirectories++
 
@@ -337,7 +338,7 @@ func CollectDirectory(log LogLevels, client Client, dirInfoCache *DirInfoCache, 
 	return nil
 }
 
-func collectDirectoriesInternal(log LogLevels, client Client, stats *CollectStats, shid msgs.ShardId) error {
+func collectDirectoriesInternal(log LogLevels, client *Client, stats *CollectStats, shid msgs.ShardId) error {
 	dirInfoCache := NewDirInfoCache()
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
@@ -365,8 +366,8 @@ func collectDirectoriesInternal(log LogLevels, client Client, stats *CollectStat
 	return nil
 }
 
-func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
-	client, err := NewShardSpecificClient(shid)
+func CollectDirectories(log LogLevels, counters *ClientCounters, shid msgs.ShardId) error {
+	client, err := NewClient(&shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -379,8 +380,8 @@ func CollectDirectories(log LogLevels, shid msgs.ShardId) error {
 	return nil
 }
 
-func CollectDirectoriesInAllShards(log LogLevels) error {
-	client, err := NewAllShardsClient()
+func CollectDirectoriesInAllShards(log LogLevels, counters *ClientCounters) error {
+	client, err := NewClient(nil, counters, nil)
 	if err != nil {
 		return err
 	}

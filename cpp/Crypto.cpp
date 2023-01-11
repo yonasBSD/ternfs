@@ -79,23 +79,15 @@ void expandKey(const std::array<uint8_t, 16>& userkey, AES128Key& key) {
 }
 
 std::array<uint8_t, 8> cbcmac(const AES128Key& key, const uint8_t* data, size_t len) {
+    // load key
     __m128i xmmKey[11];
     for (int i = 0; i < 11; i++) {
         xmmKey[i] = _mm_load_si128((__m128i*)(&key) + i);
     }
+    // CBC MAC step
     __m128i block = _mm_setzero_si128();
     __m128i dataBlock;
-    size_t i;
-    ALIGNED(16) uint8_t scratch[16];
-    for (i = 0; i < len; i += 16) {
-        // load data + CBC xor
-        if (unlikely(len-i < 16)) {
-            memset(scratch, 0, 16);
-            memcpy(scratch, data+i, len-i);
-            dataBlock = _mm_load_si128((__m128i*)scratch);
-        } else {
-            dataBlock = _mm_loadu_si128((__m128i*)(data+i));
-        }
+    auto step = [&xmmKey, &block, &dataBlock]() {
         // CBC xor
         block = _mm_xor_si128(block, dataBlock);
         // encrypt
@@ -104,7 +96,22 @@ std::array<uint8_t, 8> cbcmac(const AES128Key& key, const uint8_t* data, size_t 
             block = _mm_aesenc_si128(block, xmmKey[i]);  // Round i
         }
         block = _mm_aesenclast_si128(block, xmmKey[10]); // Round 10
+    };
+    // unpadded load
+    size_t i = 0;
+    for (; len-i >= 16; i += 16) {
+        dataBlock = _mm_loadu_si128((__m128i*)(data+i));
+        step();
     }
+    // zero-padded load
+    ALIGNED(16) uint8_t scratch[16];
+    if (len-i > 0) {
+        memset(scratch, 0, 16);
+        memcpy(scratch, data+i, len-i);
+        dataBlock = _mm_load_si128((__m128i*)scratch);
+        step();
+    }
+    // extract MAC
     _mm_store_si128((__m128i*)scratch, block);
     std::array<uint8_t, 8> mac;
     memcpy(&mac[0], scratch, 8);

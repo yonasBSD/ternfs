@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <variant>
 
 #include "Bincode.hpp"
@@ -25,39 +26,26 @@ struct CDCStep {
     uint64_t txnFinished;
     EggsError err; // if NO_ERROR, resp is contains the response.
     CDCRespContainer resp;
+
     // If non-zero, a transaction is running, but we need something
     // from a shard to have it proceed.
     //
-    // We have !((finishedTxn != 0) && (runningTxn != 0)) as an invariant
+    // We have !((finishedTxn != 0) && (txnNeedsShard != 0)) as an invariant
     // -- we can't have finished and be running a thing in the same step.
     uint64_t txnNeedsShard;
     CDCShardReq shardReq;
+
     // If non-zero, there is a transaction after the current one waiting
-    // to be executed. Only filled in if `runningTxn == 0`.
+    // to be executed. Only filled in if `txnNeedsShard == 0`.
     // Useful to decide when to call `startNextTransaction` (although
     // calling it is safe in any case).
-    uint64_t nextTxn = 0;
+    uint64_t nextTxn;
 
     void clear() {
         txnFinished = 0;
         txnNeedsShard = 0;
         nextTxn = 0;
     }
-
-    /*
-    void setFinishedTxnErr(uint64_t txnId, EggsError err) {
-        ALWAYS_ASSERT(err != NO_ERROR);
-        finishedTxn = txnId;
-        this->err = err;
-        runningTxn = 0;
-    }
-
-    CDCRespContainer& setFinishedTxn(uint64_t txnId) {
-        finishedTxn = txnId;
-        runningTxn = 0;
-        return resp;
-    }
-    */
 };
 
 std::ostream& operator<<(std::ostream& out, const CDCStep& x);

@@ -519,7 +519,7 @@ TEST_CASE("override") {
     auto logEntry = std::make_unique<ShardLogEntry>();
     uint64_t logEntryIndex = 0;
 
-    const auto createFile = [&](const char* name) {
+    const auto createFile = [&](const char* name) -> std::tuple<InodeId, EggsTime> {
         InodeId id;
         BincodeFixedBytes<8> cookie;
         {
@@ -536,6 +536,7 @@ TEST_CASE("override") {
             auto& req = reqContainer->setVisitTransientFiles();
             NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
         }
+        EggsTime creationTime;
         {
             auto& req = reqContainer->setLinkFile();
             req.fileId = id;
@@ -544,18 +545,20 @@ TEST_CASE("override") {
             req.name = name;
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
             NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+            creationTime = respContainer->getLinkFile().creationTime;
         }
-        return id;
+        return {id, creationTime};
     };
 
-    auto foo = createFile("foo");
-    auto bar = createFile("bar");
+    auto [foo, fooCreationTime] = createFile("foo");
+    auto [bar, barCreationTime] = createFile("bar");
 
     {
         auto& req = reqContainer->setSameDirectoryRename();
         req.dirId = ROOT_DIR_INODE_ID;
         req.targetId = foo;
         req.oldName = "foo";
+        req.oldCreationTime = fooCreationTime;
         req.newName = "bar";
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));

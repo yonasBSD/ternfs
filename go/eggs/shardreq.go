@@ -3,8 +3,8 @@ package eggs
 import (
 	"crypto/cipher"
 	"fmt"
-	"io"
 	"net"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
@@ -12,19 +12,19 @@ import (
 
 type shardRequest struct {
 	requestId uint64
-	body      bincode.Packable
+	body      msgs.ShardRequest
 }
 
 func (req *shardRequest) Pack(buf *bincode.Buf) {
 	buf.PackU32(msgs.SHARD_REQ_PROTOCOL_VERSION)
 	buf.PackU64(req.requestId)
-	buf.PackU8(uint8(msgs.GetShardMessageKind(req.body)))
+	buf.PackU8(uint8(req.body.ShardRequestKind()))
 	req.body.Pack(buf)
 }
 
 func packShardRequest(out *[]byte, req *shardRequest, cdcKey cipher.Block) {
 	written := bincode.PackToBytes(*out, req)
-	if (msgs.GetShardMessageKind(req.body) & 0x80) != 0 {
+	if (req.body.ShardRequestKind() & 0x80) != 0 {
 		// privileged, we must have a key
 		if cdcKey == nil {
 			panic(fmt.Errorf("trying to encode request of privileged kind %T, but got no CDC key", req.body))
@@ -38,19 +38,19 @@ func packShardRequest(out *[]byte, req *shardRequest, cdcKey cipher.Block) {
 
 type ShardResponse struct {
 	RequestId uint64
-	Body      bincode.Bincodable
+	Body      msgs.ShardResponse
 }
 
 func (req *ShardResponse) Pack(buf *bincode.Buf) {
 	buf.PackU32(msgs.SHARD_RESP_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(msgs.GetShardMessageKind(req.Body)))
+	buf.PackU8(uint8(req.Body.ShardResponseKind()))
 	req.Body.Pack(buf)
 }
 
-type UnpackedShardResponse struct {
+type unpackedShardResponse struct {
 	RequestId uint64
-	Body      bincode.Unpackable
+	Body      msgs.ShardResponse
 	// This is where we could decode as far as decoding the request id,
 	// but then errored after. We are interested in this case because
 	// we can safely drop every erroring request that is not our request
@@ -61,9 +61,9 @@ type UnpackedShardResponse struct {
 	Error error
 }
 
-func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
+func (resp *unpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	// panic immediately if we get passed a bogus body
-	expectedKind := msgs.GetShardMessageKind(resp.Body)
+	expectedKind := resp.Body.ShardResponseKind()
 	// decode message header
 	var ver uint32
 	if err := buf.UnpackU32(&ver); err != nil {
@@ -106,87 +106,222 @@ func (resp *UnpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-func ShardRequest(
+const shardSingleTimeout = 10 * time.Millisecond
+const shardMaxElapsed = 1 * time.Second
+
+var requestIdGenerator = uint64(0)
+
+func newRequestId() uint64 {
+	return atomic.AddUint64(&requestIdGenerator, 1)
+}
+
+func (c *Client) checkDeletedEdge(
 	logger LogLevels,
-	cdcKey cipher.Block,
-	writer io.Writer,
-	reader io.Reader,
-	requestId uint64,
-	reqBody bincode.Packable,
+	dirId msgs.InodeId,
+	targetId msgs.InodeId,
+	name string,
+	creationTime msgs.EggsTime,
+	owned bool,
+) bool {
+	// First we check the edge we expect to have moved away
+	snapshotResp := msgs.SnapshotLookupResp{}
+	err := c.ShardRequest(logger, dirId.Shard(), &msgs.SnapshotLookupReq{DirId: dirId, Name: name, StartFrom: creationTime}, &snapshotResp)
+	if err != nil {
+		logger.Info("failed to get snapshot edge (err %v), giving up and returning original error", err)
+		return false
+	}
+	if len(snapshotResp.Edges) != 2 {
+		logger.Info("expected 1 snapshot edges but got %v, giving up and returning original error", len(snapshotResp.Edges))
+		return false
+	}
+	oldEdge := snapshotResp.Edges[0]
+	if oldEdge.TargetId.Extra() != owned || oldEdge.TargetId.Id() != targetId || oldEdge.CreationTime != creationTime {
+		logger.Info("got mismatched snapshot edge (%+v), giving up and returning original error", oldEdge)
+		return false
+	}
+	deleteEdge := snapshotResp.Edges[1]
+	if deleteEdge.TargetId.Id() != msgs.NULL_INODE_ID {
+		logger.Info("expected deletion edge but got %+v, giving up and returning original error", deleteEdge)
+		return false
+	}
+	return true
+}
+
+func (c *Client) checkNewEdgeAfterRename(
+	logger LogLevels,
+	dirId msgs.InodeId,
+	targetId msgs.InodeId,
+	name string,
+	creationTime *msgs.EggsTime,
+) bool {
+	// Then we check the target edge
+	lookupResp := msgs.LookupResp{}
+	err := c.ShardRequest(logger, dirId.Shard(), &msgs.LookupReq{DirId: dirId, Name: name}, &lookupResp)
+	if err != nil {
+		logger.Info("failed to get current edge (err %v), giving up and returning original error", err)
+		return false
+	}
+	if lookupResp.TargetId != targetId {
+		logger.Info("got mismatched current target (%v), giving up and returning original error", lookupResp.TargetId)
+		return false
+	}
+	*creationTime = lookupResp.CreationTime
+	return true
+}
+
+func (c *Client) checkRepeatedShardRequestError(
+	logger LogLevels,
+	// these are already filled in by now
+	req shardRequest,
+	resp msgs.ShardResponse,
+	respErr msgs.ErrCode,
+) error {
+	switch reqBody := req.body.(type) {
+	case *msgs.SameDirectoryRenameReq:
+		if respErr == msgs.EDGE_NOT_FOUND {
+			// Happens when a request succeeds, and then the response gets lost.
+			// We try to apply some heuristics to let this slide. See convo following
+			// <https://eulergamma.slack.com/archives/C03PCJMGAAC/p1673547512380409>.
+			//
+			// Specifically, check that the last snapshot edge is what we expect if
+			// we had  just moved it, and that the target edge also exists.
+			logger.Info("following up on EDGE_NOT_FOUND after repeated SameDirectoryRenameReq %+v", reqBody)
+			if !c.checkDeletedEdge(logger, reqBody.DirId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
+				return respErr
+			}
+			// Then we check the target edge, and update creation time
+			respBody := resp.(*msgs.SameDirectoryRenameResp)
+			if !c.checkNewEdgeAfterRename(logger, reqBody.DirId, reqBody.TargetId, reqBody.NewName, &respBody.NewCreationTime) {
+				return respErr
+			}
+			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
+			return nil
+		}
+	case *msgs.SoftUnlinkFileReq:
+		if respErr == msgs.EDGE_NOT_FOUND {
+			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkFileReq %+v", reqBody)
+			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.FileId, reqBody.Name, reqBody.CreationTime, true) {
+				return respErr
+			}
+			return nil
+		}
+	}
+	return respErr
+}
+
+func (c *Client) ShardRequest(
+	logger LogLevels,
+	shid msgs.ShardId,
+	reqBody msgs.ShardRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.
-	respBody bincode.Unpackable,
+	respBody msgs.ShardResponse,
 ) error {
-	if msgs.GetShardMessageKind(reqBody) != msgs.GetShardMessageKind(respBody) {
+	if reqBody.ShardRequestKind() != respBody.ShardResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	req := shardRequest{
-		requestId: requestId,
-		body:      reqBody,
-	}
-	buffer := make([]byte, msgs.UDP_MTU)
-	reqBytes := buffer
-	t0 := time.Now()
-	logger.Debug("about to send request %T to shard", reqBody)
-	packShardRequest(&reqBytes, &req, cdcKey)
-	written, err := writer.Write(reqBytes)
+	sock, err := c.ShardSocketFactory.GetShardSocket(shid)
 	if err != nil {
-		return fmt.Errorf("couldn't send request: %w", err)
+		return err
 	}
-	if written < len(reqBytes) {
-		panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
-	}
-	respBytes := buffer
-	// Keep going until we found the right request id --
-	// we can't assume that what we get isn't some other
-	// request we thought was timed out.
+	defer c.ShardSocketFactory.ReleaseShardSocket(shid)
+	buffer := make([]byte, msgs.UDP_MTU)
+	attempts := 0
+	startedAt := time.Now()
+	// will keep trying as long as we get timeouts
 	for {
-		respBytes = respBytes[:cap(respBytes)]
-		read, err := reader.Read(respBytes)
-		respBytes = respBytes[:read]
+		elapsed := time.Since(startedAt)
+		if elapsed > shardMaxElapsed {
+			logger.RaiseAlert(fmt.Errorf("giving up on request to shard after waiting for %v", elapsed))
+			return msgs.TIMEOUT
+		}
+		requestId := newRequestId()
+		req := shardRequest{
+			requestId: requestId,
+			body:      reqBody,
+		}
+		reqBytes := buffer
+		packShardRequest(&reqBytes, &req, c.CDCKey)
+		logger.Debug("about to send request id %v (%T) to shard, after %v attempts", requestId, reqBody, attempts)
+		written, err := sock.Write(reqBytes)
 		if err != nil {
-			// pipe is broken, terminate with this err
-			return err
+			return fmt.Errorf("couldn't send request: %w", err)
 		}
-		resp := UnpackedShardResponse{
-			Body: respBody,
+		if written < len(reqBytes) {
+			panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
 		}
-		if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-			logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
-			continue
+		// Keep going until we found the right request id --
+		// we can't assume that what we get isn't some other
+		// request we thought was timed out.
+		sock.SetReadDeadline(time.Now().Add(shardSingleTimeout))
+		for {
+			respBytes := buffer
+			read, err := sock.Read(respBytes)
+			respBytes = respBytes[:read]
+			if err != nil {
+				isTimeout := false
+				switch netErr := err.(type) {
+				case net.Error:
+					isTimeout = netErr.Timeout()
+				}
+				if isTimeout {
+					logger.Debug("got network timeout error %v, will try to retry", err)
+					break // keep trying
+				}
+				// pipe is broken somehow, terminate immediately with this err
+				return err
+			}
+			resp := unpackedShardResponse{
+				Body: respBody,
+			}
+			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
+				continue
+			}
+			if resp.RequestId != req.requestId {
+				logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %v", resp.RequestId, req.requestId, resp.Body, resp.Error))
+				continue
+			}
+			// we've gotten a response
+			elapsed := time.Since(startedAt)
+			if c.Counters != nil {
+				msgKind := reqBody.ShardRequestKind()
+				atomic.AddInt64(&c.Counters.ShardReqsCounts[msgKind], 1)
+				atomic.AddInt64(&c.Counters.ShardReqsNanos[msgKind], elapsed.Nanoseconds())
+			}
+			respErr := resp.Error
+			if respErr != nil {
+				isTimeout := false
+				switch eggsErr := err.(type) {
+				case msgs.ErrCode:
+					isTimeout = eggsErr == msgs.TIMEOUT
+				}
+				if isTimeout {
+					logger.Debug("got resp timeout error %v, will try to retry", err)
+					break // keep trying
+				}
+			}
+			switch eggsErr := respErr.(type) {
+			case msgs.ErrCode:
+				// If we're past the first attempt, there are cases where errors are not what they
+				// seem.
+				if attempts > 0 {
+					respErr = c.checkRepeatedShardRequestError(logger, req, respBody, eggsErr)
+				}
+			}
+			// check if it's an error or not
+			if respErr != nil {
+				logger.Debug("got error %v from shard (took %v)", respErr, elapsed)
+				return respErr
+			}
+			logger.Debug("got response %T from shard (took %v)", respBody, elapsed)
+			return nil
 		}
-		if resp.RequestId != req.requestId {
-			logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %w", resp.RequestId, req.requestId, resp.Body, resp.Error))
-			continue
-		}
-		// we managed to decode, we just need to check that it's not an error
-		if resp.Error != nil {
-			logger.Debug("got error %v from shard (took %v)", resp.Error, time.Since(t0))
-			return resp.Error
-		}
-		logger.Debug("got response %T from shard (took %v)", respBody, time.Since(t0))
-		return nil
+		attempts++
 	}
 }
 
-// This function will set the deadline for the socket.
-// TODO does the deadline persist -- i.e. are we permanently modifying this socket.
-func ShardRequestSocket(
-	logger LogLevels,
-	cdcKey cipher.Block,
-	sock *net.UDPConn,
-	timeout time.Duration,
-	reqBody bincode.Packable,
-	respBody bincode.Unpackable,
-) error {
-	if timeout == time.Duration(0) {
-		panic("zero duration")
-	}
-	sock.SetReadDeadline(time.Now().Add(timeout))
-	return ShardRequest(logger, cdcKey, sock, sock, uint64(msgs.Now()), reqBody, respBody)
-}
-
-func ShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
+func CreateShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
 	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: shid.Port()})
 	if err != nil {
 		return nil, fmt.Errorf("could not create shard socket: %w", err)

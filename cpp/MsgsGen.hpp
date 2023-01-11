@@ -14,31 +14,31 @@ enum class EggsError : uint16_t {
     FILE_NOT_FOUND = 17,
     DIRECTORY_NOT_FOUND = 18,
     NAME_NOT_FOUND = 19,
-    TYPE_IS_DIRECTORY = 20,
-    TYPE_IS_NOT_DIRECTORY = 21,
-    BAD_COOKIE = 22,
-    INCONSISTENT_STORAGE_CLASS_PARITY = 23,
-    LAST_SPAN_STATE_NOT_CLEAN = 24,
-    COULD_NOT_PICK_BLOCK_SERVICES = 25,
-    BAD_SPAN_BODY = 26,
-    SPAN_NOT_FOUND = 27,
-    BLOCK_SERVICE_NOT_FOUND = 28,
-    CANNOT_CERTIFY_BLOCKLESS_SPAN = 29,
-    BAD_NUMBER_OF_BLOCKS_PROOFS = 30,
-    BAD_BLOCK_PROOF = 31,
-    CANNOT_OVERRIDE_NAME = 32,
-    NAME_IS_LOCKED = 33,
-    OLD_NAME_IS_LOCKED = 34,
-    NEW_NAME_IS_LOCKED = 35,
+    EDGE_NOT_FOUND = 20,
+    EDGE_IS_LOCKED = 21,
+    TYPE_IS_DIRECTORY = 22,
+    TYPE_IS_NOT_DIRECTORY = 23,
+    BAD_COOKIE = 24,
+    INCONSISTENT_STORAGE_CLASS_PARITY = 25,
+    LAST_SPAN_STATE_NOT_CLEAN = 26,
+    COULD_NOT_PICK_BLOCK_SERVICES = 27,
+    BAD_SPAN_BODY = 28,
+    SPAN_NOT_FOUND = 29,
+    BLOCK_SERVICE_NOT_FOUND = 30,
+    CANNOT_CERTIFY_BLOCKLESS_SPAN = 31,
+    BAD_NUMBER_OF_BLOCKS_PROOFS = 32,
+    BAD_BLOCK_PROOF = 33,
+    CANNOT_OVERRIDE_NAME = 34,
+    NAME_IS_LOCKED = 35,
     MTIME_IS_TOO_RECENT = 36,
     MISMATCHING_TARGET = 37,
     MISMATCHING_OWNER = 38,
-    DIRECTORY_NOT_EMPTY = 39,
-    FILE_IS_TRANSIENT = 40,
-    OLD_DIRECTORY_NOT_FOUND = 41,
-    NEW_DIRECTORY_NOT_FOUND = 42,
-    LOOP_IN_DIRECTORY_RENAME = 43,
-    EDGE_NOT_FOUND = 44,
+    MISMATCHING_CREATION_TIME = 39,
+    DIRECTORY_NOT_EMPTY = 40,
+    FILE_IS_TRANSIENT = 41,
+    OLD_DIRECTORY_NOT_FOUND = 42,
+    NEW_DIRECTORY_NOT_FOUND = 43,
+    LOOP_IN_DIRECTORY_RENAME = 44,
     DIRECTORY_HAS_OWNER = 45,
     FILE_IS_NOT_TRANSIENT = 46,
     FILE_NOT_EMPTY = 47,
@@ -50,10 +50,10 @@ enum class EggsError : uint16_t {
     MORE_RECENT_SNAPSHOT_EDGE = 53,
     MORE_RECENT_CURRENT_EDGE = 54,
     BAD_DIRECTORY_INFO = 55,
-    CREATION_TIME_TOO_RECENT = 56,
-    DEADLINE_NOT_PASSED = 57,
-    SAME_SOURCE_AND_DESTINATION = 58,
-    SAME_DIRECTORIES = 59,
+    DEADLINE_NOT_PASSED = 56,
+    SAME_SOURCE_AND_DESTINATION = 57,
+    SAME_DIRECTORIES = 58,
+    SAME_SHARD = 59,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -448,6 +448,27 @@ struct EntryNewBlockInfo {
 
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
+struct SnapshotLookupEdge {
+    InodeIdExtra targetId;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
+
+    SnapshotLookupEdge() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // targetId
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupEdge&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
+
 struct LookupReq {
     InodeId dirId;
     BincodeBytes name;
@@ -824,12 +845,14 @@ struct LinkFileReq {
 std::ostream& operator<<(std::ostream& out, const LinkFileReq& x);
 
 struct LinkFileResp {
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     LinkFileResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -844,8 +867,9 @@ struct SoftUnlinkFileReq {
     InodeId ownerId;
     InodeId fileId;
     BincodeBytes name;
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + fileId + name
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
     SoftUnlinkFileReq() { clear(); }
     uint16_t packedSize() const {
@@ -853,6 +877,7 @@ struct SoftUnlinkFileReq {
         _size += 8; // ownerId
         _size += 8; // fileId
         _size += name.packedSize(); // name
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -928,9 +953,10 @@ struct SameDirectoryRenameReq {
     InodeId targetId;
     InodeId dirId;
     BincodeBytes oldName;
+    EggsTime oldCreationTime;
     BincodeBytes newName;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + newName
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameReq() { clear(); }
     uint16_t packedSize() const {
@@ -938,6 +964,7 @@ struct SameDirectoryRenameReq {
         _size += 8; // targetId
         _size += 8; // dirId
         _size += oldName.packedSize(); // oldName
+        _size += 8; // oldCreationTime
         _size += newName.packedSize(); // newName
         return _size;
     }
@@ -950,12 +977,14 @@ struct SameDirectoryRenameReq {
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameReq& x);
 
 struct SameDirectoryRenameResp {
+    EggsTime newCreationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // newCreationTime
 
     SameDirectoryRenameResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // newCreationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1003,6 +1032,50 @@ struct SetDirectoryInfoResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x);
+
+struct SnapshotLookupReq {
+    InodeId dirId;
+    BincodeBytes name;
+    EggsTime startFrom;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + startFrom
+
+    SnapshotLookupReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // dirId
+        _size += name.packedSize(); // name
+        _size += 8; // startFrom
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x);
+
+struct SnapshotLookupResp {
+    EggsTime nextTime;
+    BincodeList<SnapshotLookupEdge> edges;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<SnapshotLookupEdge>::STATIC_SIZE; // nextTime + edges
+
+    SnapshotLookupResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // nextTime
+        _size += edges.packedSize(); // edges
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SnapshotLookupResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x);
 
 struct VisitDirectoriesReq {
     InodeId beginId;
@@ -1208,7 +1281,7 @@ struct RemoveNonOwnedEdgeResp {
 
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeResp& x);
 
-struct IntraShardHardFileUnlinkReq {
+struct SameShardHardFileUnlinkReq {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
@@ -1216,7 +1289,7 @@ struct IntraShardHardFileUnlinkReq {
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
-    IntraShardHardFileUnlinkReq() { clear(); }
+    SameShardHardFileUnlinkReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -1228,16 +1301,16 @@ struct IntraShardHardFileUnlinkReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const IntraShardHardFileUnlinkReq&rhs) const;
+    bool operator==(const SameShardHardFileUnlinkReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const IntraShardHardFileUnlinkReq& x);
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkReq& x);
 
-struct IntraShardHardFileUnlinkResp {
+struct SameShardHardFileUnlinkResp {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    IntraShardHardFileUnlinkResp() { clear(); }
+    SameShardHardFileUnlinkResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -1245,10 +1318,10 @@ struct IntraShardHardFileUnlinkResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const IntraShardHardFileUnlinkResp&rhs) const;
+    bool operator==(const SameShardHardFileUnlinkResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const IntraShardHardFileUnlinkResp& x);
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkResp& x);
 
 struct RemoveSpanInitiateReq {
     InodeId fileId;
@@ -1578,9 +1651,8 @@ struct CreateLockedCurrentEdgeReq {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
-    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + creationTime
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
 
     CreateLockedCurrentEdgeReq() { clear(); }
     uint16_t packedSize() const {
@@ -1588,7 +1660,6 @@ struct CreateLockedCurrentEdgeReq {
         _size += 8; // dirId
         _size += name.packedSize(); // name
         _size += 8; // targetId
-        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1600,12 +1671,14 @@ struct CreateLockedCurrentEdgeReq {
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeReq& x);
 
 struct CreateLockedCurrentEdgeResp {
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     CreateLockedCurrentEdgeResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1618,17 +1691,19 @@ std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeResp& x
 
 struct LockCurrentEdgeReq {
     InodeId dirId;
-    BincodeBytes name;
     InodeId targetId;
+    EggsTime creationTime;
+    BincodeBytes name;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + creationTime + name
 
     LockCurrentEdgeReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
-        _size += name.packedSize(); // name
         _size += 8; // targetId
+        _size += 8; // creationTime
+        _size += name.packedSize(); // name
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1659,16 +1734,18 @@ std::ostream& operator<<(std::ostream& out, const LockCurrentEdgeResp& x);
 struct UnlockCurrentEdgeReq {
     InodeId dirId;
     BincodeBytes name;
+    EggsTime creationTime;
     InodeId targetId;
     bool wasMoved;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // dirId + name + targetId + wasMoved
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + 1; // dirId + name + creationTime + targetId + wasMoved
 
     UnlockCurrentEdgeReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
         _size += name.packedSize(); // name
+        _size += 8; // creationTime
         _size += 8; // targetId
         _size += 1; // wasMoved
         return _size;
@@ -1803,13 +1880,15 @@ std::ostream& operator<<(std::ostream& out, const MakeDirectoryReq& x);
 
 struct MakeDirectoryResp {
     InodeId id;
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // id
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + creationTime
 
     MakeDirectoryResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1824,10 +1903,11 @@ struct RenameFileReq {
     InodeId targetId;
     InodeId oldOwnerId;
     BincodeBytes oldName;
+    EggsTime oldCreationTime;
     InodeId newOwnerId;
     BincodeBytes newName;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + newOwnerId + newName
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + oldCreationTime + newOwnerId + newName
 
     RenameFileReq() { clear(); }
     uint16_t packedSize() const {
@@ -1835,6 +1915,7 @@ struct RenameFileReq {
         _size += 8; // targetId
         _size += 8; // oldOwnerId
         _size += oldName.packedSize(); // oldName
+        _size += 8; // oldCreationTime
         _size += 8; // newOwnerId
         _size += newName.packedSize(); // newName
         return _size;
@@ -1848,12 +1929,14 @@ struct RenameFileReq {
 std::ostream& operator<<(std::ostream& out, const RenameFileReq& x);
 
 struct RenameFileResp {
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     RenameFileResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1867,15 +1950,17 @@ std::ostream& operator<<(std::ostream& out, const RenameFileResp& x);
 struct SoftUnlinkDirectoryReq {
     InodeId ownerId;
     InodeId targetId;
+    EggsTime creationTime;
     BincodeBytes name;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + targetId + name
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + targetId + creationTime + name
 
     SoftUnlinkDirectoryReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
         _size += 8; // targetId
+        _size += 8; // creationTime
         _size += name.packedSize(); // name
         return _size;
     }
@@ -1908,10 +1993,11 @@ struct RenameDirectoryReq {
     InodeId targetId;
     InodeId oldOwnerId;
     BincodeBytes oldName;
+    EggsTime oldCreationTime;
     InodeId newOwnerId;
     BincodeBytes newName;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + newOwnerId + newName
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + oldCreationTime + newOwnerId + newName
 
     RenameDirectoryReq() { clear(); }
     uint16_t packedSize() const {
@@ -1919,6 +2005,7 @@ struct RenameDirectoryReq {
         _size += 8; // targetId
         _size += 8; // oldOwnerId
         _size += oldName.packedSize(); // oldName
+        _size += 8; // oldCreationTime
         _size += 8; // newOwnerId
         _size += newName.packedSize(); // newName
         return _size;
@@ -1932,12 +2019,14 @@ struct RenameDirectoryReq {
 std::ostream& operator<<(std::ostream& out, const RenameDirectoryReq& x);
 
 struct RenameDirectoryResp {
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     RenameDirectoryResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1984,7 +2073,7 @@ struct HardUnlinkDirectoryResp {
 
 std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryResp& x);
 
-struct HardUnlinkFileReq {
+struct CrossShardHardUnlinkFileReq {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
@@ -1992,7 +2081,7 @@ struct HardUnlinkFileReq {
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
-    HardUnlinkFileReq() { clear(); }
+    CrossShardHardUnlinkFileReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -2004,16 +2093,16 @@ struct HardUnlinkFileReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const HardUnlinkFileReq&rhs) const;
+    bool operator==(const CrossShardHardUnlinkFileReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const HardUnlinkFileReq& x);
+std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileReq& x);
 
-struct HardUnlinkFileResp {
+struct CrossShardHardUnlinkFileResp {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    HardUnlinkFileResp() { clear(); }
+    CrossShardHardUnlinkFileResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         return _size;
@@ -2021,10 +2110,10 @@ struct HardUnlinkFileResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const HardUnlinkFileResp&rhs) const;
+    bool operator==(const CrossShardHardUnlinkFileResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const HardUnlinkFileResp& x);
+std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x);
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,
@@ -2041,12 +2130,13 @@ enum class ShardMessageKind : uint8_t {
     FILE_SPANS = 13,
     SAME_DIRECTORY_RENAME = 14,
     SET_DIRECTORY_INFO = 15,
+    SNAPSHOT_LOOKUP = 9,
     VISIT_DIRECTORIES = 21,
     VISIT_FILES = 32,
     VISIT_TRANSIENT_FILES = 22,
     FULL_READ_DIR = 33,
     REMOVE_NON_OWNED_EDGE = 23,
-    INTRA_SHARD_HARD_FILE_UNLINK = 24,
+    SAME_SHARD_HARD_FILE_UNLINK = 24,
     REMOVE_SPAN_INITIATE = 25,
     REMOVE_SPAN_CERTIFY = 26,
     SWAP_BLOCKS = 34,
@@ -2067,7 +2157,7 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, IntraShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, SnapshotLookupReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
@@ -2096,6 +2186,8 @@ public:
     SameDirectoryRenameReq& setSameDirectoryRename();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
     SetDirectoryInfoReq& setSetDirectoryInfo();
+    const SnapshotLookupReq& getSnapshotLookup() const;
+    SnapshotLookupReq& setSnapshotLookup();
     const VisitDirectoriesReq& getVisitDirectories() const;
     VisitDirectoriesReq& setVisitDirectories();
     const VisitFilesReq& getVisitFiles() const;
@@ -2106,8 +2198,8 @@ public:
     FullReadDirReq& setFullReadDir();
     const RemoveNonOwnedEdgeReq& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeReq& setRemoveNonOwnedEdge();
-    const IntraShardHardFileUnlinkReq& getIntraShardHardFileUnlink() const;
-    IntraShardHardFileUnlinkReq& setIntraShardHardFileUnlink();
+    const SameShardHardFileUnlinkReq& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkReq& setSameShardHardFileUnlink();
     const RemoveSpanInitiateReq& getRemoveSpanInitiate() const;
     RemoveSpanInitiateReq& setRemoveSpanInitiate();
     const RemoveSpanCertifyReq& getRemoveSpanCertify() const;
@@ -2147,7 +2239,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, IntraShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, SnapshotLookupResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
@@ -2176,6 +2268,8 @@ public:
     SameDirectoryRenameResp& setSameDirectoryRename();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
     SetDirectoryInfoResp& setSetDirectoryInfo();
+    const SnapshotLookupResp& getSnapshotLookup() const;
+    SnapshotLookupResp& setSnapshotLookup();
     const VisitDirectoriesResp& getVisitDirectories() const;
     VisitDirectoriesResp& setVisitDirectories();
     const VisitFilesResp& getVisitFiles() const;
@@ -2186,8 +2280,8 @@ public:
     FullReadDirResp& setFullReadDir();
     const RemoveNonOwnedEdgeResp& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeResp& setRemoveNonOwnedEdge();
-    const IntraShardHardFileUnlinkResp& getIntraShardHardFileUnlink() const;
-    IntraShardHardFileUnlinkResp& setIntraShardHardFileUnlink();
+    const SameShardHardFileUnlinkResp& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkResp& setSameShardHardFileUnlink();
     const RemoveSpanInitiateResp& getRemoveSpanInitiate() const;
     RemoveSpanInitiateResp& setRemoveSpanInitiate();
     const RemoveSpanCertifyResp& getRemoveSpanCertify() const;
@@ -2231,7 +2325,7 @@ enum class CDCMessageKind : uint8_t {
     SOFT_UNLINK_DIRECTORY = 3,
     RENAME_DIRECTORY = 4,
     HARD_UNLINK_DIRECTORY = 5,
-    HARD_UNLINK_FILE = 6,
+    CROSS_SHARD_HARD_UNLINK_FILE = 6,
 };
 
 std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
@@ -2239,7 +2333,7 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
 struct CDCReqContainer {
 private:
     CDCMessageKind _kind = (CDCMessageKind)0;
-    std::tuple<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, HardUnlinkFileReq> _data;
+    std::tuple<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, CrossShardHardUnlinkFileReq> _data;
 public:
     CDCMessageKind kind() const { return _kind; }
     const MakeDirectoryReq& getMakeDirectory() const;
@@ -2252,8 +2346,8 @@ public:
     RenameDirectoryReq& setRenameDirectory();
     const HardUnlinkDirectoryReq& getHardUnlinkDirectory() const;
     HardUnlinkDirectoryReq& setHardUnlinkDirectory();
-    const HardUnlinkFileReq& getHardUnlinkFile() const;
-    HardUnlinkFileReq& setHardUnlinkFile();
+    const CrossShardHardUnlinkFileReq& getCrossShardHardUnlinkFile() const;
+    CrossShardHardUnlinkFileReq& setCrossShardHardUnlinkFile();
 
     void clear() { _kind = (CDCMessageKind)0; };
 
@@ -2267,7 +2361,7 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
 struct CDCRespContainer {
 private:
     CDCMessageKind _kind = (CDCMessageKind)0;
-    std::tuple<MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, HardUnlinkFileResp> _data;
+    std::tuple<MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp> _data;
 public:
     CDCMessageKind kind() const { return _kind; }
     const MakeDirectoryResp& getMakeDirectory() const;
@@ -2280,8 +2374,8 @@ public:
     RenameDirectoryResp& setRenameDirectory();
     const HardUnlinkDirectoryResp& getHardUnlinkDirectory() const;
     HardUnlinkDirectoryResp& setHardUnlinkDirectory();
-    const HardUnlinkFileResp& getHardUnlinkFile() const;
-    HardUnlinkFileResp& setHardUnlinkFile();
+    const CrossShardHardUnlinkFileResp& getCrossShardHardUnlinkFile() const;
+    CrossShardHardUnlinkFileResp& setCrossShardHardUnlinkFile();
 
     void clear() { _kind = (CDCMessageKind)0; };
 
@@ -2306,7 +2400,7 @@ enum class ShardLogEntryKind : uint16_t {
     SET_DIRECTORY_OWNER = 11,
     SET_DIRECTORY_INFO = 12,
     REMOVE_NON_OWNED_EDGE = 13,
-    INTRA_SHARD_HARD_FILE_UNLINK = 14,
+    SAME_SHARD_HARD_FILE_UNLINK = 14,
     REMOVE_SPAN_INITIATE = 15,
     UPDATE_BLOCK_SERVICES = 16,
     ADD_SPAN_INITIATE = 17,
@@ -2365,19 +2459,21 @@ struct LinkFileEntry {
 std::ostream& operator<<(std::ostream& out, const LinkFileEntry& x);
 
 struct SameDirectoryRenameEntry {
-    InodeId targetId;
     InodeId dirId;
+    InodeId targetId;
     BincodeBytes oldName;
+    EggsTime oldCreationTime;
     BincodeBytes newName;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + newName
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameEntry() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += 8; // targetId
         _size += 8; // dirId
+        _size += 8; // targetId
         _size += oldName.packedSize(); // oldName
+        _size += 8; // oldCreationTime
         _size += newName.packedSize(); // newName
         return _size;
     }
@@ -2393,8 +2489,9 @@ struct SoftUnlinkFileEntry {
     InodeId ownerId;
     InodeId fileId;
     BincodeBytes name;
+    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + fileId + name
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
     SoftUnlinkFileEntry() { clear(); }
     uint16_t packedSize() const {
@@ -2402,6 +2499,7 @@ struct SoftUnlinkFileEntry {
         _size += 8; // ownerId
         _size += 8; // fileId
         _size += name.packedSize(); // name
+        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2439,9 +2537,8 @@ struct CreateLockedCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
-    EggsTime creationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + creationTime
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
 
     CreateLockedCurrentEdgeEntry() { clear(); }
     uint16_t packedSize() const {
@@ -2449,7 +2546,6 @@ struct CreateLockedCurrentEdgeEntry {
         _size += 8; // dirId
         _size += name.packedSize(); // name
         _size += 8; // targetId
-        _size += 8; // creationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2463,16 +2559,18 @@ std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeEntry& 
 struct UnlockCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
+    EggsTime creationTime;
     InodeId targetId;
     bool wasMoved;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // dirId + name + targetId + wasMoved
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + 1; // dirId + name + creationTime + targetId + wasMoved
 
     UnlockCurrentEdgeEntry() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
         _size += name.packedSize(); // name
+        _size += 8; // creationTime
         _size += 8; // targetId
         _size += 1; // wasMoved
         return _size;
@@ -2488,15 +2586,17 @@ std::ostream& operator<<(std::ostream& out, const UnlockCurrentEdgeEntry& x);
 struct LockCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
+    EggsTime creationTime;
     InodeId targetId;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + creationTime + targetId
 
     LockCurrentEdgeEntry() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
         _size += name.packedSize(); // name
+        _size += 8; // creationTime
         _size += 8; // targetId
         return _size;
     }
@@ -2615,7 +2715,7 @@ struct RemoveNonOwnedEdgeEntry {
 
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x);
 
-struct IntraShardHardFileUnlinkEntry {
+struct SameShardHardFileUnlinkEntry {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
@@ -2623,7 +2723,7 @@ struct IntraShardHardFileUnlinkEntry {
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
-    IntraShardHardFileUnlinkEntry() { clear(); }
+    SameShardHardFileUnlinkEntry() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // ownerId
@@ -2635,10 +2735,10 @@ struct IntraShardHardFileUnlinkEntry {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const IntraShardHardFileUnlinkEntry&rhs) const;
+    bool operator==(const SameShardHardFileUnlinkEntry&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const IntraShardHardFileUnlinkEntry& x);
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x);
 
 struct RemoveSpanInitiateEntry {
     InodeId fileId;
@@ -2808,7 +2908,7 @@ std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEnt
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, IntraShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry> _data;
+    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry> _data;
 public:
     ShardLogEntryKind kind() const { return _kind; }
     const ConstructFileEntry& getConstructFile() const;
@@ -2837,8 +2937,8 @@ public:
     SetDirectoryInfoEntry& setSetDirectoryInfo();
     const RemoveNonOwnedEdgeEntry& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeEntry& setRemoveNonOwnedEdge();
-    const IntraShardHardFileUnlinkEntry& getIntraShardHardFileUnlink() const;
-    IntraShardHardFileUnlinkEntry& setIntraShardHardFileUnlink();
+    const SameShardHardFileUnlinkEntry& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkEntry& setSameShardHardFileUnlink();
     const RemoveSpanInitiateEntry& getRemoveSpanInitiate() const;
     RemoveSpanInitiateEntry& setRemoveSpanInitiate();
     const UpdateBlockServicesEntry& getUpdateBlockServices() const;

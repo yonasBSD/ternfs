@@ -78,11 +78,19 @@ func handleRegisterBlockService(ll eggs.LogLevels, bss *blockServices, w http.Re
 	bss.services[bs.Id] = &bs
 }
 
+func noRunawayArgs() {
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
+		os.Exit(2)
+	}
+}
+
 func main() {
 	port := flag.Uint("port", 5000, "Port on which to run on.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()
+	noRunawayArgs()
 
 	logOut := os.Stdout
 	if *logFile != "" {

@@ -198,6 +198,18 @@ func (parity Parity) ParityBlocks() int {
 // --------------------------------------------------------------------
 // Shard requests/responses
 
+type ShardRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShardRequestKind() ShardMessageKind
+}
+
+type ShardResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShardResponseKind() ShardMessageKind
+}
+
 const (
 	EMPTY_STORAGE  StorageClass = 0
 	INLINE_STORAGE StorageClass = 1
@@ -216,6 +228,28 @@ type LookupReq struct {
 type LookupResp struct {
 	TargetId     InodeId
 	CreationTime EggsTime
+}
+
+// This request is only needed to recover from error resulting from repeated
+// calls to things moving edges (e.g. SameDirectoryRenameReq & friends).
+//
+// TODO this and the response are very ad-hoc, it'd possibly be nicer to fold
+// it in FullReadDir
+type SnapshotLookupReq struct {
+	DirId     InodeId
+	Name      string
+	StartFrom EggsTime
+}
+
+type SnapshotLookupEdge struct {
+	// If the extra bit is set, it's owned.
+	TargetId     InodeIdExtra
+	CreationTime EggsTime
+}
+
+type SnapshotLookupResp struct {
+	NextTime EggsTime // 0 for done
+	Edges    []SnapshotLookupEdge
 }
 
 // Does not consider transient files. Might return snapshot files:
@@ -417,13 +451,18 @@ type LinkFileReq struct {
 	Name    string
 }
 
-type LinkFileResp struct{}
+type LinkFileResp struct {
+	CreationTime EggsTime
+}
 
 // turns a current outgoing edge into a snapshot owning edge.
 type SoftUnlinkFileReq struct {
 	OwnerId InodeId
 	FileId  InodeId
 	Name    string
+	// See comment in `SameDirectoryRenameReq` for an idication of why
+	// we have this here even if it's not strictly needed.
+	CreationTime EggsTime
 }
 
 type SoftUnlinkFileResp struct{}
@@ -479,10 +518,26 @@ type SameDirectoryRenameReq struct {
 	TargetId InodeId
 	DirId    InodeId
 	OldName  string
-	NewName  string
+	// This request is a bit annoying in the presence of packet
+	// loss. Consider this scenario: a client performs a
+	// `SameDirectoryRenameReq`, which goes through, but the
+	// response is dropped.
+	//
+	// In this case the client must retry but genuine failures
+	// (for example because the file does not exist) are indistinguishable
+	// from failures due to the previous request going through.
+	//
+	// For this reason we include the creation time here (even if we
+	// don't strictly needed because current edges are uniquely
+	// identified by name) so that the shard can implement heuristics
+	// to let likely repeated calls through in the name of idempotency.
+	OldCreationTime EggsTime
+	NewName         string
 }
 
-type SameDirectoryRenameResp struct{}
+type SameDirectoryRenameResp struct {
+	NewCreationTime EggsTime
+}
 
 type VisitDirectoriesReq struct {
 	BeginId InodeId
@@ -604,31 +659,35 @@ type RemoveEdgesReq struct {
 // if we want to retry things safely. We might create the edge without realizing
 // that we did (e.g. timeouts), and somebody might move it away in the meantime (with
 // some shard-local operation).
+// TODO also add comment regarding that locking edges is safe only because
+// we coordinate things from the CDC
 type CreateLockedCurrentEdgeReq struct {
 	DirId    InodeId
 	Name     string
 	TargetId InodeId
-	// We need this because we want idempotency (retrying this request should
-	// not create spurious edges when overriding files), and we want to guarantee
-	// that the current edge is newest.
+}
+
+type CreateLockedCurrentEdgeResp struct {
 	CreationTime EggsTime
 }
 
-type CreateLockedCurrentEdgeResp struct{}
-
 type LockCurrentEdgeReq struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
+	DirId        InodeId
+	TargetId     InodeId
+	CreationTime EggsTime
+	Name         string
 }
 
 type LockCurrentEdgeResp struct{}
 
-// This also lets us turn edges into snapshot.
+// This also lets us turn edges into snapshot, through `WasMoved`.
 type UnlockCurrentEdgeReq struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
+	DirId        InodeId
+	Name         string
+	CreationTime EggsTime
+	TargetId     InodeId
+	// Turn the current edge into a snapshot edge, and create a deletion
+	// edge with the same name.
 	WasMoved bool
 }
 
@@ -647,14 +706,14 @@ type RemoveNonOwnedEdgeResp struct{}
 
 // Will remove the snapshot, owned edge; and move the file to transient in one
 // go.
-type IntraShardHardFileUnlinkReq struct {
+type SameShardHardFileUnlinkReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
 	CreationTime EggsTime
 }
 
-type IntraShardHardFileUnlinkResp struct{}
+type SameShardHardFileUnlinkResp struct{}
 
 // This is needed to implement inter-shard hard file unlinking, and it is unsafe, since
 // we must make sure that the owned file is made transient in its shard.
@@ -683,7 +742,7 @@ type SetDirectoryInfoReq struct {
 
 type SetDirectoryInfoResp struct{}
 
-// TODO this works with transient files, but don't require a cookie -- it's a bit
+// TODO this works with transient files, but doesn't require a cookie -- it's a bit
 // inconsistent.
 type SwapBlocksReq struct {
 	FileId1     InodeId
@@ -715,6 +774,18 @@ type DirectoryEmptyReq struct {
 // --------------------------------------------------------------------
 // CDC requests/responses
 
+type CDCRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	CDCRequestKind() CDCMessageKind
+}
+
+type CDCResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	CDCResponseKind() CDCMessageKind
+}
+
 type MakeDirectoryReq struct {
 	OwnerId InodeId
 	Name    string
@@ -722,36 +793,44 @@ type MakeDirectoryReq struct {
 }
 
 type MakeDirectoryResp struct {
-	Id InodeId
+	Id           InodeId
+	CreationTime EggsTime
 }
 
 type RenameFileReq struct {
-	TargetId   InodeId
-	OldOwnerId InodeId
-	OldName    string
-	NewOwnerId InodeId
-	NewName    string
+	TargetId        InodeId
+	OldOwnerId      InodeId
+	OldName         string
+	OldCreationTime EggsTime
+	NewOwnerId      InodeId
+	NewName         string
 }
 
-type RenameFileResp struct{}
+type RenameFileResp struct {
+	CreationTime EggsTime
+}
 
 type SoftUnlinkDirectoryReq struct {
-	OwnerId  InodeId
-	TargetId InodeId
-	Name     string
+	OwnerId      InodeId
+	TargetId     InodeId
+	CreationTime EggsTime
+	Name         string
 }
 
 type SoftUnlinkDirectoryResp struct{}
 
 type RenameDirectoryReq struct {
-	TargetId   InodeId
-	OldOwnerId InodeId
-	OldName    string
-	NewOwnerId InodeId
-	NewName    string
+	TargetId        InodeId
+	OldOwnerId      InodeId
+	OldName         string
+	OldCreationTime EggsTime
+	NewOwnerId      InodeId
+	NewName         string
 }
 
-type RenameDirectoryResp struct{}
+type RenameDirectoryResp struct {
+	CreationTime EggsTime
+}
 
 // This operation is safe for files: we can check that it has no spans,
 // and that it is transient.
@@ -771,14 +850,14 @@ type HardUnlinkDirectoryReq struct {
 
 type HardUnlinkDirectoryResp struct{}
 
-type HardUnlinkFileReq struct {
+type CrossShardHardUnlinkFileReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
 	CreationTime EggsTime
 }
 
-type HardUnlinkFileResp struct{}
+type CrossShardHardUnlinkFileResp struct{}
 
 // --------------------------------------------------------------------
 // directory info
@@ -871,16 +950,18 @@ type LinkFileEntry struct {
 }
 
 type SameDirectoryRenameEntry struct {
-	TargetId InodeId
-	DirId    InodeId
-	OldName  string
-	NewName  string
+	DirId           InodeId
+	TargetId        InodeId
+	OldName         string
+	OldCreationTime EggsTime
+	NewName         string
 }
 
 type SoftUnlinkFileEntry struct {
-	OwnerId InodeId
-	FileId  InodeId
-	Name    string
+	OwnerId      InodeId
+	FileId       InodeId
+	Name         string
+	CreationTime EggsTime
 }
 
 type CreateDirectoryInodeEntry struct {
@@ -890,23 +971,28 @@ type CreateDirectoryInodeEntry struct {
 }
 
 type CreateLockedCurrentEdgeEntry struct {
-	DirId        InodeId
-	Name         string
-	TargetId     InodeId
-	CreationTime EggsTime
+	DirId    InodeId
+	Name     string
+	TargetId InodeId
 }
 
 type UnlockCurrentEdgeEntry struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
-	WasMoved bool
+	DirId InodeId
+	Name  string
+	// Here the `CreationTime` is currently not strictly needed, since we have the
+	// locking mechanism + CDC synchronization anyway, which offer stronger guarantees
+	// which means we never need heuristics for this. But we include it for consistency
+	// and to better detect bugs.
+	CreationTime EggsTime
+	TargetId     InodeId
+	WasMoved     bool
 }
 
 type LockCurrentEdgeEntry struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
+	DirId        InodeId
+	Name         string
+	CreationTime EggsTime
+	TargetId     InodeId
 }
 
 type RemoveDirectoryOwnerEntry struct {
@@ -935,7 +1021,7 @@ type RemoveNonOwnedEdgeEntry struct {
 	CreationTime EggsTime
 }
 
-type IntraShardHardFileUnlinkEntry struct {
+type SameShardHardFileUnlinkEntry struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string

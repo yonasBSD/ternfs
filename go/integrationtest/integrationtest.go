@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err.(error))
-		log.Info("PANIC %v. Stacktrace:\n", err)
+		log.Info("PANIC %v. Stacktrace:", err)
 		for _, line := range strings.Split(string(debug.Stack()), "\n") {
 			log.Info(line)
 		}
@@ -25,50 +26,63 @@ func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
 	}
 }
 
-func runTest(blockServicesKeys map[msgs.BlockServiceId][16]byte, what string, run func(stats *harnessStats)) {
-	stats := harnessStats{}
-
-	fmt.Printf("running %s\n", what)
-	t0 := time.Now()
-	run(&stats)
-	elapsed := time.Since(t0)
-	totalShardRequests := int64(0)
-	totalShardNanos := int64(0)
+func formatShardCounters(counters *eggs.ClientCounters) {
+	fmt.Printf("    shard reqs count/avg/total:\n")
 	for i := 0; i < 256; i++ {
-		totalShardRequests += stats.shardReqsCounts[i]
-		totalShardNanos += stats.shardReqsNanos[i]
-	}
-	totalCDCRequests := int64(0)
-	totalCDCNanos := int64(0)
-	for i := 0; i < 256; i++ {
-		totalCDCRequests += stats.cdcReqsCounts[i]
-		totalCDCNanos += stats.cdcReqsNanos[i]
-	}
-
-	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
-	if totalShardRequests > 0 {
-		fmt.Printf("  shard reqs avg times:\n")
-		for i := 0; i < 256; i++ {
-			if stats.shardReqsCounts[i] == 0 {
-				continue
-			}
-			fmt.Printf("    %-30v %10v %10v\n", msgs.ShardMessageKind(i), stats.shardReqsCounts[i], time.Duration(stats.shardReqsNanos[i]/stats.shardReqsCounts[i]))
+		if counters.ShardReqsCounts[i] == 0 {
+			continue
 		}
+		fmt.Printf("      %-30v %10v %10v %v\n", msgs.ShardMessageKind(i), counters.ShardReqsCounts[i], time.Duration(counters.ShardReqsNanos[i]/counters.ShardReqsCounts[i]), time.Duration(counters.ShardReqsNanos[i]))
 	}
-	if totalCDCRequests > 0 {
-		fmt.Printf("  CDC reqs avg times:\n")
-		for i := 0; i < 256; i++ {
-			if stats.cdcReqsCounts[i] == 0 {
-				continue
-			}
-			fmt.Printf("    %-30v %10v %10v\n", msgs.CDCMessageKind(i), stats.cdcReqsCounts[i], time.Duration(stats.cdcReqsNanos[i]/stats.cdcReqsCounts[i]))
-		}
-	}
-
-	cleanupAfterTest(blockServicesKeys)
 }
 
-func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.BlockService) {
+func formatCDCCounters(counters *eggs.ClientCounters) {
+	fmt.Printf("    CDC reqs count/avg/total:\n")
+	for i := 0; i < 256; i++ {
+		if counters.CDCReqsCounts[i] == 0 {
+			continue
+		}
+		fmt.Printf("      %-30v %10v %10v %v\n", msgs.CDCMessageKind(i), counters.CDCReqsCounts[i], time.Duration(counters.CDCReqsNanos[i]/counters.CDCReqsCounts[i]), time.Duration(counters.CDCReqsNanos[i]))
+	}
+}
+
+func runTest(log eggs.LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]byte, filter *regexp.Regexp, name string, extra string, run func(env *eggs.ClientCounters)) {
+	if !filter.Match([]byte(name)) {
+		fmt.Printf("skipping test %s\n", name)
+		return
+	}
+
+	counters := &eggs.ClientCounters{}
+
+	fmt.Printf("running %s, %s\n", name, extra)
+	t0 := time.Now()
+	run(counters)
+	elapsed := time.Since(t0)
+
+	totalShardRequests := counters.TotalShardRequests()
+	totalCDCRequests := counters.TotalCDCRequests()
+	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
+	if totalShardRequests > 0 {
+		formatShardCounters(counters)
+	}
+	if totalCDCRequests > 0 {
+		formatCDCCounters(counters)
+	}
+
+	counters = &eggs.ClientCounters{}
+	t0 = time.Now()
+	cleanupAfterTest(log, counters, blockServicesKeys)
+	elapsed = time.Since(t0)
+	fmt.Printf("  cleanup took %v\n", elapsed)
+	if counters.TotalShardRequests() > 0 {
+		formatShardCounters(counters)
+	}
+	if counters.TotalCDCRequests() > 0 {
+		formatCDCCounters(counters)
+	}
+}
+
+func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.BlockService, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 
 	blockServicesKeys := make(map[msgs.BlockServiceId][16]byte)
@@ -90,45 +104,71 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.B
 		checkpointEvery: 100,       // get times every 100 actions
 		targetFiles:     1000,      // how many files we want
 		lowFiles:        500,
-		threads:         5,
+		threads:         1,
 	}
 	runTest(
+		log,
 		blockServicesKeys,
-		fmt.Sprintf("file history test, %v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
-		func(stats *harnessStats) {
-			fileHistoryTest(log, &fileHistoryOpts, stats, blockServicesKeys)
+		filter,
+		"file history test",
+		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
+		func(counters *eggs.ClientCounters) {
+			fileHistoryTest(log, &fileHistoryOpts, counters, blockServicesKeys)
 		},
 	)
 
 	fsTestOpts := fsTestOpts{
-		numDirs:  1 * 1000,   // we need at least 256 directories, to have at least one dir per shard
-		numFiles: 100 * 1000, // around 100 files per dir
+		numDirs:  1 * 1000,  // we need at least 256 directories, to have at least one dir per shard
+		numFiles: 20 * 1000, // around 20 files per dir
 		depth:    4,
 	}
+	if short {
+		fsTestOpts.numDirs = 200
+		fsTestOpts.numFiles = 10 * 200
+	}
 	runTest(
+		log,
 		blockServicesKeys,
-		fmt.Sprintf("simple fs test, %v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
-		func(stats *harnessStats) {
-			fsTest(log, &fsTestOpts, stats, blockServicesKeys)
+		filter,
+		"simple fs test",
+		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+		func(counters *eggs.ClientCounters) {
+			fsTest(log, &fsTestOpts, counters, blockServicesKeys)
 		},
 	)
 
 	terminateChan <- nil
 }
 
+func noRunawayArgs() {
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
+		os.Exit(2)
+	}
+}
+
 func main() {
 	valgrind := flag.Bool("valgrind", false, "Whether to build for and run with valgrind.")
 	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
-	debug := flag.Bool("debug", false, "Whether to build without optimizations.")
+	debug := flag.Bool("debug", false, "Build without optimizations.")
 	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
-	coverage := flag.Bool("coverage", false, "Whether to build with coverage support. Right now applies only to the C++ shard code.")
+	coverage := flag.Bool("coverage", false, "Build with coverage support. Right now applies only to the C++ shard code.")
+	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
+	perf := flag.Bool("perf", false, "Run the C++ binaries (shard & CDC) with `perf record`")
+	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
+	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
+	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
 	flag.Parse()
+	noRunawayArgs()
 
 	if *verbose && !*debug {
-		panic("You asked me to build without -debug, and with -verbose-shard. This is almost certainly wrong.")
+		fmt.Fprintf(os.Stderr, "You asked me to build without -debug, and with -verbose. This is almost certainly wrong, since you won't get debug messages in the shard/cdc without -debug.")
+		os.Exit(2)
 	}
+
+	filterRe := regexp.MustCompile(*filter)
 
 	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,
@@ -136,12 +176,6 @@ func main() {
 		Debug:    *debug,
 		Coverage: *coverage,
 	}
-
-	log := &eggs.LogToStdout{}
-
-	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
-	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
-	shuckleExe := eggs.BuildShuckleExe(log)
 
 	cleanupDbDir := false
 	tmpDataDir := *dataDir == ""
@@ -162,6 +196,26 @@ func main() {
 			fmt.Printf("preserved temp data dir %v\n", *dataDir)
 		}
 	}()
+
+	logFile := path.Join(*dataDir, "go-log")
+	var logOut *os.File
+	{
+		var err error
+		logOut, err = os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not open file %v: %v", logFile, err)
+			os.Exit(1)
+		}
+		defer logOut.Close()
+	}
+	log := &eggs.LogLogger{
+		Verbose: *verbose,
+		Logger:  eggs.NewLogger(logOut),
+	}
+
+	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
+	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
+	shuckleExe := eggs.BuildShuckleExe(log)
 
 	terminateChan := make(chan any, 1)
 
@@ -197,12 +251,19 @@ func main() {
 		})
 	}
 
+	if *incomingPacketDrop > 0 || *outgoingPacketDrop > 0 {
+		fmt.Printf("will drop %0.2f%% packets\n", (*incomingPacketDrop+*outgoingPacketDrop)*100.0)
+	}
+
 	// Start CDC
 	procs.StartCDC(&eggs.CDCOpts{
-		Exe:      cdcExe,
-		Dir:      path.Join(*dataDir, "cdc"),
-		Verbose:  *verbose,
-		Valgrind: *valgrind,
+		Exe:                cdcExe,
+		Dir:                path.Join(*dataDir, "cdc"),
+		Verbose:            *verbose,
+		Valgrind:           *valgrind,
+		Perf:               *perf,
+		IncomingPacketDrop: *incomingPacketDrop,
+		OutgoingPacketDrop: *outgoingPacketDrop,
 	})
 
 	waitShuckleFor := 10 * time.Second
@@ -213,12 +274,15 @@ func main() {
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		procs.StartShard(&eggs.ShardOpts{
-			Exe:            shardExe,
-			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:        *verbose,
-			Shid:           shid,
-			Valgrind:       *valgrind,
-			WaitForShuckle: true,
+			Exe:                shardExe,
+			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			Verbose:            *verbose,
+			Shid:               shid,
+			Valgrind:           *valgrind,
+			WaitForShuckle:     true,
+			Perf:               *perf,
+			IncomingPacketDrop: *incomingPacketDrop,
+			OutgoingPacketDrop: *outgoingPacketDrop,
 		})
 	}
 
@@ -231,7 +295,7 @@ func main() {
 	fmt.Printf("operational 🤖\n")
 
 	// start tests
-	go func() { runTests(terminateChan, log, blockServices) }()
+	go func() { runTests(terminateChan, log, blockServices, *short, filterRe) }()
 
 	// wait for things to finish
 	err := <-terminateChan

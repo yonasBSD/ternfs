@@ -11,11 +11,19 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+func noRunawayArgs() {
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
+		os.Exit(2)
+	}
+}
+
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	flag.Parse()
+	noRunawayArgs()
 
 	logOut := os.Stdout
 	if *logFile != "" {
@@ -69,7 +77,7 @@ func main() {
 			fmt.Sprintf("shard%v", shard),
 			func() {
 				for {
-					eggs.CollectDirectories(log, shard)
+					eggs.CollectDirectories(log, nil, shard)
 					if *singleIteration {
 						break
 					}

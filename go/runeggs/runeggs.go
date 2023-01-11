@@ -12,6 +12,13 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+func noRunawayArgs() {
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
+		os.Exit(2)
+	}
+}
+
 func main() {
 	dataDir := flag.String("dir", "", "Directory where to store all the databases. If not present a tmp dir will be used.")
 	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind.")
@@ -21,6 +28,7 @@ func main() {
 	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 10).")
 	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 5).")
 	flag.Parse()
+	noRunawayArgs()
 
 	if *verbose && !*debug {
 		panic("You asked me to build without -debug, and with -verbose. This is almost certainly wrong.")

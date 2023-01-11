@@ -13,6 +13,7 @@
 #include "Bincode.hpp"
 #include "CDC.hpp"
 #include "CDCDB.hpp"
+#include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
@@ -21,6 +22,7 @@
 #include "CDCDB.hpp"
 #include "Crypto.hpp"
 #include "CDCKey.hpp"
+#include "splitmix64.hpp"
 
 static uint16_t CDC_PORT = 36137;
 
@@ -48,6 +50,9 @@ private:
     CDCReqContainer _cdcReqContainer;
     ShardRespContainer _shardRespContainer;
     CDCStep _step;
+    uint64_t _shardRequestIdCounter;
+    uint64_t _packetDropRand;
+    uint64_t _packetDropProbability; // probability * 10,000
     std::array<int, 257> _socks;
     AES128Key _expandedCDCKey;
     // The requests we've enqueued, but haven't completed yet, with
@@ -57,13 +62,21 @@ private:
     std::optional<InFlightShardRequest> _inFlightShardReq;
 
 public:
-    CDCServer(Logger& logger, CDCDB& db) :
+    CDCServer(Logger& logger, const CDCOptions& options, CDCDB& db) :
         _env(logger, "req_server"),
         _stop(false),
         _db(db),
         _recvBuf(UDP_MTU),
-        _sendBuf(UDP_MTU)
+        _sendBuf(UDP_MTU),
+        _shardRequestIdCounter(0),
+        _packetDropRand(CDC_PORT),
+        _packetDropProbability(0)
     {
+        if (options.simulatePacketDrop != 0.0) {
+            LOG_INFO(_env, "will drop %s%% of packets", options.simulatePacketDrop*100.0);
+            _packetDropProbability = options.simulatePacketDrop * 10'000.0;
+            ALWAYS_ASSERT(_packetDropProbability > 0 && _packetDropProbability < 10'000);
+        }
         _currentLogIndex = _db.lastAppliedLogEntry();
         memset(&_socks[0], 0, sizeof(_socks));
         expandKey(CDCKey, _expandedCDCKey);
@@ -149,14 +162,14 @@ public:
                 break;
             }
 
-            // timeout after 5 secs
-            if (_inFlightShardReq && (eggsNow() - _inFlightShardReq->sentAt) > 5'000'000'000ull) {
-                _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
+            // timeout after 100ms
+            if (_inFlightShardReq && (eggsNow() - _inFlightShardReq->sentAt) > 100'000'000ull) {
                 _inFlightShardReq.reset();
+                _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
             }
 
-            // 10ms timeout for prompt termination and for timeouts
-            int nfds = epoll_wait(epoll, events, _socks.size(), 10 /* milliseconds */);
+            // 1ms timeout for prompt termination and for shard resps timeouts
+            int nfds = epoll_wait(epoll, events, _socks.size(), 1 /*milliseconds*/);
             if (nfds < 0) {
                 throw SYSCALL_EXCEPTION("epoll_wait");
             }
@@ -191,7 +204,12 @@ private:
             if (read < 0) {
                 throw SYSCALL_EXCEPTION("recvfrom");
             }
-            LOG_DEBUG(_env, "received message from %s", clientAddr);
+            LOG_DEBUG(_env, "received CDC request from %s", clientAddr);
+
+            if (splitmix64(_packetDropRand) % 10'000 < _packetDropProbability) {
+                LOG_DEBUG(_env, "artificially dropping packet");
+                continue;
+            }
 
             BincodeBuf reqBbuf(&_recvBuf[0], read);
             
@@ -205,7 +223,7 @@ private:
                 continue;
             }
 
-            LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, clientAddr);
+            LOG_DEBUG(_env, "received request id %s, kind %s", reqHeader.requestId, reqHeader.kind);
 
             // If this will be filled in with an actual code, it means that we couldn't process
             // the request.
@@ -229,7 +247,7 @@ private:
 
             if (err == NO_ERROR) {
                 // If things went well, process the request
-                LOG_DEBUG(_env, "cdc request %s successfully parsed, will now process", _cdcReqContainer.kind());
+                LOG_DEBUG(_env, "CDC request %s successfully parsed, will now process", _cdcReqContainer.kind());
                 uint64_t txnId = _db.processCDCReq(true, eggsNow(), _advanceLogIndex(), _cdcReqContainer, _step);
                 auto& inFlight = _inFlightTxns[txnId];
                 inFlight.cdcRequestId = reqHeader.requestId;
@@ -257,6 +275,11 @@ private:
             }
         
             LOG_DEBUG(_env, "received response from shard %s", shid);
+    
+            if (splitmix64(_packetDropRand) % 10'000 < _packetDropProbability) {
+                LOG_DEBUG(_env, "artificially dropping packet");
+                continue;
+            }
 
             BincodeBuf reqBbuf(&_recvBuf[0], read);
 
@@ -265,9 +288,11 @@ private:
                 respHeader.unpack(reqBbuf);
             } catch (BincodeException err) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
-                RAISE_ALERT(_env, "could not parse response header from shard %s, dropping it.", shid);
+                RAISE_ALERT(_env, "could not parse response header, dropping response");
                 continue;
             }
+
+            LOG_DEBUG(_env, "received response id %s, kind %s", respHeader.requestId, respHeader.kind);
 
             // Note that below we just let the BincodeExceptions propagate upwards since we
             // control all the code in this codebase, and the header is good, and we're a
@@ -325,7 +350,7 @@ private:
                     RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
                     _sendError(inFlight->second.cdcRequestId, step.err, inFlight->second.clientAddr);
                 } else {
-                    LOG_DEBUG(_env, "sending response back to %s", inFlight->second.clientAddr);
+                    LOG_DEBUG(_env, "sending response with req id %s, kind %s, back to %s", inFlight->second.cdcRequestId, inFlight->second.kind, inFlight->second.clientAddr);
                     BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
                     CDCResponseHeader respHeader(inFlight->second.cdcRequestId, inFlight->second.kind);
                     respHeader.pack(bbuf);
@@ -338,10 +363,10 @@ private:
         if (step.txnNeedsShard != 0) {
             LOG_DEBUG(_env, "txn %s needs shard %s, req %s", step.txnNeedsShard, step.shardReq.shid, step.shardReq.req);
             BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
-            auto t = eggsNow();
             // Header
             ShardRequestHeader shardReqHeader;
-            shardReqHeader.requestId = t.ns;
+            shardReqHeader.requestId = _shardRequestIdCounter;
+            _shardRequestIdCounter++;
             shardReqHeader.kind = step.shardReq.req.kind();
             shardReqHeader.pack(bbuf);
             // Body
@@ -356,12 +381,13 @@ private:
             shardAddr.sin_family = AF_INET;
             shardAddr.sin_port = htons(step.shardReq.shid.port());
             inet_aton("127.0.0.1", &shardAddr.sin_addr);
+            LOG_DEBUG(_env, "sending request with req id %s", shardReqHeader.requestId);
             _send(_socks[(int)step.shardReq.shid.u8 + 1], shardAddr, (const char*)bbuf.data, bbuf.len());
             // Record the in-flight req
             ALWAYS_ASSERT(!_inFlightShardReq);
             auto& inFlight = _inFlightShardReq.emplace();
             inFlight.shardRequestId = shardReqHeader.requestId;
-            inFlight.sentAt = t;
+            inFlight.sentAt = eggsNow();
             inFlight.txnId = step.txnNeedsShard;
             inFlight.shid = step.shardReq.shid;
         }
@@ -417,7 +443,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     CDCDB db(logger, dbDir);
 
     {
-        auto server = std::make_unique<CDCServer>(logger, db);
+        auto server = std::make_unique<CDCServer>(logger, options, db);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runCDCServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");

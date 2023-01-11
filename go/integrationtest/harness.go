@@ -2,9 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync/atomic"
-	"time"
-	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -21,53 +18,27 @@ type fullEdge struct {
 	creationTime msgs.EggsTime
 }
 
-type harnessStats struct {
-	// these arrays are indexed by req type
-	shardReqsCounts [256]int64
-	shardReqsNanos  [256]int64
-	cdcReqsCounts   [256]int64
-	cdcReqsNanos    [256]int64
-}
-
 type harness struct {
 	log               eggs.LogLevels
-	client            eggs.Client
-	stats             *harnessStats
+	client            *eggs.Client
 	blockServicesKeys map[msgs.BlockServiceId][16]byte
 }
 
-func (h *harness) shardReq(
-	shid msgs.ShardId,
-	reqBody bincode.Packable,
-	respBody bincode.Unpackable,
-) {
-	msgKind := msgs.GetShardMessageKind(reqBody)
-	atomic.AddInt64(&h.stats.shardReqsCounts[msgKind], 1)
-	t0 := time.Now()
+func (h *harness) shardReq(shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
 	err := h.client.ShardRequest(h.log, shid, reqBody, respBody)
 	if err != nil {
 		panic(err)
 	}
-	elapsed := time.Since(t0)
-	atomic.AddInt64(&h.stats.shardReqsNanos[msgKind], elapsed.Nanoseconds())
 }
 
-func (h *harness) cdcReq(
-	reqBody bincode.Packable,
-	respBody bincode.Unpackable,
-) {
-	msgKind := msgs.GetCDCMessageKind(reqBody)
-	atomic.AddInt64(&h.stats.cdcReqsCounts[msgKind], 1)
-	t0 := time.Now()
+func (h *harness) cdcReq(reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
 	err := h.client.CDCRequest(h.log, reqBody, respBody)
 	if err != nil {
 		panic(err)
 	}
-	elapsed := time.Since(t0)
-	atomic.AddInt64(&h.stats.cdcReqsNanos[msgKind], elapsed.Nanoseconds())
 }
 
-func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) msgs.InodeId {
+func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	// construct
 	constructReq := msgs.ConstructFileReq{
 		Type: msgs.FILE,
@@ -130,8 +101,9 @@ func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) msgs.
 		OwnerId: dirId,
 		Name:    name,
 	}
-	h.shardReq(dirId.Shard(), &linkReq, &msgs.LinkFileResp{})
-	return constructResp.Id
+	linkResp := msgs.LinkFileResp{}
+	h.shardReq(dirId.Shard(), &linkReq, &linkResp)
+	return constructResp.Id, linkResp.CreationTime
 }
 
 func (h *harness) readDir(dir msgs.InodeId) []edge {
@@ -181,11 +153,10 @@ func (h *harness) fullReadDir(dirId msgs.InodeId) []fullEdge {
 	return edges
 }
 
-func newHarness(log eggs.LogLevels, client eggs.Client, stats *harnessStats, blockServicesKeys map[msgs.BlockServiceId][16]byte) *harness {
+func newHarness(log eggs.LogLevels, client *eggs.Client, blockServicesKeys map[msgs.BlockServiceId][16]byte) *harness {
 	return &harness{
 		log:               log,
 		client:            client,
-		stats:             stats,
 		blockServicesKeys: blockServicesKeys,
 	}
 }

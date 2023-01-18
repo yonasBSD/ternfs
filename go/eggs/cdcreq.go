@@ -3,6 +3,7 @@ package eggs
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"sync/atomic"
 	"time"
@@ -92,8 +93,10 @@ func (resp *unpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-const cdcSingleTimeout = 100 * time.Millisecond
-const cdcMaxElapsed = 10 * time.Second
+// 5 times the shard numbers, given that we roughly do 5 shard requests per CDC request
+const minCDCSingleTimeout = 25 * time.Millisecond
+const maxCDCSingleTimeout = 500 * time.Millisecond
+const cdcMaxElapsed = 5 * time.Second
 
 func (c *Client) checkRepeatedCDCRequestError(
 	logger LogLevels,
@@ -160,7 +163,8 @@ func (c *Client) CDCRequest(
 	// are made regarding the contents of `respBody`.
 	respBody msgs.CDCResponse,
 ) error {
-	if reqBody.CDCRequestKind() != respBody.CDCResponseKind() {
+	msgKind := reqBody.CDCRequestKind()
+	if msgKind != respBody.CDCResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
 	sock := c.CDCSocket
@@ -173,6 +177,9 @@ func (c *Client) CDCRequest(
 		if elapsed > cdcMaxElapsed {
 			logger.RaiseAlert(fmt.Errorf("giving up on request to CDC after waiting for %v", elapsed))
 			return msgs.TIMEOUT
+		}
+		if c.Counters != nil {
+			atomic.AddInt64(&c.Counters.CDC.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
 		req := cdcRequest{
@@ -192,7 +199,8 @@ func (c *Client) CDCRequest(
 		// Keep going until we found the right request id --
 		// we can't assume that what we get isn't some other
 		// request we thought was timed out.
-		sock.SetReadDeadline(time.Now().Add(cdcSingleTimeout))
+		timeout := time.Duration(math.Min(float64(minCDCSingleTimeout)*math.Pow(1.5, float64(attempts)), float64(maxCDCSingleTimeout)))
+		sock.SetReadDeadline(time.Now().Add(timeout))
 		for {
 			respBytes := buffer
 			read, err := sock.Read(respBytes)
@@ -224,9 +232,8 @@ func (c *Client) CDCRequest(
 			// we've gotten a response
 			elapsed := time.Since(startedAt)
 			if c.Counters != nil {
-				msgKind := reqBody.CDCRequestKind()
-				atomic.AddInt64(&c.Counters.CDCReqsCounts[msgKind], 1)
-				atomic.AddInt64(&c.Counters.CDCReqsNanos[msgKind], elapsed.Nanoseconds())
+				atomic.AddInt64(&c.Counters.CDC.Count[msgKind], 1)
+				atomic.AddInt64(&c.Counters.CDC.Nanos[msgKind], elapsed.Nanoseconds())
 			}
 			respErr := resp.error
 			if respErr != nil {

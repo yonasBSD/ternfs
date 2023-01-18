@@ -13,28 +13,24 @@ type ShardSocketFactory interface {
 	ReleaseShardSocket(shid msgs.ShardId)
 }
 
+type ReqCounters struct {
+	Count    [256]int64
+	Attempts [256]int64
+	Nanos    [256]int64
+}
+
+func (c *ReqCounters) TotalRequests() int64 {
+	total := int64(0)
+	for i := 0; i < 256; i++ {
+		total += c.Count[i]
+	}
+	return total
+}
+
 type ClientCounters struct {
 	// these arrays are indexed by req type
-	ShardReqsCounts [256]int64
-	ShardReqsNanos  [256]int64
-	CDCReqsCounts   [256]int64
-	CDCReqsNanos    [256]int64
-}
-
-func (c *ClientCounters) TotalShardRequests() int64 {
-	total := int64(0)
-	for i := 0; i < 256; i++ {
-		total += c.ShardReqsCounts[i]
-	}
-	return total
-}
-
-func (c *ClientCounters) TotalCDCRequests() int64 {
-	total := int64(0)
-	for i := 0; i < 256; i++ {
-		total += c.CDCReqsCounts[i]
-	}
-	return total
+	Shard ReqCounters
+	CDC   ReqCounters
 }
 
 type Client struct {

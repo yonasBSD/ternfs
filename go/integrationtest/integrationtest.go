@@ -14,6 +14,31 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+func formatNanos(nanos int64) string {
+	var amount float64
+	var unit string
+	if nanos < 1e3 {
+		amount = float64(nanos)
+		unit = "ns"
+	} else if nanos < 1e6 {
+		amount = float64(nanos) / 1e3
+		unit = "µs"
+	} else if nanos < 1e9 {
+		amount = float64(nanos) / 1e6
+		unit = "ms"
+	} else if nanos < 1e12 {
+		amount = float64(nanos) / 1e9
+		unit = "s "
+	} else if nanos < 1e12*60 {
+		amount = float64(nanos) / (1e9 * 60.0)
+		unit = "m "
+	} else {
+		amount = float64(nanos) / (1e9 * 60.0 * 60.0)
+		unit = "h "
+	}
+	return fmt.Sprintf("%7.2f%s", amount, unit)
+}
+
 func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err.(error))
@@ -21,28 +46,17 @@ func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
 		for _, line := range strings.Split(string(debug.Stack()), "\n") {
 			log.Info(line)
 		}
-		fmt.Print(string(debug.Stack()))
 		terminateChan <- err
 	}
 }
 
-func formatShardCounters(counters *eggs.ClientCounters) {
-	fmt.Printf("    shard reqs count/avg/total:\n")
+func formatCounters(what string, counters *eggs.ReqCounters) {
+	fmt.Printf("    %s reqs count/attempts/avg/total:\n", what)
 	for i := 0; i < 256; i++ {
-		if counters.ShardReqsCounts[i] == 0 {
+		if counters.Count[i] == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %10v %v\n", msgs.ShardMessageKind(i), counters.ShardReqsCounts[i], time.Duration(counters.ShardReqsNanos[i]/counters.ShardReqsCounts[i]), time.Duration(counters.ShardReqsNanos[i]))
-	}
-}
-
-func formatCDCCounters(counters *eggs.ClientCounters) {
-	fmt.Printf("    CDC reqs count/avg/total:\n")
-	for i := 0; i < 256; i++ {
-		if counters.CDCReqsCounts[i] == 0 {
-			continue
-		}
-		fmt.Printf("      %-30v %10v %10v %v\n", msgs.CDCMessageKind(i), counters.CDCReqsCounts[i], time.Duration(counters.CDCReqsNanos[i]/counters.CDCReqsCounts[i]), time.Duration(counters.CDCReqsNanos[i]))
+		fmt.Printf("      %-30v %10v %6.2f %s %s\n", msgs.ShardMessageKind(i), counters.Count[i], float64(counters.Attempts[i])/float64(counters.Count[i]), formatNanos(counters.Nanos[i]/counters.Count[i]), formatNanos(counters.Nanos[i]))
 	}
 }
 
@@ -59,14 +73,14 @@ func runTest(log eggs.LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]b
 	run(counters)
 	elapsed := time.Since(t0)
 
-	totalShardRequests := counters.TotalShardRequests()
-	totalCDCRequests := counters.TotalCDCRequests()
+	totalShardRequests := counters.Shard.TotalRequests()
+	totalCDCRequests := counters.CDC.TotalRequests()
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatShardCounters(counters)
+		formatCounters("shard", &counters.Shard)
 	}
 	if totalCDCRequests > 0 {
-		formatCDCCounters(counters)
+		formatCounters("CDC", &counters.CDC)
 	}
 
 	counters = &eggs.ClientCounters{}
@@ -74,11 +88,11 @@ func runTest(log eggs.LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]b
 	cleanupAfterTest(log, counters, blockServicesKeys)
 	elapsed = time.Since(t0)
 	fmt.Printf("  cleanup took %v\n", elapsed)
-	if counters.TotalShardRequests() > 0 {
-		formatShardCounters(counters)
+	if counters.Shard.TotalRequests() > 0 {
+		formatCounters("shard", &counters.Shard)
 	}
-	if counters.TotalCDCRequests() > 0 {
-		formatCDCCounters(counters)
+	if counters.CDC.TotalRequests() > 0 {
+		formatCounters("CDC", &counters.CDC)
 	}
 }
 
@@ -104,7 +118,7 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.B
 		checkpointEvery: 100,       // get times every 100 actions
 		targetFiles:     1000,      // how many files we want
 		lowFiles:        500,
-		threads:         1,
+		threads:         5,
 	}
 	runTest(
 		log,
@@ -252,7 +266,7 @@ func main() {
 	}
 
 	if *incomingPacketDrop > 0 || *outgoingPacketDrop > 0 {
-		fmt.Printf("will drop %0.2f%% packets\n", (*incomingPacketDrop+*outgoingPacketDrop)*100.0)
+		fmt.Printf("will drop %0.2f%% of packets\n", (*incomingPacketDrop+*outgoingPacketDrop)*100.0)
 	}
 
 	// Start CDC
@@ -271,9 +285,10 @@ func main() {
 	blockServices := eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
 
 	// Start shards
-	for i := 0; i < 256; i++ {
+	numShards := 256
+	for i := 0; i < numShards; i++ {
 		shid := msgs.ShardId(i)
-		procs.StartShard(&eggs.ShardOpts{
+		shopts := eggs.ShardOpts{
 			Exe:                shardExe,
 			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
 			Verbose:            *verbose,
@@ -283,12 +298,13 @@ func main() {
 			Perf:               *perf,
 			IncomingPacketDrop: *incomingPacketDrop,
 			OutgoingPacketDrop: *outgoingPacketDrop,
-		})
+		}
+		procs.StartShard(&shopts)
 	}
 
 	waitShardFor := 20 * time.Second
 	fmt.Printf("waiting for shards for %v...\n", waitShardFor)
-	for i := 0; i < 256; i++ {
+	for i := 0; i < numShards; i++ {
 		eggs.WaitForShard(msgs.ShardId(i), waitShardFor)
 	}
 

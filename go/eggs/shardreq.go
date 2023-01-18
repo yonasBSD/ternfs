@@ -3,6 +3,7 @@ package eggs
 import (
 	"crypto/cipher"
 	"fmt"
+	"math"
 	"net"
 	"sync/atomic"
 	"time"
@@ -106,7 +107,8 @@ func (resp *unpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	return nil
 }
 
-const shardSingleTimeout = 10 * time.Millisecond
+const minShardSingleTimeout = 10 * time.Millisecond
+const maxShardSingleTimeout = 100 * time.Millisecond
 const shardMaxElapsed = 1 * time.Second
 
 var requestIdGenerator = uint64(0)
@@ -217,7 +219,8 @@ func (c *Client) ShardRequest(
 	// are made regarding the contents of `respBody`.
 	respBody msgs.ShardResponse,
 ) error {
-	if reqBody.ShardRequestKind() != respBody.ShardResponseKind() {
+	msgKind := reqBody.ShardRequestKind()
+	if msgKind != respBody.ShardResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
 	sock, err := c.ShardSocketFactory.GetShardSocket(shid)
@@ -232,8 +235,11 @@ func (c *Client) ShardRequest(
 	for {
 		elapsed := time.Since(startedAt)
 		if elapsed > shardMaxElapsed {
-			logger.RaiseAlert(fmt.Errorf("giving up on request to shard after waiting for %v", elapsed))
+			logger.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
 			return msgs.TIMEOUT
+		}
+		if c.Counters != nil {
+			atomic.AddInt64(&c.Counters.Shard.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
 		req := shardRequest{
@@ -242,52 +248,54 @@ func (c *Client) ShardRequest(
 		}
 		reqBytes := buffer
 		packShardRequest(&reqBytes, &req, c.CDCKey)
-		logger.Debug("about to send request id %v (%T) to shard, after %v attempts", requestId, reqBody, attempts)
+		logger.Debug("about to send request id %v (%T) to shard %v, after %v attempts", requestId, reqBody, shid, attempts)
 		written, err := sock.Write(reqBytes)
 		if err != nil {
-			return fmt.Errorf("couldn't send request: %w", err)
+			return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
 		}
 		if written < len(reqBytes) {
-			panic(fmt.Sprintf("incomplete send -- %v bytes written instead of %v", written, len(reqBytes)))
+			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
 		}
 		// Keep going until we found the right request id --
 		// we can't assume that what we get isn't some other
 		// request we thought was timed out.
-		sock.SetReadDeadline(time.Now().Add(shardSingleTimeout))
+		timeout := time.Duration(math.Min(float64(minShardSingleTimeout)*math.Pow(1.5, float64(attempts)), float64(maxShardSingleTimeout)))
+		sock.SetReadDeadline(time.Now().Add(timeout))
 		for {
 			respBytes := buffer
 			read, err := sock.Read(respBytes)
 			respBytes = respBytes[:read]
 			if err != nil {
-				isTimeout := false
-				switch netErr := err.(type) {
-				case net.Error:
-					isTimeout = netErr.Timeout()
+				// We retry very liberally (at least for now), to survive the shard
+				// dying in the most exotic ways.
+				shouldRetry := false
+				switch err.(type) {
+				case net.Error, *net.OpError:
+					shouldRetry = true
 				}
-				if isTimeout {
-					logger.Debug("got network timeout error %v, will try to retry", err)
+				if shouldRetry {
+					logger.Info("got network error %v to shard %v, will try to retry", err, shid)
 					break // keep trying
 				}
-				// pipe is broken somehow, terminate immediately with this err
+				// Something unexpected happen, exit immediately
 				return err
 			}
 			resp := unpackedShardResponse{
 				Body: respBody,
 			}
 			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
+				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v from shard %v, will continue waiting for responses: %w", req.requestId, shid, err))
 				continue
 			}
 			if resp.RequestId != req.requestId {
-				logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %v", resp.RequestId, req.requestId, resp.Body, resp.Error))
+				logger.RaiseAlert(fmt.Errorf("dropping response %v from shard %v, since we expected request id %v. body: %v, error: %v", resp.RequestId, shid, req.requestId, resp.Body, resp.Error))
 				continue
 			}
 			// we've gotten a response
 			elapsed := time.Since(startedAt)
 			if c.Counters != nil {
-				msgKind := reqBody.ShardRequestKind()
-				atomic.AddInt64(&c.Counters.ShardReqsCounts[msgKind], 1)
-				atomic.AddInt64(&c.Counters.ShardReqsNanos[msgKind], elapsed.Nanoseconds())
+				atomic.AddInt64(&c.Counters.Shard.Count[msgKind], 1)
+				atomic.AddInt64(&c.Counters.Shard.Nanos[msgKind], elapsed.Nanoseconds())
 			}
 			respErr := resp.Error
 			if respErr != nil {
@@ -297,7 +305,7 @@ func (c *Client) ShardRequest(
 					isTimeout = eggsErr == msgs.TIMEOUT
 				}
 				if isTimeout {
-					logger.Debug("got resp timeout error %v, will try to retry", err)
+					logger.Info("got resp timeout error %v from shard %v, will try to retry", err, shid)
 					break // keep trying
 				}
 			}
@@ -311,10 +319,10 @@ func (c *Client) ShardRequest(
 			}
 			// check if it's an error or not
 			if respErr != nil {
-				logger.Debug("got error %v from shard (took %v)", respErr, elapsed)
+				logger.Debug("got error %v from shard %v (took %v)", respErr, shid, elapsed)
 				return respErr
 			}
-			logger.Debug("got response %T from shard (took %v)", respBody, elapsed)
+			logger.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
 			return nil
 		}
 		attempts++

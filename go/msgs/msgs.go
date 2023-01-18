@@ -768,9 +768,6 @@ type BlockServiceFilesResp struct {
 	FileIds []InodeId
 }
 
-type DirectoryEmptyReq struct {
-}
-
 // --------------------------------------------------------------------
 // CDC requests/responses
 

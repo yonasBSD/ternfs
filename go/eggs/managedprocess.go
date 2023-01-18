@@ -197,22 +197,27 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) *ManagedProcess {
 
 func (procs *ManagedProcesses) Close() {
 	atomic.StoreUint32(&procs.closeInitiated, 1)
+	fmt.Printf("terminating %v managed processes\n", len(procs.processes))
 	var wait sync.WaitGroup
 	wait.Add(len(procs.processes))
 	for i := range procs.processes {
 		proc := &procs.processes[i]
 		go func() {
-			if proc.cmd.Process == nil {
+			if proc.cmd == nil || proc.cmd.Process == nil {
 				return
 			}
 			proc.cmd.Process.Signal(syscall.SIGTERM)
-			// wait at most 20 seconds for process to come down
+			terminated := uint64(0)
+			// wait at most 5 seconds for process to come down
 			go func() {
-				time.Sleep(20 * time.Second)
-				fmt.Printf("process %s not terminating, killing it\n", proc.name)
-				proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
+				time.Sleep(5 * time.Second)
+				if atomic.LoadUint64(&terminated) == 0 {
+					fmt.Printf("process %s not terminating, killing it\n", proc.name)
+					proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
+				}
 			}()
 			<-proc.exitedChan
+			atomic.StoreUint64(&terminated, 1)
 			proc.exitedChan <- struct{}{}
 			wait.Done()
 		}()
@@ -227,7 +232,7 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
 	go func() {
 		sig := <-signalChan
-		fmt.Printf("got signal `%v', terminating %v managed processes\n", sig, len(procs.processes))
+		fmt.Printf("got signal `%v', will terminate managed processes\n", sig)
 		signal.Stop(signalChan)
 		procs.Close()
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
@@ -405,8 +410,8 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(&mpArgs)
-	} else if opts.Perf {
+	}
+	if opts.Perf {
 		mpArgs.Name = fmt.Sprintf("%s (perf)", mpArgs.Name)
 		mpArgs.Exe = "perf"
 		mpArgs.Args = append(
@@ -417,10 +422,8 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(&mpArgs)
-	} else {
-		procs.Start(&mpArgs)
 	}
+	procs.Start(&mpArgs)
 }
 
 type CDCOpts struct {

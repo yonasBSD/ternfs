@@ -123,6 +123,7 @@ inline bool createCurrentLockedEdgeFatal(EggsError err) {
 }
 
 struct StateMachineEnv {
+    Env& env;
     rocksdb::OptimisticTransactionDB* db;
     rocksdb::ColumnFamilyHandle* defaultCf;
     rocksdb::ColumnFamilyHandle* parentCf;
@@ -133,9 +134,9 @@ struct StateMachineEnv {
     CDCStep& cdcStep;
 
     StateMachineEnv(
-        rocksdb::OptimisticTransactionDB* db_, rocksdb::ColumnFamilyHandle* defaultCf_, rocksdb::ColumnFamilyHandle* parentCf_, rocksdb::Transaction& dbTxn_, EggsTime time_, uint64_t txnId_, uint8_t step_, CDCStep& cdcStep_
+        Env& env_, rocksdb::OptimisticTransactionDB* db_, rocksdb::ColumnFamilyHandle* defaultCf_, rocksdb::ColumnFamilyHandle* parentCf_, rocksdb::Transaction& dbTxn_, EggsTime time_, uint64_t txnId_, uint8_t step_, CDCStep& cdcStep_
     ):
-        db(db_), defaultCf(defaultCf_), parentCf(parentCf_), dbTxn(dbTxn_), time(time_), txnId(txnId_), txnStep(step_), cdcStep(cdcStep_)
+        env(env_), db(db_), defaultCf(defaultCf_), parentCf(parentCf_), dbTxn(dbTxn_), time(time_), txnId(txnId_), txnStep(step_), cdcStep(cdcStep_)
     {}
 
     InodeId nextDirectoryId() {
@@ -304,7 +305,7 @@ struct MakeDirectoryStateMachine {
             // We're done, record the parent relationship and finish
             {
                 auto k = InodeIdKey::Static(state.dirId());
-                auto v = InodeIdKey::Static(req.ownerId);
+                auto v = InodeIdValue::Static(req.ownerId);
                 ROCKS_DB_CHECKED(env.dbTxn.Put(env.parentCf, k.toSlice(), v.toSlice()));
             }
             auto& resp = env.finish().setMakeDirectory();
@@ -733,8 +734,31 @@ struct RenameDirectoryStateMachine {
         }
     }
     
+    // Check that changing this parent-child relationship wouldn't create
+    // loops in directory structure.
     bool loopCheck() {
-        return true; // TODO implement
+        std::unordered_set<InodeId> visited;
+        InodeId cursor = req.targetId;
+        for (;;) {
+            if (visited.count(cursor) > 0) {
+                LOG_INFO(env.env, "Re-encountered %s in loop check, will return false", cursor);
+                return false;
+            }
+            LOG_DEBUG(env.env, "Performing loop check for %s", cursor);
+            visited.insert(cursor);
+            if (cursor == req.targetId) {
+                cursor = req.newOwnerId;
+            } else {
+                auto k = InodeIdKey::Static(cursor);
+                std::string v;
+                ROCKS_DB_CHECKED(env.dbTxn.Get({}, env.parentCf, k.toSlice(), &v));
+                cursor = ExternalValue<InodeIdValue>(v)().id();
+            }
+            if (cursor == ROOT_DIR_INODE_ID) {
+                break;
+            }
+        }
+        return true;
     }
 
     void start() {
@@ -857,7 +881,7 @@ struct RenameDirectoryStateMachine {
             // update cache
             {
                 auto k = InodeIdKey::Static(req.targetId);
-                auto v = InodeIdKey::Static(req.newOwnerId);
+                auto v = InodeIdValue::Static(req.newOwnerId);
                 ROCKS_DB_CHECKED(env.dbTxn.Put(env.parentCf, k.toSlice(), v.toSlice()));
             }
         }
@@ -1190,30 +1214,30 @@ struct CDCDBImpl {
         CDCStep& step
     ) {
         LOG_DEBUG(_env, "advancing txn %s of kind %s", txnId, req.kind());
-        StateMachineEnv env(_db, _defaultCf, _parentCf, dbTxn, time, txnId, state().step(), step);
+        StateMachineEnv sm(_env, _db, _defaultCf, _parentCf, dbTxn, time, txnId, state().step(), step);
         switch (req.kind()) {
         case CDCMessageKind::MAKE_DIRECTORY:
-            MakeDirectoryStateMachine(env, req.getMakeDirectory(), state().getMakeDirectory()).resume(shardRespError, shardResp);
+            MakeDirectoryStateMachine(sm, req.getMakeDirectory(), state().getMakeDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-            HardUnlinkDirectoryStateMachine(env, req.getHardUnlinkDirectory(), state().getHardUnlinkDirectory()).resume(shardRespError, shardResp);
+            HardUnlinkDirectoryStateMachine(sm, req.getHardUnlinkDirectory(), state().getHardUnlinkDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::RENAME_FILE:
-            RenameFileStateMachine(env, req.getRenameFile(), state().getRenameFile()).resume(shardRespError, shardResp);
+            RenameFileStateMachine(sm, req.getRenameFile(), state().getRenameFile()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
-            SoftUnlinkDirectoryStateMachine(env, req.getSoftUnlinkDirectory(), state().getSoftUnlinkDirectory()).resume(shardRespError, shardResp);
+            SoftUnlinkDirectoryStateMachine(sm, req.getSoftUnlinkDirectory(), state().getSoftUnlinkDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::RENAME_DIRECTORY:
-            RenameDirectoryStateMachine(env, req.getRenameDirectory(), state().getRenameDirectory()).resume(shardRespError, shardResp);
+            RenameDirectoryStateMachine(sm, req.getRenameDirectory(), state().getRenameDirectory()).resume(shardRespError, shardResp);
             break;
         case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
-            CrossShardHardUnlinkFileStateMachine(env, req.getCrossShardHardUnlinkFile(), state().getCrossShardHardUnlinkFile()).resume(shardRespError, shardResp);
+            CrossShardHardUnlinkFileStateMachine(sm, req.getCrossShardHardUnlinkFile(), state().getCrossShardHardUnlinkFile()).resume(shardRespError, shardResp);
             break;
         default:
             throw EGGS_EXCEPTION("bad cdc message kind %s", req.kind());
         }
-        state().setStep(env.txnStep);
+        state().setStep(sm.txnStep);
 
         ALWAYS_ASSERT(step.txnFinished == 0 || step.txnFinished == txnId);
         ALWAYS_ASSERT(step.txnNeedsShard == 0 || step.txnNeedsShard == txnId);

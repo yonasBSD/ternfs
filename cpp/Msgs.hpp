@@ -92,6 +92,13 @@ struct InodeId {
     }
 };
 
+template<>
+struct std::hash<InodeId> {
+    std::size_t operator()(InodeId id) const noexcept {
+        return std::hash<uint64_t>{}(id.u64);
+    }
+};
+
 std::ostream& operator<<(std::ostream& out, InodeId id);
 
 constexpr InodeId NULL_INODE_ID = InodeId::FromU64(0);

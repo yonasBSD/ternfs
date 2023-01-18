@@ -43,14 +43,16 @@ func main() {
 		fmt.Printf("running with temp data dir %v\n", *dataDir)
 	}
 
+	log := &eggs.LogToStdout{}
+
 	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,
 		Sanitize: *sanitize,
 		Debug:    *debug,
 	}
-	shardExe := eggs.BuildShardExe(&eggs.LogToStdout{}, &cppBuildOpts)
-	cdcExe := eggs.BuildCDCExe(&eggs.LogToStdout{}, &cppBuildOpts)
-	shuckleExe := eggs.BuildShuckleExe(&eggs.LogToStdout{})
+	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
+	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
+	shuckleExe := eggs.BuildShuckleExe(log)
 
 	terminateChan := make(chan any, 1)
 
@@ -112,7 +114,7 @@ func main() {
 	waitShardFor := 20 * time.Second
 	fmt.Printf("waiting for shards for %v...\n", waitShardFor)
 	for i := 0; i < 256; i++ {
-		eggs.WaitForShard(msgs.ShardId(i), waitShardFor)
+		eggs.WaitForShard(log, msgs.ShardId(i), waitShardFor)
 	}
 
 	fmt.Printf("operational 🤖\n")

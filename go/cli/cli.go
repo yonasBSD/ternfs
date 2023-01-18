@@ -103,8 +103,13 @@ func main() {
 			os.Exit(2)
 		}
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
+		stats := eggs.MigrateStats{}
 		if *migrateFileIdU64 == 0 {
-			if err := eggs.MigrateBlocksInAllShards(log, blockServiceId); err != nil {
+			client, err := eggs.NewClient(nil, nil, nil)
+			if err != nil {
+				panic(err)
+			}
+			if err := eggs.MigrateBlocksInAllShards(log, client, nil, &stats, blockServiceId); err != nil {
 				panic(err)
 			}
 		} else {
@@ -116,7 +121,7 @@ func main() {
 			}
 			defer client.Close()
 			stats := eggs.MigrateStats{}
-			if err := eggs.MigrateBlocksInFile(log, client, &stats, blockServiceId, fileId); err != nil {
+			if err := eggs.MigrateBlocksInFile(log, client, nil, &stats, blockServiceId, fileId); err != nil {
 				panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 			}
 			log.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)

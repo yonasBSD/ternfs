@@ -1103,6 +1103,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
+			reflect.TypeOf(msgs.SwapBlocksEntry{}),
 		},
 	)
 

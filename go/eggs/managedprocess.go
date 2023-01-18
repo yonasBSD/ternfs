@@ -487,7 +487,7 @@ func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
 	}
 }
 
-func WaitForShard(shid msgs.ShardId, timeout time.Duration) {
+func WaitForShard(log LogLevels, shid msgs.ShardId, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client
@@ -502,7 +502,7 @@ func WaitForShard(shid msgs.ShardId, timeout time.Duration) {
 			continue
 		}
 		err = client.ShardRequest(
-			LogBlackHole{},
+			log,
 			shid,
 			&msgs.VisitDirectoriesReq{},
 			&msgs.VisitDirectoriesResp{},

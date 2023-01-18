@@ -6,14 +6,19 @@ echo "$(tput bold)go tests$(tput sgr0)"
 
 ./cpp/run-tests.sh
 
+(cd go/integrationtest && go build .)
+
 echo "$(tput bold)integration tests$(tput sgr0)"
-(cd go/integrationtest && go run .)
+./go/integrationtest/integrationtest
 
 echo "$(tput bold)integration tests, sanitized$(tput sgr0)"
-(cd go/integrationtest && go run . -sanitize)
+./go/integrationtest/integrationtest -sanitize
+
+echo "$(tput bold)integration tests, valgrind$(tput sgr0)"
+./go/integrationtest/integrationtest -valgrind -short
 
 echo "$(tput bold)integration tests, packet drop$(tput sgr0)"
-(cd go/integrationtest && go run . -sanitize -outgoing-packet-drop 0.1 -short)
+./go/integrationtest/integrationtest -sanitize -outgoing-packet-drop 0.1 -short
 
 # # Both ./cpp/run-tests.sh and the integration test will write coverage info
 # 

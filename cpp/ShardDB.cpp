@@ -4,6 +4,7 @@
 #include <limits>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/write_batch.h>
 #include <system_error>
 #include <xxhash.h>
 
@@ -102,11 +103,11 @@
 //     - Similar size as spans -- I think it makes a ton of sense to have them in a different column family
 //         from directories, given the different order of magnitude when it comes to size.
 //
-// * Blocks:
-//     - Goes from block service to file ids
-//     - No values, only { blockServiceId: uint64_t, fileId: uint64_t }, "set like"
-//     - Assuming RS(10,4), roughly 1e12/256 * 8 bytes = 31GiB
-//     - Not a big deal.
+// * Block services to files:
+//     - Goes from block service, file id to count
+//     - { blockServiceId: uint64_t, fileId: uint64_t }: int64
+//     - Assuming RS(10,4), roughly 1e12/256 * 24 bytes ~ 100GiB
+//     - Not small, but not a huge deal either.
 //
 // We'll also store some small metadata in the default column family:
 //
@@ -239,6 +240,8 @@ struct ShardDBImpl {
         rocksdb::Options options;
         options.create_if_missing = true;
         options.create_missing_column_families = true;
+        rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
+        blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
             {rocksdb::kDefaultColumnFamilyName, {}},
             {"files", {}},
@@ -246,7 +249,7 @@ struct ShardDBImpl {
             {"transientFiles", {}},
             {"directories", {}},
             {"edges", {}},
-            {"blockServicesToFiles", {}},
+            {"blockServicesToFiles", blockServicesToFilesOptions},
         };
         std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
         auto dbPath = path + "/db";
@@ -765,21 +768,24 @@ struct ShardDBImpl {
         beginKey().setBlockServiceId(req.blockServiceId);
         beginKey().setFileId(req.startFrom);
         StaticValue<BlockServiceToFileKey> endKey;
-        beginKey().setBlockServiceId(req.blockServiceId+1);
-        beginKey().setFileId(NULL_INODE_ID);
+        endKey().setBlockServiceId(req.blockServiceId+1);
+        endKey().setFileId(NULL_INODE_ID);
         auto endKeySlice = endKey.toSlice();
 
         rocksdb::ReadOptions options;
         options.iterate_upper_bound = &endKeySlice;
-        WrappedIterator it(_db->NewIterator(options));
-        int i;
+        WrappedIterator it(_db->NewIterator(options, _blockServicesToFilesCf));
         for (
-            it->Seek(beginKey.toSlice()), i = 0;
-            it->Valid() && i < maxFiles;
-            it->Next(), i++
+            it->Seek(beginKey.toSlice());
+            it->Valid() && resp.fileIds.els.size() < maxFiles;
+            it->Next()
         ) {
             auto key = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
+            int64_t blocks = ExternalValue<I64Value>::FromSlice(it->value())().i64();
+            ALWAYS_ASSERT(blocks >= 0);
+            if (blocks == 0) { continue; } // this can happen when we migrate block services/remove spans
             resp.fileIds.els.emplace_back(key().fileId());
+            break;
         }
         ROCKS_DB_CHECKED(it->status());
         return NO_ERROR;
@@ -1391,6 +1397,23 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _prepareSwapBlocks(EggsTime time, const SwapBlocksReq& req, SwapBlocksEntry& entry) {
+        if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        entry.fileId1 = req.fileId1;
+        entry.byteOffset1 = req.byteOffset1;
+        entry.blockId1 = req.blockId1;
+        entry.fileId2 = req.fileId2;
+        entry.byteOffset2 = req.byteOffset2;
+        entry.blockId2 = req.blockId2;
+        return NO_ERROR;
+    }
+
     EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         logEntry.clear();
@@ -1462,7 +1485,8 @@ struct ShardDBImpl {
             err = _prepareRemoveOwnedSnapshotFileEdge(time, req.getRemoveOwnedSnapshotFileEdge(), logEntryBody.setRemoveOwnedSnapshotFileEdge());
             break;
         case ShardMessageKind::SWAP_BLOCKS:
-            throw EGGS_EXCEPTION("UNIMPLEMENTED");
+            err = _prepareSwapBlocks(time, req.getSwapBlocks(), logEntryBody.setSwapBlocks());
+            break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
         }
@@ -2347,6 +2371,8 @@ struct ShardDBImpl {
         // The idea here is that we ask for some block services to use to shuckle once a minute,
         // and then just pick at random within them. We shouldn't have many to pick from at any
         // given point.
+        //
+        // The random part is not done yet.
         ALWAYS_ASSERT(entry.blockServices.els.size() < 256); // TODO proper error
         OwnedValue<CurrentBlockServicesBody> currentBody(entry.blockServices.els.size());
         _currentBlockServices.resize(entry.blockServices.els.size());
@@ -2405,6 +2431,16 @@ struct ShardDBImpl {
             respBlock.blockServicePort = cache.port;
             respBlock.certificate.data = _blockAddCertificate(spanBody.blockSize(), block, cache.secretKey);
         }
+    }
+
+    void _addBlockServicesToFiles(rocksdb::WriteBatch& batch, uint64_t blockServiceId, InodeId fileId, int64_t delta) {
+        StaticValue<BlockServiceToFileKey> k;
+        k().setBlockServiceId(blockServiceId);
+        k().setFileId(fileId);
+        LOG_DEBUG(_env, "Adding %s to block services to file entry with block service %s, file %s", delta, blockServiceId, fileId);
+        StaticValue<I64Value> v;
+        v().setI64(delta);
+        ROCKS_DB_CHECKED(batch.Merge(_blockServicesToFilesCf, k.toSlice(), v.toSlice()));
     }
 
     EggsError _applyAddSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanInitiateEntry& entry, AddSpanInitiateResp& resp) {
@@ -2493,12 +2529,7 @@ struct ShardDBImpl {
                 block.blockServiceId = entryBlock.blockServiceId;
                 block.crc32 = entryBlock.crc32.data;
                 spanBody().setBlock(i, block);
-                {
-                    StaticValue<BlockServiceToFileKey> k;
-                    k().setBlockServiceId(entryBlock.blockServiceId);
-                    k().setFileId(entry.fileId);
-                    ROCKS_DB_CHECKED(batch.Put(_blockServicesToFilesCf, k.toSlice(), {}));
-                }
+                _addBlockServicesToFiles(batch, entryBlock.blockServiceId, entry.fileId, 1);
             }
             _writeNextBlockId(batch, nextBlockId);
             ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), spanBody.toSlice()));
@@ -2717,6 +2748,8 @@ struct ShardDBImpl {
             if (!_checkBlockDeleteProof(block.blockServiceId, proof)) {
                 return EggsError::BAD_BLOCK_PROOF;
             }
+            // record balance change in block service to files
+            _addBlockServicesToFiles(batch, block.blockServiceId, entry.fileId, -1);
         }
 
         // Delete span, set new size, and go back to clean state
@@ -2751,6 +2784,92 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, edgeKey.toSlice()));
         }
 
+        return NO_ERROR;
+    }
+
+    EggsError _applySwapBlocks(EggsTime time, rocksdb::WriteBatch& batch, const SwapBlocksEntry& entry, SwapBlocksResp& resp) {
+        // TODO turn assertions into proper errors
+        // Fetch spans
+        const auto fetchSpan = [this](InodeId fileId, uint64_t byteOffset, StaticValue<SpanKey>& spanKey, std::string& spanValue, ExternalValue<SpanBody>& span) -> bool {
+            spanKey().setFileId(fileId);
+            spanKey().setOffset(byteOffset);
+            auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
+            if (status.IsNotFound()) {
+                return false;
+            }
+            ROCKS_DB_CHECKED(status);
+            span = ExternalValue<SpanBody>(spanValue);
+            return true;
+        };
+        StaticValue<SpanKey> span1Key;
+        std::string span1Value;
+        ExternalValue<SpanBody> span1;
+        if (!fetchSpan(entry.fileId1, entry.byteOffset1, span1Key, span1Value, span1)) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        StaticValue<SpanKey> span2Key;
+        std::string span2Value;
+        ExternalValue<SpanBody> span2;
+        if (!fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        ALWAYS_ASSERT(span1().blockSize() == span2().blockSize());
+        // Fetch span state
+        const auto fetchState = [this, time](InodeId fileId, uint64_t spanEnd) -> SpanState {
+            // See if it's a normal file first
+            std::string fileValue;
+            ExternalValue<FileBody> file;
+            auto err = _getFile({}, fileId, fileValue, file);
+            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::FILE_NOT_FOUND);
+            if (err == NO_ERROR) {
+                return SpanState::CLEAN;
+            }
+            // couldn't find normal file, must be transient
+            ExternalValue<TransientFileBody> transientFile;
+            err = _getTransientFile({}, time, true, fileId, fileValue, transientFile);
+            ALWAYS_ASSERT(err == NO_ERROR);
+            if (spanEnd == transientFile().fileSize()) {
+                return transientFile().lastSpanState();
+            } else {
+                return SpanState::CLEAN;
+            }
+        };
+        auto state1 = fetchState(entry.fileId1, entry.byteOffset1 + span1().size());
+        auto state2 = fetchState(entry.fileId2, entry.byteOffset2 + span2().size());
+        // We don't want to put not-certified blocks in clean spans, or similar
+        ALWAYS_ASSERT(state1 == state2);
+        // Find blocks
+        const auto findBlock = [](const SpanBody& span, uint64_t blockId, BlockBody& block) -> int {
+            for (int i = 0; i < span.parity().blocks(); i++) {
+                block = span.block(i);
+                if (block.blockId == blockId) {
+                    return i;
+                }
+            }
+            return -1;
+        };
+        BlockBody block1;
+        int block1Ix = findBlock(span1(), entry.blockId1, block1);
+        BlockBody block2;
+        int block2Ix = findBlock(span2(), entry.blockId2, block2);
+        if (block1Ix < 0 || block2Ix < 0) {
+            // if neither are found, check if we haven't swapped already, for idempotency
+            if (block1Ix < 0 && block2Ix < 0) {
+                if (findBlock(span1(), entry.blockId2, block1) >= 0 && findBlock(span2(), entry.blockId1, block2) >= 0) {
+                    return NO_ERROR;
+                }
+            }
+            throw EGGS_EXCEPTION("blocks not found");
+        }
+        // Finally, swap the blocks
+        span1().setBlock(block1Ix, block2);
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span1.toSlice()));
+        _addBlockServicesToFiles(batch, block1.blockServiceId, entry.fileId1, -1);
+        _addBlockServicesToFiles(batch, block2.blockServiceId, entry.fileId1, +1);
+        span2().setBlock(block2Ix, block1);
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
+        _addBlockServicesToFiles(batch, block1.blockServiceId, entry.fileId2, +1);
+        _addBlockServicesToFiles(batch, block2.blockServiceId, entry.fileId2, -1);
         return NO_ERROR;
     }
 
@@ -2844,12 +2963,15 @@ struct ShardDBImpl {
         case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
             err = _applyRemoveOwnedSnapshotFileEdge(time, batch, logEntryBody.getRemoveOwnedSnapshotFileEdge(), resp.setRemoveOwnedSnapshotFileEdge());
             break;
+        case ShardLogEntryKind::SWAP_BLOCKS:
+            err = _applySwapBlocks(time, batch, logEntryBody.getSwapBlocks(), resp.setSwapBlocks());
+            break;
         default:
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
         }
 
         if (err != NO_ERROR) {
-            LOG_INFO(_env, "could not apply log entry %s, index %s, because of err %s", logEntryBody.kind(), logIndex, err);
+            LOG_DEBUG(_env, "could not apply log entry %s, index %s, because of err %s", logEntryBody.kind(), logIndex, err);
             batch.RollbackToSavePoint();
         } else {
             LOG_DEBUG(_env, "applied log entry of kind %s, index %s, writing changes", logEntryBody.kind(), logIndex);

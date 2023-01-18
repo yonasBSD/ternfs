@@ -4333,6 +4333,9 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         out << "REMOVE_OWNED_SNAPSHOT_FILE_EDGE";
         break;
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        out << "SWAP_BLOCKS";
+        break;
     default:
         out << "ShardLogEntryKind(" << ((int)err) << ")";
         break;
@@ -4906,6 +4909,44 @@ std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEnt
     return out;
 }
 
+void SwapBlocksEntry::pack(BincodeBuf& buf) const {
+    fileId1.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset1);
+    buf.packScalar<uint64_t>(blockId1);
+    fileId2.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset2);
+    buf.packScalar<uint64_t>(blockId2);
+}
+void SwapBlocksEntry::unpack(BincodeBuf& buf) {
+    fileId1.unpack(buf);
+    byteOffset1 = buf.unpackScalar<uint64_t>();
+    blockId1 = buf.unpackScalar<uint64_t>();
+    fileId2.unpack(buf);
+    byteOffset2 = buf.unpackScalar<uint64_t>();
+    blockId2 = buf.unpackScalar<uint64_t>();
+}
+void SwapBlocksEntry::clear() {
+    fileId1 = InodeId();
+    byteOffset1 = uint64_t(0);
+    blockId1 = uint64_t(0);
+    fileId2 = InodeId();
+    byteOffset2 = uint64_t(0);
+    blockId2 = uint64_t(0);
+}
+bool SwapBlocksEntry::operator==(const SwapBlocksEntry& rhs) const {
+    if ((InodeId)this->fileId1 != (InodeId)rhs.fileId1) { return false; };
+    if ((uint64_t)this->byteOffset1 != (uint64_t)rhs.byteOffset1) { return false; };
+    if ((uint64_t)this->blockId1 != (uint64_t)rhs.blockId1) { return false; };
+    if ((InodeId)this->fileId2 != (InodeId)rhs.fileId2) { return false; };
+    if ((uint64_t)this->byteOffset2 != (uint64_t)rhs.byteOffset2) { return false; };
+    if ((uint64_t)this->blockId2 != (uint64_t)rhs.blockId2) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SwapBlocksEntry& x) {
+    out << "SwapBlocksEntry(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "BlockId1=" << x.blockId1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ", " << "BlockId2=" << x.blockId2 << ")";
+    return out;
+}
+
 const ConstructFileEntry& ShardLogEntryContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardLogEntryKind::CONSTRUCT_FILE);
     return std::get<0>(_data);
@@ -5116,6 +5157,16 @@ RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::setRemoveOwnedSnapshot
     x.clear();
     return x;
 }
+const SwapBlocksEntry& ShardLogEntryContainer::getSwapBlocks() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::SWAP_BLOCKS, "%s != %s", _kind, ShardLogEntryKind::SWAP_BLOCKS);
+    return std::get<21>(_data);
+}
+SwapBlocksEntry& ShardLogEntryContainer::setSwapBlocks() {
+    _kind = ShardLogEntryKind::SWAP_BLOCKS;
+    auto& x = std::get<21>(_data);
+    x.clear();
+    return x;
+}
 size_t ShardLogEntryContainer::packedSize() const {
     switch (_kind) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -5160,6 +5211,8 @@ size_t ShardLogEntryContainer::packedSize() const {
         return std::get<19>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         return std::get<20>(_data).packedSize();
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        return std::get<21>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -5229,6 +5282,9 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         break;
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         std::get<20>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        std::get<21>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -5301,6 +5357,9 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf, ShardLogEntryKind kind) {
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         std::get<20>(_data).unpack(buf);
         break;
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        std::get<21>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", kind);
     }
@@ -5370,6 +5429,9 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         out << x.getRemoveOwnedSnapshotFileEdge();
+        break;
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        out << x.getSwapBlocks();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", x.kind());

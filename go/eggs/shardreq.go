@@ -49,23 +49,9 @@ func (req *ShardResponse) Pack(buf *bincode.Buf) {
 	req.Body.Pack(buf)
 }
 
-type unpackedShardResponse struct {
-	RequestId uint64
-	Body      msgs.ShardResponse
-	// This is where we could decode as far as decoding the request id,
-	// but then errored after. We are interested in this case because
-	// we can safely drop every erroring request that is not our request
-	// id. And on the contrary, we want to know if things failed for
-	// the request we're interested in.
-	//
-	// If this is non-nil, the body will be set to nil.
-	Error error
-}
+type unpackedShardRequestId uint64
 
-func (resp *unpackedShardResponse) Unpack(buf *bincode.Buf) error {
-	// panic immediately if we get passed a bogus body
-	expectedKind := resp.Body.ShardResponseKind()
-	// decode message header
+func (requestId *unpackedShardRequestId) Unpack(buf *bincode.Buf) error {
 	var ver uint32
 	if err := buf.UnpackU32(&ver); err != nil {
 		return err
@@ -73,46 +59,19 @@ func (resp *unpackedShardResponse) Unpack(buf *bincode.Buf) error {
 	if ver != msgs.SHARD_RESP_PROTOCOL_VERSION {
 		return fmt.Errorf("expected protocol version %v, but got %v", msgs.SHARD_RESP_PROTOCOL_VERSION, ver)
 	}
-	if err := buf.UnpackU64(&resp.RequestId); err != nil {
+	if err := buf.UnpackU64((*uint64)(requestId)); err != nil {
 		return err
 	}
-	// We've made it with the request id, from now on if we fail we set
-	// the error inside the object, rather than returning an error.
-	body := resp.Body
-	resp.Body = nil
-	var kind uint8
-	if err := buf.UnpackU8(&kind); err != nil {
-		resp.Error = fmt.Errorf("could not decode response kind: %w", err)
-		return nil
-	}
-	if kind == msgs.ERROR_KIND {
-		var errCode msgs.ErrCode
-		if err := errCode.Unpack(buf); err != nil {
-			resp.Error = fmt.Errorf("could not decode error body: %w", err)
-			return nil
-		}
-		resp.Error = errCode
-		return nil
-	}
-	if msgs.ShardMessageKind(kind) != expectedKind {
-		resp.Error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
-		return nil
-	}
-	if err := body.Unpack(buf); err != nil {
-		resp.Error = fmt.Errorf("could not decode response body: %w", err)
-		return nil
-	}
-	resp.Body = body
-	resp.Error = nil
 	return nil
 }
 
 const minShardSingleTimeout = 10 * time.Millisecond
 const maxShardSingleTimeout = 100 * time.Millisecond
-const shardMaxElapsed = 1 * time.Second
+const shardMaxElapsed = 5 * time.Second // TODO these are a bit ridicolous now because of the valgrind test, adjust
 
 var requestIdGenerator = uint64(0)
 
+// Starts from 1, we use 0 as a placeholder in `requestIds`
 func newRequestId() uint64 {
 	return atomic.AddUint64(&requestIdGenerator, 1)
 }
@@ -177,7 +136,7 @@ func (c *Client) checkRepeatedShardRequestError(
 	req shardRequest,
 	resp msgs.ShardResponse,
 	respErr msgs.ErrCode,
-) error {
+) *msgs.ErrCode {
 	switch reqBody := req.body.(type) {
 	case *msgs.SameDirectoryRenameReq:
 		if respErr == msgs.EDGE_NOT_FOUND {
@@ -189,12 +148,12 @@ func (c *Client) checkRepeatedShardRequestError(
 			// we had  just moved it, and that the target edge also exists.
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SameDirectoryRenameReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.DirId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return respErr
+				return &respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.SameDirectoryRenameResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.DirId, reqBody.TargetId, reqBody.NewName, &respBody.NewCreationTime) {
-				return respErr
+				return &respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
 			return nil
@@ -203,12 +162,12 @@ func (c *Client) checkRepeatedShardRequestError(
 		if respErr == msgs.EDGE_NOT_FOUND {
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkFileReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.FileId, reqBody.Name, reqBody.CreationTime, true) {
-				return respErr
+				return &respErr
 			}
 			return nil
 		}
 	}
-	return respErr
+	return &respErr
 }
 
 func (c *Client) ShardRequest(
@@ -229,6 +188,7 @@ func (c *Client) ShardRequest(
 	}
 	defer c.ShardSocketFactory.ReleaseShardSocket(shid)
 	buffer := make([]byte, msgs.UDP_MTU)
+	requestIds := make([]uint64, shardMaxElapsed/minShardSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()
 	// will keep trying as long as we get timeouts
@@ -242,6 +202,7 @@ func (c *Client) ShardRequest(
 			atomic.AddInt64(&c.Counters.Shard.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
+		requestIds[attempts] = requestId
 		req := shardRequest{
 			requestId: requestId,
 			body:      reqBody,
@@ -256,18 +217,19 @@ func (c *Client) ShardRequest(
 		if written < len(reqBytes) {
 			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
 		}
-		// Keep going until we found the right request id --
-		// we can't assume that what we get isn't some other
-		// request we thought was timed out.
-		timeout := time.Duration(math.Min(float64(minShardSingleTimeout)*math.Pow(1.5, float64(attempts)), float64(maxShardSingleTimeout)))
-		sock.SetReadDeadline(time.Now().Add(timeout))
+		// Keep going until we found the right request id -- we can't assume that what we get isn't
+		// some other request we thought was timed out.
+		timeout := time.Duration(math.Min(float64(minShardSingleTimeout)*math.Pow(2.0, float64(attempts)), float64(maxShardSingleTimeout)))
+		readLoopStart := time.Now()
+		readLoopDeadline := readLoopStart.Add(timeout)
+		sock.SetReadDeadline(readLoopDeadline)
 		for {
 			respBytes := buffer
 			read, err := sock.Read(respBytes)
 			respBytes = respBytes[:read]
 			if err != nil {
-				// We retry very liberally (at least for now), to survive the shard
-				// dying in the most exotic ways.
+				// We retry very liberally rather than only with timeouts (at least for now),
+				// to survive the shard dying in the most exotic ways.
 				shouldRetry := false
 				switch err.(type) {
 				case net.Error, *net.OpError:
@@ -275,56 +237,86 @@ func (c *Client) ShardRequest(
 				}
 				if shouldRetry {
 					logger.Info("got network error %v to shard %v, will try to retry", err, shid)
+					// make sure we've waited as much as the expected timeout, otherwise we might
+					// call in a busy loop due to the server just not being up.
+					time.Sleep(time.Until(readLoopDeadline))
 					break // keep trying
 				}
 				// Something unexpected happen, exit immediately
 				return err
 			}
-			resp := unpackedShardResponse{
-				Body: respBody,
-			}
-			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v from shard %v, will continue waiting for responses: %w", req.requestId, shid, err))
+			// Start parsing, from the header with request id
+			bbuf := bincode.Buf(respBytes)
+			var respRequestId unpackedShardRequestId
+			if err := (&respRequestId).Unpack(&bbuf); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				continue
 			}
-			if resp.RequestId != req.requestId {
-				logger.RaiseAlert(fmt.Errorf("dropping response %v from shard %v, since we expected request id %v. body: %v, error: %v", resp.RequestId, shid, req.requestId, resp.Body, resp.Error))
+			// Check if we're interested in the request id we got -- accept any we've sent
+			// so far
+			goodRequestId := false
+			for _, requestId := range requestIds {
+				if uint64(respRequestId) == requestId {
+					goodRequestId = true
+					break
+				}
+			}
+			if !goodRequestId {
+				logger.Info("dropping response %v from shard %v, since we expected one of %v", uint64(respRequestId), shid, requestIds)
 				continue
 			}
-			// we've gotten a response
+			// We are interested, parse the kind
+			var kind uint8
+			if err := bbuf.UnpackU8(&kind); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode Shard response kind for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+				continue
+			}
+			var eggsError *msgs.ErrCode
+			if kind == msgs.ERROR_KIND {
+				// If the kind is an error, parse it
+				var eggsErrVal msgs.ErrCode
+				eggsError = &eggsErrVal
+				if err := eggsError.Unpack(&bbuf); err != nil {
+					logger.RaiseAlert(fmt.Errorf("could not decode Shard response error for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+					continue
+				}
+			} else {
+				// If the kind dosen't match, it's bad, since it's the same request id
+				if msgs.ShardMessageKind(kind) != msgKind {
+					logger.RaiseAlert(fmt.Errorf("dropping response %v from shard %v, since we it is of kind %v while we expected %v", uint64(respRequestId), shid, msgs.ShardMessageKind(kind), msgKind))
+					continue
+				}
+				// Otherwise, finally parse the body
+				if err := respBody.Unpack(&bbuf); err != nil {
+					logger.RaiseAlert(fmt.Errorf("could not decode Shard response body for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+					continue
+				}
+			}
+			// If we've got a timeout, keep trying
+			if eggsError != nil && *eggsError == msgs.TIMEOUT {
+				logger.Info("got resp timeout error %v from shard %v, will try to retry", err, shid)
+				break // keep trying
+			}
+			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
 			if c.Counters != nil {
 				atomic.AddInt64(&c.Counters.Shard.Count[msgKind], 1)
 				atomic.AddInt64(&c.Counters.Shard.Nanos[msgKind], elapsed.Nanoseconds())
 			}
-			respErr := resp.Error
-			if respErr != nil {
-				isTimeout := false
-				switch eggsErr := err.(type) {
-				case msgs.ErrCode:
-					isTimeout = eggsErr == msgs.TIMEOUT
-				}
-				if isTimeout {
-					logger.Info("got resp timeout error %v from shard %v, will try to retry", err, shid)
-					break // keep trying
-				}
+			// If we're past the first attempt, there are cases where errors are not what they seem.
+			if eggsError != nil && attempts > 0 {
+				eggsError = c.checkRepeatedShardRequestError(logger, req, respBody, *eggsError)
 			}
-			switch eggsErr := respErr.(type) {
-			case msgs.ErrCode:
-				// If we're past the first attempt, there are cases where errors are not what they
-				// seem.
-				if attempts > 0 {
-					respErr = c.checkRepeatedShardRequestError(logger, req, respBody, eggsErr)
-				}
-			}
-			// check if it's an error or not
-			if respErr != nil {
-				logger.Debug("got error %v from shard %v (took %v)", respErr, shid, elapsed)
-				return respErr
+			// Check if it's an error or not. We only use debug here because some errors are legitimate
+			// responses (e.g. FILE_EMPTY)
+			if eggsError != nil {
+				logger.Debug("got error %v from shard %v (took %v)", *eggsError, shid, elapsed)
+				return *eggsError
 			}
 			logger.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
 			return nil
 		}
+		// We got through the loop busily consuming responses, now try again by sending a new request
 		attempts++
 	}
 }

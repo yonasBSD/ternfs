@@ -3,6 +3,50 @@
 #include "Common.hpp"
 #include "Bincode.hpp"
 
+struct Duration {
+    int64_t ns;
+
+    constexpr  Duration(): ns(0) {}
+    constexpr Duration(uint64_t ns_): ns(ns_) {}
+
+    bool operator==(Duration rhs) const {
+        return ns == rhs.ns;
+    }
+
+    bool operator>(Duration rhs) const {
+        return ns > rhs.ns;
+    }
+
+    bool operator>=(Duration rhs) const {
+        return ns >= rhs.ns;
+    }
+
+    bool operator<(Duration rhs) const {
+        return ns < rhs.ns;
+    }
+
+    bool operator<=(Duration rhs) const {
+        return ns <= rhs.ns;
+    }
+
+    Duration operator+(Duration d) {
+        return Duration(ns + d.ns);
+    }
+
+    Duration operator-(Duration d) {
+        return ns - d.ns;
+    }
+};
+
+constexpr Duration operator "" _ns   (unsigned long long t) { return Duration(t); }
+constexpr Duration operator "" _us   (unsigned long long t) { return Duration(t*1'000); }
+constexpr Duration operator "" _ms   (unsigned long long t) { return Duration(t*1'000'000); }
+constexpr Duration operator "" _sec  (unsigned long long t) { return Duration(t*1'000'000'000ull); }
+constexpr Duration operator "" _mins (unsigned long long t) { return Duration(t*1'000'000'000ull*60); }
+constexpr Duration operator "" _hours(unsigned long long t) { return Duration(t*1'000'000'00'000ull*60*60); }
+
+std::ostream& operator<<(std::ostream& out, Duration d);
+
 constexpr uint64_t EGGS_EPOCH = 1'577'836'800'000'000'000;
 
 struct EggsTime {
@@ -35,12 +79,12 @@ struct EggsTime {
         ns = buf.unpackScalar<uint64_t>();
     }
 
-    EggsTime operator+(uint64_t delta) {
-        return EggsTime(ns + delta);
+    EggsTime operator+(Duration d) {
+        return EggsTime(ns + d.ns);
     }
 
-    uint64_t operator-(EggsTime t) {
-        return ns - t.ns;
+    Duration operator-(EggsTime d) {
+        return Duration(ns - d.ns);
     }
 };
 

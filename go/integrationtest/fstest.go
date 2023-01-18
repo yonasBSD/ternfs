@@ -154,7 +154,7 @@ func (state *fsTestState) incrementFiles(log eggs.LogLevels, opts *fsTestOpts) {
 	}
 	state.totalFiles++
 	if state.totalFiles%100 == 0 {
-		log.Info("%v out of %v dirs created", state.totalFiles, opts.numFiles)
+		log.Info("%v out of %v files created", state.totalFiles, opts.numFiles)
 	}
 }
 
@@ -319,5 +319,29 @@ func fsTest(
 		}
 	}
 	// finally, check that our view of the world is the real view of the world
+	state.rootDir.check(log, harness)
+	// Now, try to migrate away from one block service, to stimulate that code path
+	// in tests somewhere.
+	blockServiceToPurge := msgs.BlockServiceId(0)
+	{
+		stopAt := int(rand.Uint32()) % len(blockServicesKeys)
+		i := 0
+		for blockService := range blockServicesKeys {
+			blockServiceToPurge = blockService
+			if i == stopAt {
+				break
+			}
+		}
+	}
+	log.Info("will migrate block service %v", blockServiceToPurge)
+	migrateStats := eggs.MigrateStats{}
+	err = eggs.MigrateBlocksInAllShards(log, client, blockServicesKeys, &migrateStats, blockServiceToPurge)
+	if err != nil {
+		panic(fmt.Errorf("could not migrate: %w", err))
+	}
+	if migrateStats.MigratedBlocks == 0 {
+		panic(fmt.Errorf("migrate didn't migrate any blocks"))
+	}
+	// And check the state again
 	state.rootDir.check(log, harness)
 }

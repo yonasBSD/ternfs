@@ -35,6 +35,7 @@ func (req *CDCResponse) Pack(buf *bincode.Buf) {
 	req.Body.Pack(buf)
 }
 
+/*
 type unpackedCDCResponse struct {
 	requestId uint64
 	body      msgs.CDCResponse
@@ -68,35 +69,56 @@ func (resp *unpackedCDCResponse) Unpack(buf *bincode.Buf) error {
 	resp.body = nil
 	var kind uint8
 	if err := buf.UnpackU8(&kind); err != nil {
-		resp.error = fmt.Errorf("could not decode response kind: %w", err)
+		resp.error = fmt.Errorf("%v: could not decode response kind: %w", resp.requestId, err)
+		buf.Consume()
 		return nil
 	}
 	if kind == msgs.ERROR_KIND {
 		var errCode msgs.ErrCode
 		if err := errCode.Unpack(buf); err != nil {
-			resp.error = fmt.Errorf("could not decode error body: %w", err)
+			resp.error = fmt.Errorf("%v: could not decode error body: %w", resp.requestId, err)
+			buf.Consume()
 			return nil
 		}
 		resp.error = errCode
 		return nil
 	}
 	if msgs.CDCMessageKind(kind) != expectedKind {
-		resp.error = fmt.Errorf("expected body of kind %v, got %v instead", expectedKind, kind)
+		resp.error = fmt.Errorf("%v: expected body of kind %v, got %v instead", resp.requestId, expectedKind, kind)
+		buf.Consume()
 		return nil
 	}
 	if err := body.Unpack(buf); err != nil {
-		resp.error = fmt.Errorf("could not decode response body: %w", err)
+		resp.error = fmt.Errorf("%v: could not decode response body: %w", resp.requestId, err)
+
 		return nil
 	}
 	resp.body = body
 	resp.error = nil
 	return nil
 }
+*/
+
+type unpackedCDCRequestId uint64
+
+func (requestId *unpackedCDCRequestId) Unpack(buf *bincode.Buf) error {
+	var ver uint32
+	if err := buf.UnpackU32(&ver); err != nil {
+		return err
+	}
+	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
+		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
+	}
+	if err := buf.UnpackU64((*uint64)(requestId)); err != nil {
+		return err
+	}
+	return nil
+}
 
 // 5 times the shard numbers, given that we roughly do 5 shard requests per CDC request
 const minCDCSingleTimeout = 25 * time.Millisecond
 const maxCDCSingleTimeout = 500 * time.Millisecond
-const cdcMaxElapsed = 5 * time.Second
+const cdcMaxElapsed = 25 * time.Second // TODO these are a bit ridicolous now because of the valgrind test, adjust
 
 func (c *Client) checkRepeatedCDCRequestError(
 	logger LogLevels,
@@ -104,7 +126,7 @@ func (c *Client) checkRepeatedCDCRequestError(
 	req cdcRequest,
 	resp msgs.CDCResponse,
 	respErr msgs.ErrCode,
-) error {
+) *msgs.ErrCode {
 	switch reqBody := req.body.(type) {
 	case *msgs.RenameDirectoryReq:
 		// We repeat the request, but the previous had actually gone through:
@@ -118,12 +140,12 @@ func (c *Client) checkRepeatedCDCRequestError(
 			// we had  just moved it, and that the target edge also exists.
 			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameDirectoryReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return respErr
+				return &respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.RenameDirectoryResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
-				return respErr
+				return &respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
 			return nil
@@ -133,12 +155,12 @@ func (c *Client) checkRepeatedCDCRequestError(
 		if respErr == msgs.EDGE_NOT_FOUND {
 			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameFileReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return respErr
+				return &respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.RenameFileResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
-				return respErr
+				return &respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
 			return nil
@@ -148,12 +170,12 @@ func (c *Client) checkRepeatedCDCRequestError(
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkDirectoryReq %+v", reqBody)
 			// Note that here we expect a non-owned edge, since we're deleting a directory.
 			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.TargetId, reqBody.Name, reqBody.CreationTime, false) {
-				return respErr
+				return &respErr
 			}
 			return nil
 		}
 	}
-	return respErr
+	return &respErr
 }
 
 func (c *Client) CDCRequest(
@@ -169,6 +191,7 @@ func (c *Client) CDCRequest(
 	}
 	sock := c.CDCSocket
 	buffer := make([]byte, msgs.UDP_MTU)
+	requestIds := make([]uint64, cdcMaxElapsed/minCDCSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()
 	// will keep trying as long as we get timeouts
@@ -182,6 +205,7 @@ func (c *Client) CDCRequest(
 			atomic.AddInt64(&c.Counters.CDC.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
+		requestIds[attempts] = requestId
 		req := cdcRequest{
 			requestId: requestId,
 			body:      reqBody,
@@ -199,8 +223,10 @@ func (c *Client) CDCRequest(
 		// Keep going until we found the right request id --
 		// we can't assume that what we get isn't some other
 		// request we thought was timed out.
-		timeout := time.Duration(math.Min(float64(minCDCSingleTimeout)*math.Pow(1.5, float64(attempts)), float64(maxCDCSingleTimeout)))
-		sock.SetReadDeadline(time.Now().Add(timeout))
+		timeout := time.Duration(math.Min(float64(minCDCSingleTimeout)*math.Pow(2.0, float64(attempts)), float64(maxCDCSingleTimeout)))
+		readLoopStart := time.Now()
+		readLoopDeadline := readLoopStart.Add(timeout)
+		sock.SetReadDeadline(readLoopDeadline)
 		for {
 			respBytes := buffer
 			read, err := sock.Read(respBytes)
@@ -213,52 +239,81 @@ func (c *Client) CDCRequest(
 				}
 				if isTimeout {
 					logger.Debug("got network timeout error %v, will try to retry", err)
+					// make sure we've waited as much as the expected timeout, otherwise we might
+					// call in a busy loop due to the server just not being up.
+					time.Sleep(time.Until(readLoopDeadline))
 					break // keep trying
 				}
 				// pipe is broken somehow, terminate immediately with this err
 				return err
 			}
-			resp := unpackedCDCResponse{
-				body: respBody,
-			}
-			if err := bincode.UnpackFromBytes(&resp, respBytes); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode response to request %v, will continue waiting for responses: %w", req.requestId, err))
+			// Start parsing, from the header with request id
+			bbuf := bincode.Buf(respBytes)
+			var respRequestId unpackedCDCRequestId
+			if err := (&respRequestId).Unpack(&bbuf); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode CDC response header for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
 				continue
 			}
-			if resp.requestId != req.requestId {
-				logger.RaiseAlert(fmt.Errorf("dropping response %v, since we expected request id %v. body: %v, error: %v", resp.requestId, req.requestId, resp.body, resp.error))
+			// Check if we're interested in the request id we got -- accept any we've sent
+			// so far
+			goodRequestId := false
+			for _, requestId := range requestIds {
+				if uint64(respRequestId) == requestId {
+					goodRequestId = true
+					break
+				}
+			}
+			if !goodRequestId {
+				logger.Info("dropping response %v from CDC, since we expected one of %v", uint64(respRequestId), requestIds)
 				continue
 			}
-			// we've gotten a response
+			// We are interested, parse the kind
+			var kind uint8
+			if err := bbuf.UnpackU8(&kind); err != nil {
+				logger.RaiseAlert(fmt.Errorf("could not decode CDC response kind for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
+				continue
+			}
+			var eggsError *msgs.ErrCode
+			if kind == msgs.ERROR_KIND {
+				// If the kind is an error, parse it
+				var eggsErrVal msgs.ErrCode
+				eggsError = &eggsErrVal
+				if err := eggsError.Unpack(&bbuf); err != nil {
+					logger.RaiseAlert(fmt.Errorf("could not decode CDC response error for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
+					continue
+				}
+			} else {
+				// If the kind dosen't match, it's bad, since it's the same request id
+				if msgs.CDCMessageKind(kind) != msgKind {
+					logger.RaiseAlert(fmt.Errorf("dropping response %v from CDC, since we it is of kind %v while we expected %v", uint64(respRequestId), msgs.CDCMessageKind(kind), msgKind))
+					continue
+				}
+				// Otherwise, finally parse the body
+				if err := respBody.Unpack(&bbuf); err != nil {
+					logger.RaiseAlert(fmt.Errorf("could not decode CDC response body for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
+					continue
+				}
+			}
+			// If we've got a timeout, keep trying
+			if eggsError != nil && *eggsError == msgs.TIMEOUT {
+				logger.Info("got resp timeout error %v from CDC, will try to retry", err)
+				break // keep trying
+			}
+			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
 			if c.Counters != nil {
 				atomic.AddInt64(&c.Counters.CDC.Count[msgKind], 1)
 				atomic.AddInt64(&c.Counters.CDC.Nanos[msgKind], elapsed.Nanoseconds())
 			}
-			respErr := resp.error
-			if respErr != nil {
-				isTimeout := false
-				switch eggsErr := err.(type) {
-				case msgs.ErrCode:
-					isTimeout = eggsErr == msgs.TIMEOUT
-				}
-				if isTimeout {
-					logger.Debug("got resp timeout error %v, will try to retry", err)
-					break // keep trying
-				}
+			// If we're past the first attempt, there are cases where errors are not what they seem.
+			if eggsError != nil && attempts > 0 {
+				eggsError = c.checkRepeatedCDCRequestError(logger, req, respBody, *eggsError)
 			}
-			switch eggsErr := respErr.(type) {
-			case msgs.ErrCode:
-				// If we're past the first attempt, there are cases where errors are not what they
-				// seem.
-				if attempts > 0 {
-					respErr = c.checkRepeatedCDCRequestError(logger, req, respBody, eggsErr)
-				}
-			}
-			// check if it's an error or not
-			if respErr != nil {
-				logger.Debug("got error %v (%T) from CDC (took %v)", respErr, respErr, elapsed)
-				return respErr
+			// Check if it's an error or not. We only use debug here because some errors are legitimate
+			// responses (e.g. FILE_EMPTY)
+			if eggsError != nil {
+				logger.Debug("got error %v from CDC (took %v)", *eggsError, elapsed)
+				return *eggsError
 			}
 			logger.Debug("got response %T from CDC (took %v)", respBody, elapsed)
 			return nil

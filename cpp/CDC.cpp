@@ -163,7 +163,7 @@ public:
             }
 
             // timeout after 100ms
-            if (_inFlightShardReq && (eggsNow() - _inFlightShardReq->sentAt) > 100'000'000ull) {
+            if (_inFlightShardReq && (eggsNow() - _inFlightShardReq->sentAt) > 100_ms) {
                 _inFlightShardReq.reset();
                 _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
             }

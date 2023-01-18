@@ -13,6 +13,13 @@ type Packable interface {
 	Pack(buf *Buf)
 }
 
+// Consumes all bytes in the buf, and throws them away. Sometimes
+// useful when unpacking structures have their own error handling
+// and want to exit early discarding the rest of the data.
+func (buf *Buf) Consume() {
+	*buf = (*buf)[len(*buf):]
+}
+
 func (buf *Buf) PackU8(x uint8) {
 	(*buf)[0] = x
 	*buf = (*buf)[1:]

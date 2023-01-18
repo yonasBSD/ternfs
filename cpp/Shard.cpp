@@ -198,6 +198,7 @@ public:
             }
 
             // Actually process the request
+            auto t0 = eggsNow();
             if (err == NO_ERROR) {
                 if (readOnlyShardReq(reqContainer->kind())) {
                     err = _shared.db.read(*reqContainer, *respContainer);
@@ -208,14 +209,15 @@ public:
                     }
                 }
             }
+            Duration elapsed = eggsNow() - t0;
 
             BincodeBuf respBbuf(&sendBuf[0], sendBuf.size());
             if (err == NO_ERROR) {
-                LOG_DEBUG(_env, "successfully processed request %s with kind %s: %s", reqHeader.requestId, respContainer->kind(), *respContainer);
+                LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s: %s", reqHeader.requestId, respContainer->kind(), elapsed, *respContainer);
                 ShardResponseHeader(reqHeader.requestId, respContainer->kind()).pack(respBbuf);
                 respContainer->pack(respBbuf);
             } else {
-                LOG_DEBUG(_env, "request %s failed with error %s", reqContainer->kind(), err);
+                LOG_DEBUG(_env, "request %s failed with error %s in %s", reqContainer->kind(), err, elapsed);
                 ShardResponseHeader(reqHeader.requestId, ShardMessageKind::ERROR).pack(respBbuf);
                 respBbuf.packScalar<uint16_t>((uint16_t)err);
             }
@@ -297,11 +299,11 @@ public:
             }
 
             EggsTime t = eggsNow();
-            if (lastRequestSuccessful && (t - lastRequestT) < 60'000'000'000) {
+            if (lastRequestSuccessful && (t - lastRequestT) < 1_mins) {
                 // wait 60 secs before requesting again
                 GO_TO_NEXT_ITERATION
             }
-            if (!lastRequestSuccessful && (t - lastRequestT) < 100'000'000) {
+            if (!lastRequestSuccessful && (t - lastRequestT) < 100_ms) {
                 // if the last request failed, wait at least 100ms before retrying
                 GO_TO_NEXT_ITERATION
             }

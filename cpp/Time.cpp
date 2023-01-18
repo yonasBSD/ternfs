@@ -6,6 +6,23 @@
 #include "Time.hpp"
 #include "Assert.hpp"
 
+std::ostream& operator<<(std::ostream& out, Duration d) {
+    if (d.ns < 1'000) {
+        out << d.ns << "ns";
+    } else if (d.ns < 1'000'000) {
+        out << d.ns/1'000 << "." << d.ns%1'000 << "us";
+    } else if (d.ns < 1'000'000'000) {
+        out << d.ns/1'000'000 << "." << d.ns%1'000'000 << "ms";
+    } else if (d.ns < 1'000'000'000ull*60) {
+        out << d.ns/1'000'000'000 << "." << d.ns%1'000'000'000 << "s";
+    } else if (d.ns < 1'000'000'000ull*60*60) {
+        out << d.ns/(1'000'000'000ull*60) << "." << d.ns%(1'000'000'000ull*60) << "m";
+    } else {
+        out << d.ns/(1'000'000'000ull*60*60) << "." << d.ns%(1'000'000'000ull*60*60) << "h";
+    }
+    return out;
+}
+
 EggsTime eggsNow() {
     struct timespec now;
 

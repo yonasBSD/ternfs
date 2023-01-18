@@ -67,5 +67,5 @@ func (l *LogLogger) Debug(format string, v ...any) {
 }
 
 func (l *LogLogger) RaiseAlert(err error) {
-	l.Logger.Printf("ALERT %s\n", err)
+	l.Logger.Output(2, fmt.Sprintf("ALERT %s\n", err))
 }

@@ -87,11 +87,13 @@ func runTest(log eggs.LogLevels, blockServicesKeys map[msgs.BlockServiceId][16]b
 	t0 = time.Now()
 	cleanupAfterTest(log, counters, blockServicesKeys)
 	elapsed = time.Since(t0)
-	fmt.Printf("  cleanup took %v\n", elapsed)
-	if counters.Shard.TotalRequests() > 0 {
+	totalShardRequests = counters.Shard.TotalRequests()
+	totalCDCRequests = counters.CDC.TotalRequests()
+	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
+	if totalShardRequests > 0 {
 		formatCounters("shard", &counters.Shard)
 	}
-	if counters.CDC.TotalRequests() > 0 {
+	if totalCDCRequests > 0 {
 		formatCounters("CDC", &counters.CDC)
 	}
 }
@@ -119,6 +121,9 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []eggs.B
 		targetFiles:     1000,      // how many files we want
 		lowFiles:        500,
 		threads:         5,
+	}
+	if short {
+		fileHistoryOpts.threads = 2
 	}
 	runTest(
 		log,
@@ -249,7 +254,7 @@ func main() {
 	// get block services, since we don't actually write to the block services
 	// yet (it's just too slow).
 	hddBlockServices := 10
-	flashBlockServices := 5
+	flashBlockServices := 0
 	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
 		storageClass := "HDD"
 		if i >= hddBlockServices {
@@ -305,7 +310,7 @@ func main() {
 	waitShardFor := 20 * time.Second
 	fmt.Printf("waiting for shards for %v...\n", waitShardFor)
 	for i := 0; i < numShards; i++ {
-		eggs.WaitForShard(msgs.ShardId(i), waitShardFor)
+		eggs.WaitForShard(log, msgs.ShardId(i), waitShardFor)
 	}
 
 	fmt.Printf("operational 🤖\n")

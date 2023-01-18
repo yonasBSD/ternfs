@@ -160,6 +160,10 @@ public:
         return _val;
     }
 
+    const T operator()() const {
+        return _val;
+    }
+
     rocksdb::Slice toSlice() {
         return rocksdb::Slice(_val._data, _val.size());
     }
@@ -270,6 +274,22 @@ struct U64Value {
     }
 };
 
+struct I64Value {
+    char* _data;
+
+    static constexpr size_t MAX_SIZE = sizeof(int64_t);
+    size_t size() const { return MAX_SIZE; }
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+
+    LE_VAL(int64_t, i64, setI64, 0)
+
+    static StaticValue<I64Value> Static(int64_t x) {
+        auto v = StaticValue<I64Value>();
+        v().setI64(x);
+        return v;
+    }
+};
+
 // When we need a simple u64 key (e.g. log index)
 struct U64Key {
     char* _data;
@@ -338,3 +358,5 @@ struct InodeIdValue {
         return x;
     }
 };
+
+std::shared_ptr<rocksdb::MergeOperator> CreateInt64AddOperator();

@@ -271,7 +271,7 @@ type StatTransientFileReq struct {
 type StatTransientFileResp struct {
 	Mtime EggsTime
 	Size  uint64
-	Note  []byte
+	Note  string
 }
 
 // Considers all directories, also snapshot/transient ones. Remember that
@@ -1083,4 +1083,13 @@ type RemoveOwnedSnapshotFileEdgeEntry struct {
 	TargetId     InodeId
 	Name         string
 	CreationTime EggsTime
+}
+
+type SwapBlocksEntry struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	BlockId1    BlockId
+	FileId2     InodeId
+	ByteOffset2 uint64
+	BlockId2    BlockId
 }

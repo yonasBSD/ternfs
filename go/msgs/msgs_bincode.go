@@ -408,7 +408,7 @@ func (v *StatTransientFileResp) Unpack(buf *bincode.Buf) error {
 	if err := buf.UnpackU64((*uint64)(&v.Size)); err != nil {
 		return err
 	}
-	if err := buf.UnpackBytes((*[]byte)(&v.Note)); err != nil {
+	if err := buf.UnpackString(&v.Note); err != nil {
 		return err
 	}
 	return nil

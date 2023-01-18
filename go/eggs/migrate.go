@@ -1,3 +1,6 @@
+// TODO right now we only use one scratch file for everything, which is obviously not
+// great -- in general this below is more a proof of concept than anything, to test
+// the right shard code paths.
 package eggs
 
 import (
@@ -9,7 +12,7 @@ import (
 type scratchFile struct {
 	id     msgs.InodeId
 	cookie [8]byte
-	offset uint64
+	size   uint64
 }
 
 func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, file *scratchFile) error {
@@ -31,19 +34,25 @@ func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, 
 	}
 	file.id = resp.Id
 	file.cookie = resp.Cookie
-	file.offset = 0
+	file.size = 0
 	return nil
 }
 
 func copyBlock(
-	log LogLevels, client *Client,
-	file *scratchFile, blockServices []msgs.BlockService, blockSize uint64, storageClass msgs.StorageClass, block *msgs.FetchedBlock,
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	file *scratchFile,
+	blockServices []msgs.BlockService,
+	blockSize uint64,
+	storageClass msgs.StorageClass,
+	block *msgs.FetchedBlock,
 ) (msgs.BlockId, error) {
 	blockService := blockServices[block.BlockServiceIx]
 	initiateSpanReq := msgs.AddSpanInitiateReq{
 		FileId:       file.id,
 		Cookie:       file.cookie,
-		ByteOffset:   file.offset,
+		ByteOffset:   file.size,
 		StorageClass: storageClass,
 		Blacklist:    []msgs.BlockServiceBlacklist{{Id: blockService.Id}},
 		Parity:       msgs.MkParity(1, 0),
@@ -57,9 +66,19 @@ func copyBlock(
 		return 0, err
 	}
 	dstBlock := &initiateSpanResp.Blocks[0]
-	proof, err := CopyBlock(log, blockServices, blockSize, block, dstBlock)
-	if err != nil {
-		return 0, err
+	var proof [8]byte
+	var err error
+	if blockServicesKeys == nil {
+		proof, err = CopyBlock(log, blockServices, blockSize, block, dstBlock)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		key, wasPresent := blockServicesKeys[dstBlock.BlockServiceId]
+		if !wasPresent {
+			panic(fmt.Errorf("could not find key for block service %v", dstBlock.BlockServiceId))
+		}
+		proof = BlockAddProof(dstBlock.BlockServiceId, dstBlock.BlockId, key)
 	}
 	certifySpanResp := msgs.AddSpanCertifyResp{}
 	err = client.ShardRequest(
@@ -68,32 +87,28 @@ func copyBlock(
 		&msgs.AddSpanCertifyReq{
 			FileId:     file.id,
 			Cookie:     file.cookie,
-			ByteOffset: file.offset,
+			ByteOffset: file.size,
 			Proofs:     []msgs.BlockProof{{BlockId: dstBlock.BlockId, Proof: proof}},
 		},
 		&certifySpanResp,
 	)
+	file.size += blockSize
 	if err != nil {
 		return 0, err
 	}
 	return dstBlock.BlockId, nil
 }
 
-type MigrateStats struct {
-	MigratedFiles  uint64
-	MigratedBlocks uint64
+type keepScratchFileAlive struct {
+	stopHeartbeat chan struct{}
 }
 
-// Migrates the blocks in that block service, in that file.
-//
-// If the source block service it's still healthy, it'll just copy the block over, otherwise
-// it'll be recovered from the other. If possible, anyway.
-//
-// Returns the number of migrated blocks.
-func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blockServiceId msgs.BlockServiceId, fileId msgs.InodeId) error {
-	scratchFile := scratchFile{}
+func startToKeepScratchFileAlive(
+	log LogLevels,
+	client *Client,
+	scratchFile *scratchFile,
+) keepScratchFileAlive {
 	stopHeartbeat := make(chan struct{}, 1)
-	defer func() { stopHeartbeat <- struct{}{} }()
 	go func() {
 		for {
 			select {
@@ -117,6 +132,24 @@ func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blo
 			time.Sleep(time.Minute)
 		}
 	}()
+	return keepScratchFileAlive{
+		stopHeartbeat: stopHeartbeat,
+	}
+}
+
+func (k *keepScratchFileAlive) stop() {
+	k.stopHeartbeat <- struct{}{}
+}
+
+func migrateBlocksInFileInternal(
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	stats *MigrateStats,
+	blockServiceId msgs.BlockServiceId,
+	scratchFile *scratchFile,
+	fileId msgs.InodeId,
+) error {
 	fileSpansReq := msgs.FileSpansReq{
 		FileId:     fileId,
 		ByteOffset: 0,
@@ -150,10 +183,11 @@ func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blo
 				// TODO actually decide how flags work
 				if blockService.Flags == 0 {
 					replacementFound = true
-					if err := ensureScratchFile(log, client, fileId, &scratchFile); err != nil {
+					if err := ensureScratchFile(log, client, fileId, scratchFile); err != nil {
 						return err
 					}
-					newBlock, err := copyBlock(log, client, &scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
+					blockOffset := scratchFile.size
+					newBlock, err := copyBlock(log, client, blockServicesKeys, scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
 					if err != nil {
 						return err
 					}
@@ -162,7 +196,7 @@ func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blo
 						ByteOffset1: span.ByteOffset,
 						BlockId1:    blockToMigrate,
 						FileId2:     scratchFile.id,
-						ByteOffset2: scratchFile.offset,
+						ByteOffset2: blockOffset,
 						BlockId2:    newBlock,
 					}
 					if err := client.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
@@ -181,12 +215,46 @@ func MigrateBlocksInFile(log LogLevels, client *Client, stats *MigrateStats, blo
 		}
 	}
 	stats.MigratedFiles++
+	log.Debug("finished migrating file %v, %v files migrated so far", fileId, stats.MigratedFiles)
 	return nil
+}
+
+type MigrateStats struct {
+	MigratedFiles  uint64
+	MigratedBlocks uint64
+}
+
+// Migrates the blocks in that block service, in that file.
+//
+// If the source block service it's still healthy, it'll just copy the block over, otherwise
+// it'll be recovered from the other. If possible, anyway.
+func MigrateBlocksInFile(
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	stats *MigrateStats,
+	blockServiceId msgs.BlockServiceId,
+	fileId msgs.InodeId,
+) error {
+	scratchFile := scratchFile{}
+	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
+	defer keepAlive.stop()
+	return migrateBlocksInFileInternal(log, client, blockServicesKeys, stats, blockServiceId, &scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
 // shard.
-func migrateBlocksInternal(log LogLevels, client *Client, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
+func migrateBlocksInternal(
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	stats *MigrateStats,
+	shid msgs.ShardId,
+	blockServiceId msgs.BlockServiceId,
+) error {
+	scratchFile := scratchFile{}
+	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
+	defer keepAlive.stop()
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
 	for {
@@ -199,7 +267,10 @@ func migrateBlocksInternal(log LogLevels, client *Client, stats *MigrateStats, s
 		}
 		log.Debug("will migrate %d files", len(filesResp.FileIds))
 		for _, file := range filesResp.FileIds {
-			if err := MigrateBlocksInFile(log, client, stats, blockServiceId, file); err != nil {
+			if file == scratchFile.id {
+				continue
+			}
+			if err := migrateBlocksInFileInternal(log, client, blockServicesKeys, stats, blockServiceId, &scratchFile, file); err != nil {
 				return err
 			}
 		}
@@ -207,30 +278,19 @@ func migrateBlocksInternal(log LogLevels, client *Client, stats *MigrateStats, s
 	}
 }
 
-func MigrateBlocks(log LogLevels, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
-	client, err := NewClient(&shid, nil, nil)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	stats := MigrateStats{}
-	if err := migrateBlocksInternal(log, client, &stats, shid, blockServiceId); err != nil {
+func MigrateBlocks(log LogLevels, client *Client, blockServicesKeys map[msgs.BlockServiceId][16]byte, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
+	if err := migrateBlocksInternal(log, client, blockServicesKeys, stats, shid, blockServiceId); err != nil {
 		return err
 	}
 	log.Info("finished migrating blocks out of %v in shard %v, stats: %+v", blockServiceId, shid, stats)
 	return nil
 }
 
-func MigrateBlocksInAllShards(log LogLevels, blockServiceId msgs.BlockServiceId) error {
-	client, err := NewClient(nil, nil, nil)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	stats := MigrateStats{}
+func MigrateBlocksInAllShards(log LogLevels, client *Client, blockServicesKeys map[msgs.BlockServiceId][16]byte, stats *MigrateStats, blockServiceId msgs.BlockServiceId) error {
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		if err := migrateBlocksInternal(log, client, &stats, shid, blockServiceId); err != nil {
+		log.Info("migrating blocks in shard %v", shid)
+		if err := migrateBlocksInternal(log, client, blockServicesKeys, stats, shid, blockServiceId); err != nil {
 			return err
 		}
 	}

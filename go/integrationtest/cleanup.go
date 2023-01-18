@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -121,8 +122,11 @@ func cleanupAfterTest(
 				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
 					panic(err)
 				}
+				if strings.HasPrefix(statResp.Note, "migrate (") {
+					continue // created by migration
+				}
 				if statResp.Size > 0 {
-					panic(fmt.Errorf("unexpected non-empty transient file %v after cleanup", file))
+					panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))
 				}
 			}
 			if visitTransientFilesResp.NextId == 0 {

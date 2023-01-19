@@ -4,10 +4,12 @@
 #include "Env.hpp"
 
 struct ShardOptions {
-    bool waitForShuckle = false;
+    bool waitForBlockServices = false;
     LogLevel level = LogLevel::LOG_INFO;
     std::string logFile = ""; // if empty, stdout
-    std::string shuckleHost = "http://localhost:39999";
+    uint16_t port = 0; // automatically assigned, stored in shuckle
+    std::string shuckleHost = "localhost";
+    uint16_t shucklePort = 39999;
     // If non-zero, packets will be dropped with this probability. Useful to test
     // resilience of the system.
     double simulateIncomingPacketDrop = 0.0;

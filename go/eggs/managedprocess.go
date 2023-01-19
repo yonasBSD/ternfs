@@ -132,7 +132,7 @@ func closeOut(out io.Writer) {
 	}
 }
 
-func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) *ManagedProcess {
+func (procs *ManagedProcesses) Start(ll LogLevels, args *ManagedProcessArgs) *ManagedProcess {
 	exitedChan := make(chan struct{}, 1)
 
 	procs.processes = append(procs.processes, ManagedProcess{
@@ -156,7 +156,9 @@ func (procs *ManagedProcesses) Start(args *ManagedProcessArgs) *ManagedProcess {
 		proc.cmd.Env = args.Env
 	}
 
+	ll.Debug("starting %v", proc.cmd)
 	if err := proc.cmd.Start(); err != nil {
+		procs.processes = procs.processes[:len(procs.processes)-1]
 		panic(fmt.Errorf("could not start process %s: %w", proc.name, err))
 	}
 
@@ -240,16 +242,17 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 }
 
 func (procs *ManagedProcesses) StartPythonScript(
-	name string, script string, args []string, mpArgs *ManagedProcessArgs,
+	ll LogLevels, name string, script string, args []string, mpArgs *ManagedProcessArgs,
 ) {
 	mpArgs.Name = name
 	mpArgs.Exe = "python"
 	mpArgs.Args = append([]string{script}, args...)
 	mpArgs.Dir = pythonDir()
-	procs.Start(mpArgs)
+	procs.Start(ll, mpArgs)
 }
 
 type BlockServiceOpts struct {
+	Exe           string
 	Path          string
 	Port          uint16
 	StorageClass  string
@@ -267,35 +270,32 @@ func createDataDir(dir string) {
 	}
 }
 
-func (procs *ManagedProcesses) StartBlockService(opts *BlockServiceOpts) {
+func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServiceOpts) {
 	createDataDir(opts.Path)
 	args := []string{
-		"--storage_class", opts.StorageClass,
-		"--failure_domain", opts.FailureDomain,
-		"--port", fmt.Sprintf("%d", opts.Port),
-		"--log_file", path.Join(opts.Path, "log"),
-		opts.Path,
+		"-storage-class", opts.StorageClass,
+		"-failure-domain", opts.FailureDomain,
+		"-port", fmt.Sprintf("%d", opts.Port),
+		"-log-file", path.Join(opts.Path, "log"),
 	}
 	if opts.NoTimeCheck {
-		args = append(args, "--no_time_check")
+		args = append(args, "-no-time-check")
 	}
 	if opts.Verbose {
-		args = append(args, "--verbose")
+		args = append(args, "-verbose")
 	}
 	if opts.ShuckleHost != "" {
-		args = append(args, "--shuckle_host", opts.ShuckleHost)
+		args = append(args, "-shuckle", opts.ShuckleHost)
 	}
-	mpArgs := ManagedProcessArgs{
-		TerminateOnExit: true,
+	args = append(args, opts.Path)
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            fmt.Sprintf("block service (port %d)", opts.Port),
+		Exe:             opts.Exe,
+		Args:            args,
 		StdoutFile:      path.Join(opts.Path, "stdout"),
 		StderrFile:      path.Join(opts.Path, "stderr"),
-	}
-	procs.StartPythonScript(
-		fmt.Sprintf("block service (port %d)", opts.Port),
-		"block_service.py",
-		args,
-		&mpArgs,
-	)
+		TerminateOnExit: true,
+	})
 }
 
 type ShuckleOpts struct {
@@ -305,7 +305,7 @@ type ShuckleOpts struct {
 	Port    uint16
 }
 
-func (procs *ManagedProcesses) StartShuckle(opts *ShuckleOpts) {
+func (procs *ManagedProcesses) StartShuckle(ll LogLevels, opts *ShuckleOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-port", fmt.Sprintf("%d", opts.Port),
@@ -314,7 +314,7 @@ func (procs *ManagedProcesses) StartShuckle(opts *ShuckleOpts) {
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
-	procs.Start(&ManagedProcessArgs{
+	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",
 		Exe:             opts.Exe,
 		Args:            args,
@@ -331,47 +331,37 @@ func BuildShuckleExe(ll LogLevels) string {
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
-		panic(fmt.Errorf("could not build shard: %w", err))
+		panic(fmt.Errorf("could not build shuckle: %w", err))
 	}
 	return path.Join(buildCmd.Dir, "shuckle")
 }
 
-func WaitForShuckle(shuckleHost string, expectedBlockServices int, timeout time.Duration) []BlockService {
-	t0 := time.Now()
-	var err error
-	var bss []BlockService
-	for {
-		t := time.Now()
-		if t.Sub(t0) > timeout {
-			panic(fmt.Errorf("giving up waiting for shuckle, last error: %w", err))
-		}
-		bss, err = GetAllBlockServices(shuckleHost)
-		if err == nil && len(bss) == expectedBlockServices {
-			return bss
-		}
-		if err == nil && len(bss) > expectedBlockServices {
-			panic(fmt.Errorf("got more block services than expected (%v > %v)", len(bss), expectedBlockServices))
-		}
-		if err == nil {
-			err = fmt.Errorf("expecting %v block services, got %v", expectedBlockServices, len(bss))
-		}
-		time.Sleep(10 * time.Millisecond)
+func BuildBlockServiceExe(ll LogLevels) string {
+	buildCmd := exec.Command("go", "build", ".")
+	buildCmd.Dir = path.Join(goDir(), "blockservice")
+	ll.Info("building block service")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Printf("build output:\n")
+		os.Stdout.Write(out)
+		panic(fmt.Errorf("could not build block service: %w", err))
 	}
+	return path.Join(buildCmd.Dir, "blockservice")
 }
 
 type ShardOpts struct {
-	Exe                string
-	Dir                string
-	Verbose            bool
-	Shid               msgs.ShardId
-	Valgrind           bool
-	WaitForShuckle     bool
-	Perf               bool
-	IncomingPacketDrop float64
-	OutgoingPacketDrop float64
+	Exe                  string
+	Dir                  string
+	Verbose              bool
+	Shid                 msgs.ShardId
+	Valgrind             bool
+	WaitForBlockServices bool
+	Perf                 bool
+	IncomingPacketDrop   float64
+	OutgoingPacketDrop   float64
+	Sanitize             bool
 }
 
-func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
+func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -386,8 +376,8 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 	if opts.Verbose {
 		args = append(args, "--verbose")
 	}
-	if opts.WaitForShuckle {
-		args = append(args, "--wait-for-shuckle")
+	if opts.WaitForBlockServices {
+		args = append(args, "--wait-for-block-services")
 	}
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("shard %v", opts.Shid),
@@ -396,6 +386,7 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
 		StderrFile:      path.Join(opts.Dir, "stderr"),
 		TerminateOnExit: true,
+		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1"},
 	}
 	if opts.Valgrind {
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)
@@ -423,7 +414,7 @@ func (procs *ManagedProcesses) StartShard(opts *ShardOpts) {
 			mpArgs.Args...,
 		)
 	}
-	procs.Start(&mpArgs)
+	procs.Start(ll, &mpArgs)
 }
 
 type CDCOpts struct {
@@ -436,7 +427,7 @@ type CDCOpts struct {
 	OutgoingPacketDrop float64
 }
 
-func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
+func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -469,7 +460,7 @@ func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(&mpArgs)
+		procs.Start(ll, &mpArgs)
 	} else if opts.Perf {
 		mpArgs.Name = fmt.Sprintf("%s (perf)", mpArgs.Name)
 		mpArgs.Exe = "perf"
@@ -481,9 +472,9 @@ func (procs *ManagedProcesses) StartCDC(opts *CDCOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(&mpArgs)
+		procs.Start(ll, &mpArgs)
 	} else {
-		procs.Start(&mpArgs)
+		procs.Start(ll, &mpArgs)
 	}
 }
 
@@ -496,7 +487,7 @@ func WaitForShard(log LogLevels, shid msgs.ShardId, timeout time.Duration) {
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
 		}
-		client, err = NewClient(&shid, nil, nil)
+		client, err = NewClient(log, &shid, nil, nil)
 		if err != nil {
 			time.Sleep(10 * time.Millisecond)
 			continue

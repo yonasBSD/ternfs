@@ -23,22 +23,6 @@ func main() {
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	flag.Parse()
-	noRunawayArgs()
-
-	logOut := os.Stdout
-	if *logFile != "" {
-		var err error
-		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not open file %v: %v", *logFile, err)
-			os.Exit(1)
-		}
-		defer logOut.Close()
-	}
-	log := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
 
 	if flag.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "Please specify at least one shard to run with using positional arguments.")
@@ -57,6 +41,21 @@ func main() {
 			os.Exit(2)
 		}
 		shards = append(shards, msgs.ShardId(shardI))
+	}
+
+	logOut := os.Stdout
+	if *logFile != "" {
+		var err error
+		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not open file %v: %v", *logFile, err)
+			os.Exit(1)
+		}
+		defer logOut.Close()
+	}
+	log := &eggs.LogLogger{
+		Verbose: *verbose,
+		Logger:  eggs.NewLogger(logOut),
 	}
 
 	panicChan := make(chan error)

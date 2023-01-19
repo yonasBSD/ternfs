@@ -4,13 +4,14 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"net"
+	"sync"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
-type ShardSocketFactory interface {
-	GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error)
-	ReleaseShardSocket(shid msgs.ShardId)
+type shardSocketFactory interface {
+	getShardSocket(shid msgs.ShardId, addr [4]byte, port uint16) (*net.UDPConn, error)
+	releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn)
 }
 
 type ReqCounters struct {
@@ -34,61 +35,134 @@ type ClientCounters struct {
 }
 
 type Client struct {
-	ShardSocketFactory ShardSocketFactory
-	CDCSocket          *net.UDPConn
-	Counters           *ClientCounters
-	CDCKey             cipher.Block
+	shardIps           [256][4]byte
+	shardPorts         [256]uint16
+	shardSocketFactory shardSocketFactory
+	cdcIp              [4]byte
+	cdcPort            uint16
+	cdcSocket          *net.UDPConn
+	cdcLock            sync.Mutex
+	counters           *ClientCounters
+	cdcKey             cipher.Block
 }
 
-func NewClient(shid *msgs.ShardId, counters *ClientCounters, cdcKey cipher.Block) (*Client, error) {
-	var err error
+// If `shid` is present, the client will only create a socket for that shard,
+// otherwise sockets for all 256 shards will be created.
+//
+// The other two parameters are optional too.
+//
+// The client is thread safe, and more sockets might be temporarily created
+// if multiple things are trying to talk to the same shard. So the assumption
+// is that there won't be much contention otherwise you might as well create
+// a socket each time. TODO not sure this is the best way forward
+func NewClient(
+	log LogLevels,
+	shid *msgs.ShardId, counters *ClientCounters, cdcKey cipher.Block,
+) (*Client, error) {
+	shuckleAddress := "localhost:39999"
 	c := Client{}
-	c.CDCSocket, err = CreateCDCSocket()
+	{
+		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})
+		if err != nil {
+			return nil, err
+		}
+		shards := resp.(*msgs.ShardsResp)
+		for i, shard := range shards.Shards {
+			if shard.Port == 0 {
+				return nil, fmt.Errorf("shard %v not present in shuckle", i)
+			}
+			c.shardIps[i] = shard.Ip
+			c.shardPorts[i] = shard.Port
+		}
+		resp, err = ShuckleRequest(log, shuckleAddress, &msgs.CdcReq{})
+		if err != nil {
+			return nil, err
+		}
+		cdc := resp.(*msgs.CdcResp)
+		if cdc.Port == 0 {
+			return nil, fmt.Errorf("CDC not present in shuckle")
+		}
+		c.cdcIp = cdc.Ip
+		c.cdcPort = cdc.Port
+	}
+	var err error
+	c.cdcSocket, err = CreateCDCSocket(c.cdcIp, c.cdcPort)
 	if err != nil {
 		return nil, err
 	}
 	if shid != nil {
-		c.ShardSocketFactory, err = NewShardSpecificFactory(*shid)
+		c.shardSocketFactory, err = newShardSpecificFactory(*shid, c.shardIps[int(*shid)], c.shardPorts[int(*shid)])
 		if err != nil {
-			c.CDCSocket.Close()
+			c.cdcSocket.Close()
 			return nil, err
 		}
 	} else {
-		c.ShardSocketFactory, err = NewAllShardsFactory()
+		c.shardSocketFactory, err = newAllShardsFactory(c.shardIps[:], c.shardPorts[:])
 		if err != nil {
-			c.CDCSocket.Close()
+			c.cdcSocket.Close()
 			return nil, err
 		}
 	}
-	c.Counters = counters
-	c.CDCKey = cdcKey
+	c.counters = counters
+	c.cdcKey = cdcKey
 	return &c, nil
 }
 
-func (c *Client) Close() {
-	switch factory := c.ShardSocketFactory.(type) {
-	case *AllShardsFactory:
-		factory.Close()
-	case *ShardSpecificFactory:
-		factory.Close()
-	default:
-		panic(fmt.Errorf("bad factory %T", c.ShardSocketFactory))
+func (c *Client) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
+	return c.shardSocketFactory.getShardSocket(shid, c.shardIps[int(shid)], c.shardPorts[int(shid)])
+}
+
+func (c *Client) ReleaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
+	c.shardSocketFactory.releaseShardSocket(shid, sock)
+}
+
+func (c *Client) GetCDCSocket() (*net.UDPConn, error) {
+	if c.cdcLock.TryLock() {
+		return c.cdcSocket, nil
+	} else {
+		conn, err := CreateCDCSocket(c.cdcIp, c.cdcPort)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
 	}
-	if err := c.CDCSocket.Close(); err != nil {
+}
+
+func (c *Client) ReleaseCDCSocket(sock *net.UDPConn) {
+	if sock == c.cdcSocket {
+		c.cdcLock.Unlock()
+	} else {
+		if err := sock.Close(); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func (c *Client) Close() {
+	switch factory := c.shardSocketFactory.(type) {
+	case *allShardsFactory:
+		factory.close()
+	case *shardSpecificFactory:
+		factory.close()
+	default:
+		panic(fmt.Errorf("bad factory %T", c.shardSocketFactory))
+	}
+	if err := c.cdcSocket.Close(); err != nil {
 		panic(err)
 	}
 }
 
 // Holds sockets to all 256 shards
-type AllShardsFactory struct {
+type allShardsFactory struct {
 	shardSocks [256]*net.UDPConn
+	shardLocks [256]sync.Mutex
 }
 
-func NewAllShardsFactory() (*AllShardsFactory, error) {
+func newAllShardsFactory(shardIps [][4]byte, shardPorts []uint16) (*allShardsFactory, error) {
 	var err error
-	c := AllShardsFactory{}
+	c := allShardsFactory{}
 	for i := 0; i < 256; i++ {
-		c.shardSocks[msgs.ShardId(i)], err = CreateShardSocket(msgs.ShardId(i))
+		c.shardSocks[msgs.ShardId(i)], err = CreateShardSocket(msgs.ShardId(i), shardIps[i], shardPorts[i])
 		if err != nil {
 			return nil, err
 		}
@@ -96,7 +170,7 @@ func NewAllShardsFactory() (*AllShardsFactory, error) {
 	return &c, nil
 }
 
-func (c *AllShardsFactory) Close() {
+func (c *allShardsFactory) close() {
 	for _, sock := range c.shardSocks {
 		if err := sock.Close(); err != nil {
 			panic(err)
@@ -104,44 +178,61 @@ func (c *AllShardsFactory) Close() {
 	}
 }
 
-func (c *AllShardsFactory) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
-	return c.shardSocks[int(shid)], nil
+func (c *allShardsFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
+	if c.shardLocks[int(shid)].TryLock() {
+		return c.shardSocks[int(shid)], nil
+	} else {
+		conn, err := CreateShardSocket(shid, ip, port)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
+	}
 }
 
-func (c *AllShardsFactory) ReleaseShardSocket(msgs.ShardId) {}
+func (c *allShardsFactory) releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
+	if c.shardSocks[int(shid)] == sock {
+		c.shardLocks[int(shid)].Unlock()
+	} else {
+		if err := sock.Close(); err != nil {
+			panic(err)
+		}
+	}
+}
 
 // For when you almost always do requests to a single shard (e.g. in GC).
-type ShardSpecificFactory struct {
+type shardSpecificFactory struct {
 	shid      msgs.ShardId
 	shardSock *net.UDPConn
+	shardLock sync.Mutex
 }
 
 // TODO probably convert these errors to stderr, we can't do much with them usually
 // but they'd be worth knowing about
-func (c *ShardSpecificFactory) Close() error {
+func (c *shardSpecificFactory) close() error {
 	if err := c.shardSock.Close(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func NewShardSpecificFactory(shid msgs.ShardId) (*ShardSpecificFactory, error) {
-	c := ShardSpecificFactory{
+func newShardSpecificFactory(shid msgs.ShardId, ip [4]byte, port uint16) (*shardSpecificFactory, error) {
+	c := shardSpecificFactory{
 		shid: shid,
 	}
 	var err error
-	c.shardSock, err = CreateShardSocket(shid)
+	c.shardSock, err = CreateShardSocket(shid, ip, port)
 	if err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
 
-func (c *ShardSpecificFactory) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
-	if shid == c.shid {
+func (c *shardSpecificFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
+	if shid == c.shid && c.shardLock.TryLock() {
 		return c.shardSock, nil
 	} else {
-		shardSock, err := CreateShardSocket(shid)
+		shardSock, err := CreateShardSocket(shid, ip, port)
 		if err != nil {
 			return nil, err
 		}
@@ -149,12 +240,13 @@ func (c *ShardSpecificFactory) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, 
 	}
 }
 
-func (c *ShardSpecificFactory) ReleaseShardSocket(shid msgs.ShardId) {
-	if shid == c.shid {
-		return
-	}
-	if err := c.shardSock.Close(); err != nil {
-		panic(err)
+func (c *shardSpecificFactory) releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
+	if sock == c.shardSock {
+		c.shardLock.Unlock()
+	} else {
+		if err := sock.Close(); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -168,7 +260,7 @@ func GetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId) (*msgs.Director
 		return nil, err
 	}
 	info := msgs.DirectoryInfoBody{}
-	if err := bincode.UnpackFromBytes(&info, resp.Info); err != nil {
+	if err := bincode.Unpack(resp.Info, &info); err != nil {
 		return nil, err
 	}
 	if len(resp.Info) == 0 {
@@ -186,8 +278,7 @@ func SetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId, inherited bool,
 		buf = make([]byte, 0)
 	} else {
 		info.Version = 1
-		buf = make([]byte, 255)
-		bincode.PackIntoBytes(&buf, info)
+		buf = bincode.Pack(info)
 	}
 	req := msgs.SetDirectoryInfoReq{
 		Id: id,
@@ -200,4 +291,51 @@ func SetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId, inherited bool,
 		return err
 	}
 	return nil
+}
+
+func ResolveDirectoryInfo(
+	log LogLevels,
+	client *Client,
+	dirInfoCache *DirInfoCache,
+	dirId msgs.InodeId,
+) (*msgs.DirectoryInfoBody, error) {
+	statResp := msgs.StatDirectoryResp{}
+	err := client.ShardRequest(log, dirId.Shard(), &msgs.StatDirectoryReq{Id: dirId}, &statResp)
+	if err != nil {
+		return nil, fmt.Errorf("could not send stat to external shard %v to resolve directory info: %w", dirId.Shard(), err)
+	}
+
+	return resolveDirectoryInfo(log, client, dirInfoCache, dirId, &statResp)
+}
+
+func resolveDirectoryInfo(
+	log LogLevels,
+	client *Client,
+	dirInfoCache *DirInfoCache,
+	dirId msgs.InodeId,
+	statResp *msgs.StatDirectoryResp,
+) (*msgs.DirectoryInfoBody, error) {
+	// we have the data directly in the stat response
+	if len(statResp.Info) > 0 {
+		infoBody := msgs.DirectoryInfoBody{}
+		if err := bincode.Unpack(statResp.Info, &infoBody); err != nil {
+			return nil, err
+		}
+		dirInfoCache.UpdateCachedDirInfo(dirId, &infoBody)
+		return &infoBody, nil
+	}
+
+	// we have the data in the cache
+	dirInfoBody := dirInfoCache.LookupCachedDirInfo(dirId)
+	if dirInfoBody != nil {
+		return dirInfoBody, nil
+	}
+
+	// we need to traverse upwards
+	dirInfoBody, err := ResolveDirectoryInfo(log, client, dirInfoCache, statResp.Owner)
+	if err != nil {
+		return nil, err
+	}
+
+	return dirInfoBody, nil
 }

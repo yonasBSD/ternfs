@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
-	"strings"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -46,9 +46,9 @@ func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, na
 func cleanupAfterTest(
 	log eggs.LogLevels,
 	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) {
-	client, err := eggs.NewClient(nil, counters, nil)
+	client, err := eggs.NewClient(log, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -121,9 +121,6 @@ func cleanupAfterTest(
 				statResp := msgs.StatTransientFileResp{}
 				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
 					panic(err)
-				}
-				if strings.HasPrefix(statResp.Note, "migrate (") {
-					continue // created by migration
 				}
 				if statResp.Size > 0 {
 					panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))

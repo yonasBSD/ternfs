@@ -1179,6 +1179,10 @@ struct ShardDBImpl {
             return true;
         }
 
+        if (req.parity.blocks() != req.bodyBlocks.els.size()) {
+            return false;
+        }
+
         if (req.parity.dataBlocks() == 1) {
             // mirroring blocks should all be the same
             for (const auto& block: req.bodyBlocks.els) {
@@ -1416,6 +1420,17 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _prepareExpireTransientFile(EggsTime time, const ExpireTransientFileReq& req, ExpireTransientFileEntry& entry) {
+        if (req.id.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.id.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        entry.id = req.id;
+        return NO_ERROR;
+    }
+
     EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         logEntry.clear();
@@ -1488,6 +1503,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::SWAP_BLOCKS:
             err = _prepareSwapBlocks(time, req.getSwapBlocks(), logEntryBody.setSwapBlocks());
+            break;
+        case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+            err = _prepareExpireTransientFile(time, req.getExpireTransientFile(), logEntryBody.setExpireTransientFile());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -2360,7 +2378,7 @@ struct ShardDBImpl {
             respBlock.blockServicePort = cache.port;
             respBlock.blockServiceId = block.blockServiceId;
             respBlock.blockId = block.blockId;
-            respBlock.certificate = _blockDeleteCertificate(span().blockSize(), block, cache.secretKey);
+            respBlock.certificate = _blockEraseCertificate(span().blockSize(), block, cache.secretKey);
         }
 
         return NO_ERROR;
@@ -2431,7 +2449,7 @@ struct ShardDBImpl {
             const auto& cache = _blockServicesCache.at(block.blockServiceId);
             respBlock.blockServiceIp = cache.ip;
             respBlock.blockServicePort = cache.port;
-            respBlock.certificate.data = _blockAddCertificate(spanBody.blockSize(), block, cache.secretKey);
+            respBlock.certificate.data = _blockWriteCertificate(spanBody.blockSize(), block, cache.secretKey);
         }
     }
 
@@ -2543,7 +2561,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    std::array<uint8_t, 8> _blockAddCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
+    std::array<uint8_t, 8> _blockWriteCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -2572,7 +2590,7 @@ struct ShardDBImpl {
         return proof.proof == expectedProof;
     }
 
-    std::array<uint8_t, 8> _blockDeleteCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
+    std::array<uint8_t, 8> _blockEraseCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -2875,6 +2893,23 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _applyExpireTransientFile(EggsTime time, rocksdb::WriteBatch& batch, const ExpireTransientFileEntry& entry, ExpireTransientFileResp& resp) {
+        std::string value;
+        ExternalValue<TransientFileBody> transientFile;
+        {
+            EggsError err = _getTransientFile({}, time, true, entry.id, value, transientFile);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        transientFile().setDeadline(0);
+        {
+            auto k = InodeIdKey::Static(entry.id);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
+        }
+        return NO_ERROR;
+    }
+
     EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
@@ -2967,6 +3002,9 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::SWAP_BLOCKS:
             err = _applySwapBlocks(time, batch, logEntryBody.getSwapBlocks(), resp.setSwapBlocks());
+            break;
+        case ShardLogEntryKind::EXPIRE_TRANSIENT_FILE:
+            err = _applyExpireTransientFile(time, batch, logEntryBody.getExpireTransientFile(), resp.setExpireTransientFile());
             break;
         default:
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
@@ -3156,6 +3194,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::REMOVE_INODE:
     case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

@@ -40,6 +40,12 @@ func (cg *goCodegen) pline(e string) {
 	fmt.Fprintf(cg.pack, "%s%s\n", cg.tabs, e)
 }
 
+func (cg *goCodegen) pstep(e string) {
+	fmt.Fprintf(cg.pack, "%sif err := %s; err != nil {\n", cg.tabs, e)
+	fmt.Fprintf(cg.pack, "%s\treturn err\n", cg.tabs)
+	fmt.Fprintf(cg.pack, "%s}\n", cg.tabs)
+}
+
 // unpack line
 func (cg *goCodegen) uline(e string) {
 	fmt.Fprintf(cg.unpack, "%s%s\n", cg.tabs, e)
@@ -74,51 +80,39 @@ func sliceTypeElem(t reflect.Type) reflect.Type {
 func (cg *goCodegen) gen(expr *subexpr) {
 	t := expr.typ
 	switch t.Kind() {
-	case reflect.Uint8:
+	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU8(uint8(%v))", expr.fld))
-		cg.ustep(fmt.Sprintf("buf.UnpackU8((*uint8)(&%s))", expr.fld))
-	case reflect.Bool:
-		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackBool(bool(%v))", expr.fld))
-		cg.ustep(fmt.Sprintf("buf.UnpackBool((*bool)(&%s))", expr.fld))
-	case reflect.Uint16:
-		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU16(uint16(%v))", expr.fld))
-		cg.ustep(fmt.Sprintf("buf.UnpackU16((*uint16)(&%s))", expr.fld))
-	case reflect.Uint32:
-		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("buf.PackU32(uint32(%v))", expr.fld))
-		cg.ustep(fmt.Sprintf("buf.UnpackU32((*uint32)(&%s))", expr.fld))
+		cg.pstep(fmt.Sprintf("bincode.PackScalar(w, %s(%v))", strings.ToLower(t.Kind().String()), expr.fld))
+		cg.ustep(fmt.Sprintf("bincode.UnpackScalar(r, (*%s)(&%v))", strings.ToLower(t.Kind().String()), expr.fld))
 	case reflect.Uint64:
 		if expr.tag == "varint" {
-			cg.pline(fmt.Sprintf("buf.PackVarU61(uint64(%v))", expr.fld))
-			cg.ustep(fmt.Sprintf("buf.UnpackVarU61((*uint64)(&%s))", expr.fld))
+			cg.pstep(fmt.Sprintf("bincode.PackVarU61(w, uint64(%v))", expr.fld))
+			cg.ustep(fmt.Sprintf("bincode.UnpackVarU61(r, (*uint64)(&%s))", expr.fld))
 		} else {
 			assertExpectedTag(expr, `tag bincode:"varint" or no tag`)
-			cg.pline(fmt.Sprintf("buf.PackU64(uint64(%v))", expr.fld))
-			cg.ustep(fmt.Sprintf("buf.UnpackU64((*uint64)(&%s))", expr.fld))
+			cg.pstep(fmt.Sprintf("bincode.PackScalar(w, uint64(%v))", expr.fld))
+			cg.ustep(fmt.Sprintf("bincode.UnpackScalar(r, (*uint64)(&%v))", expr.fld))
 		}
 	case reflect.Struct:
 		assertNoTag(expr)
-		cg.pline(fmt.Sprintf("%v.Pack(buf)", expr.fld))
-		cg.ustep(fmt.Sprintf("%v.Unpack(buf)", expr.fld))
+		cg.pstep(fmt.Sprintf("%v.Pack(w)", expr.fld))
+		cg.ustep(fmt.Sprintf("%v.Unpack(r)", expr.fld))
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 {
-			cg.pline(fmt.Sprintf("buf.PackBytes([]byte(%v))", expr.fld))
+			cg.pstep(fmt.Sprintf("bincode.PackBytes(w, []byte(%v))", expr.fld))
 			if expr.typ.Kind() == reflect.String {
-				cg.ustep(fmt.Sprintf("buf.UnpackString(&%v)", expr.fld))
+				cg.ustep(fmt.Sprintf("bincode.UnpackString(r, &%v)", expr.fld))
 			} else {
-				cg.ustep(fmt.Sprintf("buf.UnpackBytes((*[]byte)(&%v))", expr.fld))
+				cg.ustep(fmt.Sprintf("bincode.UnpackBytes(r, (*[]byte)(&%v))", expr.fld))
 			}
 		} else {
 			lenVar := cg.lenVar()
 			// handle length
 			cg.pline(fmt.Sprintf("%s := len(%s)", lenVar, expr.fld))
-			cg.pline(fmt.Sprintf("buf.PackLength(%s)", lenVar))
+			cg.pstep(fmt.Sprintf("bincode.PackLength(w, %s)", lenVar))
 			cg.uline(fmt.Sprintf("var %s int", lenVar))
-			cg.ustep(fmt.Sprintf("buf.UnpackLength(&%s)", lenVar))
+			cg.ustep(fmt.Sprintf("bincode.UnpackLength(r, &%s)", lenVar))
 			// handle body
 			cg.uline(fmt.Sprintf("bincode.EnsureLength(&%s, %s)", expr.fld, lenVar))
 			loop := fmt.Sprintf("for i := 0; i < %s; i++ {", lenVar)
@@ -137,8 +131,8 @@ func (cg *goCodegen) gen(expr *subexpr) {
 			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
 		}
 		len := expr.typ.Size()
-		cg.pline(fmt.Sprintf("buf.PackFixedBytes(%d, %v[:])", len, expr.fld))
-		cg.ustep(fmt.Sprintf("buf.UnpackFixedBytes(%d, %v[:])", len, expr.fld))
+		cg.pstep(fmt.Sprintf("bincode.PackFixedBytes(w, %d, %v[:])", len, expr.fld))
+		cg.ustep(fmt.Sprintf("bincode.UnpackFixedBytes(r, %d, %v[:])", len, expr.fld))
 	default:
 		panic(fmt.Sprintf("unsupported type %v with kind %v", expr.typ, expr.typ.Kind()))
 	}
@@ -173,8 +167,8 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 		fresh:  &fresh,
 	}
 
-	cg.pline(fmt.Sprintf("func (v *%s) Pack(buf *bincode.Buf) {", t.Name()))
-	cg.uline(fmt.Sprintf("func (v *%s) Unpack(buf *bincode.Buf) error {", t.Name()))
+	cg.pline(fmt.Sprintf("func (v *%s) Pack(w io.Writer) error {", t.Name()))
+	cg.uline(fmt.Sprintf("func (v *%s) Unpack(r io.Reader) error {", t.Name()))
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		cg.genInSlice(&subexpr{
@@ -183,6 +177,7 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 			typ: fld.Type,
 		})
 	}
+	cg.pline("\treturn nil")
 	cg.uline("\treturn nil")
 	cg.pline("}\n")
 	cg.uline("}\n")
@@ -278,7 +273,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "}\n\n")
 }
 
-func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	fmt.Fprintln(out, "// Automatically generated with go run bincodegen.")
@@ -287,6 +282,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	fmt.Fprintln(out)
 
 	fmt.Fprintln(out, `import "fmt"`)
+	fmt.Fprintln(out, `import "io"`)
 	fmt.Fprintln(out, `import "xtx/eggsfs/bincode"`)
 	fmt.Fprintln(out)
 
@@ -294,6 +290,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 	generateGoMsgKind(out, "ShardMessageKind", shardReqResps)
 	generateGoMsgKind(out, "CDCMessageKind", cdcReqResps)
+	generateGoMsgKind(out, "ShuckleMessageKind", shuckleReqResps)
 
 	for _, reqResp := range shardReqResps {
 		generateGoReqResp(out, reqResp, "ShardMessageKind", "ShardRequestKind", "ShardResponseKind")
@@ -303,6 +300,9 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	}
 	for _, typ := range extras {
 		generateGoSingle(out, typ)
+	}
+	for _, reqResp := range shuckleReqResps {
+		generateGoReqResp(out, reqResp, "ShuckleMessageKind", "ShuckleRequestKind", "ShuckleResponseKind")
 	}
 
 	return out.Bytes()
@@ -628,7 +628,7 @@ func generateC(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRe
 }
 
 func cppType(t reflect.Type) string {
-	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" {
 		return t.Name()
 	}
 	switch t.Kind() {
@@ -702,7 +702,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// pack/unpack
 	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
 	// when unpacking
-	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" {
+	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" {
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Uint64 && expr.tag == "varint" {
@@ -1027,7 +1027,7 @@ func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []re
 	generateCppContainer(hpp, cpp, what+"RespContainer", what+"MessageKind", respContainerTypes)
 }
 
-func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
 
@@ -1073,9 +1073,14 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
+	for _, reqResp := range shuckleReqResps {
+		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.resp)
+	}
 
 	generateCppReqResp(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppReqResp(hppOut, cppOut, "CDC", cdcReqResps)
+	generateCppReqResp(hppOut, cppOut, "Shuckle", shuckleReqResps)
 
 	generateCppLogEntries(
 		hppOut,
@@ -1104,6 +1109,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
+			reflect.TypeOf(msgs.ExpireTransientFileEntry{}),
 		},
 	)
 
@@ -1240,6 +1246,11 @@ func main() {
 			reflect.TypeOf(msgs.SnapshotLookupReq{}),
 			reflect.TypeOf(msgs.SnapshotLookupResp{}),
 		},
+		{
+			0x0B,
+			reflect.TypeOf(msgs.ExpireTransientFileReq{}),
+			reflect.TypeOf(msgs.ExpireTransientFileResp{}),
+		},
 		// PRIVATE OPERATIONS -- These are safe operations, but we don't want the FS client itself
 		// to perform them. TODO make privileged?
 		{
@@ -1373,6 +1384,44 @@ func main() {
 		},
 	}
 
+	shuckleReqResps := []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.BlockServicesForShardReq{}),
+			reflect.TypeOf(msgs.BlockServicesForShardResp{}),
+		},
+		{
+			0x02,
+			reflect.TypeOf(msgs.RegisterBlockServiceReq{}),
+			reflect.TypeOf(msgs.RegisterBlockServiceResp{}),
+		},
+		{
+			0x03,
+			reflect.TypeOf(msgs.ShardsReq{}),
+			reflect.TypeOf(msgs.ShardsResp{}),
+		},
+		{
+			0x04,
+			reflect.TypeOf(msgs.RegisterShardReq{}),
+			reflect.TypeOf(msgs.RegisterShardResp{}),
+		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.AllBlockServicesReq{}),
+			reflect.TypeOf(msgs.AllBlockServicesResp{}),
+		},
+		{
+			0x06,
+			reflect.TypeOf(msgs.RegisterCdcReq{}),
+			reflect.TypeOf(msgs.RegisterCdcResp{}),
+		},
+		{
+			0x07,
+			reflect.TypeOf(msgs.CdcReq{}),
+			reflect.TypeOf(msgs.CdcResp{}),
+		},
+	}
+
 	extras := []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.FetchedBlock{}),
@@ -1388,12 +1437,13 @@ func main() {
 		reflect.TypeOf(msgs.BlockServiceBlacklist{}),
 		reflect.TypeOf(msgs.BlockService{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
-		reflect.TypeOf(msgs.EntryBlockService{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
+		reflect.TypeOf(msgs.BlockServiceInfo{}),
+		reflect.TypeOf(msgs.ShardInfo{}),
 	}
 
-	goCode := generateGo(errors, shardReqResps, cdcReqResps, extras)
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	goOutFile, err := os.Create(goOutFileName)
 	if err != nil {
@@ -1430,7 +1480,7 @@ func main() {
 		panic(err)
 	}
 	defer cppOutFile.Close()
-	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, extras)
+	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, shuckleReqResps, extras)
 	hppOutFile.Write(hppBytes)
 	cppOutFile.Write(cppBytes)
 

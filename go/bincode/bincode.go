@@ -1,51 +1,23 @@
 package bincode
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"math/bits"
 )
 
-type Buf []byte
-
 type Packable interface {
-	Pack(buf *Buf)
+	Pack(w io.Writer) error
 }
 
-// Consumes all bytes in the buf, and throws them away. Sometimes
-// useful when unpacking structures have their own error handling
-// and want to exit early discarding the rest of the data.
-func (buf *Buf) Consume() {
-	*buf = (*buf)[len(*buf):]
+func PackScalar[V bool | uint8 | uint16 | uint32 | uint64](w io.Writer, x V) error {
+	return binary.Write(w, binary.LittleEndian, x)
 }
 
-func (buf *Buf) PackU8(x uint8) {
-	(*buf)[0] = x
-	*buf = (*buf)[1:]
-}
-func (buf *Buf) PackBool(x bool) {
-	if x {
-		(*buf)[0] = 1
-	} else {
-		(*buf)[0] = 0
-	}
-	*buf = (*buf)[1:]
-}
-func (buf *Buf) PackU16(x uint16) {
-	binary.LittleEndian.PutUint16(*buf, x)
-	*buf = (*buf)[2:]
-}
-func (buf *Buf) PackU32(x uint32) {
-	binary.LittleEndian.PutUint32(*buf, x)
-	*buf = (*buf)[4:]
-}
-func (buf *Buf) PackU64(x uint64) {
-	binary.LittleEndian.PutUint64(*buf, x)
-	*buf = (*buf)[8:]
-}
-
-func (buf *Buf) PackVarU61(x uint64) {
+func PackVarU61(w io.Writer, x uint64) error {
 	bits := bits.Len64(x)
 	if bits > 61 {
 		panic(fmt.Sprintf("uint64 too large for PackU61Var: %v", x))
@@ -53,128 +25,63 @@ func (buf *Buf) PackVarU61(x uint64) {
 	neededBytes := ((bits + 3) + 8 - 1) / 8
 	x = (x << 3) | uint64(neededBytes-1)
 	first := true
+	var data [8]byte
+	i := 0
 	for first || x > 0 {
 		first = false
-		(*buf)[0] = byte(x)
+		data[i] = byte(x)
 		x = x >> 8
-		(*buf) = (*buf)[1:]
+		i++
 	}
+	_, err := w.Write(data[:i])
+	return err
 }
 
-func (buf *Buf) PackBytes(bs []byte) {
+func PackBytes(w io.Writer, bs []byte) error {
 	if len(bs) > 255 {
 		panic(fmt.Sprintf("bytes length exceed 255: %v", len(bs)))
 	}
-	buf.PackU8(uint8(len(bs)))
-	if copy(*buf, bs) != len(bs) {
-		panic("not enough space for bytes")
+	if err := PackScalar(w, uint8(len(bs))); err != nil {
+		return err
 	}
-	*buf = (*buf)[len(bs):]
+	if _, err := w.Write(bs); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (buf *Buf) PackFixedBytes(l int, bs []byte) {
+func PackFixedBytes(w io.Writer, l int, bs []byte) error {
 	if len(bs) != l {
 		panic(fmt.Sprintf("expecting fixed bytes of len %v, got %v instead", l, len(bs)))
 	}
-	if copy(*buf, bs) != l {
-		panic("not enough space for fixed bytes")
-	}
-	*buf = (*buf)[l:]
+	_, err := w.Write(bs)
+	return err
 }
 
-func (buf *Buf) PackLength(l int) {
+func PackLength(w io.Writer, l int) error {
 	if l > math.MaxUint16 {
 		panic(fmt.Sprintf("len %d exceeds max length %d", l, math.MaxUint16))
 	}
-	buf.PackU16(uint16(l))
+	return PackScalar(w, uint16(l))
 }
 
-// Writes into `out`. Returns how much was written.
-//
-// Will panic if `out` is not big enough.
-func PackToBytes(out []byte, v Packable) int {
-	buf := Buf(out)
-	v.Pack(&buf)
-	return len(out) - len(buf)
+func UnpackScalar[V bool | uint8 | uint16 | uint32 | uint64](r io.Reader, x *V) error {
+	return binary.Read(r, binary.LittleEndian, x)
 }
 
-// A variant of `PackToBytes` which automatically updates the pointer
-// to the appropriately sized slice
-func PackIntoBytes(out *[]byte, v Packable) {
-	written := PackToBytes(*out, v)
-	*out = (*out)[:written]
-}
-
-func (buf *Buf) hasBytes(x int) error {
-	if len(*buf) < x {
-		return fmt.Errorf("ran out of space (needed %v, got %v)", x, len(*buf))
-	}
-	return nil
-}
-
-func (buf *Buf) UnpackU8(x *uint8) error {
-	if err := buf.hasBytes(1); err != nil {
-		return err
-	}
-	*x = (*buf)[0]
-	(*buf) = (*buf)[1:]
-	return nil
-}
-func (buf *Buf) UnpackBool(x *bool) error {
-	var y uint8
-	if err := buf.UnpackU8(&y); err != nil {
-		return err
-	}
-	if y != 0 && y != 1 {
-		return fmt.Errorf("expected 0 and 1 for bool, got %d", y)
-	}
-	if y == 0 {
-		*x = false
-	} else {
-		*x = true
-	}
-	return nil
-}
-func (buf *Buf) UnpackU16(x *uint16) error {
-	if err := buf.hasBytes(2); err != nil {
-		return err
-	}
-	*x = binary.LittleEndian.Uint16(*buf)
-	(*buf) = (*buf)[2:]
-	return nil
-}
-func (buf *Buf) UnpackU32(x *uint32) error {
-	if err := buf.hasBytes(4); err != nil {
-		return err
-	}
-	*x = binary.LittleEndian.Uint32(*buf)
-	(*buf) = (*buf)[4:]
-	return nil
-}
-func (buf *Buf) UnpackU64(x *uint64) error {
-	if err := buf.hasBytes(8); err != nil {
-		return err
-	}
-	*x = binary.LittleEndian.Uint64(*buf)
-	(*buf) = (*buf)[8:]
-	return nil
-}
-
-func (buf *Buf) UnpackVarU61(x *uint64) error {
+func UnpackVarU61(r io.Reader, x *uint64) error {
 	var b uint8
-	if err := buf.UnpackU8(&b); err != nil {
+	if err := UnpackScalar(r, &b); err != nil {
 		return err
 	}
 	remaining := b & (8 - 1)
-	if err := buf.hasBytes(int(remaining)); err != nil {
+	var buf [8]byte
+	if _, err := io.ReadFull(r, buf[:remaining]); err != nil {
 		return err
 	}
 	*x = uint64(b)
-	for i := 1; i <= int(remaining); i++ {
-		if err := buf.UnpackU8(&b); err != nil {
-			return err
-		}
-		*x = *x | (uint64(b) << (i * 8))
+	for i := 0; i <= int(remaining); i++ {
+		*x = *x | (uint64(buf[i]) << ((i + 1) * 8))
 	}
 	*x = *x >> 3
 	return nil
@@ -182,55 +89,56 @@ func (buf *Buf) UnpackVarU61(x *uint64) error {
 
 // This function will discard what's in `data`, and just
 // set the pointer to a slice of the backing `buf`.
-func (buf *Buf) UnpackBytes(data *[]byte) error {
+func UnpackBytes(r io.Reader, data *[]byte) error {
 	var l uint8
-	if err := buf.UnpackU8(&l); err != nil {
+	if err := UnpackScalar(r, &l); err != nil {
 		return err
 	}
-	if err := buf.hasBytes(int(l)); err != nil {
+	*data = make([]byte, l)
+	if _, err := io.ReadFull(r, *data); err != nil {
 		return err
 	}
-	*data = (*buf)[:l]
-	*buf = (*buf)[l:]
-	return nil
-}
-
-func (buf *Buf) UnpackString(data *string) error {
-	var bs []byte
-	if err := buf.UnpackBytes(&bs); err != nil {
-		return err
-	}
-	*data = string(bs)
 	return nil
 }
 
 // The intent with this one (as opposed with `UnpackBytes`) is
-// to use it with a fixed-sized array, e.g.
+// to use it with a fixedsized array, e.g.
 //
 //     var x [4]byte
 //     buf.UnpackFixedBytes(4, x[:])
 //
 // Which is why it does not take a pointer like `UnpackBytes`,
 // and copies the data.
-func (buf *Buf) UnpackFixedBytes(l int, data []byte) error {
+func UnpackFixedBytes(r io.Reader, l int, data []byte) error {
 	if len(data) != l {
 		panic(fmt.Sprintf("expecting fixed bytes of len %v, got %v instead", l, len(data)))
 	}
-	if err := buf.hasBytes(l); err != nil {
+	if _, err := io.ReadFull(r, data); err != nil {
 		return err
 	}
-	copy(data, *buf)
-	*buf = (*buf)[l:]
 	return nil
 }
 
-func (buf *Buf) UnpackLength(l *int) error {
+func UnpackString(r io.Reader, data *string) error {
+	var bs []byte
+	if err := UnpackBytes(r, &bs); err != nil {
+		return err
+	}
+	*data = string(bs)
+	return nil
+}
+
+func UnpackLength(r io.Reader, l *int) error {
 	var l16 uint16
-	if err := buf.UnpackU16(&l16); err != nil {
+	if err := UnpackScalar(r, &l16); err != nil {
 		return err
 	}
 	*l = int(l16)
 	return nil
+}
+
+type Unpackable interface {
+	Unpack(r io.Reader) error
 }
 
 // Useful in codegen, weirdly go does not include something like vector::resize.
@@ -245,27 +153,21 @@ func EnsureLength[T any](xs *[]T, l int) {
 	}
 }
 
-type Unpackable interface {
-	Unpack(buf *Buf) error
+func Pack(v Packable) []byte {
+	buf := bytes.NewBuffer([]byte{})
+	if err := v.Pack(buf); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
 }
 
-// Note that this function errors if we don't consume all the input.
-//
-// Also note that this function will return data structures which refer to `data`. In
-// other words, make sure to not mutate `data` while you're still using the unpacked
-// data structure.
-func UnpackFromBytes(v Unpackable, data []byte) error {
-	buf := Buf(data)
-	if err := v.Unpack(&buf); err != nil {
+func Unpack(data []byte, v Unpackable) error {
+	buf := bytes.NewReader(data)
+	if err := v.Unpack(buf); err != nil {
 		return err
 	}
-	if len(buf) != 0 {
-		return fmt.Errorf("%v leftover bytes remaining after unpacking", len(buf))
+	if buf.Len() != 0 {
+		return fmt.Errorf("%v leftover bytes remaining after unpacking", buf.Len())
 	}
 	return nil
-}
-
-type Bincodable interface {
-	Packable
-	Unpackable
 }

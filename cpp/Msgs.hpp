@@ -19,12 +19,16 @@ struct ShardId {
 
     constexpr ShardId(uint8_t id): u8(id) {}
 
-    uint16_t port() const {
-        return 22272 + u8;
-    }
-
     bool operator==(ShardId rhs) const {
         return u8 == rhs.u8;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint8_t>(u8);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u8 = buf.unpackScalar<uint8_t>();
     }
 };
 
@@ -218,6 +222,14 @@ constexpr uint32_t CDC_REQ_PROTOCOL_VERSION = 0x434443;
 // >>> format(struct.unpack('<I', b'CDC\1')[0], 'x')
 // '1434443'
 constexpr uint32_t CDC_RESP_PROTOCOL_VERSION = 0x1434443;
+
+// >>> format(struct.unpack('<I', b'SHU\0')[0], 'x')
+// '554853'
+constexpr uint32_t SHUCKLE_REQ_PROTOCOL_VERSION = 0x554853;
+
+// >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
+// '1554853'
+constexpr uint32_t SHUCKLE_RESP_PROTOCOL_VERSION = 0x1554853;
 
 // If this doesn't parse, no point in continuing attempting to parse
 // the request.

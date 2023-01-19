@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -174,7 +175,8 @@ func runCheckpoint(harness *harness, prefix string, files *files) checkpoint {
 func runStep(harness *harness, files *files, stepAny any) any {
 	switch step := stepAny.(type) {
 	case createFile:
-		id, creationTime := harness.createFile(msgs.ROOT_DIR_INODE_ID, step.name, step.size)
+		// 10 MiB spans
+		id, creationTime := harness.createFile(msgs.ROOT_DIR_INODE_ID, uint64(10)<<20, step.name, step.size)
 		files.addFile(step.name, id, creationTime)
 		return createdFile{
 			name:         step.name,
@@ -329,7 +331,7 @@ func fileHistoryTest(
 	log eggs.LogLevels,
 	opts *fileHistoryTestOpts,
 	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) {
 	terminateChan := make(chan any, 1)
 
@@ -347,7 +349,7 @@ func fileHistoryTest(
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
 				shid := msgs.ShardId(0)
-				client, err := eggs.NewClient(&shid, counters, nil)
+				client, err := eggs.NewClient(log, &shid, counters, nil)
 				if err != nil {
 					panic(err)
 				}

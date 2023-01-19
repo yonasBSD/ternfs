@@ -9,7 +9,8 @@ import (
 type LogLevels interface {
 	Info(format string, v ...any)
 	Debug(format string, v ...any)
-	RaiseAlert(err error)
+	RaiseAlert(err any)
+	RaiseAlertStack(calldepth int, err any)
 }
 
 func Log(log LogLevels, debug bool, format string, v ...any) {
@@ -19,12 +20,6 @@ func Log(log LogLevels, debug bool, format string, v ...any) {
 		log.Info(format, v...)
 	}
 }
-
-type LogBlackHole struct{}
-
-func (b LogBlackHole) Info(format string, v ...any)  {}
-func (b LogBlackHole) Debug(format string, v ...any) {}
-func (b LogBlackHole) RaiseAlert(err error)          {}
 
 type LogToStdout struct {
 	Verbose bool
@@ -42,8 +37,12 @@ func (s *LogToStdout) Debug(format string, v ...any) {
 	}
 }
 
-func (s *LogToStdout) RaiseAlert(err error) {
-	fmt.Printf("ALERT %s\n", err)
+func (s *LogToStdout) RaiseAlert(err any) {
+	fmt.Printf("ALERT %v\n", err)
+}
+
+func (s *LogToStdout) RaiseAlertStack(calldepth int, err any) {
+	s.RaiseAlert(err)
 }
 
 // Creates a logger with the formatting we want
@@ -66,6 +65,10 @@ func (l *LogLogger) Debug(format string, v ...any) {
 	}
 }
 
-func (l *LogLogger) RaiseAlert(err error) {
-	l.Logger.Output(2, fmt.Sprintf("ALERT %s\n", err))
+func (l *LogLogger) RaiseAlert(err any) {
+	l.Logger.Output(2, fmt.Sprintf("ALERT %v\n", err))
+}
+
+func (l *LogLogger) RaiseAlertStack(calldepth int, err any) {
+	l.Logger.Output(2+calldepth, fmt.Sprintf("ALERT %v\n", err))
 }

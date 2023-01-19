@@ -1,3 +1,4 @@
+#include <chrono>
 #include <fstream>
 #include <memory>
 #include <netinet/in.h>
@@ -7,6 +8,7 @@
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <optional>
+#include <thread>
 #include <unordered_map>
 #include <arpa/inet.h>
 
@@ -23,8 +25,7 @@
 #include "Crypto.hpp"
 #include "CDCKey.hpp"
 #include "splitmix64.hpp"
-
-static uint16_t CDC_PORT = 36137;
+#include "Shuckle.hpp"
 
 struct InFlightShardRequest {
     uint64_t txnId; // the txn id that requested this shard request
@@ -43,6 +44,10 @@ struct CDCServer : Undertaker::Reapable {
 private:
     Env _env;
     std::atomic<bool> _stop;
+    std::string _shuckleHost;
+    uint16_t _shucklePort;
+    uint16_t _port;
+    std::vector<ShardInfo> _shards;
     CDCDB& _db;
     uint64_t _currentLogIndex;
     std::vector<char> _recvBuf;
@@ -62,14 +67,18 @@ private:
     std::optional<InFlightShardRequest> _inFlightShardReq;
 
 public:
-    CDCServer(Logger& logger, const CDCOptions& options, CDCDB& db) :
+    CDCServer(Logger& logger, const CDCOptions& options, std::vector<ShardInfo>&& shards, CDCDB& db) :
         _env(logger, "req_server"),
         _stop(false),
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort),
+        _port(options.port),
+        _shards(std::move(shards)),
         _db(db),
         _recvBuf(UDP_MTU),
         _sendBuf(UDP_MTU),
         _shardRequestIdCounter(0),
-        _packetDropRand(CDC_PORT),
+        _packetDropRand(0),
         _packetDropProbability(0)
     {
         if (options.simulatePacketDrop != 0.0) {
@@ -93,6 +102,10 @@ public:
         _env.flush();
     }
 
+    void registerWithShuckle() {
+
+    }
+
     void run() {
         // Create sockets
         // First sock: the CDC sock
@@ -109,14 +122,14 @@ public:
             struct sockaddr_in addr;
             addr.sin_family = AF_INET;
             addr.sin_addr.s_addr = htonl(INADDR_ANY);
-            if (i == 0) { // CDC
-                addr.sin_port = htons(CDC_PORT);
+            if (i == 0 && _port != 0) { // CDC
+                addr.sin_port = htons(_port);
             } else { // just to communicate with the shard
                 addr.sin_port = 0;
             }
             if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-                if (i == 0) {
-                    throw SYSCALL_EXCEPTION("cannot bind socket to port %s", CDC_PORT);
+                if (i == 0 && _port != 0) {
+                    throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _port);
                 } else {
                     throw SYSCALL_EXCEPTION("cannot bind socket");
                 }
@@ -129,10 +142,12 @@ public:
             }
             if (i == 0) {
                 LOG_DEBUG(_env, "bound CDC sock to port %s", ntohs(addr.sin_port));
+                _port = ntohs(addr.sin_port);
             } else {
                 LOG_DEBUG(_env, "bound shard %s sock to port %s", i-1, ntohs(addr.sin_port));
             }
         }
+        _registerWithShuckle();
 
         // create epoll structure
         int epoll = epoll_create1(0);
@@ -149,7 +164,7 @@ public:
             }
         }
 
-        LOG_INFO(_env, "running on port %s", CDC_PORT);
+        LOG_INFO(_env, "running on port %s", _port);
 
         // If we've got a dangling transaction, immediately start processing it
         _db.startNextTransaction(true, eggsNow(), _advanceLogIndex(), _step);
@@ -188,6 +203,22 @@ public:
     }
 
 private:
+    void _registerWithShuckle() {
+        ALWAYS_ASSERT(_port != 0);
+        for (;;) {
+            std::array<uint8_t, 4> addr{127,0,0,1};
+            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, addr, _port);
+            if (!err.empty()) {
+                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            break;
+        }
+        LOG_INFO(_env, "Successfully registered with shuckle");
+    }
+
+
     void _drainCDCSock() {
         int sock = _socks[0];
 
@@ -378,10 +409,12 @@ private:
             // Send
             struct sockaddr_in shardAddr;
             memset(&shardAddr, 0, sizeof(shardAddr));
+            const auto& shardInfo = _shards[step.shardReq.shid.u8];
             shardAddr.sin_family = AF_INET;
-            shardAddr.sin_port = htons(step.shardReq.shid.port());
-            inet_aton("127.0.0.1", &shardAddr.sin_addr);
-            LOG_DEBUG(_env, "sending request with req id %s", shardReqHeader.requestId);
+            shardAddr.sin_port = htons(shardInfo.port);
+            static_assert(sizeof(shardAddr.sin_addr) == sizeof(shardInfo.ip));
+            memcpy(&shardAddr.sin_addr, shardInfo.ip.data.data(), sizeof(shardAddr.sin_addr));
+            LOG_DEBUG(_env, "sending request with req id %s to shard %s (%s)", shardReqHeader.requestId, step.shardReq.shid, shardAddr);
             _send(_socks[(int)step.shardReq.shid.u8 + 1], shardAddr, (const char*)bbuf.data, bbuf.len());
             // Record the in-flight req
             ALWAYS_ASSERT(!_inFlightShardReq);
@@ -426,6 +459,41 @@ static void* runCDCServer(void* server) {
     return nullptr;
 }
 
+std::vector<ShardInfo> lookupShardInfo(Logger& logger, const CDCOptions& options) {
+    Env env(logger, "lookup_shard_info");
+    auto startT = eggsNow();
+    std::vector<ShardInfo> shards;
+    for (;;) {
+        if (eggsNow() - startT > 20_sec) {
+            throw EGGS_EXCEPTION("could not reach shuckle to get shards after 20 seconds, giving up");
+        }
+
+        std::string err = fetchShards(options.shuckleHost, options.shucklePort, 100_ms, shards);
+        if (!err.empty()) {
+            LOG_INFO(env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", options.shuckleHost, options.shucklePort, err);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        bool badShard = false;
+        for (int i = 0; i < 256; i++) {
+            const auto& shard = shards.at(i);
+            if (shard.port == 0) {
+                LOG_INFO(env, "shard %s is not registered in shuckle yet, might retry", i);
+                badShard = true;
+                break;
+            }
+        }
+        if (badShard) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        LOG_INFO(env, "sucessfully fetched shards from shuckle");
+        return shards;
+    }
+}
+
 void runCDC(const std::string& dbDir, const CDCOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
 
@@ -440,10 +508,12 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     }
     Logger logger(options.level, *logOut);
 
+    auto shards = lookupShardInfo(logger, options);
+
     CDCDB db(logger, dbDir);
 
     {
-        auto server = std::make_unique<CDCServer>(logger, options, db);
+        auto server = std::make_unique<CDCServer>(logger, options, std::move(shards), db);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runCDCServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");

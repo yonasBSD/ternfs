@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
@@ -21,7 +22,7 @@ type fullEdge struct {
 type harness struct {
 	log               eggs.LogLevels
 	client            *eggs.Client
-	blockServicesKeys map[msgs.BlockServiceId][16]byte
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block
 }
 
 func (h *harness) shardReq(shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
@@ -38,7 +39,7 @@ func (h *harness) cdcReq(reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
 	}
 }
 
-func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) (id msgs.InodeId, creationTime msgs.EggsTime) {
+func (h *harness) createFile(dirId msgs.InodeId, spanSize uint64, name string, size uint64) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	// construct
 	constructReq := msgs.ConstructFileReq{
 		Type: msgs.FILE,
@@ -62,34 +63,52 @@ func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) (id m
 		}
 		h.shardReq(dirId.Shard(), &addSpanReq, &msgs.AddSpanInitiateResp{})
 	} else {
-		spanSize := uint64(10) << 20 // 10MiB
 		for offset := uint64(0); offset < size; offset += spanSize {
 			thisSpanSize := eggs.Min(spanSize, size-offset)
+			var data []byte
+			var crc [4]byte
+			if h.blockServicesKeys == nil {
+				data = make([]byte, thisSpanSize)
+				crc = eggs.CRC32C(data)
+			}
 			addSpanReq := msgs.AddSpanInitiateReq{
 				FileId:       constructResp.Id,
 				Cookie:       constructResp.Cookie,
 				ByteOffset:   offset,
 				StorageClass: 2,
 				Parity:       msgs.MkParity(1, 1),
-				Crc32:        [4]byte{0, 0, 0, 0},
+				Crc32:        crc,
 				Size:         thisSpanSize,
 				BlockSize:    thisSpanSize,
-				BodyBlocks: []msgs.NewBlockInfo{
-					{Crc32: [4]byte{0, 0, 0, 0}},
-					{Crc32: [4]byte{0, 0, 0, 0}},
-				},
+				BodyBlocks:   []msgs.NewBlockInfo{{Crc32: crc}, {Crc32: crc}},
 			}
 			addSpanResp := msgs.AddSpanInitiateResp{}
 			h.shardReq(dirId.Shard(), &addSpanReq, &addSpanResp)
 			block0 := &addSpanResp.Blocks[0]
 			block1 := &addSpanResp.Blocks[1]
-			blockServiceKey0, blockServiceFound0 := h.blockServicesKeys[block0.BlockServiceId]
-			if !blockServiceFound0 {
-				panic(fmt.Errorf("could not find block service %v", block0.BlockServiceId))
-			}
-			blockServiceKey1, blockServiceFound1 := h.blockServicesKeys[block1.BlockServiceId]
-			if !blockServiceFound1 {
-				panic(fmt.Errorf("could not find block service %v", block1.BlockServiceId))
+			var proof0 [8]byte
+			var proof1 [8]byte
+			if h.blockServicesKeys != nil {
+				blockServiceKey0, blockServiceFound0 := h.blockServicesKeys[block0.BlockServiceId]
+				if !blockServiceFound0 {
+					panic(fmt.Errorf("could not find block service %v", block0.BlockServiceId))
+				}
+				proof0 = eggs.BlockWriteProof(block0.BlockServiceId, block0.BlockId, blockServiceKey0)
+				blockServiceKey1, blockServiceFound1 := h.blockServicesKeys[block1.BlockServiceId]
+				if !blockServiceFound1 {
+					panic(fmt.Errorf("could not find block service %v", block1.BlockServiceId))
+				}
+				proof1 = eggs.BlockWriteProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1)
+			} else {
+				var err error
+				proof0, err = eggs.WriteBlock(h.log, block0, data, crc)
+				if err != nil {
+					panic(err)
+				}
+				proof1, err = eggs.WriteBlock(h.log, block1, data, crc)
+				if err != nil {
+					panic(err)
+				}
 			}
 			certifySpanReq := msgs.AddSpanCertifyReq{
 				FileId:     constructResp.Id,
@@ -98,11 +117,11 @@ func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) (id m
 				Proofs: []msgs.BlockProof{
 					{
 						BlockId: block0.BlockId,
-						Proof:   eggs.BlockAddProof(block0.BlockServiceId, block0.BlockId, blockServiceKey0),
+						Proof:   proof0,
 					},
 					{
 						BlockId: block1.BlockId,
-						Proof:   eggs.BlockAddProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1),
+						Proof:   proof1,
 					},
 				},
 			}
@@ -169,7 +188,7 @@ func (h *harness) fullReadDir(dirId msgs.InodeId) []fullEdge {
 	return edges
 }
 
-func newHarness(log eggs.LogLevels, client *eggs.Client, blockServicesKeys map[msgs.BlockServiceId][16]byte) *harness {
+func newHarness(log eggs.LogLevels, client *eggs.Client, blockServicesKeys map[msgs.BlockServiceId]cipher.Block) *harness {
 	return &harness{
 		log:               log,
 		client:            client,

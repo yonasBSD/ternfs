@@ -188,7 +188,7 @@ struct BincodeFixedBytes {
     BincodeFixedBytes() { clear(); }
     BincodeFixedBytes(const std::array<uint8_t, SZ>& data_): data(data_) {}
 
-    void clear() { memset(&data[0], 0, SZ); }
+    void clear() { memset(data.data(), 0, SZ); }
 
     constexpr uint16_t packedSize() const {
         return SZ;
@@ -201,6 +201,18 @@ struct BincodeFixedBytes {
 
 template<uint16_t SZ>
 static std::ostream& operator<<(std::ostream& out, const BincodeFixedBytes<SZ>& x) {
+    out << SZ << "[";
+    const uint8_t* data = (const uint8_t*)x.data.data();
+    for (int i = 0; i < SZ; i++) {
+        if (i > 0) {
+            out << " ";
+        }
+        out << (int)data[i];
+    }
+    out << "]";
+    return out;
+
+    /*
     // Unlike operator<< for BincodeBytes, we always escape here,
     // since these are basically never ASCII strings.
     out << "b" << SZ << "\"";
@@ -212,6 +224,7 @@ static std::ostream& operator<<(std::ostream& out, const BincodeFixedBytes<SZ>& 
     out << std::setfill(cfill) << std::dec;
     out << "\"";
     return out;
+    */
 }
 
 #define BINCODE_EXCEPTION(...) BincodeException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))

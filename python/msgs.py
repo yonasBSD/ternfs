@@ -74,6 +74,7 @@ class ShardMessageKind(enum.IntEnum):
     SAME_DIRECTORY_RENAME = 0xE
     SET_DIRECTORY_INFO = 0xF
     SNAPSHOT_LOOKUP = 0x9
+    EXPIRE_TRANSIENT_FILE = 0xB
     VISIT_DIRECTORIES = 0x15
     VISIT_FILES = 0x20
     VISIT_TRANSIENT_FILES = 0x16
@@ -534,45 +535,6 @@ class FullReadDirCursor(bincode.Packable):
         return _size
 
 @dataclass
-class EntryBlockService(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 # id + ip + port + storage_class + failure_domain + secret_key
-    id: int
-    ip: bytes
-    port: int
-    storage_class: int
-    failure_domain: bytes
-    secret_key: bytes
-
-    def pack_into(self, b: bytearray) -> None:
-        bincode.pack_u64_into(self.id, b)
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
-        bincode.pack_u8_into(self.storage_class, b)
-        bincode.pack_fixed_into(self.failure_domain, 16, b)
-        bincode.pack_fixed_into(self.secret_key, 16, b)
-        return None
-
-    @staticmethod
-    def unpack(u: bincode.UnpackWrapper) -> 'EntryBlockService':
-        id = bincode.unpack_u64(u)
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
-        storage_class = bincode.unpack_u8(u)
-        failure_domain = bincode.unpack_fixed(u, 16)
-        secret_key = bincode.unpack_fixed(u, 16)
-        return EntryBlockService(id, ip, port, storage_class, failure_domain, secret_key)
-
-    def calc_packed_size(self) -> int:
-        _size = 0
-        _size += 8 # id
-        _size += 4 # ip
-        _size += 2 # port
-        _size += 1 # storage_class
-        _size += 16 # failure_domain
-        _size += 16 # secret_key
-        return _size
-
-@dataclass
 class EntryNewBlockInfo(bincode.Packable):
     STATIC_SIZE: ClassVar[int] = 8 + 4 # block_service_id + crc32
     block_service_id: int
@@ -616,6 +578,68 @@ class SnapshotLookupEdge(bincode.Packable):
         _size = 0
         _size += 8 # target_id
         _size += 8 # creation_time
+        return _size
+
+@dataclass
+class BlockServiceInfo(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 # id + ip + port + storage_class + failure_domain + secret_key
+    id: int
+    ip: bytes
+    port: int
+    storage_class: int
+    failure_domain: bytes
+    secret_key: bytes
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.id, b)
+        bincode.pack_fixed_into(self.ip, 4, b)
+        bincode.pack_u16_into(self.port, b)
+        bincode.pack_u8_into(self.storage_class, b)
+        bincode.pack_fixed_into(self.failure_domain, 16, b)
+        bincode.pack_fixed_into(self.secret_key, 16, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceInfo':
+        id = bincode.unpack_u64(u)
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        storage_class = bincode.unpack_u8(u)
+        failure_domain = bincode.unpack_fixed(u, 16)
+        secret_key = bincode.unpack_fixed(u, 16)
+        return BlockServiceInfo(id, ip, port, storage_class, failure_domain, secret_key)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # id
+        _size += 4 # ip
+        _size += 2 # port
+        _size += 1 # storage_class
+        _size += 16 # failure_domain
+        _size += 16 # secret_key
+        return _size
+
+@dataclass
+class ShardInfo(bincode.Packable):
+    STATIC_SIZE: ClassVar[int] = 4 + 2 # ip + port
+    ip: bytes
+    port: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_fixed_into(self.ip, 4, b)
+        bincode.pack_u16_into(self.port, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ShardInfo':
+        ip = bincode.unpack_fixed(u, 4)
+        port = bincode.unpack_u16(u)
+        return ShardInfo(ip, port)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 4 # ip
+        _size += 2 # port
         return _size
 
 @dataclass
@@ -1386,6 +1410,42 @@ class SnapshotLookupResp(bincode.Packable):
         _size += 2 # len(edges)
         for i in range(len(self.edges)):
             _size += self.edges[i].calc_packed_size() # edges[i]
+        return _size
+
+@dataclass
+class ExpireTransientFileReq(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.EXPIRE_TRANSIENT_FILE
+    STATIC_SIZE: ClassVar[int] = 8 # id
+    id: int
+
+    def pack_into(self, b: bytearray) -> None:
+        bincode.pack_u64_into(self.id, b)
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpireTransientFileReq':
+        id = bincode.unpack_u64(u)
+        return ExpireTransientFileReq(id)
+
+    def calc_packed_size(self) -> int:
+        _size = 0
+        _size += 8 # id
+        return _size
+
+@dataclass
+class ExpireTransientFileResp(bincode.Packable):
+    KIND: ClassVar[ShardMessageKind] = ShardMessageKind.EXPIRE_TRANSIENT_FILE
+    STATIC_SIZE: ClassVar[int] = 0 # 
+
+    def pack_into(self, b: bytearray) -> None:
+        return None
+
+    @staticmethod
+    def unpack(u: bincode.UnpackWrapper) -> 'ExpireTransientFileResp':
+        return ExpireTransientFileResp()
+
+    def calc_packed_size(self) -> int:
+        _size = 0
         return _size
 
 @dataclass
@@ -2621,8 +2681,8 @@ class CrossShardHardUnlinkFileResp(bincode.Packable):
         _size = 0
         return _size
 
-ShardRequestBody = Union[LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, SnapshotLookupReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
-ShardResponseBody = Union[LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, SnapshotLookupResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
+ShardRequestBody = Union[LookupReq, StatFileReq, StatTransientFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, SetDirectoryInfoReq, SnapshotLookupReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq]
+ShardResponseBody = Union[LookupResp, StatFileResp, StatTransientFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, SetDirectoryInfoResp, SnapshotLookupResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp]
 
 SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardResponseBody]]] = {
     ShardMessageKind.LOOKUP: (LookupReq, LookupResp),
@@ -2639,6 +2699,7 @@ SHARD_REQUESTS: Dict[ShardMessageKind, Tuple[Type[ShardRequestBody], Type[ShardR
     ShardMessageKind.SAME_DIRECTORY_RENAME: (SameDirectoryRenameReq, SameDirectoryRenameResp),
     ShardMessageKind.SET_DIRECTORY_INFO: (SetDirectoryInfoReq, SetDirectoryInfoResp),
     ShardMessageKind.SNAPSHOT_LOOKUP: (SnapshotLookupReq, SnapshotLookupResp),
+    ShardMessageKind.EXPIRE_TRANSIENT_FILE: (ExpireTransientFileReq, ExpireTransientFileResp),
     ShardMessageKind.VISIT_DIRECTORIES: (VisitDirectoriesReq, VisitDirectoriesResp),
     ShardMessageKind.VISIT_FILES: (VisitFilesReq, VisitFilesResp),
     ShardMessageKind.VISIT_TRANSIENT_FILES: (VisitTransientFilesReq, VisitTransientFilesResp),

@@ -1,6 +1,18 @@
 #include "Bincode.hpp"
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytesRef& x) {
+    out << "[";
+    uint8_t len = x.size();
+    const uint8_t* data = (const uint8_t*)x.data();
+    for (int i = 0; i < len; i++) {
+        if (i > 0) {
+            out << " ";
+        }
+        out << (int)data[i];
+    }
+    out << "]";
+    return out;
+    /*
     out << "b\"";
     uint8_t len = x.size();
     const uint8_t* data = (const uint8_t*)x.data();
@@ -19,6 +31,7 @@ std::ostream& operator<<(std::ostream& out, const BincodeBytesRef& x) {
     }
     out << "\"";
     return out;
+    */
 }
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytes& x) {

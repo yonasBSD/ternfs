@@ -4,6 +4,7 @@
 package eggs
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"time"
 	"xtx/eggsfs/msgs"
@@ -41,7 +42,7 @@ func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, 
 func copyBlock(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	file *scratchFile,
 	blockServices []msgs.BlockService,
 	blockSize uint64,
@@ -78,7 +79,7 @@ func copyBlock(
 		if !wasPresent {
 			panic(fmt.Errorf("could not find key for block service %v", dstBlock.BlockServiceId))
 		}
-		proof = BlockAddProof(dstBlock.BlockServiceId, dstBlock.BlockId, key)
+		proof = BlockWriteProof(dstBlock.BlockServiceId, dstBlock.BlockId, key)
 	}
 	certifySpanResp := msgs.AddSpanCertifyResp{}
 	err = client.ShardRequest(
@@ -100,7 +101,8 @@ func copyBlock(
 }
 
 type keepScratchFileAlive struct {
-	stopHeartbeat chan struct{}
+	stopHeartbeat    chan struct{}
+	heartbeatStopped chan struct{}
 }
 
 func startToKeepScratchFileAlive(
@@ -108,14 +110,11 @@ func startToKeepScratchFileAlive(
 	client *Client,
 	scratchFile *scratchFile,
 ) keepScratchFileAlive {
-	stopHeartbeat := make(chan struct{}, 1)
+	stopHeartbeat := make(chan struct{})
+	heartbeatStopped := make(chan struct{})
+	timerExpired := make(chan struct{}, 1)
 	go func() {
 		for {
-			select {
-			case <-stopHeartbeat:
-				return
-			default:
-			}
 			if scratchFile.id != msgs.NULL_INODE_ID {
 				// bump the deadline, makes sure the file stays alive for
 				// the duration of this function
@@ -129,22 +128,46 @@ func startToKeepScratchFileAlive(
 					log.RaiseAlert(fmt.Errorf("could not bump scratch file deadline when migrating blocks: %w", err))
 				}
 			}
-			time.Sleep(time.Minute)
+			go func() {
+				time.Sleep(time.Minute)
+				select {
+				case timerExpired <- struct{}{}:
+				default:
+				}
+			}()
+			select {
+			case <-stopHeartbeat:
+				// allow GC to immediately collect this, this is mostly useful for
+				// integration tests right now, since they check that everything
+				// has been cleaned up.
+				if scratchFile.id != msgs.NULL_INODE_ID {
+					log.Info("expiring scratch file %v", scratchFile.id)
+					req := msgs.ExpireTransientFileReq{Id: scratchFile.id}
+					if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.ExpireTransientFileResp{}); err != nil {
+						log.RaiseAlert(fmt.Errorf("could not expire transient file %v: %w", scratchFile.id, err))
+					}
+				}
+				heartbeatStopped <- struct{}{}
+				return
+			case <-timerExpired:
+			}
 		}
 	}()
 	return keepScratchFileAlive{
-		stopHeartbeat: stopHeartbeat,
+		stopHeartbeat:    stopHeartbeat,
+		heartbeatStopped: heartbeatStopped,
 	}
 }
 
 func (k *keepScratchFileAlive) stop() {
 	k.stopHeartbeat <- struct{}{}
+	<-k.heartbeatStopped
 }
 
 func migrateBlocksInFileInternal(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 	scratchFile *scratchFile,
@@ -231,7 +254,7 @@ type MigrateStats struct {
 func MigrateBlocksInFile(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 	fileId msgs.InodeId,
@@ -247,7 +270,7 @@ func MigrateBlocksInFile(
 func migrateBlocksInternal(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	stats *MigrateStats,
 	shid msgs.ShardId,
 	blockServiceId msgs.BlockServiceId,
@@ -278,7 +301,14 @@ func migrateBlocksInternal(
 	}
 }
 
-func MigrateBlocks(log LogLevels, client *Client, blockServicesKeys map[msgs.BlockServiceId][16]byte, stats *MigrateStats, shid msgs.ShardId, blockServiceId msgs.BlockServiceId) error {
+func MigrateBlocks(
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	stats *MigrateStats,
+	shid msgs.ShardId,
+	blockServiceId msgs.BlockServiceId,
+) error {
 	if err := migrateBlocksInternal(log, client, blockServicesKeys, stats, shid, blockServiceId); err != nil {
 		return err
 	}
@@ -286,7 +316,13 @@ func MigrateBlocks(log LogLevels, client *Client, blockServicesKeys map[msgs.Blo
 	return nil
 }
 
-func MigrateBlocksInAllShards(log LogLevels, client *Client, blockServicesKeys map[msgs.BlockServiceId][16]byte, stats *MigrateStats, blockServiceId msgs.BlockServiceId) error {
+func MigrateBlocksInAllShards(
+	log LogLevels,
+	client *Client,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	stats *MigrateStats,
+	blockServiceId msgs.BlockServiceId,
+) error {
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		log.Info("migrating blocks in shard %v", shid)

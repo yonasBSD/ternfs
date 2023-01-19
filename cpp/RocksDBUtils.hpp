@@ -233,11 +233,11 @@ public:
 #define FBYTES_VAL(sz, getName, setName, offset) \
     std::array<uint8_t, sz> getName() const { \
         std::array<uint8_t, sz> bs; \
-        memcpy(&bs[0], _data+offset, sz); \
+        memcpy(bs.data(), _data+offset, sz); \
         return bs; \
     } \
     void setName(const std::array<uint8_t, sz>& bs) { \
-        memcpy(_data+offset, &bs[0], sz); \
+        memcpy(_data+offset, bs.data(), sz); \
     }
 
 #define BE64_VAL(type, name, setName, offset) \

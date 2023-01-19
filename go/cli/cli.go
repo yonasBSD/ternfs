@@ -56,7 +56,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			shid := dirId.Shard()
-			client, err := eggs.NewClient(&shid, nil, nil)
+			client, err := eggs.NewClient(log, &shid, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard client: %v", err))
 			}
@@ -81,7 +81,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
 			shid := fileId.Shard()
-			client, err := eggs.NewClient(&shid, nil, nil)
+			client, err := eggs.NewClient(log, &shid, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -105,7 +105,7 @@ func main() {
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		stats := eggs.MigrateStats{}
 		if *migrateFileIdU64 == 0 {
-			client, err := eggs.NewClient(nil, nil, nil)
+			client, err := eggs.NewClient(log, nil, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -115,7 +115,7 @@ func main() {
 		} else {
 			fileId := msgs.InodeId(*migrateFileIdU64)
 			shid := fileId.Shard()
-			client, err := eggs.NewClient(&shid, nil, nil)
+			client, err := eggs.NewClient(log, &shid, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard socket: %v", err))
 			}

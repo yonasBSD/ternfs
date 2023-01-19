@@ -5,7 +5,7 @@ verbose ?= no
 coverage ?= no
 time_trace ?= no
 
-libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash libcurl
+libs = rocksdb libzstd libelf libunwind zlib liblz4 snappy bzip2 liburing libxxhash
 
 # TODO Go over the pkg-config --cflags output for rocksdb
 CXX = clang++

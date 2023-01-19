@@ -43,7 +43,21 @@ func main() {
 		fmt.Printf("running with temp data dir %v\n", *dataDir)
 	}
 
-	log := &eggs.LogToStdout{}
+	logFile := path.Join(*dataDir, "go-log")
+	var logOut *os.File
+	{
+		var err error
+		logOut, err = os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not open file %v: %v", logFile, err)
+			os.Exit(1)
+		}
+		defer logOut.Close()
+	}
+	log := &eggs.LogLogger{
+		Verbose: *verbose,
+		Logger:  eggs.NewLogger(logOut),
+	}
 
 	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,
@@ -53,6 +67,7 @@ func main() {
 	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
 	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
 	shuckleExe := eggs.BuildShuckleExe(log)
+	blockServiceExe := eggs.BuildBlockServiceExe(log)
 
 	terminateChan := make(chan any, 1)
 
@@ -63,7 +78,7 @@ func main() {
 
 	// Start shuckle
 	shucklePort := uint16(39999)
-	procs.StartShuckle(&eggs.ShuckleOpts{
+	procs.StartShuckle(log, &eggs.ShuckleOpts{
 		Exe:     shuckleExe,
 		Port:    shucklePort,
 		Verbose: *verbose,
@@ -76,7 +91,8 @@ func main() {
 		if i >= *hddBlockServices {
 			storageClass = "FLASH"
 		}
-		procs.StartBlockService(&eggs.BlockServiceOpts{
+		procs.StartBlockService(log, &eggs.BlockServiceOpts{
+			Exe:           blockServiceExe,
 			Path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			Port:          40000 + uint16(i),
 			StorageClass:  storageClass,
@@ -87,35 +103,29 @@ func main() {
 	}
 
 	// Start CDC
-	procs.StartCDC(&eggs.CDCOpts{
+	procs.StartCDC(log, &eggs.CDCOpts{
 		Exe:      cdcExe,
 		Dir:      path.Join(*dataDir, "cdc"),
 		Verbose:  *verbose,
 		Valgrind: *valgrind,
 	})
 
-	waitShuckleFor := 10 * time.Second
-	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	eggs.WaitForShuckle(fmt.Sprintf("localhost:%v", shucklePort), int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
-
 	// Start shards
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		procs.StartShard(&eggs.ShardOpts{
-			Exe:            shardExe,
-			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:        *verbose,
-			Shid:           shid,
-			Valgrind:       *valgrind,
-			WaitForShuckle: true,
+		procs.StartShard(log, &eggs.ShardOpts{
+			Exe:                  shardExe,
+			Dir:                  path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			Verbose:              *verbose,
+			Shid:                 shid,
+			Valgrind:             *valgrind,
+			WaitForBlockServices: true,
 		})
 	}
 
-	waitShardFor := 20 * time.Second
-	fmt.Printf("waiting for shards for %v...\n", waitShardFor)
-	for i := 0; i < 256; i++ {
-		eggs.WaitForShard(log, msgs.ShardId(i), waitShardFor)
-	}
+	waitShuckleFor := 20 * time.Second
+	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
+	eggs.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
 
 	fmt.Printf("operational 🤖\n")
 

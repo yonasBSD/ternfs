@@ -238,7 +238,6 @@ class RenameFile(Transaction):
         map_err_code(
             {
                 ErrCode.DIRECTORY_NOT_FOUND: ErrCode.OLD_DIRECTORY_NOT_FOUND,
-                ErrCode.NAME_IS_LOCKED: ErrCode.OLD_NAME_IS_LOCKED,
             },
             resp,
         )

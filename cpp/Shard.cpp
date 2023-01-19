@@ -29,10 +29,10 @@ private:
     std::mutex _applyLock;
 public:
     ShardDB& db;
-    std::atomic<bool> shuckleReached;
+    std::atomic<bool> gotBlockServices;
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_), shuckleReached(false) {
+    ShardShared(ShardDB& db_): db(db_), gotBlockServices(false) {
         _currentLogIndex = db.lastAppliedLogEntry();
     }
 
@@ -49,8 +49,11 @@ private:
     Env _env;
     ShardShared& _shared;
     ShardId _shid;
+    uint16_t _port;
     std::atomic<bool> _stop;
-    bool _waitForShuckle;
+    std::string _shuckleHost;
+    uint16_t _shucklePort;
+    bool _waitForBlockServices;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
@@ -59,9 +62,12 @@ public:
         _env(logger, "server"),
         _shared(shared),
         _shid(shid),
+        _port(options.port),
         _stop(false),
-        _waitForShuckle(options.waitForShuckle),
-        _packetDropRand(shid.port()),
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort),
+        _waitForBlockServices(options.waitForBlockServices),
+        _packetDropRand((int)shid.u8 + 1), // CDC is 0
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
     {
@@ -95,16 +101,19 @@ public:
         if (sock < 0) {
             throw SYSCALL_EXCEPTION("cannot create socket");
         }
+        struct sockaddr_in serverAddr;
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+        serverAddr.sin_port = htons(0);
+        if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
+            throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _port);
+        }
         {
-            struct sockaddr_in serverAddr;
-            serverAddr.sin_family = AF_INET;
-            serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-            serverAddr.sin_port = htons(_shid.port());
-            if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
-                throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _shid.port());
+            socklen_t addrLen = sizeof(serverAddr);
+            if (getsockname(sock, (struct sockaddr*)&serverAddr, &addrLen) < 0) {
+                throw SYSCALL_EXCEPTION("getsockname");
             }
         }
-        
         // 10ms timeout for prompt termination
         {
             struct timeval tv;
@@ -115,8 +124,11 @@ public:
             }
         }
 
-        LOG_INFO(_env, "running on port %s", _shid.port());
-        
+        _port = ntohs(serverAddr.sin_port);
+        LOG_INFO(_env, "Bound shard %s to port %s", _shid, ntohs(serverAddr.sin_port));
+
+        _registerWithShuckle();
+
         struct sockaddr_in clientAddr;
         std::vector<char> recvBuf(UDP_MTU);
         std::vector<char> sendBuf(UDP_MTU);
@@ -130,7 +142,7 @@ public:
                 break;
             }
 
-            if (_waitForShuckle && !_shared.shuckleReached.load()) {
+            if (_waitForBlockServices && !_shared.gotBlockServices.load()) {
                 LOG_DEBUG(_env, "need to wait for shuckle, waiting");
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
@@ -139,7 +151,7 @@ public:
             // Read one request
             memset(&clientAddr, 0, sizeof(clientAddr));
             socklen_t addrLen = sizeof(clientAddr);
-            int read = recvfrom(sock, &recvBuf[0], recvBuf.size(), 0, (struct sockaddr*)&clientAddr, &addrLen);
+            int read = recvfrom(sock, recvBuf.data(), recvBuf.size(), 0, (struct sockaddr*)&clientAddr, &addrLen);
             if (read < 0 && errno == EAGAIN) {
                 continue;
             }
@@ -148,7 +160,7 @@ public:
             }
             LOG_DEBUG(_env, "received message from %s", clientAddr);
 
-            BincodeBuf reqBbuf(&recvBuf[0], read);
+            BincodeBuf reqBbuf(recvBuf.data(), read);
             
             // First, try to parse the header
             ShardRequestHeader reqHeader;
@@ -211,7 +223,7 @@ public:
             }
             Duration elapsed = eggsNow() - t0;
 
-            BincodeBuf respBbuf(&sendBuf[0], sendBuf.size());
+            BincodeBuf respBbuf(sendBuf.data(), sendBuf.size());
             if (err == NO_ERROR) {
                 LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s: %s", reqHeader.requestId, respContainer->kind(), elapsed, *respContainer);
                 ShardResponseHeader(reqHeader.requestId, respContainer->kind()).pack(respBbuf);
@@ -235,7 +247,24 @@ public:
 
         // If we're terminating gracefully we're the last ones, close the db nicely
         _shared.db.close();
-    }    
+    }
+
+private:
+    void _registerWithShuckle() {
+        ALWAYS_ASSERT(_port != 0);
+        for (;;) {
+            LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, _port);
+            std::array<uint8_t, 4> addr{127,0,0,1};
+            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, addr, _port);
+            if (!err.empty()) {
+                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            break;
+        }
+        LOG_INFO(_env, "Successfully registered with shuckle");
+    }
 };
 
 static void* runShardServer(void* server) {
@@ -243,23 +272,27 @@ static void* runShardServer(void* server) {
     return nullptr;
 }
 
-struct BlockServiceUpdater : Undertaker::Reapable {
+struct ShardShuckleUpdater : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
     std::atomic<bool> _stop;
+    ShardId _shid;
     std::string _shuckleHost;
+    uint16_t _shucklePort;
     bool _waitForShuckle;
 public:
-    BlockServiceUpdater(Logger& logger, ShardShared& shared, const ShardOptions& options):
-        _env(logger, "block_service_updater"),
+    ShardShuckleUpdater(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
+        _env(logger, "shuckle_updater"),
         _shared(shared),
         _stop(false),
+        _shid(shid),
         _shuckleHost(options.shuckleHost),
-        _waitForShuckle(options.waitForShuckle)
+        _shucklePort(options.shucklePort),
+        _waitForShuckle(options.waitForBlockServices)
     {}
 
-    virtual ~BlockServiceUpdater() = default;
+    virtual ~ShardShuckleUpdater() = default;
 
     virtual void terminate() override {
         _env.flush();
@@ -288,7 +321,7 @@ public:
                 break;
             }
 
-            if (_waitForShuckle && !_shared.shuckleReached.load() && (eggsNow() - t0) > 5'000'000'000) {
+            if (_waitForShuckle && !_shared.gotBlockServices.load() && (eggsNow() - t0) > 5_sec) {
                 // if we refuse to start the server and we haven't reached shuckle within 5 secs,
                 // fail hard
                 if (reachedButEmpty) {
@@ -309,9 +342,11 @@ public:
             }
 
             logEntry->time = eggsNow();
-            LOG_INFO(_env, "about to perform shuckle request to %s", _shuckleHost);
+            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleHost, _shucklePort);
             std::string err;
-            lastRequestSuccessful = fetchBlockServices(_shuckleHost, 100 /* timeoutMs */, err, logEntry->body.setUpdateBlockServices());
+
+            err = fetchBlockServices(_shuckleHost, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());
+            lastRequestSuccessful = err.empty();
             if (lastRequestSuccessful && logEntry->body.getUpdateBlockServices().blockServices.els.empty()) {
                 lastRequestSuccessful = false;
                 reachedButEmpty = true;
@@ -328,18 +363,19 @@ public:
                 if (err != NO_ERROR) {
                     RAISE_ALERT(_env, "unexpected failure when trying to update block services: %s", err);
                     lastRequestSuccessful = false;
-                } else {
-                    _shared.shuckleReached.store(true);
+                    GO_TO_NEXT_ITERATION
                 }
             }
+
+            _shared.gotBlockServices.store(true);
         }
 
         #undef GO_TO_NEXT_ITERATION
     }
 };
 
-static void* runBlockServiceUpdater(void* server) {
-    ((BlockServiceUpdater*)server)->run();
+static void* runShardShuckleUpdater(void* server) {
+    ((ShardShuckleUpdater*)server)->run();
     return nullptr;
 }
 
@@ -371,12 +407,12 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
 
     {
-        auto blockServiceUpdater = std::make_unique<BlockServiceUpdater>(logger, shared, options);
+        auto shuckleUpdater = std::make_unique<ShardShuckleUpdater>(logger, shared, shid, options);
         pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runBlockServiceUpdater, &*blockServiceUpdater) != 0) {
+        if (pthread_create(&tid, nullptr, &runShardShuckleUpdater, &*shuckleUpdater) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
-        undertaker->checkin(std::move(blockServiceUpdater), tid, "block_service_updater");
+        undertaker->checkin(std::move(shuckleUpdater), tid, "shuckle_updater");
     }
 
     undertaker->reap();

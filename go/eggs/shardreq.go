@@ -1,8 +1,10 @@
 package eggs
 
 import (
+	"bytes"
 	"crypto/cipher"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"sync/atomic"
@@ -16,25 +18,38 @@ type shardRequest struct {
 	body      msgs.ShardRequest
 }
 
-func (req *shardRequest) Pack(buf *bincode.Buf) {
-	buf.PackU32(msgs.SHARD_REQ_PROTOCOL_VERSION)
-	buf.PackU64(req.requestId)
-	buf.PackU8(uint8(req.body.ShardRequestKind()))
-	req.body.Pack(buf)
+func (req *shardRequest) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, msgs.SHARD_REQ_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, req.requestId); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(req.body.ShardRequestKind())); err != nil {
+		return err
+	}
+	if err := req.body.Pack(w); err != nil {
+		return err
+	}
+	return nil
 }
 
-func packShardRequest(out *[]byte, req *shardRequest, cdcKey cipher.Block) {
-	written := bincode.PackToBytes(*out, req)
+func packShardRequest(req *shardRequest, cdcKey cipher.Block) []byte {
+	buf := bytes.NewBuffer([]byte{})
+	if err := req.Pack(buf); err != nil {
+		panic(err)
+	}
+	bs := buf.Bytes()
 	if (req.body.ShardRequestKind() & 0x80) != 0 {
 		// privileged, we must have a key
 		if cdcKey == nil {
 			panic(fmt.Errorf("trying to encode request of privileged kind %T, but got no CDC key", req.body))
 		}
-		mac := CBCMAC(cdcKey, (*out)[:written])
-		copy((*out)[written:written+len(mac)], mac[:])
-		written += len(mac)
+		mac := CBCMAC(cdcKey, bs)
+		buf.Write(mac[:])
+		bs = buf.Bytes()
 	}
-	*out = (*out)[:written]
+	return bs
 }
 
 type ShardResponse struct {
@@ -42,24 +57,17 @@ type ShardResponse struct {
 	Body      msgs.ShardResponse
 }
 
-func (req *ShardResponse) Pack(buf *bincode.Buf) {
-	buf.PackU32(msgs.SHARD_RESP_PROTOCOL_VERSION)
-	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(req.Body.ShardResponseKind()))
-	req.Body.Pack(buf)
-}
-
 type unpackedShardRequestId uint64
 
-func (requestId *unpackedShardRequestId) Unpack(buf *bincode.Buf) error {
+func (requestId *unpackedShardRequestId) Unpack(r io.Reader) error {
 	var ver uint32
-	if err := buf.UnpackU32(&ver); err != nil {
+	if err := bincode.UnpackScalar(r, &ver); err != nil {
 		return err
 	}
 	if ver != msgs.SHARD_RESP_PROTOCOL_VERSION {
 		return fmt.Errorf("expected protocol version %v, but got %v", msgs.SHARD_RESP_PROTOCOL_VERSION, ver)
 	}
-	if err := buf.UnpackU64((*uint64)(requestId)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint64)(requestId)); err != nil {
 		return err
 	}
 	return nil
@@ -182,12 +190,12 @@ func (c *Client) ShardRequest(
 	if msgKind != respBody.ShardResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	sock, err := c.ShardSocketFactory.GetShardSocket(shid)
+	sock, err := c.GetShardSocket(shid)
 	if err != nil {
 		return err
 	}
-	defer c.ShardSocketFactory.ReleaseShardSocket(shid)
-	buffer := make([]byte, msgs.UDP_MTU)
+	defer c.ReleaseShardSocket(shid, sock)
+	respBuf := make([]byte, msgs.UDP_MTU)
 	requestIds := make([]uint64, shardMaxElapsed/minShardSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()
@@ -198,8 +206,8 @@ func (c *Client) ShardRequest(
 			logger.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
 			return msgs.TIMEOUT
 		}
-		if c.Counters != nil {
-			atomic.AddInt64(&c.Counters.Shard.Attempts[msgKind], 1)
+		if c.counters != nil {
+			atomic.AddInt64(&c.counters.Shard.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
 		requestIds[attempts] = requestId
@@ -207,9 +215,8 @@ func (c *Client) ShardRequest(
 			requestId: requestId,
 			body:      reqBody,
 		}
-		reqBytes := buffer
-		packShardRequest(&reqBytes, &req, c.CDCKey)
-		logger.Debug("about to send request id %v (%T) to shard %v, after %v attempts", requestId, reqBody, shid, attempts)
+		reqBytes := packShardRequest(&req, c.cdcKey)
+		logger.Debug("about to send request id %v (%T, %+v) to shard %v, after %v attempts", requestId, reqBody, reqBody, shid, attempts)
 		written, err := sock.Write(reqBytes)
 		if err != nil {
 			return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
@@ -224,9 +231,8 @@ func (c *Client) ShardRequest(
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)
 		for {
-			respBytes := buffer
-			read, err := sock.Read(respBytes)
-			respBytes = respBytes[:read]
+			read, err := sock.Read(respBuf)
+			respBytes := respBuf[:read]
 			if err != nil {
 				// We retry very liberally rather than only with timeouts (at least for now),
 				// to survive the shard dying in the most exotic ways.
@@ -246,9 +252,9 @@ func (c *Client) ShardRequest(
 				return err
 			}
 			// Start parsing, from the header with request id
-			bbuf := bincode.Buf(respBytes)
+			respReader := bytes.NewReader(respBytes)
 			var respRequestId unpackedShardRequestId
-			if err := (&respRequestId).Unpack(&bbuf); err != nil {
+			if err := (&respRequestId).Unpack(respReader); err != nil {
 				logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				continue
 			}
@@ -267,7 +273,7 @@ func (c *Client) ShardRequest(
 			}
 			// We are interested, parse the kind
 			var kind uint8
-			if err := bbuf.UnpackU8(&kind); err != nil {
+			if err := bincode.UnpackScalar(respReader, &kind); err != nil {
 				logger.RaiseAlert(fmt.Errorf("could not decode Shard response kind for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				continue
 			}
@@ -276,7 +282,7 @@ func (c *Client) ShardRequest(
 				// If the kind is an error, parse it
 				var eggsErrVal msgs.ErrCode
 				eggsError = &eggsErrVal
-				if err := eggsError.Unpack(&bbuf); err != nil {
+				if err := eggsError.Unpack(respReader); err != nil {
 					logger.RaiseAlert(fmt.Errorf("could not decode Shard response error for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 					continue
 				}
@@ -287,10 +293,14 @@ func (c *Client) ShardRequest(
 					continue
 				}
 				// Otherwise, finally parse the body
-				if err := respBody.Unpack(&bbuf); err != nil {
+				if err := respBody.Unpack(respReader); err != nil {
 					logger.RaiseAlert(fmt.Errorf("could not decode Shard response body for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 					continue
 				}
+			}
+			// Check that we've parsed everything
+			if respReader.Len() != 0 {
+				return fmt.Errorf("malformed response, %v leftover bytes", respReader.Len())
 			}
 			// If we've got a timeout, keep trying
 			if eggsError != nil && *eggsError == msgs.TIMEOUT {
@@ -299,9 +309,9 @@ func (c *Client) ShardRequest(
 			}
 			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
-			if c.Counters != nil {
-				atomic.AddInt64(&c.Counters.Shard.Count[msgKind], 1)
-				atomic.AddInt64(&c.Counters.Shard.Nanos[msgKind], elapsed.Nanoseconds())
+			if c.counters != nil {
+				atomic.AddInt64(&c.counters.Shard.Count[msgKind], 1)
+				atomic.AddInt64(&c.counters.Shard.Nanos[msgKind], elapsed.Nanoseconds())
 			}
 			// If we're past the first attempt, there are cases where errors are not what they seem.
 			if eggsError != nil && attempts > 0 {
@@ -321,10 +331,10 @@ func (c *Client) ShardRequest(
 	}
 }
 
-func CreateShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
-	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: shid.Port()})
+func CreateShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
+	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip[:], Port: int(port)})
 	if err != nil {
-		return nil, fmt.Errorf("could not create shard socket: %w", err)
+		return nil, fmt.Errorf("could not create shard %v socket at %v:%v: %w", shid, ip, port, err)
 	}
 	return socket, nil
 }

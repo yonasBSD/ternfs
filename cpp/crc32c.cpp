@@ -172,7 +172,7 @@ std::array<uint8_t, 4> crc32c(const char* buf, size_t len) {
     crc = crc32_fusion(crc, buf, len);
     crc ^= 0xffffffff;
     std::array<uint8_t, 4> res;
-    memcpy(&res[0], &crc, 4);
+    memcpy(res.data(), &crc, 4);
     return res;
 }
 
@@ -212,10 +212,10 @@ static uint32_t x2n_mod_p(uint32_t n, uint32_t k) {
 
 std::array<uint8_t, 4> crc32cCombine(std::array<uint8_t, 4> crcAarr, std::array<uint8_t, 4> crcBarr, size_t lenB) {
     static_assert(std::endian::native == std::endian::little);
-    uint32_t crcA; memcpy(&crcA, &crcAarr[0], 4);
-    uint32_t crcB; memcpy(&crcB, &crcBarr[0], 4);
+    uint32_t crcA; memcpy(&crcA, crcAarr.data(), 4);
+    uint32_t crcB; memcpy(&crcB, crcBarr.data(), 4);
     uint32_t crc = mult_mod_p(x2n_mod_p(lenB, 3), crcA) ^ crcB;
     std::array<uint8_t, 4> crcArr;
-    memcpy(&crcArr[0], &crc, 4);
+    memcpy(crcArr.data(), &crc, 4);
     return crcArr;
 }

@@ -1,131 +1,220 @@
-#include <curl/curl.h>
+#include <sstream>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
+#include <sys/time.h>
+#include <array>
 
-#include "Exception.hpp"
+#include "Bincode.hpp"
+#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Shuckle.hpp"
-#include "json.hpp"
+#include "Exception.hpp"
 
-#define CURL_CHECKED(code) \
-    do { \
-        if (code != 0) { \
-            throw CurlException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), code); \
-        } \
-    } while (false)
-
-#define CURL_CHECKED_MSG(code, ...) \
-    do { \
-        if (code != 0) { \
-            throw CurlException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), code, VALIDATE_FORMAT(__VA_ARGS__)); \
-        } \
-    } while (false)
-
-class CurlException : public AbstractException {
-public:
-    template <typename ... Args>
-    CurlException(int line, const char *file, const char *function, CURLcode code, const char *fmt, Args ... args) {
-        std::stringstream ss;
-        ss << "CurlException(" << file << "@" << line << ", " << code << "=" << curl_easy_strerror(code) << "):\n";
-        format_pack(ss, fmt, args...);
-        _msg = ss.str();
-    }
-
-    CurlException(int line, const char *file, const char *function, CURLcode code) {
-        std::stringstream ss;
-        ss << "CurlException(" << file << "@" << line << ", " << code << "=" << curl_easy_strerror(code) << ")";
-        _msg = ss.str();
-    }
-
-    virtual const char *what() const throw() override {
-        return _msg.c_str();
-    };
-private:
-    std::string _msg;
-};
-
-struct WrappedCurl {
-    CURL* curl;
-
-    WrappedCurl(CURL* curl_) : curl(curl_) {
-        if (curl == nullptr) {
-            throw EGGS_EXCEPTION("could not initialize curl");
-        }
-    }
-
-    ~WrappedCurl() {
-        curl_easy_cleanup(curl);
-    }
-
-    CURL* operator->() {
-        return curl;
-    }
-};
-
-__attribute__((constructor))
-static void curlGlobalInit() {
-    CURL_CHECKED(curl_global_init(0));
+static std::string generateErrString(const std::string& what, int err) {
+    char errbuf[64];
+    const char *errmsg = strerror_r(err, errbuf, sizeof(errbuf));
+    std::stringstream ss;
+    ss << "could not " << what << ": " << err << "/" << translateErrno(err) << "=" << errmsg;
+    return ss.str();
 }
 
-static size_t curlWriteCallback(char* contents, size_t size, size_t nmemb, void* strPtr) {
-    ALWAYS_ASSERT(size == 1);
-    auto str = (std::string*)strPtr;
-    str->append(contents, nmemb);
-    return nmemb;
+static int shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        throw SYSCALL_EXCEPTION("socket");
+    }
+
+    struct timeval tv;      
+    tv.tv_sec = timeout.ns/1'000'000'000ull;
+    tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt");
+    }
+
+    struct hostent* he = gethostbyname(host.c_str());
+    if (he == nullptr) {
+        throw EGGS_EXCEPTION("could not get address for host %s", host);
+    }
+
+    struct sockaddr_in shuckleAddr;
+    shuckleAddr.sin_family = AF_INET;
+    shuckleAddr.sin_addr = *(struct in_addr*)he->h_addr_list[0];
+    shuckleAddr.sin_port = htons(port);
+
+    if (connect(sock, (struct sockaddr*)&shuckleAddr, sizeof(shuckleAddr)) < 0) {
+        errString = generateErrString("connect to " + host, errno);
+        close(sock);
+        return -1;
+    }
+
+    return sock;
 }
 
-bool fetchBlockServices(const std::string& host, uint64_t timeout, std::string& errString, UpdateBlockServicesEntry& blocks) {
-    WrappedCurl curl(curl_easy_init());
+static std::string writeShuckleRequest(int fd, const ShuckleReqContainer& req) {
+    static_assert(std::endian::native == std::endian::little);
+    // Serialize
+    std::vector<char> buf(req.packedSize());
+    BincodeBuf bbuf(buf.data(), buf.size());
+    req.pack(bbuf);
+    // Write out
+#define WRITE_OUT(buf, len) \
+    do { \
+        ssize_t written = write(fd, buf, len); \
+        if (written < 0) { \
+            return generateErrString("write request", errno); \
+        } \
+        if (written != len) { \
+            return "couldn't write full request"; \
+        } \
+    } while (false)
+    WRITE_OUT(&SHUCKLE_REQ_PROTOCOL_VERSION, sizeof(SHUCKLE_REQ_PROTOCOL_VERSION));
+    uint32_t len = 1 + bbuf.len();
+    WRITE_OUT(&len, sizeof(len));
+    auto kind = req.kind();
+    WRITE_OUT(&kind, sizeof(kind));
+    WRITE_OUT(bbuf.data, bbuf.len());
+#undef WRITE_OUT
+    return {};
+}
 
-    std::string url = host + "/block_services_for_shard";
-    CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_URL, url.c_str()));
-    CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_WRITEFUNCTION, curlWriteCallback));
-    std::string responseBody;
-    CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_WRITEDATA, &responseBody));
-    char errbuf[CURL_ERROR_SIZE];
-    CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_ERRORBUFFER, errbuf));
-    CURL_CHECKED(curl_easy_setopt(curl.curl, CURLOPT_TIMEOUT_MS, timeout));
+static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
+    static_assert(std::endian::native == std::endian::little);
+#define READ_IN(buf, count) \
+    do { \
+        ssize_t readSoFar = 0; \
+        while (readSoFar < count) { \
+            ssize_t r = read(fd, buf+readSoFar, count-readSoFar); \
+            if (r < 0) { \
+                return generateErrString("read response", errno); \
+            } \
+            if (r == 0) { \
+                return "unexpected EOF"; \
+            } \
+            readSoFar += r; \
+        } \
+    } while (0)
+    uint32_t protocol;
+    READ_IN(&protocol, sizeof(protocol));
+    if (protocol != SHUCKLE_RESP_PROTOCOL_VERSION) {
+        throw BINCODE_EXCEPTION("bad shuckle protocol (expected %s, got %s)", SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
+    }
+    uint32_t len;
+    READ_IN(&len, sizeof(len));
+    ShuckleMessageKind kind;
+    READ_IN(&kind, sizeof(kind));
+    std::vector<char> buf(len-1);
+    READ_IN(buf.data(), buf.size());
+#undef READ_IN
+    BincodeBuf bbuf(buf.data(), buf.size());
+    resp.unpack(bbuf, kind);
+    return {};
+}
 
-    {
-        CURLcode code = curl_easy_perform(curl.curl);
-        if (code != 0) {
-            std::stringstream ss;
-            ss << "curl failed with code " << code << "=" << curl_easy_strerror(code) << ": " << errbuf;
-            errString = ss.str();
-            return false;
-        }
+std::string fetchBlockServices(const std::string& host, uint16_t port, Duration timeout, ShardId shid, UpdateBlockServicesEntry& blocks) {
+    std::string errString;
+    int sock = shuckleSock(host, port, timeout, errString);
+    if (sock < 0) {
+        return errString;
     }
 
-    {
-        using json = nlohmann::json;
-        json j;
-        try {
-            j = json::parse(responseBody);
-        } catch (json::parse_error e) {
-            std::stringstream ss;
-            ss << "could not parse response body: " << e.what();
-            errString = ss.str();
-            return false;
-        }
-        for (const auto& block: j) {
-            auto& blockService = blocks.blockServices.els.emplace_back();
-            blockService.id = block["id"];
-            std::string ip = block["ip"];
-            if (inet_pton(AF_INET, ip.c_str(), &blockService.ip.data[0]) != 1) {
-                throw SYSCALL_EXCEPTION("inet_pton");
-            }
-            blockService.port = block["port"];
-            std::string failureDomain = block["failure_domain"];
-            ALWAYS_ASSERT(failureDomain.size() < blockService.failureDomain.data.size());
-            memcpy(&blockService.failureDomain.data[0], failureDomain.c_str(), failureDomain.size()+1);
-            std::string secretKey = block["secret_key"];
-            ALWAYS_ASSERT(secretKey.size() == blockService.secretKey.data.size()*2);
-            for (int i = 0; i < secretKey.size(); i += 2) {
-                // TODO we should check that strtol didn't fail, which is very annoying
-                // in its own right...
-                blockService.secretKey.data[i/2] = strtol(secretKey.substr(i, 2).c_str(), nullptr, 16);
-            }
-            blockService.storageClass = block["storage_class"];
-        }
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setBlockServicesForShard();
+    req.shard = shid;
+    errString = writeShuckleRequest(sock, reqContainer);
+    if (!errString.empty()) {
+        return errString;
     }
 
-    return true;
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    blocks.blockServices = respContainer.getBlockServicesForShard().blockServices;
+
+    return {};
+}
+
+std::string registerShard(
+    const std::string& host, uint16_t port, Duration timeout, ShardId shid, const std::array<uint8_t, 4>& shardAddr, uint16_t shardPort
+) {
+    std::string errString;
+    int sock = shuckleSock(host, port, timeout, errString);
+    if (sock < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setRegisterShard();
+    req.id = shid;
+    req.info.ip.data = shardAddr;
+    req.info.port = shardPort;
+    errString = writeShuckleRequest(sock, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+    respContainer.getRegisterShard();
+
+    return {};
+}
+
+std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, const std::array<uint8_t, 4>& cdcAddr, uint16_t cdcPort) {
+    std::string errString;
+    int sock = shuckleSock(host, port, timeout, errString);
+    if (sock < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setRegisterCdc();
+    req.ip.data = cdcAddr;
+    req.port = cdcPort;
+    errString = writeShuckleRequest(sock, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+    respContainer.getRegisterCdc();
+
+    return {};
+}
+
+std::string fetchShards(const std::string& host, uint16_t port, Duration timeout, std::vector<ShardInfo>& shards) {
+    std::string errString;
+    int sock = shuckleSock(host, port, timeout, errString);
+    if (sock < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    reqContainer.setShards();
+    errString = writeShuckleRequest(sock, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+    shards = respContainer.getShards().shards.els;
+
+    return {};
 }

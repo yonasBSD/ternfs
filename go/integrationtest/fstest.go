@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"math"
 	"math/rand"
@@ -11,9 +12,11 @@ import (
 )
 
 type fsTestOpts struct {
-	numDirs  int // how many dirs (in total) to create
-	numFiles int // how many files (in total) to create
-	depth    int // directory tree depth
+	numDirs     int // how many dirs (in total) to create
+	numFiles    int // how many files (in total) to create
+	depth       int // directory tree depth
+	maxFileSize int
+	spanSize    int
 }
 
 type fsTestDir struct {
@@ -101,7 +104,6 @@ func (state *fsTestState) makeDir(log eggs.LogLevels, harness *harness, opts *fs
 }
 
 func (state *fsTestState) makeDirFromTemp(log eggs.LogLevels, harness *harness, opts *fsTestOpts, parent []int, name int, tmpParent []int) []int {
-	state.incrementDirs(log, opts)
 	dir := state.dir(parent)
 	_, dirExists := dir.children.directories[name]
 	if dirExists {
@@ -114,6 +116,10 @@ func (state *fsTestState) makeDirFromTemp(log eggs.LogLevels, harness *harness, 
 	var id msgs.InodeId
 	var tmpCreationTime msgs.EggsTime
 	tmpParentId := state.dir(tmpParent).id
+	if tmpParentId == dir.id {
+		return state.makeDir(log, harness, opts, parent, name)
+	}
+	state.incrementDirs(log, opts)
 	{
 		req := msgs.MakeDirectoryReq{
 			OwnerId: tmpParentId,
@@ -169,8 +175,8 @@ func (state *fsTestState) makeFile(log eggs.LogLevels, harness *harness, opts *f
 	if fileExists {
 		panic("conflicting name (files)")
 	}
-	size := rand.Uint64() % (uint64(100) << 20) // up to 20MiB
-	id, creationTime := harness.createFile(dir.id, strconv.Itoa(name), size)
+	size := rand.Uint64() % uint64(opts.maxFileSize)
+	id, creationTime := harness.createFile(dir.id, uint64(opts.spanSize), strconv.Itoa(name), size)
 	dir.children.files[name] = fsTestChild[msgs.InodeId]{
 		body:         id,
 		creationTime: creationTime,
@@ -193,10 +199,10 @@ func (state *fsTestState) makeFileFromTemp(log eggs.LogLevels, harness *harness,
 	if rand.Uint64()%3 == 0 {
 		size = 1 + rand.Uint64()%256
 	} else {
-		size = 1 + rand.Uint64()%(uint64(100)<<20) // up to 20MiB
+		size = 1 + rand.Uint64()%uint64(opts.maxFileSize)
 	}
 	tmpParentId := state.dir(tmpDirPath).id
-	id, creationTime := harness.createFile(tmpParentId, "tmp", size)
+	id, creationTime := harness.createFile(tmpParentId, uint64(opts.spanSize), "tmp", size)
 	if tmpParentId == dir.id {
 		req := msgs.SameDirectoryRenameReq{
 			DirId:           dir.id,
@@ -259,9 +265,10 @@ func fsTest(
 	log eggs.LogLevels,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServices []msgs.BlockServiceInfo,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) {
-	client, err := eggs.NewClient(nil, counters, nil)
+	client, err := eggs.NewClient(log, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -328,17 +335,7 @@ func fsTest(
 	state.rootDir.check(log, harness)
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
-	blockServiceToPurge := msgs.BlockServiceId(0)
-	{
-		stopAt := int(rand.Uint32()) % len(blockServicesKeys)
-		i := 0
-		for blockService := range blockServicesKeys {
-			blockServiceToPurge = blockService
-			if i == stopAt {
-				break
-			}
-		}
-	}
+	blockServiceToPurge := blockServices[int(rand.Uint32())%len(blockServices)].Id
 	log.Info("will migrate block service %v", blockServiceToPurge)
 	migrateStats := eggs.MigrateStats{}
 	err = eggs.MigrateBlocksInAllShards(log, client, blockServicesKeys, &migrateStats, blockServiceToPurge)

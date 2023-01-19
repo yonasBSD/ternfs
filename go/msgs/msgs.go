@@ -3,6 +3,7 @@ package msgs
 
 import (
 	"fmt"
+	"io"
 	"time"
 	"xtx/eggsfs/bincode"
 )
@@ -44,6 +45,16 @@ const CDC_REQ_PROTOCOL_VERSION uint32 = 0x434443
 // >>> format(struct.unpack('<I', b'CDC\1')[0], 'x')
 // '1434443'
 const CDC_RESP_PROTOCOL_VERSION uint32 = 0x1434443
+
+// >>> format(struct.unpack('<I', b'SHU\0')[0], 'x')
+// '554853'
+const SHUCKLE_REQ_PROTOCOL_VERSION uint32 = 0x554853
+
+// >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
+// '1554853'
+const SHUCKLE_RESP_PROTOCOL_VERSION uint32 = 0x1554853
+
+const SHUCKLE_PORT uint16 = 10000
 
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
@@ -129,12 +140,6 @@ const (
 	ROOT_DIR_INODE_ID = InodeId(DIRECTORY) << 61
 )
 
-func (shard ShardId) Port() int {
-	return 22272 + int(shard)
-}
-
-const CDC_PORT int = 36137
-
 const EGGS_EPOCH uint64 = 1_577_836_800_000_000_000
 
 func MakeEggsTime(t time.Time) EggsTime {
@@ -159,13 +164,13 @@ func (err ErrCode) Error() string {
 	return err.String()
 }
 
-func (err *ErrCode) Pack(buf *bincode.Buf) {
-	buf.PackU16(uint16(*err))
+func (err *ErrCode) Pack(w io.Writer) error {
+	return bincode.PackScalar(w, uint16(*err))
 }
 
-func (errCode *ErrCode) Unpack(buf *bincode.Buf) error {
+func (errCode *ErrCode) Unpack(r io.Reader) error {
 	var c uint16
-	if err := buf.UnpackU16(&c); err != nil {
+	if err := bincode.UnpackScalar(r, &c); err != nil {
 		return err
 	}
 	*errCode = ErrCode(c)
@@ -175,6 +180,8 @@ func (errCode *ErrCode) Unpack(buf *bincode.Buf) error {
 type ShardMessageKind uint8
 
 type CDCMessageKind uint8
+
+type ShuckleMessageKind uint8
 
 const ERROR uint8 = 0
 
@@ -193,6 +200,13 @@ func (parity Parity) DataBlocks() int {
 }
 func (parity Parity) ParityBlocks() int {
 	return int(parity) >> 4
+}
+func (parity Parity) Blocks() int {
+	return parity.DataBlocks() + parity.ParityBlocks()
+}
+
+func (parity Parity) String() string {
+	return fmt.Sprintf("(%v,%v)", parity.DataBlocks(), parity.ParityBlocks())
 }
 
 // --------------------------------------------------------------------
@@ -768,6 +782,12 @@ type BlockServiceFilesResp struct {
 	FileIds []InodeId
 }
 
+type ExpireTransientFileReq struct {
+	Id InodeId
+}
+
+type ExpireTransientFileResp struct{}
+
 // --------------------------------------------------------------------
 // CDC requests/responses
 
@@ -1029,8 +1049,8 @@ type RemoveSpanInitiateEntry struct {
 	FileId InodeId
 }
 
-type EntryBlockService struct {
-	Id            uint64
+type BlockServiceInfo struct {
+	Id            BlockServiceId
 	Ip            [4]byte
 	Port          uint16
 	StorageClass  uint8
@@ -1039,7 +1059,7 @@ type EntryBlockService struct {
 }
 
 type UpdateBlockServicesEntry struct {
-	BlockServices []EntryBlockService
+	BlockServices []BlockServiceInfo
 }
 
 type EntryNewBlockInfo struct {
@@ -1092,4 +1112,77 @@ type SwapBlocksEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	BlockId2    BlockId
+}
+
+type ExpireTransientFileEntry struct {
+	Id InodeId
+}
+
+// --------------------------------------------------------------------
+// shuckle requests/responses
+
+type ShuckleRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShuckleRequestKind() ShuckleMessageKind
+}
+
+type ShuckleResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShuckleResponseKind() ShuckleMessageKind
+}
+
+type BlockServicesForShardReq struct {
+	Shard ShardId
+}
+
+type BlockServicesForShardResp struct {
+	BlockServices []BlockServiceInfo
+}
+
+type AllBlockServicesReq struct{}
+
+type AllBlockServicesResp struct {
+	BlockServices []BlockServiceInfo
+}
+
+type RegisterBlockServiceReq struct {
+	BlockService BlockServiceInfo
+}
+
+type RegisterBlockServiceResp struct{}
+
+type ShardsReq struct{}
+
+type ShardInfo struct {
+	Ip   [4]byte
+	Port uint16
+}
+
+type ShardsResp struct {
+	// Always 256 length. If we don't have info for some shards, the ShardInfo
+	// is zeroed.
+	Shards []ShardInfo
+}
+
+type RegisterShardReq struct {
+	Id   ShardId
+	Info ShardInfo
+}
+
+type RegisterShardResp struct{}
+
+type RegisterCdcReq struct {
+	Ip   [4]byte
+	Port uint16
+}
+
+type RegisterCdcResp struct{}
+
+type CdcReq struct{}
+
+type CdcResp struct {
+	Ip   [4]byte
+	Port uint16
 }

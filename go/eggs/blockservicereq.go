@@ -1,183 +1,176 @@
 package eggs
 
 import (
-	"crypto/aes"
+	"bytes"
+	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
-	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
 // TODO connection pool rather than opening a new one each time
 
-type blockServiceReq struct {
-	id     msgs.BlockServiceId
-	ip     net.IP
-	port   int
-	sock   *net.TCPConn
-	kind   byte
-	buf    []byte
-	cursor int
+func bsReqInit(id msgs.BlockServiceId, kind byte) *bytes.Buffer {
+	buf := bytes.NewBuffer([]byte{})
+	bsWrite(buf, uint64(id))
+	bsWrite(buf, kind)
+	return buf
 }
 
-func (req *blockServiceReq) init(id msgs.BlockServiceId, ip net.IP, port int, kind byte) error {
-	sock, err := net.DialTCP("tcp4", nil, &net.TCPAddr{IP: ip, Port: port})
+func bsWrite[V uint8 | uint32 | uint64](buf *bytes.Buffer, x V) {
+	if err := binary.Write(buf, binary.LittleEndian, x); err != nil {
+		panic(err)
+	}
+}
+
+func bsSend(ip net.IP, port uint16, buf *bytes.Buffer) (*net.TCPConn, error) {
+	sock, err := net.DialTCP("tcp4", nil, &net.TCPAddr{IP: ip, Port: int(port)})
 	if err != nil {
-		return fmt.Errorf("could not connect to block service %v (%v:%d): %w", id, ip, port, err)
+		return nil, fmt.Errorf("could not connect to block service %v:%d: %w", ip, port, err)
 	}
-	req.id = id
-	req.ip = ip
-	req.port = port
-	req.sock = sock
-	req.kind = kind
-	req.writeUint64(uint64(id))
-	req.writeByte(kind)
-	return nil
-}
-
-func (req *blockServiceReq) close() {
-	req.sock.Close()
-}
-
-func (req *blockServiceReq) send() error {
-	if len(req.buf) != req.cursor {
-		panic(fmt.Errorf("buf is not full, len=%d, cursor=%d", len(req.buf), req.cursor))
+	if _, err := sock.Write(buf.Bytes()); err != nil {
+		return nil, err
 	}
-	_, err := req.sock.Write(req.buf)
-	if err != nil {
-		return req.err(fmt.Sprintf("send req of kind %v", req.kind), err)
-	}
-	return nil
+	return sock, nil
 }
 
-func (req *blockServiceReq) err(what string, err error) error {
-	return fmt.Errorf("could not %s from block service %v (%v:%d): %w", what, req.id, req.ip, req.port, err)
-}
-
-func (req *blockServiceReq) writeByte(x byte) {
-	req.buf[req.cursor] = x
-	req.cursor++
-}
-
-func (req *blockServiceReq) writeUint64(x uint64) {
-	binary.LittleEndian.PutUint64(req.buf[req.cursor:], x)
-	req.cursor += 8
-}
-
-func (req *blockServiceReq) writeUint32(x uint32) {
-	binary.LittleEndian.PutUint32(req.buf[req.cursor:], x)
-	req.cursor += 4
-}
-
-func (req *blockServiceReq) writeBytes(xs []byte) {
-	copy(req.buf[req.cursor:], xs)
-	req.cursor += len(xs)
-}
-
-type blockServiceResp struct {
-	req    *blockServiceReq
-	kind   byte
-	buf    []byte
-	cursor int
-}
-
-func (resp *blockServiceResp) init(req *blockServiceReq, kind byte) error {
-	resp.req = req
-	resp.kind = kind
-	_, err := io.ReadFull(req.sock, resp.buf[:])
-	if err != nil {
-		return req.err("read response", err)
-	}
-	if err := resp.expectUint64(uint64(resp.req.id)); err != nil {
+func bsRespInit(id msgs.BlockServiceId, kind byte, sock *net.TCPConn) error {
+	if err := bsExpect("block service id", sock, (uint64)(id)); err != nil {
 		return err
 	}
-	if err := resp.expectByte(kind); err != nil {
+	if err := bsExpect("kind", sock, kind); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (resp *blockServiceResp) finished() {
-	if resp.cursor != len(resp.buf) {
-		panic(fmt.Errorf("buf is not consumed, len=%d, cursor=%d", len(resp.buf), resp.cursor))
+func bsRead[V uint8 | uint32 | uint64](sock *net.TCPConn) (x V, err error) {
+	if err := binary.Read(sock, binary.LittleEndian, &x); err != nil {
+		return 0, nil
 	}
+	return x, nil
 }
 
-func (resp *blockServiceResp) readByte() byte {
-	x := resp.buf[resp.cursor]
-	resp.cursor++
-	return x
-}
-
-func (resp *blockServiceResp) expectByte(expected byte) error {
-	got := resp.readByte()
-	if expected != got {
-		return fmt.Errorf("expecting byte %v (%c), got %v (%c) from block service %v (%v:%d)", expected, expected, got, got, resp.req.id, resp.req.ip, resp.req.port)
+func bsExpect[V uint8 | uint32 | uint64](what string, sock *net.TCPConn, x V) error {
+	y, err := bsRead[V](sock)
+	if err != nil {
+		return err
+	}
+	if x != y {
+		return fmt.Errorf("expecting %s %v, got %v from block service %v", what, x, y, sock.RemoteAddr())
 	}
 	return nil
 }
 
-func (resp *blockServiceResp) readUint64() uint64 {
-	x := binary.LittleEndian.Uint64(resp.buf[resp.cursor:])
-	resp.cursor += 8
-	return x
+func WriteBlock(
+	logger LogLevels,
+	block *msgs.BlockInfo,
+	data []byte,
+	crc [4]byte,
+) ([8]byte, error) {
+	logger.Debug("writing block %+v with CRC %v", block, crc)
+	var proof [8]byte
+	// start writing the block: message (block_service_id, 'w', block_id, crc32, block_size, certificate)
+	writeReq := bsReqInit(block.BlockServiceId, 'w')
+	bsWrite(writeReq, uint64(block.BlockId))
+	writeReq.Write(crc[:])
+	bsWrite(writeReq, uint32(len(data)))
+	writeReq.Write(block.Certificate[:])
+	conn, err := bsSend(block.BlockServiceIp[:], block.BlockServicePort, writeReq)
+	if err != nil {
+		return proof, err
+	}
+	defer conn.Close()
+	// Write block data
+	logger.Debug("writing block data")
+	if _, err := conn.Write(data); err != nil {
+		return proof, fmt.Errorf("could not write block data to %v: %w", conn.RemoteAddr(), err)
+	}
+	logger.Debug("block data written")
+	// write response: (block_service_id, 'W', block_id, proof)
+	if err := bsRespInit(block.BlockServiceId, 'W', conn); err != nil {
+		return proof, err
+	}
+	if _, err := io.ReadFull(conn, proof[:]); err != nil {
+		return proof, fmt.Errorf("could not read proof from %v: %w", conn.RemoteAddr(), err)
+	}
+	logger.Debug("response gotten")
+	// we're finally done
+	return proof, nil
 }
 
-func (resp *blockServiceResp) expectUint64(expected uint64) error {
-	got := resp.readUint64()
-	if expected != got {
-		return fmt.Errorf("expecting uint64 %v, got %v from block service %v (%v:%d)", expected, got, resp.req.id, resp.req.ip, resp.req.port)
+// Reads so that `data` is filled, or fails. It might partially fill `data` before failing.
+func FetchBlock(
+	logger LogLevels,
+	blockServices []msgs.BlockService,
+	block *msgs.FetchedBlock,
+	offset uint32,
+	data []byte,
+) error {
+	blockService := blockServices[block.BlockServiceIx]
+	logger.Debug("fetching block %+v from block service %+v", block, blockService)
+	// start reading the block: message (block_service_id, 'f', block_id, offset)
+	readReq := bsReqInit(blockService.Id, 'f')
+	bsWrite(readReq, uint64(block.BlockId))
+	bsWrite(readReq, offset)
+	bsWrite(readReq, uint32(len(data)))
+	conn, err := bsSend(blockService.Ip[:], blockService.Port, readReq)
+	if err != nil {
+		return fmt.Errorf("could not read source block from %v: %w", conn.RemoteAddr(), err)
+	}
+	defer conn.Close()
+	// read response: (block_service_id, 'F', size)
+	if err := bsRespInit(blockService.Id, 'F', conn); err != nil {
+		return err
+	}
+	// read block data
+	if _, err := io.ReadFull(conn, data); err != nil {
+		return fmt.Errorf("could not read block data from %v: %w", conn.RemoteAddr(), err)
 	}
 	return nil
 }
 
-func (resp *blockServiceResp) readUint32() uint32 {
-	x := binary.LittleEndian.Uint32(resp.buf[resp.cursor:])
-	resp.cursor += 4
-	return x
-}
-
-func (resp *blockServiceResp) expectUint32(expected uint32) error {
-	got := resp.readUint32()
-	if expected != got {
-		return fmt.Errorf("expecting uint32 %v, got %v from block service %v (%v:%d)", expected, got, resp.req.id, resp.req.ip, resp.req.port)
+func FetchFullBlock(
+	logger LogLevels,
+	blockServices []msgs.BlockService,
+	block *msgs.FetchedBlock,
+	data []byte,
+) error {
+	if err := FetchBlock(logger, blockServices, block, 0, data); err != nil {
+		return err
+	}
+	// verify crc
+	crc := CRC32C(data)
+	if crc != block.Crc32 {
+		return fmt.Errorf("mismatching CRC32 for block %v: expected %v, got %v", block.BlockId, block.Crc32, crc)
 	}
 	return nil
-}
-
-func (resp *blockServiceResp) readBytes(bs []byte) {
-	copy(bs, resp.buf[resp.cursor:])
-	resp.cursor += len(bs)
 }
 
 func EraseBlock(
 	logger LogLevels,
 	block msgs.BlockInfo,
 ) ([8]byte, error) {
+	logger.Debug("erasing block %+v", block)
 	var proof [8]byte
 	// message: (block_service_id, 'e', block_id, certificate)
-	var reqBuf [8 + 1 + 8 + 8]byte
-	req := blockServiceReq{buf: reqBuf[:]}
-	if err := req.init(block.BlockServiceId, net.IP(block.BlockServiceIp[:]), int(block.BlockServicePort), 'e'); err != nil {
+	req := bsReqInit(block.BlockServiceId, 'e')
+	bsWrite(req, uint64(block.BlockId))
+	req.Write(block.Certificate[:])
+	conn, err := bsSend(block.BlockServiceIp[:], block.BlockServicePort, req)
+	if err != nil {
 		return proof, err
 	}
-	defer req.close()
-	req.writeUint64(uint64(block.BlockId))
-	req.writeBytes(block.Certificate[:])
-	if err := req.send(); err != nil {
-		return proof, err
-	}
+	defer conn.Close()
 	// response: (block_service_id, 'E', block_id, proof)
-	var respBuf [8 + 1 + 8 + 8]byte
-	resp := blockServiceResp{buf: respBuf[:]}
-	if err := resp.init(&req, 'E'); err != nil {
+	if err := bsRespInit(block.BlockServiceId, 'E', conn); err != nil {
 		return proof, err
 	}
-	resp.expectUint64(uint64(block.BlockId))
-	resp.readBytes(proof[:])
-	resp.finished()
+	if _, err := io.ReadFull(conn, proof[:]); err != nil {
+		return proof, fmt.Errorf("could not read proof from %v: %w", conn.RemoteAddr(), err)
+	}
 	return proof, nil
 }
 
@@ -190,90 +183,35 @@ func CopyBlock(
 	dstBlock *msgs.BlockInfo,
 ) ([8]byte, error) {
 	var proof [8]byte
-	sourceBlockService := sourceBlockServices[sourceBlock.BlockServiceIx]
-	// start reading the block: message (block_service_id, 'f', block_id)
-	var readReqBuf [8 + 1 + 8]byte
-	readReq := blockServiceReq{buf: readReqBuf[:]}
-	if err := readReq.init(sourceBlockService.Id, net.IP(sourceBlockService.Ip[:]), int(sourceBlockService.Port), 'f'); err != nil {
+	var err error
+	sourceData := make([]byte, sourceBlockSize)
+	if err := FetchFullBlock(logger, sourceBlockServices, sourceBlock, sourceData); err != nil {
 		return proof, err
 	}
-	defer readReq.close()
-	readReq.writeUint64(uint64(sourceBlock.BlockId))
-	readReq.send()
-	// read response: (block_service_id, 'F', size)
-	var readRespBuf [8 + 1 + 4]byte
-	readResp := blockServiceResp{buf: readRespBuf[:]}
-	if err := readResp.init(&readReq, 'F'); err != nil {
+	proof, err = WriteBlock(logger, dstBlock, sourceData, sourceBlock.Crc32)
+	if err != nil {
 		return proof, err
 	}
-	if err := readResp.expectUint32(uint32(sourceBlockSize)); err != nil {
-		return proof, err
-	}
-	readResp.finished()
-	// read block data
-	blockData := make([]byte, sourceBlockSize)
-	if _, err := io.ReadFull(readReq.sock, blockData); err != nil {
-		return proof, readReq.err("read block", err)
-	}
-	// start writing the block: message (block_service_id, 'w', block_id, crc32, block_size, certificate)
-	var writeReqBuf [8 + 1 + 8 + 4 + 4 + 8]byte
-	writeReq := blockServiceReq{buf: writeReqBuf[:]}
-	if err := writeReq.init(dstBlock.BlockServiceId, net.IP(dstBlock.BlockServiceIp[:]), int(dstBlock.BlockServicePort), 'w'); err != nil {
-		return proof, err
-	}
-	defer writeReq.close()
-	writeReq.writeUint64(uint64(dstBlock.BlockId))
-	writeReq.writeBytes(sourceBlock.Crc32[:])
-	writeReq.writeUint32(uint32(sourceBlockSize))
-	writeReq.writeBytes(dstBlock.Certificate[:])
-	writeReq.send()
-	// Write block data
-	if _, err := writeReq.sock.Write(blockData); err != nil {
-		return proof, writeReq.err("write block", err)
-	}
-	// write response: (block_service_id, 'W', block_id, proof)
-	var writeRespBuf [8 + 1 + 8 + 8]byte
-	writeResp := blockServiceResp{buf: writeRespBuf[:]}
-	if err := writeResp.init(&writeReq, 'W'); err != nil {
-		return proof, err
-	}
-	writeResp.expectUint64(uint64(dstBlock.BlockId))
-	writeResp.readBytes(proof[:])
-	writeResp.finished()
-	// we're finally done
 	return proof, nil
 }
 
 // This is used to mock the block service in test
-func BlockAddProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, secretKey [16]byte) [8]byte {
-	var buf [32]byte
-	bbuf := bincode.Buf(buf[:])
+func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
+	buf := bytes.NewBuffer([]byte{})
 	// struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
-	bbuf.PackU64(uint64(blockServiceId))
-	bbuf.PackU8(uint8('W'))
-	bbuf.PackU64(uint64(blockId))
-
-	cipher, err := aes.NewCipher(secretKey[:])
-	if err != nil {
-		panic(fmt.Errorf("could not create AES-128 key: %w", err))
-	}
-
-	return CBCMAC(cipher, buf[:])
+	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
+	buf.Write([]byte{'W'})
+	binary.Write(buf, binary.LittleEndian, uint64(blockId))
+	return CBCMAC(key, buf.Bytes())
 }
 
 // This is used to mock the block service in test
-func BlockDeleteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, secretKey [16]byte) [8]byte {
-	var buf [32]byte
-	bbuf := bincode.Buf(buf[:])
+func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
+	buf := bytes.NewBuffer([]byte{})
 	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
-	bbuf.PackU64(uint64(blockServiceId))
-	bbuf.PackU8(uint8('E'))
-	bbuf.PackU64(uint64(blockId))
+	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
+	buf.Write([]byte{'E'})
+	binary.Write(buf, binary.LittleEndian, uint64(blockId))
 
-	cipher, err := aes.NewCipher(secretKey[:])
-	if err != nil {
-		panic(fmt.Errorf("could not create AES-128 key: %w", err))
-	}
-
-	return CBCMAC(cipher, buf[:])
+	return CBCMAC(key, buf.Bytes())
 }

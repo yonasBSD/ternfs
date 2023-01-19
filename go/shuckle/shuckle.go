@@ -1,81 +1,147 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"sync"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
 
-type blockServices struct {
-	mutex    sync.RWMutex
-	services map[msgs.BlockServiceId]*eggs.BlockService
+type state struct {
+	mutex         sync.RWMutex
+	blockServices map[msgs.BlockServiceId]*msgs.BlockServiceInfo
+	shards        [256]msgs.ShardInfo
+	cdcIp         [4]byte
+	cdcPort       uint16
 }
 
-func newBlockServices() *blockServices {
-	return &blockServices{
-		mutex:    sync.RWMutex{},
-		services: make(map[msgs.BlockServiceId]*eggs.BlockService),
+func newBlockServices() *state {
+	return &state{
+		mutex:         sync.RWMutex{},
+		blockServices: make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo),
 	}
 }
 
-func handleIndex(bss *blockServices, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	fmt.Fprintf(w, "Hello world\n")
-}
+func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-func handleBlockServicesForShard(ll eggs.LogLevels, bss *blockServices, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+	resp := msgs.BlockServicesForShardResp{}
+	resp.BlockServices = make([]msgs.BlockServiceInfo, len(s.blockServices))
 
-	w.Header().Set("content-type", "application/json")
-
-	bss.mutex.RLock()
-	defer bss.mutex.RUnlock()
-
-	bssList := make([]*eggs.BlockService, len(bss.services))
 	i := 0
-	for _, bs := range bss.services {
-		bssList[i] = bs
+	for _, bs := range s.blockServices {
+		resp.BlockServices[i] = *bs
 		i++
 	}
 
-	ll.Debug("sending back block services")
-
-	json.NewEncoder(w).Encode(bssList)
+	return &resp
 }
 
-func handleRegisterBlockService(ll eggs.LogLevels, bss *blockServices, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	resp := msgs.AllBlockServicesResp{}
+	resp.BlockServices = make([]msgs.BlockServiceInfo, len(s.blockServices))
+
+	i := 0
+	for _, bs := range s.blockServices {
+		resp.BlockServices[i] = *bs
+		i++
 	}
 
-	var bs eggs.BlockService
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	// no way to require all fields to be present, great.
-	if err := decoder.Decode(&bs); err != nil {
-		http.Error(w, fmt.Sprintf("bad body: %v", err), http.StatusBadRequest)
+	return &resp
+}
+
+func handleRegisterBlockService(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterBlockServiceReq) *msgs.RegisterBlockServiceResp {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.blockServices[req.BlockService.Id] = &req.BlockService
+
+	return &msgs.RegisterBlockServiceResp{}
+}
+
+func handleShards(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	resp := msgs.ShardsResp{}
+	resp.Shards = s.shards[:]
+
+	return &resp
+}
+
+func handleRegisterShard(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.shards[req.Id] = req.Info
+
+	return &msgs.RegisterShardResp{}
+}
+
+func handleCdcReq(log eggs.LogLevels, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	resp := msgs.CdcResp{}
+	resp.Ip = s.cdcIp
+	resp.Port = s.cdcPort
+
+	return &resp
+}
+
+func handleRegisterCdcReq(log eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.cdcIp = req.Ip
+	s.cdcPort = req.Port
+
+	return &msgs.RegisterCdcResp{}
+}
+
+func handleRequest(log eggs.LogLevels, s *state, conn *net.TCPConn) {
+	conn.SetLinger(0) // poor man error handling for now
+	defer conn.Close()
+
+	req, err := eggs.ReadShuckleRequest(log, conn)
+	if err != nil {
+		log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
 		return
 	}
+	log.Debug("handling request %T %+v", req, req)
+	var resp msgs.ShuckleResponse
 
-	ll.Debug("adding block service %+v", bs)
-
-	bss.mutex.Lock()
-	defer bss.mutex.Unlock()
-
-	bss.services[bs.Id] = &bs
+	switch whichReq := req.(type) {
+	case *msgs.BlockServicesForShardReq:
+		resp = handleBlockServicesForShard(log, s, conn, whichReq)
+	case *msgs.RegisterBlockServiceReq:
+		resp = handleRegisterBlockService(log, s, conn, whichReq)
+	case *msgs.ShardsReq:
+		resp = handleShards(log, s, conn, whichReq)
+	case *msgs.RegisterShardReq:
+		resp = handleRegisterShard(log, s, conn, whichReq)
+	case *msgs.AllBlockServicesReq:
+		resp = handleAllBlockServicesReq(log, s, conn, whichReq)
+	case *msgs.CdcReq:
+		resp = handleCdcReq(log, s, conn, whichReq)
+	case *msgs.RegisterCdcReq:
+		resp = handleRegisterCdcReq(log, s, conn, whichReq)
+	default:
+		log.RaiseAlert(fmt.Errorf("bad req type %T", req))
+	}
+	log.Debug("sending back response %T", resp)
+	if err := eggs.WriteShuckleResponse(log, conn, resp); err != nil {
+		log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
+	}
 }
 
 func noRunawayArgs() {
@@ -106,26 +172,21 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	ll.Info("running on port %v", *port)
+	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *port))
+	if err != nil {
+		panic(err)
+	}
+	defer listener.Close()
+
+	ll.Info("running on %v", listener.Addr())
 
 	blockServices := newBlockServices()
 
-	http.HandleFunc(
-		"/",
-		func(w http.ResponseWriter, r *http.Request) { handleIndex(blockServices, w, r) },
-	)
-	http.HandleFunc(
-		"/block_services_for_shard",
-		func(w http.ResponseWriter, r *http.Request) { handleBlockServicesForShard(ll, blockServices, w, r) },
-	)
-	http.HandleFunc(
-		"/all_block_services",
-		func(w http.ResponseWriter, r *http.Request) { handleBlockServicesForShard(ll, blockServices, w, r) },
-	)
-	http.HandleFunc(
-		"/register_block_service",
-		func(w http.ResponseWriter, r *http.Request) { handleRegisterBlockService(ll, blockServices, w, r) },
-	)
-
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%v", *port), nil))
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			panic(err)
+		}
+		go func() { handleRequest(ll, blockServices, conn.(*net.TCPConn)) }()
+	}
 }

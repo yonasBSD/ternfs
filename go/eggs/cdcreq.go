@@ -2,7 +2,9 @@
 package eggs
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"sync/atomic"
@@ -16,11 +18,20 @@ type cdcRequest struct {
 	body      msgs.CDCRequest
 }
 
-func (req *cdcRequest) Pack(buf *bincode.Buf) {
-	buf.PackU32(msgs.CDC_REQ_PROTOCOL_VERSION)
-	buf.PackU64(req.requestId)
-	buf.PackU8(uint8(req.body.CDCRequestKind()))
-	req.body.Pack(buf)
+func (req *cdcRequest) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, msgs.CDC_REQ_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, req.requestId); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(req.body.CDCRequestKind())); err != nil {
+		return err
+	}
+	if err := req.body.Pack(w); err != nil {
+		return err
+	}
+	return nil
 }
 
 type CDCResponse struct {
@@ -28,88 +39,26 @@ type CDCResponse struct {
 	Body      msgs.CDCResponse
 }
 
+/*
 func (req *CDCResponse) Pack(buf *bincode.Buf) {
 	buf.PackU32(msgs.CDC_RESP_PROTOCOL_VERSION)
 	buf.PackU64(req.RequestId)
 	buf.PackU8(uint8(req.Body.CDCResponseKind()))
 	req.Body.Pack(buf)
 }
-
-/*
-type unpackedCDCResponse struct {
-	requestId uint64
-	body      msgs.CDCResponse
-	// This is where we could decode as far as decoding the request id,
-	// but then errored after. We are interested in this case because
-	// we can safely drop every erroring request that is not our request
-	// id. And on the contrary, we want to know if things failed for
-	// the request we're interested in.
-	//
-	// If this is non-nil, the body will be set to nil.
-	error error
-}
-
-func (resp *unpackedCDCResponse) Unpack(buf *bincode.Buf) error {
-	// panic immediately if we get passed a bogus body
-	expectedKind := resp.body.CDCResponseKind()
-	// decode message header
-	var ver uint32
-	if err := buf.UnpackU32(&ver); err != nil {
-		return err
-	}
-	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
-	}
-	if err := buf.UnpackU64(&resp.requestId); err != nil {
-		return err
-	}
-	// We've made it with the request id, from now on if we fail we set
-	// the error inside the object, rather than returning an error.
-	body := resp.body
-	resp.body = nil
-	var kind uint8
-	if err := buf.UnpackU8(&kind); err != nil {
-		resp.error = fmt.Errorf("%v: could not decode response kind: %w", resp.requestId, err)
-		buf.Consume()
-		return nil
-	}
-	if kind == msgs.ERROR_KIND {
-		var errCode msgs.ErrCode
-		if err := errCode.Unpack(buf); err != nil {
-			resp.error = fmt.Errorf("%v: could not decode error body: %w", resp.requestId, err)
-			buf.Consume()
-			return nil
-		}
-		resp.error = errCode
-		return nil
-	}
-	if msgs.CDCMessageKind(kind) != expectedKind {
-		resp.error = fmt.Errorf("%v: expected body of kind %v, got %v instead", resp.requestId, expectedKind, kind)
-		buf.Consume()
-		return nil
-	}
-	if err := body.Unpack(buf); err != nil {
-		resp.error = fmt.Errorf("%v: could not decode response body: %w", resp.requestId, err)
-
-		return nil
-	}
-	resp.body = body
-	resp.error = nil
-	return nil
-}
 */
 
 type unpackedCDCRequestId uint64
 
-func (requestId *unpackedCDCRequestId) Unpack(buf *bincode.Buf) error {
+func (requestId *unpackedCDCRequestId) Unpack(r io.Reader) error {
 	var ver uint32
-	if err := buf.UnpackU32(&ver); err != nil {
+	if err := bincode.UnpackScalar(r, &ver); err != nil {
 		return err
 	}
 	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
 		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
 	}
-	if err := buf.UnpackU64((*uint64)(requestId)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint64)(requestId)); err != nil {
 		return err
 	}
 	return nil
@@ -189,8 +138,12 @@ func (c *Client) CDCRequest(
 	if msgKind != respBody.CDCResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	sock := c.CDCSocket
-	buffer := make([]byte, msgs.UDP_MTU)
+	sock, err := c.GetCDCSocket()
+	if err != nil {
+		return err
+	}
+	defer c.ReleaseCDCSocket(sock)
+	respBuf := make([]byte, msgs.UDP_MTU)
 	requestIds := make([]uint64, cdcMaxElapsed/minCDCSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()
@@ -201,8 +154,8 @@ func (c *Client) CDCRequest(
 			logger.RaiseAlert(fmt.Errorf("giving up on request to CDC after waiting for %v", elapsed))
 			return msgs.TIMEOUT
 		}
-		if c.Counters != nil {
-			atomic.AddInt64(&c.Counters.CDC.Attempts[msgKind], 1)
+		if c.counters != nil {
+			atomic.AddInt64(&c.counters.CDC.Attempts[msgKind], 1)
 		}
 		requestId := newRequestId()
 		requestIds[attempts] = requestId
@@ -210,9 +163,8 @@ func (c *Client) CDCRequest(
 			requestId: requestId,
 			body:      reqBody,
 		}
-		reqBytes := buffer
-		bincode.PackIntoBytes(&reqBytes, &req)
-		logger.Debug("about to send request id %v (%T) to CDC, after %v attempts", requestId, reqBody, attempts)
+		reqBytes := bincode.Pack(&req)
+		logger.Debug("about to send request id %v (%T, %+v) to CDC, after %v attempts", requestId, reqBody, reqBody, attempts)
 		written, err := sock.Write(reqBytes)
 		if err != nil {
 			return fmt.Errorf("couldn't send request: %w", err)
@@ -228,9 +180,8 @@ func (c *Client) CDCRequest(
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)
 		for {
-			respBytes := buffer
-			read, err := sock.Read(respBytes)
-			respBytes = respBytes[:read]
+			read, err := sock.Read(respBuf)
+			respBytes := respBuf[:read]
 			if err != nil {
 				isTimeout := false
 				switch netErr := err.(type) {
@@ -248,9 +199,9 @@ func (c *Client) CDCRequest(
 				return err
 			}
 			// Start parsing, from the header with request id
-			bbuf := bincode.Buf(respBytes)
+			respReader := bytes.NewReader(respBytes)
 			var respRequestId unpackedCDCRequestId
-			if err := (&respRequestId).Unpack(&bbuf); err != nil {
+			if err := (&respRequestId).Unpack(respReader); err != nil {
 				logger.RaiseAlert(fmt.Errorf("could not decode CDC response header for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
 				continue
 			}
@@ -269,7 +220,7 @@ func (c *Client) CDCRequest(
 			}
 			// We are interested, parse the kind
 			var kind uint8
-			if err := bbuf.UnpackU8(&kind); err != nil {
+			if err := bincode.UnpackScalar(respReader, &kind); err != nil {
 				logger.RaiseAlert(fmt.Errorf("could not decode CDC response kind for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
 				continue
 			}
@@ -278,7 +229,7 @@ func (c *Client) CDCRequest(
 				// If the kind is an error, parse it
 				var eggsErrVal msgs.ErrCode
 				eggsError = &eggsErrVal
-				if err := eggsError.Unpack(&bbuf); err != nil {
+				if err := eggsError.Unpack(respReader); err != nil {
 					logger.RaiseAlert(fmt.Errorf("could not decode CDC response error for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
 					continue
 				}
@@ -289,10 +240,14 @@ func (c *Client) CDCRequest(
 					continue
 				}
 				// Otherwise, finally parse the body
-				if err := respBody.Unpack(&bbuf); err != nil {
+				if err := respBody.Unpack(respReader); err != nil {
 					logger.RaiseAlert(fmt.Errorf("could not decode CDC response body for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
 					continue
 				}
+			}
+			// Check that we've parsed everything
+			if respReader.Len() != 0 {
+				return fmt.Errorf("malformed response, %v leftover bytes", respReader.Len())
 			}
 			// If we've got a timeout, keep trying
 			if eggsError != nil && *eggsError == msgs.TIMEOUT {
@@ -301,9 +256,9 @@ func (c *Client) CDCRequest(
 			}
 			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
-			if c.Counters != nil {
-				atomic.AddInt64(&c.Counters.CDC.Count[msgKind], 1)
-				atomic.AddInt64(&c.Counters.CDC.Nanos[msgKind], elapsed.Nanoseconds())
+			if c.counters != nil {
+				atomic.AddInt64(&c.counters.CDC.Count[msgKind], 1)
+				atomic.AddInt64(&c.counters.CDC.Nanos[msgKind], elapsed.Nanoseconds())
 			}
 			// If we're past the first attempt, there are cases where errors are not what they seem.
 			if eggsError != nil && attempts > 0 {
@@ -322,8 +277,8 @@ func (c *Client) CDCRequest(
 	}
 }
 
-func CreateCDCSocket() (*net.UDPConn, error) {
-	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{Port: msgs.CDC_PORT})
+func CreateCDCSocket(ip [4]byte, port uint16) (*net.UDPConn, error) {
+	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip[:], Port: int(port)})
 	if err != nil {
 		return nil, fmt.Errorf("could not create CDC socket: %w", err)
 	}

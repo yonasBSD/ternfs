@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
     const auto dieWithUsage = [&argv]() {
-        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-shuckle] [--incoming-packet-drop <probability>] [--outgoing-packet-drop <probability>] db_dir shard_id\n", argv[0]);
+        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--wait-for-block-services] [--incoming-packet-drop <probability>] [--outgoing-packet-drop <probability>] db_dir shard_id\n", argv[0]);
     };
 
     ShardOptions options;
@@ -59,8 +59,8 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "--log-file") {
             options.logFile = getNextArg();
-        } else if (arg == "--wait-for-shuckle") {
-            options.waitForShuckle = true;
+        } else if (arg == "--wait-for-block-services") {
+            options.waitForBlockServices = true;
         } else if (arg == "--incoming-packet-drop") {
             options.simulateIncomingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "--outgoing-packet-drop") {

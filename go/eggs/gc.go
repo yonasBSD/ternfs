@@ -1,8 +1,8 @@
 package eggs
 
 import (
+	"crypto/cipher"
 	"fmt"
-	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
 
@@ -16,7 +16,7 @@ type DestructionStats struct {
 func DestructFile(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	stats *DestructionStats,
 	id msgs.InodeId, deadline msgs.EggsTime, cookie [8]byte,
 ) error {
@@ -62,7 +62,7 @@ func DestructFile(
 					if !wasPresent {
 						panic(fmt.Errorf("could not find key for block service %v", block.BlockServiceId))
 					}
-					proof = BlockDeleteProof(block.BlockServiceId, block.BlockId, key)
+					proof = BlockEraseProof(block.BlockServiceId, block.BlockId, key)
 				}
 				stats.DestructedBlocks++
 				certifyReq.Proofs[i].BlockId = block.BlockId
@@ -87,7 +87,7 @@ func DestructFile(
 }
 
 func destructFilesInternal(
-	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) error {
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
@@ -118,9 +118,9 @@ func destructFilesInternal(
 // we'll just generate the proof ourselves and certify. This is only useful
 // for testing, obviously.
 func DestructFiles(
-	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) error {
-	client, err := NewClient(&shid, counters, nil)
+	client, err := NewClient(log, &shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -134,9 +134,9 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log LogLevels, counters *ClientCounters, blockServicesKeys map[msgs.BlockServiceId][16]byte,
+	log LogLevels, counters *ClientCounters, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) error {
-	client, err := NewClient(nil, counters, nil)
+	client, err := NewClient(log, nil, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -218,47 +218,6 @@ func applyPolicy(
 		stats.CollectedEdges++
 	}
 	return toCollect == len(edges), nil
-}
-
-func requestDirectoryInfo(
-	log LogLevels, client *Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId,
-) (*msgs.DirectoryInfoBody, error) {
-	statResp := msgs.StatDirectoryResp{}
-	err := client.ShardRequest(log, dirId.Shard(), &msgs.StatDirectoryReq{Id: dirId}, &statResp)
-	if err != nil {
-		return nil, fmt.Errorf("could not send stat to external shard %v to resolve directory info: %w", dirId.Shard(), err)
-	}
-
-	return resolveDirectoryInfo(log, client, dirInfoCache, dirId, &statResp)
-}
-
-func resolveDirectoryInfo(
-	log LogLevels, client *Client, dirInfoCache *DirInfoCache, dirId msgs.InodeId, statResp *msgs.StatDirectoryResp,
-) (*msgs.DirectoryInfoBody, error) {
-	// we have the data directly in the stat response
-	if len(statResp.Info) > 0 {
-		infoBody := msgs.DirectoryInfoBody{}
-		buf := bincode.Buf(statResp.Info)
-		if err := infoBody.Unpack(&buf); err != nil {
-			return nil, err
-		}
-		dirInfoCache.UpdateCachedDirInfo(dirId, &infoBody)
-		return &infoBody, nil
-	}
-
-	// we have the data in the cache
-	dirInfoBody := dirInfoCache.LookupCachedDirInfo(dirId)
-	if dirInfoBody != nil {
-		return dirInfoBody, nil
-	}
-
-	// we need to traverse upwards
-	dirInfoBody, err := requestDirectoryInfo(log, client, dirInfoCache, statResp.Owner)
-	if err != nil {
-		return nil, err
-	}
-
-	return dirInfoBody, nil
 }
 
 func CollectDirectory(log LogLevels, client *Client, dirInfoCache *DirInfoCache, stats *CollectStats, dirId msgs.InodeId) error {
@@ -367,7 +326,7 @@ func collectDirectoriesInternal(log LogLevels, client *Client, stats *CollectSta
 }
 
 func CollectDirectories(log LogLevels, counters *ClientCounters, shid msgs.ShardId) error {
-	client, err := NewClient(&shid, counters, nil)
+	client, err := NewClient(log, &shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -381,7 +340,7 @@ func CollectDirectories(log LogLevels, counters *ClientCounters, shid msgs.Shard
 }
 
 func CollectDirectoriesInAllShards(log LogLevels, counters *ClientCounters) error {
-	client, err := NewClient(nil, counters, nil)
+	client, err := NewClient(log, nil, counters, nil)
 	if err != nil {
 		return err
 	}

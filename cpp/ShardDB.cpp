@@ -1168,10 +1168,12 @@ struct ShardDBImpl {
         }
         if (req.storageClass == INLINE_STORAGE) {
             if (req.bodyBytes.size() == 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != req.bodyBytes.size() || req.blockSize != 0) {
+                LOG_DEBUG(_env, "bad inline span body because of bad blocks/parity/size, req.bodyBytes.size()=%s, req.bodyBlocks.els.size()=%s, req.parity=%s, req.size=%s, req.blockSize=%s", (int)req.bodyBytes.size(), req.bodyBlocks.els.size(), req.parity, req.size, req.blockSize);
                 return false;
             }
             auto expectedCrc32 = crc32c(req.bodyBytes.data(), req.bodyBytes.size());
             if (req.crc32.data != expectedCrc32) {
+                LOG_DEBUG(_env, "bad inline span body because of bad crc32c");
                 return false;
             }
             return true;

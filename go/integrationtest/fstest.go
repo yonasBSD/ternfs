@@ -188,7 +188,13 @@ func (state *fsTestState) makeFileFromTemp(log eggs.LogLevels, harness *harness,
 	if fileExists {
 		panic("conflicting name (files)")
 	}
-	size := rand.Uint64() % (uint64(100) << 20) // up to 20MiB
+	var size uint64
+	// one out of three files as inline storage
+	if rand.Uint64()%3 == 0 {
+		size = 1 + rand.Uint64()%256
+	} else {
+		size = 1 + rand.Uint64()%(uint64(100)<<20) // up to 20MiB
+	}
 	tmpParentId := state.dir(tmpDirPath).id
 	id, creationTime := harness.createFile(tmpParentId, "tmp", size)
 	if tmpParentId == dir.id {

@@ -101,7 +101,13 @@ func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile 
 		_, wasPresent := files.byName[name]
 		if !wasPresent {
 			delete(files.byName, name)
-			size := rand.Uint64() % (uint64(100) << 20) // up to 20MiB
+			var size uint64
+			// one out of three files as inline storage
+			if rand.Uint64()%3 == 0 {
+				size = 1 + rand.Uint64()%255
+			} else {
+				size = 1 + rand.Uint64()%(uint64(100)<<20) // up to 20MiB
+			}
 			return createFile{
 				name: name,
 				size: size,

@@ -47,52 +47,68 @@ func (h *harness) createFile(dirId msgs.InodeId, name string, size uint64) (id m
 	constructResp := msgs.ConstructFileResp{}
 	h.shardReq(dirId.Shard(), &constructReq, &constructResp)
 	// add spans
-	spanSize := uint64(10) << 20 // 10MiB
-	for offset := uint64(0); offset < size; offset += spanSize {
-		thisSpanSize := eggs.Min(spanSize, size-offset)
+	if size < 256 {
+		bytes := make([]byte, size)
 		addSpanReq := msgs.AddSpanInitiateReq{
 			FileId:       constructResp.Id,
 			Cookie:       constructResp.Cookie,
-			ByteOffset:   offset,
-			StorageClass: 2,
-			Parity:       msgs.MkParity(1, 1),
-			Crc32:        [4]byte{0, 0, 0, 0},
-			Size:         thisSpanSize,
-			BlockSize:    thisSpanSize,
-			BodyBlocks: []msgs.NewBlockInfo{
-				{Crc32: [4]byte{0, 0, 0, 0}},
-				{Crc32: [4]byte{0, 0, 0, 0}},
-			},
+			ByteOffset:   0,
+			StorageClass: msgs.INLINE_STORAGE,
+			Parity:       0,
+			Crc32:        eggs.CRC32C(bytes),
+			Size:         size,
+			BlockSize:    0,
+			BodyBytes:    bytes,
 		}
-		addSpanResp := msgs.AddSpanInitiateResp{}
-		h.shardReq(dirId.Shard(), &addSpanReq, &addSpanResp)
-		block0 := &addSpanResp.Blocks[0]
-		block1 := &addSpanResp.Blocks[1]
-		blockServiceKey0, blockServiceFound0 := h.blockServicesKeys[block0.BlockServiceId]
-		if !blockServiceFound0 {
-			panic(fmt.Errorf("could not find block service %v", block0.BlockServiceId))
-		}
-		blockServiceKey1, blockServiceFound1 := h.blockServicesKeys[block1.BlockServiceId]
-		if !blockServiceFound1 {
-			panic(fmt.Errorf("could not find block service %v", block1.BlockServiceId))
-		}
-		certifySpanReq := msgs.AddSpanCertifyReq{
-			FileId:     constructResp.Id,
-			Cookie:     constructResp.Cookie,
-			ByteOffset: offset,
-			Proofs: []msgs.BlockProof{
-				{
-					BlockId: block0.BlockId,
-					Proof:   eggs.BlockAddProof(block0.BlockServiceId, block0.BlockId, blockServiceKey0),
+		h.shardReq(dirId.Shard(), &addSpanReq, &msgs.AddSpanInitiateResp{})
+	} else {
+		spanSize := uint64(10) << 20 // 10MiB
+		for offset := uint64(0); offset < size; offset += spanSize {
+			thisSpanSize := eggs.Min(spanSize, size-offset)
+			addSpanReq := msgs.AddSpanInitiateReq{
+				FileId:       constructResp.Id,
+				Cookie:       constructResp.Cookie,
+				ByteOffset:   offset,
+				StorageClass: 2,
+				Parity:       msgs.MkParity(1, 1),
+				Crc32:        [4]byte{0, 0, 0, 0},
+				Size:         thisSpanSize,
+				BlockSize:    thisSpanSize,
+				BodyBlocks: []msgs.NewBlockInfo{
+					{Crc32: [4]byte{0, 0, 0, 0}},
+					{Crc32: [4]byte{0, 0, 0, 0}},
 				},
-				{
-					BlockId: block1.BlockId,
-					Proof:   eggs.BlockAddProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1),
+			}
+			addSpanResp := msgs.AddSpanInitiateResp{}
+			h.shardReq(dirId.Shard(), &addSpanReq, &addSpanResp)
+			block0 := &addSpanResp.Blocks[0]
+			block1 := &addSpanResp.Blocks[1]
+			blockServiceKey0, blockServiceFound0 := h.blockServicesKeys[block0.BlockServiceId]
+			if !blockServiceFound0 {
+				panic(fmt.Errorf("could not find block service %v", block0.BlockServiceId))
+			}
+			blockServiceKey1, blockServiceFound1 := h.blockServicesKeys[block1.BlockServiceId]
+			if !blockServiceFound1 {
+				panic(fmt.Errorf("could not find block service %v", block1.BlockServiceId))
+			}
+			certifySpanReq := msgs.AddSpanCertifyReq{
+				FileId:     constructResp.Id,
+				Cookie:     constructResp.Cookie,
+				ByteOffset: offset,
+				Proofs: []msgs.BlockProof{
+					{
+						BlockId: block0.BlockId,
+						Proof:   eggs.BlockAddProof(block0.BlockServiceId, block0.BlockId, blockServiceKey0),
+					},
+					{
+						BlockId: block1.BlockId,
+						Proof:   eggs.BlockAddProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1),
+					},
 				},
-			},
+			}
+			certifySpanResp := msgs.AddSpanCertifyResp{}
+			h.shardReq(dirId.Shard(), &certifySpanReq, &certifySpanResp)
 		}
-		certifySpanResp := msgs.AddSpanCertifyResp{}
-		h.shardReq(dirId.Shard(), &certifySpanReq, &certifySpanResp)
 	}
 	// link
 	linkReq := msgs.LinkFileReq{

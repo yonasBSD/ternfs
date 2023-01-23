@@ -8,6 +8,7 @@ import (
 	"path"
 	"regexp"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"time"
 	"xtx/eggsfs/eggs"
@@ -179,6 +180,7 @@ func main() {
 	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
+	cpuprofile := flag.String("cpuprofile", "", "Write cpu profile to file")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -188,6 +190,15 @@ func main() {
 	}
 
 	filterRe := regexp.MustCompile(*filter)
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			panic(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	cppBuildOpts := eggs.BuildCppOpts{
 		Valgrind: *valgrind,

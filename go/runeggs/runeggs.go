@@ -79,10 +79,11 @@ func main() {
 	// Start shuckle
 	shucklePort := uint16(39999)
 	procs.StartShuckle(log, &eggs.ShuckleOpts{
-		Exe:     shuckleExe,
-		Port:    shucklePort,
-		Verbose: *verbose,
-		Dir:     path.Join(*dataDir, "shuckle"),
+		Exe:         shuckleExe,
+		BincodePort: shucklePort,
+		HttpPort:    uint16(30000),
+		Verbose:     *verbose,
+		Dir:         path.Join(*dataDir, "shuckle"),
 	})
 
 	// Start block services
@@ -94,7 +95,6 @@ func main() {
 		procs.StartBlockService(log, &eggs.BlockServiceOpts{
 			Exe:           blockServiceExe,
 			Path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			Port:          40000 + uint16(i),
 			StorageClass:  storageClass,
 			FailureDomain: fmt.Sprintf("%d", i),
 			Verbose:       *verbose,

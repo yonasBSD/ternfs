@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/cipher"
 	"fmt"
+	"net"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -101,11 +103,22 @@ func (h *harness) createFile(dirId msgs.InodeId, spanSize uint64, name string, s
 				proof1 = eggs.BlockWriteProof(block1.BlockServiceId, block1.BlockId, blockServiceKey1)
 			} else {
 				var err error
-				proof0, err = eggs.WriteBlock(h.log, block0, data, crc)
+				var conn *net.TCPConn
+				conn, err = eggs.BlockServiceConnection(block0.BlockServiceId, block0.BlockServiceIp[:], block0.BlockServicePort)
 				if err != nil {
 					panic(err)
 				}
-				proof1, err = eggs.WriteBlock(h.log, block1, data, crc)
+				proof0, err = eggs.WriteBlock(h.log, conn, block0, bytes.NewReader(data), uint32(len(data)), crc)
+				conn.Close()
+				if err != nil {
+					panic(err)
+				}
+				conn, err = eggs.BlockServiceConnection(block1.BlockServiceId, block1.BlockServiceIp[:], block1.BlockServicePort)
+				if err != nil {
+					panic(err)
+				}
+				proof1, err = eggs.WriteBlock(h.log, conn, block1, bytes.NewReader(data), uint32(len(data)), crc)
+				conn.Close()
 				if err != nil {
 					panic(err)
 				}

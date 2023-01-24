@@ -53,7 +53,12 @@ func DestructFile(
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
 				if blockServicesKeys == nil {
-					proof, err = EraseBlock(log, block)
+					conn, err := BlockServiceConnection(block.BlockServiceId, block.BlockServiceIp[:], block.BlockServicePort)
+					if err != nil {
+						return err
+					}
+					proof, err = EraseBlock(log, conn, block)
+					conn.Close()
 					if err != nil {
 						return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 					}

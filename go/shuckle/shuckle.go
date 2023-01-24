@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 	"xtx/eggsfs/eggs"
@@ -151,8 +154,95 @@ func noRunawayArgs() {
 	}
 }
 
+type indexBlockService struct {
+	Id            msgs.BlockServiceId
+	Addr          string
+	StorageClass  uint8
+	FailureDomain string
+}
+
+type indexData struct {
+	BlockServices []indexBlockService
+	ShardsAddrs   []string
+}
+
+const indexTemplateStr string = `
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>Shuckle</title>
+	</head>
+	<body>
+		<h1>Shuckle</h1>
+		<h2>Block services</h2>
+		<table>
+			<thead>
+				<tr>
+					<th>Id</th>
+					<th>Address</th>
+					<th>StorageClass</th>
+					<th>FailureDomain</th>
+				</tr>
+			<tbody>
+				{{ range .BlockServices }}
+					<tr>
+						<td><tt>{{.Id}}</tt></td>
+						<td><tt>{{.Addr}}</tt></td>
+						<td>{{.StorageClass}}</td>
+						<td>{{.FailureDomain}}</td>
+					</tr>
+				{{end}}
+			</tbody>
+		</table>
+		<h2>Shards</h2>
+		<table>
+			<thead>
+				<tr>
+					<th>Id</th>
+					<th>Address</th>
+				</tr>
+			<tbody>
+				{{ range $id, $addr := .ShardsAddrs }}
+					<tr>
+						<td><tt>{{printf "%03v" $id}}</tt></td>
+						<td><tt>{{$addr}}</tt></td>
+					</tr>
+				{{end}}
+			</tbody>
+		</table>
+	</body>
+</html>
+`
+
+func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	state.mutex.RLock()
+	defer state.mutex.RUnlock()
+	data := indexData{}
+	for _, bs := range state.blockServices {
+		data.BlockServices = append(data.BlockServices, indexBlockService{
+			Id:            bs.Id,
+			Addr:          fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
+			StorageClass:  bs.StorageClass,
+			FailureDomain: string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
+		})
+	}
+	for _, shard := range state.shards {
+		data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
+	}
+	if err := template.Execute(w, &data); err != nil {
+		ll.RaiseAlert(fmt.Errorf("could not execute template: %w", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
 func main() {
-	port := flag.Uint("port", 5000, "Port on which to run on.")
+	httpPort := flag.Uint("http-port", 30000, "Port on which to run the HTTP server")
+	bincodePort := flag.Uint("bincode-port", 30001, "Port on which to run the bincode server.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()
@@ -172,21 +262,43 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *port))
+	indexTemplate, err := template.New("index").Option("missingkey=error").Parse(indexTemplateStr)
 	if err != nil {
 		panic(err)
 	}
-	defer listener.Close()
 
-	ll.Info("running on %v", listener.Addr())
+	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
+	if err != nil {
+		panic(err)
+	}
+	defer bincodeListener.Close()
+
+	httpAddr := fmt.Sprintf("0.0.0.0:%v", *httpPort)
+	ll.Info("running on %v (HTTP) and %v (bincode)", httpAddr, bincodeListener.Addr())
 
 	blockServices := newBlockServices()
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			panic(err)
+	http.HandleFunc(
+		"/",
+		func(w http.ResponseWriter, r *http.Request) { handleIndex(ll, indexTemplate, blockServices, w, r) },
+	)
+
+	terminateChan := make(chan error)
+
+	go func() {
+		for {
+			conn, err := bincodeListener.Accept()
+			if err != nil {
+				terminateChan <- err
+				return
+			}
+			go func() { handleRequest(ll, blockServices, conn.(*net.TCPConn)) }()
 		}
-		go func() { handleRequest(ll, blockServices, conn.(*net.TCPConn)) }()
-	}
+	}()
+
+	go func() {
+		terminateChan <- http.ListenAndServe(httpAddr, nil)
+	}()
+
+	panic(<-terminateChan)
 }

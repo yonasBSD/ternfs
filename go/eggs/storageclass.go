@@ -1,8 +1,10 @@
 package eggs
 
-import "fmt"
+import (
+	"fmt"
+)
 
-func StorageClass(s string) uint8 {
+func StorageClassFromString(s string) uint8 {
 	if s == "HDD" {
 		return 2
 	}

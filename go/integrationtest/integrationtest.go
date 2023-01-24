@@ -283,10 +283,10 @@ func main() {
 	// Start shuckle
 	shucklePort := uint16(39999)
 	procs.StartShuckle(log, &eggs.ShuckleOpts{
-		Exe:     shuckleExe,
-		Port:    shucklePort,
-		Verbose: *verbose,
-		Dir:     path.Join(*dataDir, "shuckle"),
+		Exe:         shuckleExe,
+		BincodePort: shucklePort,
+		Verbose:     *verbose,
+		Dir:         path.Join(*dataDir, "shuckle"),
 	})
 
 	// Start block services. Right now this is just used for shuckle to

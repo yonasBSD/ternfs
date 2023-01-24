@@ -299,16 +299,18 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 }
 
 type ShuckleOpts struct {
-	Exe     string
-	Dir     string
-	Verbose bool
-	Port    uint16
+	Exe         string
+	Dir         string
+	Verbose     bool
+	BincodePort uint16
+	HttpPort    uint16
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll LogLevels, opts *ShuckleOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
-		"-port", fmt.Sprintf("%d", opts.Port),
+		"-bincode-port", fmt.Sprintf("%d", opts.BincodePort),
+		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
 	}
 	if opts.Verbose {

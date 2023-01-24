@@ -150,7 +150,7 @@ func sendFetchBlock(log eggs.LogLevels, blockServiceId msgs.BlockServiceId, base
 		return err
 	}
 	remainingSize := int(fi.Size()) - int(offset)
-	if remainingSize > int(count) {
+	if int(count) > remainingSize {
 		return fmt.Errorf("was requested %v bytes, but only got %v", count, remainingSize)
 	}
 	if remainingSize < 0 {
@@ -166,7 +166,11 @@ func sendFetchBlock(log eggs.LogLevels, blockServiceId msgs.BlockServiceId, base
 	if _, err := conn.Write([]byte{'F'}); err != nil {
 		return err
 	}
-	if _, err := conn.ReadFrom(f); err != nil {
+	lf := io.LimitedReader{
+		R: f,
+		N: int64(count),
+	}
+	if _, err := conn.ReadFrom(&lf); err != nil {
 		return err
 	}
 	return nil
@@ -288,6 +292,7 @@ func handleRequest(
 			if err != io.EOF {
 				handleReqError(log, err)
 			}
+			log.Debug("got EOF, terminating")
 			return
 		}
 		if reqBlockServiceId != blockServiceIdFromKey(key) {
@@ -364,7 +369,7 @@ func main() {
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", "localhost:5000", "Shuckle address")
 	flag.Parse()
-	storageClass := eggs.StorageClass(*storageClassStr)
+	storageClass := eggs.StorageClassFromString(*storageClassStr)
 	if flag.NArg() != 1 {
 		fmt.Fprintf(os.Stderr, "Expected one positional argument with the path to the root of the storage partition.\n")
 		os.Exit(2)

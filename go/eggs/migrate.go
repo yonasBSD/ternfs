@@ -70,7 +70,17 @@ func copyBlock(
 	var proof [8]byte
 	var err error
 	if blockServicesKeys == nil {
-		proof, err = CopyBlock(log, blockServices, blockSize, block, dstBlock)
+		blockService := &blockServices[block.BlockServiceIx]
+		srcConn, err := BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+		if err != nil {
+			return 0, err
+		}
+		dstConn, err := BlockServiceConnection(dstBlock.BlockServiceId, dstBlock.BlockServiceIp[:], dstBlock.BlockServicePort)
+		if err != nil {
+			return 0, err
+		}
+		proof, err = CopyBlock(log, srcConn, blockService, blockSize, block, dstConn, dstBlock)
+		dstConn.Close()
 		if err != nil {
 			return 0, err
 		}

@@ -33,14 +33,14 @@ func bsWrite[V uint8 | uint32 | uint64](buf *bytes.Buffer, x V) {
 	}
 }
 
-func bsSend(sock *net.TCPConn, buf *bytes.Buffer) error {
+func bsSend(sock io.Writer, buf *bytes.Buffer) error {
 	if _, err := sock.Write(buf.Bytes()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func bsRespInit(sock *net.TCPConn, id msgs.BlockServiceId, kind byte) error {
+func bsRespInit(sock io.Reader, id msgs.BlockServiceId, kind byte) error {
 	if err := bsExpect("block service id", sock, (uint64)(id)); err != nil {
 		return err
 	}
@@ -50,29 +50,33 @@ func bsRespInit(sock *net.TCPConn, id msgs.BlockServiceId, kind byte) error {
 	return nil
 }
 
-func bsRead[V uint8 | uint32 | uint64](sock *net.TCPConn) (x V, err error) {
+func bsRead[V uint8 | uint32 | uint64](sock io.Reader) (x V, err error) {
 	if err := binary.Read(sock, binary.LittleEndian, &x); err != nil {
 		return 0, nil
 	}
 	return x, nil
 }
 
-func bsExpect[V uint8 | uint32 | uint64](what string, sock *net.TCPConn, x V) error {
+func bsExpect[V uint8 | uint32 | uint64](what string, sock io.Reader, x V) error {
 	y, err := bsRead[V](sock)
 	if err != nil {
 		return err
 	}
 	if x != y {
-		return fmt.Errorf("expecting %s %v, got %v from block service %v", what, x, y, sock.RemoteAddr())
+		return fmt.Errorf("expecting %s %v, got %v from block service", what, x, y)
 	}
 	return nil
 }
 
 func WriteBlock(
 	logger LogLevels,
-	conn *net.TCPConn,
+	conn interface {
+		io.ReaderFrom
+		io.Reader
+		io.Writer
+	},
 	block *msgs.BlockInfo,
-	r io.Reader,
+	r io.Reader, // only `size` bytes will be read
 	size uint32,
 	crc [4]byte,
 ) ([8]byte, error) {
@@ -94,22 +98,26 @@ func WriteBlock(
 		N: int64(size),
 	}
 	if _, err := conn.ReadFrom(&lr); err != nil {
-		return proof, fmt.Errorf("could not write block data to %v: %w", conn.RemoteAddr(), err)
+		return proof, fmt.Errorf("could not write block data to: %w", err)
 	}
 	// write response: (block_service_id, 'W', block_id, proof)
 	if err := bsRespInit(conn, block.BlockServiceId, 'W'); err != nil {
 		return proof, err
 	}
 	if _, err := io.ReadFull(conn, proof[:]); err != nil {
-		return proof, fmt.Errorf("could not read proof from %v: %w", conn.RemoteAddr(), err)
+		return proof, fmt.Errorf("could not read proof from: %w", err)
 	}
 	// we're finally done
 	return proof, nil
 }
 
+// Won't actually fetch the block -- it'll be readable from `conn` as this function terminates.
 func FetchBlock(
 	logger LogLevels,
-	conn *net.TCPConn,
+	conn interface {
+		io.Reader
+		io.Writer
+	},
 	blockService *msgs.BlockService,
 	block *msgs.FetchedBlock,
 	offset uint32,
@@ -123,11 +131,10 @@ func FetchBlock(
 	bsWrite(readReq, count)
 	err := bsSend(conn, readReq)
 	if err != nil {
-		return fmt.Errorf("could not read source block from %v: %w", conn.RemoteAddr(), err)
+		return fmt.Errorf("could not read source block: %w", err)
 	}
 	// read response: (block_service_id, 'F', size)
 	if err := bsRespInit(conn, blockService.Id, 'F'); err != nil {
-		conn.Close()
 		return err
 	}
 	return nil
@@ -135,7 +142,10 @@ func FetchBlock(
 
 func EraseBlock(
 	logger LogLevels,
-	conn *net.TCPConn,
+	conn interface {
+		io.Writer
+		io.Reader
+	},
 	block msgs.BlockInfo,
 ) ([8]byte, error) {
 	logger.Debug("erasing block %+v", block)
@@ -148,13 +158,12 @@ func EraseBlock(
 	if err != nil {
 		return proof, err
 	}
-	defer conn.Close()
 	// response: (block_service_id, 'E', block_id, proof)
 	if err := bsRespInit(conn, block.BlockServiceId, 'E'); err != nil {
 		return proof, err
 	}
 	if _, err := io.ReadFull(conn, proof[:]); err != nil {
-		return proof, fmt.Errorf("could not read proof from %v: %w", conn.RemoteAddr(), err)
+		return proof, fmt.Errorf("could not read proof from: %w", err)
 	}
 	return proof, nil
 }
@@ -162,11 +171,18 @@ func EraseBlock(
 // returns the write proof
 func CopyBlock(
 	logger LogLevels,
-	sourceConn *net.TCPConn,
+	sourceConn interface {
+		io.Reader
+		io.Writer
+	},
 	sourceBlockService *msgs.BlockService,
 	sourceBlockSize uint64,
 	sourceBlock *msgs.FetchedBlock,
-	dstConn *net.TCPConn,
+	dstConn interface {
+		io.ReaderFrom
+		io.Reader
+		io.Writer
+	},
 	dstBlock *msgs.BlockInfo,
 ) ([8]byte, error) {
 	var proof [8]byte

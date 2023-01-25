@@ -8,7 +8,9 @@ import (
 
 type LogLevels interface {
 	Info(format string, v ...any)
+	InfoStack(calldepth int, format string, v ...any)
 	Debug(format string, v ...any)
+	DebugStack(calldepth int, format string, v ...any)
 	RaiseAlert(err any)
 	RaiseAlertStack(calldepth int, err any)
 }
@@ -30,7 +32,19 @@ func (*LogToStdout) Info(format string, v ...any) {
 	fmt.Println()
 }
 
+func (*LogToStdout) InfoStack(calldepth int, format string, v ...any) {
+	fmt.Printf(format, v...)
+	fmt.Println()
+}
+
 func (s *LogToStdout) Debug(format string, v ...any) {
+	if s.Verbose {
+		fmt.Printf(format, v...)
+		fmt.Println()
+	}
+}
+
+func (s *LogToStdout) DebugStack(calldepth int, format string, v ...any) {
 	if s.Verbose {
 		fmt.Printf(format, v...)
 		fmt.Println()
@@ -59,9 +73,19 @@ func (l *LogLogger) Info(format string, v ...any) {
 	l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
 }
 
+func (l *LogLogger) InfoStack(calldepth int, format string, v ...any) {
+	l.Logger.Output(2+calldepth, fmt.Sprintf(format+"\n", v...))
+}
+
 func (l *LogLogger) Debug(format string, v ...any) {
 	if l.Verbose {
 		l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
+	}
+}
+
+func (l *LogLogger) DebugStack(calldepth int, format string, v ...any) {
+	if l.Verbose {
+		l.Logger.Output(2+calldepth, fmt.Sprintf(format+"\n", v...))
 	}
 }
 

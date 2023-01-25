@@ -298,6 +298,46 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	})
 }
 
+type EggsFuseOpts struct {
+	Exe     string
+	Path    string
+	Verbose bool
+	Wait    bool
+}
+
+func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) string {
+	createDataDir(opts.Path)
+	mountPoint := path.Join(opts.Path, "mnt")
+	createDataDir(mountPoint)
+	args := []string{
+		"-log-file", path.Join(opts.Path, "log"),
+	}
+	var signalChan chan os.Signal
+	if opts.Wait {
+		args = append(args, "-signal-parent")
+		signalChan = make(chan os.Signal, 1)
+		signal.Notify(signalChan, syscall.SIGUSR1)
+	}
+	if opts.Verbose {
+		args = append(args, "-verbose")
+	}
+	args = append(args, mountPoint)
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            "eggsfuse",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Path, "stdout"),
+		StderrFile:      path.Join(opts.Path, "stderr"),
+		TerminateOnExit: true,
+	})
+	if opts.Wait {
+		ll.Info("waiting for eggsfuse")
+		<-signalChan
+		signal.Stop(signalChan)
+	}
+	return mountPoint
+}
+
 type ShuckleOpts struct {
 	Exe         string
 	Dir         string
@@ -348,6 +388,18 @@ func BuildBlockServiceExe(ll LogLevels) string {
 		panic(fmt.Errorf("could not build block service: %w", err))
 	}
 	return path.Join(buildCmd.Dir, "blockservice")
+}
+
+func BuildEggsFuseExe(ll LogLevels) string {
+	buildCmd := exec.Command("go", "build", ".")
+	buildCmd.Dir = path.Join(goDir(), "eggsfuse")
+	ll.Info("building eggsfuse")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Printf("build output:\n")
+		os.Stdout.Write(out)
+		panic(fmt.Errorf("could not build eggsfuse: %w", err))
+	}
+	return path.Join(buildCmd.Dir, "eggsfuse")
 }
 
 type ShardOpts struct {

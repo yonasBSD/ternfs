@@ -1,7 +1,6 @@
 package eggs
 
 import (
-	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/msgs"
 )
@@ -16,7 +15,7 @@ type DestructionStats struct {
 func DestructFile(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *DestructionStats,
 	id msgs.InodeId, deadline msgs.EggsTime, cookie [8]byte,
 ) error {
@@ -52,22 +51,14 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
-				if blockServicesKeys == nil {
-					conn, err := BlockServiceConnection(block.BlockServiceId, block.BlockServiceIp[:], block.BlockServicePort)
-					if err != nil {
-						return err
-					}
-					proof, err = EraseBlock(log, conn, block)
-					conn.Close()
-					if err != nil {
-						return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
-					}
-				} else {
-					key, wasPresent := blockServicesKeys[block.BlockServiceId]
-					if !wasPresent {
-						panic(fmt.Errorf("could not find key for block service %v", block.BlockServiceId))
-					}
-					proof = BlockEraseProof(block.BlockServiceId, block.BlockId, key)
+				conn, err := mbs.BlockServiceConnection(block.BlockServiceId, block.BlockServiceIp[:], block.BlockServicePort)
+				if err != nil {
+					return err
+				}
+				proof, err = mbs.EraseBlock(log, conn, block)
+				conn.Close()
+				if err != nil {
+					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 				}
 				stats.DestructedBlocks++
 				certifyReq.Proofs[i].BlockId = block.BlockId
@@ -92,7 +83,7 @@ func DestructFile(
 }
 
 func destructFilesInternal(
-	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockService MockableBlockServices,
 ) error {
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
@@ -104,7 +95,7 @@ func destructFilesInternal(
 		}
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
-			if err := DestructFile(log, client, blockServicesKeys, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+			if err := DestructFile(log, client, blockService, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
 			}
 		}
@@ -118,12 +109,8 @@ func destructFilesInternal(
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
-//
-// If `blockServicesKeys` is present, spans won't be actually removed --
-// we'll just generate the proof ourselves and certify. This is only useful
-// for testing, obviously.
 func DestructFiles(
-	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
 ) error {
 	client, err := NewClient(log, &shid, counters, nil)
 	if err != nil {
@@ -131,7 +118,7 @@ func DestructFiles(
 	}
 	defer client.Close()
 	stats := DestructionStats{}
-	if err := destructFilesInternal(log, client, shid, &stats, blockServicesKeys); err != nil {
+	if err := destructFilesInternal(log, client, shid, &stats, blockService); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
@@ -139,7 +126,7 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log LogLevels, counters *ClientCounters, blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	log LogLevels, counters *ClientCounters, blockService MockableBlockServices,
 ) error {
 	client, err := NewClient(log, nil, counters, nil)
 	if err != nil {
@@ -149,7 +136,7 @@ func DestructFilesInAllShards(
 	stats := DestructionStats{}
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		if err := destructFilesInternal(log, client, shid, &stats, blockServicesKeys); err != nil {
+		if err := destructFilesInternal(log, client, shid, &stats, blockService); err != nil {
 			return err
 		}
 	}

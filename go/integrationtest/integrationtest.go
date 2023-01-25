@@ -69,11 +69,11 @@ func formatCounters(what string, counters *eggs.ReqCounters) {
 
 func runTest(
 	log eggs.LogLevels,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs eggs.MockableBlockServices,
 	filter *regexp.Regexp,
 	name string,
 	extra string,
-	run func(env *eggs.ClientCounters),
+	run func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters),
 ) {
 	if !filter.Match([]byte(name)) {
 		fmt.Printf("skipping test %s\n", name)
@@ -84,7 +84,7 @@ func runTest(
 
 	fmt.Printf("running %s, %s\n", name, extra)
 	t0 := time.Now()
-	run(counters)
+	run(mbs, counters)
 	elapsed := time.Since(t0)
 
 	totalShardRequests := counters.Shard.TotalRequests()
@@ -99,7 +99,7 @@ func runTest(
 
 	counters = &eggs.ClientCounters{}
 	t0 = time.Now()
-	cleanupAfterTest(log, counters, blockServicesKeys)
+	cleanupAfterTest(log, counters, mbs)
 	elapsed = time.Since(t0)
 	totalShardRequests = counters.Shard.TotalRequests()
 	totalCDCRequests = counters.CDC.TotalRequests()
@@ -112,7 +112,7 @@ func runTest(
 	}
 }
 
-func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.BlockServiceInfo, short bool, filter *regexp.Regexp) {
+func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 
 	blockServicesKeys := make(map[msgs.BlockServiceId]cipher.Block)
@@ -123,6 +123,9 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 		}
 		blockServicesKeys[blockService.Id] = cipher
 	}
+
+	realBlockServices := eggs.RealBlockServices{}
+	mockedBlockServices := &eggs.MockedBlockServices{Keys: blockServicesKeys}
 
 	fileHistoryOpts := fileHistoryTestOpts{
 		steps:           10 * 1000, // perform 10k actions
@@ -136,12 +139,12 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
-		blockServicesKeys,
+		mockedBlockServices,
 		filter,
 		"file history test",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
-		func(counters *eggs.ClientCounters) {
-			fileHistoryTest(log, &fileHistoryOpts, counters, blockServicesKeys)
+		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
+			fileHistoryTest(log, mbs, &fileHistoryOpts, counters)
 		},
 	)
 
@@ -158,12 +161,12 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
-		blockServicesKeys,
+		mockedBlockServices,
 		filter,
 		"simple fs test",
 		fmt.Sprintf("%v dirs, %v files, %v depth", noBlocksFsTestOpts.numDirs, noBlocksFsTestOpts.numFiles, noBlocksFsTestOpts.depth),
-		func(counters *eggs.ClientCounters) {
-			fsTest(log, &noBlocksFsTestOpts, counters, blockServices, blockServicesKeys)
+		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
+			fsTest(log, &noBlocksFsTestOpts, counters, mbs, "")
 		},
 	)
 
@@ -176,12 +179,23 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
-		nil,
+		realBlockServices,
 		filter,
 		"fs test with blocks",
 		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-		func(counters *eggs.ClientCounters) {
-			fsTest(log, &blocksFsTestOpts, counters, blockServices, nil)
+		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
+			fsTest(log, &blocksFsTestOpts, counters, mbs, "")
+		},
+	)
+
+	runTest(
+		log,
+		realBlockServices,
+		filter,
+		"fs test with fuse",
+		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
+		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
+			fsTest(log, &blocksFsTestOpts, counters, mbs, fuseMountPoint)
 		},
 	)
 
@@ -274,6 +288,7 @@ func main() {
 	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
 	shuckleExe := eggs.BuildShuckleExe(log)
 	blockServiceExe := eggs.BuildBlockServiceExe(log)
+	eggsFuseExe := eggs.BuildEggsFuseExe(log)
 
 	terminateChan := make(chan any, 1)
 
@@ -293,7 +308,7 @@ func main() {
 	// get block services, since we don't actually write to the block services
 	// yet (it's just too slow).
 	hddBlockServices := 10
-	flashBlockServices := 0 // only one type to not confuse integration tests TODO clarify
+	flashBlockServices := 5
 	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
 		storageClass := "HDD"
 		if i >= hddBlockServices {
@@ -351,10 +366,17 @@ func main() {
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
 	blockServices := eggs.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor).BlockServices
 
+	fuseMountPoint := procs.StartEggsFuse(log, &eggs.EggsFuseOpts{
+		Exe:     eggsFuseExe,
+		Path:    path.Join(*dataDir, "eggsfuse"),
+		Verbose: *verbose,
+		Wait:    true,
+	})
+
 	fmt.Printf("operational 🤖\n")
 
 	// start tests
-	go func() { runTests(terminateChan, log, blockServices, *short, filterRe) }()
+	go func() { runTests(terminateChan, log, blockServices, fuseMountPoint, *short, filterRe) }()
 
 	// wait for things to finish
 	err := <-terminateChan

@@ -273,8 +273,13 @@ func main() {
 	}
 	defer bincodeListener.Close()
 
-	httpAddr := fmt.Sprintf("0.0.0.0:%v", *httpPort)
-	ll.Info("running on %v (HTTP) and %v (bincode)", httpAddr, bincodeListener.Addr())
+	httpListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *httpPort))
+	if err != nil {
+		panic(err)
+	}
+	defer httpListener.Close()
+
+	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
 	blockServices := newBlockServices()
 
@@ -297,7 +302,7 @@ func main() {
 	}()
 
 	go func() {
-		terminateChan <- http.ListenAndServe(httpAddr, nil)
+		terminateChan <- http.Serve(httpListener, nil)
 	}()
 
 	panic(<-terminateChan)

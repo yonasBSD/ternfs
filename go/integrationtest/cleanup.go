@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
@@ -46,7 +45,7 @@ func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, na
 func cleanupAfterTest(
 	log eggs.LogLevels,
 	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs eggs.MockableBlockServices,
 ) {
 	client, err := eggs.NewClient(log, nil, counters, nil)
 	if err != nil {
@@ -86,7 +85,7 @@ func cleanupAfterTest(
 	if err := eggs.CollectDirectoriesInAllShards(log, counters); err != nil {
 		panic(err)
 	}
-	if err := eggs.DestructFilesInAllShards(log, counters, blockServicesKeys); err != nil {
+	if err := eggs.DestructFilesInAllShards(log, counters, mbs); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left

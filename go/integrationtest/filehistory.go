@@ -2,7 +2,6 @@
 package main
 
 import (
-	"crypto/cipher"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -13,53 +12,53 @@ import (
 
 // actions
 
-type createFile struct {
+type fileHistoryCreateFile struct {
 	name string
 	size uint64
 }
 
-type deleteFile struct {
+type fileHistoryDeleteFile struct {
 	name string
 }
 
-type renameFile struct {
+type fileHistoryRenameFile struct {
 	oldName string
 	newName string
 }
 
 // trace
 
-type createdFile struct {
+type fileHistoryCreatedFile struct {
 	name         string
 	id           msgs.InodeId
 	creationTime msgs.EggsTime
 }
 
-type renamedFile struct {
+type fileHistoryRenamedFile struct {
 	oldName         string
 	newName         string
 	newCreationTime msgs.EggsTime
 }
 
-type checkpoint struct {
+type fileHistoryCheckpoint struct {
 	time msgs.EggsTime
 }
 
-type file struct {
+type fileHistoryFile struct {
 	name         string
 	id           msgs.InodeId
 	creationTime msgs.EggsTime
 }
-type files struct {
-	files  []file
+type fileHistoryFiles struct {
+	files  []fileHistoryFile
 	byName map[string]int
 }
 
-func (files *files) addFile(name string, id msgs.InodeId, creationTime msgs.EggsTime) {
+func (files *fileHistoryFiles) addFile(name string, id msgs.InodeId, creationTime msgs.EggsTime) {
 	if _, wasPresent := files.byName[name]; wasPresent {
 		panic(fmt.Errorf("unexpected overwrite of %s", name))
 	}
-	files.files = append(files.files, file{name: name, id: id, creationTime: creationTime})
+	files.files = append(files.files, fileHistoryFile{name: name, id: id, creationTime: creationTime})
 	files.byName[name] = len(files.files) - 1
 }
 
@@ -73,7 +72,7 @@ func (files *files) id(name string) msgs.InodeId {
 }
 */
 
-func (files *files) file(name string) file {
+func (files *fileHistoryFiles) file(name string) fileHistoryFile {
 	ix, present := files.byName[name]
 	if !present {
 		panic(fmt.Errorf("name not found %v", name))
@@ -81,7 +80,7 @@ func (files *files) file(name string) file {
 	return files.files[ix]
 }
 
-func (files *files) deleteFile(name string) {
+func (files *fileHistoryFiles) deleteFile(name string) {
 	if _, wasPresent := files.byName[name]; !wasPresent {
 		panic(fmt.Errorf("name not found %v", name))
 	}
@@ -95,7 +94,7 @@ func (files *files) deleteFile(name string) {
 	delete(files.byName, name)
 }
 
-func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile {
+func genCreateFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryCreateFile {
 	var name string
 	for {
 		name = fmt.Sprintf("%s%x", filePrefix, rand.Uint32())
@@ -109,7 +108,7 @@ func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile 
 			} else {
 				size = 1 + rand.Uint64()%(uint64(100)<<20) // up to 20MiB
 			}
-			return createFile{
+			return fileHistoryCreateFile{
 				name: name,
 				size: size,
 			}
@@ -117,33 +116,33 @@ func genCreateFile(filePrefix string, rand *rand.Rand, files *files) createFile 
 	}
 }
 
-func genDeleteFile(filePrefix string, rand *rand.Rand, files *files) deleteFile {
+func genDeleteFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryDeleteFile {
 	file := &files.files[int(rand.Uint32())%len(files.files)]
-	return deleteFile{name: file.name}
+	return fileHistoryDeleteFile{name: file.name}
 }
 
-func genRenameFile(filePrefix string, rand *rand.Rand, files *files) renameFile {
+func genRenameFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
 	oldName := genDeleteFile(filePrefix, rand, files).name
 	newName := genCreateFile(filePrefix, rand, files).name
-	return renameFile{
+	return fileHistoryRenameFile{
 		oldName: oldName,
 		newName: newName,
 	}
 }
 
-func genRenameOverrideFile(filePrefix string, rand *rand.Rand, files *files) renameFile {
+func genRenameOverrideFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
 	oldName := genDeleteFile(filePrefix, rand, files).name
 	newName := genDeleteFile(filePrefix, rand, files).name
 	if oldName == newName {
 		return genRenameFile(filePrefix, rand, files)
 	}
-	return renameFile{
+	return fileHistoryRenameFile{
 		oldName: oldName,
 		newName: newName,
 	}
 }
 
-func checkCheckpoint(prefix string, files *files, allEdges []edge) {
+func checkCheckpoint(prefix string, files *fileHistoryFiles, allEdges []edge) {
 	edges := []edge{}
 	for _, edge := range allEdges {
 		if !strings.HasPrefix(edge.name, prefix) {
@@ -162,47 +161,54 @@ func checkCheckpoint(prefix string, files *files, allEdges []edge) {
 	}
 }
 
-func runCheckpoint(harness *harness, prefix string, files *files) checkpoint {
-	edges := harness.readDir(msgs.ROOT_DIR_INODE_ID)
+func runCheckpoint(log eggs.LogLevels, client *eggs.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
+	edges := readDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	checkCheckpoint(prefix, files, edges)
 	resp := msgs.StatDirectoryResp{}
-	harness.shardReq(msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.StatDirectoryReq{Id: msgs.ROOT_DIR_INODE_ID}, &resp)
-	return checkpoint{
+	shardReq(log, client, msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.StatDirectoryReq{Id: msgs.ROOT_DIR_INODE_ID}, &resp)
+	return fileHistoryCheckpoint{
 		time: resp.Mtime,
 	}
 }
 
-func runStep(harness *harness, files *files, stepAny any) any {
+func runStep(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockServices, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
-	case createFile:
+	case fileHistoryCreateFile:
 		// 10 MiB spans
-		id, creationTime := harness.createFile(msgs.ROOT_DIR_INODE_ID, uint64(10)<<20, step.name, step.size)
+		id, creationTime := createFile(
+			log, client, mbs,
+			msgs.ROOT_DIR_INODE_ID, uint64(10)<<20, step.name, step.size,
+			func(size uint64) []byte {
+				return make([]byte, size)
+			},
+		)
 		files.addFile(step.name, id, creationTime)
-		return createdFile{
+		return fileHistoryCreatedFile{
 			name:         step.name,
 			id:           id,
 			creationTime: creationTime,
 		}
-	case deleteFile:
+	case fileHistoryDeleteFile:
 		f := files.file(step.name)
-		harness.shardReq(
+		shardReq(
+			log, client,
 			msgs.ROOT_DIR_INODE_ID.Shard(),
 			&msgs.SoftUnlinkFileReq{OwnerId: msgs.ROOT_DIR_INODE_ID, FileId: f.id, CreationTime: f.creationTime, Name: step.name}, &msgs.SoftUnlinkFileResp{},
 		)
 		files.deleteFile(step.name)
 		return step
-	case renameFile:
+	case fileHistoryRenameFile:
 		f := files.file(step.oldName)
 		req := msgs.SameDirectoryRenameReq{DirId: msgs.ROOT_DIR_INODE_ID, TargetId: f.id, OldCreationTime: f.creationTime, OldName: step.oldName, NewName: step.newName}
 		resp := msgs.SameDirectoryRenameResp{}
-		harness.shardReq(msgs.ROOT_DIR_INODE_ID.Shard(), &req, &resp)
+		shardReq(log, client, msgs.ROOT_DIR_INODE_ID.Shard(), &req, &resp)
 		files.deleteFile(step.oldName)
 		if _, wasPresent := files.byName[step.newName]; wasPresent {
 			// overwrite
 			files.deleteFile(step.newName)
 		}
 		files.addFile(step.newName, f.id, resp.NewCreationTime)
-		return renamedFile{
+		return fileHistoryRenamedFile{
 			oldName:         step.oldName,
 			newName:         step.newName,
 			newCreationTime: resp.NewCreationTime,
@@ -236,18 +242,18 @@ func edgesAsOf(allEdges []fullEdge, t msgs.EggsTime) []edge {
 	return edges
 }
 
-func replayCheckpoint(prefix string, files *files, fullEdges []fullEdge, t msgs.EggsTime) {
+func replayCheckpoint(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, t msgs.EggsTime) {
 	edges := edgesAsOf(fullEdges, t)
 	checkCheckpoint(prefix, files, edges)
 }
 
-func replayStep(prefix string, files *files, fullEdges []fullEdge, stepAny any) {
+func replayStep(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, stepAny any) {
 	switch step := stepAny.(type) {
-	case createdFile:
+	case fileHistoryCreatedFile:
 		files.addFile(step.name, step.id, step.creationTime)
-	case deleteFile:
+	case fileHistoryDeleteFile:
 		files.deleteFile(step.name)
-	case renamedFile:
+	case fileHistoryRenamedFile:
 		targetId := files.file(step.oldName).id
 		files.deleteFile(step.oldName)
 		if _, wasPresent := files.byName[step.newName]; wasPresent {
@@ -255,14 +261,14 @@ func replayStep(prefix string, files *files, fullEdges []fullEdge, stepAny any) 
 			files.deleteFile(step.newName)
 		}
 		files.addFile(step.newName, targetId, step.newCreationTime)
-	case checkpoint:
+	case fileHistoryCheckpoint:
 		replayCheckpoint(prefix, files, fullEdges, step.time)
 	default:
 		panic(fmt.Errorf("bad step %T", stepAny))
 	}
 }
 
-func fileHistoryStepSingle(log eggs.LogLevels, opts *fileHistoryTestOpts, harness *harness, seed int64, filePrefix string) {
+func fileHistoryStepSingle(log eggs.LogLevels, client *eggs.Client, mbs *eggs.MockedBlockServices, opts *fileHistoryTestOpts, seed int64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -273,8 +279,8 @@ func fileHistoryStepSingle(log eggs.LogLevels, opts *fileHistoryTestOpts, harnes
 	trace := []any{}
 
 	reachedTargetFiles := false
-	fls := files{
-		files:  []file{},
+	fls := fileHistoryFiles{
+		files:  []fileHistoryFile{},
 		byName: make(map[string]int),
 	}
 	source := rand.NewSource(seed)
@@ -282,7 +288,7 @@ func fileHistoryStepSingle(log eggs.LogLevels, opts *fileHistoryTestOpts, harnes
 	for stepIx := 0; stepIx < opts.steps; stepIx++ {
 		if stepIx%opts.checkpointEvery == 0 {
 			log.Info("%v: reached checkpoint at step %v", filePrefix, stepIx)
-			checkpoint := runCheckpoint(harness, filePrefix, &fls)
+			checkpoint := runCheckpoint(log, client, filePrefix, &fls)
 			trace = append(trace, checkpoint)
 		}
 		var step any
@@ -307,13 +313,13 @@ func fileHistoryStepSingle(log eggs.LogLevels, opts *fileHistoryTestOpts, harnes
 			}
 		}
 		reachedTargetFiles = reachedTargetFiles || len(fls.files) >= opts.targetFiles
-		trace = append(trace, runStep(harness, &fls, step))
+		trace = append(trace, runStep(log, client, mbs, &fls, step))
 	}
-	fls = files{
-		files:  []file{},
+	fls = fileHistoryFiles{
+		files:  []fileHistoryFile{},
 		byName: make(map[string]int),
 	}
-	fullEdges := harness.fullReadDir(msgs.ROOT_DIR_INODE_ID)
+	fullEdges := fullReadDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	for _, step := range trace {
 		replayStep(filePrefix, &fls, fullEdges, step)
 	}
@@ -329,10 +335,12 @@ type fileHistoryTestOpts struct {
 
 func fileHistoryTest(
 	log eggs.LogLevels,
+	mbs0 eggs.MockableBlockServices,
 	opts *fileHistoryTestOpts,
 	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) {
+	mbs := mbs0.(*eggs.MockedBlockServices)
+
 	terminateChan := make(chan any, 1)
 
 	go func() {
@@ -354,8 +362,7 @@ func fileHistoryTest(
 					panic(err)
 				}
 				defer client.Close()
-				harness := newHarness(log, client, blockServicesKeys)
-				fileHistoryStepSingle(log, opts, harness, seed, prefix)
+				fileHistoryStepSingle(log, client, mbs, opts, seed, prefix)
 				wait.Done()
 			}()
 		}

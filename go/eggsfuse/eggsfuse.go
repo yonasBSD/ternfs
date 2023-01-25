@@ -744,6 +744,7 @@ func usage() {
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
+	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -792,6 +793,13 @@ func main() {
 	}
 
 	log.Info("mounted at %v", mountPoint)
+
+	if *signalParent {
+		log.Info("sending USR1 to parent")
+		if err := syscall.Kill(os.Getppid(), syscall.SIGUSR1); err != nil {
+			panic(err)
+		}
+	}
 
 	unmounted := false
 	defer unmount(server, &unmounted)

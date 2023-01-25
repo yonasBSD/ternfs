@@ -4,7 +4,6 @@
 package eggs
 
 import (
-	"crypto/cipher"
 	"fmt"
 	"time"
 	"xtx/eggsfs/msgs"
@@ -42,14 +41,14 @@ func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, 
 func copyBlock(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	file *scratchFile,
 	blockServices []msgs.BlockService,
 	blockSize uint64,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 ) (msgs.BlockId, error) {
-	blockService := blockServices[block.BlockServiceIx]
+	blockService := &blockServices[block.BlockServiceIx]
 	initiateSpanReq := msgs.AddSpanInitiateReq{
 		FileId:       file.id,
 		Cookie:       file.cookie,
@@ -69,27 +68,18 @@ func copyBlock(
 	dstBlock := &initiateSpanResp.Blocks[0]
 	var proof [8]byte
 	var err error
-	if blockServicesKeys == nil {
-		blockService := &blockServices[block.BlockServiceIx]
-		srcConn, err := BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
-		if err != nil {
-			return 0, err
-		}
-		dstConn, err := BlockServiceConnection(dstBlock.BlockServiceId, dstBlock.BlockServiceIp[:], dstBlock.BlockServicePort)
-		if err != nil {
-			return 0, err
-		}
-		proof, err = CopyBlock(log, srcConn, blockService, blockSize, block, dstConn, dstBlock)
-		dstConn.Close()
-		if err != nil {
-			return 0, err
-		}
-	} else {
-		key, wasPresent := blockServicesKeys[dstBlock.BlockServiceId]
-		if !wasPresent {
-			panic(fmt.Errorf("could not find key for block service %v", dstBlock.BlockServiceId))
-		}
-		proof = BlockWriteProof(dstBlock.BlockServiceId, dstBlock.BlockId, key)
+	srcConn, err := mbs.BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+	if err != nil {
+		return 0, err
+	}
+	dstConn, err := mbs.BlockServiceConnection(dstBlock.BlockServiceId, dstBlock.BlockServiceIp[:], dstBlock.BlockServicePort)
+	if err != nil {
+		return 0, err
+	}
+	proof, err = mbs.CopyBlock(log, srcConn, blockService, blockSize, block, dstConn, dstBlock)
+	dstConn.Close()
+	if err != nil {
+		return 0, fmt.Errorf("could not copy block: %w", err)
 	}
 	certifySpanResp := msgs.AddSpanCertifyResp{}
 	err = client.ShardRequest(
@@ -177,7 +167,7 @@ func (k *keepScratchFileAlive) stop() {
 func migrateBlocksInFileInternal(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 	scratchFile *scratchFile,
@@ -220,7 +210,7 @@ func migrateBlocksInFileInternal(
 						return err
 					}
 					blockOffset := scratchFile.size
-					newBlock, err := copyBlock(log, client, blockServicesKeys, scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
+					newBlock, err := copyBlock(log, client, mbs, scratchFile, fileSpansResp.BlockServices, span.BlockSize, span.StorageClass, &block)
 					if err != nil {
 						return err
 					}
@@ -264,7 +254,7 @@ type MigrateStats struct {
 func MigrateBlocksInFile(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 	fileId msgs.InodeId,
@@ -272,7 +262,7 @@ func MigrateBlocksInFile(
 	scratchFile := scratchFile{}
 	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
 	defer keepAlive.stop()
-	return migrateBlocksInFileInternal(log, client, blockServicesKeys, stats, blockServiceId, &scratchFile, fileId)
+	return migrateBlocksInFileInternal(log, client, mbs, stats, blockServiceId, &scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
@@ -280,7 +270,7 @@ func MigrateBlocksInFile(
 func migrateBlocksInternal(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *MigrateStats,
 	shid msgs.ShardId,
 	blockServiceId msgs.BlockServiceId,
@@ -303,7 +293,7 @@ func migrateBlocksInternal(
 			if file == scratchFile.id {
 				continue
 			}
-			if err := migrateBlocksInFileInternal(log, client, blockServicesKeys, stats, blockServiceId, &scratchFile, file); err != nil {
+			if err := migrateBlocksInFileInternal(log, client, mbs, stats, blockServiceId, &scratchFile, file); err != nil {
 				return err
 			}
 		}
@@ -314,12 +304,12 @@ func migrateBlocksInternal(
 func MigrateBlocks(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *MigrateStats,
 	shid msgs.ShardId,
 	blockServiceId msgs.BlockServiceId,
 ) error {
-	if err := migrateBlocksInternal(log, client, blockServicesKeys, stats, shid, blockServiceId); err != nil {
+	if err := migrateBlocksInternal(log, client, mbs, stats, shid, blockServiceId); err != nil {
 		return err
 	}
 	log.Info("finished migrating blocks out of %v in shard %v, stats: %+v", blockServiceId, shid, stats)
@@ -329,14 +319,14 @@ func MigrateBlocks(
 func MigrateBlocksInAllShards(
 	log LogLevels,
 	client *Client,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	mbs MockableBlockServices,
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 ) error {
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		log.Info("migrating blocks in shard %v", shid)
-		if err := migrateBlocksInternal(log, client, blockServicesKeys, stats, shid, blockServiceId); err != nil {
+		if err := migrateBlocksInternal(log, client, mbs, stats, shid, blockServiceId); err != nil {
 			return err
 		}
 	}

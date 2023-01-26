@@ -11,17 +11,13 @@
 
 namespace { // anonymous namespace
 
-using ROCKSDB_NAMESPACE::AssociativeMergeOperator;
-using ROCKSDB_NAMESPACE::Logger;
-using ROCKSDB_NAMESPACE::Slice;
-
 // A 'model' merge operator with int64 addition semantics
 // Implemented as an AssociativeMergeOperator for simplicity and example.
-class Int64AddOperator : public AssociativeMergeOperator {
+class Int64AddOperator : public rocksdb::AssociativeMergeOperator {
  public:
-  bool Merge(const Slice& /*key*/, const Slice* existing_value,
-             const Slice& value, std::string* new_value,
-             Logger* logger) const override {
+  bool Merge(const rocksdb::Slice& key, const rocksdb::Slice* existing_value,
+             const rocksdb::Slice& value, std::string* new_value,
+             rocksdb::Logger* logger) const override {
     int64_t orig_value = 0;
     if (existing_value) {
       orig_value = ExternalValue<I64Value>::FromSlice(*existing_value)().i64();

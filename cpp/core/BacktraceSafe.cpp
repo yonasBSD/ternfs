@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <array>
 
 #include "Common.hpp"
 #include "SBRMUnix.hpp"

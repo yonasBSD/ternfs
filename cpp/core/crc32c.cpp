@@ -5,6 +5,7 @@
 #include <string.h>
 #include <bit>
 
+__attribute__((no_sanitize("integer")))
 static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_blocks) {
     size_t stride = n_blocks * 24 + 8;
     // Four chunks:
@@ -135,7 +136,6 @@ static uint32_t crc32_fusion_kernel(uint32_t acc_a, const char* buf, size_t n_bl
     return crc;
 }
 
-// TODO due to the `-((uintptr_t)buf + n_blocks * 8)`, needs investigation
 __attribute__((no_sanitize("integer")))
 static uint32_t crc32_fusion(uint32_t crc, const char* buf, size_t length) {
     if (length >= 31) {

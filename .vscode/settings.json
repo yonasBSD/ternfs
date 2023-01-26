@@ -4,7 +4,6 @@
         "cpp/.**.o": true,
         "cpp/vgcore.*": true,
         "cpp/eggs-shard": true,
-        "cpp/tests": true,
         "cpp/.cache": true,
         "cpp/.mypy_cache": true,
         "python/_crc32c*": true,

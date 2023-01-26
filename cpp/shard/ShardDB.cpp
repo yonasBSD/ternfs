@@ -240,6 +240,7 @@ struct ShardDBImpl {
         rocksdb::Options options;
         options.create_if_missing = true;
         options.create_missing_column_families = true;
+        options.compression = rocksdb::kLZ4Compression;
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{

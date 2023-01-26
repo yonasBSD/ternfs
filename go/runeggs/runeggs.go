@@ -21,17 +21,21 @@ func noRunawayArgs() {
 
 func main() {
 	dataDir := flag.String("dir", "", "Directory where to store all the databases. If not present a tmp dir will be used.")
-	valgrind := flag.Bool("valgrind", false, "Whether to build/run with valgrind.")
-	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
-	debug := flag.Bool("debug", false, "Whether to build without optimizations.")
+	valgrind := flag.Bool("valgrind", false, "Whether to build for and run with valgrind.")
+	buildType := flag.String("build-type", "release", "C++ build type, one of release/debug/sanitized/valgrind")
 	verbose := flag.Bool("verbose", false, "Whether to run the tools as verbose. Note that all the logs will be written to files anyway.")
 	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 10).")
 	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 5).")
 	flag.Parse()
 	noRunawayArgs()
 
-	if *verbose && !*debug {
-		panic("You asked me to build without -debug, and with -verbose. This is almost certainly wrong.")
+	if *verbose && *buildType != "debug" {
+		fmt.Fprintf(os.Stderr, "We're building with build type %v, which is not \"debug\", and you also passed in -verbose. This is almost certainly wrong, since you won't get debug messages in the shard/cdc without build type \"debug\".", *buildType)
+		os.Exit(2)
+	}
+
+	if *valgrind && *buildType == "valgrind" {
+		fmt.Fprintf(os.Stderr, "valgrind does not work with fully static linkage (see <https://stackoverflow.com/questions/7506134/valgrind-errors-when-linked-with-static-why>). Specify -build-type valgrind.")
 	}
 
 	if *dataDir == "" {
@@ -59,13 +63,7 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	cppBuildOpts := eggs.BuildCppOpts{
-		Valgrind: *valgrind,
-		Sanitize: *sanitize,
-		Debug:    *debug,
-	}
-	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
-	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
+	cppExes := eggs.BuildCppExes(log, *buildType)
 	shuckleExe := eggs.BuildShuckleExe(log)
 	blockServiceExe := eggs.BuildBlockServiceExe(log)
 
@@ -104,7 +102,7 @@ func main() {
 
 	// Start CDC
 	procs.StartCDC(log, &eggs.CDCOpts{
-		Exe:      cdcExe,
+		Exe:      cppExes.ShardExe,
 		Dir:      path.Join(*dataDir, "cdc"),
 		Verbose:  *verbose,
 		Valgrind: *valgrind,
@@ -114,7 +112,7 @@ func main() {
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		procs.StartShard(log, &eggs.ShardOpts{
-			Exe:                  shardExe,
+			Exe:                  cppExes.CDCExe,
 			Dir:                  path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
 			Verbose:              *verbose,
 			Shid:                 shid,

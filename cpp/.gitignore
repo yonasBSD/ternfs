@@ -1,7 +1,3 @@
 build/
-eggs-shard
 compile_commands.json
-vgcore.*
 .cache/
-tests
-eggs-cdc

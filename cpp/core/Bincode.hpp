@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <bit>
 #include <vector>
+#include <array>
 
 #include "Common.hpp"
 #include "Assert.hpp"
@@ -120,7 +121,7 @@ public:
         other._data = 0;
     }
 
-    uint8_t packedSize() const {
+    uint16_t packedSize() const {
         return 1 + size();
     }
 

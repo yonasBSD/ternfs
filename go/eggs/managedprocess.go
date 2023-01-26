@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -177,6 +176,9 @@ func (procs *ManagedProcesses) Start(ll LogLevels, args *ManagedProcessArgs) *Ma
 				procs.printLock.Lock()
 				fmt.Printf("%s crashed: %v\n", args.Name, err)
 				fmt.Printf("cmdline: %s %s\n", args.Exe, strings.Join(args.Args, " "))
+				if len(args.Env) > 0 {
+					fmt.Printf("env: %v\n", args.Env)
+				}
 				printOut("stdout", os.Stdout, proc.cmd.Stdout)
 				printOut("stderr", os.Stderr, proc.cmd.Stderr)
 				fmt.Println()
@@ -380,14 +382,14 @@ func BuildShuckleExe(ll LogLevels) string {
 
 func BuildBlockServiceExe(ll LogLevels) string {
 	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "blockservice")
+	buildCmd.Dir = path.Join(goDir(), "eggsblockservice")
 	ll.Info("building block service")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build block service: %w", err))
 	}
-	return path.Join(buildCmd.Dir, "blockservice")
+	return path.Join(buildCmd.Dir, "eggsblockservice")
 }
 
 func BuildEggsFuseExe(ll LogLevels) string {
@@ -412,7 +414,6 @@ type ShardOpts struct {
 	Perf                 bool
 	IncomingPacketDrop   float64
 	OutgoingPacketDrop   float64
-	Sanitize             bool
 }
 
 func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
@@ -433,6 +434,7 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 	if opts.WaitForBlockServices {
 		args = append(args, "--wait-for-block-services")
 	}
+	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("shard %v", opts.Shid),
 		Exe:             opts.Exe,
@@ -449,7 +451,7 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 			[]string{
 				"--exit-on-first-error=yes",
 				"-q",
-				fmt.Sprintf("--suppressions=%s", path.Join(cppDir(), "valgrind-suppressions")),
+				fmt.Sprintf("--suppressions=%s", path.Join(cppDir, "valgrind-suppressions")),
 				"--error-exitcode=1",
 				opts.Exe,
 			},
@@ -493,6 +495,7 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 	if opts.Verbose {
 		args = append(args, "--verbose")
 	}
+	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
 		Name:            "cdc",
 		Exe:             opts.Exe,
@@ -500,6 +503,7 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
 		StderrFile:      path.Join(opts.Dir, "stderr"),
 		TerminateOnExit: true,
+		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1"},
 	}
 	if opts.Valgrind {
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)
@@ -508,7 +512,7 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 			[]string{
 				"--exit-on-first-error=yes",
 				"-q",
-				fmt.Sprintf("--suppressions=%s", path.Join(cppDir(), "valgrind-suppressions")),
+				fmt.Sprintf("--suppressions=%s", path.Join(cppDir, "valgrind-suppressions")),
 				"--error-exitcode=1",
 				opts.Exe,
 			},
@@ -568,46 +572,38 @@ type BuildCppOpts struct {
 	Coverage bool
 }
 
-func BuildCppExe(ll LogLevels, opts *BuildCppOpts, target string) string {
-	buildArgs := []string{"-j"}
-	if opts.Valgrind {
-		buildArgs = append(buildArgs, "valgrind=yes")
+// Returns build dir
+func buildCpp(ll LogLevels, buildType string, targets []string) string {
+	switch buildType {
+	case "release":
+	case "debug":
+	case "sanitized":
+	case "valgrind":
+	default:
+		panic(fmt.Errorf("bad C++ build type %v, expected release/debug/sanitized/valgrind", buildType))
 	}
-	if opts.Sanitize {
-		buildArgs = append(buildArgs, "sanitize=yes")
-	}
-	if opts.Debug {
-		buildArgs = append(buildArgs, "debug=yes")
-	}
-	if opts.Coverage {
-		buildArgs = append(buildArgs, "coverage=yes")
-	}
-	buildArgs = append(buildArgs, target)
-	buildCmd := exec.Command("make", buildArgs...)
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("no caller information")
-	}
-	cppDir := path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
+	cppDir := cppDir()
+	buildArgs := append([]string{buildType}, targets...)
+	buildCmd := exec.Command("./build.py", buildArgs...)
 	buildCmd.Dir = cppDir
-	ll.Info("building %s with `make %s'", target, strings.Join(buildArgs, " "))
+	ll.Info("building cpp with `./build.py %s'", strings.Join(buildArgs, " "))
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
-		panic(fmt.Errorf("could not build %s: %w", target, err))
+		panic(fmt.Errorf("could not build %s: %w", targets, err))
 	}
-	// Nicer for stuff like coverage files
-	exe, err := filepath.EvalSymlinks(path.Join(cppDir, target))
-	if err != nil {
-		panic(fmt.Errorf("could not resolve symlink: %w", err))
-	}
-	return exe
+	return path.Join(path.Join(cppDir, "build"), buildType)
 }
 
-func BuildShardExe(ll LogLevels, opts *BuildCppOpts) string {
-	return BuildCppExe(ll, opts, "eggs-shard")
+type CppExes struct {
+	ShardExe string
+	CDCExe   string
 }
 
-func BuildCDCExe(ll LogLevels, opts *BuildCppOpts) string {
-	return BuildCppExe(ll, opts, "eggs-cdc")
+func BuildCppExes(ll LogLevels, buildType string) *CppExes {
+	buildDir := buildCpp(ll, buildType, []string{"shard/eggsshard", "cdc/eggscdc"})
+	return &CppExes{
+		ShardExe: path.Join(buildDir, "shard/eggsshard"),
+		CDCExe:   path.Join(buildDir, "cdc/eggscdc"),
+	}
 }

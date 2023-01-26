@@ -44,7 +44,7 @@ struct CDCServer : Undertaker::Reapable {
 private:
     Env _env;
     std::atomic<bool> _stop;
-    std::string _shuckleHost;
+    std::string _shuckleAddr;
     uint16_t _shucklePort;
     uint16_t _port;
     std::vector<ShardInfo> _shards;
@@ -70,7 +70,7 @@ public:
     CDCServer(Logger& logger, const CDCOptions& options, std::vector<ShardInfo>&& shards, CDCDB& db) :
         _env(logger, "req_server"),
         _stop(false),
-        _shuckleHost(options.shuckleHost),
+        _shuckleAddr(options.shuckleAddr),
         _shucklePort(options.shucklePort),
         _port(options.port),
         _shards(std::move(shards)),
@@ -206,8 +206,11 @@ private:
     void _registerWithShuckle() {
         ALWAYS_ASSERT(_port != 0);
         for (;;) {
+            if (_stop.load()) {
+                return;
+            }
             std::array<uint8_t, 4> addr{127,0,0,1};
-            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, addr, _port);
+            std::string err = registerCDC(_shuckleAddr, _shucklePort, 100_ms, addr, _port);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -468,9 +471,9 @@ std::vector<ShardInfo> lookupShardInfo(Logger& logger, const CDCOptions& options
             throw EGGS_EXCEPTION("could not reach shuckle to get shards after 20 seconds, giving up");
         }
 
-        std::string err = fetchShards(options.shuckleHost, options.shucklePort, 100_ms, shards);
+        std::string err = fetchShards(options.shuckleAddr, options.shucklePort, 100_ms, shards);
         if (!err.empty()) {
-            LOG_INFO(env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", options.shuckleHost, options.shucklePort, err);
+            LOG_INFO(env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", options.shuckleAddr, options.shucklePort, err);
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }

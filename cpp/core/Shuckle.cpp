@@ -21,7 +21,7 @@ static std::string generateErrString(const std::string& what, int err) {
     return ss.str();
 }
 
-static int shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
+static int shuckleSock(const std::string& addr, uint16_t port, Duration timeout, std::string& errString) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         throw SYSCALL_EXCEPTION("socket");
@@ -35,18 +35,13 @@ static int shuckleSock(const std::string& host, uint16_t port, Duration timeout,
         throw SYSCALL_EXCEPTION("setsockopt");
     }
 
-    struct hostent* he = gethostbyname(host.c_str());
-    if (he == nullptr) {
-        throw EGGS_EXCEPTION("could not get address for host %s", host);
-    }
-
     struct sockaddr_in shuckleAddr;
     shuckleAddr.sin_family = AF_INET;
-    shuckleAddr.sin_addr = *(struct in_addr*)he->h_addr_list[0];
+    inet_pton(AF_INET, addr.c_str(), &shuckleAddr.sin_addr);
     shuckleAddr.sin_port = htons(port);
 
     if (connect(sock, (struct sockaddr*)&shuckleAddr, sizeof(shuckleAddr)) < 0) {
-        errString = generateErrString("connect to " + host, errno);
+        errString = generateErrString("connect to " + addr, errno);
         close(sock);
         return -1;
     }
@@ -114,9 +109,9 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
     return {};
 }
 
-std::string fetchBlockServices(const std::string& host, uint16_t port, Duration timeout, ShardId shid, UpdateBlockServicesEntry& blocks) {
+std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, UpdateBlockServicesEntry& blocks) {
     std::string errString;
-    int sock = shuckleSock(host, port, timeout, errString);
+    int sock = shuckleSock(addr, port, timeout, errString);
     if (sock < 0) {
         return errString;
     }
@@ -141,10 +136,10 @@ std::string fetchBlockServices(const std::string& host, uint16_t port, Duration 
 }
 
 std::string registerShard(
-    const std::string& host, uint16_t port, Duration timeout, ShardId shid, const std::array<uint8_t, 4>& shardAddr, uint16_t shardPort
+    const std::string& addr, uint16_t port, Duration timeout, ShardId shid, const std::array<uint8_t, 4>& shardAddr, uint16_t shardPort
 ) {
     std::string errString;
-    int sock = shuckleSock(host, port, timeout, errString);
+    int sock = shuckleSock(addr, port, timeout, errString);
     if (sock < 0) {
         return errString;
     }

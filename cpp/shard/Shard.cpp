@@ -51,7 +51,7 @@ private:
     ShardId _shid;
     uint16_t _port;
     std::atomic<bool> _stop;
-    std::string _shuckleHost;
+    std::string _shuckleAddr;
     uint16_t _shucklePort;
     bool _waitForBlockServices;
     uint64_t _packetDropRand;
@@ -64,7 +64,7 @@ public:
         _shid(shid),
         _port(options.port),
         _stop(false),
-        _shuckleHost(options.shuckleHost),
+        _shuckleAddr(options.shuckleAddr),
         _shucklePort(options.shucklePort),
         _waitForBlockServices(options.waitForBlockServices),
         _packetDropRand((int)shid.u8 + 1), // CDC is 0
@@ -253,9 +253,12 @@ private:
     void _registerWithShuckle() {
         ALWAYS_ASSERT(_port != 0);
         for (;;) {
+            if (_stop.load()) {
+                return;
+            }
             LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, _port);
             std::array<uint8_t, 4> addr{127,0,0,1};
-            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, addr, _port);
+            std::string err = registerShard(_shuckleAddr, _shucklePort, 100_ms, _shid, addr, _port);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -278,7 +281,7 @@ private:
     ShardShared& _shared;
     std::atomic<bool> _stop;
     ShardId _shid;
-    std::string _shuckleHost;
+    std::string _shuckleAddr;
     uint16_t _shucklePort;
     bool _waitForShuckle;
 public:
@@ -287,7 +290,7 @@ public:
         _shared(shared),
         _stop(false),
         _shid(shid),
-        _shuckleHost(options.shuckleHost),
+        _shuckleAddr(options.shuckleAddr),
         _shucklePort(options.shucklePort),
         _waitForShuckle(options.waitForBlockServices)
     {}
@@ -342,10 +345,10 @@ public:
             }
 
             logEntry->time = eggsNow();
-            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleHost, _shucklePort);
+            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleAddr, _shucklePort);
             std::string err;
 
-            err = fetchBlockServices(_shuckleHost, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());
+            err = fetchBlockServices(_shuckleAddr, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());
             lastRequestSuccessful = err.empty();
             if (lastRequestSuccessful && logEntry->body.getUpdateBlockServices().blockServices.els.empty()) {
                 lastRequestSuccessful = false;

@@ -210,13 +210,10 @@ func noRunawayArgs() {
 }
 
 func main() {
-	valgrind := flag.Bool("valgrind", false, "Whether to build for and run with valgrind.")
-	sanitize := flag.Bool("sanitize", false, "Whether to build with sanitize.")
-	debug := flag.Bool("debug", false, "Build without optimizations.")
+	buildType := flag.String("build-type", "release", "C++ build type, one of release/debug/sanitized/valgrind")
 	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
-	coverage := flag.Bool("coverage", false, "Build with coverage support. Right now applies only to the C++ shard code.")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
 	perf := flag.Bool("perf", false, "Run the C++ binaries (shard & CDC) with `perf record`")
 	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
@@ -226,8 +223,8 @@ func main() {
 	flag.Parse()
 	noRunawayArgs()
 
-	if *verbose && !*debug {
-		fmt.Fprintf(os.Stderr, "You asked me to build without -debug, and with -verbose. This is almost certainly wrong, since you won't get debug messages in the shard/cdc without -debug.")
+	if *verbose && *buildType != "debug" {
+		fmt.Fprintf(os.Stderr, "We're building with build type %v, which is not \"debug\", and you also passed in -verbose. This is almost certainly wrong, since you won't get debug messages in the shard/cdc without build type \"debug\".", *buildType)
 		os.Exit(2)
 	}
 
@@ -240,13 +237,6 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
-	}
-
-	cppBuildOpts := eggs.BuildCppOpts{
-		Valgrind: *valgrind,
-		Sanitize: *sanitize,
-		Debug:    *debug,
-		Coverage: *coverage,
 	}
 
 	cleanupDbDir := false
@@ -284,8 +274,8 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	shardExe := eggs.BuildShardExe(log, &cppBuildOpts)
-	cdcExe := eggs.BuildCDCExe(log, &cppBuildOpts)
+	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
+	cppExes := eggs.BuildCppExes(log, *buildType)
 	shuckleExe := eggs.BuildShuckleExe(log)
 	blockServiceExe := eggs.BuildBlockServiceExe(log)
 	eggsFuseExe := eggs.BuildEggsFuseExe(log)
@@ -335,10 +325,10 @@ func main() {
 
 	// Start CDC
 	procs.StartCDC(log, &eggs.CDCOpts{
-		Exe:                cdcExe,
+		Exe:                cppExes.CDCExe,
 		Dir:                path.Join(*dataDir, "cdc"),
 		Verbose:            *verbose,
-		Valgrind:           *valgrind,
+		Valgrind:           *buildType == "valgrind",
 		Perf:               *perf,
 		IncomingPacketDrop: *incomingPacketDrop,
 		OutgoingPacketDrop: *outgoingPacketDrop,
@@ -349,11 +339,11 @@ func main() {
 	for i := 0; i < numShards; i++ {
 		shid := msgs.ShardId(i)
 		shopts := eggs.ShardOpts{
-			Exe:                  shardExe,
+			Exe:                  cppExes.ShardExe,
 			Dir:                  path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
 			Verbose:              *verbose,
 			Shid:                 shid,
-			Valgrind:             *valgrind,
+			Valgrind:             *buildType == "valgrind",
 			WaitForBlockServices: true,
 			Perf:                 *perf,
 			IncomingPacketDrop:   *incomingPacketDrop,

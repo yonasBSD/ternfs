@@ -9,13 +9,15 @@ project(eggsfs)
 
 # Yes, this means that it won't work for multi-configuration stuff, which is fine for now.
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING
-      "Choose the type of build, options are: Debug, Release, Valgrind, Sanitize. Note that Debug is automatically sanitized, Sanitize is Release, but sanitized."
-      FORCE)
+    set(
+        CMAKE_BUILD_TYPE release CACHE STRING
+        "Choose the type of build, options are: 'debug', 'release', 'alpine', 'valgrind', 'sanitized'."
+        FORCE
+    )
 endif()
 
-if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(Debug|Release|Sanitized|Valgrind)$"))
-    message(FATAL_ERROR "Build type must be one of Debug, Release, Sanitized, got ${CMAKE_BUILD_TYPE}")
+if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|sanitized|valgrind)$"))
+    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, got ${CMAKE_BUILD_TYPE}")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -23,26 +25,26 @@ set(CMAKE_CXX_REQUIRED true)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_SHARED_LIBS OFF)
 set(POSITION_INDEPENDENT_CODE off)
-add_compile_options(-fno-pie -fdiagnostics-color=always -fno-stack-protector -g -gdwarf -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-gnu-string-literal-operator-template)
-add_link_options(-fuse-ld=lld -no-pie)
+add_compile_options(-fno-pie -fno-stack-protector -fdiagnostics-color=always -fno-stack-protector -g -gdwarf-4 -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-gnu-string-literal-operator-template)
+add_link_options(-fuse-ld=lld -pthread)
 
-add_compile_options("$<$<CONFIG:Debug,Release,Sanitized>:-march=skylake>")
-add_compile_options("$<$<CONFIG:Valgrind>:-march=haswell;-maes>") # Valgrind cannot digest certain instructions
+# valgrind we currently use cannot digest certain instructions
+add_compile_options("$<$<CONFIG:valgrind>:-march=haswell;-maes>")
+add_compile_options("$<$<NOT:$<CONFIG:valgrind>>:-march=skylake>")
 
-add_compile_options("$<$<CONFIG:Release,Sanitized,Valgrind>:-O3>")
+# performance/debug stuff
+add_compile_options("$<$<NOT:$<CONFIG:debug>>:-O3>")
+add_compile_options("$<$<CONFIG:debug>:-O;-DEGGS_DEBUG>")
 
-add_compile_options("$<$<CONFIG:Debug>:-O;-DEGGS_DEBUG>")
+# We build the release build statically in Alpine
+add_compile_options("$<$<CONFIG:alpine>:-DEGGS_ALPINE>")
+add_link_options("$<$<CONFIG:alpine>:-static>")
+add_link_options("$<$<NOT:$<CONFIG:alpine>>:-no-pie>")
 
-# asan does not support static linkage, and valgrind does not play well with it either:
-# <https://stackoverflow.com/questions/7506134/valgrind-errors-when-linked-with-static-why>
-#
-# Also, regarding the thread stuff: <https://stackoverflow.com/a/45271521>.
-add_link_options("$<$<CONFIG:Release,Debug>:-static;-lrt;-pthread;-Wl,--whole-archive;-lpthread;-Wl,--no-whole-archive>")
-add_link_options("$<$<CONFIG:Valgrind,Sanitized>:-pthread>")
-
+# sanitizer options
 set(SANITIZE_OPTIONS "-fsanitize=undefined,address,integer,function;-fno-sanitize-recover=all;-fsanitize-blacklist=${CMAKE_SOURCE_DIR}/ubsan-ignorelist")
-add_compile_options("$<$<CONFIG:Sanitized>:${SANITIZE_OPTIONS}>")
-add_link_options("$<$<CONFIG:Sanitized>:${SANITIZE_OPTIONS}>")
+add_compile_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
+add_link_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 
 include(thirdparty.cmake)
 

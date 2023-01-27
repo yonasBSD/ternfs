@@ -11,7 +11,7 @@
 // on things that are almost certainly not transient (e.g. bad data on
 // the wire).
 std::string fetchBlockServices(
-    const std::string& shuckleAddr,
+    const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     ShardId shid,
@@ -19,7 +19,7 @@ std::string fetchBlockServices(
 );
 
 std::string registerShard(
-    const std::string& shuckleAddr,
+    const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     ShardId shid,
@@ -28,7 +28,7 @@ std::string registerShard(
 );
 
 std::string registerCDC(
-    const std::string& shuckleAddr,
+    const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     const std::array<uint8_t, 4>& cdcAddr,
@@ -36,8 +36,11 @@ std::string registerCDC(
 );
 
 std::string fetchShards(
-    const std::string& shuckleAddr,
+    const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     std::vector<ShardInfo>& shards
 );
+
+const std::string defaultShuckleAddress = "REDACTED";
+bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort);

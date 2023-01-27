@@ -22,6 +22,13 @@ func noRunawayArgs() {
 }
 
 func main() {
+	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		badCommand()
+	}
+
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC. If not present, they'll all be collected.")
 
@@ -33,21 +40,17 @@ func main() {
 	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
 	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
 
-	if len(os.Args) < 2 {
-		badCommand()
-	}
-
 	log := &eggs.LogLogger{
 		Logger:  eggs.NewLogger(os.Stdout),
 		Verbose: true,
 	}
 
-	switch os.Args[1] {
+	switch flag.Args()[0] {
 	case "collect":
-		collectCmd.Parse(os.Args[2:])
+		collectCmd.Parse(flag.Args()[1:])
 		noRunawayArgs()
 		if *collectDirIdU64 == 0 {
-			if err := eggs.CollectDirectoriesInAllShards(log, nil); err != nil {
+			if err := eggs.CollectDirectoriesInAllShards(log, *shuckleAddress, nil); err != nil {
 				panic(err)
 			}
 		} else {
@@ -56,7 +59,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			shid := dirId.Shard()
-			client, err := eggs.NewClient(log, &shid, nil, nil)
+			client, err := eggs.NewClient(log, *shuckleAddress, &shid, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard client: %v", err))
 			}
@@ -69,10 +72,10 @@ func main() {
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)
 		}
 	case "destruct":
-		destructCmd.Parse(os.Args[2:])
+		destructCmd.Parse(flag.Args()[1:])
 		noRunawayArgs()
 		if *destructFileIdU64 == 0 {
-			if err := eggs.DestructFilesInAllShards(log, nil, nil); err != nil {
+			if err := eggs.DestructFilesInAllShards(log, *shuckleAddress, nil, nil); err != nil {
 				panic(err)
 			}
 		} else {
@@ -81,7 +84,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
 			shid := fileId.Shard()
-			client, err := eggs.NewClient(log, &shid, nil, nil)
+			client, err := eggs.NewClient(log, *shuckleAddress, &shid, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -96,7 +99,7 @@ func main() {
 			log.Info("finished destructing %v, stats: %+v", fileId, stats)
 		}
 	case "migrate":
-		migrateCmd.Parse(os.Args[2:])
+		migrateCmd.Parse(flag.Args()[1:])
 		noRunawayArgs()
 		if *migrateBlockService == 0 {
 			migrateCmd.Usage()
@@ -105,7 +108,7 @@ func main() {
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		stats := eggs.MigrateStats{}
 		if *migrateFileIdU64 == 0 {
-			client, err := eggs.NewClient(log, nil, nil, nil)
+			client, err := eggs.NewClient(log, *shuckleAddress, nil, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -115,7 +118,7 @@ func main() {
 		} else {
 			fileId := msgs.InodeId(*migrateFileIdU64)
 			shid := fileId.Shard()
-			client, err := eggs.NewClient(log, &shid, nil, nil)
+			client, err := eggs.NewClient(log, *shuckleAddress, &shid, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard socket: %v", err))
 			}

@@ -69,6 +69,7 @@ func formatCounters(what string, counters *eggs.ReqCounters) {
 
 func runTest(
 	log eggs.LogLevels,
+	shuckleAddress string,
 	mbs eggs.MockableBlockServices,
 	filter *regexp.Regexp,
 	name string,
@@ -99,7 +100,7 @@ func runTest(
 
 	counters = &eggs.ClientCounters{}
 	t0 = time.Now()
-	cleanupAfterTest(log, counters, mbs)
+	cleanupAfterTest(log, shuckleAddress, counters, mbs)
 	elapsed = time.Since(t0)
 	totalShardRequests = counters.Shard.TotalRequests()
 	totalCDCRequests = counters.CDC.TotalRequests()
@@ -112,7 +113,7 @@ func runTest(
 	}
 }
 
-func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
+func runTests(terminateChan chan any, log eggs.LogLevels, shuckleAddress string, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 
 	blockServicesKeys := make(map[msgs.BlockServiceId]cipher.Block)
@@ -139,12 +140,13 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
+		shuckleAddress,
 		mockedBlockServices,
 		filter,
 		"file history test",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fileHistoryTest(log, mbs, &fileHistoryOpts, counters)
+			fileHistoryTest(log, shuckleAddress, mbs, &fileHistoryOpts, counters)
 		},
 	)
 
@@ -161,12 +163,13 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
+		shuckleAddress,
 		mockedBlockServices,
 		filter,
 		"simple fs test",
 		fmt.Sprintf("%v dirs, %v files, %v depth", noBlocksFsTestOpts.numDirs, noBlocksFsTestOpts.numFiles, noBlocksFsTestOpts.depth),
 		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, &noBlocksFsTestOpts, counters, mbs, "")
+			fsTest(log, shuckleAddress, &noBlocksFsTestOpts, counters, mbs, "")
 		},
 	)
 
@@ -179,23 +182,25 @@ func runTests(terminateChan chan any, log eggs.LogLevels, blockServices []msgs.B
 	}
 	runTest(
 		log,
+		shuckleAddress,
 		realBlockServices,
 		filter,
 		"fs test with blocks",
 		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
 		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, &blocksFsTestOpts, counters, mbs, "")
+			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, mbs, "")
 		},
 	)
 
 	runTest(
 		log,
+		shuckleAddress,
 		realBlockServices,
 		filter,
 		"fs test with fuse",
 		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
 		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, &blocksFsTestOpts, counters, mbs, fuseMountPoint)
+			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, mbs, fuseMountPoint)
 		},
 	)
 
@@ -210,22 +215,21 @@ func noRunawayArgs() {
 }
 
 func main() {
-	buildType := flag.String("build-type", "release", "C++ build type, one of release/debug/sanitized/valgrind")
+	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind")
 	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
 	perf := flag.Bool("perf", false, "Run the C++ binaries (shard & CDC) with `perf record`")
-	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
-	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard & CDC (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
+	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
+	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
 	cpuprofile := flag.String("cpuprofile", "", "Write cpu profile to file")
 	flag.Parse()
 	noRunawayArgs()
 
 	if *verbose && *buildType != "debug" {
-		fmt.Fprintf(os.Stderr, "We're building with build type %v, which is not \"debug\", and you also passed in -verbose. This is almost certainly wrong, since you won't get debug messages in the shard/cdc without build type \"debug\".", *buildType)
-		os.Exit(2)
+		fmt.Printf("We're building with build type %v, which is not \"debug\", and you also passed in -verbose.\nBe aware that you won't get debug messages for C++ binaries.", *buildType)
 	}
 
 	filterRe := regexp.MustCompile(*filter)
@@ -286,10 +290,12 @@ func main() {
 	defer procs.Close()
 
 	// Start shuckle
-	shucklePort := uint16(39999)
+	shucklePort := uint16(10000)
+	shuckleAddress := fmt.Sprintf("localhost:%v", shucklePort)
 	procs.StartShuckle(log, &eggs.ShuckleOpts{
 		Exe:         shuckleExe,
 		BincodePort: shucklePort,
+		HttpPort:    shucklePort + 1,
 		Verbose:     *verbose,
 		Dir:         path.Join(*dataDir, "shuckle"),
 	})
@@ -300,19 +306,20 @@ func main() {
 	hddBlockServices := 10
 	flashBlockServices := 5
 	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
-		storageClass := "HDD"
+		storageClass := msgs.HDD_STORAGE
 		if i >= hddBlockServices {
-			storageClass = "FLASH"
+			storageClass = msgs.FLASH_STORAGE
 		}
 		procs.StartBlockService(log, &eggs.BlockServiceOpts{
-			Exe:           blockServiceExe,
-			Path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			Port:          0,
-			StorageClass:  storageClass,
-			FailureDomain: fmt.Sprintf("%d", i),
-			Verbose:       *verbose,
-			ShuckleHost:   fmt.Sprintf("localhost:%d", shucklePort),
-			NoTimeCheck:   true,
+			Exe:            blockServiceExe,
+			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
+			Port:           0,
+			StorageClass:   storageClass,
+			FailureDomain:  fmt.Sprintf("%d", i),
+			Verbose:        *verbose,
+			ShuckleAddress: fmt.Sprintf("localhost:%d", shucklePort),
+			NoTimeCheck:    true,
+			OwnIp:          "127.0.0.1",
 		})
 	}
 
@@ -325,13 +332,13 @@ func main() {
 
 	// Start CDC
 	procs.StartCDC(log, &eggs.CDCOpts{
-		Exe:                cppExes.CDCExe,
-		Dir:                path.Join(*dataDir, "cdc"),
-		Verbose:            *verbose,
-		Valgrind:           *buildType == "valgrind",
-		Perf:               *perf,
-		IncomingPacketDrop: *incomingPacketDrop,
-		OutgoingPacketDrop: *outgoingPacketDrop,
+		Exe:            cppExes.CDCExe,
+		Dir:            path.Join(*dataDir, "cdc"),
+		Verbose:        *verbose && *buildType == "debug",
+		Valgrind:       *buildType == "valgrind",
+		Perf:           *perf,
+		ShuckleAddress: shuckleAddress,
+		OwnIp:          "127.0.0.1",
 	})
 
 	// Start shards
@@ -339,34 +346,41 @@ func main() {
 	for i := 0; i < numShards; i++ {
 		shid := msgs.ShardId(i)
 		shopts := eggs.ShardOpts{
-			Exe:                  cppExes.ShardExe,
-			Dir:                  path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:              *verbose,
-			Shid:                 shid,
-			Valgrind:             *buildType == "valgrind",
-			WaitForBlockServices: true,
-			Perf:                 *perf,
-			IncomingPacketDrop:   *incomingPacketDrop,
-			OutgoingPacketDrop:   *outgoingPacketDrop,
+			Exe:                cppExes.ShardExe,
+			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			Verbose:            *verbose && *buildType == "debug",
+			Shid:               shid,
+			Valgrind:           *buildType == "valgrind",
+			Perf:               *perf,
+			IncomingPacketDrop: *incomingPacketDrop,
+			OutgoingPacketDrop: *outgoingPacketDrop,
+			ShuckleAddress:     shuckleAddress,
+			OwnIp:              "127.0.0.1",
 		}
 		procs.StartShard(log, &shopts)
 	}
 
-	waitShuckleFor := 20 * time.Second
+	waitShuckleFor := 5 * time.Second
+	if *buildType == "valgrind" {
+		waitShuckleFor = 30 * time.Second
+	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
 	blockServices := eggs.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor).BlockServices
 
 	fuseMountPoint := procs.StartEggsFuse(log, &eggs.EggsFuseOpts{
-		Exe:     eggsFuseExe,
-		Path:    path.Join(*dataDir, "eggsfuse"),
-		Verbose: *verbose,
-		Wait:    true,
+		Exe:            eggsFuseExe,
+		Path:           path.Join(*dataDir, "eggsfuse"),
+		Verbose:        *verbose,
+		Wait:           true,
+		ShuckleAddress: shuckleAddress,
 	})
 
 	fmt.Printf("operational 🤖\n")
 
 	// start tests
-	go func() { runTests(terminateChan, log, blockServices, fuseMountPoint, *short, filterRe) }()
+	go func() {
+		runTests(terminateChan, log, shuckleAddress, blockServices, fuseMountPoint, *short, filterRe)
+	}()
 
 	// wait for things to finish
 	err := <-terminateChan

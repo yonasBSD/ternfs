@@ -1,0 +1,4 @@
+# <https://github.com/google/sanitizers/issues/1346>, ticket also
+# contains some typically funny ranting.
+[integer]
+src:.*bits/basic_string.h$

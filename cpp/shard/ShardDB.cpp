@@ -152,6 +152,13 @@
 // 
 // TODO fill in results
 
+static auto wrappedSnapshot(rocksdb::DB* db) {
+    auto deleter = [db](const rocksdb::Snapshot* snapshot) {
+        db->ReleaseSnapshot(snapshot);
+    };
+    return std::unique_ptr<const rocksdb::Snapshot, decltype(deleter)>(db->GetSnapshot(), deleter);
+}
+
 static uint64_t computeHash(HashMode mode, const BincodeBytesRef& bytes) {
     switch (mode) {
     case HashMode::XXH3_63:
@@ -241,6 +248,7 @@ struct ShardDBImpl {
         options.create_if_missing = true;
         options.create_missing_column_families = true;
         options.compression = rocksdb::kLZ4Compression;
+        options.bottommost_compression = rocksdb::kZSTD;
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
@@ -389,7 +397,7 @@ struct ShardDBImpl {
                 auto upperBound = (ShardMetadataKey)((uint8_t)BLOCK_SERVICE_KEY + 1);
                 auto upperBoundSlice = shardMetadataKey(&upperBound);
                 options.iterate_upper_bound = &upperBoundSlice;
-                WrappedIterator it(_db->NewIterator(options, _defaultCf));
+                std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _defaultCf));
                 StaticValue<BlockServiceKey> beginKey;
                 beginKey().setKey(BLOCK_SERVICE_KEY);
                 beginKey().setBlockServiceId(0);
@@ -457,9 +465,9 @@ struct ShardDBImpl {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
-        WrappedSnapshot snapshot(_db);
+        auto snapshot = wrappedSnapshot(_db);
         rocksdb::ReadOptions options;
-        options.snapshot = snapshot.snapshot;
+        options.snapshot = snapshot.get();
 
         // we don't want snapshot directories, so check for that early
         {
@@ -472,7 +480,7 @@ struct ShardDBImpl {
         }
 
         {
-            auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
+            auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
             beginKey().setDirIdWithCurrent(req.dirId, true); // current = true
             beginKey().setNameHash(req.startHash);
@@ -510,12 +518,12 @@ struct ShardDBImpl {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
-        WrappedSnapshot snapshot(_db);
+        auto snapshot = wrappedSnapshot(_db);
         rocksdb::ReadOptions options;
-        options.snapshot = snapshot.snapshot;
+        options.snapshot = snapshot.get();
 
         {
-            auto it = WrappedIterator(_db->NewIterator(options, _edgesCf));
+            auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
             beginKey().setDirIdWithCurrent(req.dirId, req.cursor.current);
             beginKey().setNameHash(req.cursor.startHash);
@@ -582,9 +590,9 @@ struct ShardDBImpl {
     }
 
     EggsError _lookup(const LookupReq& req, LookupResp& resp) {
-        WrappedSnapshot snapshot(_db);
+        auto snapshot = wrappedSnapshot(_db);
         rocksdb::ReadOptions options;
-        options.snapshot = snapshot.snapshot;
+        options.snapshot = snapshot.get();
 
         uint64_t nameHash;
         {
@@ -617,7 +625,7 @@ struct ShardDBImpl {
         resp.nextId = NULL_INODE_ID;
 
         {
-            WrappedIterator it(_db->NewIterator({}, _transientCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _transientCf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - VisitTransientFilesResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
@@ -649,7 +657,7 @@ struct ShardDBImpl {
         int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - Resp::STATIC_SIZE;
         int maxIds = (budget/8) + 1; // include next inode
         {
-            WrappedIterator it(_db->NewIterator({}, cf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, cf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             for (
                 it->Seek(beginKey.toSlice());
@@ -677,9 +685,9 @@ struct ShardDBImpl {
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
-        WrappedSnapshot snapshot(_db);
+        auto snapshot = wrappedSnapshot(_db);
         rocksdb::ReadOptions options;
-        options.snapshot = snapshot.snapshot;
+        options.snapshot = snapshot.get();
 
         int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
@@ -708,7 +716,7 @@ struct ShardDBImpl {
         beginKey().setFileId(req.fileId);
         beginKey().setOffset(req.byteOffset);
         {
-            WrappedIterator it(_db->NewIterator(options, _spansCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _spansCf));
             for (it->SeekForPrev(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<SpanKey>::FromSlice(it->key());
                 if (key().fileId() != req.fileId) {
@@ -775,7 +783,7 @@ struct ShardDBImpl {
 
         rocksdb::ReadOptions options;
         options.iterate_upper_bound = &endKeySlice;
-        WrappedIterator it(_db->NewIterator(options, _blockServicesToFilesCf));
+        std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _blockServicesToFilesCf));
         for (
             it->Seek(beginKey.toSlice());
             it->Valid() && resp.fileIds.els.size() < maxFiles;
@@ -811,7 +819,7 @@ struct ShardDBImpl {
         }
 
         int maxEdges = 1 + (UDP_MTU - ShardResponseHeader::STATIC_SIZE - SnapshotLookupResp::STATIC_SIZE) / SnapshotLookupEdge::STATIC_SIZE;
-        WrappedIterator it(_db->NewIterator({}, _edgesCf));
+        std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
         StaticValue<EdgeKey> firstK;
         firstK().setDirIdWithCurrent(req.dirId, false);
         firstK().setNameHash(nameHash);
@@ -1302,7 +1310,8 @@ struct ShardDBImpl {
                             continue;
                         }
                         LOG_DEBUG(_env, "(1) Picking block service candidate %s", spanBlock.blockServiceId);
-                        pickedBlockServices.emplace_back(spanBlock.blockServiceId);
+                        uint64_t blockServiceId = spanBlock.blockServiceId;
+                        pickedBlockServices.emplace_back(blockServiceId);
                         std::iter_swap(isCandidate, candidateBlockServices.end()-1);
                         candidateBlockServices.pop_back();
                     }
@@ -1705,7 +1714,7 @@ struct ShardDBImpl {
             snapshotEdgeKey().setNameHash(nameHash);
             snapshotEdgeKey().setName(name.ref());
             snapshotEdgeKey().setCreationTime({std::numeric_limits<uint64_t>::max()});
-            WrappedIterator it(_db->NewIterator({}, _edgesCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
             it->SeekForPrev(snapshotEdgeKey.toSlice());
             if (it->Valid() && !it->status().IsNotFound()) {
                 auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -2004,7 +2013,7 @@ struct ShardDBImpl {
             edgeKey().setDirIdWithCurrent(entry.dirId, true); // current=true
             edgeKey().setNameHash(0);
             edgeKey().setName({});
-            WrappedIterator it(_db->NewIterator({}, _edgesCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -2058,7 +2067,7 @@ struct ShardDBImpl {
             edgeKey().setNameHash(0);
             edgeKey().setName({});
             edgeKey().setCreationTime(0);
-            WrappedIterator it(_db->NewIterator({}, _edgesCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -2118,7 +2127,7 @@ struct ShardDBImpl {
                 StaticValue<SpanKey> spanKey;
                 spanKey().setFileId(entry.id);
                 spanKey().setOffset(0);
-                WrappedIterator it(_db->NewIterator({}, _spansCf));
+                std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _spansCf));
                 it->Seek(spanKey.toSlice());
                 if (it->Valid()) {
                     auto otherSpan = ExternalValue<SpanKey>::FromSlice(it->key());
@@ -2332,7 +2341,7 @@ struct ShardDBImpl {
         LOG_DEBUG(_env, "deleting span from file %s of size %s", entry.fileId, file().fileSize());
 
         // Fetch the last span
-        WrappedIterator spanIt(_db->NewIterator({}, _spansCf));
+        std::unique_ptr<rocksdb::Iterator> spanIt(_db->NewIterator({}, _spansCf));
         ExternalValue<SpanKey> spanKey;
         ExternalValue<SpanBody> span;
         {

@@ -22,6 +22,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
+	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -76,7 +77,7 @@ func main() {
 			fmt.Sprintf("shard%v", shard),
 			func() {
 				for {
-					eggs.CollectDirectories(log, nil, shard)
+					eggs.CollectDirectories(log, *shuckleAddress, nil, shard)
 					if *singleIteration {
 						break
 					}

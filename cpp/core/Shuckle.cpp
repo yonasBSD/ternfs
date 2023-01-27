@@ -1,11 +1,17 @@
+#include <fcntl.h>
 #include <sstream>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <array>
+#include <charconv>
+#include <stdio.h>
+#include <memory>
+#include <netinet/tcp.h>
 
 #include "Bincode.hpp"
 #include "Msgs.hpp"
@@ -14,36 +20,52 @@
 #include "Exception.hpp"
 
 static std::string generateErrString(const std::string& what, int err) {
-    char errbuf[64];
-    const char *errmsg = strerror_r(err, errbuf, sizeof(errbuf));
+
+    const char *errmsg = safe_strerror(err);
     std::stringstream ss;
     ss << "could not " << what << ": " << err << "/" << translateErrno(err) << "=" << errmsg;
     return ss.str();
 }
 
-static int shuckleSock(const std::string& addr, uint16_t port, Duration timeout, std::string& errString) {
+static std::mutex gethostbynameMutex;
+
+static int shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
+    struct hostent* he;
+    {
+        // too lazy to learn getaddrinfo
+        std::lock_guard<std::mutex> lock(gethostbynameMutex);
+        he = gethostbyname(host.c_str());
+        if (he == nullptr) {
+            throw EGGS_EXCEPTION("could not get address for host %s", host);
+        }
+    }
+
+    // nonblock at the beginning for connect timeout
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         throw SYSCALL_EXCEPTION("socket");
     }
 
-    struct timeval tv;      
+    int synRetries = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
+
+    struct sockaddr_in shuckleAddr;
+    shuckleAddr.sin_family = AF_INET;
+    shuckleAddr.sin_addr = *(struct in_addr*)he->h_addr_list[0];
+    shuckleAddr.sin_port = htons(port);
+
+    if (connect(sock, (struct sockaddr*)&shuckleAddr, sizeof(shuckleAddr)) < 0) {
+        errString = generateErrString("connect to " + host, errno);
+        close(sock);
+        return -1;
+    }
+    
+    struct timeval tv;
     tv.tv_sec = timeout.ns/1'000'000'000ull;
     tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;
 
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
         throw SYSCALL_EXCEPTION("setsockopt");
-    }
-
-    struct sockaddr_in shuckleAddr;
-    shuckleAddr.sin_family = AF_INET;
-    inet_pton(AF_INET, addr.c_str(), &shuckleAddr.sin_addr);
-    shuckleAddr.sin_port = htons(port);
-
-    if (connect(sock, (struct sockaddr*)&shuckleAddr, sizeof(shuckleAddr)) < 0) {
-        errString = generateErrString("connect to " + addr, errno);
-        close(sock);
-        return -1;
     }
 
     return sock;
@@ -212,4 +234,31 @@ std::string fetchShards(const std::string& host, uint16_t port, Duration timeout
     shards = respContainer.getShards().shards.els;
 
     return {};
+}
+
+bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort) {
+    // split host:port
+    auto colon = fullShuckleAddress.find(":");
+    if (colon == fullShuckleAddress.size()) {
+        std::cerr << "Could not find colon" << std::endl;
+        return false;
+    }
+    // parse port
+    if (fullShuckleAddress.size() - colon > 6) {
+        return false; // port too long
+    }
+    uint32_t port = 0;
+    for (int i = colon + 1; i < fullShuckleAddress.size(); i++) {
+        char ch = fullShuckleAddress[i];
+        if ((i == colon + 1 && ch == '0') || ch < '0' || ch > '9') {
+            return false;
+        }
+        port = port*10 + (ch-'0');
+    }
+    if (port == 0 || port > 65535) {
+        return false;
+    }
+    shucklePort = port;
+    shuckleHost = {fullShuckleAddress.begin(), fullShuckleAddress.begin()+colon};
+    return true;
 }

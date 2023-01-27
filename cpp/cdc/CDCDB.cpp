@@ -1,3 +1,4 @@
+#include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/utilities/transaction.h>
@@ -1291,7 +1292,7 @@ struct CDCDBImpl {
 
         rocksdb::WriteOptions options;
         options.sync = sync;
-        WrappedTransaction dbTxn(_db->BeginTransaction(options));
+        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
 
         step.clear();
 
@@ -1329,7 +1330,7 @@ struct CDCDBImpl {
 
         rocksdb::WriteOptions options;
         options.sync = sync;
-        WrappedTransaction dbTxn(_db->BeginTransaction(options));
+        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
 
         step.clear();
 
@@ -1369,7 +1370,7 @@ struct CDCDBImpl {
 
         rocksdb::WriteOptions options;
         options.sync = sync;
-        WrappedTransaction dbTxn(_db->BeginTransaction(options));
+        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
 
         step.clear();
 

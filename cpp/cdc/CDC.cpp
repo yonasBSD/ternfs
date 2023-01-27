@@ -44,9 +44,10 @@ struct CDCServer : Undertaker::Reapable {
 private:
     Env _env;
     std::atomic<bool> _stop;
-    std::string _shuckleAddr;
+    std::string _shuckleHost;
     uint16_t _shucklePort;
     uint16_t _port;
+    std::array<uint8_t, 4> _ownIp;
     std::vector<ShardInfo> _shards;
     CDCDB& _db;
     uint64_t _currentLogIndex;
@@ -56,8 +57,6 @@ private:
     ShardRespContainer _shardRespContainer;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
-    uint64_t _packetDropRand;
-    uint64_t _packetDropProbability; // probability * 10,000
     std::array<int, 257> _socks;
     AES128Key _expandedCDCKey;
     // The requests we've enqueued, but haven't completed yet, with
@@ -70,22 +69,16 @@ public:
     CDCServer(Logger& logger, const CDCOptions& options, std::vector<ShardInfo>&& shards, CDCDB& db) :
         _env(logger, "req_server"),
         _stop(false),
-        _shuckleAddr(options.shuckleAddr),
+        _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
         _port(options.port),
+        _ownIp(options.ownIp),
         _shards(std::move(shards)),
         _db(db),
         _recvBuf(UDP_MTU),
         _sendBuf(UDP_MTU),
-        _shardRequestIdCounter(0),
-        _packetDropRand(0),
-        _packetDropProbability(0)
+        _shardRequestIdCounter(0)
     {
-        if (options.simulatePacketDrop != 0.0) {
-            LOG_INFO(_env, "will drop %s%% of packets", options.simulatePacketDrop*100.0);
-            _packetDropProbability = options.simulatePacketDrop * 10'000.0;
-            ALWAYS_ASSERT(_packetDropProbability > 0 && _packetDropProbability < 10'000);
-        }
         _currentLogIndex = _db.lastAppliedLogEntry();
         memset(&_socks[0], 0, sizeof(_socks));
         expandKey(CDCKey, _expandedCDCKey);
@@ -100,10 +93,6 @@ public:
 
     virtual void onAbort() override {
         _env.flush();
-    }
-
-    void registerWithShuckle() {
-
     }
 
     void run() {
@@ -147,6 +136,7 @@ public:
                 LOG_DEBUG(_env, "bound shard %s sock to port %s", i-1, ntohs(addr.sin_port));
             }
         }
+
         _registerWithShuckle();
 
         // create epoll structure
@@ -209,11 +199,10 @@ private:
             if (_stop.load()) {
                 return;
             }
-            std::array<uint8_t, 4> addr{127,0,0,1};
-            std::string err = registerCDC(_shuckleAddr, _shucklePort, 100_ms, addr, _port);
+            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp, _port);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
             break;
@@ -240,18 +229,13 @@ private:
             }
             LOG_DEBUG(_env, "received CDC request from %s", clientAddr);
 
-            if (splitmix64(_packetDropRand) % 10'000 < _packetDropProbability) {
-                LOG_DEBUG(_env, "artificially dropping packet");
-                continue;
-            }
-
             BincodeBuf reqBbuf(&_recvBuf[0], read);
             
             // First, try to parse the header
             CDCRequestHeader reqHeader;
             try {
                 reqHeader.unpack(reqBbuf);
-            } catch (BincodeException err) {
+            } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
                 RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", clientAddr);
                 continue;
@@ -267,7 +251,7 @@ private:
             try {
                 _cdcReqContainer.unpack(reqBbuf, reqHeader.kind);
                 LOG_DEBUG(_env, "parsed request: %s", _cdcReqContainer);
-            } catch (BincodeException exc) {
+            } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", exc.what(), exc.getStackTrace());
                 RAISE_ALERT(_env, "could not parse CDC request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
                 err = EggsError::MALFORMED_REQUEST;
@@ -310,11 +294,6 @@ private:
         
             LOG_DEBUG(_env, "received response from shard %s", shid);
     
-            if (splitmix64(_packetDropRand) % 10'000 < _packetDropProbability) {
-                LOG_DEBUG(_env, "artificially dropping packet");
-                continue;
-            }
-
             BincodeBuf reqBbuf(&_recvBuf[0], read);
 
             ShardResponseHeader respHeader;
@@ -471,9 +450,9 @@ std::vector<ShardInfo> lookupShardInfo(Logger& logger, const CDCOptions& options
             throw EGGS_EXCEPTION("could not reach shuckle to get shards after 20 seconds, giving up");
         }
 
-        std::string err = fetchShards(options.shuckleAddr, options.shucklePort, 100_ms, shards);
+        std::string err = fetchShards(options.shuckleHost, options.shucklePort, 100_ms, shards);
         if (!err.empty()) {
-            LOG_INFO(env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", options.shuckleAddr, options.shucklePort, err);
+            LOG_INFO(env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", options.shuckleHost, options.shucklePort, err);
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }

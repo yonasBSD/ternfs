@@ -313,7 +313,7 @@ func (k ShuckleMessageKind) String() string {
 	case 1:
 		return "BLOCK_SERVICES_FOR_SHARD"
 	case 2:
-		return "REGISTER_BLOCK_SERVICE"
+		return "REGISTER_BLOCK_SERVICES"
 	case 3:
 		return "SHARDS"
 	case 4:
@@ -332,7 +332,7 @@ func (k ShuckleMessageKind) String() string {
 
 const (
 	BLOCK_SERVICES_FOR_SHARD ShuckleMessageKind = 0x1
-	REGISTER_BLOCK_SERVICE ShuckleMessageKind = 0x2
+	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x2
 	SHARDS ShuckleMessageKind = 0x3
 	REGISTER_SHARD ShuckleMessageKind = 0x4
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
@@ -2964,6 +2964,15 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint64(v.Available)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Used)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Path)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2984,6 +2993,15 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Available)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Used)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Path); err != nil {
 		return err
 	}
 	return nil
@@ -3058,33 +3076,46 @@ func (v *BlockServicesForShardResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterBlockServiceReq) ShuckleRequestKind() ShuckleMessageKind {
-	return REGISTER_BLOCK_SERVICE
+func (v *RegisterBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+	return REGISTER_BLOCK_SERVICES
 }
 
-func (v *RegisterBlockServiceReq) Pack(w io.Writer) error {
-	if err := v.BlockService.Pack(w); err != nil {
+func (v *RegisterBlockServicesReq) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
 		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (v *RegisterBlockServiceReq) Unpack(r io.Reader) error {
-	if err := v.BlockService.Unpack(r); err != nil {
+func (v *RegisterBlockServicesReq) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (v *RegisterBlockServiceResp) ShuckleResponseKind() ShuckleMessageKind {
-	return REGISTER_BLOCK_SERVICE
+func (v *RegisterBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+	return REGISTER_BLOCK_SERVICES
 }
 
-func (v *RegisterBlockServiceResp) Pack(w io.Writer) error {
+func (v *RegisterBlockServicesResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *RegisterBlockServiceResp) Unpack(r io.Reader) error {
+func (v *RegisterBlockServicesResp) Unpack(r io.Reader) error {
 	return nil
 }
 

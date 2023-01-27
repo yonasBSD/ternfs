@@ -9,6 +9,8 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
+
 func ReadShuckleRequest(
 	log LogLevels,
 	r io.Reader,
@@ -33,8 +35,8 @@ func ReadShuckleRequest(
 	switch kind {
 	case msgs.BLOCK_SERVICES_FOR_SHARD:
 		req = &msgs.BlockServicesForShardReq{}
-	case msgs.REGISTER_BLOCK_SERVICE:
-		req = &msgs.RegisterBlockServiceReq{}
+	case msgs.REGISTER_BLOCK_SERVICES:
+		req = &msgs.RegisterBlockServicesReq{}
 	case msgs.SHARDS:
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:
@@ -97,8 +99,8 @@ func ReadShuckleResponse(
 	switch kind {
 	case msgs.BLOCK_SERVICES_FOR_SHARD:
 		resp = &msgs.BlockServicesForShardResp{}
-	case msgs.REGISTER_BLOCK_SERVICE:
-		resp = &msgs.RegisterBlockServiceResp{}
+	case msgs.REGISTER_BLOCK_SERVICES:
+		resp = &msgs.RegisterBlockServicesResp{}
 	case msgs.SHARDS:
 		resp = &msgs.ShardsResp{}
 	case msgs.REGISTER_SHARD:

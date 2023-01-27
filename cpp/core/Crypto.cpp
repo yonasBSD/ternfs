@@ -5,26 +5,20 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/random.h>
 
 #include "Crypto.hpp"
 #include "Exception.hpp"
 
 
 void generateSecretKey(std::array<uint8_t, 16>& key) {
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd < 0) {
-        throw SYSCALL_EXCEPTION("open");
+    ssize_t read = getrandom(key.data(), key.size(), 0);
+    if (read < 0) {
+        throw SYSCALL_EXCEPTION("getrandom");
     }
-    ssize_t soFar = 0;
-    while (soFar < key.size()) {
-        ssize_t x = read(fd, &key[soFar], key.size()-soFar);
-        if (x < 0) {
-            throw SYSCALL_EXCEPTION("read");
-        }
-        soFar += x;
-    }
-    if (close(fd) < 0) {
-        throw SYSCALL_EXCEPTION("close");
+    if (read != key.size()) {
+        // getrandom(2) states that once initialized you can always get up to 256 bytes.
+        throw EGGS_EXCEPTION("could not read %s random bytes, read %s instead!", key.size(), read);
     }
 }
 

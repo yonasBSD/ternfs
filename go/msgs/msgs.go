@@ -209,6 +209,43 @@ func (parity Parity) String() string {
 	return fmt.Sprintf("(%v,%v)", parity.DataBlocks(), parity.ParityBlocks())
 }
 
+const (
+	EMPTY_STORAGE  StorageClass = 0
+	INLINE_STORAGE StorageClass = 1
+	HDD_STORAGE    StorageClass = 2
+	FLASH_STORAGE  StorageClass = 3
+)
+
+func StorageClassFromString(s string) StorageClass {
+	switch s {
+	case "EMPTY":
+		return EMPTY_STORAGE
+	case "INLINE":
+		return INLINE_STORAGE
+	case "HDD":
+		return HDD_STORAGE
+	case "FLASH":
+		return FLASH_STORAGE
+	default:
+		panic(fmt.Errorf("bad storage class string '%v'", s))
+	}
+}
+
+func (s StorageClass) String() string {
+	switch s {
+	case EMPTY_STORAGE:
+		return "EMPTY"
+	case INLINE_STORAGE:
+		return "INLINE"
+	case HDD_STORAGE:
+		return "HDD"
+	case FLASH_STORAGE:
+		return "FLASH"
+	default:
+		return fmt.Sprintf("StorageClass(%v)", uint8(s))
+	}
+}
+
 // --------------------------------------------------------------------
 // Shard requests/responses
 
@@ -223,11 +260,6 @@ type ShardResponse interface {
 	bincode.Unpackable
 	ShardResponseKind() ShardMessageKind
 }
-
-const (
-	EMPTY_STORAGE  StorageClass = 0
-	INLINE_STORAGE StorageClass = 1
-)
 
 // Given directory inode and name, returns inode from outgoing
 // current edge. Does not consider non-current directories and
@@ -1053,9 +1085,12 @@ type BlockServiceInfo struct {
 	Id            BlockServiceId
 	Ip            [4]byte
 	Port          uint16
-	StorageClass  uint8
+	StorageClass  StorageClass
 	FailureDomain [16]byte
 	SecretKey     [16]byte
+	Available     uint64 // bytes available
+	Used          uint64 // bytes used
+	Path          string
 }
 
 type UpdateBlockServicesEntry struct {
@@ -1147,11 +1182,11 @@ type AllBlockServicesResp struct {
 	BlockServices []BlockServiceInfo
 }
 
-type RegisterBlockServiceReq struct {
-	BlockService BlockServiceInfo
+type RegisterBlockServicesReq struct {
+	BlockServices []BlockServiceInfo
 }
 
-type RegisterBlockServiceResp struct{}
+type RegisterBlockServicesResp struct{}
 
 type ShardsReq struct{}
 

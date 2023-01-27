@@ -6,6 +6,8 @@ github.com/hanwen/go-fuse v1.0.0/go.mod h1:unqXarDXqzAk0rt98O2tVndEPIpUgLD9+rwFi
 github.com/hanwen/go-fuse/v2 v2.2.0 h1:jo5QZYmBLNcl9ovypWaQ5yXMSSV+Ch68xoC3rtZvvBM=
 github.com/hanwen/go-fuse/v2 v2.2.0/go.mod h1:B1nGE/6RBFyBRC1RRnf23UpwCdyJ31eukw34oAKukAc=
 github.com/kylelemons/godebug v0.0.0-20170820004349-d65d576e9348/go.mod h1:B69LEHPfb2qLo0BaaOLcbitczOKLWTsrBG9LczfCD4k=
+github.com/mattn/go-sqlite3 v1.14.16 h1:yOQRA0RpS5PFz/oikGwBEqvAWhWg5ufRz4ETLjwpU1Y=
+github.com/mattn/go-sqlite3 v1.14.16/go.mod h1:2eHXhiwb8IkHr+BDWZGa96P6+rkvnG63S2DGjv9HUNg=
 github.com/nsf/gocode v0.0.0-20190302080247-5bee97b48836 h1:oc3CL18CoGhyOQJ7HDa9gJAde33bwI8Vi28zLdIzJVc=
 github.com/nsf/gocode v0.0.0-20190302080247-5bee97b48836/go.mod h1:6Q8/OMaaKAgTX7/jt2bOXVDrm1eJhoNd+iwzghR7jvs=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

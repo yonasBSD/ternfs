@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"flag"
 	"fmt"
 	"html/template"
@@ -10,14 +11,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"sync"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type state struct {
 	mutex         sync.RWMutex
-	blockServices map[msgs.BlockServiceId]*msgs.BlockServiceInfo
+	blockServices map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	shards        [256]msgs.ShardInfo
 	cdcIp         [4]byte
 	cdcPort       uint16
@@ -26,7 +30,7 @@ type state struct {
 func newBlockServices() *state {
 	return &state{
 		mutex:         sync.RWMutex{},
-		blockServices: make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo),
+		blockServices: make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
 	}
 }
 
@@ -39,7 +43,7 @@ func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = *bs
+		resp.BlockServices[i] = bs
 		i++
 	}
 
@@ -55,20 +59,22 @@ func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *ms
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = *bs
+		resp.BlockServices[i] = bs
 		i++
 	}
 
 	return &resp
 }
 
-func handleRegisterBlockService(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterBlockServiceReq) *msgs.RegisterBlockServiceResp {
+func handleRegisterBlockServices(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.blockServices[req.BlockService.Id] = &req.BlockService
+	for _, bs := range req.BlockServices {
+		s.blockServices[bs.Id] = bs
+	}
 
-	return &msgs.RegisterBlockServiceResp{}
+	return &msgs.RegisterBlockServicesResp{}
 }
 
 func handleShards(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
@@ -126,8 +132,8 @@ func handleRequest(log eggs.LogLevels, s *state, conn *net.TCPConn) {
 	switch whichReq := req.(type) {
 	case *msgs.BlockServicesForShardReq:
 		resp = handleBlockServicesForShard(log, s, conn, whichReq)
-	case *msgs.RegisterBlockServiceReq:
-		resp = handleRegisterBlockService(log, s, conn, whichReq)
+	case *msgs.RegisterBlockServicesReq:
+		resp = handleRegisterBlockServices(log, s, conn, whichReq)
 	case *msgs.ShardsReq:
 		resp = handleShards(log, s, conn, whichReq)
 	case *msgs.RegisterShardReq:
@@ -157,11 +163,15 @@ func noRunawayArgs() {
 type indexBlockService struct {
 	Id            msgs.BlockServiceId
 	Addr          string
-	StorageClass  uint8
+	StorageClass  msgs.StorageClass
 	FailureDomain string
+	Available     string
+	Used          string
+	Path          string
 }
 
 type indexData struct {
+	CDCAddr       string
 	BlockServices []indexBlockService
 	ShardsAddrs   []string
 }
@@ -175,24 +185,16 @@ const indexTemplateStr string = `
 	</head>
 	<body>
 		<h1>Shuckle</h1>
-		<h2>Block services</h2>
+		<h2>CDC</h2>
 		<table>
 			<thead>
 				<tr>
-					<th>Id</th>
 					<th>Address</th>
-					<th>StorageClass</th>
-					<th>FailureDomain</th>
 				</tr>
 			<tbody>
-				{{ range .BlockServices }}
-					<tr>
-						<td><tt>{{.Id}}</tt></td>
-						<td><tt>{{.Addr}}</tt></td>
-						<td>{{.StorageClass}}</td>
-						<td>{{.FailureDomain}}</td>
-					</tr>
-				{{end}}
+				<tr>
+					<td><tt>{{.CDCAddr}}</tt></td>
+				</tr>
 			</tbody>
 		</table>
 		<h2>Shards</h2>
@@ -211,9 +213,55 @@ const indexTemplateStr string = `
 				{{end}}
 			</tbody>
 		</table>
+		<h2>Block services</h2>
+		<table>
+			<thead>
+				<tr>
+					<th>FailureDomain</th>
+					<th>Address</th>
+					<th>Path</th>
+					<th>Id</th>
+					<th>StorageClass</th>
+					<th>Available</th>
+					<th>Used</th>
+				</tr>
+			<tbody>
+				{{ range .BlockServices }}
+					<tr>
+						<td>{{.FailureDomain}}</td>
+						<td><tt>{{.Addr}}</tt></td>
+						<td><tt>{{.Path}}</tt></td>
+						<td><tt>{{.Id}}</tt></td>
+						<td>{{.StorageClass}}</td>
+						<td>{{.Available}}</td>
+						<td>{{.Used}}</td>
+					</tr>
+				{{end}}
+			</tbody>
+		</table>
 	</body>
 </html>
 `
+
+func formatSize(bytes uint64) string {
+	bytesf := float64(bytes)
+	if bytes == 0 {
+		return "0"
+	}
+	if bytesf < 1e6 {
+		return fmt.Sprintf("%.2fKB", bytesf/1e3)
+	}
+	if bytesf < 1e9 {
+		return fmt.Sprintf("%.2fMB", bytesf/1e6)
+	}
+	if bytesf < 1e12 {
+		return fmt.Sprintf("%.2fGB", bytesf/1e9)
+	}
+	if bytesf < 1e15 {
+		return fmt.Sprintf("%.2fTB", bytesf/1e12)
+	}
+	return fmt.Sprintf("%.2fPB", bytesf/1e15)
+}
 
 func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -222,15 +270,34 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	}
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
+
 	data := indexData{}
+	data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
 	for _, bs := range state.blockServices {
 		data.BlockServices = append(data.BlockServices, indexBlockService{
 			Id:            bs.Id,
 			Addr:          fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
 			StorageClass:  bs.StorageClass,
 			FailureDomain: string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
+			Available:     formatSize(bs.Available),
+			Used:          formatSize(bs.Used),
+			Path:          bs.Path,
 		})
 	}
+	sort.Slice(
+		data.BlockServices,
+		func(i, j int) bool {
+			a := data.BlockServices[i]
+			b := data.BlockServices[j]
+			if a.FailureDomain != b.FailureDomain {
+				return a.FailureDomain < b.FailureDomain
+			}
+			if a.Path != b.Path {
+				return a.Path < b.Path
+			}
+			return a.Id < b.Id
+		},
+	)
 	for _, shard := range state.shards {
 		data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
 	}
@@ -240,13 +307,39 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	}
 }
 
+func initDb(log eggs.LogLevels, db *sql.DB) {
+
+}
+
 func main() {
-	httpPort := flag.Uint("http-port", 30000, "Port on which to run the HTTP server")
-	bincodePort := flag.Uint("bincode-port", 30001, "Port on which to run the bincode server.")
+	bincodePort := flag.Uint("bincode-port", 10000, "Port on which to run the bincode server.")
+	httpPort := flag.Uint("http-port", 10001, "Port on which to run the HTTP server")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
+	// databaseFile := flag.String("db-file", "", "File for the sqlite3 database")
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()
 	noRunawayArgs()
+
+	/*
+		if *databaseFile == "" {
+			fmt.Fprintf(os.Stderr, "Please provide a database file with -db-file\n")
+			flag.Usage()
+			os.Exit(2)
+		}
+	*/
+
+	indexTemplate, err := template.New("index").Option("missingkey=error").Parse(indexTemplateStr)
+	if err != nil {
+		panic(err)
+	}
+
+	/*
+		db, err := sql.Open("sqlite3", *databaseFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+	*/
 
 	logOut := os.Stdout
 	if *logFile != "" {
@@ -262,10 +355,7 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	indexTemplate, err := template.New("index").Option("missingkey=error").Parse(indexTemplateStr)
-	if err != nil {
-		panic(err)
-	}
+	// initDb(ll, db)
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

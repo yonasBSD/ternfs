@@ -11,5 +11,6 @@
         "go/runeggs/runeggs": true,
         "go/gcdaemon/gcdaemon": true,
         "go/cli/cli": true,
-    }
+    },
+    "cmake.configureOnOpen": false
 }

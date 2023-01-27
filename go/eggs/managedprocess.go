@@ -254,14 +254,15 @@ func (procs *ManagedProcesses) StartPythonScript(
 }
 
 type BlockServiceOpts struct {
-	Exe           string
-	Path          string
-	Port          uint16
-	StorageClass  string
-	FailureDomain string
-	NoTimeCheck   bool
-	Verbose       bool
-	ShuckleHost   string
+	Exe            string
+	Path           string
+	Port           uint16
+	StorageClass   msgs.StorageClass
+	FailureDomain  string
+	NoTimeCheck    bool
+	Verbose        bool
+	ShuckleAddress string
+	OwnIp          string
 }
 
 func createDataDir(dir string) {
@@ -275,10 +276,10 @@ func createDataDir(dir string) {
 func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServiceOpts) {
 	createDataDir(opts.Path)
 	args := []string{
-		"-storage-class", opts.StorageClass,
 		"-failure-domain", opts.FailureDomain,
 		"-port", fmt.Sprintf("%d", opts.Port),
 		"-log-file", path.Join(opts.Path, "log"),
+		"-own-ip", opts.OwnIp,
 	}
 	if opts.NoTimeCheck {
 		args = append(args, "-no-time-check")
@@ -286,10 +287,10 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
-	if opts.ShuckleHost != "" {
-		args = append(args, "-shuckle", opts.ShuckleHost)
+	if opts.ShuckleAddress != "" {
+		args = append(args, "-shuckle", opts.ShuckleAddress)
 	}
-	args = append(args, opts.Path)
+	args = append(args, opts.Path, opts.StorageClass.String())
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            fmt.Sprintf("block service (port %d)", opts.Port),
 		Exe:             opts.Exe,
@@ -301,10 +302,11 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 }
 
 type EggsFuseOpts struct {
-	Exe     string
-	Path    string
-	Verbose bool
-	Wait    bool
+	Exe            string
+	Path           string
+	Verbose        bool
+	Wait           bool
+	ShuckleAddress string
 }
 
 func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) string {
@@ -313,6 +315,7 @@ func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) s
 	createDataDir(mountPoint)
 	args := []string{
 		"-log-file", path.Join(opts.Path, "log"),
+		"-shuckle", opts.ShuckleAddress,
 	}
 	var signalChan chan os.Signal
 	if opts.Wait {
@@ -370,14 +373,14 @@ func (procs *ManagedProcesses) StartShuckle(ll LogLevels, opts *ShuckleOpts) {
 
 func BuildShuckleExe(ll LogLevels) string {
 	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "shuckle")
+	buildCmd.Dir = path.Join(goDir(), "eggsshuckle")
 	ll.Info("building shuckle")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build shuckle: %w", err))
 	}
-	return path.Join(buildCmd.Dir, "shuckle")
+	return path.Join(buildCmd.Dir, "eggsshuckle")
 }
 
 func BuildBlockServiceExe(ll LogLevels) string {
@@ -405,15 +408,16 @@ func BuildEggsFuseExe(ll LogLevels) string {
 }
 
 type ShardOpts struct {
-	Exe                  string
-	Dir                  string
-	Verbose              bool
-	Shid                 msgs.ShardId
-	Valgrind             bool
-	WaitForBlockServices bool
-	Perf                 bool
-	IncomingPacketDrop   float64
-	OutgoingPacketDrop   float64
+	Exe                string
+	Dir                string
+	Verbose            bool
+	Shid               msgs.ShardId
+	Valgrind           bool
+	Perf               bool
+	IncomingPacketDrop float64
+	OutgoingPacketDrop float64
+	ShuckleAddress     string
+	OwnIp              string
 }
 
 func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
@@ -422,17 +426,16 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 	}
 	createDataDir(opts.Dir)
 	args := []string{
-		"--log-file", path.Join(opts.Dir, "log"),
+		"-log-file", path.Join(opts.Dir, "log"),
 		opts.Dir,
 		fmt.Sprintf("%d", int(opts.Shid)),
-		"--incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
-		"--outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
+		"-incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
+		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
+		"-shuckle", opts.ShuckleAddress,
+		"-own-ip", opts.OwnIp,
 	}
 	if opts.Verbose {
-		args = append(args, "--verbose")
-	}
-	if opts.WaitForBlockServices {
-		args = append(args, "--wait-for-block-services")
+		args = append(args, "-verbose")
 	}
 	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
@@ -452,6 +455,7 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 				"--exit-on-first-error=yes",
 				"-q",
 				fmt.Sprintf("--suppressions=%s", path.Join(cppDir, "valgrind-suppressions")),
+				"--gen-suppressions=all",
 				"--error-exitcode=1",
 				opts.Exe,
 			},
@@ -474,13 +478,13 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 }
 
 type CDCOpts struct {
-	Exe                string
-	Dir                string
-	Verbose            bool
-	Valgrind           bool
-	Perf               bool
-	IncomingPacketDrop float64
-	OutgoingPacketDrop float64
+	Exe            string
+	Dir            string
+	Verbose        bool
+	Valgrind       bool
+	Perf           bool
+	ShuckleAddress string
+	OwnIp          string
 }
 
 func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
@@ -489,11 +493,13 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 	}
 	createDataDir(opts.Dir)
 	args := []string{
-		"--log-file", path.Join(opts.Dir, "log"),
+		"-log-file", path.Join(opts.Dir, "log"),
+		"-shuckle", opts.ShuckleAddress,
+		"-own-ip", opts.OwnIp,
 		opts.Dir,
 	}
 	if opts.Verbose {
-		args = append(args, "--verbose")
+		args = append(args, "-verbose")
 	}
 	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
@@ -536,7 +542,7 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 	}
 }
 
-func WaitForShard(log LogLevels, shid msgs.ShardId, timeout time.Duration) {
+func WaitForShard(log LogLevels, shuckleAddress string, shid msgs.ShardId, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client
@@ -545,7 +551,7 @@ func WaitForShard(log LogLevels, shid msgs.ShardId, timeout time.Duration) {
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
 		}
-		client, err = NewClient(log, &shid, nil, nil)
+		client, err = NewClient(log, shuckleAddress, &shid, nil, nil)
 		if err != nil {
 			time.Sleep(10 * time.Millisecond)
 			continue
@@ -574,14 +580,6 @@ type BuildCppOpts struct {
 
 // Returns build dir
 func buildCpp(ll LogLevels, buildType string, targets []string) string {
-	switch buildType {
-	case "release":
-	case "debug":
-	case "sanitized":
-	case "valgrind":
-	default:
-		panic(fmt.Errorf("bad C++ build type %v, expected release/debug/sanitized/valgrind", buildType))
-	}
 	cppDir := cppDir()
 	buildArgs := append([]string{buildType}, targets...)
 	buildCmd := exec.Command("./build.py", buildArgs...)
@@ -592,7 +590,7 @@ func buildCpp(ll LogLevels, buildType string, targets []string) string {
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build %s: %w", targets, err))
 	}
-	return path.Join(path.Join(cppDir, "build"), buildType)
+	return path.Join(cppDir, "build", buildType)
 }
 
 type CppExes struct {

@@ -745,6 +745,7 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
+	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -776,7 +777,7 @@ func main() {
 	}
 
 	var err error
-	client, err = eggs.NewClient(log, nil, nil, nil)
+	client, err = eggs.NewClient(log, *shuckleAddress, nil, nil, nil)
 	if err != nil {
 		panic(err)
 	}

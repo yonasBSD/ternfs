@@ -57,9 +57,11 @@ type Client struct {
 // a socket each time. TODO not sure this is the best way forward
 func NewClient(
 	log LogLevels,
-	shid *msgs.ShardId, counters *ClientCounters, cdcKey cipher.Block,
+	shuckleAddress string,
+	shid *msgs.ShardId,
+	counters *ClientCounters,
+	cdcKey cipher.Block,
 ) (*Client, error) {
-	shuckleAddress := "localhost:39999"
 	c := Client{}
 	{
 		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})

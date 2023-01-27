@@ -335,6 +335,7 @@ type fileHistoryTestOpts struct {
 
 func fileHistoryTest(
 	log eggs.LogLevels,
+	shuckleAddress string,
 	mbs0 eggs.MockableBlockServices,
 	opts *fileHistoryTestOpts,
 	counters *eggs.ClientCounters,
@@ -357,7 +358,7 @@ func fileHistoryTest(
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
 				shid := msgs.ShardId(0)
-				client, err := eggs.NewClient(log, &shid, counters, nil)
+				client, err := eggs.NewClient(log, shuckleAddress, &shid, counters, nil)
 				if err != nil {
 					panic(err)
 				}

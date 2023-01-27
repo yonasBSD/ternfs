@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
 	"flag"
@@ -19,6 +20,8 @@ import (
 	"time"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
+
+	"golang.org/x/sys/unix"
 )
 
 var stacktraceLock sync.Mutex
@@ -47,20 +50,38 @@ func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
 	return msgs.BlockServiceId(binary.LittleEndian.Uint64(secretKey[:8]) & uint64(0x7FFFFFFFFFFFFFFF))
 }
 
-func registerPeriodically(log eggs.LogLevels, port uint16, storageClass uint8, failureDomain [16]byte, secretKey [16]byte, shuckleAddress string) {
+func registerPeriodically(
+	log eggs.LogLevels,
+	ip [4]byte,
+	port uint16,
+	failureDomain [16]byte,
+	blockServices map[msgs.BlockServiceId]blockService,
+	shuckleAddress string,
+) {
+	req := msgs.RegisterBlockServicesReq{}
+	for id, blockService := range blockServices {
+		var statfs unix.Statfs_t
+		if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
+			panic(err)
+		}
+		bs := msgs.BlockServiceInfo{
+			Id:            id,
+			Ip:            ip,
+			SecretKey:     blockService.key,
+			Port:          port,
+			StorageClass:  blockService.storageClass,
+			FailureDomain: failureDomain,
+			Available:     statfs.Bavail * uint64(statfs.Bsize),
+			Used:          (statfs.Bavail - statfs.Bfree) * uint64(statfs.Bsize),
+			Path:          blockService.path,
+		}
+		req.BlockServices = append(req.BlockServices, bs)
+	}
 	for {
-		req := msgs.RegisterBlockServiceReq{}
-		req.BlockService.Id = blockServiceIdFromKey(secretKey)
-		req.BlockService.Ip = [4]byte{127, 0, 0, 1}
-		req.BlockService.SecretKey = secretKey
-		req.BlockService.Port = port
-		req.BlockService.StorageClass = storageClass
-		req.BlockService.FailureDomain = failureDomain
-
 		_, err := eggs.ShuckleRequest(log, shuckleAddress, &req)
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("could not register block service %v with %v: %w", req.BlockService.Id, shuckleAddress, err))
-			time.Sleep(10 * time.Millisecond)
+			log.RaiseAlert(fmt.Errorf("could not register block services with %v: %w", shuckleAddress, err))
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		log.Info("registered with %v, waiting a minute", shuckleAddress)
@@ -90,13 +111,13 @@ func deserEraseBlock(blockServiceId msgs.BlockServiceId, cipher cipher.Block, ki
 }
 
 func blockIdToPath(basePath string, blockId msgs.BlockId) string {
-	// 256 subdirs
 	hex := fmt.Sprintf("%08x", uint64(blockId))
-	// dir is the first byte of the SHA1 of the little endian blockId. We need this
-	// because the block ids are not necessarily uniform (and they're very much
-	// not uniform right now, since it's the timestamp).
+	// We want to split the blocks in dirs to avoid trouble with high number of
+	// files in single directory (e.g. birthday paradox stuff). However the block
+	// id is very much _not_ uniformly distributed (it's the time). So we use
+	// the first byte of the SHA1 of the filename of the block id.
 	h := sha1.New()
-	binary.Write(h, binary.LittleEndian, uint64(blockId))
+	h.Write([]byte(hex))
 	dir := fmt.Sprintf("%02x", h.Sum(nil)[0])
 	return path.Join(path.Join(basePath, dir), hex)
 }
@@ -272,31 +293,31 @@ const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
 const MAX_OBJECT_SIZE uint32 = 100e6
 
 func handleRequest(
-	log eggs.LogLevels, terminateChan chan any, basePath string, conn *net.TCPConn, timeCheck bool, key [16]byte,
+	log eggs.LogLevels,
+	terminateChan chan any,
+	blockServices map[msgs.BlockServiceId]blockService,
+	conn *net.TCPConn,
+	timeCheck bool,
 ) {
 	defer conn.Close()
 
-	// we don't have error responses, we just close the connn
+	// We currently do not have error responses, we just close the
+	// connection.
 	conn.SetLinger(0)
 
-	blockServiceId := blockServiceIdFromKey(key)
-
-	cipher, err := aes.NewCipher(key[:])
-	if err != nil {
-		panic(fmt.Errorf("could not create AES-128 key: %w", err))
-	}
-
 	for {
-		var reqBlockServiceId msgs.BlockServiceId
-		if err := binary.Read(conn, binary.LittleEndian, (*uint64)(&reqBlockServiceId)); err != nil {
-			if err != io.EOF {
+		var blockServiceId msgs.BlockServiceId
+		if err := binary.Read(conn, binary.LittleEndian, (*uint64)(&blockServiceId)); err != nil {
+			if err == io.EOF {
+				log.Debug("got EOF, terminating")
+			} else {
 				handleReqError(log, err)
 			}
-			log.Debug("got EOF, terminating")
 			return
 		}
-		if reqBlockServiceId != blockServiceIdFromKey(key) {
-			handleReqError(log, fmt.Errorf("expected block service id %v, got %v", blockServiceIdFromKey(key), reqBlockServiceId))
+		blockService, found := blockServices[blockServiceId]
+		if !found {
+			handleReqError(log, fmt.Errorf("received unknown block service id %v", blockServiceId))
 			return
 		}
 		var kind byte
@@ -309,7 +330,7 @@ func handleRequest(
 		case 'e':
 			// erase block
 			// (block_id, mac) -> data
-			blockId, err := deserEraseBlock(blockServiceId, cipher, kind, conn)
+			blockId, err := deserEraseBlock(blockServiceId, blockService.cipher, kind, conn)
 			if err != nil {
 				handleReqError(log, err)
 				return
@@ -318,8 +339,8 @@ func handleRequest(
 				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted", blockId))
 				return
 			}
-			eraseBlock(log, basePath, blockId) // can never fail
-			if err := serEraseCert(blockServiceId, cipher, blockId, conn); err != nil {
+			eraseBlock(log, blockService.path, blockId) // can never fail
+			if err := serEraseCert(blockServiceId, blockService.cipher, blockId, conn); err != nil {
 				handleReqError(log, err)
 				return
 			}
@@ -331,14 +352,14 @@ func handleRequest(
 				handleReqError(log, err)
 				return
 			}
-			if err := sendFetchBlock(log, blockServiceId, basePath, blockId, offset, count, conn); err != nil {
+			if err := sendFetchBlock(log, blockServiceId, blockService.path, blockId, offset, count, conn); err != nil {
 				handleReqError(log, err)
 				return
 			}
 		case 'w':
 			// write block
 			// (block_id, crc, size, mac) -> data
-			blockId, crc, size, err := deserWriteBlock(cipher, blockServiceId, kind, conn)
+			blockId, crc, size, err := deserWriteBlock(blockService.cipher, blockServiceId, kind, conn)
 			if err != nil {
 				handleReqError(log, err)
 				return
@@ -347,11 +368,11 @@ func handleRequest(
 				handleReqError(log, fmt.Errorf("block %v exceeds max object size: %v > %v", blockId, size, MAX_OBJECT_SIZE))
 				return
 			}
-			if err := writeBlock(log, basePath, blockId, crc, size, conn); err != nil {
+			if err := writeBlock(log, blockService.path, blockId, crc, size, conn); err != nil {
 				handleReqError(log, err)
 				return
 			}
-			if err := serWriteCert(blockServiceId, cipher, blockId, conn); err != nil {
+			if err := serWriteCert(blockServiceId, blockService.cipher, blockId, conn); err != nil {
 				handleReqError(log, err)
 				return
 			}
@@ -360,24 +381,107 @@ func handleRequest(
 	}
 }
 
+func usage() {
+	fmt.Fprintf(os.Stderr, "Usage: %v DIRECTORY STORAGE_CLASS...\n\n", os.Args[0])
+	description := `
+For each directory/storage class pair specified we'll have one block
+service. The block service id for each will be automatically generated
+when running for the first time. The failure domain will be the same.
+
+The intention is that a single blockservice process will service
+a storage node.
+
+Options:`
+	description = strings.TrimSpace(description)
+	fmt.Fprintln(os.Stderr, description)
+	flag.PrintDefaults()
+}
+
+func retrieveOrCreateKey(log eggs.LogLevels, dir string) [16]byte {
+	var err error
+	if err := os.Mkdir(dir, 0777); err != nil && !os.IsExist(err) {
+		panic(fmt.Errorf("could not create data dir %v", dir))
+	}
+	var keyFile *os.File
+	keyFilePath := path.Join(dir, "secret.key")
+	keyFile, err = os.OpenFile(keyFilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not open key file %v: %v\n", keyFilePath, err)
+		os.Exit(1)
+	}
+	keyFile.Seek(0, 0)
+	if err := syscall.Flock(int(keyFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "could not lock key file %v: %v\n", keyFilePath, err)
+		os.Exit(1)
+	}
+	var key [16]byte
+	var read int
+	read, err = keyFile.Read(key[:])
+	if err != nil && err != io.EOF {
+		fmt.Fprintf(os.Stderr, "could not read key file %v: %v\n", keyFilePath, err)
+		os.Exit(1)
+	}
+	if err == io.EOF {
+		log.Info("creating new secret key")
+		if _, err := rand.Read(key[:]); err != nil {
+			panic(err)
+		}
+		if _, err := keyFile.Write(key[:]); err != nil {
+			panic(err)
+		}
+	} else if read != 16 {
+		panic(fmt.Errorf("short secret key (%v rather than 16 bytes)", read))
+	}
+	return key
+}
+
+type blockService struct {
+	path         string
+	key          [16]byte
+	cipher       cipher.Block
+	storageClass msgs.StorageClass
+}
+
 func main() {
-	storageClassStr := flag.String("storage-class", "HDD", "Storage class")
+	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
 	noTimeCheck := flag.Bool("no-time-check", false, "Do not perform block deletion time check (to prevent replay attacks). Useful for testing.")
-	port := flag.Uint("port", 0, "")
+	port := flag.Uint("port", 0, "Port on which to run on. By default it will be picked automatically.")
 	verbose := flag.Bool("verbose", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
-	shuckleAddress := flag.String("shuckle", "localhost:5000", "Shuckle address")
+	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	ownIpStr := flag.String("own-ip", "", "IP that we'll advertise to shuckle.")
 	flag.Parse()
-	storageClass := eggs.StorageClassFromString(*storageClassStr)
-	if flag.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "Expected one positional argument with the path to the root of the storage partition.\n")
+	if flag.NArg()%2 != 0 {
+		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
+		usage()
 		os.Exit(2)
 	}
-	dataDir := flag.Args()[0]
+	if flag.NArg() < 2 {
+		fmt.Fprintf(os.Stderr, "Expected at least one block service.\n\n")
+		usage()
+		os.Exit(2)
+	}
+
+	if *ownIpStr == "" {
+		fmt.Fprintf(os.Stderr, "-own-ip must be provided.\n\n")
+		usage()
+		os.Exit(2)
+	}
+
+	parsedOwnIp := net.ParseIP(*ownIpStr)
+	if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
+		fmt.Fprintf(os.Stderr, "-own-ip %v is not a valid ipv4 address. %v\n\n", *ownIpStr, parsedOwnIp)
+		usage()
+		os.Exit(2)
+	}
+	var ownIP [4]byte
+	copy(ownIP[:], parsedOwnIp.To4())
+
 	var failureDomain [16]byte
 	if copy(failureDomain[:], []byte(*failureDomainStr)) != len(*failureDomainStr) {
-		fmt.Fprintf(os.Stderr, "Failure domain too long -- must be at most 16 characters: %v\n", *failureDomainStr)
+		fmt.Fprintf(os.Stderr, "Failure domain too long -- must be at most 16 characters: %v\n\n", *failureDomainStr)
+		usage()
 		os.Exit(2)
 	}
 
@@ -396,39 +500,29 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	var err error
-	var keyFile *os.File
-	keyFilePath := path.Join(dataDir, "secret.key")
-	keyFile, err = os.OpenFile(keyFilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not open key file %v: %v\n", *logFile, err)
-		os.Exit(1)
-	}
-	keyFile.Seek(0, 0)
-	if err := syscall.Flock(int(keyFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		fmt.Fprintf(os.Stderr, "could not lock key file %v: %v\n", keyFilePath, err)
-		os.Exit(1)
-	}
-	var key [16]byte
-	var read int
-	read, err = keyFile.Read(key[:])
-	if err != nil && err != io.EOF {
-		fmt.Fprintf(os.Stderr, "could not read key file %v: %v\n", keyFilePath, err)
-		os.Exit(1)
-	}
-	if err == io.EOF {
-		log.Info("creating new secret key")
-		var urandom *os.File
-		urandom, err = os.Open("/dev/urandom")
+	blockServices := make(map[msgs.BlockServiceId]blockService)
+	for i := 0; i < flag.NArg(); i += 2 {
+		dir := flag.Args()[i]
+		storageClass := msgs.StorageClassFromString(flag.Args()[i+1])
+		if storageClass == msgs.EMPTY_STORAGE || storageClass == msgs.INLINE_STORAGE {
+			fmt.Fprintf(os.Stderr, "Storage class cannot be EMPTY/INLINE")
+			os.Exit(2)
+		}
+		key := retrieveOrCreateKey(log, dir)
+		id := blockServiceIdFromKey(key)
+		cipher, err := aes.NewCipher(key[:])
 		if err != nil {
-			panic(err)
+			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
-		if _, err := io.ReadFull(urandom, key[:]); err != nil {
-			panic(err)
+		blockServices[id] = blockService{
+			path:         dir,
+			key:          key,
+			cipher:       cipher,
+			storageClass: storageClass,
 		}
-	} else if read != 16 {
-		fmt.Fprintf(os.Stderr, "short secret key (%v rather than 16 bytes)\n", read)
-		os.Exit(1)
+	}
+	if len(blockServices) != flag.NArg()/2 {
+		panic(fmt.Errorf("duplicate block services!"))
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *port))
@@ -444,7 +538,7 @@ func main() {
 
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
-		registerPeriodically(log, actualPort, storageClass, failureDomain, key, *shuckleAddress)
+		registerPeriodically(log, ownIP, actualPort, failureDomain, blockServices, *shuckleAddress)
 	}()
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
@@ -456,7 +550,7 @@ func main() {
 			}
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
-				handleRequest(log, terminateChan, dataDir, conn.(*net.TCPConn), !*noTimeCheck, key)
+				handleRequest(log, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
 			}()
 		}
 	}()

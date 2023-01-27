@@ -29,10 +29,9 @@ private:
     std::mutex _applyLock;
 public:
     ShardDB& db;
-    std::atomic<bool> gotBlockServices;
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_), gotBlockServices(false) {
+    ShardShared(ShardDB& db_): db(db_) {
         _currentLogIndex = db.lastAppliedLogEntry();
     }
 
@@ -50,10 +49,10 @@ private:
     ShardShared& _shared;
     ShardId _shid;
     uint16_t _port;
+    std::array<uint8_t, 4> _ownIp;
     std::atomic<bool> _stop;
-    std::string _shuckleAddr;
+    std::string _shuckleHost;
     uint16_t _shucklePort;
-    bool _waitForBlockServices;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
@@ -63,10 +62,10 @@ public:
         _shared(shared),
         _shid(shid),
         _port(options.port),
+        _ownIp(options.ownIp),
         _stop(false),
-        _shuckleAddr(options.shuckleAddr),
+        _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
-        _waitForBlockServices(options.waitForBlockServices),
         _packetDropRand((int)shid.u8 + 1), // CDC is 0
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
@@ -142,12 +141,6 @@ public:
                 break;
             }
 
-            if (_waitForBlockServices && !_shared.gotBlockServices.load()) {
-                LOG_DEBUG(_env, "need to wait for shuckle, waiting");
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-
             // Read one request
             memset(&clientAddr, 0, sizeof(clientAddr));
             socklen_t addrLen = sizeof(clientAddr);
@@ -166,7 +159,7 @@ public:
             ShardRequestHeader reqHeader;
             try {
                 reqHeader.unpack(reqBbuf);
-            } catch (BincodeException err) {
+            } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
                 RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", clientAddr);
                 continue;
@@ -187,7 +180,7 @@ public:
             try {
                 reqContainer->unpack(reqBbuf, reqHeader.kind);
                 LOG_DEBUG(_env, "parsed request: %s", *reqContainer);
-            } catch (BincodeException exc) {
+            } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "%s\nstacktrace:\n%s", exc.what(), exc.getStackTrace());
                 RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
                 err = EggsError::MALFORMED_REQUEST;
@@ -257,11 +250,10 @@ private:
                 return;
             }
             LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, _port);
-            std::array<uint8_t, 4> addr{127,0,0,1};
-            std::string err = registerShard(_shuckleAddr, _shucklePort, 100_ms, _shid, addr, _port);
+            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, _ownIp, _port);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
             break;
@@ -281,18 +273,16 @@ private:
     ShardShared& _shared;
     std::atomic<bool> _stop;
     ShardId _shid;
-    std::string _shuckleAddr;
+    std::string _shuckleHost;
     uint16_t _shucklePort;
-    bool _waitForShuckle;
 public:
     ShardShuckleUpdater(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
         _env(logger, "shuckle_updater"),
         _shared(shared),
         _stop(false),
         _shid(shid),
-        _shuckleAddr(options.shuckleAddr),
-        _shucklePort(options.shucklePort),
-        _waitForShuckle(options.waitForBlockServices)
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort)
     {}
 
     virtual ~ShardShuckleUpdater() = default;
@@ -310,7 +300,6 @@ public:
         EggsTime t0 = eggsNow();
         EggsTime lastRequestT = 0;
         bool lastRequestSuccessful = false;
-        bool reachedButEmpty = false;
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();
 
@@ -324,16 +313,6 @@ public:
                 break;
             }
 
-            if (_waitForShuckle && !_shared.gotBlockServices.load() && (eggsNow() - t0) > 5_sec) {
-                // if we refuse to start the server and we haven't reached shuckle within 5 secs,
-                // fail hard
-                if (reachedButEmpty) {
-                    throw EGGS_EXCEPTION("reached shuckle, but got no block services, and _waitForShuckle=true, terminating");
-                } else {
-                    throw EGGS_EXCEPTION("could not reach shuckle in time, and _waitForShuckle=true, terminating");
-                }
-            }
-
             EggsTime t = eggsNow();
             if (lastRequestSuccessful && (t - lastRequestT) < 1_mins) {
                 // wait 60 secs before requesting again
@@ -345,14 +324,13 @@ public:
             }
 
             logEntry->time = eggsNow();
-            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleAddr, _shucklePort);
+            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleHost, _shucklePort);
             std::string err;
 
-            err = fetchBlockServices(_shuckleAddr, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());
+            err = fetchBlockServices(_shuckleHost, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());
             lastRequestSuccessful = err.empty();
             if (lastRequestSuccessful && logEntry->body.getUpdateBlockServices().blockServices.els.empty()) {
                 lastRequestSuccessful = false;
-                reachedButEmpty = true;
                 err = "no block services";
             }
             lastRequestT = t;
@@ -369,8 +347,6 @@ public:
                     GO_TO_NEXT_ITERATION
                 }
             }
-
-            _shared.gotBlockServices.store(true);
         }
 
         #undef GO_TO_NEXT_ITERATION

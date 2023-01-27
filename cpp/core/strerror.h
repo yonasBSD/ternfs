@@ -1,0 +1,1 @@
+const char* safe_strerror(int errnum);

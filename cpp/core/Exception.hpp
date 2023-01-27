@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "FormatTuple.hpp"
+#include "strerror.h"
 
 #define EGGS_EXCEPTION(...) EggsException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))
 #define SYSCALL_EXCEPTION(...) SyscallException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), errno, VALIDATE_FORMAT(__VA_ARGS__))
@@ -87,8 +88,7 @@ SyscallException::SyscallException(int line, const char *file, const char *funct
     _errno(capturedErrno)
 {
 
-    char errbuf[64];
-    const char *errmsg = strerror_r(_errno, errbuf, sizeof(errbuf));
+    const char* errmsg = safe_strerror(_errno);
 
     std::stringstream ss;
     ss << "SyscallException(" << file << "@" << line << ", " << _errno << "/" << translateErrno(_errno) << "=" << errmsg << " in " << function << "):\n";

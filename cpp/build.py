@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 import sys
 import os
-import pathlib
+from pathlib import Path
 import subprocess
 
-if len(sys.argv) < 2 or sys.argv[1] not in ('release', 'sanitized', 'debug', 'valgrind'):
-    print(f'Usage: {sys.argv[0]} release|sanitized|debug|valgrind [NINJA_ARG ...]', file=sys.stderr)
+if len(sys.argv) < 2:
+    print(f'Usage: {sys.argv[0]} release|alpine|sanitized|debug|valgrind [NINJA_ARG ...]', file=sys.stderr)
     sys.exit(2)
 
-typ = sys.argv[1]
-
-if typ == 'release':
-    cmake_build = 'Release'
-    build_dir = 'build/release'
-elif typ == 'valgrind':
-    cmake_build = 'Valgrind'
-    build_dir = 'build/valgrind'
-elif typ == 'sanitized':
-    cmake_build = 'Sanitized'
-    build_dir = 'build/sanitized'
-elif typ == 'debug':
-    cmake_build = 'Debug'
-    build_dir = 'build/debug'
+if len(sys.argv) == 1:
+    build_type = 'alpine'
 else:
-    assert False
+    build_type = sys.argv[1]
 
-build_dir = f'{os.path.dirname(__file__)}/{build_dir}'
-pathlib.Path(build_dir).mkdir(parents=True, exist_ok=True)
-os.chdir(build_dir)
+cpp_dir = Path(__file__).parent
+build_dir = cpp_dir / 'build' / build_type
+build_dir.mkdir(parents=True, exist_ok=True)
 
-subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={cmake_build}', '../..'])
-subprocess.run(['ninja'] + sys.argv[2:])
+if build_type == 'alpine' and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
+    subprocess.run(
+        ['docker', 'run', '-i', '--mount', f'type=bind,src={cpp_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/build.py', 'alpine'],
+        check=True,
+    )
+else:
+    os.chdir(str(build_dir))
+    subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={build_type}', '../..'], check=True)
+    subprocess.run(['ninja'] + sys.argv[2:], check=True)

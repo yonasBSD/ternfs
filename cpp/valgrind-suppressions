@@ -9,3 +9,13 @@
    fun:_ULx86_64_step
    ...
 }
+# # I'm not sure why it picks the slow version (it shouldn't), even
+# # if I do build for Haskell with valgrind it should still have
+# # the required instructions. Worth investigating
+# {
+#    rocksdb-crc32c
+#    Memcheck:Value8
+#    ...
+#    fun:_ZN7rocksdb6crc32c10ExtendImplIXadL_ZNS0_L10Slow_CRC32EPmPPKhEEEEjjPKcm
+#    ...
+# }

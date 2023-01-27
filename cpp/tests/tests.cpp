@@ -319,7 +319,7 @@ TEST_CASE("ShardDB data") {
             db.db->Put({}, currentKey->toSlice(), current.toSlice())
         );
 
-        WrappedIterator it(db.db->NewIterator({}));
+        std::unique_ptr<rocksdb::Iterator> it(db.db->NewIterator({}));
         // we first go to the current edge, to emulate what readdir does
         {
             auto key = EdgeKey::NewCurrent(0);

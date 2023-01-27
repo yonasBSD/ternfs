@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/utilities/transaction.h>
 
@@ -43,68 +44,6 @@ public:
 private:
     std::string _msg;
 };
-
-// Just to avoid having to call delete manually
-struct WrappedIterator {
-    WrappedIterator(rocksdb::Iterator* it): _it(it) {
-        ALWAYS_ASSERT(_it);
-    }
-
-    ~WrappedIterator() {
-        delete _it;
-    }
-
-    rocksdb::Iterator* operator->() {
-        return _it;
-    }
-
-private:
-    rocksdb::Iterator* _it;
-};
-
-// Just to avoid having to call delete manually
-struct WrappedTransaction {
-    WrappedTransaction(rocksdb::Transaction* txn): _txn(txn) {
-        ALWAYS_ASSERT(_txn);
-    }
-
-    ~WrappedTransaction() {
-        delete _txn;
-    }
-
-    rocksdb::Transaction* operator->() {
-        return _txn;
-    }
-
-    rocksdb::Transaction& operator*() {
-        return *_txn;
-    }
-
-private:
-    rocksdb::Transaction* _txn;
-};
-
-// Just to avoid having to call release manually. `db` must outlive the snapshot.
-struct WrappedSnapshot {
-private:
-    rocksdb::DB* _db;
-
-public:
-    const rocksdb::Snapshot* snapshot;
-
-    WrappedSnapshot(rocksdb::DB* db): _db(db), snapshot(db->GetSnapshot()) {
-        ALWAYS_ASSERT(snapshot);
-    }
-
-    ~WrappedSnapshot() {
-        _db->ReleaseSnapshot(snapshot);
-    }
-
-    const rocksdb::Snapshot* operator->() {
-        return snapshot;
-    }
-};
-
 
 // We use byteswap to go from LE to BE, and vice-versa.
 static_assert(std::endian::native == std::endian::little);
@@ -247,12 +186,12 @@ public:
         memcpy(&x, _data+offset, sizeof(x)); \
         x = byteswapU64(x); /* BE -> LE */ \
         type v; \
-        memcpy(&v, &x, sizeof(uint64_t)); \
+        memcpy(&v, (char*)&x, sizeof(uint64_t)); \
         return v; \
     } \
     void setName(type v) { \
         uint64_t x; \
-        memcpy(&x, &v, sizeof(uint64_t)); \
+        memcpy(&x, (char*)&v, sizeof(uint64_t)); \
         x = byteswapU64(x); /* LE -> BE */ \
         memcpy(_data+offset, &x, sizeof(x)); \
     }

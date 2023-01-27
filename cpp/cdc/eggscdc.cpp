@@ -1,23 +1,57 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <filesystem>
+#include <arpa/inet.h>
 
+#include "Shuckle.hpp"
 #include "CDC.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
+void usage(const char* binary) {
+    fprintf(stderr, "Usage: %s DIRECTORY\n\n", binary);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, " -log-level debug|info|error\n");
+    fprintf(stderr, "    	Note that 'debug' will only work for debug builds.\n");
+    fprintf(stderr, " -verbose\n");
+    fprintf(stderr, "    	Same as '-log-level debug'.\n");
+    fprintf(stderr, " -shuckle host:port\n");
+    fprintf(stderr, "    	How to reach shuckle, default '%s'\n", defaultShuckleAddress.c_str());
+    fprintf(stderr, " -own-ip ipv4 address\n");
+    fprintf(stderr, "    	How to advertise ourselves to shuckle.\n");
+    fprintf(stderr, " -log-file string\n");
+    fprintf(stderr, "    	If not provided, stdout.\n");
+}
+
+static std::array<uint8_t, 4> parseIpv4(const char* binary, const std::string& arg) {
+    struct sockaddr_in addr;
+    int res = inet_pton(AF_INET, arg.c_str(), &addr.sin_addr);
+    if (res == 0) {
+        fprintf(stderr, "Invalid ipv4 address '%s'\n\n", arg.c_str());
+        usage(binary);
+        exit(2);
+    }
+    std::array<uint8_t, 4> out;
+    static_assert(sizeof(addr.sin_addr) == sizeof(out));
+    memcpy(out.data(), &addr.sin_addr, sizeof(addr.sin_addr));
+    return out;
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
-    const auto dieWithUsage = [&argv]() {
-        die("Usage: %s [-v|--verbose] [--log-level debug|info|error] [--log-file <file_path>] [--packet-drop <probability>] db_dir\n", argv[0]);
+    const auto dieWithUsage = [&argv]() { 
+        usage(argv[0]);
+        exit(2);
     };
 
     CDCOptions options;
     std::vector<std::string> args;
+    std::string shuckleAddress = defaultShuckleAddress;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
             if (i+1 >= argc) {
+                fprintf(stderr, "Argument list ended too early.\n\n");
                 dieWithUsage();
             }
             std::string arg(argv[i+1]);
@@ -25,11 +59,11 @@ int main(int argc, char** argv) {
             return arg;
         };
         std::string arg = argv[i];
-        if (arg == "-h" || arg == "--help") {
+        if (arg == "-h" || arg == "-help") {
             dieWithUsage();
-        } else if (arg == "-v" || arg == "--verbose") {
+        } else if (arg == "-verbose") {
             options.level = std::min<LogLevel>(LogLevel::LOG_DEBUG, options.level);
-        } else if (arg == "--log-level") {
+        } else if (arg == "-log-level") {
             std::string logLevel = getNextArg();
             if (logLevel == "debug") {
                 options.level = LogLevel::LOG_DEBUG;
@@ -40,40 +74,46 @@ int main(int argc, char** argv) {
             } else {
                 die("Bad log level `%s'", logLevel.c_str());
             }
-        } else if (arg == "--log-file") {
+        } else if (arg == "-log-file") {
             options.logFile = getNextArg();
-        } else if (arg == "--packet-drop") {
-            std::string probStr = getNextArg();
-            size_t idx;
-            options.simulatePacketDrop = std::stod(probStr, &idx);
-            if (idx != probStr.size()) {
-                die("Runoff characters in number %s", probStr.c_str());
-            }
-            if (options.simulatePacketDrop < 0.0 || options.simulatePacketDrop >= 1.0) {
-                die("Please specify a number in the interval [0.0, 1.0) for --packet-drop.");
-            }
+        } else if (arg == "-shuckle") {
+            shuckleAddress = getNextArg();
+        } else if (arg == "-own-ip") {
+            options.ownIp = parseIpv4(argv[0], getNextArg());
         } else {
             args.emplace_back(std::move(arg));
         }
     }
 
     if (args.size() != 1) {
+        fprintf(stderr, "Expecting one positional argument (DIRECTORY), got %ld.\n", args.size());
         dieWithUsage();
     }
 
 #ifndef EGGS_DEBUG
     if (options.level <= LogLevel::LOG_DEBUG) {
-        die("Cannot use --verbose for non-debug builds (it won't work).");
+        die("Cannot use -verbose for non-debug builds (it won't work).");
     }
 #endif
+
+    if (!parseShuckleAddress(shuckleAddress, options.shuckleHost, options.shucklePort)) {
+        fprintf(stderr, "Bad shuckle address '%s'.\n\n", shuckleAddress.c_str());
+        dieWithUsage();
+    }
+
+    if (options.ownIp == std::array<uint8_t, 4>{0,0,0,0}) {
+        fprintf(stderr, "Please provide -own-ip.\n\n");
+        usage(argv[0]);
+        exit(2);
+    }
 
     fs::path dbDir(args.at(0));
     auto dbDirStatus = fs::status(dbDir);
     if (dbDirStatus.type() == fs::file_type::not_found) {
-        die("Could not find DB directory `%s'.\n", dbDir.c_str());
+        die("Could not find DB directory '%s'.\n", dbDir.c_str());
     }
     if (dbDirStatus.type() != fs::file_type::directory) {
-        die("DB directory `%s' is not a directory.\n", dbDir.c_str());
+        die("DB directory '%s' is not a directory.\n", dbDir.c_str());
     }
 
     runCDC(dbDir, options);

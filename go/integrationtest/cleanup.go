@@ -44,10 +44,11 @@ func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, na
 
 func cleanupAfterTest(
 	log eggs.LogLevels,
+	shuckleAddress string,
 	counters *eggs.ClientCounters,
 	mbs eggs.MockableBlockServices,
 ) {
-	client, err := eggs.NewClient(log, nil, counters, nil)
+	client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -82,10 +83,10 @@ func cleanupAfterTest(
 		}
 	}
 	// Collect everything
-	if err := eggs.CollectDirectoriesInAllShards(log, counters); err != nil {
+	if err := eggs.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
 		panic(err)
 	}
-	if err := eggs.DestructFilesInAllShards(log, counters, mbs); err != nil {
+	if err := eggs.DestructFilesInAllShards(log, shuckleAddress, counters, mbs); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left

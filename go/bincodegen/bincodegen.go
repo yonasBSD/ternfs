@@ -1392,8 +1392,8 @@ func main() {
 		},
 		{
 			0x02,
-			reflect.TypeOf(msgs.RegisterBlockServiceReq{}),
-			reflect.TypeOf(msgs.RegisterBlockServiceResp{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
 		},
 		{
 			0x03,
@@ -1468,13 +1468,13 @@ func main() {
 	defer cOutFile.Close()
 	cOutFile.Write(generateC(errors, shardReqResps, cdcReqResps, extras))
 
-	hppOutFilename := fmt.Sprintf("%s/../../cpp/MsgsGen.hpp", cwd)
+	hppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd)
 	hppOutFile, err := os.Create(hppOutFilename)
 	if err != nil {
 		panic(err)
 	}
 	defer hppOutFile.Close()
-	cppOutFilename := fmt.Sprintf("%s/../../cpp/MsgsGen.cpp", cwd)
+	cppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd)
 	cppOutFile, err := os.Create(cppOutFilename)
 	if err != nil {
 		panic(err)

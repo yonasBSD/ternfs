@@ -468,6 +468,7 @@ func findBlockServiceToPurge(log eggs.LogLevels, client *eggs.Client) msgs.Block
 
 func fsTestInternal[Id comparable](
 	log eggs.LogLevels,
+	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,
 	mbs eggs.MockableBlockServices,
@@ -536,7 +537,7 @@ func fsTestInternal[Id comparable](
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
 	{
-		client, err := eggs.NewClient(log, nil, counters, nil)
+		client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -558,13 +559,14 @@ func fsTestInternal[Id comparable](
 
 func fsTest(
 	log eggs.LogLevels,
+	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,
 	mbs eggs.MockableBlockServices,
 	realFs string, // if non-empty, will run the tests using this mountpoint
 ) {
 	if realFs == "" {
-		client, err := eggs.NewClient(log, nil, counters, nil)
+		client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -573,9 +575,9 @@ func fsTest(
 			client: client,
 			mbs:    mbs,
 		}
-		fsTestInternal[msgs.InodeId](log, opts, counters, mbs, harness, msgs.ROOT_DIR_INODE_ID)
+		fsTestInternal[msgs.InodeId](log, shuckleAddress, opts, counters, mbs, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{}
-		fsTestInternal[string](log, opts, counters, mbs, harness, realFs)
+		fsTestInternal[string](log, shuckleAddress, opts, counters, mbs, harness, realFs)
 	}
 }

@@ -83,7 +83,11 @@ func DestructFile(
 }
 
 func destructFilesInternal(
-	log LogLevels, client *Client, shid msgs.ShardId, stats *DestructionStats, blockService MockableBlockServices,
+	log LogLevels,
+	client *Client,
+	shid msgs.ShardId,
+	stats *DestructionStats,
+	blockService MockableBlockServices,
 ) error {
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
@@ -110,9 +114,9 @@ func destructFilesInternal(
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
 func DestructFiles(
-	log LogLevels, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
+	log LogLevels, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
 ) error {
-	client, err := NewClient(log, &shid, counters, nil)
+	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -126,9 +130,12 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log LogLevels, counters *ClientCounters, blockService MockableBlockServices,
+	log LogLevels,
+	shuckleAddress string,
+	counters *ClientCounters,
+	blockService MockableBlockServices,
 ) error {
-	client, err := NewClient(log, nil, counters, nil)
+	client, err := NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -317,8 +324,8 @@ func collectDirectoriesInternal(log LogLevels, client *Client, stats *CollectSta
 	return nil
 }
 
-func CollectDirectories(log LogLevels, counters *ClientCounters, shid msgs.ShardId) error {
-	client, err := NewClient(log, &shid, counters, nil)
+func CollectDirectories(log LogLevels, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
+	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
 		return err
 	}
@@ -331,8 +338,8 @@ func CollectDirectories(log LogLevels, counters *ClientCounters, shid msgs.Shard
 	return nil
 }
 
-func CollectDirectoriesInAllShards(log LogLevels, counters *ClientCounters) error {
-	client, err := NewClient(log, nil, counters, nil)
+func CollectDirectoriesInAllShards(log LogLevels, shuckleAddress string, counters *ClientCounters) error {
+	client, err := NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
 		return err
 	}

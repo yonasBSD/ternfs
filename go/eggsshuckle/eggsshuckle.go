@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"flag"
 	"fmt"
 	"html/template"
@@ -15,8 +14,6 @@ import (
 	"sync"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type state struct {
@@ -171,9 +168,14 @@ type indexBlockService struct {
 }
 
 type indexData struct {
-	CDCAddr       string
-	BlockServices []indexBlockService
-	ShardsAddrs   []string
+	NumBlockServices    int
+	NumFailureDomains   int
+	TotalAvailable      string
+	TotalUsed           string
+	TotalUsedPercentage string
+	CDCAddr             string
+	BlockServices       []indexBlockService
+	ShardsAddrs         []string
 }
 
 const indexTemplateStr string = `
@@ -185,6 +187,12 @@ const indexTemplateStr string = `
 	</head>
 	<body>
 		<h1>Shuckle</h1>
+		<h2>Overview</h2>
+		<ul>
+			<li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
+			<li>{{.TotalAvailable}} available</li>
+			<li>{{.TotalUsed}} used ({{.TotalUsedPercentage}})</li>
+		</ul>
 		<h2>CDC</h2>
 		<table>
 			<thead>
@@ -271,8 +279,13 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
 
-	data := indexData{}
+	data := indexData{
+		NumBlockServices: len(state.blockServices),
+	}
 	data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
+	totalUsed := uint64(0)
+	totalAvailable := uint64(0)
+	failureDomains := make(map[string]struct{})
 	for _, bs := range state.blockServices {
 		data.BlockServices = append(data.BlockServices, indexBlockService{
 			Id:            bs.Id,
@@ -283,6 +296,9 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 			Used:          formatSize(bs.Used),
 			Path:          bs.Path,
 		})
+		failureDomains[string(bs.FailureDomain[:])] = struct{}{}
+		totalAvailable += bs.Available
+		totalUsed += bs.Used
 	}
 	sort.Slice(
 		data.BlockServices,
@@ -301,45 +317,32 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	for _, shard := range state.shards {
 		data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
 	}
+	data.TotalUsed = formatSize(totalUsed)
+	data.TotalAvailable = formatSize(totalAvailable)
+	data.NumFailureDomains = len(failureDomains)
+	if totalAvailable == 0 {
+		data.TotalUsedPercentage = "0%"
+	} else {
+		data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalUsed)/float64(totalAvailable))
+	}
 	if err := template.Execute(w, &data); err != nil {
 		ll.RaiseAlert(fmt.Errorf("could not execute template: %w", err))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }
 
-func initDb(log eggs.LogLevels, db *sql.DB) {
-
-}
-
 func main() {
 	bincodePort := flag.Uint("bincode-port", 10000, "Port on which to run the bincode server.")
 	httpPort := flag.Uint("http-port", 10001, "Port on which to run the HTTP server")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
-	// databaseFile := flag.String("db-file", "", "File for the sqlite3 database")
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()
 	noRunawayArgs()
-
-	/*
-		if *databaseFile == "" {
-			fmt.Fprintf(os.Stderr, "Please provide a database file with -db-file\n")
-			flag.Usage()
-			os.Exit(2)
-		}
-	*/
 
 	indexTemplate, err := template.New("index").Option("missingkey=error").Parse(indexTemplateStr)
 	if err != nil {
 		panic(err)
 	}
-
-	/*
-		db, err := sql.Open("sqlite3", *databaseFile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer db.Close()
-	*/
 
 	logOut := os.Stdout
 	if *logFile != "" {

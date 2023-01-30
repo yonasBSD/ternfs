@@ -399,9 +399,6 @@ Options:`
 
 func retrieveOrCreateKey(log eggs.LogLevels, dir string) [16]byte {
 	var err error
-	if err := os.Mkdir(dir, 0777); err != nil && !os.IsExist(err) {
-		panic(fmt.Errorf("could not create data dir %v", dir))
-	}
 	var keyFile *os.File
 	keyFilePath := path.Join(dir, "secret.key")
 	keyFile, err = os.OpenFile(keyFilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
@@ -483,6 +480,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failure domain too long -- must be at most 16 characters: %v\n\n", *failureDomainStr)
 		usage()
 		os.Exit(2)
+	}
+
+	// create all directories first, we might need them for the log output
+	for i := 0; i < flag.NArg(); i += 2 {
+		dir := flag.Args()[i]
+		if err := os.Mkdir(dir, 0777); err != nil && !os.IsExist(err) {
+			panic(fmt.Errorf("could not create data dir %v", dir))
+		}
 	}
 
 	logOut := os.Stdout

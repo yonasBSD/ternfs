@@ -9,17 +9,6 @@
 // Safer alternative to throwing when in static initialization or signal handler
 void dieWithError(const char *err);
 
-struct Globals {
-    Globals();
-
-    bool _collectingProgramInfo = false;
-};
-extern Globals _globals;
-
-inline bool collectingProgramInfo() {
-    return _globals._collectingProgramInfo;
-}
-
 ////////////////////////////////////////////
 // Compiler hints
 ////////////////////////////////////////////

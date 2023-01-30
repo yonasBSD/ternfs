@@ -154,7 +154,7 @@ public:
             try {
                 reqHeader.unpack(reqBbuf);
             } catch (const BincodeException& err) {
-                LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
+                LOG_ERROR(_env, "Could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", clientAddr);
                 continue;
             }
@@ -175,7 +175,7 @@ public:
                 reqContainer->unpack(reqBbuf, reqHeader.kind);
                 LOG_DEBUG(_env, "parsed request: %s", *reqContainer);
             } catch (const BincodeException& exc) {
-                LOG_ERROR(_env, "%s\nstacktrace:\n%s", exc.what(), exc.getStackTrace());
+                LOG_ERROR(_env, "Could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
                 err = EggsError::MALFORMED_REQUEST;
             }
@@ -276,7 +276,8 @@ public:
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (_shared.stop.load()) {
-                return;
+                LOG_DEBUG(_env, "got told to stop, stopping");
+                break;
             }
             if (eggsNow() - successfulIterationAt < 1_mins) {
                 continue;                

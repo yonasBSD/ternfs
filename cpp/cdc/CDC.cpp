@@ -261,7 +261,7 @@ private:
             try {
                 reqHeader.unpack(reqBbuf);
             } catch (const BincodeException& err) {
-                LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
+                LOG_ERROR(_env, "could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", clientAddr);
                 continue;
             }
@@ -277,7 +277,7 @@ private:
                 _cdcReqContainer.unpack(reqBbuf, reqHeader.kind);
                 LOG_DEBUG(_env, "parsed request: %s", _cdcReqContainer);
             } catch (const BincodeException& exc) {
-                LOG_ERROR(_env, "%s\nstacktrace:\n%s", exc.what(), exc.getStackTrace());
+                LOG_ERROR(_env, "could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse CDC request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
                 err = EggsError::MALFORMED_REQUEST;
             }
@@ -325,7 +325,7 @@ private:
             try {
                 respHeader.unpack(reqBbuf);
             } catch (BincodeException err) {
-                LOG_ERROR(_env, "%s\nstacktrace:\n%s", err.what(), err.getStackTrace());
+                LOG_ERROR(_env, "could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse response header, dropping response");
                 continue;
             }

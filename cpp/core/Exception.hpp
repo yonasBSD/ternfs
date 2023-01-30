@@ -17,12 +17,7 @@ const char *translateErrno(int _errno);
 
 class AbstractException : public std::exception {
 public:
-    AbstractException();
-    const char * getStackTrace() const;
     virtual const char *what() const throw() override = 0;
-
-private:
-    char _stacktrace[4000];
 };
 
 

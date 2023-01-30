@@ -4,12 +4,9 @@
 #include <atomic>
 #include <fcntl.h>
 #include <cxxabi.h>
-#define UNW_LOCAL_ONLY
-#include <libunwind.h>
 
 #include "Common.hpp"
 #include "BinaryFormatter.hpp"
-#include "Backtrace.hpp"
 #include "Exception.hpp"
 
 const char *translateErrno(int _errno) {
@@ -179,15 +176,6 @@ std::string removeTemplates(const std::string & s) {
 
     return r;
 
-}
-
-AbstractException::AbstractException() {
-    generateBacktrace(_stacktrace, sizeof(_stacktrace));
-}
-
-
-const char * AbstractException::getStackTrace() const {
-    return _stacktrace;
 }
 
 const char *EggsException::what() const throw() {

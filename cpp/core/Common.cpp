@@ -2,8 +2,8 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
-
-#include "Backtrace.hpp"
+#include <string.h>
+#include <unistd.h>
 
 // Throwing in static initialization is nasty, and there is no useful stacktrace
 // Also use direct syscalls to write the error as iostream might not be initialized
@@ -25,28 +25,6 @@ void dieWithError(const char *err) {
     size_t _ = write(STDERR_FILENO, "\n", 1);
     _exit(1);
 }
-
-Globals::Globals()
-{
-    // Checks whether program info collection is requested on static initialization,
-    // If so, does it and exits the process.
-    {
-        const char *exePath = getenv("EGGS_GET_PROGRAM_INFO");
-        if (exePath != nullptr) {
-            _collectingProgramInfo = true;
-            try {
-                int out_fd = std::stoi(getenv("EGGS_GET_PROGRAM_INFO_OUT_MEMFD"));
-                loadAndSendProgramInfo(exePath, out_fd);
-                exit(0);
-            } catch (std::exception &e) {
-                dieWithError(e.what());
-            } catch (...) {
-            }
-            _exit(1);
-        }
-    }
-}
-Globals _globals;
 
 std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr) {
     char buf[INET_ADDRSTRLEN];

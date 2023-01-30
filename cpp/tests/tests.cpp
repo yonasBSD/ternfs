@@ -23,7 +23,8 @@
 
 REGISTER_EXCEPTION_TRANSLATOR(AbstractException& ex) {
     std::stringstream ss;
-    ss << std::endl << ex.what() << std::endl << ex.getStackTrace() << std::endl;
+    // Before, we had stack traces and this was useful, now a bit less
+    ss << std::endl << ex.what() << std::endl;
     return doctest::String(ss.str().c_str());
 }
 

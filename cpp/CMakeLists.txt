@@ -25,7 +25,7 @@ set(CMAKE_CXX_REQUIRED true)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_SHARED_LIBS OFF)
 set(POSITION_INDEPENDENT_CODE off)
-add_compile_options(-fno-pie -fno-stack-protector -fdiagnostics-color=always -fno-stack-protector -g -gdwarf-4 -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-gnu-string-literal-operator-template)
+add_compile_options(-fno-pie -fno-stack-protector -fdiagnostics-color=always -fno-stack-protector -g -gdwarf -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-gnu-string-literal-operator-template)
 add_link_options(-fuse-ld=lld -pthread)
 
 # valgrind we currently use cannot digest certain instructions

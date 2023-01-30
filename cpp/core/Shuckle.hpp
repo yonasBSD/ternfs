@@ -39,7 +39,7 @@ std::string fetchShards(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
-    std::vector<ShardInfo>& shards
+    std::array<ShardInfo, 256>& shards
 );
 
 const std::string defaultShuckleAddress = "REDACTED";

@@ -21,6 +21,7 @@
 #include "Time.hpp"
 #include "Undertaker.hpp"
 #include "splitmix64.hpp"
+#include "Time.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -29,9 +30,11 @@ private:
     std::mutex _applyLock;
 public:
     ShardDB& db;
+    std::atomic<bool> stop;
+    std::atomic<uint16_t> ownPort;
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_) {
+    ShardShared(ShardDB& db_): db(db_), stop(false), ownPort(0) {
         _currentLogIndex = db.lastAppliedLogEntry();
     }
 
@@ -43,29 +46,22 @@ public:
     }
 };
 
+
 struct ShardServer : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
     ShardId _shid;
-    uint16_t _port;
-    std::array<uint8_t, 4> _ownIp;
-    std::atomic<bool> _stop;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
+    uint16_t _desiredPort;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 public:
-    ShardServer(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
+    ShardServer(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
         _env(logger, "server"),
         _shared(shared),
         _shid(shid),
-        _port(options.port),
-        _ownIp(options.ownIp),
-        _stop(false),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
+        _desiredPort(options.port),
         _packetDropRand((int)shid.u8 + 1), // CDC is 0
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
@@ -85,7 +81,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _stop.store(true);
+        _shared.stop.store(true);
     }
 
     virtual void onAbort() override {
@@ -105,7 +101,7 @@ public:
         serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
         serverAddr.sin_port = htons(0);
         if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
-            throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _port);
+            throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _desiredPort);
         }
         {
             socklen_t addrLen = sizeof(serverAddr);
@@ -123,10 +119,8 @@ public:
             }
         }
 
-        _port = ntohs(serverAddr.sin_port);
-        LOG_INFO(_env, "Bound shard %s to port %s", _shid, ntohs(serverAddr.sin_port));
-
-        _registerWithShuckle();
+        _shared.ownPort.store(ntohs(serverAddr.sin_port));
+        LOG_INFO(_env, "Bound shard %s to port %s", _shid, _shared.ownPort.load());
 
         struct sockaddr_in clientAddr;
         std::vector<char> recvBuf(UDP_MTU);
@@ -136,7 +130,7 @@ public:
         auto logEntry = std::make_unique<ShardLogEntry>();
 
         for (;;) {
-            if (_stop.load()) {
+            if (_shared.stop.load()) {
                 LOG_DEBUG(_env, "got told to stop, stopping");
                 break;
             }
@@ -241,25 +235,6 @@ public:
         // If we're terminating gracefully we're the last ones, close the db nicely
         _shared.db.close();
     }
-
-private:
-    void _registerWithShuckle() {
-        ALWAYS_ASSERT(_port != 0);
-        for (;;) {
-            if (_stop.load()) {
-                return;
-            }
-            LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, _port);
-            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, _ownIp, _port);
-            if (!err.empty()) {
-                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
-            }
-            break;
-        }
-        LOG_INFO(_env, "Successfully registered with shuckle");
-    }
 };
 
 static void* runShardServer(void* server) {
@@ -267,29 +242,85 @@ static void* runShardServer(void* server) {
     return nullptr;
 }
 
-struct ShardShuckleUpdater : Undertaker::Reapable {
+struct ShardRegisterer : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
-    std::atomic<bool> _stop;
+    ShardId _shid;
+    std::array<uint8_t, 4> _ownIp;
+    std::string _shuckleHost;
+    uint16_t _shucklePort;
+public:
+    ShardRegisterer(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
+        _env(logger, "registerer"),
+        _shared(shared),
+        _shid(shid),
+        _ownIp(options.ownIp),
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort)
+    {}
+
+    virtual ~ShardRegisterer() = default;
+
+    virtual void terminate() override {
+        _env.flush();
+        _shared.stop.store(true);
+    }
+
+    virtual void onAbort() override {
+        _env.flush();
+    }
+
+    void run() {
+        for (;;) {
+            if (_shared.stop.load()) {
+                return;
+            }
+            uint16_t port = _shared.ownPort.load();
+            if (port == 0) {
+                // shard server isn't up yet
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, port);
+            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, _ownIp, port);
+            if (!err.empty()) {
+                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+            LOG_INFO(_env, "Successfully registered with shuckle, will register again in one minute");
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+        }
+    }
+};
+
+static void* runShardRegisterer(void* server) {
+    ((ShardRegisterer*)server)->run();
+    return nullptr;
+}
+
+struct ShardBlockServiceUpdater : Undertaker::Reapable {
+private:
+    Env _env;
+    ShardShared& _shared;
     ShardId _shid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
 public:
-    ShardShuckleUpdater(Logger& logger, ShardShared& shared, ShardId shid, const ShardOptions& options):
-        _env(logger, "shuckle_updater"),
+    ShardBlockServiceUpdater(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
+        _env(logger, "block_service_updater"),
         _shared(shared),
-        _stop(false),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
     {}
 
-    virtual ~ShardShuckleUpdater() = default;
+    virtual ~ShardBlockServiceUpdater() = default;
 
     virtual void terminate() override {
         _env.flush();
-        _stop.store(true);
+        _shared.stop.store(true);
     }
 
     virtual void onAbort() override {
@@ -308,7 +339,7 @@ public:
             continue; \
 
         for (;;) {
-            if (_stop.load()) {
+            if (_shared.stop.load()) {
                 LOG_DEBUG(_env, "got told to stop, stopping");
                 break;
             }
@@ -353,8 +384,8 @@ public:
     }
 };
 
-static void* runShardShuckleUpdater(void* server) {
-    ((ShardShuckleUpdater*)server)->run();
+static void* runShardBlockServiceUpdater(void* server) {
+    ((ShardBlockServiceUpdater*)server)->run();
     return nullptr;
 }
 
@@ -377,7 +408,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     ShardShared shared(db);
 
     {
-        auto server = std::make_unique<ShardServer>(logger, shared, shid, options);
+        auto server = std::make_unique<ShardServer>(logger, shid, options, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -386,12 +417,21 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
 
     {
-        auto shuckleUpdater = std::make_unique<ShardShuckleUpdater>(logger, shared, shid, options);
+        auto shuckleRegisterer = std::make_unique<ShardRegisterer>(logger, shid, options, shared);
         pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runShardShuckleUpdater, &*shuckleUpdater) != 0) {
+        if (pthread_create(&tid, nullptr, &runShardRegisterer, &*shuckleRegisterer) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
-        undertaker->checkin(std::move(shuckleUpdater), tid, "shuckle_updater");
+        undertaker->checkin(std::move(shuckleRegisterer), tid, "registerer");
+    }
+
+    {
+        auto shuckleUpdater = std::make_unique<ShardBlockServiceUpdater>(logger, shid, options, shared);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runShardBlockServiceUpdater, &*shuckleUpdater) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(shuckleUpdater), tid, "block_service_updater");
     }
 
     undertaker->reap();

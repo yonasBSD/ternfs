@@ -212,7 +212,7 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
     return {};
 }
 
-std::string fetchShards(const std::string& host, uint16_t port, Duration timeout, std::vector<ShardInfo>& shards) {
+std::string fetchShards(const std::string& host, uint16_t port, Duration timeout, std::array<ShardInfo, 256>& shards) {
     std::string errString;
     int sock = shuckleSock(host, port, timeout, errString);
     if (sock < 0) {
@@ -231,7 +231,12 @@ std::string fetchShards(const std::string& host, uint16_t port, Duration timeout
     if (!errString.empty()) {
         return errString;
     }
-    shards = respContainer.getShards().shards.els;
+    if (respContainer.getShards().shards.els.size() != shards.size()) {
+        throw EGGS_EXCEPTION("expecting %s shards, got %s", shards.size(), respContainer.getShards().shards.els.size());
+    }
+    for (int i = 0; i < shards.size(); i++) {
+        shards[i] = respContainer.getShards().shards.els[i];
+    }
 
     return {};
 }

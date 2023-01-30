@@ -212,9 +212,9 @@ func (procs *ManagedProcesses) Close() {
 			}
 			proc.cmd.Process.Signal(syscall.SIGTERM)
 			terminated := uint64(0)
-			// wait at most 5 seconds for process to come down
+			// wait at most 20 seconds for process to come down
 			go func() {
-				time.Sleep(5 * time.Second)
+				time.Sleep(20 * time.Second)
 				if atomic.LoadUint64(&terminated) == 0 {
 					fmt.Printf("process %s not terminating, killing it\n", proc.name)
 					proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now

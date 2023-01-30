@@ -50,20 +50,43 @@ func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
 	return msgs.BlockServiceId(binary.LittleEndian.Uint64(secretKey[:8]) & uint64(0x7FFFFFFFFFFFFFFF))
 }
 
+func countBlocks(basePath string) uint64 {
+	blocks := uint64(0)
+	for i := 0; i < 256; i++ {
+		blockDir := fmt.Sprintf("%02x", i)
+		d, err := os.Open(path.Join(basePath, blockDir))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			panic(err)
+		}
+		defer d.Close()
+		for {
+			entries, err := d.Readdirnames(1000)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				panic(err)
+			}
+			blocks += uint64(len(entries))
+		}
+		fmt.Printf("%v blocks\n", blocks)
+	}
+	return blocks
+}
+
 func registerPeriodically(
 	log eggs.LogLevels,
 	ip [4]byte,
 	port uint16,
 	failureDomain [16]byte,
-	blockServices map[msgs.BlockServiceId]blockService,
+	blockServices map[msgs.BlockServiceId]*blockService,
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
 	for id, blockService := range blockServices {
-		var statfs unix.Statfs_t
-		if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
-			panic(err)
-		}
 		bs := msgs.BlockServiceInfo{
 			Id:            id,
 			Ip:            ip,
@@ -71,16 +94,27 @@ func registerPeriodically(
 			Port:          port,
 			StorageClass:  blockService.storageClass,
 			FailureDomain: failureDomain,
-			Available:     statfs.Bavail * uint64(statfs.Bsize),
-			Used:          (statfs.Bavail - statfs.Bfree) * uint64(statfs.Bsize),
 			Path:          blockService.path,
 		}
 		req.BlockServices = append(req.BlockServices, bs)
 	}
 	for {
+		for ix := range req.BlockServices {
+			bsInfo := &req.BlockServices[ix]
+			blockService := blockServices[bsInfo.Id]
+			var statfs unix.Statfs_t
+			if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
+				panic(err)
+			}
+			log.Debug("statfs for %v: %+v", blockService.path, statfs)
+			bsInfo.Blocks = countBlocks(blockService.path)
+			bsInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
+			bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
+		}
+		log.Debug("registering with %+v", req)
 		_, err := eggs.ShuckleRequest(log, shuckleAddress, &req)
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("could not register block services with %v: %w", shuckleAddress, err))
+			log.RaiseAlert(fmt.Errorf("could not register block services with %+v: %w", shuckleAddress, err))
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -295,7 +329,7 @@ const MAX_OBJECT_SIZE uint32 = 100e6
 func handleRequest(
 	log eggs.LogLevels,
 	terminateChan chan any,
-	blockServices map[msgs.BlockServiceId]blockService,
+	blockServices map[msgs.BlockServiceId]*blockService,
 	conn *net.TCPConn,
 	timeCheck bool,
 ) {
@@ -505,7 +539,7 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	blockServices := make(map[msgs.BlockServiceId]blockService)
+	blockServices := make(map[msgs.BlockServiceId]*blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
 		dir := flag.Args()[i]
 		storageClass := msgs.StorageClassFromString(flag.Args()[i+1])
@@ -519,7 +553,7 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
-		blockServices[id] = blockService{
+		blockServices[id] = &blockService{
 			path:         dir,
 			key:          key,
 			cipher:       cipher,

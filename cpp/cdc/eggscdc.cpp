@@ -108,12 +108,11 @@ int main(int argc, char** argv) {
     }
 
     fs::path dbDir(args.at(0));
-    auto dbDirStatus = fs::status(dbDir);
-    if (dbDirStatus.type() == fs::file_type::not_found) {
-        die("Could not find DB directory '%s'.\n", dbDir.c_str());
-    }
-    if (dbDirStatus.type() != fs::file_type::directory) {
-        die("DB directory '%s' is not a directory.\n", dbDir.c_str());
+    {
+        std::error_code err;
+        if (!fs::create_directory(dbDir, err) && err.value() != 0) {
+            throw EXPLICIT_SYSCALL_EXCEPTION(err.value(), "mkdir");
+        }
     }
 
     runCDC(dbDir, options);

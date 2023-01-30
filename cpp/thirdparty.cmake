@@ -87,9 +87,9 @@ set_target_properties(zstd PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libzs
 
 # Depends on: lz4, zstd
 # Dependency of: eggs
-# if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind")
-#     set(ROCKS_DB_MARCH "-march=haswell") # Valgind can't support current -march=native instructions
-# endif()
+if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind")
+    set(ROCKS_DB_MARCH "-march=haswell") # Valgind can't support current -march=native instructions
+endif()
 # musl doesn't seem to like AVX512, at least for now.
 separate_arguments(
     rocksdb_build UNIX_COMMAND

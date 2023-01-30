@@ -447,11 +447,12 @@ struct BlockServiceInfo {
     uint8_t storageClass;
     BincodeFixedBytes<16> failureDomain;
     BincodeFixedBytes<16> secretKey;
-    uint64_t available;
-    uint64_t used;
+    uint64_t capacityBytes;
+    uint64_t availableBytes;
+    uint64_t blocks;
     BincodeBytes path;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip + port + storageClass + failureDomain + secretKey + available + used + path
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip + port + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path
 
     BlockServiceInfo() { clear(); }
     uint16_t packedSize() const {
@@ -462,8 +463,9 @@ struct BlockServiceInfo {
         _size += 1; // storageClass
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
-        _size += 8; // available
-        _size += 8; // used
+        _size += 8; // capacityBytes
+        _size += 8; // availableBytes
+        _size += 8; // blocks
         _size += path.packedSize(); // path
         return _size;
     }

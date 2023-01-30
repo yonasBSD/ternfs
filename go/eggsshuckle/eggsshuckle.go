@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"html/template"
@@ -18,7 +20,7 @@ import (
 
 type state struct {
 	mutex         sync.RWMutex
-	blockServices map[msgs.BlockServiceId]msgs.BlockServiceInfo
+	blockServices map[msgs.BlockServiceId]*msgs.BlockServiceInfo
 	shards        [256]msgs.ShardInfo
 	cdcIp         [4]byte
 	cdcPort       uint16
@@ -27,7 +29,7 @@ type state struct {
 func newBlockServices() *state {
 	return &state{
 		mutex:         sync.RWMutex{},
-		blockServices: make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		blockServices: make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo),
 	}
 }
 
@@ -40,7 +42,7 @@ func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = bs
+		resp.BlockServices[i] = *bs
 		i++
 	}
 
@@ -56,7 +58,7 @@ func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *ms
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = bs
+		resp.BlockServices[i] = *bs
 		i++
 	}
 
@@ -68,7 +70,7 @@ func handleRegisterBlockServices(ll eggs.LogLevels, s *state, w io.Writer, req *
 	defer s.mutex.Unlock()
 
 	for _, bs := range req.BlockServices {
-		s.blockServices[bs.Id] = bs
+		s.blockServices[bs.Id] = &bs
 	}
 
 	return &msgs.RegisterBlockServicesResp{}
@@ -158,25 +160,37 @@ func noRunawayArgs() {
 }
 
 type indexBlockService struct {
-	Id            msgs.BlockServiceId
-	Addr          string
-	StorageClass  msgs.StorageClass
-	FailureDomain string
-	Available     string
-	Used          string
-	Path          string
+	Id             msgs.BlockServiceId
+	Addr           string
+	StorageClass   msgs.StorageClass
+	FailureDomain  string
+	CapacityBytes  string
+	AvailableBytes string
+	Path           string
+	Blocks         uint64
 }
 
 type indexData struct {
-	NumBlockServices    int
-	NumFailureDomains   int
-	TotalAvailable      string
-	TotalUsed           string
-	TotalUsedPercentage string
-	CDCAddr             string
-	BlockServices       []indexBlockService
-	ShardsAddrs         []string
+	ShuckleFacePngBase64 string
+	ShucklePngBase64     string
+	NumBlockServices     int
+	NumFailureDomains    int
+	TotalCapacity        string
+	TotalUsed            string
+	TotalUsedPercentage  string
+	CDCAddr              string
+	BlockServices        []indexBlockService
+	ShardsAddrs          []string
+	Blocks               uint64
 }
+
+//go:embed shuckle.png
+var shucklePng []byte
+var shucklePngBase64 string
+
+//go:embed shuckleface.png
+var shuckleFacePng []byte
+var shuckleFacePngBase64 string
 
 const indexTemplateStr string = `
 <!DOCTYPE html>
@@ -184,14 +198,16 @@ const indexTemplateStr string = `
 	<head>
 		<meta charset="UTF-8">
 		<title>Shuckle</title>
+		<link rel="icon" type="image/png" href="data:image/png;base64,{{.ShuckleFacePngBase64}}" />
 	</head>
 	<body>
 		<h1>Shuckle</h1>
+		<img src="data:image/png;base64,{{.ShucklePngBase64}}" alt="Mr. Shuckle"/>
 		<h2>Overview</h2>
 		<ul>
 			<li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
-			<li>{{.TotalAvailable}} available</li>
-			<li>{{.TotalUsed}} used ({{.TotalUsedPercentage}})</li>
+			<li>Total capacity: {{.TotalCapacity}}</li>
+			<li>{{.TotalUsed}} used over {{.Blocks}} blocks ({{.TotalUsedPercentage}})</li>
 		</ul>
 		<h2>CDC</h2>
 		<table>
@@ -230,8 +246,9 @@ const indexTemplateStr string = `
 					<th>Path</th>
 					<th>Id</th>
 					<th>StorageClass</th>
+					<th>Blocks</th>
+					<th>Capacity</th>
 					<th>Available</th>
-					<th>Used</th>
 				</tr>
 			<tbody>
 				{{ range .BlockServices }}
@@ -241,8 +258,9 @@ const indexTemplateStr string = `
 						<td><tt>{{.Path}}</tt></td>
 						<td><tt>{{.Id}}</tt></td>
 						<td>{{.StorageClass}}</td>
-						<td>{{.Available}}</td>
-						<td>{{.Used}}</td>
+						<td>{{.Blocks}}</td>
+						<td>{{.CapacityBytes}}</td>
+						<td>{{.AvailableBytes}}</td>
 					</tr>
 				{{end}}
 			</tbody>
@@ -280,31 +298,38 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	defer state.mutex.RUnlock()
 
 	data := indexData{
-		NumBlockServices: len(state.blockServices),
+		ShucklePngBase64:     shucklePngBase64,
+		ShuckleFacePngBase64: shuckleFacePngBase64,
+		NumBlockServices:     len(state.blockServices),
 	}
 	data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
-	totalUsed := uint64(0)
-	totalAvailable := uint64(0)
-	failureDomains := make(map[string]struct{})
+	totalCapacityBytes := uint64(0)
+	totalAvailableBytes := uint64(0)
+	failureDomainsBytes := make(map[string]struct{})
 	for _, bs := range state.blockServices {
 		data.BlockServices = append(data.BlockServices, indexBlockService{
-			Id:            bs.Id,
-			Addr:          fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
-			StorageClass:  bs.StorageClass,
-			FailureDomain: string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
-			Available:     formatSize(bs.Available),
-			Used:          formatSize(bs.Used),
-			Path:          bs.Path,
+			Id:             bs.Id,
+			Addr:           fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
+			StorageClass:   bs.StorageClass,
+			FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
+			CapacityBytes:  formatSize(bs.CapacityBytes),
+			AvailableBytes: formatSize(bs.AvailableBytes),
+			Path:           bs.Path,
+			Blocks:         bs.Blocks,
 		})
-		failureDomains[string(bs.FailureDomain[:])] = struct{}{}
-		totalAvailable += bs.Available
-		totalUsed += bs.Used
+		failureDomainsBytes[string(bs.FailureDomain[:])] = struct{}{}
+		totalAvailableBytes += bs.AvailableBytes
+		totalCapacityBytes += bs.CapacityBytes
+		data.Blocks += bs.Blocks
 	}
 	sort.Slice(
 		data.BlockServices,
 		func(i, j int) bool {
 			a := data.BlockServices[i]
 			b := data.BlockServices[j]
+			if len(a.FailureDomain) != len(b.FailureDomain) {
+				return len(a.FailureDomain) < len(b.FailureDomain)
+			}
 			if a.FailureDomain != b.FailureDomain {
 				return a.FailureDomain < b.FailureDomain
 			}
@@ -317,13 +342,13 @@ func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w
 	for _, shard := range state.shards {
 		data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
 	}
-	data.TotalUsed = formatSize(totalUsed)
-	data.TotalAvailable = formatSize(totalAvailable)
-	data.NumFailureDomains = len(failureDomains)
-	if totalAvailable == 0 {
+	data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
+	data.TotalCapacity = formatSize(totalAvailableBytes)
+	data.NumFailureDomains = len(failureDomainsBytes)
+	if totalAvailableBytes == 0 {
 		data.TotalUsedPercentage = "0%"
 	} else {
-		data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalUsed)/float64(totalAvailable))
+		data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalAvailableBytes)/float64(totalCapacityBytes))
 	}
 	if err := template.Execute(w, &data); err != nil {
 		ll.RaiseAlert(fmt.Errorf("could not execute template: %w", err))
@@ -358,7 +383,8 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	// initDb(ll, db)
+	shucklePngBase64 = base64.StdEncoding.EncodeToString(shucklePng)
+	shuckleFacePngBase64 = base64.StdEncoding.EncodeToString(shuckleFacePng)
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

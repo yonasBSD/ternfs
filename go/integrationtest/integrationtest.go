@@ -229,7 +229,7 @@ func main() {
 	noRunawayArgs()
 
 	if *verbose && *buildType != "debug" {
-		fmt.Printf("We're building with build type %v, which is not \"debug\", and you also passed in -verbose.\nBe aware that you won't get debug messages for C++ binaries.", *buildType)
+		fmt.Printf("We're building with build type %v, which is not \"debug\", and you also passed in -verbose.\nBe aware that you won't get debug messages for C++ binaries.\n\n", *buildType)
 	}
 
 	filterRe := regexp.MustCompile(*filter)
@@ -313,7 +313,6 @@ func main() {
 		procs.StartBlockService(log, &eggs.BlockServiceOpts{
 			Exe:            blockServiceExe,
 			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			Port:           0,
 			StorageClass:   storageClass,
 			FailureDomain:  fmt.Sprintf("%d", i),
 			Verbose:        *verbose,

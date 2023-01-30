@@ -2964,10 +2964,13 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint64(v.Available)); err != nil {
+	if err := bincode.PackScalar(w, uint64(v.CapacityBytes)); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint64(v.Used)); err != nil {
+	if err := bincode.PackScalar(w, uint64(v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
 		return err
 	}
 	if err := bincode.PackBytes(w, []byte(v.Path)); err != nil {
@@ -2995,10 +2998,13 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Available)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CapacityBytes)); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Used)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackString(r, &v.Path); err != nil {

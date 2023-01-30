@@ -612,8 +612,9 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     buf.packScalar<uint8_t>(storageClass);
     buf.packFixedBytes<16>(failureDomain);
     buf.packFixedBytes<16>(secretKey);
-    buf.packScalar<uint64_t>(available);
-    buf.packScalar<uint64_t>(used);
+    buf.packScalar<uint64_t>(capacityBytes);
+    buf.packScalar<uint64_t>(availableBytes);
+    buf.packScalar<uint64_t>(blocks);
     buf.packBytes(path);
 }
 void BlockServiceInfo::unpack(BincodeBuf& buf) {
@@ -623,8 +624,9 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     storageClass = buf.unpackScalar<uint8_t>();
     buf.unpackFixedBytes<16>(failureDomain);
     buf.unpackFixedBytes<16>(secretKey);
-    available = buf.unpackScalar<uint64_t>();
-    used = buf.unpackScalar<uint64_t>();
+    capacityBytes = buf.unpackScalar<uint64_t>();
+    availableBytes = buf.unpackScalar<uint64_t>();
+    blocks = buf.unpackScalar<uint64_t>();
     buf.unpackBytes(path);
 }
 void BlockServiceInfo::clear() {
@@ -634,8 +636,9 @@ void BlockServiceInfo::clear() {
     storageClass = uint8_t(0);
     failureDomain.clear();
     secretKey.clear();
-    available = uint64_t(0);
-    used = uint64_t(0);
+    capacityBytes = uint64_t(0);
+    availableBytes = uint64_t(0);
+    blocks = uint64_t(0);
     path.clear();
 }
 bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
@@ -645,13 +648,14 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
     if (failureDomain != rhs.failureDomain) { return false; };
     if (secretKey != rhs.secretKey) { return false; };
-    if ((uint64_t)this->available != (uint64_t)rhs.available) { return false; };
-    if ((uint64_t)this->used != (uint64_t)rhs.used) { return false; };
+    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
+    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
+    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
     if (path != rhs.path) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Available=" << x.available << ", " << "Used=" << x.used << ", " << "Path=" << x.path << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << x.path << ")";
     return out;
 }
 

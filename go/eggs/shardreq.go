@@ -268,7 +268,14 @@ func (c *Client) ShardRequest(
 				}
 			}
 			if !goodRequestId {
-				logger.Info("dropping response %v from shard %v, since we expected one of %v", uint64(respRequestId), shid, requestIds)
+				prefix := []uint64{}
+				for _, req := range requestIds {
+					if req == 0 {
+						break
+					}
+					prefix = append(prefix, req)
+				}
+				logger.Info("dropping response %v from shard %v, since we expected one of %v", uint64(respRequestId), shid, prefix)
 				continue
 			}
 			// We are interested, parse the kind

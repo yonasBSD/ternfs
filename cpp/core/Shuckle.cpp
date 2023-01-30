@@ -60,7 +60,7 @@ static int shuckleSock(const std::string& host, uint16_t port, Duration timeout,
         close(sock);
         return -1;
     }
-    
+
     struct timeval tv;
     tv.tv_sec = timeout.ns/1'000'000'000ull;
     tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;

@@ -500,7 +500,7 @@ public:
             if (_shared.stop.load()) {
                 return;
             }
-            if (successfulIterationAt - eggsNow() < 1_mins) {
+            if (eggsNow() - successfulIterationAt < 1_mins) {
                 continue;
             }
             std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, *shards);
@@ -564,9 +564,14 @@ public:
     }
 
     void run() {
+        EggsTime successfulIterationAt = 0;
         for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (_shared.stop.load()) {
                 return;
+            }
+            if (eggsNow() - successfulIterationAt < 1_mins) {
+                continue;                
             }
             uint16_t port = _shared.ownPort.load();
             if (port == 0) {
@@ -578,11 +583,11 @@ public:
             std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp, port);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                EggsTime successfulIterationAt = 0;
                 continue;
             }
             LOG_INFO(_env, "Successfully registered with shuckle, will register again in one minute");
-            std::this_thread::sleep_for(std::chrono::minutes(1));
+            successfulIterationAt = eggsNow();
         }
     }
 };

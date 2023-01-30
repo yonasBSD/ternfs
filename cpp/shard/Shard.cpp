@@ -278,7 +278,7 @@ public:
             if (_shared.stop.load()) {
                 return;
             }
-            if (successfulIterationAt - eggsNow() < 1_mins) {
+            if (eggsNow() - successfulIterationAt < 1_mins) {
                 continue;                
             }
             uint16_t port = _shared.ownPort.load();

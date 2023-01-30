@@ -582,15 +582,16 @@ class SnapshotLookupEdge(bincode.Packable):
 
 @dataclass
 class BlockServiceInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 + 8 + 8 + 1 # id + ip + port + storage_class + failure_domain + secret_key + available + used + len(path)
+    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 + 8 + 8 + 8 + 1 # id + ip + port + storage_class + failure_domain + secret_key + capacity_bytes + available_bytes + blocks + len(path)
     id: int
     ip: bytes
     port: int
     storage_class: int
     failure_domain: bytes
     secret_key: bytes
-    available: int
-    used: int
+    capacity_bytes: int
+    available_bytes: int
+    blocks: int
     path: bytes
 
     def pack_into(self, b: bytearray) -> None:
@@ -600,8 +601,9 @@ class BlockServiceInfo(bincode.Packable):
         bincode.pack_u8_into(self.storage_class, b)
         bincode.pack_fixed_into(self.failure_domain, 16, b)
         bincode.pack_fixed_into(self.secret_key, 16, b)
-        bincode.pack_u64_into(self.available, b)
-        bincode.pack_u64_into(self.used, b)
+        bincode.pack_u64_into(self.capacity_bytes, b)
+        bincode.pack_u64_into(self.available_bytes, b)
+        bincode.pack_u64_into(self.blocks, b)
         bincode.pack_bytes_into(self.path, b)
         return None
 
@@ -613,10 +615,11 @@ class BlockServiceInfo(bincode.Packable):
         storage_class = bincode.unpack_u8(u)
         failure_domain = bincode.unpack_fixed(u, 16)
         secret_key = bincode.unpack_fixed(u, 16)
-        available = bincode.unpack_u64(u)
-        used = bincode.unpack_u64(u)
+        capacity_bytes = bincode.unpack_u64(u)
+        available_bytes = bincode.unpack_u64(u)
+        blocks = bincode.unpack_u64(u)
         path = bincode.unpack_bytes(u)
-        return BlockServiceInfo(id, ip, port, storage_class, failure_domain, secret_key, available, used, path)
+        return BlockServiceInfo(id, ip, port, storage_class, failure_domain, secret_key, capacity_bytes, available_bytes, blocks, path)
 
     def calc_packed_size(self) -> int:
         _size = 0
@@ -626,8 +629,9 @@ class BlockServiceInfo(bincode.Packable):
         _size += 1 # storage_class
         _size += 16 # failure_domain
         _size += 16 # secret_key
-        _size += 8 # available
-        _size += 8 # used
+        _size += 8 # capacity_bytes
+        _size += 8 # available_bytes
+        _size += 8 # blocks
         _size += 1 # len(path)
         _size += len(self.path) # path contents
         return _size

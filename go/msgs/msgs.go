@@ -1082,15 +1082,16 @@ type RemoveSpanInitiateEntry struct {
 }
 
 type BlockServiceInfo struct {
-	Id            BlockServiceId
-	Ip            [4]byte
-	Port          uint16
-	StorageClass  StorageClass
-	FailureDomain [16]byte
-	SecretKey     [16]byte
-	Available     uint64 // bytes available
-	Used          uint64 // bytes used
-	Path          string
+	Id             BlockServiceId
+	Ip             [4]byte
+	Port           uint16
+	StorageClass   StorageClass
+	FailureDomain  [16]byte
+	SecretKey      [16]byte
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64 // how many blocks we have
+	Path           string
 }
 
 type UpdateBlockServicesEntry struct {

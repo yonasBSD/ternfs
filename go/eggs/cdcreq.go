@@ -215,7 +215,14 @@ func (c *Client) CDCRequest(
 				}
 			}
 			if !goodRequestId {
-				logger.Info("dropping response %v from CDC, since we expected one of %v", uint64(respRequestId), requestIds)
+				prefix := []uint64{}
+				for _, req := range requestIds {
+					if req == 0 {
+						break
+					}
+					prefix = append(prefix, req)
+				}
+				logger.Info("dropping response %v from CDC, since we expected one of %v", uint64(respRequestId), prefix)
 				continue
 			}
 			// We are interested, parse the kind

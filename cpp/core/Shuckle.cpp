@@ -46,7 +46,8 @@ static int shuckleSock(const std::string& host, uint16_t port, Duration timeout,
         throw SYSCALL_EXCEPTION("socket");
     }
 
-    int synRetries = 1;
+    // We retry upstream anyway, and we want prompt termination of `connect`
+    int synRetries = 0;
     setsockopt(sock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
 
     struct sockaddr_in shuckleAddr;

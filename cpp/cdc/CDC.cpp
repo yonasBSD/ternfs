@@ -493,27 +493,31 @@ public:
     }
 
     void run() {
+        EggsTime successfulIterationAt = 0;
         auto shards = std::make_unique<std::array<ShardInfo, 256>>();
         for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (_shared.stop.load()) {
                 return;
             }
+            if (successfulIterationAt - eggsNow() < 1_mins) {
+                continue;
+            }
             std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, *shards);
             if (!err.empty()) {
-                LOG_INFO(_env, "failed to reach shuckle at %s:%s to fetch shards, might retry: %s", _shuckleHost, _shucklePort, err);
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                LOG_INFO(_env, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
+                EggsTime successfulIterationAt = 0;
                 continue;
             }
             bool badShard = false;
             for (int i = 0; i < shards->size(); i++) {
                 if (shards->at(i).port == 0) {
-                    LOG_DEBUG(_env, "Shard %s not ready yet", i);
                     badShard = true;
                     break;
                 }
             }
             if (badShard) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                EggsTime successfulIterationAt = 0;
                 continue;
             }
             {
@@ -523,7 +527,7 @@ public:
                 }
             }
             LOG_INFO(_env, "successfully fetched all shards from shuckle, will wait one minute");
-            std::this_thread::sleep_for(std::chrono::minutes(1));
+            EggsTime successfulIterationAt = eggsNow();
         }
     }
 };

@@ -20,7 +20,7 @@ func noRunawayArgs() {
 }
 
 func main() {
-	buildType := flag.String("build-type", "", "C++ build type, one of alpine/release/debug/sanitized/valgrind. Either this or -exe-dir must be set.")
+	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind.")
 	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 0).")

@@ -24,9 +24,16 @@
                 for (let i = 0; i < els.length; i++) {
                     els[i].style.display = show ? '' : 'none';
                 }
+                if (show) {
+                    localStorage.setItem('edges-full', show);
+                } else {
+                    localStorage.removeItem('edges-full');
+                }
             }
             window.addEventListener('DOMContentLoaded', () => {
-                toggleFullEdges(document.getElementById('snapshot-edges-checkbox').checked);
+                const enabled = localStorage.getItem('edges-full');
+                toggleFullEdges(enabled);
+                document.getElementById('snapshot-edges-checkbox').checked = enabled;
             });
         </script>
     </body>

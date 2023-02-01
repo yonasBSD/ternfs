@@ -4,7 +4,14 @@
             {{if .Path}}
                 <tr>
                     <th>Path</th>
-                    <td><code>{{.Path}}</code></td>
+                    <td>
+                        <code>
+                            <a href="/inode">/</a>
+                            {{range $segment := .PathSegments}}
+                                <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
+                            {{end}}
+                        </code>
+                    </td>
                 </tr>
             {{end}}
             <tr>
@@ -59,7 +66,7 @@
                             <code>{{$edge.Name}}</code>
                         {{else}}
                             {{if and $edge.Current $.Path}}
-                                <a href="/inode?path={{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
+                                <a href="/inode{{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
                             {{else}}
                                 <a href="/inode?id={{$edge.TargetId}}"><code>{{$edge.Name}}</code></a>
                             {{end}}

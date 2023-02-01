@@ -260,6 +260,7 @@ func handleWithRecover(
 		*statusPtr = status
 		*sizePtr = size
 	}()
+	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(*statusPtr)
 	if written, err := io.CopyN(w, content, *sizePtr); err != nil {
 		log.RaiseAlert(fmt.Errorf("Could not send full response of size %v, %v written: %w", *sizePtr, written, err))
@@ -439,12 +440,18 @@ type fileSpan struct {
 	DataBlocks   int
 }
 
+type pathSegment struct {
+	Segment   string
+	PathSoFar string
+}
+
 type fileData struct {
-	Id    string
-	Path  string // might be empty
-	Size  string
-	Mtime string
-	Spans []fileSpan
+	Id           string
+	Path         string // might be empty
+	Size         string
+	Mtime        string
+	Spans        []fileSpan
+	PathSegments []pathSegment
 }
 
 //go:embed directory.html
@@ -462,11 +469,12 @@ type directoryEdge struct {
 }
 
 type directoryData struct {
-	Id    string
-	Path  string // might be empty
-	Mtime string
-	Owner string
-	Edges []directoryEdge
+	Id           string
+	Path         string // might be empty
+	PathSegments []pathSegment
+	Mtime        string
+	Owner        string
+	Edges        []directoryEdge
 }
 
 func newClient(log eggs.LogLevels, state *state) *eggs.Client {
@@ -486,13 +494,27 @@ func newClient(log eggs.LogLevels, state *state) *eggs.Client {
 	return client
 }
 
-func lookup(log eggs.LogLevels, client *eggs.Client, path string) *msgs.InodeId {
-	segments := strings.Split(path, "/")[1:] // starts with /
-	id := msgs.ROOT_DIR_INODE_ID
-	for _, segment := range segments {
+func normalizePath(path string) string {
+	newPath := ""
+	for _, segment := range strings.Split(path, "/") {
 		if segment == "" {
 			continue
 		}
+		newPath = newPath + "/" + segment
+	}
+	if len(newPath) > 1 {
+		newPath = newPath[1:] // strip leading /
+	}
+	return newPath
+}
+
+func lookup(log eggs.LogLevels, client *eggs.Client, path string) *msgs.InodeId {
+	id := msgs.ROOT_DIR_INODE_ID
+	if path == "" {
+		return &id
+	}
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
 		req := msgs.LookupReq{
 			DirId: id,
 			Name:  segment,
@@ -512,6 +534,24 @@ func lookup(log eggs.LogLevels, client *eggs.Client, path string) *msgs.InodeId 
 	return &id
 }
 
+func pathSegments(path string) []pathSegment {
+	pathSegments := []pathSegment{}
+	if path == "" {
+		return pathSegments
+	}
+	segments := strings.Split(path, "/")
+	pathSoFar := "/"
+	for _, segment := range segments {
+		if pathSoFar == "/" {
+			pathSoFar = pathSoFar + segment
+		} else {
+			pathSoFar = pathSoFar + "/" + segment
+		}
+		pathSegments = append(pathSegments, pathSegment{Segment: segment, PathSoFar: pathSoFar})
+	}
+	return pathSegments
+}
+
 var fileTemplate *template.Template
 var directoryTemplate *template.Template
 
@@ -524,12 +564,8 @@ func handleInode(
 	handlePage(
 		log, w, r,
 		func(query url.Values) (*template.Template, *pageData, int) {
-			path := query.Get("path")
-			if path != "" {
-				if len(path) == 0 || path[0] != '/' {
-					return errorPage(http.StatusBadRequest, "Path must start with /")
-				}
-			}
+			path := r.URL.Path[len("/inode"):]
+			path = normalizePath(path)
 			var id msgs.InodeId
 			idStr := query.Get("id")
 			if idStr != "" {
@@ -542,9 +578,6 @@ func handleInode(
 			if id != msgs.NULL_INODE_ID && path != "" {
 				return errorPage(http.StatusBadRequest, "cannot specify both id and path")
 			}
-			if id == msgs.NULL_INODE_ID && path == "" {
-				path = "/"
-			}
 			client := newClient(log, state)
 			if id == msgs.NULL_INODE_ID {
 				mbId := lookup(log, client, path)
@@ -556,7 +589,7 @@ func handleInode(
 			if id.Type() == msgs.DIRECTORY {
 				data := directoryData{
 					Id:   fmt.Sprintf("%v", id),
-					Path: path,
+					Path: "/" + path + "/",
 				}
 				title := fmt.Sprintf("Directory %v", data.Id)
 				{
@@ -567,6 +600,7 @@ func handleInode(
 					data.Owner = resp.Owner.String()
 					data.Mtime = resp.Mtime.String()
 				}
+				data.PathSegments = pathSegments(path)
 				{
 					_, full := query["full"]
 					if full {
@@ -574,52 +608,58 @@ func handleInode(
 					} else {
 						req := msgs.FullReadDirReq{DirId: id}
 						resp := msgs.FullReadDirResp{}
+						edges := []msgs.Edge{}
 						for {
 							if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 								panic(err)
 							}
-							for _, edge := range resp.Results {
-								dataEdge := directoryEdge{
-									Current:      edge.Current,
-									TargetId:     fmt.Sprintf("%v", edge.TargetId.Id()),
-									Owned:        edge.Current || edge.TargetId.Extra(),
-									NameHash:     fmt.Sprintf("%08x", edge.NameHash),
-									Name:         edge.Name,
-									CreationTime: edge.CreationTime.String(),
-									Locked:       edge.Current && edge.TargetId.Extra(),
-								}
-								if edge.TargetId.Id() != msgs.NULL_INODE_ID {
-									dataEdge.Type = edge.TargetId.Id().Type().String()
-								}
-								data.Edges = append(data.Edges, dataEdge)
-							}
+							edges = append(edges, resp.Results...)
 							req.Cursor = resp.Next
 							if req.Cursor == (msgs.FullReadDirCursor{}) {
 								break
 							}
 						}
+						sort.Slice(
+							edges,
+							func(i, j int) bool {
+								a := edges[i]
+								b := edges[j]
+								if a.Name != b.Name {
+									return a.Name < b.Name
+								}
+								if a.NameHash != b.NameHash {
+									return a.NameHash < b.NameHash
+								}
+								return a.CreationTime < b.CreationTime
+							},
+						)
+						for _, edge := range edges {
+							dataEdge := directoryEdge{
+								Current:      edge.Current,
+								TargetId:     fmt.Sprintf("%v", edge.TargetId.Id()),
+								Owned:        edge.Current || edge.TargetId.Extra(),
+								NameHash:     fmt.Sprintf("%08x", edge.NameHash),
+								Name:         edge.Name,
+								CreationTime: edge.CreationTime.String(),
+								Locked:       edge.Current && edge.TargetId.Extra(),
+							}
+							if edge.TargetId.Id() != msgs.NULL_INODE_ID {
+								dataEdge.Type = edge.TargetId.Id().Type().String()
+								if edge.TargetId.Id().Type() == msgs.DIRECTORY {
+									dataEdge.Name = dataEdge.Name + "/"
+								}
+							}
+							data.Edges = append(data.Edges, dataEdge)
+						}
 					}
 				}
-				sort.Slice(
-					data.Edges,
-					func(i, j int) bool {
-						a := data.Edges[i]
-						b := data.Edges[j]
-						if a.Name != b.Name {
-							return a.Name < b.Name
-						}
-						if a.NameHash != b.NameHash {
-							return a.NameHash < b.NameHash
-						}
-						return a.CreationTime < b.CreationTime
-					},
-				)
 				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			} else {
 				data := fileData{
 					Id:   fmt.Sprintf("%v", id),
-					Path: path,
+					Path: "/" + path,
 				}
+				data.PathSegments = pathSegments(path)
 				title := fmt.Sprintf("File %v", data.Id)
 				{
 					resp := msgs.StatFileResp{}
@@ -643,10 +683,13 @@ func handleInode(
 								Crc32:        hex.EncodeToString(span.Crc32[:]),
 								StorageClass: span.StorageClass.String(),
 								BlockSize:    formatPreciseSize(span.BlockSize),
-								BodyBytes:    hex.EncodeToString(span.BodyBytes),
 								DataBlocks:   span.Parity.DataBlocks(),
 								ParityBlocks: span.Parity.ParityBlocks(),
 							}
+							if len(span.BodyBytes) > 0 {
+								fs.BodyBytes = fmt.Sprintf("%q", span.BodyBytes)
+							}
+
 							for _, block := range span.BodyBlocks {
 								blockService := resp.BlockServices[block.BlockServiceIx]
 								crcStr := hex.EncodeToString(block.Crc32[:])
@@ -782,7 +825,7 @@ func setupRouting(log eggs.LogLevels, st *state) {
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "directory", body: directoryTemplateStr},
 	)
-	setupPage("/inode", handleInode)
+	setupPage("/inode/", handleInode)
 }
 
 func main() {

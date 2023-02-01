@@ -14,6 +14,7 @@ else:
     build_type = sys.argv[1]
 
 cpp_dir = Path(__file__).parent
+
 build_dir = cpp_dir / 'build' / build_type
 build_dir.mkdir(parents=True, exist_ok=True)
 

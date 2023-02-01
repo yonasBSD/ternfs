@@ -4,7 +4,18 @@
             {{if .Path}}
                 <tr>
                     <th>Path</th>
-                    <td><code>{{.Path}}</code></td>
+                    <td>
+                        <code>
+                            <a href="/inode">/</a>
+                            {{range $segment := .PathSegments}}
+                                {{if eq $segment.PathSoFar $.Path}}
+                                    <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a>
+                                {{else}}
+                                    <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
+                                {{end}}
+                            {{end}}
+                        </code>
+                    </td>
                 </tr>
             {{end}}
             <tr>

@@ -1,11 +1,11 @@
 {{define "body"}}
-    <img src="/shuckle.png" alt="Mr. Shuckle"/>
-    <h2>Overview</h2>
-    <ul>
-        <li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
-        <li>Total capacity: {{.TotalCapacity}}</li>
-        <li>{{.TotalUsed}} used over {{.Blocks}} blocks ({{.TotalUsedPercentage}})</li>
-    </ul>
+    <p>
+        <ul>
+            <li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
+            <li>Total capacity: {{.TotalCapacity}}</li>
+            <li>{{.TotalUsed}} used over {{.Blocks}} blocks ({{.TotalUsedPercentage}})</li>
+        </ul>    
+    </p>
     <h2>CDC</h2>
     <table class="table">
         <thead>

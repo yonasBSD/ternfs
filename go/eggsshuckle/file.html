@@ -40,7 +40,9 @@
                 <th class="text-end">Size</th>
                 <th>Crc32</th>
                 <th>Storage</th>
-                <th class="text-end">BlockSize</th>
+                {{if not $.AllInline}}
+                    <th class="text-end">BlockSize</th>
+                {{end}}
                 <th>Body</th>
             </tr>
         </thead>
@@ -51,11 +53,13 @@
                     <td class="text-end">{{$span.Size}}</td>
                     <td><code>{{$span.Crc32}}</code></td>
                     <td>{{$span.StorageClass}}</td>
-                    <td class="text-end">
-                        {{if $span.BlockSize}}
-                            {{$span.BlockSize}}
-                        {{end}}
-                    </td>
+                    {{if not $.AllInline}}
+                        <td class="text-end">
+                            {{if $span.BlockSize}}
+                                {{$span.BlockSize}}
+                            {{end}}
+                        </td>
+                    {{end}}
                     <td>
                         <small>
                             {{if $span.BodyBytes}}

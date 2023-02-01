@@ -353,12 +353,16 @@ func formatPreciseSize(bytes uint64) string {
 	return fmt.Sprintf("%vB", bytes)
 }
 
-var shuckleTemplate *template.Template
+var indexTemplate *template.Template
 
 func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		ll, w, r,
 		func(_ url.Values) (*template.Template, *pageData, int) {
+			if r.URL.Path != "/" {
+				return errorPage(http.StatusNotFound, "not found")
+			}
+
 			state.mutex.RLock()
 			defer state.mutex.RUnlock()
 
@@ -413,7 +417,7 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 			} else {
 				data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalAvailableBytes)/float64(totalCapacityBytes))
 			}
-			return shuckleTemplate, &pageData{Title: "Shuckle", Body: &data}, http.StatusOK
+			return indexTemplate, &pageData{Title: "Shuckle", Body: &data}, http.StatusOK
 		},
 	)
 }
@@ -450,6 +454,7 @@ type fileData struct {
 	Path         string // might be empty
 	Size         string
 	Mtime        string
+	AllInline    bool
 	Spans        []fileSpan
 	PathSegments []pathSegment
 }
@@ -638,7 +643,7 @@ func handleInode(
 								Current:      edge.Current,
 								TargetId:     fmt.Sprintf("%v", edge.TargetId.Id()),
 								Owned:        edge.Current || edge.TargetId.Extra(),
-								NameHash:     fmt.Sprintf("%08x", edge.NameHash),
+								NameHash:     fmt.Sprintf("%016x", edge.NameHash),
 								Name:         edge.Name,
 								CreationTime: edge.CreationTime.String(),
 								Locked:       edge.Current && edge.TargetId.Extra(),
@@ -656,8 +661,9 @@ func handleInode(
 				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			} else {
 				data := fileData{
-					Id:   fmt.Sprintf("%v", id),
-					Path: "/" + path,
+					Id:        fmt.Sprintf("%v", id),
+					Path:      "/" + path,
+					AllInline: true,
 				}
 				data.PathSegments = pathSegments(path)
 				title := fmt.Sprintf("File %v", data.Id)
@@ -688,6 +694,8 @@ func handleInode(
 							}
 							if len(span.BodyBytes) > 0 {
 								fs.BodyBytes = fmt.Sprintf("%q", span.BodyBytes)
+							} else {
+								data.AllInline = false
 							}
 
 							for _, block := range span.BodyBlocks {
@@ -812,11 +820,11 @@ func setupRouting(log eggs.LogLevels, st *state) {
 	)
 
 	// pages
-	shuckleTemplate = parseTemplates(
+	indexTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "shuckle", body: indexTemplateStr},
 	)
-	setupPage("/shuckle", handleIndex)
+	setupPage("/", handleIndex)
 
 	fileTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},

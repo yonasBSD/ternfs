@@ -145,7 +145,7 @@ func deserEraseBlock(blockServiceId msgs.BlockServiceId, cipher cipher.Block, ki
 }
 
 func blockIdToPath(basePath string, blockId msgs.BlockId) string {
-	hex := fmt.Sprintf("%08x", uint64(blockId))
+	hex := fmt.Sprintf("%016x", uint64(blockId))
 	// We want to split the blocks in dirs to avoid trouble with high number of
 	// files in single directory (e.g. birthday paradox stuff). However the block
 	// id is very much _not_ uniformly distributed (it's the time). So we use

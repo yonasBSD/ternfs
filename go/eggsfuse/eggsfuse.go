@@ -237,9 +237,9 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 	}
 	req := msgs.ConstructFileReq{Note: name}
 	resp := msgs.ConstructFileResp{}
-	if mode&syscall.S_IFREG != 0 {
+	if (mode & syscall.S_IFMT) == syscall.S_IFREG {
 		req.Type = msgs.FILE
-	} else if mode&syscall.S_IFLNK != 0 {
+	} else if (mode & syscall.S_IFMT) == syscall.S_IFLNK {
 		req.Type = msgs.SYMLINK
 	} else {
 		panic(fmt.Errorf("bad mode %v", mode))
@@ -713,13 +713,47 @@ func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.E
 	if err != 0 {
 		return nil, err
 	}
-	if _, err := tf.Write(ctx, []byte(name), 0); err != 0 {
+	if _, err := tf.Write(ctx, []byte(target), 0); err != 0 {
 		return nil, err
 	}
 	if err := tf.Flush(ctx); err != 0 {
 		return nil, err
 	}
 	return n.NewInode(ctx, &eggsNode{id: tf.id}, fs.StableAttr{Ino: uint64(tf.id), Mode: syscall.S_IFLNK}), 0
+}
+
+func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	var data []byte
+	resp := msgs.FileSpansResp{}
+	if err := shardRequest(n.id.Shard(), &msgs.FileSpansReq{FileId: n.id}, &resp); err != 0 {
+		return nil, err
+	}
+	if len(resp.Spans) > 1 {
+		panic(fmt.Errorf("more than one span for symlink"))
+	}
+	span := resp.Spans[0]
+	if len(span.BodyBytes) > 0 {
+		data = span.BodyBytes
+	} else {
+		if span.Parity.DataBlocks() > 1 {
+			panic(fmt.Errorf("multiple data blocks not supported yet"))
+		}
+		block := span.BodyBlocks[0]
+		blockService := resp.BlockServices[block.BlockServiceIx]
+		conn, err := eggs.BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+		if err != nil {
+			panic(err)
+		}
+		defer conn.Close()
+		if err := eggs.FetchBlock(log, conn, &blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
+			panic(err)
+		}
+		data = make([]byte, span.BlockSize)
+		if _, err := io.ReadFull(conn, data); err != nil {
+			panic(err)
+		}
+	}
+	return data, 0
 }
 
 var _ = (fs.InodeEmbedder)((*eggsNode)(nil))
@@ -734,6 +768,7 @@ var _ = (fs.NodeOpener)((*eggsNode)(nil))
 var _ = (fs.NodeUnlinker)((*eggsNode)(nil))
 var _ = (fs.NodeRmdirer)((*eggsNode)(nil))
 var _ = (fs.NodeSymlinker)((*eggsNode)(nil))
+var _ = (fs.NodeReadlinker)((*eggsNode)(nil))
 
 var _ = (fs.FileWriter)((*transientFile)(nil))
 var _ = (fs.FileFlusher)((*transientFile)(nil))

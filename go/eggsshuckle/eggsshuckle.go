@@ -768,6 +768,7 @@ func handleBlock(log eggs.LogLevels, st *state, w http.ResponseWriter, r *http.R
 				panic(err)
 			}
 			w.Header().Set("Content-Type", "application/x-binary")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%016x\"", uint64(blockId)))
 			log.Info("serving block of size %v", size)
 			return conn, int64(size), http.StatusOK
 		},

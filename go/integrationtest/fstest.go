@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math"
 	"math/rand"
@@ -113,8 +114,8 @@ func (c *apiFsTestHarness) readDirectory(log eggs.LogLevels, dir msgs.InodeId) (
 	return files, dirs
 }
 
-func checkFileData(fileData []byte, expectedData []byte) {
-	if !bytes.Equal(fileData, expectedData) {
+func checkFileData(actualData []byte, expectedData []byte) {
+	if !bytes.Equal(actualData, expectedData) {
 		dir, err := os.MkdirTemp("", "eggs-fstest-files.")
 		if err != nil {
 			panic(fmt.Errorf("mismatching data, could not create temp directory"))
@@ -124,7 +125,7 @@ func checkFileData(fileData []byte, expectedData []byte) {
 		if err := os.WriteFile(expectedPath, expectedData, 0644); err != nil {
 			panic(fmt.Errorf("mismatching data, could not create data file"))
 		}
-		if err := os.WriteFile(actualPath, fileData, 0644); err != nil {
+		if err := os.WriteFile(actualPath, actualData, 0644); err != nil {
 			panic(fmt.Errorf("mismatching data, could not create data file"))
 		}
 		panic(fmt.Errorf("mismatching data, expected data is in %v, found data is in %v", expectedPath, actualPath))
@@ -204,11 +205,35 @@ func (c *posixFsTestHarness) readDirectory(log eggs.LogLevels, dirFullPath strin
 }
 
 func (c *posixFsTestHarness) checkFileData(log eggs.LogLevels, fullFilePath string, size uint64, genData func(size uint64) []byte) {
-	fileData, err := os.ReadFile(fullFilePath)
+	allData := genData(size)
+	fileData := make([]byte, len(allData))
+	f, err := os.Open(fullFilePath)
 	if err != nil {
 		panic(err)
 	}
-	checkFileData(fileData, genData(size))
+	defer f.Close()
+	// First we check the whole thing
+	if _, err := io.ReadFull(f, fileData); err != nil {
+		panic(err)
+	}
+	checkFileData(fileData, allData)
+	// then we start doing random reads around
+	if len(allData) > 1 {
+		rand := rand.New(rand.NewSource(int64(size)))
+		for i := 0; i < 10; i++ {
+			offset := rand.Int() % (len(allData) - 1)
+			size := 1 + rand.Int()%(len(allData)-offset-1)
+			if _, err := f.Seek(int64(offset), 0); err != nil {
+				panic(err)
+			}
+			expectedPartialData := allData[offset : offset+size]
+			actualPartialData := fileData[offset : offset+size]
+			if _, err := io.ReadFull(f, actualPartialData); err != nil {
+				panic(err)
+			}
+			checkFileData(actualPartialData, expectedPartialData)
+		}
+	}
 }
 
 var _ = (fsTestHarness[string])((*posixFsTestHarness)(nil))

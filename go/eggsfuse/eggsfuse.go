@@ -579,11 +579,12 @@ func (of *openFile) ensureBlockService(bs *msgs.BlockService) syscall.Errno {
 	return 0
 }
 
-func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+// One step of reading, will go through at most one span.
+func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) {
 	// Check if we're still within the file: if not, we can just exit
 	if off >= int64(of.size) {
 		log.Debug("%v is beyond %v, nothing to read", off, of.size)
-		return fuse.ReadResultData([]byte{}), 0
+		return 0, 0
 	}
 
 	// Check if we're still within the current span
@@ -596,7 +597,7 @@ func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, sysca
 			log.Debug("offset %v is not within the current spanS bounds [%v, %v), will refresh", off, firstSpan.ByteOffset, lastSpan.ByteOffset+lastSpan.Size)
 			// we need to refresh the spans
 			if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(off)}, &of.spans); err != 0 {
-				return nil, err
+				return 0, err
 			}
 			of.currentSpanIx = 0
 			// restart
@@ -628,16 +629,16 @@ func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, sysca
 
 	if currentSpan.StorageClass == msgs.INLINE_STORAGE {
 		if err := of.resetBlockService(); err != 0 {
-			return nil, err
+			return 0, err
 		}
-		return fuse.ReadResultData(currentSpan.BodyBytes[spanOffset:]), 0
+		return int64(copy(dest, currentSpan.BodyBytes[spanOffset:])), 0
 	} else {
 		if currentSpan.Parity.DataBlocks() != 1 {
 			panic(fmt.Errorf("unsupported parity %v", currentSpan.Parity))
 		}
 		block := &currentSpan.BodyBlocks[0]
 		if err := of.ensureBlockService(&of.spans.BlockServices[block.BlockServiceIx]); err != 0 {
-			return nil, err
+			return 0, err
 		}
 		toRead := uint32(remainingInSpan)
 		if len(dest) < int(toRead) {
@@ -650,14 +651,27 @@ func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, sysca
 		if _, err := io.ReadFull(of.currentBlockServiceConn, dest); err != nil {
 			panic(err)
 		}
-		return fuse.ReadResultData(dest), 0
+		return int64(len(dest)), 0
 	}
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	of.mu.Lock()
 	defer of.mu.Unlock()
-	return of.readInternal(dest, off)
+	internalOff := int64(0)
+	// TODO for some reason go-fuse does not seem to support partial reads in the middle of the
+	// file, which is weird. So we fully drain it. But we should understand what's going on.
+	for {
+		read, err := of.readInternal(dest[internalOff:], off+internalOff)
+		if err != 0 {
+			return nil, err
+		}
+		internalOff += read
+		if read == 0 {
+			break
+		}
+	}
+	return fuse.ReadResultData(dest[:internalOff]), 0
 }
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {

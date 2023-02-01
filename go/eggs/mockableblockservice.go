@@ -29,7 +29,8 @@ type MockableBlockServices interface {
 		logger LogLevels,
 		conn MockableBlockServiceConn,
 		blockService *msgs.BlockService,
-		block *msgs.FetchedBlock,
+		blockId msgs.BlockId,
+		crc32 [4]byte,
 		offset uint32,
 		count uint32,
 	) error
@@ -42,8 +43,9 @@ type MockableBlockServices interface {
 		logger LogLevels,
 		sourceConn MockableBlockServiceConn,
 		sourceBlockService *msgs.BlockService,
+		sourceBlockId msgs.BlockId,
+		sourceBlockCrc [4]byte,
 		sourceBlockSize uint64,
-		sourceBlock *msgs.FetchedBlock,
 		dstConn MockableBlockServiceConn,
 		dstBlock *msgs.BlockInfo,
 	) ([8]byte, error)
@@ -70,11 +72,12 @@ func (RealBlockServices) FetchBlock(
 	logger LogLevels,
 	conn MockableBlockServiceConn,
 	blockService *msgs.BlockService,
-	block *msgs.FetchedBlock,
+	blockId msgs.BlockId,
+	blockCrc [4]byte,
 	offset uint32,
 	count uint32,
 ) error {
-	return FetchBlock(logger, conn, blockService, block, offset, count)
+	return FetchBlock(logger, conn, blockService, blockId, blockCrc, offset, count)
 }
 
 func (RealBlockServices) EraseBlock(
@@ -89,13 +92,16 @@ func (RealBlockServices) CopyBlock(
 	logger LogLevels,
 	sourceConn MockableBlockServiceConn,
 	sourceBlockService *msgs.BlockService,
+	sourceBlockId msgs.BlockId,
+	sourceBlockCrc [4]byte,
 	sourceBlockSize uint64,
-	sourceBlock *msgs.FetchedBlock,
 	dstConn MockableBlockServiceConn,
 	dstBlock *msgs.BlockInfo,
 ) ([8]byte, error) {
-	return CopyBlock(logger, sourceConn, sourceBlockService, sourceBlockSize, sourceBlock, dstConn, dstBlock)
+	return CopyBlock(logger, sourceConn, sourceBlockService, sourceBlockId, sourceBlockCrc, sourceBlockSize, dstConn, dstBlock)
 }
+
+var _ = (MockableBlockServices)(RealBlockServices{})
 
 type MockedBlockServices struct {
 	Keys map[msgs.BlockServiceId]cipher.Block
@@ -155,7 +161,8 @@ func (mbs *MockedBlockServices) FetchBlock(
 	logger LogLevels,
 	conn MockableBlockServiceConn,
 	blockService *msgs.BlockService,
-	block *msgs.FetchedBlock,
+	blockId msgs.BlockId,
+	blockCrc [4]byte,
 	offset uint32,
 	count uint32,
 ) error {
@@ -178,8 +185,9 @@ func (mbs *MockedBlockServices) CopyBlock(
 	logger LogLevels,
 	sourceConn MockableBlockServiceConn,
 	sourceBlockService *msgs.BlockService,
+	sourceBlockId msgs.BlockId,
+	sourceBlockCrc [4]byte,
 	sourceBlockSize uint64,
-	sourceBlock *msgs.FetchedBlock,
 	dstConn MockableBlockServiceConn,
 	dstBlock *msgs.BlockInfo,
 ) ([8]byte, error) {
@@ -189,3 +197,5 @@ func (mbs *MockedBlockServices) CopyBlock(
 	}
 	return BlockWriteProof(dstBlock.BlockServiceId, dstBlock.BlockId, key), nil
 }
+
+var _ = (MockableBlockServices)((*MockedBlockServices)(nil))

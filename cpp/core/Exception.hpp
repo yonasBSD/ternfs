@@ -86,7 +86,7 @@ SyscallException::SyscallException(int line, const char *file, const char *funct
     const char* errmsg = safe_strerror(_errno);
 
     std::stringstream ss;
-    ss << "SyscallException(" << file << "@" << line << ", " << _errno << "/" << translateErrno(_errno) << "=" << errmsg << " in " << function << "):\n";
+    ss << "SyscallException(" << file << "@" << line << ", " << _errno << "/" << translateErrno(_errno) << "=" << errmsg << " in " << function << "): ";
     format_pack(ss, fmt, args...);
 
     _msg = ss.str();
@@ -96,7 +96,7 @@ template <typename ... Args>
 FatalException::FatalException(int line, const char *file, const char *function, const char *fmt, Args ... args) {
 
     std::stringstream ss;
-    ss << "FatalException(" << file << "@" << line << " in " << function << "):\n";
+    ss << "FatalException(" << file << "@" << line << " in " << function << "): ";
     format_pack(ss, fmt, args...);
 
     _msg = ss.str();

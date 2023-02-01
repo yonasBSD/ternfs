@@ -193,7 +193,7 @@ func readFile(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockSer
 				if err != nil {
 					panic(err)
 				}
-				if err := mbs.FetchBlock(log, conn, blockService, block, 0, uint32(span.BlockSize)); err != nil {
+				if err := mbs.FetchBlock(log, conn, blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
 					conn.Close()
 					panic(err)
 				}

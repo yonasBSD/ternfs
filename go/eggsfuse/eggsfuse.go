@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"sync"
 	"syscall"
 	"xtx/eggsfs/eggs"
@@ -625,8 +626,6 @@ func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, sysca
 		panic(fmt.Errorf("unexpected out of bounds spanOffset/remainingInSpan"))
 	}
 
-	// log.Debug("reading file %v at %v, count %v, spanOffset=%v, remainingInSpan=%v", )
-
 	if currentSpan.StorageClass == msgs.INLINE_STORAGE {
 		if err := of.resetBlockService(); err != 0 {
 			return nil, err
@@ -644,7 +643,7 @@ func (of *openFile) readInternal(dest []byte, off int64) (fuse.ReadResult, sysca
 		if len(dest) < int(toRead) {
 			toRead = uint32(len(dest))
 		}
-		if err := eggs.FetchBlock(log, of.currentBlockServiceConn, of.currentBlockService, block, uint32(spanOffset), toRead); err != nil {
+		if err := eggs.FetchBlock(log, of.currentBlockServiceConn, of.currentBlockService, block.BlockId, block.Crc32, uint32(spanOffset), toRead); err != nil {
 			panic(err)
 		}
 		dest = dest[:toRead]
@@ -728,24 +727,28 @@ var _ = (fs.FileFlusher)((*transientFile)(nil))
 var _ = (fs.FileReader)((*openFile)(nil))
 var _ = (fs.FileFlusher)((*openFile)(nil))
 
-func unmount(server *fuse.Server, unmounted *bool) {
-	if *unmounted {
+func terminate(server *fuse.Server, terminated *bool) {
+	if *terminated {
 		return
 	}
+	*terminated = true
 	if err := server.Unmount(); err != nil {
-		fmt.Fprintf(os.Stderr, "could not unmount: %v\n", err)
+		log.Info("could not unmount: %v\n", err)
 	}
+	pprof.StopCPUProfile()
 }
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
 	flag.PrintDefaults()
 }
+
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -776,6 +779,15 @@ func main() {
 		Logger:  logger,
 	}
 
+	if *profileFile != "" {
+		f, err := os.Create(*profileFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open profile file %v", *profileFile)
+			os.Exit(1)
+		}
+		pprof.StartCPUProfile(f) // we stop in terminate()
+	}
+
 	var err error
 	client, err = eggs.NewClient(log, *shuckleAddress, nil, nil, nil)
 	if err != nil {
@@ -802,8 +814,8 @@ func main() {
 		}
 	}
 
-	unmounted := false
-	defer unmount(server, &unmounted)
+	terminated := false
+	defer terminate(server, &terminated)
 	// Cleanup if we get killed with a signal. Obviously we can't do much
 	// in the case of SIGKILL or SIGQUIT.
 	signalChan := make(chan os.Signal, 1)
@@ -811,7 +823,7 @@ func main() {
 	go func() {
 		sig := <-signalChan
 		signal.Stop(signalChan)
-		unmount(server, &unmounted)
+		terminate(server, &terminated)
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
 	}()
 

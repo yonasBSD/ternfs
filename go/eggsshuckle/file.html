@@ -1,0 +1,95 @@
+{{define "body"}}
+    <table class="table">
+        <tbody>
+            {{if .Path}}
+                <tr>
+                    <th>Path</th>
+                    <td><code>{{.Path}}</code></td>
+                </tr>
+            {{end}}
+            <tr>
+                <th>Id</th>
+                <td><code>{{.Id}}</code></td>
+            </tr>
+            <tr>
+                <th>Size</th>
+                <td><code>{{.Size}}</code></td>
+            </tr>
+            <tr>
+                <th>Mtime</th>
+                <td><code>{{.Mtime}}</code></td>
+            </tr>
+        </tbody>
+    </table>
+    <h2>Spans</h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th class="text-end">Offset</th>
+                <th class="text-end">Size</th>
+                <th>Crc32</th>
+                <th>Storage</th>
+                <th class="text-end">BlockSize</th>
+                <th>Body</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range $span := .Spans}}
+                <tr>
+                    <td class="text-end">{{$span.Offset}}</td>
+                    <td class="text-end">{{$span.Size}}</td>
+                    <td><code>{{$span.Crc32}}</code></td>
+                    <td>{{$span.StorageClass}}</td>
+                    <td class="text-end">
+                        {{if $span.BlockSize}}
+                            {{$span.BlockSize}}
+                        {{end}}
+                    </td>
+                    <td>
+                        <small>
+                            {{if $span.BodyBytes}}
+                                <code>{{$span.BodyBytes}}</code>
+                            {{else}}
+                                <table class="table table-sm mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th></th>
+                                            <th colspan="{{$span.DataBlocks}}">
+                                                data
+                                            </th>    
+                                            <th colspan="{{$span.ParityBlocks}}">
+                                                parity
+                                            </th>    
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <th>Id</th>
+                                            {{range $block := $span.BodyBlocks}}
+                                                <td>
+                                                    <a href="{{$block.Link}}"><code>{{$block.Id}}</code></a>
+                                                </td>
+                                            {{end}}
+                                        </tr>
+                                        <tr>
+                                            <th>Crc32</th>
+                                            {{range $block := $span.BodyBlocks}}
+                                                <td><code>{{$block.Crc32}}<code></td>
+                                            {{end}}
+                                        </tr>
+                                        <tr>
+                                            <th>BlockService</th>
+                                            {{range $block := $span.BodyBlocks}}
+                                                <td><a href="/shuckle#bs-{{$block.BlockService}}"><code>{{$block.BlockService}}</code></a></td>
+                                            {{end}}
+                                        </tr>
+                                    </tbody>
+                                </table>    
+                            {{end}}
+                        </small>
+                    </td>
+                </tr>
+            {{end}}
+        </tbody>
+    </table>
+{{end}}

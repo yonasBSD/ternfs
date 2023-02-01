@@ -100,7 +100,7 @@ func WriteBlock(
 	if _, err := conn.ReadFrom(&lr); err != nil {
 		return proof, fmt.Errorf("could not write block data to: %w", err)
 	}
-	// write response: (block_service_id, 'W', block_id, proof)
+	// write response: (block_service_id, 'W', proof)
 	if err := bsRespInit(conn, block.BlockServiceId, 'W'); err != nil {
 		return proof, err
 	}
@@ -119,14 +119,15 @@ func FetchBlock(
 		io.Writer
 	},
 	blockService *msgs.BlockService,
-	block *msgs.FetchedBlock,
+	blockId msgs.BlockId,
+	crc32 [4]byte,
 	offset uint32,
 	count uint32,
 ) error {
-	logger.Debug("fetching block %+v from block service %+v, offset=%v, count=%v", block, blockService, offset, count)
+	logger.Debug("fetching block %v from block service %+v, offset=%v, count=%v", blockId, blockService, offset, count)
 	// start reading the block: message (block_service_id, 'f', block_id, offset)
 	readReq := bsReqInit(blockService.Id, 'f')
-	bsWrite(readReq, uint64(block.BlockId))
+	bsWrite(readReq, uint64(blockId))
 	bsWrite(readReq, offset)
 	bsWrite(readReq, count)
 	err := bsSend(conn, readReq)
@@ -176,8 +177,9 @@ func CopyBlock(
 		io.Writer
 	},
 	sourceBlockService *msgs.BlockService,
+	sourceBlockId msgs.BlockId,
+	sourceBlockCrc [4]byte,
 	sourceBlockSize uint64,
-	sourceBlock *msgs.FetchedBlock,
 	dstConn interface {
 		io.ReaderFrom
 		io.Reader
@@ -187,10 +189,10 @@ func CopyBlock(
 ) ([8]byte, error) {
 	var proof [8]byte
 	var err error
-	if err := FetchBlock(logger, sourceConn, sourceBlockService, sourceBlock, 0, uint32(sourceBlockSize)); err != nil {
+	if err := FetchBlock(logger, sourceConn, sourceBlockService, sourceBlockId, sourceBlockCrc, 0, uint32(sourceBlockSize)); err != nil {
 		return proof, err
 	}
-	proof, err = WriteBlock(logger, dstConn, dstBlock, sourceConn, uint32(sourceBlockSize), sourceBlock.Crc32)
+	proof, err = WriteBlock(logger, dstConn, dstBlock, sourceConn, uint32(sourceBlockSize), sourceBlockCrc)
 	if err != nil {
 		return proof, err
 	}

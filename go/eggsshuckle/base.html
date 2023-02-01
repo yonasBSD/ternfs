@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="/bootstrap.min.css">
+        <link rel="icon" type="image/png" href="/shuckle-face.png" />
+
+        <style type="text/css">
+        </style>
+
+        <title>EggsFS — {{.Title}}</title>
+    </head>
+    <body>
+        <div class="container">
+            <h1>{{.Title}}</h1>
+            {{template "body" .Body}}    
+        </div>
+
+        <script>
+            // snapshot edges
+            function toggleFullEdges(show) {
+                const els = document.getElementsByClassName('edges-full');
+                for (let i = 0; i < els.length; i++) {
+                    els[i].style.display = show ? '' : 'none';
+                }
+            }
+            window.addEventListener('DOMContentLoaded', () => {
+                toggleFullEdges(document.getElementById('snapshot-edges-checkbox').checked);
+            });
+        </script>
+    </body>
+</html>

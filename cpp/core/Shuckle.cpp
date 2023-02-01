@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <sstream>
+#include <string>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -14,59 +15,85 @@
 #include <netinet/tcp.h>
 
 #include "Bincode.hpp"
+#include "Env.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Shuckle.hpp"
 #include "Exception.hpp"
 
-static std::string generateErrString(const std::string& what, int err) {
-
+static std::string explicitGenerateErrString(const std::string& what, int err, const char* str) {
     const char *errmsg = safe_strerror(err);
     std::stringstream ss;
-    ss << "could not " << what << ": " << err << "/" << translateErrno(err) << "=" << errmsg;
+    ss << "could not " << what << ": " << err << "/" << str << "=" << errmsg;
     return ss.str();
 }
 
-static std::mutex gethostbynameMutex;
+static std::string generateErrString(const std::string& what, int err) {
+    return explicitGenerateErrString(what, err, (std::string(translateErrno(err)) + "=" + safe_strerror(err)).c_str());
+}
 
-static int shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
-    struct hostent* he;
+struct ShuckleSock {
+    int fd;
+    ~ShuckleSock() { close(fd); }
+};
+
+static ShuckleSock shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
+    ShuckleSock sock;
+    sock.fd = -1;
+
+    std::unique_ptr<struct addrinfo, decltype(&freeaddrinfo)> infos(nullptr, &freeaddrinfo);
     {
-        // too lazy to learn getaddrinfo
-        std::lock_guard<std::mutex> lock(gethostbynameMutex);
-        he = gethostbyname(host.c_str());
-        if (he == nullptr) {
-            throw EGGS_EXCEPTION("could not get address for host %s", host);
+        char portStr[10];
+        snprintf(portStr, sizeof(portStr), "%d", port);
+        struct addrinfo hint;
+        memset(&hint, 0, sizeof(hint));
+        hint.ai_family = AF_INET;
+        struct addrinfo* infosRaw;
+        int res = getaddrinfo(host.c_str(), portStr, &hint, &infosRaw);
+        if (res != 0) {
+            if (res == EAI_SYSTEM) { // errno is filled in in this case
+                throw SYSCALL_EXCEPTION("getaddrinfo");
+            }
+            std::string prefix = "resolve host " + host + ":" + std::to_string(port);
+            if (res == EAI_ADDRFAMILY || res == EAI_AGAIN || res == EAI_NONAME) { // things that might be worth retrying
+                errString = explicitGenerateErrString(prefix, res, gai_strerror(res));
+                return sock;
+            }
+            throw EGGS_EXCEPTION("%s: %s/%s", prefix, res, gai_strerror(res)); // we're probably hosed
+        }
+        infos.reset(infosRaw);
+    }
+
+    for (struct addrinfo* info = infos.get(); info != nullptr; info = info->ai_next) {
+        int infoSock = socket(AF_INET, SOCK_STREAM, 0);
+        if (infoSock < 0) {
+            throw SYSCALL_EXCEPTION("socket");
+        }
+
+        // We retry upstream anyway, and we want prompt termination of `connect`.
+        // If we don't do this, mistakenly trying to connect to an iceland shuckle (currently
+        // the default) will hang for a long time.
+        int synRetries = 0;
+        setsockopt(infoSock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
+
+        if (connect(infoSock, info->ai_addr, info->ai_addrlen) < 0) {
+            close(infoSock);
+        } else {
+            sock.fd = infoSock;
+            break;
         }
     }
 
-    // nonblock at the beginning for connect timeout
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        throw SYSCALL_EXCEPTION("socket");
-    }
-
-    // We retry upstream anyway, and we want prompt termination of `connect`
-    int synRetries = 0;
-    setsockopt(sock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
-
-    struct sockaddr_in shuckleAddr;
-    shuckleAddr.sin_family = AF_INET;
-    shuckleAddr.sin_addr = *(struct in_addr*)he->h_addr_list[0];
-    shuckleAddr.sin_port = htons(port);
-
-    if (connect(sock, (struct sockaddr*)&shuckleAddr, sizeof(shuckleAddr)) < 0) {
+    if (sock.fd == -1) {
         errString = generateErrString("connect to " + host, errno);
-        close(sock);
-        return -1;
-    }
+    } else {
+        struct timeval tv;
+        tv.tv_sec = timeout.ns/1'000'000'000ull;
+        tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;
 
-    struct timeval tv;
-    tv.tv_sec = timeout.ns/1'000'000'000ull;
-    tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;
-
-    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        throw SYSCALL_EXCEPTION("setsockopt");
+        if (setsockopt(sock.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+            throw SYSCALL_EXCEPTION("setsockopt");
+        }
     }
 
     return sock;
@@ -134,21 +161,21 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
 
 std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, UpdateBlockServicesEntry& blocks) {
     std::string errString;
-    int sock = shuckleSock(addr, port, timeout, errString);
-    if (sock < 0) {
+    auto sock = shuckleSock(addr, port, timeout, errString);
+    if (sock.fd < 0) {
         return errString;
     }
 
     ShuckleReqContainer reqContainer;
     auto& req = reqContainer.setBlockServicesForShard();
     req.shard = shid;
-    errString = writeShuckleRequest(sock, reqContainer);
+    errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
     }
 
     ShuckleRespContainer respContainer;
-    errString = readShuckleResponse(sock, respContainer);
+    errString = readShuckleResponse(sock.fd, respContainer);
     if (!errString.empty()) {
         return errString;
     }
@@ -162,8 +189,8 @@ std::string registerShard(
     const std::string& addr, uint16_t port, Duration timeout, ShardId shid, const std::array<uint8_t, 4>& shardAddr, uint16_t shardPort
 ) {
     std::string errString;
-    int sock = shuckleSock(addr, port, timeout, errString);
-    if (sock < 0) {
+    auto sock = shuckleSock(addr, port, timeout, errString);
+    if (sock.fd < 0) {
         return errString;
     }
 
@@ -172,13 +199,13 @@ std::string registerShard(
     req.id = shid;
     req.info.ip.data = shardAddr;
     req.info.port = shardPort;
-    errString = writeShuckleRequest(sock, reqContainer);
+    errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
     }
 
     ShuckleRespContainer respContainer;
-    errString = readShuckleResponse(sock, respContainer);
+    errString = readShuckleResponse(sock.fd, respContainer);
     if (!errString.empty()) {
         return errString;
     }
@@ -189,8 +216,8 @@ std::string registerShard(
 
 std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, const std::array<uint8_t, 4>& cdcAddr, uint16_t cdcPort) {
     std::string errString;
-    int sock = shuckleSock(host, port, timeout, errString);
-    if (sock < 0) {
+    auto sock = shuckleSock(host, port, timeout, errString);
+    if (sock.fd < 0) {
         return errString;
     }
 
@@ -198,13 +225,13 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
     auto& req = reqContainer.setRegisterCdc();
     req.ip.data = cdcAddr;
     req.port = cdcPort;
-    errString = writeShuckleRequest(sock, reqContainer);
+    errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
     }
 
     ShuckleRespContainer respContainer;
-    errString = readShuckleResponse(sock, respContainer);
+    errString = readShuckleResponse(sock.fd, respContainer);
     if (!errString.empty()) {
         return errString;
     }
@@ -215,20 +242,20 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
 
 std::string fetchShards(const std::string& host, uint16_t port, Duration timeout, std::array<ShardInfo, 256>& shards) {
     std::string errString;
-    int sock = shuckleSock(host, port, timeout, errString);
-    if (sock < 0) {
+    auto sock = shuckleSock(host, port, timeout, errString);
+    if (sock.fd < 0) {
         return errString;
     }
 
     ShuckleReqContainer reqContainer;
     reqContainer.setShards();
-    errString = writeShuckleRequest(sock, reqContainer);
+    errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
     }
 
     ShuckleRespContainer respContainer;
-    errString = readShuckleResponse(sock, respContainer);
+    errString = readShuckleResponse(sock.fd, respContainer);
     if (!errString.empty()) {
         return errString;
     }

@@ -1,0 +1,99 @@
+{{define "body"}}
+    <table class="table">
+        <tbody>
+            {{if .Path}}
+                <tr>
+                    <th>Path</th>
+                    <td><code>{{.Path}}</code></td>
+                </tr>
+            {{end}}
+            <tr>
+                <th>Id</th>
+                <td><code>{{.Id}}</code></td>
+            </tr>
+            <tr>
+                <th>Owner</th>
+                <td>
+                    {{if eq .Owner "0x0"}}
+                        <code>NONE</code>
+                    {{else}}
+                        <a href="/inode?id={{.Owner}}"><code>{{.Owner}}</code></a>
+                    {{end}}
+                </td>
+            </tr>
+            <tr>
+                <th>Mtime</th>
+                <td><code>{{.Mtime}}</code></td>
+            </tr>
+        </tbody>
+    </table>
+    <h2>Edges</h2>
+    <form>
+        <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="snapshot-edges-checkbox" checked="true" onchange="toggleFullEdges(this.checked)">
+            <label class="form-check-label">Show snapshot edges</label>
+        </div>
+    </form>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>NameHash</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Target</th>
+                <th>CreationTime</th>
+                <th class="edges-full">Owned</th>
+                <th>Locked</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range $edge := .Edges}}
+                {{if $edge.Current}}
+                <tr>
+                {{else}}
+                <tr class="table-active edges-full">
+                {{end}}
+                    <td><code>{{$edge.NameHash}}</code></td>
+                    <td>
+                        {{if eq $edge.TargetId "0x0"}}
+                            <code>{{$edge.Name}}</code>
+                        {{else}}
+                            {{if and $edge.Current $.Path}}
+                                <a href="/inode?path={{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
+                            {{else}}
+                                <a href="/inode?id={{$edge.TargetId}}"><code>{{$edge.Name}}</code></a>
+                            {{end}}
+                        {{end}}
+                    </td>
+                    <td>
+                        <code>{{$edge.Type}}</code>
+                    </td>
+                    <td>
+                        {{if not (eq $edge.TargetId "0x0")}}
+                            <code>{{$edge.TargetId}}</code>
+                        {{else}}
+                            <code>DELETE</code>
+                        {{end}}
+                    </td>
+                    <td><code>{{$edge.CreationTime}}</code></td>
+                    <td class="edges-full">
+                        {{if $edge.Owned}}
+                            <strong>yes</strong>
+                        {{else}}
+                            no
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if $edge.Current}}
+                            {{if $edge.Locked}}
+                                <strong>yes</strong>
+                            {{else}}
+                                no
+                            {{end}}
+                        {{end}}
+                    </td>
+                </tr>
+            {{end}}
+        </tbody>
+    </table>
+{{end}}

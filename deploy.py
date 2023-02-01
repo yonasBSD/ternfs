@@ -7,7 +7,7 @@ this_dir = os.path.dirname(__file__)
 
 metadata_hosts = ['REDACTED']
 metadata_binaries = [
-    'cpp/build/alpine/shard/eggsshard', 'cpp/build/alpine/cdc/eggscdc', 'go/eggsshuckle/eggsshuckle'
+    'cpp/build/alpine/shard/eggsshard', 'cpp/build/alpine/cdc/eggscdc', 'go/eggsshuckle/eggsshuckle', 'go/eggsrun/eggsrun'
 ]
 storage_hosts = [f'REDACTED{i}' for i in range(1,17)]
 storage_binaries = [

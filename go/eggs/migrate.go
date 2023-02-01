@@ -76,7 +76,7 @@ func copyBlock(
 	if err != nil {
 		return 0, err
 	}
-	proof, err = mbs.CopyBlock(log, srcConn, blockService, blockSize, block, dstConn, dstBlock)
+	proof, err = mbs.CopyBlock(log, srcConn, blockService, block.BlockId, block.Crc32, blockSize, dstConn, dstBlock)
 	dstConn.Close()
 	if err != nil {
 		return 0, fmt.Errorf("could not copy block: %w", err)

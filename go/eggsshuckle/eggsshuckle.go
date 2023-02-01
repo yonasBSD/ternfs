@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	_ "embed"
-	"encoding/base64"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"html/template"
@@ -11,12 +11,38 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"runtime/debug"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
+
+type namedTemplate struct {
+	name string
+	body string
+}
+
+func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
+	for _, t := range ts {
+		if tmpl == nil {
+			tmpl = template.New(t.name)
+			if _, err := tmpl.Parse(t.body); err != nil {
+				panic(err)
+			}
+		} else {
+			other := tmpl.New(t.name)
+			if _, err := other.Parse(t.body); err != nil {
+				panic(err)
+			}
+		}
+	}
+	return tmpl
+}
 
 type state struct {
 	mutex         sync.RWMutex
@@ -26,7 +52,7 @@ type state struct {
 	cdcPort       uint16
 }
 
-func newBlockServices() *state {
+func newState() *state {
 	return &state{
 		mutex:         sync.RWMutex{},
 		blockServices: make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo),
@@ -46,6 +72,7 @@ func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *
 		i++
 	}
 
+	template.ParseFiles()
 	return &resp
 }
 
@@ -159,6 +186,110 @@ func noRunawayArgs() {
 	}
 }
 
+//go:embed shuckle.png
+var shucklePngStr []byte
+
+//go:embed shuckleface.png
+var shuckleFacePngStr []byte
+
+//go:embed bootstrap.min.css
+var bootstrapCssStr []byte
+
+type pageData struct {
+	Title string
+	Body  any
+}
+
+//go:embed base.html
+var baseTemplateStr string
+
+func renderPage(
+	tmpl *template.Template,
+	data *pageData,
+) []byte {
+	content := bytes.NewBuffer([]byte{})
+	if err := tmpl.Execute(content, &data); err != nil {
+		panic(err)
+	}
+	return content.Bytes()
+}
+
+func sendPage(
+	tmpl *template.Template,
+	data *pageData,
+	status int,
+) (io.ReadCloser, int64, int) {
+	content := renderPage(tmpl, data)
+	return io.NopCloser(bytes.NewReader(content)), int64(len(content)), status
+}
+
+func handleWithRecover(
+	log eggs.LogLevels,
+	w http.ResponseWriter,
+	r *http.Request,
+	handle func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int),
+) {
+	statusPtr := new(int)
+	var content io.ReadCloser
+	defer func() {
+		if content != nil {
+			content.Close()
+		}
+	}()
+	sizePtr := new(int64)
+	func() {
+		var status int
+		var size int64
+		defer func() {
+			if r := recover(); r != nil {
+				content, size, status = sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("PANIC: %v\n%v", r, string(debug.Stack()))))
+				*statusPtr = status
+				*sizePtr = size
+			}
+		}()
+		if r.Method != http.MethodGet {
+			content, size, status = sendPage(errorPage(http.StatusMethodNotAllowed, "Only GET allowed"))
+		} else {
+			query, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil {
+				content, size, status = sendPage(errorPage(http.StatusBadRequest, "could not parse query"))
+			} else {
+				content, size, status = handle(log, query)
+			}
+		}
+		*statusPtr = status
+		*sizePtr = size
+	}()
+	w.WriteHeader(*statusPtr)
+	if written, err := io.CopyN(w, content, *sizePtr); err != nil {
+		log.RaiseAlert(fmt.Errorf("Could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+	}
+}
+
+func handlePage(
+	log eggs.LogLevels,
+	w http.ResponseWriter,
+	r *http.Request,
+	// third result is status code
+	page func(query url.Values) (*template.Template, *pageData, int),
+) {
+	handleWithRecover(
+		log, w, r,
+		func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int) {
+			return sendPage(page(query))
+		},
+	)
+}
+
+//go:embed error.html
+var errorTemplateStr string
+
+var errorTemplate *template.Template
+
+func errorPage(status int, body string) (*template.Template, *pageData, int) {
+	return errorTemplate, &pageData{Title: "Error!", Body: body}, status
+}
+
 type indexBlockService struct {
 	Id             msgs.BlockServiceId
 	Addr           string
@@ -171,189 +302,487 @@ type indexBlockService struct {
 }
 
 type indexData struct {
-	ShuckleFacePngBase64 string
-	ShucklePngBase64     string
-	NumBlockServices     int
-	NumFailureDomains    int
-	TotalCapacity        string
-	TotalUsed            string
-	TotalUsedPercentage  string
-	CDCAddr              string
-	BlockServices        []indexBlockService
-	ShardsAddrs          []string
-	Blocks               uint64
+	NumBlockServices    int
+	NumFailureDomains   int
+	TotalCapacity       string
+	TotalUsed           string
+	TotalUsedPercentage string
+	CDCAddr             string
+	BlockServices       []indexBlockService
+	ShardsAddrs         []string
+	Blocks              uint64
 }
 
-//go:embed shuckle.png
-var shucklePng []byte
-var shucklePngBase64 string
-
-//go:embed shuckleface.png
-var shuckleFacePng []byte
-var shuckleFacePngBase64 string
-
-const indexTemplateStr string = `
-<!DOCTYPE html>
-<html lang="en">
-	<head>
-		<meta charset="UTF-8">
-		<title>Shuckle</title>
-		<link rel="icon" type="image/png" href="data:image/png;base64,{{.ShuckleFacePngBase64}}" />
-	</head>
-	<body>
-		<h1>Shuckle</h1>
-		<img src="data:image/png;base64,{{.ShucklePngBase64}}" alt="Mr. Shuckle"/>
-		<h2>Overview</h2>
-		<ul>
-			<li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
-			<li>Total capacity: {{.TotalCapacity}}</li>
-			<li>{{.TotalUsed}} used over {{.Blocks}} blocks ({{.TotalUsedPercentage}})</li>
-		</ul>
-		<h2>CDC</h2>
-		<table>
-			<thead>
-				<tr>
-					<th>Address</th>
-				</tr>
-			<tbody>
-				<tr>
-					<td><tt>{{.CDCAddr}}</tt></td>
-				</tr>
-			</tbody>
-		</table>
-		<h2>Shards</h2>
-		<table>
-			<thead>
-				<tr>
-					<th>Id</th>
-					<th>Address</th>
-				</tr>
-			<tbody>
-				{{ range $id, $addr := .ShardsAddrs }}
-					<tr>
-						<td><tt>{{printf "%03v" $id}}</tt></td>
-						<td><tt>{{$addr}}</tt></td>
-					</tr>
-				{{end}}
-			</tbody>
-		</table>
-		<h2>Block services</h2>
-		<table>
-			<thead>
-				<tr>
-					<th>FailureDomain</th>
-					<th>Address</th>
-					<th>Path</th>
-					<th>Id</th>
-					<th>StorageClass</th>
-					<th>Blocks</th>
-					<th>Capacity</th>
-					<th>Available</th>
-				</tr>
-			<tbody>
-				{{ range .BlockServices }}
-					<tr>
-						<td>{{.FailureDomain}}</td>
-						<td><tt>{{.Addr}}</tt></td>
-						<td><tt>{{.Path}}</tt></td>
-						<td><tt>{{.Id}}</tt></td>
-						<td>{{.StorageClass}}</td>
-						<td>{{.Blocks}}</td>
-						<td>{{.CapacityBytes}}</td>
-						<td>{{.AvailableBytes}}</td>
-					</tr>
-				{{end}}
-			</tbody>
-		</table>
-	</body>
-</html>
-`
+//go:embed index.html
+var indexTemplateStr string
 
 func formatSize(bytes uint64) string {
 	bytesf := float64(bytes)
 	if bytes == 0 {
 		return "0"
 	}
-	if bytesf < 1e6 {
-		return fmt.Sprintf("%.2fKB", bytesf/1e3)
+	if bytes < (uint64(1) << 20) {
+		return fmt.Sprintf("%.2fKiB", bytesf/float64(uint64(1)<<10))
 	}
-	if bytesf < 1e9 {
-		return fmt.Sprintf("%.2fMB", bytesf/1e6)
+	if bytes < (uint64(1) << 30) {
+		return fmt.Sprintf("%.2fMiB", bytesf/float64(uint64(1)<<20))
 	}
-	if bytesf < 1e12 {
-		return fmt.Sprintf("%.2fGB", bytesf/1e9)
+	if bytes < (uint64(1) << 40) {
+		return fmt.Sprintf("%.2fGiB", bytesf/float64(uint64(1)<<30))
 	}
-	if bytesf < 1e15 {
-		return fmt.Sprintf("%.2fTB", bytesf/1e12)
+	if bytes < (uint64(1) << 50) {
+		return fmt.Sprintf("%.2fTiB", bytesf/float64(uint64(1)<<40))
 	}
-	return fmt.Sprintf("%.2fPB", bytesf/1e15)
+	return fmt.Sprintf("%.2fPiB", bytesf/float64(uint64(1)<<50))
 }
 
-func handleIndex(ll eggs.LogLevels, template *template.Template, state *state, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func formatPreciseSize(bytes uint64) string {
+	if bytes == 0 {
+		return "0"
 	}
+	if bytes%(1<<30) == 0 {
+		return fmt.Sprintf("%vGiB", bytes>>30)
+	}
+	if bytes%(1<<20) == 0 {
+		return fmt.Sprintf("%vMiB", bytes>>20)
+	}
+	if bytes%(1<<10) == 0 {
+		return fmt.Sprintf("%vKiB", bytes>>10)
+	}
+	return fmt.Sprintf("%vB", bytes)
+}
+
+var shuckleTemplate *template.Template
+
+func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http.Request) {
+	handlePage(
+		ll, w, r,
+		func(_ url.Values) (*template.Template, *pageData, int) {
+			state.mutex.RLock()
+			defer state.mutex.RUnlock()
+
+			data := indexData{
+				NumBlockServices: len(state.blockServices),
+			}
+			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
+			totalCapacityBytes := uint64(0)
+			totalAvailableBytes := uint64(0)
+			failureDomainsBytes := make(map[string]struct{})
+			for _, bs := range state.blockServices {
+				data.BlockServices = append(data.BlockServices, indexBlockService{
+					Id:             bs.Id,
+					Addr:           fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
+					StorageClass:   bs.StorageClass,
+					FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
+					CapacityBytes:  formatSize(bs.CapacityBytes),
+					AvailableBytes: formatSize(bs.AvailableBytes),
+					Path:           bs.Path,
+					Blocks:         bs.Blocks,
+				})
+				failureDomainsBytes[string(bs.FailureDomain[:])] = struct{}{}
+				totalAvailableBytes += bs.AvailableBytes
+				totalCapacityBytes += bs.CapacityBytes
+				data.Blocks += bs.Blocks
+			}
+			sort.Slice(
+				data.BlockServices,
+				func(i, j int) bool {
+					a := data.BlockServices[i]
+					b := data.BlockServices[j]
+					if len(a.FailureDomain) != len(b.FailureDomain) {
+						return len(a.FailureDomain) < len(b.FailureDomain)
+					}
+					if a.FailureDomain != b.FailureDomain {
+						return a.FailureDomain < b.FailureDomain
+					}
+					if a.Path != b.Path {
+						return a.Path < b.Path
+					}
+					return a.Id < b.Id
+				},
+			)
+			for _, shard := range state.shards {
+				data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
+			}
+			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
+			data.TotalCapacity = formatSize(totalAvailableBytes)
+			data.NumFailureDomains = len(failureDomainsBytes)
+			if totalAvailableBytes == 0 {
+				data.TotalUsedPercentage = "0%"
+			} else {
+				data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalAvailableBytes)/float64(totalCapacityBytes))
+			}
+			return shuckleTemplate, &pageData{Title: "Shuckle", Body: &data}, http.StatusOK
+		},
+	)
+}
+
+//go:embed file.html
+var fileTemplateStr string
+
+type fileBlock struct {
+	Id           string
+	Crc32        string
+	BlockService string
+	Link         string
+}
+
+type fileSpan struct {
+	Offset       string
+	Size         string
+	Crc32        string
+	StorageClass string
+	BlockSize    string
+	BodyBlocks   []fileBlock
+	BodyBytes    string
+	ParityBlocks int
+	DataBlocks   int
+}
+
+type fileData struct {
+	Id    string
+	Path  string // might be empty
+	Size  string
+	Mtime string
+	Spans []fileSpan
+}
+
+//go:embed directory.html
+var directoryTemplateStr string
+
+type directoryEdge struct {
+	Current      bool
+	TargetId     string
+	Owned        bool
+	NameHash     string
+	Name         string
+	CreationTime string
+	Type         string
+	Locked       bool
+}
+
+type directoryData struct {
+	Id    string
+	Path  string // might be empty
+	Mtime string
+	Owner string
+	Edges []directoryEdge
+}
+
+func newClient(log eggs.LogLevels, state *state) *eggs.Client {
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
 
-	data := indexData{
-		ShucklePngBase64:     shucklePngBase64,
-		ShuckleFacePngBase64: shuckleFacePngBase64,
-		NumBlockServices:     len(state.blockServices),
+	var shardIps [256][4]byte
+	var shardPorts [256]uint16
+	for i, si := range state.shards {
+		shardIps[i] = si.Ip
+		shardPorts[i] = si.Port
 	}
-	data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
-	totalCapacityBytes := uint64(0)
-	totalAvailableBytes := uint64(0)
-	failureDomainsBytes := make(map[string]struct{})
-	for _, bs := range state.blockServices {
-		data.BlockServices = append(data.BlockServices, indexBlockService{
-			Id:             bs.Id,
-			Addr:           fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
-			StorageClass:   bs.StorageClass,
-			FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
-			CapacityBytes:  formatSize(bs.CapacityBytes),
-			AvailableBytes: formatSize(bs.AvailableBytes),
-			Path:           bs.Path,
-			Blocks:         bs.Blocks,
-		})
-		failureDomainsBytes[string(bs.FailureDomain[:])] = struct{}{}
-		totalAvailableBytes += bs.AvailableBytes
-		totalCapacityBytes += bs.CapacityBytes
-		data.Blocks += bs.Blocks
+	client, err := eggs.NewClientDirect(log, nil, nil, nil, state.cdcIp, state.cdcPort, &shardIps, &shardPorts)
+	if err != nil {
+		panic(err)
 	}
-	sort.Slice(
-		data.BlockServices,
-		func(i, j int) bool {
-			a := data.BlockServices[i]
-			b := data.BlockServices[j]
-			if len(a.FailureDomain) != len(b.FailureDomain) {
-				return len(a.FailureDomain) < len(b.FailureDomain)
+	return client
+}
+
+func lookup(log eggs.LogLevels, client *eggs.Client, path string) *msgs.InodeId {
+	segments := strings.Split(path, "/")[1:] // starts with /
+	id := msgs.ROOT_DIR_INODE_ID
+	for _, segment := range segments {
+		if segment == "" {
+			continue
+		}
+		req := msgs.LookupReq{
+			DirId: id,
+			Name:  segment,
+		}
+		resp := msgs.LookupResp{}
+		if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+			eggsErr, ok := err.(msgs.ErrCode)
+			if ok {
+				if eggsErr == msgs.NAME_NOT_FOUND {
+					return nil
+				}
 			}
-			if a.FailureDomain != b.FailureDomain {
-				return a.FailureDomain < b.FailureDomain
+			panic(err)
+		}
+		id = resp.TargetId
+	}
+	return &id
+}
+
+var fileTemplate *template.Template
+var directoryTemplate *template.Template
+
+func handleInode(
+	log eggs.LogLevels,
+	state *state,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	handlePage(
+		log, w, r,
+		func(query url.Values) (*template.Template, *pageData, int) {
+			path := query.Get("path")
+			if path != "" {
+				if len(path) == 0 || path[0] != '/' {
+					return errorPage(http.StatusBadRequest, "Path must start with /")
+				}
 			}
-			if a.Path != b.Path {
-				return a.Path < b.Path
+			var id msgs.InodeId
+			idStr := query.Get("id")
+			if idStr != "" {
+				i, err := strconv.ParseUint(idStr, 0, 63)
+				if err != nil {
+					return errorPage(http.StatusBadRequest, fmt.Sprintf("cannot parse id %v: %v", idStr, err))
+				}
+				id = msgs.InodeId(i)
 			}
-			return a.Id < b.Id
+			if id != msgs.NULL_INODE_ID && path != "" {
+				return errorPage(http.StatusBadRequest, "cannot specify both id and path")
+			}
+			if id == msgs.NULL_INODE_ID && path == "" {
+				path = "/"
+			}
+			client := newClient(log, state)
+			if id == msgs.NULL_INODE_ID {
+				mbId := lookup(log, client, path)
+				if mbId == nil {
+					return errorPage(http.StatusNotFound, fmt.Sprintf("path '%v' not found", path))
+				}
+				id = *mbId
+			}
+			if id.Type() == msgs.DIRECTORY {
+				data := directoryData{
+					Id:   fmt.Sprintf("%v", id),
+					Path: path,
+				}
+				title := fmt.Sprintf("Directory %v", data.Id)
+				{
+					resp := msgs.StatDirectoryResp{}
+					if err := client.ShardRequest(log, id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != nil {
+						panic(err)
+					}
+					data.Owner = resp.Owner.String()
+					data.Mtime = resp.Mtime.String()
+				}
+				{
+					_, full := query["full"]
+					if full {
+
+					} else {
+						req := msgs.FullReadDirReq{DirId: id}
+						resp := msgs.FullReadDirResp{}
+						for {
+							if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+								panic(err)
+							}
+							for _, edge := range resp.Results {
+								dataEdge := directoryEdge{
+									Current:      edge.Current,
+									TargetId:     fmt.Sprintf("%v", edge.TargetId.Id()),
+									Owned:        edge.Current || edge.TargetId.Extra(),
+									NameHash:     fmt.Sprintf("%08x", edge.NameHash),
+									Name:         edge.Name,
+									CreationTime: edge.CreationTime.String(),
+									Locked:       edge.Current && edge.TargetId.Extra(),
+								}
+								if edge.TargetId.Id() != msgs.NULL_INODE_ID {
+									dataEdge.Type = edge.TargetId.Id().Type().String()
+								}
+								data.Edges = append(data.Edges, dataEdge)
+							}
+							req.Cursor = resp.Next
+							if req.Cursor == (msgs.FullReadDirCursor{}) {
+								break
+							}
+						}
+					}
+				}
+				sort.Slice(
+					data.Edges,
+					func(i, j int) bool {
+						a := data.Edges[i]
+						b := data.Edges[j]
+						if a.Name != b.Name {
+							return a.Name < b.Name
+						}
+						if a.NameHash != b.NameHash {
+							return a.NameHash < b.NameHash
+						}
+						return a.CreationTime < b.CreationTime
+					},
+				)
+				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
+			} else {
+				data := fileData{
+					Id:   fmt.Sprintf("%v", id),
+					Path: path,
+				}
+				title := fmt.Sprintf("File %v", data.Id)
+				{
+					resp := msgs.StatFileResp{}
+					if err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+						panic(err)
+					}
+					data.Mtime = resp.Mtime.String()
+					data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
+				}
+				{
+					req := msgs.FileSpansReq{FileId: id}
+					resp := msgs.FileSpansResp{}
+					for {
+						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+							panic(err)
+						}
+						for _, span := range resp.Spans {
+							fs := fileSpan{
+								Offset:       formatPreciseSize(span.ByteOffset),
+								Size:         formatPreciseSize(span.Size),
+								Crc32:        hex.EncodeToString(span.Crc32[:]),
+								StorageClass: span.StorageClass.String(),
+								BlockSize:    formatPreciseSize(span.BlockSize),
+								BodyBytes:    hex.EncodeToString(span.BodyBytes),
+								DataBlocks:   span.Parity.DataBlocks(),
+								ParityBlocks: span.Parity.ParityBlocks(),
+							}
+							for _, block := range span.BodyBlocks {
+								blockService := resp.BlockServices[block.BlockServiceIx]
+								crcStr := hex.EncodeToString(block.Crc32[:])
+								fb := fileBlock{
+									Id:           block.BlockId.String(),
+									BlockService: blockService.Id.String(),
+									Crc32:        crcStr,
+									Link:         fmt.Sprintf("/blocks/%v/%v?size=%v&crc=%v", blockService.Id, block.BlockId, span.BlockSize, crcStr),
+								}
+								fs.BodyBlocks = append(fs.BodyBlocks, fb)
+							}
+							data.Spans = append(data.Spans, fs)
+						}
+						req.ByteOffset = resp.NextOffset
+						if req.ByteOffset == 0 {
+							break
+						}
+					}
+				}
+				return fileTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
+			}
 		},
 	)
-	for _, shard := range state.shards {
-		data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
+}
+
+func handleBlock(log eggs.LogLevels, st *state, w http.ResponseWriter, r *http.Request) {
+	handleWithRecover(
+		log, w, r,
+		func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int) {
+			segments := strings.Split(r.URL.Path, "/")[1:]
+			if segments[0] != "blocks" {
+				panic(fmt.Errorf("bad path %v", r.URL.Path))
+			}
+			if len(segments) != 3 {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /blocks/<blockservice>/<blockid>, got %v", r.URL.Path)))
+			}
+			blockServiceIdU, err := strconv.ParseUint(segments[1], 0, 64)
+			if err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /blocks/<blockservice>/<blockid>, got %v", r.URL.Path)))
+			}
+			blockServiceId := msgs.BlockServiceId(blockServiceIdU)
+			blockIdU, err := strconv.ParseUint(segments[2], 0, 64)
+			if err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /blocks/<blockservice>/<blockid>, got %v", r.URL.Path)))
+			}
+			blockId := msgs.BlockId(blockIdU)
+			size, err := strconv.ParseUint(query.Get("size"), 0, 32)
+			if err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad block size '%v'", query.Get("size"))))
+			}
+			crcBytes, err := hex.DecodeString(query.Get("crc"))
+			if err != nil || len(crcBytes) != 4 {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad crc '%v'", query.Get("crc"))))
+			}
+			var crc [4]byte
+			copy(crc[:], crcBytes)
+			var blockService msgs.BlockService
+			var conn *net.TCPConn
+			{
+				st.mutex.RLock()
+				blockServiceInfo, found := st.blockServices[blockServiceId]
+				st.mutex.RUnlock()
+				if !found {
+					return sendPage(errorPage(http.StatusNotFound, fmt.Sprintf("Unknown block service id %v", blockServiceId)))
+				}
+				blockService.Id = blockServiceInfo.Id
+				blockService.Ip = blockServiceInfo.Ip
+				blockService.Port = blockServiceInfo.Port
+				var err error
+				conn, err = eggs.BlockServiceConnection(blockServiceId, blockService.Ip[:], blockService.Port)
+				if err != nil {
+					panic(err)
+				}
+			}
+			if err := eggs.FetchBlock(log, conn, &blockService, blockId, crc, 0, uint32(size)); err != nil {
+				panic(err)
+			}
+			w.Header().Set("Content-Type", "application/x-binary")
+			log.Info("serving block of size %v", size)
+			return conn, int64(size), http.StatusOK
+		},
+	)
+}
+
+func setupRouting(log eggs.LogLevels, st *state) {
+	errorTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "error", body: errorTemplateStr},
+	)
+
+	setupPage := func(path string, handle func(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http.Request)) {
+		http.HandleFunc(
+			path,
+			func(w http.ResponseWriter, r *http.Request) { handle(log, st, w, r) },
+		)
 	}
-	data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
-	data.TotalCapacity = formatSize(totalAvailableBytes)
-	data.NumFailureDomains = len(failureDomainsBytes)
-	if totalAvailableBytes == 0 {
-		data.TotalUsedPercentage = "0%"
-	} else {
-		data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalAvailableBytes)/float64(totalCapacityBytes))
-	}
-	if err := template.Execute(w, &data); err != nil {
-		ll.RaiseAlert(fmt.Errorf("could not execute template: %w", err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
-	}
+
+	// Static assets
+	http.HandleFunc(
+		"/bootstrap.min.css",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			w.Write(bootstrapCssStr)
+		},
+	)
+	http.HandleFunc(
+		"/shuckle-face.png",
+		func(w http.ResponseWriter, r *http.Request) { w.Write(shuckleFacePngStr) },
+	)
+	http.HandleFunc(
+		"/shuckle.png",
+		func(w http.ResponseWriter, r *http.Request) { w.Write(shucklePngStr) },
+	)
+
+	// blocks serving
+	http.HandleFunc(
+		"/blocks/",
+		func(w http.ResponseWriter, r *http.Request) { handleBlock(log, st, w, r) },
+	)
+
+	// pages
+	shuckleTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "shuckle", body: indexTemplateStr},
+	)
+	setupPage("/shuckle", handleIndex)
+
+	fileTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "file", body: fileTemplateStr},
+	)
+	directoryTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "directory", body: directoryTemplateStr},
+	)
+	setupPage("/inode", handleInode)
 }
 
 func main() {
@@ -363,11 +792,6 @@ func main() {
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()
 	noRunawayArgs()
-
-	indexTemplate, err := template.New("index").Option("missingkey=error").Parse(indexTemplateStr)
-	if err != nil {
-		panic(err)
-	}
 
 	logOut := os.Stdout
 	if *logFile != "" {
@@ -383,9 +807,6 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	shucklePngBase64 = base64.StdEncoding.EncodeToString(shucklePng)
-	shuckleFacePngBase64 = base64.StdEncoding.EncodeToString(shuckleFacePng)
-
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {
 		panic(err)
@@ -400,12 +821,9 @@ func main() {
 
 	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
-	blockServices := newBlockServices()
+	state := newState()
 
-	http.HandleFunc(
-		"/",
-		func(w http.ResponseWriter, r *http.Request) { handleIndex(ll, indexTemplate, blockServices, w, r) },
-	)
+	setupRouting(ll, state)
 
 	terminateChan := make(chan error)
 
@@ -416,7 +834,7 @@ func main() {
 				terminateChan <- err
 				return
 			}
-			go func() { handleRequest(ll, blockServices, conn.(*net.TCPConn)) }()
+			go func() { handleRequest(ll, state, conn.(*net.TCPConn)) }()
 		}
 	}()
 

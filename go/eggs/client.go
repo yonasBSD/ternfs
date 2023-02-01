@@ -62,7 +62,10 @@ func NewClient(
 	counters *ClientCounters,
 	cdcKey cipher.Block,
 ) (*Client, error) {
-	c := Client{}
+	var shardIps [256][4]byte
+	var shardPorts [256]uint16
+	var cdcIp [4]byte
+	var cdcPort uint16
 	{
 		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})
 		if err != nil {
@@ -73,8 +76,8 @@ func NewClient(
 			if shard.Port == 0 {
 				return nil, fmt.Errorf("shard %v not present in shuckle", i)
 			}
-			c.shardIps[i] = shard.Ip
-			c.shardPorts[i] = shard.Port
+			shardIps[i] = shard.Ip
+			shardPorts[i] = shard.Port
 		}
 		resp, err = ShuckleRequest(log, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
@@ -84,30 +87,40 @@ func NewClient(
 		if cdc.Port == 0 {
 			return nil, fmt.Errorf("CDC not present in shuckle")
 		}
-		c.cdcIp = cdc.Ip
-		c.cdcPort = cdc.Port
+		cdcIp = cdc.Ip
+		cdcPort = cdc.Port
 	}
-	var err error
+	return NewClientDirect(log, shid, counters, cdcKey, cdcIp, cdcPort, &shardIps, &shardPorts)
+}
+
+func NewClientDirect(
+	log LogLevels,
+	shid *msgs.ShardId,
+	counters *ClientCounters,
+	cdcKey cipher.Block,
+	cdcIp [4]byte,
+	cdcPort uint16,
+	shardIps *[256][4]byte,
+	shardPorts *[256]uint16,
+) (c *Client, err error) {
+	c = &Client{
+		shardIps:   *shardIps,
+		shardPorts: *shardPorts,
+		cdcIp:      cdcIp,
+		cdcPort:    cdcPort,
+	}
 	c.cdcSocket, err = CreateCDCSocket(c.cdcIp, c.cdcPort)
 	if err != nil {
 		return nil, err
 	}
 	if shid != nil {
-		c.shardSocketFactory, err = newShardSpecificFactory(*shid, c.shardIps[int(*shid)], c.shardPorts[int(*shid)])
-		if err != nil {
-			c.cdcSocket.Close()
-			return nil, err
-		}
+		c.shardSocketFactory = &shardSpecificFactory{shid: *shid}
 	} else {
-		c.shardSocketFactory, err = newAllShardsFactory(c.shardIps[:], c.shardPorts[:])
-		if err != nil {
-			c.cdcSocket.Close()
-			return nil, err
-		}
+		c.shardSocketFactory = &allShardsFactory{}
 	}
 	c.counters = counters
 	c.cdcKey = cdcKey
-	return &c, nil
+	return c, nil
 }
 
 func (c *Client) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
@@ -160,20 +173,11 @@ type allShardsFactory struct {
 	shardLocks [256]sync.Mutex
 }
 
-func newAllShardsFactory(shardIps [][4]byte, shardPorts []uint16) (*allShardsFactory, error) {
-	var err error
-	c := allShardsFactory{}
-	for i := 0; i < 256; i++ {
-		c.shardSocks[msgs.ShardId(i)], err = CreateShardSocket(msgs.ShardId(i), shardIps[i], shardPorts[i])
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &c, nil
-}
-
 func (c *allShardsFactory) close() {
 	for _, sock := range c.shardSocks {
+		if sock == nil {
+			continue
+		}
 		if err := sock.Close(); err != nil {
 			panic(err)
 		}
@@ -181,7 +185,15 @@ func (c *allShardsFactory) close() {
 }
 
 func (c *allShardsFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
-	if c.shardLocks[int(shid)].TryLock() {
+	ix := int(shid)
+	if c.shardLocks[ix].TryLock() {
+		if c.shardSocks[ix] == nil {
+			var err error
+			c.shardSocks[ix], err = CreateShardSocket(shid, ip, port)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return c.shardSocks[int(shid)], nil
 	} else {
 		conn, err := CreateShardSocket(shid, ip, port)
@@ -212,26 +224,24 @@ type shardSpecificFactory struct {
 // TODO probably convert these errors to stderr, we can't do much with them usually
 // but they'd be worth knowing about
 func (c *shardSpecificFactory) close() error {
+	if c.shardSock == nil {
+		return nil
+	}
 	if err := c.shardSock.Close(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func newShardSpecificFactory(shid msgs.ShardId, ip [4]byte, port uint16) (*shardSpecificFactory, error) {
-	c := shardSpecificFactory{
-		shid: shid,
-	}
-	var err error
-	c.shardSock, err = CreateShardSocket(shid, ip, port)
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
 func (c *shardSpecificFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
 	if shid == c.shid && c.shardLock.TryLock() {
+		if c.shardSock == nil {
+			var err error
+			c.shardSock, err = CreateShardSocket(shid, ip, port)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return c.shardSock, nil
 	} else {
 		shardSock, err := CreateShardSocket(shid, ip, port)

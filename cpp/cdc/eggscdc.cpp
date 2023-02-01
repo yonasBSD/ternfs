@@ -21,6 +21,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	How to advertise ourselves to shuckle.\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
+    fprintf(stderr, " -port port\n");
+    fprintf(stderr, "    	Port to listen on.\n");
 }
 
 static std::array<uint8_t, 4> parseIpv4(const char* binary, const std::string& arg) {
@@ -35,6 +37,18 @@ static std::array<uint8_t, 4> parseIpv4(const char* binary, const std::string& a
     static_assert(sizeof(addr.sin_addr) == sizeof(out));
     memcpy(out.data(), &addr.sin_addr, sizeof(addr.sin_addr));
     return out;
+}
+
+static uint16_t parsePort(const std::string& arg) {
+    size_t idx;
+    unsigned long port = std::stoul(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff character in number %s", arg.c_str());
+    }
+    if (port > 0xFFFFul) {
+        die("Bad port %s", arg.c_str());
+    }
+    return port;
 }
 
 int main(int argc, char** argv) {
@@ -80,6 +94,8 @@ int main(int argc, char** argv) {
             shuckleAddress = getNextArg();
         } else if (arg == "-own-ip") {
             options.ownIp = parseIpv4(argv[0], getNextArg());
+        } else if (arg == "-port") {
+            options.port = parsePort(getNextArg());
         } else {
             args.emplace_back(std::move(arg));
         }

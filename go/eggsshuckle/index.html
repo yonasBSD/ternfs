@@ -1,0 +1,65 @@
+{{define "body"}}
+    <img src="/shuckle.png" alt="Mr. Shuckle"/>
+    <h2>Overview</h2>
+    <ul>
+        <li>{{.NumBlockServices}} block services on {{.NumFailureDomains}} failure domains</li>
+        <li>Total capacity: {{.TotalCapacity}}</li>
+        <li>{{.TotalUsed}} used over {{.Blocks}} blocks ({{.TotalUsedPercentage}})</li>
+    </ul>
+    <h2>CDC</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Address</th>
+            </tr>
+        <tbody>
+            <tr>
+                <td><code>{{.CDCAddr}}</code></td>
+            </tr>
+        </tbody>
+    </table>
+    <h2>Shards</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Address</th>
+            </tr>
+        <tbody>
+            {{ range $id, $addr := .ShardsAddrs }}
+                <tr>
+                    <td><code>{{printf "%03v" $id}}</code></td>
+                    <td><code>{{$addr}}</code></td>
+                </tr>
+            {{end}}
+        </tbody>
+    </table>
+    <h2>Block services</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>FailureDomain</th>
+                <th>Address</th>
+                <th>Path</th>
+                <th>Id</th>
+                <th>StorageClass</th>
+                <th class="text-end">Blocks</th>
+                <th class="text-end">Capacity</th>
+                <th class="text-end">Available</th>
+            </tr>
+        <tbody>
+            {{ range .BlockServices }}
+                <tr id="bs-{{.Id}}">
+                    <td>{{.FailureDomain}}</td>
+                    <td><code>{{.Addr}}</code></td>
+                    <td><code>{{.Path}}</code></td>
+                    <td><code>{{.Id}}</code></td>
+                    <td>{{.StorageClass}}</td>
+                    <td class="text-end">{{.Blocks}}</td>
+                    <td class="text-end">{{.CapacityBytes}}</td>
+                    <td class="text-end">{{.AvailableBytes}}</td>
+                </tr>
+            {{end}}
+        </tbody>
+    </table>
+{{end}}

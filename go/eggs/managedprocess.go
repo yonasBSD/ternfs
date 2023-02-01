@@ -263,6 +263,7 @@ type BlockServiceOpts struct {
 	Verbose        bool
 	ShuckleAddress string
 	OwnIp          string
+	Profile        bool
 }
 
 func createDataDir(dir string) {
@@ -290,6 +291,9 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	if opts.ShuckleAddress != "" {
 		args = append(args, "-shuckle", opts.ShuckleAddress)
 	}
+	if opts.Profile {
+		args = append(args, "-profile-file")
+	}
 	args = append(args, opts.Path, opts.StorageClass.String())
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            fmt.Sprintf("block service (port %d)", opts.Port),
@@ -307,6 +311,7 @@ type EggsFuseOpts struct {
 	Verbose        bool
 	Wait           bool
 	ShuckleAddress string
+	Profile        bool
 }
 
 func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) string {
@@ -325,6 +330,9 @@ func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) s
 	}
 	if opts.Verbose {
 		args = append(args, "-verbose")
+	}
+	if opts.Profile {
+		args = append(args, "-profile-file", path.Join(opts.Path, "prof"))
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{
@@ -418,6 +426,7 @@ type ShardOpts struct {
 	OutgoingPacketDrop float64
 	ShuckleAddress     string
 	OwnIp              string
+	Port               uint16
 }
 
 func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
@@ -427,16 +436,19 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
-		opts.Dir,
-		fmt.Sprintf("%d", int(opts.Shid)),
 		"-incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-shuckle", opts.ShuckleAddress,
 		"-own-ip", opts.OwnIp,
+		"-port", fmt.Sprintf("%v", opts.Port),
 	}
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
+	args = append(args,
+		opts.Dir,
+		fmt.Sprintf("%d", int(opts.Shid)),
+	)
 	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("shard %v", opts.Shid),
@@ -485,6 +497,7 @@ type CDCOpts struct {
 	Perf           bool
 	ShuckleAddress string
 	OwnIp          string
+	Port           uint16
 }
 
 func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
@@ -496,11 +509,12 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-shuckle", opts.ShuckleAddress,
 		"-own-ip", opts.OwnIp,
-		opts.Dir,
+		"-port", fmt.Sprintf("%v", opts.Port),
 	}
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
+	args = append(args, opts.Dir)
 	cppDir := cppDir()
 	mpArgs := ManagedProcessArgs{
 		Name:            "cdc",
@@ -524,8 +538,8 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(ll, &mpArgs)
-	} else if opts.Perf {
+	}
+	if opts.Perf {
 		mpArgs.Name = fmt.Sprintf("%s (perf)", mpArgs.Name)
 		mpArgs.Exe = "perf"
 		mpArgs.Args = append(
@@ -536,10 +550,8 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 			},
 			mpArgs.Args...,
 		)
-		procs.Start(ll, &mpArgs)
-	} else {
-		procs.Start(ll, &mpArgs)
 	}
+	procs.Start(ll, &mpArgs)
 }
 
 func WaitForShard(log LogLevels, shuckleAddress string, shid msgs.ShardId, timeout time.Duration) {

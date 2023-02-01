@@ -95,11 +95,11 @@ func (id InodeId) String() string {
 }
 
 func (id BlockServiceId) String() string {
-	return fmt.Sprintf("0x%016X", uint64(id))
+	return fmt.Sprintf("0x%016x", uint64(id))
 }
 
 func (id BlockId) String() string {
-	return fmt.Sprintf("0x%016X", uint64(id))
+	return fmt.Sprintf("0x%016x", uint64(id))
 }
 
 func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {

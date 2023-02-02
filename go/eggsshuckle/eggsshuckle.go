@@ -293,7 +293,8 @@ func errorPage(status int, body string) (*template.Template, *pageData, int) {
 
 type indexBlockService struct {
 	Id             msgs.BlockServiceId
-	Addr           string
+	Addr1          string
+	Addr2          string
 	StorageClass   msgs.StorageClass
 	FailureDomain  string
 	CapacityBytes  string
@@ -376,7 +377,8 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 			for _, bs := range state.blockServices {
 				data.BlockServices = append(data.BlockServices, indexBlockService{
 					Id:             bs.Id,
-					Addr:           fmt.Sprintf("%v:%v", net.IP(bs.Ip[:]), bs.Port),
+					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port2),
+					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
 					StorageClass:   bs.StorageClass,
 					FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
 					CapacityBytes:  formatSize(bs.CapacityBytes),
@@ -764,10 +766,12 @@ func handleBlock(log eggs.LogLevels, st *state, w http.ResponseWriter, r *http.R
 					return sendPage(errorPage(http.StatusNotFound, fmt.Sprintf("Unknown block service id %v", blockServiceId)))
 				}
 				blockService.Id = blockServiceInfo.Id
-				blockService.Ip = blockServiceInfo.Ip
-				blockService.Port = blockServiceInfo.Port
+				blockService.Ip1 = blockServiceInfo.Ip1
+				blockService.Port1 = blockServiceInfo.Port1
+				blockService.Ip2 = blockServiceInfo.Ip2
+				blockService.Port2 = blockServiceInfo.Port2
 				var err error
-				conn, err = eggs.BlockServiceConnection(blockServiceId, blockService.Ip[:], blockService.Port)
+				conn, err = eggs.BlockServiceConnection(log, blockServiceId, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}

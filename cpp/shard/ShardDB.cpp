@@ -201,8 +201,10 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
 
 struct BlockServiceCache {
     AES128Key secretKey;
-    std::array<uint8_t, 4> ip;
-    uint16_t port;
+    std::array<uint8_t, 4> ip1;
+    uint16_t port1;
+    std::array<uint8_t, 4> ip2;
+    uint16_t port2;
     uint8_t storageClass;
 };
 
@@ -406,8 +408,10 @@ struct ShardDBImpl {
                     ALWAYS_ASSERT(k().key() == BLOCK_SERVICE_KEY);
                     auto v = ExternalValue<BlockServiceBody>::FromSlice(it->value());
                     auto& cache = _blockServicesCache[k().blockServiceId()];
-                    cache.ip = v().ip();
-                    cache.port = v().port();
+                    cache.ip1 = v().ip1();
+                    cache.port1 = v().port1();
+                    cache.ip2 = v().ip2();
+                    cache.port2 = v().port2();
                     expandKey(v().secretKey(), cache.secretKey);
                     cache.storageClass = v().storageClass();
                 }
@@ -706,8 +710,10 @@ struct ShardDBImpl {
             auto& blockService = resp.blockServices.els.emplace_back();
             const auto& cache = _blockServicesCache.at(blockServiceId);
             blockService.id = blockServiceId;
-            blockService.ip = cache.ip;
-            blockService.port = cache.port;
+            blockService.ip1 = cache.ip1;
+            blockService.port1 = cache.port1;
+            blockService.ip2 = cache.ip2;
+            blockService.port2 = cache.port2;
             // TODO propagade block service flags here
             return resp.blockServices.els.size()-1;
         };
@@ -1227,9 +1233,6 @@ struct ShardDBImpl {
     bool _blockServiceMatchesBlacklist(const std::vector<BlockServiceBlacklist>& blacklists, uint64_t blockServiceId, const BlockServiceCache& cache) {
         for (const auto& blacklist: blacklists) {
             if (blacklist.id == blockServiceId) {
-                return true;
-            }
-            if (blacklist.ip == cache.ip && blacklist.port == cache.port) {
                 return true;
             }
         }
@@ -2384,8 +2387,10 @@ struct ShardDBImpl {
             const auto& block = span().block(i);
             const auto& cache = _blockServicesCache.at(block.blockServiceId);
             auto& respBlock = resp.blocks.els.emplace_back();
-            respBlock.blockServiceIp = cache.ip;
-            respBlock.blockServicePort = cache.port;
+            respBlock.blockServiceIp1 = cache.ip1;
+            respBlock.blockServicePort1 = cache.port1;
+            respBlock.blockServiceIp2 = cache.ip2;
+            respBlock.blockServicePort2 = cache.port2;
             respBlock.blockServiceId = block.blockServiceId;
             respBlock.blockId = block.blockId;
             respBlock.certificate = _blockEraseCertificate(span().blockSize(), block, cache.secretKey);
@@ -2415,16 +2420,20 @@ struct ShardDBImpl {
             _currentBlockServices[i] = entryBlock.id;
             blockKey().setBlockServiceId(entryBlock.id);
             blockBody().setId(entryBlock.id);
-            blockBody().setIp(entryBlock.ip.data);
-            blockBody().setPort(entryBlock.port);
+            blockBody().setIp1(entryBlock.ip1.data);
+            blockBody().setPort1(entryBlock.port1);
+            blockBody().setIp2(entryBlock.ip2.data);
+            blockBody().setPort2(entryBlock.port2);
             blockBody().setStorageClass(entryBlock.storageClass);
             blockBody().setFailureDomain(entryBlock.failureDomain.data);
             blockBody().setSecretKey(entryBlock.secretKey.data);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
             auto& cache = _blockServicesCache[entryBlock.id];
             expandKey(entryBlock.secretKey.data, cache.secretKey);
-            cache.ip = entryBlock.ip.data;
-            cache.port = entryBlock.port;
+            cache.ip1 = entryBlock.ip1.data;
+            cache.port1 = entryBlock.port1;
+            cache.ip2 = entryBlock.ip2.data;
+            cache.port2 = entryBlock.port2;
             cache.storageClass = entryBlock.storageClass;
         }
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
@@ -2457,8 +2466,10 @@ struct ShardDBImpl {
             respBlock.blockServiceId = block.blockServiceId;
             respBlock.blockId = block.blockId;
             const auto& cache = _blockServicesCache.at(block.blockServiceId);
-            respBlock.blockServiceIp = cache.ip;
-            respBlock.blockServicePort = cache.port;
+            respBlock.blockServiceIp1 = cache.ip1;
+            respBlock.blockServicePort1 = cache.port1;
+            respBlock.blockServiceIp2 = cache.ip2;
+            respBlock.blockServicePort2 = cache.port2;
             respBlock.certificate.data = _blockWriteCertificate(spanBody.blockSize(), block, cache.secretKey);
         }
     }

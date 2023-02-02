@@ -467,7 +467,6 @@ func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
 				"--exit-on-first-error=yes",
 				"-q",
 				fmt.Sprintf("--suppressions=%s", path.Join(cppDir, "valgrind-suppressions")),
-				"--gen-suppressions=all",
 				"--error-exitcode=1",
 				opts.Exe,
 			},

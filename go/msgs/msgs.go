@@ -160,10 +160,6 @@ func (t EggsTime) String() string {
 
 type ErrCode uint16
 
-func (err ErrCode) Error() string {
-	return err.String()
-}
-
 func (err *ErrCode) Pack(w io.Writer) error {
 	return bincode.PackScalar(w, uint16(*err))
 }
@@ -392,9 +388,7 @@ type NewBlockInfo struct {
 }
 
 type BlockServiceBlacklist struct {
-	Ip   [4]byte
-	Port uint16
-	Id   BlockServiceId
+	Id BlockServiceId
 }
 
 // Add span. The file must be transient.
@@ -434,10 +428,12 @@ type AddSpanInitiateReq struct {
 }
 
 type BlockInfo struct {
-	BlockServiceIp   [4]byte
-	BlockServicePort uint16
-	BlockServiceId   BlockServiceId
-	BlockId          BlockId
+	BlockServiceIp1   [4]byte
+	BlockServicePort1 uint16
+	BlockServiceIp2   [4]byte
+	BlockServicePort2 uint16
+	BlockServiceId    BlockServiceId
+	BlockId           BlockId
 	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
 	Certificate [8]byte
 }
@@ -544,8 +540,10 @@ type FetchedSpan struct {
 }
 
 type BlockService struct {
-	Ip   [4]byte
-	Port uint16
+	Ip1   [4]byte
+	Port1 uint16
+	Ip2   [4]byte
+	Port2 uint16
 	// The BlockServiceId is stable (derived from the secret key, which is stored on the
 	// block service id).
 	//
@@ -1083,8 +1081,10 @@ type RemoveSpanInitiateEntry struct {
 
 type BlockServiceInfo struct {
 	Id             BlockServiceId
-	Ip             [4]byte
-	Port           uint16
+	Ip1            [4]byte
+	Port1          uint16
+	Ip2            [4]byte
+	Port2          uint16
 	StorageClass   StorageClass
 	FailureDomain  [16]byte
 	SecretKey      [16]byte

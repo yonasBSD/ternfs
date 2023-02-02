@@ -6,18 +6,47 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"xtx/eggsfs/msgs"
 )
 
 // TODO connection pool rather than opening a new one each time
 
-func BlockServiceConnection(id msgs.BlockServiceId, ip net.IP, port uint16) (*net.TCPConn, error) {
-	sock, err := net.DialTCP("tcp4", nil, &net.TCPAddr{IP: ip, Port: int(port)})
-	if err != nil {
-		return nil, fmt.Errorf("could not connect to block service %v at %v:%d: %w", id, ip, port, err)
+// The first ip1/port1 cannot be zeroed, the second one can. One of them
+// will be tried at random.
+func BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
+	if port1 == 0 {
+		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
-	return sock, nil
+	var ips [2][4]byte
+	ips[0] = ip1
+	ips[1] = ip2
+	var ports [2]uint16
+	ports[0] = port1
+	ports[1] = port2
+	var errs [2]error
+	var sock *net.TCPConn
+	start := int(rand.Uint32())
+	for i := start; i < start+2; i++ {
+		ip := net.IP(ips[i%2][:])
+		port := int(ports[i%2])
+		if port == 0 {
+			continue
+		}
+		sock, errs[i%2] = net.DialTCP("tcp4", nil, &net.TCPAddr{IP: ip, Port: port})
+		if errs[i%2] == nil {
+			return sock, nil
+		}
+		log.RaiseAlert(fmt.Errorf("Could not connect to block service %v:%v: %w. Might try other ip/port.", ip, port, errs[i%2]))
+	}
+	// return one of the two errors, we don't want to mess with them too much and they are alerts
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	panic("impossible")
 }
 
 func bsReqInit(id msgs.BlockServiceId, kind byte) *bytes.Buffer {

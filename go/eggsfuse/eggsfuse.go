@@ -363,7 +363,7 @@ func (f *transientFile) writeSpan(policy *msgs.SpanPolicy) syscall.Errno {
 			Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
 		}
 		for i, block := range initiateResp.Blocks {
-			conn, err := eggs.BlockServiceConnection(block.BlockServiceId, block.BlockServiceIp[:], block.BlockServicePort)
+			conn, err := eggs.BlockServiceConnection(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 			if err != nil {
 				return syscall.EIO
 			}
@@ -569,7 +569,7 @@ func (of *openFile) ensureBlockService(bs *msgs.BlockService) syscall.Errno {
 				panic(err)
 			}
 		}
-		conn, err := eggs.BlockServiceConnection(bs.Id, bs.Ip[:], bs.Port)
+		conn, err := eggs.BlockServiceConnection(log, bs.Id, bs.Ip1, bs.Port1, bs.Ip2, bs.Port2)
 		if err != nil {
 			panic(err)
 		}
@@ -740,7 +740,7 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 		}
 		block := span.BodyBlocks[0]
 		blockService := resp.BlockServices[block.BlockServiceIx]
-		conn, err := eggs.BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+		conn, err := eggs.BlockServiceConnection(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 		if err != nil {
 			panic(err)
 		}

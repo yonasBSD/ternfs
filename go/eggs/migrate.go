@@ -68,11 +68,11 @@ func copyBlock(
 	dstBlock := &initiateSpanResp.Blocks[0]
 	var proof [8]byte
 	var err error
-	srcConn, err := mbs.BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+	srcConn, err := mbs.BlockServiceConnection(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 	if err != nil {
 		return 0, err
 	}
-	dstConn, err := mbs.BlockServiceConnection(dstBlock.BlockServiceId, dstBlock.BlockServiceIp[:], dstBlock.BlockServicePort)
+	dstConn, err := mbs.BlockServiceConnection(log, dstBlock.BlockServiceId, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
 	if err != nil {
 		return 0, err
 	}

@@ -286,6 +286,11 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	fmt.Fprintln(out, `import "xtx/eggsfs/bincode"`)
 	fmt.Fprintln(out)
 
+	fmt.Fprintln(out, `func (err ErrCode) Error() string {`)
+	fmt.Fprintln(out, `	return err.String()`)
+	fmt.Fprintln(out, `}`)
+	fmt.Fprintln(out, ``)
+
 	generateGoErrorCodes(out, errors)
 
 	generateGoMsgKind(out, "ShardMessageKind", shardReqResps)

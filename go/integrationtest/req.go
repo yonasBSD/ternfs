@@ -126,7 +126,7 @@ func createFile(
 			var proof1 [8]byte
 			var err error
 			var conn eggs.MockableBlockServiceConn
-			conn, err = mbs.BlockServiceConnection(block0.BlockServiceId, block0.BlockServiceIp[:], block0.BlockServicePort)
+			conn, err = mbs.BlockServiceConnection(log, block0.BlockServiceId, block0.BlockServiceIp1, block0.BlockServicePort1, block0.BlockServiceIp2, block0.BlockServicePort2)
 			if err != nil {
 				panic(err)
 			}
@@ -135,7 +135,7 @@ func createFile(
 			if err != nil {
 				panic(err)
 			}
-			conn, err = mbs.BlockServiceConnection(block1.BlockServiceId, block1.BlockServiceIp[:], block1.BlockServicePort)
+			conn, err = mbs.BlockServiceConnection(log, block1.BlockServiceId, block1.BlockServiceIp1, block1.BlockServicePort1, block1.BlockServiceIp2, block1.BlockServicePort2)
 			if err != nil {
 				panic(err)
 			}
@@ -189,7 +189,7 @@ func readFile(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockSer
 			} else {
 				block := &span.BodyBlocks[0]
 				blockService := &spansResp.BlockServices[block.BlockServiceIx]
-				conn, err := mbs.BlockServiceConnection(blockService.Id, blockService.Ip[:], blockService.Port)
+				conn, err := mbs.BlockServiceConnection(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}

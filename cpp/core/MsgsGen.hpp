@@ -190,19 +190,23 @@ struct FetchedSpan {
 std::ostream& operator<<(std::ostream& out, const FetchedSpan& x);
 
 struct BlockInfo {
-    BincodeFixedBytes<4> blockServiceIp;
-    uint16_t blockServicePort;
+    BincodeFixedBytes<4> blockServiceIp1;
+    uint16_t blockServicePort1;
+    BincodeFixedBytes<4> blockServiceIp2;
+    uint16_t blockServicePort2;
     uint64_t blockServiceId;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp + blockServicePort + blockServiceId + blockId + certificate
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockId + certificate
 
     BlockInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp
-        _size += 2; // blockServicePort
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp1
+        _size += 2; // blockServicePort1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp2
+        _size += 2; // blockServicePort2
         _size += 8; // blockServiceId
         _size += 8; // blockId
         _size += BincodeFixedBytes<8>::STATIC_SIZE; // certificate
@@ -326,17 +330,13 @@ struct SetDirectoryInfo {
 std::ostream& operator<<(std::ostream& out, const SetDirectoryInfo& x);
 
 struct BlockServiceBlacklist {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
     uint64_t id;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + id
+    static constexpr uint16_t STATIC_SIZE = 8; // id
 
     BlockServiceBlacklist() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
         _size += 8; // id
         return _size;
     }
@@ -349,18 +349,22 @@ struct BlockServiceBlacklist {
 std::ostream& operator<<(std::ostream& out, const BlockServiceBlacklist& x);
 
 struct BlockService {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
     uint64_t id;
     uint8_t flags;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip + port + id + flags
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip1 + port1 + ip2 + port2 + id + flags
 
     BlockService() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         _size += 8; // id
         _size += 1; // flags
         return _size;
@@ -442,8 +446,10 @@ std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
 
 struct BlockServiceInfo {
     uint64_t id;
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
     uint8_t storageClass;
     BincodeFixedBytes<16> failureDomain;
     BincodeFixedBytes<16> secretKey;
@@ -452,14 +458,16 @@ struct BlockServiceInfo {
     uint64_t blocks;
     BincodeBytes path;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip + port + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path
 
     BlockServiceInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // id
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         _size += 1; // storageClass
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey

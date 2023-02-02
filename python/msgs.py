@@ -281,16 +281,20 @@ class FetchedSpan(bincode.Packable):
 
 @dataclass
 class BlockInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 8 + 8 # block_service_ip + block_service_port + block_service_id + block_id + certificate
-    block_service_ip: bytes
-    block_service_port: int
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 4 + 2 + 8 + 8 + 8 # block_service_ip1 + block_service_port1 + block_service_ip2 + block_service_port2 + block_service_id + block_id + certificate
+    block_service_ip1: bytes
+    block_service_port1: int
+    block_service_ip2: bytes
+    block_service_port2: int
     block_service_id: int
     block_id: int
     certificate: bytes
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(self.block_service_ip, 4, b)
-        bincode.pack_u16_into(self.block_service_port, b)
+        bincode.pack_fixed_into(self.block_service_ip1, 4, b)
+        bincode.pack_u16_into(self.block_service_port1, b)
+        bincode.pack_fixed_into(self.block_service_ip2, 4, b)
+        bincode.pack_u16_into(self.block_service_port2, b)
         bincode.pack_u64_into(self.block_service_id, b)
         bincode.pack_u64_into(self.block_id, b)
         bincode.pack_fixed_into(self.certificate, 8, b)
@@ -298,17 +302,21 @@ class BlockInfo(bincode.Packable):
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockInfo':
-        block_service_ip = bincode.unpack_fixed(u, 4)
-        block_service_port = bincode.unpack_u16(u)
+        block_service_ip1 = bincode.unpack_fixed(u, 4)
+        block_service_port1 = bincode.unpack_u16(u)
+        block_service_ip2 = bincode.unpack_fixed(u, 4)
+        block_service_port2 = bincode.unpack_u16(u)
         block_service_id = bincode.unpack_u64(u)
         block_id = bincode.unpack_u64(u)
         certificate = bincode.unpack_fixed(u, 8)
-        return BlockInfo(block_service_ip, block_service_port, block_service_id, block_id, certificate)
+        return BlockInfo(block_service_ip1, block_service_port1, block_service_ip2, block_service_port2, block_service_id, block_id, certificate)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 4 # block_service_ip
-        _size += 2 # block_service_port
+        _size += 4 # block_service_ip1
+        _size += 2 # block_service_port1
+        _size += 4 # block_service_ip2
+        _size += 2 # block_service_port2
         _size += 8 # block_service_id
         _size += 8 # block_id
         _size += 8 # certificate
@@ -446,58 +454,58 @@ class SetDirectoryInfo(bincode.Packable):
 
 @dataclass
 class BlockServiceBlacklist(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 # ip + port + id
-    ip: bytes
-    port: int
+    STATIC_SIZE: ClassVar[int] = 8 # id
     id: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
         bincode.pack_u64_into(self.id, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceBlacklist':
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
         id = bincode.unpack_u64(u)
-        return BlockServiceBlacklist(ip, port, id)
+        return BlockServiceBlacklist(id)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 4 # ip
-        _size += 2 # port
         _size += 8 # id
         return _size
 
 @dataclass
 class BlockService(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 4 + 2 + 8 + 1 # ip + port + id + flags
-    ip: bytes
-    port: int
+    STATIC_SIZE: ClassVar[int] = 4 + 2 + 4 + 2 + 8 + 1 # ip1 + port1 + ip2 + port2 + id + flags
+    ip1: bytes
+    port1: int
+    ip2: bytes
+    port2: int
     id: int
     flags: int
 
     def pack_into(self, b: bytearray) -> None:
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
+        bincode.pack_fixed_into(self.ip1, 4, b)
+        bincode.pack_u16_into(self.port1, b)
+        bincode.pack_fixed_into(self.ip2, 4, b)
+        bincode.pack_u16_into(self.port2, b)
         bincode.pack_u64_into(self.id, b)
         bincode.pack_u8_into(self.flags, b)
         return None
 
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockService':
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
+        ip1 = bincode.unpack_fixed(u, 4)
+        port1 = bincode.unpack_u16(u)
+        ip2 = bincode.unpack_fixed(u, 4)
+        port2 = bincode.unpack_u16(u)
         id = bincode.unpack_u64(u)
         flags = bincode.unpack_u8(u)
-        return BlockService(ip, port, id, flags)
+        return BlockService(ip1, port1, ip2, port2, id, flags)
 
     def calc_packed_size(self) -> int:
         _size = 0
-        _size += 4 # ip
-        _size += 2 # port
+        _size += 4 # ip1
+        _size += 2 # port1
+        _size += 4 # ip2
+        _size += 2 # port2
         _size += 8 # id
         _size += 1 # flags
         return _size
@@ -582,10 +590,12 @@ class SnapshotLookupEdge(bincode.Packable):
 
 @dataclass
 class BlockServiceInfo(bincode.Packable):
-    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 1 + 16 + 16 + 8 + 8 + 8 + 1 # id + ip + port + storage_class + failure_domain + secret_key + capacity_bytes + available_bytes + blocks + len(path)
+    STATIC_SIZE: ClassVar[int] = 8 + 4 + 2 + 4 + 2 + 1 + 16 + 16 + 8 + 8 + 8 + 1 # id + ip1 + port1 + ip2 + port2 + storage_class + failure_domain + secret_key + capacity_bytes + available_bytes + blocks + len(path)
     id: int
-    ip: bytes
-    port: int
+    ip1: bytes
+    port1: int
+    ip2: bytes
+    port2: int
     storage_class: int
     failure_domain: bytes
     secret_key: bytes
@@ -596,8 +606,10 @@ class BlockServiceInfo(bincode.Packable):
 
     def pack_into(self, b: bytearray) -> None:
         bincode.pack_u64_into(self.id, b)
-        bincode.pack_fixed_into(self.ip, 4, b)
-        bincode.pack_u16_into(self.port, b)
+        bincode.pack_fixed_into(self.ip1, 4, b)
+        bincode.pack_u16_into(self.port1, b)
+        bincode.pack_fixed_into(self.ip2, 4, b)
+        bincode.pack_u16_into(self.port2, b)
         bincode.pack_u8_into(self.storage_class, b)
         bincode.pack_fixed_into(self.failure_domain, 16, b)
         bincode.pack_fixed_into(self.secret_key, 16, b)
@@ -610,8 +622,10 @@ class BlockServiceInfo(bincode.Packable):
     @staticmethod
     def unpack(u: bincode.UnpackWrapper) -> 'BlockServiceInfo':
         id = bincode.unpack_u64(u)
-        ip = bincode.unpack_fixed(u, 4)
-        port = bincode.unpack_u16(u)
+        ip1 = bincode.unpack_fixed(u, 4)
+        port1 = bincode.unpack_u16(u)
+        ip2 = bincode.unpack_fixed(u, 4)
+        port2 = bincode.unpack_u16(u)
         storage_class = bincode.unpack_u8(u)
         failure_domain = bincode.unpack_fixed(u, 16)
         secret_key = bincode.unpack_fixed(u, 16)
@@ -619,13 +633,15 @@ class BlockServiceInfo(bincode.Packable):
         available_bytes = bincode.unpack_u64(u)
         blocks = bincode.unpack_u64(u)
         path = bincode.unpack_bytes(u)
-        return BlockServiceInfo(id, ip, port, storage_class, failure_domain, secret_key, capacity_bytes, available_bytes, blocks, path)
+        return BlockServiceInfo(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, capacity_bytes, available_bytes, blocks, path)
 
     def calc_packed_size(self) -> int:
         _size = 0
         _size += 8 # id
-        _size += 4 # ip
-        _size += 2 # port
+        _size += 4 # ip1
+        _size += 2 # port1
+        _size += 4 # ip2
+        _size += 2 # port2
         _size += 1 # storage_class
         _size += 16 # failure_domain
         _size += 16 # secret_key

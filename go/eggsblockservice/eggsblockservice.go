@@ -91,9 +91,9 @@ func registerPeriodically(
 	for id, blockService := range blockServices {
 		bs := msgs.BlockServiceInfo{
 			Id:            id,
-			Ip:            ip,
+			Ip1:           ip,
+			Port1:         port,
 			SecretKey:     blockService.key,
-			Port:          port,
 			StorageClass:  blockService.storageClass,
 			FailureDomain: failureDomain,
 			Path:          blockService.path,

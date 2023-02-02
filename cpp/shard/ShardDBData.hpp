@@ -64,8 +64,10 @@ struct BlockServiceBody {
 
     static constexpr size_t MAX_SIZE =
         sizeof(uint64_t) + // id
-        sizeof(char[4]) +  // ip
-        sizeof(uint16_t) + // port
+        sizeof(char[4]) +  // ip1
+        sizeof(uint16_t) + // port1
+        sizeof(char[4]) +  // ip2
+        sizeof(uint16_t) + // port2
         sizeof(uint8_t) +  // storage class
         sizeof(char[16]) + // failure domain
         sizeof(char[16]);  // secret key
@@ -74,11 +76,13 @@ struct BlockServiceBody {
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
     LE_VAL(uint64_t, id,               setId,             0)
-    FBYTES_VAL(4,    ip,               setIp,             8)
-    LE_VAL(uint16_t, port,             setPort,          12)
-    U8_VAL(uint8_t,  storageClass,     setStorageClass,  14)
-    FBYTES_VAL(16,   failureDomain,    setFailureDomain, 15)
-    FBYTES_VAL(16,   secretKey,        setSecretKey,     31)
+    FBYTES_VAL(4,    ip1,              setIp1,            8)
+    LE_VAL(uint16_t, port1,            setPort1,         12)
+    FBYTES_VAL(4,    ip2,              setIp2,           14)
+    LE_VAL(uint16_t, port2,            setPort2,         18)
+    U8_VAL(uint8_t,  storageClass,     setStorageClass,  20)
+    FBYTES_VAL(16,   failureDomain,    setFailureDomain, 21)
+    FBYTES_VAL(16,   secretKey,        setSecretKey,     37)
 };
 
 struct CurrentBlockServicesBody {

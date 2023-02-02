@@ -4,7 +4,6 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"io"
-	"net"
 	"xtx/eggsfs/msgs"
 )
 
@@ -16,7 +15,7 @@ type MockableBlockServiceConn interface {
 }
 
 type MockableBlockServices interface {
-	BlockServiceConnection(id msgs.BlockServiceId, ip net.IP, port uint16) (MockableBlockServiceConn, error)
+	BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error)
 	WriteBlock(
 		logger LogLevels,
 		conn MockableBlockServiceConn,
@@ -53,8 +52,8 @@ type MockableBlockServices interface {
 
 type RealBlockServices struct{}
 
-func (RealBlockServices) BlockServiceConnection(id msgs.BlockServiceId, ip net.IP, port uint16) (MockableBlockServiceConn, error) {
-	return BlockServiceConnection(id, ip, port)
+func (RealBlockServices) BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
+	return BlockServiceConnection(log, id, ip1, port1, ip2, port2)
 }
 
 func (RealBlockServices) WriteBlock(
@@ -125,7 +124,7 @@ func (dummyConn) ReadFrom(r io.Reader) (n int64, err error) {
 	return 0, nil
 }
 
-func (mbs *MockedBlockServices) BlockServiceConnection(id msgs.BlockServiceId, ip net.IP, port uint16) (MockableBlockServiceConn, error) {
+func (mbs *MockedBlockServices) BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
 	return dummyConn{}, nil
 }
 

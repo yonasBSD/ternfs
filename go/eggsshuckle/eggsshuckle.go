@@ -46,7 +46,7 @@ func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
 
 type state struct {
 	mutex         sync.RWMutex
-	blockServices map[msgs.BlockServiceId]*msgs.BlockServiceInfo
+	blockServices map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	shards        [256]msgs.ShardInfo
 	cdcIp         [4]byte
 	cdcPort       uint16
@@ -55,7 +55,7 @@ type state struct {
 func newState() *state {
 	return &state{
 		mutex:         sync.RWMutex{},
-		blockServices: make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo),
+		blockServices: make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
 	}
 }
 
@@ -68,7 +68,7 @@ func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = *bs
+		resp.BlockServices[i] = bs
 		i++
 	}
 
@@ -85,7 +85,7 @@ func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *ms
 
 	i := 0
 	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = *bs
+		resp.BlockServices[i] = bs
 		i++
 	}
 
@@ -97,7 +97,7 @@ func handleRegisterBlockServices(ll eggs.LogLevels, s *state, w io.Writer, req *
 	defer s.mutex.Unlock()
 
 	for _, bs := range req.BlockServices {
-		s.blockServices[bs.Id] = &bs
+		s.blockServices[bs.Id] = bs
 	}
 
 	return &msgs.RegisterBlockServicesResp{}
@@ -414,7 +414,7 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 			if totalAvailableBytes == 0 {
 				data.TotalUsedPercentage = "0%"
 			} else {
-				data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*float64(totalAvailableBytes)/float64(totalCapacityBytes))
+				data.TotalUsedPercentage = fmt.Sprintf("%0.2f%%", 100.0*(1.0-float64(totalAvailableBytes)/float64(totalCapacityBytes)))
 			}
 			return indexTemplate, &pageData{Title: "Shuckle", Body: &data}, http.StatusOK
 		},
@@ -838,8 +838,8 @@ func setupRouting(log eggs.LogLevels, st *state) {
 }
 
 func main() {
-	bincodePort := flag.Uint("bincode-port", 10000, "Port on which to run the bincode server.")
-	httpPort := flag.Uint("http-port", 10001, "Port on which to run the HTTP server")
+	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
+	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	flag.Parse()

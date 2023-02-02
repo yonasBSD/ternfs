@@ -54,8 +54,6 @@ const SHUCKLE_REQ_PROTOCOL_VERSION uint32 = 0x554853
 // '1554853'
 const SHUCKLE_RESP_PROTOCOL_VERSION uint32 = 0x1554853
 
-const SHUCKLE_PORT uint16 = 10000
-
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
 

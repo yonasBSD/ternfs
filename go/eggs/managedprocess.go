@@ -397,14 +397,14 @@ func BuildShuckleExe(ll LogLevels) string {
 
 func BuildBlockServiceExe(ll LogLevels) string {
 	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "eggsblockservice")
+	buildCmd.Dir = path.Join(goDir(), "eggsblocks")
 	ll.Info("building block service")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build block service: %w", err))
 	}
-	return path.Join(buildCmd.Dir, "eggsblockservice")
+	return path.Join(buildCmd.Dir, "eggsblocks")
 }
 
 func BuildEggsFuseExe(ll LogLevels) string {

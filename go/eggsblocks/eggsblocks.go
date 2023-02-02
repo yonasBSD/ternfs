@@ -86,7 +86,7 @@ func registerPeriodically(
 	ip2 [4]byte,
 	port2 uint16,
 	failureDomain [16]byte,
-	blockServices map[msgs.BlockServiceId]*blockService,
+	blockServices map[msgs.BlockServiceId]blockService,
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
@@ -335,7 +335,7 @@ const MAX_OBJECT_SIZE uint32 = 100e6
 func handleRequest(
 	log eggs.LogLevels,
 	terminateChan chan any,
-	blockServices map[msgs.BlockServiceId]*blockService,
+	blockServices map[msgs.BlockServiceId]blockService,
 	conn *net.TCPConn,
 	timeCheck bool,
 ) {
@@ -580,7 +580,7 @@ func main() {
 		Logger:  eggs.NewLogger(logOut),
 	}
 
-	blockServices := make(map[msgs.BlockServiceId]*blockService)
+	blockServices := make(map[msgs.BlockServiceId]blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
 		dir := flag.Args()[i]
 		storageClass := msgs.StorageClassFromString(flag.Args()[i+1])
@@ -594,13 +594,17 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
-		blockServices[id] = &blockService{
+		blockServices[id] = blockService{
 			path:         dir,
 			key:          key,
 			cipher:       cipher,
 			storageClass: storageClass,
 		}
 	}
+	for id, blockService := range blockServices {
+		log.Info("block service %v at %v, storage class %v", id, blockService.path, blockService.storageClass)
+	}
+
 	if len(blockServices) != flag.NArg()/2 {
 		panic(fmt.Errorf("duplicate block services!"))
 	}

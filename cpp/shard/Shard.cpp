@@ -99,7 +99,7 @@ public:
         struct sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-        serverAddr.sin_port = htons(0);
+        serverAddr.sin_port = htons(_desiredPort);
         if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
             throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _desiredPort);
         }

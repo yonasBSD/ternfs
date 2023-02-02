@@ -116,11 +116,11 @@ func main() {
 			FailureDomain:  fmt.Sprintf("%d", i),
 			Verbose:        *verbose,
 			ShuckleAddress: shuckleAddress,
-			OwnIp:          *ownIp,
+			OwnIp1:         *ownIp,
 			Profile:        *profile,
 		}
 		if *startingPort != 0 {
-			opts.Port = uint16(*startingPort) + 257 + uint16(i)
+			opts.Port1 = uint16(*startingPort) + 257 + uint16(i)
 		}
 		procs.StartBlockService(log, &opts)
 	}

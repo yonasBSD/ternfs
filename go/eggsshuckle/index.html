@@ -39,7 +39,8 @@
         <thead>
             <tr>
                 <th>FailureDomain</th>
-                <th>Address</th>
+                <th>Address 1</th>
+                <th>Address 2</th>
                 <th>Path</th>
                 <th>Id</th>
                 <th>StorageClass</th>
@@ -51,7 +52,8 @@
             {{ range .BlockServices }}
                 <tr id="bs-{{.Id}}">
                     <td>{{.FailureDomain}}</td>
-                    <td><code>{{.Addr}}</code></td>
+                    <td><code>{{.Addr1}}</code></td>
+                    <td><code>{{.Addr2}}</code></td>
                     <td><code>{{.Path}}</code></td>
                     <td><code>{{.Id}}</code></td>
                     <td>{{.StorageClass}}</td>

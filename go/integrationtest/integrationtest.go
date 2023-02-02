@@ -317,7 +317,8 @@ func main() {
 			Verbose:        *verbose,
 			ShuckleAddress: fmt.Sprintf("localhost:%d", shucklePort),
 			NoTimeCheck:    true,
-			OwnIp:          "127.0.0.1",
+			OwnIp1:         "127.0.0.1",
+			OwnIp2:         "127.0.0.1",
 			Profile:        *profile,
 		})
 	}

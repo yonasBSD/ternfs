@@ -256,13 +256,15 @@ func (procs *ManagedProcesses) StartPythonScript(
 type BlockServiceOpts struct {
 	Exe            string
 	Path           string
-	Port           uint16
+	OwnIp1         string
+	Port1          uint16
+	OwnIp2         string
+	Port2          uint16
 	StorageClass   msgs.StorageClass
 	FailureDomain  string
 	NoTimeCheck    bool
 	Verbose        bool
 	ShuckleAddress string
-	OwnIp          string
 	Profile        bool
 }
 
@@ -278,9 +280,11 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
-		"-port", fmt.Sprintf("%d", opts.Port),
+		"-own-ip-1", opts.OwnIp1,
+		"-port-1", fmt.Sprintf("%d", opts.Port1),
+		"-own-ip-2", opts.OwnIp2,
+		"-port-2", fmt.Sprintf("%d", opts.Port2),
 		"-log-file", path.Join(opts.Path, "log"),
-		"-own-ip", opts.OwnIp,
 	}
 	if opts.NoTimeCheck {
 		args = append(args, "-no-time-check")
@@ -296,7 +300,7 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	}
 	args = append(args, opts.Path, opts.StorageClass.String())
 	procs.Start(ll, &ManagedProcessArgs{
-		Name:            fmt.Sprintf("block service (port %d)", opts.Port),
+		Name:            fmt.Sprintf("block service (%v:%d & %v:%d)", opts.OwnIp1, opts.Port1, opts.OwnIp2, opts.Port2),
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Path, "stdout"),

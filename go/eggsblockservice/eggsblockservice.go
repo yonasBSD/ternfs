@@ -81,8 +81,10 @@ func countBlocks(basePath string) uint64 {
 
 func registerPeriodically(
 	log eggs.LogLevels,
-	ip [4]byte,
-	port uint16,
+	ip1 [4]byte,
+	port1 uint16,
+	ip2 [4]byte,
+	port2 uint16,
 	failureDomain [16]byte,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	shuckleAddress string,
@@ -91,8 +93,10 @@ func registerPeriodically(
 	for id, blockService := range blockServices {
 		bs := msgs.BlockServiceInfo{
 			Id:            id,
-			Ip1:           ip,
-			Port1:         port,
+			Ip1:           ip1,
+			Port1:         port1,
+			Ip2:           ip2,
+			Port2:         port2,
 			SecretKey:     blockService.key,
 			StorageClass:  blockService.storageClass,
 			FailureDomain: failureDomain,
@@ -479,11 +483,13 @@ func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
 	noTimeCheck := flag.Bool("no-time-check", false, "Do not perform block deletion time check (to prevent replay attacks). Useful for testing.")
-	port := flag.Uint("port", 0, "Port on which to run on. By default it will be picked automatically.")
+	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to, and that we'll advertise to shuckle.")
+	port1 := flag.Uint("port-1", 0, "First port on which to run on. By default it will be picked automatically.")
+	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll advertise to shuckle. If it is not provided, we will only bind to the first IP.")
+	port2 := flag.Uint("port-2", 0, "Port on which to run on. By default it will be picked automatically.")
 	verbose := flag.Bool("verbose", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
-	ownIpStr := flag.String("own-ip", "", "IP that we'll advertise to shuckle.")
 	profileFile := flag.String("profile-file", "", "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
@@ -497,20 +503,34 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *ownIpStr == "" {
-		fmt.Fprintf(os.Stderr, "-own-ip must be provided.\n\n")
+	if *ownIp1Str == "" {
+		fmt.Fprintf(os.Stderr, "-own-ip-1 must be provided.\n\n")
 		usage()
 		os.Exit(2)
 	}
 
-	parsedOwnIp := net.ParseIP(*ownIpStr)
-	if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
-		fmt.Fprintf(os.Stderr, "-own-ip %v is not a valid ipv4 address. %v\n\n", *ownIpStr, parsedOwnIp)
+	if *ownIp2Str == "" && *port2 != 0 {
+		fmt.Fprintf(os.Stderr, "You've provided -port-2, but no -own-ip-2. If you don't need the second route, provide neither. If you do, provide both.\n\n")
 		usage()
 		os.Exit(2)
 	}
-	var ownIP [4]byte
-	copy(ownIP[:], parsedOwnIp.To4())
+
+	parseIp := func(ipStr string) [4]byte {
+		parsedOwnIp := net.ParseIP(ipStr)
+		if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
+			fmt.Fprintf(os.Stderr, "IP %v is not a valid ipv4 address. %v\n\n", ipStr, parsedOwnIp)
+			usage()
+			os.Exit(2)
+		}
+		var ownIp [4]byte
+		copy(ownIp[:], parsedOwnIp.To4())
+		return ownIp
+	}
+	ownIp1 := parseIp(*ownIp1Str)
+	var ownIp2 [4]byte
+	if *ownIp2Str != "" {
+		ownIp2 = parseIp(*ownIp2Str)
+	}
 
 	var failureDomain [16]byte
 	if copy(failureDomain[:], []byte(*failureDomainStr)) != len(*failureDomainStr) {
@@ -585,25 +605,38 @@ func main() {
 		panic(fmt.Errorf("duplicate block services!"))
 	}
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *port))
+	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *port1))
 	if err != nil {
 		panic(err)
 	}
-	defer listener.Close()
+	defer listener1.Close()
 
-	log.Info("running on %v", listener.Addr())
-	actualPort := uint16(listener.Addr().(*net.TCPAddr).Port)
+	log.Info("running 1 on %v", listener1.Addr())
+	actualPort1 := uint16(listener1.Addr().(*net.TCPAddr).Port)
+
+	var listener2 net.Listener
+	var actualPort2 uint16
+	if *ownIp2Str != "" {
+		listener2, err = net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), *port2))
+		if err != nil {
+			panic(err)
+		}
+		defer listener2.Close()
+
+		log.Info("running 2 on %v", listener2.Addr())
+		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
+	}
 
 	terminateChan := make(chan any)
 
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
-		registerPeriodically(log, ownIP, actualPort, failureDomain, blockServices, *shuckleAddress)
+		registerPeriodically(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices, *shuckleAddress)
 	}()
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
 		for {
-			conn, err := listener.Accept()
+			conn, err := listener1.Accept()
 			if err != nil {
 				terminateChan <- err
 				return
@@ -614,6 +647,22 @@ func main() {
 			}()
 		}
 	}()
+	if listener2 != nil {
+		go func() {
+			defer func() { handleRecover(log, terminateChan, recover()) }()
+			for {
+				conn, err := listener2.Accept()
+				if err != nil {
+					terminateChan <- err
+					return
+				}
+				go func() {
+					defer func() { handleRecover(log, terminateChan, recover()) }()
+					handleRequest(log, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
+				}()
+			}
+		}()
+	}
 
 	{
 		err := <-terminateChan

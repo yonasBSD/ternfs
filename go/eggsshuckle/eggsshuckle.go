@@ -186,9 +186,6 @@ func noRunawayArgs() {
 	}
 }
 
-//go:embed shuckle.png
-var shucklePngStr []byte
-
 //go:embed shuckleface.png
 var shuckleFacePngStr []byte
 
@@ -810,11 +807,10 @@ func setupRouting(log eggs.LogLevels, st *state) {
 	)
 	http.HandleFunc(
 		"/shuckle-face.png",
-		func(w http.ResponseWriter, r *http.Request) { w.Write(shuckleFacePngStr) },
-	)
-	http.HandleFunc(
-		"/shuckle.png",
-		func(w http.ResponseWriter, r *http.Request) { w.Write(shucklePngStr) },
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(shuckleFacePngStr)
+		},
 	)
 
 	// blocks serving

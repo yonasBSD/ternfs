@@ -12,8 +12,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"syscall"
@@ -482,6 +484,7 @@ func main() {
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	ownIpStr := flag.String("own-ip", "", "IP that we'll advertise to shuckle.")
+	profileFile := flag.String("profile-file", "", "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
@@ -522,6 +525,24 @@ func main() {
 		if err := os.Mkdir(dir, 0777); err != nil && !os.IsExist(err) {
 			panic(fmt.Errorf("could not create data dir %v", dir))
 		}
+	}
+
+	if *profileFile != "" {
+		f, err := os.Create(*profileFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open profile file %v", *profileFile)
+			os.Exit(1)
+		}
+		pprof.StartCPUProfile(f)
+		// Save CPU profile if we get killed by a signal
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
+		go func() {
+			sig := <-signalChan
+			signal.Stop(signalChan)
+			pprof.StopCPUProfile()
+			syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
+		}()
 	}
 
 	logOut := os.Stdout

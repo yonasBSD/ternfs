@@ -220,11 +220,10 @@ func main() {
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
-	perf := flag.Bool("perf", false, "Run the C++ binaries (shard & CDC) with `perf record`")
+	profile := flag.Bool("profile", false, "Run with profiling (this includes the C++ and Go binaries and the test driver). Implies -preserve-data-dir")
 	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
-	cpuprofile := flag.String("cpuprofile", "", "Write cpu profile to file")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -233,15 +232,6 @@ func main() {
 	}
 
 	filterRe := regexp.MustCompile(*filter)
-
-	if *cpuprofile != "" {
-		f, err := os.Create(*cpuprofile)
-		if err != nil {
-			panic(err)
-		}
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
 
 	cleanupDbDir := false
 	tmpDataDir := *dataDir == ""
@@ -262,7 +252,16 @@ func main() {
 		}
 	}()
 
-	logFile := path.Join(*dataDir, "go-log")
+	if *profile {
+		f, err := os.Create(path.Join(*dataDir, "test-profile"))
+		if err != nil {
+			panic(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File
 	{
 		var err error
@@ -319,6 +318,7 @@ func main() {
 			ShuckleAddress: fmt.Sprintf("localhost:%d", shucklePort),
 			NoTimeCheck:    true,
 			OwnIp:          "127.0.0.1",
+			Profile:        *profile,
 		})
 	}
 
@@ -335,7 +335,7 @@ func main() {
 		Dir:            path.Join(*dataDir, "cdc"),
 		Verbose:        *verbose && *buildType == "debug",
 		Valgrind:       *buildType == "valgrind",
-		Perf:           *perf,
+		Perf:           *profile,
 		ShuckleAddress: shuckleAddress,
 		OwnIp:          "127.0.0.1",
 	})
@@ -350,7 +350,7 @@ func main() {
 			Verbose:            *verbose && *buildType == "debug",
 			Shid:               shid,
 			Valgrind:           *buildType == "valgrind",
-			Perf:               *perf,
+			Perf:               *profile,
 			IncomingPacketDrop: *incomingPacketDrop,
 			OutgoingPacketDrop: *outgoingPacketDrop,
 			ShuckleAddress:     shuckleAddress,
@@ -360,18 +360,19 @@ func main() {
 	}
 
 	waitShuckleFor := 5 * time.Second
-	if *buildType == "valgrind" {
+	if *buildType == "valgrind" || *profile {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
 	blockServices := eggs.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor).BlockServices
 
-	fuseMountPoint := procs.StartEggsFuse(log, &eggs.EggsFuseOpts{
+	fuseMountPoint := procs.StartFuse(log, &eggs.FuseOpts{
 		Exe:            eggsFuseExe,
 		Path:           path.Join(*dataDir, "eggsfuse"),
 		Verbose:        *verbose,
 		Wait:           true,
 		ShuckleAddress: shuckleAddress,
+		Profile:        *profile,
 	})
 
 	fmt.Printf("operational 🤖\n")
@@ -387,5 +388,5 @@ func main() {
 		panic(err)
 	}
 	// we haven't panicked, allow to cleanup the db dir if appropriate
-	cleanupDbDir = tmpDataDir && !*preserveDbDir
+	cleanupDbDir = tmpDataDir && !*preserveDbDir && !*profile
 }

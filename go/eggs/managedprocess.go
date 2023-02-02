@@ -292,7 +292,7 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 		args = append(args, "-shuckle", opts.ShuckleAddress)
 	}
 	if opts.Profile {
-		args = append(args, "-profile-file")
+		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
 	}
 	args = append(args, opts.Path, opts.StorageClass.String())
 	procs.Start(ll, &ManagedProcessArgs{
@@ -305,7 +305,7 @@ func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServic
 	})
 }
 
-type EggsFuseOpts struct {
+type FuseOpts struct {
 	Exe            string
 	Path           string
 	Verbose        bool
@@ -314,7 +314,7 @@ type EggsFuseOpts struct {
 	Profile        bool
 }
 
-func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) string {
+func (procs *ManagedProcesses) StartFuse(ll LogLevels, opts *FuseOpts) string {
 	createDataDir(opts.Path)
 	mountPoint := path.Join(opts.Path, "mnt")
 	createDataDir(mountPoint)
@@ -332,7 +332,7 @@ func (procs *ManagedProcesses) StartEggsFuse(ll LogLevels, opts *EggsFuseOpts) s
 		args = append(args, "-verbose")
 	}
 	if opts.Profile {
-		args = append(args, "-profile-file", path.Join(opts.Path, "prof"))
+		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{

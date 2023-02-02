@@ -777,14 +777,18 @@ var _ = (fs.FileReader)((*openFile)(nil))
 var _ = (fs.FileFlusher)((*openFile)(nil))
 
 func terminate(server *fuse.Server, terminated *bool) {
+	log.Info("terminating")
 	if *terminated {
+		log.Info("already terminated")
 		return
 	}
+	log.Info("stopping cpu pofile")
+	pprof.StopCPUProfile()
+	log.Info("about to terminate")
 	*terminated = true
 	if err := server.Unmount(); err != nil {
 		log.Info("could not unmount: %v\n", err)
 	}
-	pprof.StopCPUProfile()
 }
 
 func usage() {

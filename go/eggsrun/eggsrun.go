@@ -162,7 +162,7 @@ func main() {
 	}
 
 	waitShuckleFor := 5 * time.Second
-	if *buildType == "valgrind" {
+	if *buildType == "valgrind" || *profile {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)

@@ -2,53 +2,52 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
 
-func badCommand() {
-	fmt.Fprintf(os.Stderr, "expected 'collect', 'destruct', or 'migrate' subcommand\n")
-	os.Exit(2)
+type commandSpec struct {
+	flags *flag.FlagSet
+	run   func()
 }
 
-func noRunawayArgs() {
+var commands map[string]commandSpec
+
+func noRunawayArgs(flag *flag.FlagSet) {
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
 		os.Exit(2)
 	}
 }
 
-func main() {
-	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
-	flag.Parse()
-
-	if flag.NArg() < 1 {
-		badCommand()
+func usage() {
+	commandsStrs := []string{}
+	for c := range commands {
+		commandsStrs = append(commandsStrs, c)
 	}
+	fmt.Fprintf(os.Stderr, "Usage: %v %v\n\n", os.Args[0], strings.Join(commandsStrs, "|"))
+	fmt.Fprintf(os.Stderr, "Global options:\n\n")
+	flag.PrintDefaults()
+}
+
+func main() {
+	flag.Usage = usage
+	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	verbose := flag.Bool("verbose", false, "")
+
+	var log eggs.LogLevels
+
+	commands = make(map[string]commandSpec)
 
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC. If not present, they'll all be collected.")
-
-	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
-	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
-	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
-
-	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
-	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
-	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
-
-	log := &eggs.LogLogger{
-		Logger:  eggs.NewLogger(os.Stdout),
-		Verbose: true,
-	}
-
-	switch flag.Args()[0] {
-	case "collect":
-		collectCmd.Parse(flag.Args()[1:])
-		noRunawayArgs()
+	collectRun := func() {
 		if *collectDirIdU64 == 0 {
 			if err := eggs.CollectDirectoriesInAllShards(log, *shuckleAddress, nil); err != nil {
 				panic(err)
@@ -71,9 +70,16 @@ func main() {
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)
 		}
-	case "destruct":
-		destructCmd.Parse(flag.Args()[1:])
-		noRunawayArgs()
+	}
+	commands["collect"] = commandSpec{
+		flags: collectCmd,
+		run:   collectRun,
+	}
+
+	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
+	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
+	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
+	destructRun := func() {
 		if *destructFileIdU64 == 0 {
 			if err := eggs.DestructFilesInAllShards(log, *shuckleAddress, nil, nil); err != nil {
 				panic(err)
@@ -98,9 +104,16 @@ func main() {
 			}
 			log.Info("finished destructing %v, stats: %+v", fileId, stats)
 		}
-	case "migrate":
-		migrateCmd.Parse(flag.Args()[1:])
-		noRunawayArgs()
+	}
+	commands["destruct"] = commandSpec{
+		flags: destructCmd,
+		run:   destructRun,
+	}
+
+	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
+	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
+	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
+	migrateRun := func() {
 		if *migrateBlockService == 0 {
 			migrateCmd.Usage()
 			os.Exit(2)
@@ -129,7 +142,100 @@ func main() {
 			}
 			log.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)
 		}
-	default:
-		badCommand()
 	}
+	commands["migrate"] = commandSpec{
+		flags: migrateCmd,
+		run:   migrateRun,
+	}
+
+	setPolicyCmd := flag.NewFlagSet("set-policy", flag.ExitOnError)
+	setPolicyIdU64 := setPolicyCmd.Uint64("id", 0, "InodeId for the directory to set the policy of.")
+	setPolicyPolicy := setPolicyCmd.String("policy", "", "Policy, in JSON")
+	setPolicyRun := func() {
+		info := msgs.DirectoryInfoBody{}
+		if err := json.Unmarshal([]byte(*setPolicyPolicy), &info); err != nil {
+			panic(fmt.Errorf("could not decode directory info: %w", err))
+		}
+		id := msgs.InodeId(*setPolicyIdU64)
+		fmt.Printf("Will set following policy to directory %v:\n", id)
+		fmt.Printf("%+v\n", info)
+		for {
+			var action string
+			fmt.Printf("Proceed? y/n ")
+			fmt.Scanln(&action)
+			if action == "y" {
+				break
+			}
+			if action == "n" {
+				fmt.Printf("BYE\n")
+				os.Exit(0)
+			}
+		}
+		shid := id.Shard()
+		client, err := eggs.NewClient(log, *shuckleAddress, &shid, nil, nil)
+		if err != nil {
+			panic(err)
+		}
+		req := msgs.SetDirectoryInfoReq{
+			Id: id,
+			Info: msgs.SetDirectoryInfo{
+				Inherited: false,
+				Body:      bincode.Pack(&info),
+			},
+		}
+		if err := client.ShardRequest(log, shid, &req, &msgs.SetDirectoryInfoResp{}); err != nil {
+			panic(err)
+		}
+	}
+	commands["set-policy"] = commandSpec{
+		flags: setPolicyCmd,
+		run:   setPolicyRun,
+	}
+
+	unsetPolicyCmd := flag.NewFlagSet("unset-policy", flag.ExitOnError)
+	unsetPolicyIdU64 := unsetPolicyCmd.Uint64("id", 0, "InodeId for the directory to unset the policy of.")
+	unsetPolicyRun := func() {
+		id := msgs.InodeId(*unsetPolicyIdU64)
+		shid := id.Shard()
+		client, err := eggs.NewClient(log, *shuckleAddress, &shid, nil, nil)
+		if err != nil {
+			panic(err)
+		}
+		req := msgs.SetDirectoryInfoReq{
+			Id: id,
+			Info: msgs.SetDirectoryInfo{
+				Inherited: true,
+			},
+		}
+		if err := client.ShardRequest(log, shid, &req, &msgs.SetDirectoryInfoResp{}); err != nil {
+			panic(err)
+		}
+	}
+	commands["unset-policy"] = commandSpec{
+		flags: unsetPolicyCmd,
+		run:   unsetPolicyRun,
+	}
+
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "No command provided.\n\n")
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	log = &eggs.LogLogger{
+		Logger:  eggs.NewLogger(os.Stdout),
+		Verbose: *verbose,
+	}
+
+	spec, found := commands[flag.Args()[0]]
+	if !found {
+		fmt.Fprintf(os.Stderr, "Bad subcommand %v provided.\n\n", flag.Args()[0])
+		flag.Usage()
+		os.Exit(2)
+	}
+	spec.flags.Parse(flag.Args()[1:])
+	noRunawayArgs(spec.flags)
+	spec.run()
 }

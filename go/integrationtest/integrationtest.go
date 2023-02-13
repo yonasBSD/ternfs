@@ -289,12 +289,11 @@ func main() {
 	defer procs.Close()
 
 	// Start shuckle
-	shucklePort := uint16(10001)
+	shucklePort := uint16(55555)
 	shuckleAddress := fmt.Sprintf("localhost:%v", shucklePort)
 	procs.StartShuckle(log, &eggs.ShuckleOpts{
 		Exe:         shuckleExe,
 		BincodePort: shucklePort,
-		HttpPort:    shucklePort + 1,
 		Verbose:     *verbose,
 		Dir:         path.Join(*dataDir, "shuckle"),
 	})

@@ -2,6 +2,7 @@
 package msgs
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -201,6 +202,22 @@ func (parity Parity) Blocks() int {
 
 func (parity Parity) String() string {
 	return fmt.Sprintf("(%v,%v)", parity.DataBlocks(), parity.ParityBlocks())
+}
+
+func (p Parity) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]int{p.DataBlocks(), p.ParityBlocks()})
+}
+
+func (p *Parity) UnmarshalJSON(b []byte) error {
+	var nums []uint8
+	if err := json.Unmarshal(b, &nums); err != nil {
+		return err
+	}
+	if len(nums) != 2 {
+		return fmt.Errorf("expecting a list of 2 numbers for parity value, got %v", nums)
+	}
+	*p = MkParity(nums[0], nums[1])
+	return nil
 }
 
 const (
@@ -920,6 +937,14 @@ func (dat DeleteAfterTime) Active() bool {
 	return (uint64(dat) >> 63) != 0
 }
 
+func (dat DeleteAfterTime) String() string {
+	if dat.Active() {
+		return fmt.Sprintf("ActiveDeleteAfterTime(%v)", dat.Time())
+	} else {
+		return "InactiveDeleteAfterTime()"
+	}
+}
+
 func (dat DeleteAfterTime) Time() time.Duration {
 	return time.Duration(uint64(dat) & ^(uint64(1) << 63))
 }
@@ -935,6 +960,26 @@ func ActiveDeleteAfterTime(duration time.Duration) DeleteAfterTime {
 	return DeleteAfterTime((uint64(1) << 63) | uint64(duration.Nanoseconds()))
 }
 
+func (dat *DeleteAfterTime) UnmarshalJSON(b []byte) error {
+	var spec struct {
+		Active bool
+		Time   string
+	}
+	if err := json.Unmarshal(b, &spec); err != nil {
+		return err
+	}
+	if spec.Active {
+		dur, err := time.ParseDuration(spec.Time)
+		if err != nil {
+			return err
+		}
+		*dat = ActiveDeleteAfterTime(dur)
+	} else {
+		*dat = InactiveDeleteAfterTime()
+	}
+	return nil
+}
+
 // MSB: whether this policy is active or not. After: nanoseconds.
 type DeleteAfterVersions uint16
 
@@ -946,6 +991,14 @@ func (dav DeleteAfterVersions) Versions() uint16 {
 	return uint16(dav) & ^(uint16(1) << 15)
 }
 
+func (dav DeleteAfterVersions) String() string {
+	if dav.Active() {
+		return fmt.Sprintf("ActiveDeleteAfterVersions(%v)", dav.Versions())
+	} else {
+		return "InactiveDeleteAfterVersions()"
+	}
+}
+
 func InactiveDeleteAfterVersions() DeleteAfterVersions {
 	return 0
 }
@@ -955,6 +1008,22 @@ func ActiveDeleteAfterVersions(versions int16) DeleteAfterVersions {
 		panic(fmt.Errorf("negative versions: %v", versions))
 	}
 	return DeleteAfterVersions((uint16(1) << 15) | uint16(versions))
+}
+
+func (dat *DeleteAfterVersions) UnmarshalJSON(b []byte) error {
+	var spec struct {
+		Active   bool
+		Versions uint16
+	}
+	if err := json.Unmarshal(b, &spec); err != nil {
+		return err
+	}
+	if spec.Active {
+		*dat = ActiveDeleteAfterVersions(int16(spec.Versions))
+	} else {
+		*dat = InactiveDeleteAfterVersions()
+	}
+	return nil
 }
 
 // See SnapshotPolicy for the meaning of `DeleteAfterTime` and

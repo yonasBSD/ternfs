@@ -28,7 +28,7 @@ func main() {
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	ownIp := flag.String("own-ip", "127.0.0.1", "What IP to advertise to shuckle for these services.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
-	shuckleHttpPort := flag.Uint("shuckle-http-port", 10001, "")
+	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
 	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. Otherwise ports will be chosen randomly.")
 	flag.Parse()
 	noRunawayArgs()

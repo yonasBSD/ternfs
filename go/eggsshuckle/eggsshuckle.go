@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 )
@@ -472,6 +473,19 @@ type directoryEdge struct {
 	Locked       bool
 }
 
+type spanPolicy struct {
+	MaxSize      string
+	StorageClass string
+	Parity       string
+}
+
+type directoryInfo struct {
+	InheritedFrom       string
+	DeleteAfterTime     string
+	DeleteAfterVersions string
+	SpanPolicies        []spanPolicy
+}
+
 type directoryData struct {
 	Id           string
 	Path         string // might be empty
@@ -479,6 +493,7 @@ type directoryData struct {
 	Mtime        string
 	Owner        string
 	Edges        []directoryEdge
+	Info         directoryInfo
 }
 
 func newClient(log eggs.LogLevels, state *state) *eggs.Client {
@@ -554,6 +569,26 @@ func pathSegments(path string) []pathSegment {
 		pathSegments = append(pathSegments, pathSegment{Segment: segment, PathSoFar: pathSoFar})
 	}
 	return pathSegments
+}
+
+func lookupDirectoryInfo(log eggs.LogLevels, client *eggs.Client, id msgs.InodeId) (msgs.InodeId, *msgs.DirectoryInfoBody) {
+	req := msgs.StatDirectoryReq{Id: id}
+	resp := msgs.StatDirectoryResp{}
+	for {
+		if err := client.ShardRequest(log, req.Id.Shard(), &req, &resp); err != nil {
+			panic(err)
+		}
+		if len(resp.Info) == 0 {
+			req.Id = resp.Owner
+		} else {
+			break
+		}
+	}
+	info := msgs.DirectoryInfoBody{}
+	if err := bincode.Unpack(resp.Info, &info); err != nil {
+		panic(err)
+	}
+	return req.Id, &info
 }
 
 var fileTemplate *template.Template
@@ -655,6 +690,25 @@ func handleInode(
 							}
 							data.Edges = append(data.Edges, dataEdge)
 						}
+					}
+				}
+				{
+					inheritedFrom, info := lookupDirectoryInfo(log, client, id)
+					if inheritedFrom != id {
+						data.Info.InheritedFrom = fmt.Sprintf("%v", inheritedFrom)
+					}
+					if info.DeleteAfterTime.Active() {
+						data.Info.DeleteAfterTime = info.DeleteAfterTime.Time().String()
+					}
+					if info.DeleteAfterVersions.Active() {
+						data.Info.DeleteAfterVersions = fmt.Sprintf("%v", info.DeleteAfterVersions.Versions())
+					}
+					for _, policy := range info.SpanPolicies {
+						data.Info.SpanPolicies = append(data.Info.SpanPolicies, spanPolicy{
+							MaxSize:      formatPreciseSize(policy.MaxSize),
+							StorageClass: policy.StorageClass.String(),
+							Parity:       policy.Parity.String(),
+						})
 					}
 				}
 				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK

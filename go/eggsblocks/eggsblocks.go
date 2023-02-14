@@ -74,7 +74,6 @@ func countBlocks(basePath string) uint64 {
 			}
 			blocks += uint64(len(entries))
 		}
-		fmt.Printf("%v blocks\n", blocks)
 	}
 	return blocks
 }
@@ -330,7 +329,7 @@ const ONE_HOUR_IN_NS uint64 = 60 * 60 * 1000 * 1000 * 1000
 const PAST_CUTOFF uint64 = ONE_HOUR_IN_NS * 22
 const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
 
-const MAX_OBJECT_SIZE uint32 = 100e6
+const MAX_OBJECT_SIZE uint32 = (1 << 20) * 100
 
 func handleRequest(
 	log *eggs.Logger,

@@ -18,9 +18,17 @@ type Logger struct {
 	level  LogLevel
 }
 
+func NewLoggerLogger(out io.Writer) *log.Logger {
+	return log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+}
+
 func NewLogger(verbose bool, out io.Writer) *Logger {
+	return NewLoggerFromLogger(verbose, NewLoggerLogger(out))
+}
+
+func NewLoggerFromLogger(verbose bool, logger *log.Logger) *Logger {
 	l := Logger{
-		logger: log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
+		logger: logger,
 	}
 	if verbose {
 		l.level = DEBUG
@@ -52,6 +60,10 @@ func (l *Logger) Trace(format string, v ...any) {
 
 func (l *Logger) Debug(format string, v ...any) {
 	l.LogStack(1, DEBUG, format, v...)
+}
+
+func (l *Logger) DebugStack(calldepth int, format string, v ...any) {
+	l.LogStack(1+calldepth, DEBUG, format, v...)
 }
 
 func (l *Logger) Info(format string, v ...any) {

@@ -178,6 +178,34 @@ func main() {
 		run:   shardReqRun,
 	}
 
+	cdcReqCmd := flag.NewFlagSet("cdc-req", flag.ExitOnError)
+	cdcReqKind := cdcReqCmd.String("kind", "", "")
+	cdcReqReq := cdcReqCmd.String("req", "", "Request body, in JSON")
+	cdcReqRun := func() {
+		req, resp := msgs.MkCDCMessage(*cdcReqKind)
+		if err := json.Unmarshal([]byte(*cdcReqReq), &req); err != nil {
+			panic(fmt.Errorf("could not decode cdc req: %w", err))
+		}
+		client, err := eggs.NewClient(log, *shuckleAddress, nil, nil, nil)
+		if err != nil {
+			panic(err)
+		}
+		defer client.Close()
+		if err := client.CDCRequest(log, req, resp); err != nil {
+			panic(err)
+		}
+		out, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			panic(fmt.Errorf("could not encode response %+v to json: %w", resp, err))
+		}
+		os.Stdout.Write(out)
+		fmt.Println()
+	}
+	commands["cdc-req"] = commandSpec{
+		flags: cdcReqCmd,
+		run:   cdcReqRun,
+	}
+
 	setPolicyCmd := flag.NewFlagSet("set-policy", flag.ExitOnError)
 	setPolicyIdU64 := setPolicyCmd.Uint64("id", 0, "InodeId for the directory to set the policy of.")
 	setPolicyPolicy := setPolicyCmd.String("policy", "", "Policy, in JSON")

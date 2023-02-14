@@ -216,7 +216,7 @@ func (c *Client) ShardRequest(
 			body:      reqBody,
 		}
 		reqBytes := packShardRequest(&req, c.cdcKey)
-		logger.Debug("about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, sock.RemoteAddr(), sock.LocalAddr(), attempts)
+		logger.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, sock.RemoteAddr(), sock.LocalAddr(), attempts)
 		logger.Trace("reqBody %+v", reqBody)
 		written, err := sock.Write(reqBytes)
 		if err != nil {

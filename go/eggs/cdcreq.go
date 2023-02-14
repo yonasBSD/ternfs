@@ -164,7 +164,7 @@ func (c *Client) CDCRequest(
 			body:      reqBody,
 		}
 		reqBytes := bincode.Pack(&req)
-		logger.Debug("about to send request id %v (type %T) to CDC, after %v attempts", requestId, reqBody, attempts)
+		logger.DebugStack(1, "about to send request id %v (type %T) to CDC, after %v attempts", requestId, reqBody, attempts)
 		logger.Trace("reqBody %+v", reqBody)
 		written, err := sock.Write(reqBytes)
 		if err != nil {

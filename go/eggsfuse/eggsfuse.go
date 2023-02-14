@@ -146,6 +146,7 @@ type eggsNode struct {
 func (n *eggsNode) Lookup(
 	ctx context.Context, name string, out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
+	log.Debug("lookup dir=%v, name=%v", n.id, name)
 	resp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &resp); err != 0 {
 		return nil, err
@@ -220,6 +221,7 @@ func (ds *dirStream) Next() (fuse.DirEntry, syscall.Errno) {
 func (ds *dirStream) Close() {}
 
 func (n *eggsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	log.Debug("readdir dir=%v", n.id)
 	ds := dirStream{dirId: n.id}
 	if err := ds.refresh(); err != 0 {
 		return nil, err
@@ -262,6 +264,8 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 func (n *eggsNode) Create(
 	ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut,
 ) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	log.Debug("create dir=%v, name=%v, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
+
 	tf, err := n.createInternal(name, mode)
 	if err != 0 {
 		return nil, nil, 0, err
@@ -275,6 +279,8 @@ func (n *eggsNode) Create(
 func (n *eggsNode) Mkdir(
 	ctx context.Context, name string, mode uint32, out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
+	log.Debug("mkdir dir=%v, name=%v, mode=0x%08x", n.id, name, mode)
+
 	// TODO would probably be better to check the mode and return
 	// EINVAL if it doesn't match what we want.
 	req := msgs.MakeDirectoryReq{
@@ -290,6 +296,8 @@ func (n *eggsNode) Mkdir(
 }
 
 func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	log.Debug("getattr inode=%v, name=%v", n.id)
+
 	out.Ino = uint64(n.id)
 	out.Mode = inodeTypeToMode(n.id.Type())
 	if n.id.Type() == msgs.DIRECTORY {
@@ -370,6 +378,7 @@ func (f *transientFile) writeSpan(policy *msgs.SpanPolicy) syscall.Errno {
 			proof, err := eggs.WriteBlock(log, conn, &block, bytes.NewReader(data), uint32(len(data)), crc)
 			conn.Close()
 			if err != nil {
+				log.Error("writing block failed with error %v", err)
 				return syscall.EIO
 			}
 			certifyReq.Proofs[i].BlockId = block.BlockId
@@ -395,14 +404,14 @@ func (f *transientFile) writeSpanIfNecessary() syscall.Errno {
 }
 
 func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
+	log.Debug("write file=%v, off=%v, count=%v", f.id, off, len(data))
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if !f.valid {
 		return 0, syscall.EBADF
 	}
-
-	log.Debug("writing %v at %v, %v bytes", f.id, off, len(data))
 
 	// TODO support writing in the middle (and flushing out the span later)
 	if off != int64(f.written)+int64(len(f.buf.Bytes())) {
@@ -413,6 +422,7 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 	f.buf.Write(data)
 
 	if err := f.writeSpanIfNecessary(); err != 0 {
+		log.Debug("writing span failed with error %v, invalidating %v", err, f.id)
 		f.valid = false
 		return 0, err
 	}
@@ -421,10 +431,13 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 }
 
 func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
+	log.Debug("flush file=%v", f.id)
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if !f.valid {
+		log.Debug("tf %v is not valid, returning EBADF", f.id)
 		return syscall.EBADF
 	}
 
@@ -463,12 +476,16 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 }
 
 func (n *eggsNode) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	log.Debug("setattr inode=%v, in=%+v", n.id, in)
+
 	return 0
 }
 
 func (n *eggsNode) Rename(ctx context.Context, oldName string, newParent0 fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	oldParent := n.id
 	newParent := newParent0.(*eggsNode).id
+
+	log.Debug("rename dir=%v oldParent=%v, oldName=%v, newParent=%v, newName=%v", n, oldParent, oldName, newParent, newName)
 
 	var targetId msgs.InodeId
 	var oldCreationTime msgs.EggsTime
@@ -537,6 +554,8 @@ type openFile struct {
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	log.Debug("open file=%v", n.id)
+
 	statResp := msgs.StatFileResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &statResp); err != 0 {
 		return nil, 0, err
@@ -656,6 +675,8 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	log.Debug("read file=%v, off=%v, count=%v", of.id, off, len(dest))
+
 	of.mu.Lock()
 	defer of.mu.Unlock()
 	internalOff := int64(0)
@@ -675,12 +696,16 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 }
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
+	log.Debug("flush file=%v", of.id)
+
 	of.mu.Lock()
 	defer of.mu.Unlock()
 	return of.resetBlockService()
 }
 
 func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
+	log.Debug("unlink dir=%v, name=%v", n, n.id, name)
+
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
 		return err
@@ -695,6 +720,7 @@ func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	log.Debug("rmdir dir=%v, name=%v", n, n.id, name)
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
 		return err
@@ -709,6 +735,7 @@ func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (node *fs.Inode, errno syscall.Errno) {
+	log.Debug("symlink dir=%v, target=%v, name=%v", n.id, target, name)
 	tf, err := n.createInternal(name, syscall.S_IFLNK)
 	if err != 0 {
 		return nil, err
@@ -723,6 +750,8 @@ func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.E
 }
 
 func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	log.Debug("readlink file=%v", n.id)
+
 	var data []byte
 	resp := msgs.FileSpansResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.FileSpansReq{FileId: n.id}, &resp); err != 0 {
@@ -826,7 +855,8 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log = eggs.NewLogger(*verbose, logOut)
+	logger := eggs.NewLoggerLogger(logOut)
+	log = eggs.NewLoggerFromLogger(*verbose, logger)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -848,7 +878,7 @@ func main() {
 	root := eggsNode{
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
-	server, err := fs.Mount(mountPoint, &root, &fs.Options{})
+	server, err := fs.Mount(mountPoint, &root, &fs.Options{Logger: logger})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not mount: %v", err)
 		os.Exit(1)

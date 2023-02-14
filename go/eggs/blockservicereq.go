@@ -109,7 +109,7 @@ func WriteBlock(
 	size uint32,
 	crc [4]byte,
 ) ([8]byte, error) {
-	logger.Debug("writing block %+v with CRC %v", block, crc)
+	logger.Debug("writing block %+v, size %v, CRC %v", block, size, crc)
 	var proof [8]byte
 	// start writing the block: message (block_service_id, 'w', block_id, crc32, block_size, certificate)
 	writeReq := bsReqInit(block.BlockServiceId, 'w')

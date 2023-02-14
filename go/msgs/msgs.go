@@ -1289,9 +1289,14 @@ type ShardsResp struct {
 	Shards []ShardInfo
 }
 
+type RegisterShardInfo struct {
+	Ip   [4]byte
+	Port uint16
+}
+
 type RegisterShardReq struct {
 	Id   ShardId
-	Info ShardInfo
+	Info RegisterShardInfo
 }
 
 type RegisterShardResp struct{}

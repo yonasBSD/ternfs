@@ -4,7 +4,7 @@
 #include "Env.hpp"
 
 struct ShardOptions {
-    LogLevel level = LogLevel::LOG_INFO;
+    LogLevel logLevel = LogLevel::LOG_INFO;
     std::string logFile = ""; // if empty, stdout
     uint16_t port = 0; // automatically assigned, stored in shuckle
     std::string shuckleHost = "";

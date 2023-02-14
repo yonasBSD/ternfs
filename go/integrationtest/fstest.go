@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/cipher"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -587,11 +588,17 @@ func fsTest(
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,
-	mbs eggs.MockableBlockServices,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	realFs string, // if non-empty, will run the tests using this mountpoint
 ) {
+	client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
+	var mbs eggs.MockableBlockServices
+	if blockServicesKeys == nil {
+		mbs = client
+	} else {
+		mbs = &eggs.MockedBlockServices{Keys: blockServicesKeys}
+	}
 	if realFs == "" {
-		client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
 		if err != nil {
 			panic(err)
 		}

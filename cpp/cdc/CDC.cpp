@@ -614,7 +614,21 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         }
         logOut = &fileOut;
     }
-    Logger logger(options.level, *logOut);
+    Logger logger(options.logLevel, *logOut);
+
+    {
+        Env env(logger, "startup");
+        LOG_INFO(env, "Running CDC with options:");
+        LOG_INFO(env, "  level = %s", options.logLevel);
+        LOG_INFO(env, "  logFile = '%s'", options.logFile);
+        LOG_INFO(env, "  port = %s", options.port);
+        LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
+        LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
+        {
+            char ip[INET_ADDRSTRLEN];
+            LOG_INFO(env, "  ownIp = %s", inet_ntop(AF_INET, &options.ownIp, ip, INET_ADDRSTRLEN));
+        }
+    }
 
     CDCDB db(logger, dbDir);
     auto shared = std::make_unique<CDCShared>(db);

@@ -4,7 +4,9 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"net"
+	"os"
 	"sync"
+	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
@@ -15,35 +17,35 @@ type shardSocketFactory interface {
 }
 
 type ReqCounters struct {
-	Count    [256]int64
-	Attempts [256]int64
-	Nanos    [256]int64
-}
-
-func (c *ReqCounters) TotalRequests() int64 {
-	total := int64(0)
-	for i := 0; i < 256; i++ {
-		total += c.Count[i]
-	}
-	return total
+	Timings  Timings
+	Attempts uint64
 }
 
 type ClientCounters struct {
-	// these arrays are indexed by req type
-	Shard ReqCounters
-	CDC   ReqCounters
+	// these maps are indexed by req type
+	Shard [256]ReqCounters
+	CDC   [10]ReqCounters
+}
+
+type blockServiceConn struct {
+	mu         sync.Mutex
+	lastActive time.Time
+	conn       *net.TCPConn
 }
 
 type Client struct {
-	shardIps           [256][4]byte
-	shardPorts         [256]uint16
-	shardSocketFactory shardSocketFactory
-	cdcIp              [4]byte
-	cdcPort            uint16
-	cdcSocket          *net.UDPConn
-	cdcLock            sync.Mutex
-	counters           *ClientCounters
-	cdcKey             cipher.Block
+	shardIps            [256][4]byte
+	shardPorts          [256]uint16
+	shardSocketFactory  shardSocketFactory
+	cdcIp               [4]byte
+	cdcPort             uint16
+	cdcSocket           *net.UDPConn
+	cdcLock             sync.Mutex
+	counters            *ClientCounters
+	cdcKey              cipher.Block
+	blockServicesConns  map[string]*blockServiceConn
+	blockServicesLock   sync.RWMutex
+	blockServicesReaper chan<- bool
 }
 
 // If `shid` is present, the client will only create a socket for that shard,
@@ -120,6 +122,37 @@ func NewClientDirect(
 	}
 	c.counters = counters
 	c.cdcKey = cdcKey
+	c.blockServicesConns = make(map[string]*blockServiceConn)
+	{
+		ch := make(chan bool)
+		c.blockServicesReaper = ch
+		go func() {
+			for {
+				keepGoing := <-ch
+				if !keepGoing {
+					break
+				}
+				c.blockServicesLock.RLock()
+				now := time.Now()
+				for _, conn := range c.blockServicesConns {
+					if !conn.mu.TryLock() { // somebody else is using this
+						continue
+					}
+					if now.Sub(conn.lastActive) > time.Minute {
+						if err := conn.conn.Close(); err != nil {
+							log.RaiseAlert(fmt.Errorf("could not close connection %v", conn.conn.RemoteAddr()))
+						}
+					}
+					conn.mu.Unlock()
+				}
+				c.blockServicesLock.RUnlock()
+				go func() {
+					time.Sleep(time.Minute)
+					ch <- true
+				}()
+			}
+		}()
+	}
 	return c, nil
 }
 
@@ -163,7 +196,13 @@ func (c *Client) Close() {
 		panic(fmt.Errorf("bad factory %T", c.shardSocketFactory))
 	}
 	if err := c.cdcSocket.Close(); err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "Could not close CDC conn: %v", err)
+	}
+	c.blockServicesReaper <- false
+	for _, conn := range c.blockServicesConns {
+		if err := conn.conn.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not close block service conn: %v", err)
+		}
 	}
 }
 
@@ -179,7 +218,7 @@ func (c *allShardsFactory) close() {
 			continue
 		}
 		if err := sock.Close(); err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "could not close shard socket: %v", err)
 		}
 	}
 }
@@ -221,16 +260,13 @@ type shardSpecificFactory struct {
 	shardLock sync.Mutex
 }
 
-// TODO probably convert these errors to stderr, we can't do much with them usually
-// but they'd be worth knowing about
-func (c *shardSpecificFactory) close() error {
+func (c *shardSpecificFactory) close() {
 	if c.shardSock == nil {
-		return nil
+		return
 	}
 	if err := c.shardSock.Close(); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "could not close shard sock: %v\n", err)
 	}
-	return nil
 }
 
 func (c *shardSpecificFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
@@ -350,4 +386,12 @@ func resolveDirectoryInfo(
 	}
 
 	return dirInfoBody, nil
+}
+
+func blockServicesConnsKey(ip [4]byte, port uint16) string {
+	return fmt.Sprintf("%v:%v", net.IP(ip[:]), port)
+}
+
+func blockServicesConnsKeyFromConn(conn *net.TCPConn) string {
+	return conn.RemoteAddr().String()
 }

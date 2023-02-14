@@ -207,7 +207,7 @@ func (c *Client) ShardRequest(
 			return msgs.TIMEOUT
 		}
 		if c.counters != nil {
-			atomic.AddInt64(&c.counters.Shard.Attempts[msgKind], 1)
+			atomic.AddUint64(&c.counters.Shard[msgKind].Attempts, 1)
 		}
 		requestId := newRequestId()
 		requestIds[attempts] = requestId
@@ -318,8 +318,7 @@ func (c *Client) ShardRequest(
 			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
 			if c.counters != nil {
-				atomic.AddInt64(&c.counters.Shard.Count[msgKind], 1)
-				atomic.AddInt64(&c.counters.Shard.Nanos[msgKind], elapsed.Nanoseconds())
+				c.counters.Shard[msgKind].Timings.Add(elapsed)
 			}
 			// If we're past the first attempt, there are cases where errors are not what they seem.
 			if eggsError != nil && attempts > 0 {

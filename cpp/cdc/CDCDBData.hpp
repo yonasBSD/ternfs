@@ -7,7 +7,7 @@
 #include "Assert.hpp"
 #include "Bincode.hpp"
 #include "Exception.hpp"
-#include "MsgsGen.hpp"
+#include "Msgs.hpp"
 #include "RocksDBUtils.hpp"
 #include "Msgs.hpp"
 #include "Time.hpp"
@@ -211,5 +211,6 @@ struct TxnState {
         default:
             throw EGGS_EXCEPTION("bad cdc message kind %s", reqKind());
         }
+        memset(_data+MIN_SIZE, 0, size()-MIN_SIZE);
     }
 };

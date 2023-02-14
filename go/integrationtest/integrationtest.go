@@ -17,7 +17,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func formatNanos(nanos int64) string {
+func formatNanos(nanos uint64) string {
 	var amount float64
 	var unit string
 	if nanos < 1e3 {
@@ -57,24 +57,33 @@ func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
 	}
 }
 
-func formatCounters(what string, counters *eggs.ReqCounters) {
+func formatCounters(what string, counters []eggs.ReqCounters) {
 	fmt.Printf("    %s reqs count/attempts/avg/total:\n", what)
-	for i := 0; i < 256; i++ {
-		if counters.Count[i] == 0 {
+	for i := 0; i < len(counters); i++ {
+		count := &counters[i]
+		if count.Attempts == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", msgs.ShardMessageKind(i), counters.Count[i], float64(counters.Attempts[i])/float64(counters.Count[i]), formatNanos(counters.Nanos[i]/counters.Count[i]), formatNanos(counters.Nanos[i]))
+		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", msgs.ShardMessageKind(i), count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())/count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())))
 	}
+}
+
+func totalRequests(c []eggs.ReqCounters) uint64 {
+	total := uint64(0)
+	for i := 0; i < len(c); i++ {
+		total += c[i].Timings.TotalCount()
+	}
+	return total
 }
 
 func runTest(
 	log *eggs.Logger,
 	shuckleAddress string,
-	mbs eggs.MockableBlockServices,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	filter *regexp.Regexp,
 	name string,
 	extra string,
-	run func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters),
+	run func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters),
 ) {
 	if !filter.Match([]byte(name)) {
 		fmt.Printf("skipping test %s\n", name)
@@ -85,31 +94,31 @@ func runTest(
 
 	fmt.Printf("running %s, %s\n", name, extra)
 	t0 := time.Now()
-	run(mbs, counters)
+	run(blockServicesKeys, counters)
 	elapsed := time.Since(t0)
 
-	totalShardRequests := counters.Shard.TotalRequests()
-	totalCDCRequests := counters.CDC.TotalRequests()
+	totalShardRequests := totalRequests(counters.Shard[:])
+	totalCDCRequests := totalRequests(counters.CDC[:])
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", &counters.Shard)
+		formatCounters("shard", counters.Shard[:])
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", &counters.CDC)
+		formatCounters("CDC", counters.CDC[:])
 	}
 
 	counters = &eggs.ClientCounters{}
 	t0 = time.Now()
-	cleanupAfterTest(log, shuckleAddress, counters, mbs)
+	cleanupAfterTest(log, shuckleAddress, counters, blockServicesKeys)
 	elapsed = time.Since(t0)
-	totalShardRequests = counters.Shard.TotalRequests()
-	totalCDCRequests = counters.CDC.TotalRequests()
+	totalShardRequests = totalRequests(counters.Shard[:])
+	totalCDCRequests = totalRequests(counters.CDC[:])
 	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", &counters.Shard)
+		formatCounters("shard", counters.Shard[:])
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", &counters.CDC)
+		formatCounters("CDC", counters.CDC[:])
 	}
 }
 
@@ -125,9 +134,6 @@ func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, b
 		blockServicesKeys[blockService.Id] = cipher
 	}
 
-	realBlockServices := eggs.RealBlockServices{}
-	mockedBlockServices := &eggs.MockedBlockServices{Keys: blockServicesKeys}
-
 	fileHistoryOpts := fileHistoryTestOpts{
 		steps:           10 * 1000, // perform 10k actions
 		checkpointEvery: 100,       // get times every 100 actions
@@ -141,12 +147,12 @@ func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, b
 	runTest(
 		log,
 		shuckleAddress,
-		mockedBlockServices,
+		blockServicesKeys,
 		filter,
 		"file history test",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
-		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fileHistoryTest(log, shuckleAddress, mbs, &fileHistoryOpts, counters)
+		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
+			fileHistoryTest(log, shuckleAddress, blockServicesKeys, &fileHistoryOpts, counters)
 		},
 	)
 
@@ -164,12 +170,12 @@ func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, b
 	runTest(
 		log,
 		shuckleAddress,
-		mockedBlockServices,
+		blockServicesKeys,
 		filter,
 		"simple fs test",
 		fmt.Sprintf("%v dirs, %v files, %v depth", noBlocksFsTestOpts.numDirs, noBlocksFsTestOpts.numFiles, noBlocksFsTestOpts.depth),
-		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &noBlocksFsTestOpts, counters, mbs, "")
+		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
+			fsTest(log, shuckleAddress, &noBlocksFsTestOpts, counters, blockServicesKeys, "")
 		},
 	)
 
@@ -183,24 +189,24 @@ func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, b
 	runTest(
 		log,
 		shuckleAddress,
-		realBlockServices,
+		nil,
 		filter,
 		"fs test with blocks",
 		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, mbs, "")
+		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
+			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, "")
 		},
 	)
 
 	runTest(
 		log,
 		shuckleAddress,
-		realBlockServices,
+		nil,
 		filter,
 		"fs test with fuse",
 		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-		func(mbs eggs.MockableBlockServices, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, mbs, fuseMountPoint)
+		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
+			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, fuseMountPoint)
 		},
 	)
 
@@ -216,7 +222,7 @@ func noRunawayArgs() {
 
 func main() {
 	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind")
-	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
+	verbose := flag.Bool("verbose", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
@@ -226,10 +232,6 @@ func main() {
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
 	flag.Parse()
 	noRunawayArgs()
-
-	if *verbose && *buildType != "debug" {
-		fmt.Printf("We're building with build type %v, which is not \"debug\", and you also passed in -verbose.\nBe aware that you won't get debug messages for C++ binaries.\n\n", *buildType)
-	}
 
 	filterRe := regexp.MustCompile(*filter)
 
@@ -330,7 +332,7 @@ func main() {
 	procs.StartCDC(log, &eggs.CDCOpts{
 		Exe:            cppExes.CDCExe,
 		Dir:            path.Join(*dataDir, "cdc"),
-		Verbose:        *verbose && *buildType == "debug",
+		Verbose:        *verbose,
 		Valgrind:       *buildType == "valgrind",
 		Perf:           *profile,
 		ShuckleAddress: shuckleAddress,
@@ -344,7 +346,7 @@ func main() {
 		shopts := eggs.ShardOpts{
 			Exe:                cppExes.ShardExe,
 			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:            *verbose && *buildType == "debug",
+			Verbose:            *verbose,
 			Shid:               shid,
 			Valgrind:           *buildType == "valgrind",
 			Perf:               *profile,

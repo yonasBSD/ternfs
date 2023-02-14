@@ -39,15 +39,6 @@ type CDCResponse struct {
 	Body      msgs.CDCResponse
 }
 
-/*
-func (req *CDCResponse) Pack(buf *bincode.Buf) {
-	buf.PackU32(msgs.CDC_RESP_PROTOCOL_VERSION)
-	buf.PackU64(req.RequestId)
-	buf.PackU8(uint8(req.Body.CDCResponseKind()))
-	req.Body.Pack(buf)
-}
-*/
-
 type unpackedCDCRequestId uint64
 
 func (requestId *unpackedCDCRequestId) Unpack(r io.Reader) error {
@@ -155,7 +146,7 @@ func (c *Client) CDCRequest(
 			return msgs.TIMEOUT
 		}
 		if c.counters != nil {
-			atomic.AddInt64(&c.counters.CDC.Attempts[msgKind], 1)
+			atomic.AddUint64(&c.counters.CDC[msgKind].Attempts, 1)
 		}
 		requestId := newRequestId()
 		requestIds[attempts] = requestId
@@ -265,8 +256,7 @@ func (c *Client) CDCRequest(
 			// At this point, we know we've got a response
 			elapsed := time.Since(startedAt)
 			if c.counters != nil {
-				atomic.AddInt64(&c.counters.CDC.Count[msgKind], 1)
-				atomic.AddInt64(&c.counters.CDC.Nanos[msgKind], elapsed.Nanoseconds())
+				c.counters.CDC[msgKind].Timings.Add(elapsed)
 			}
 			// If we're past the first attempt, there are cases where errors are not what they seem.
 			if eggsError != nil && attempts > 0 {

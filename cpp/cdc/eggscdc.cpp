@@ -76,17 +76,17 @@ int main(int argc, char** argv) {
         if (arg == "-h" || arg == "-help") {
             dieWithUsage();
         } else if (arg == "-verbose") {
-            options.level = std::min<LogLevel>(LogLevel::LOG_DEBUG, options.level);
+            options.logLevel = std::min<LogLevel>(LogLevel::LOG_DEBUG, options.logLevel);
         } else if (arg == "-log-level") {
             std::string logLevel = getNextArg();
             if (logLevel == "trace") {
-                options.level = LogLevel::LOG_TRACE;
+                options.logLevel = LogLevel::LOG_TRACE;
             } else if (logLevel == "debug") {
-                options.level = LogLevel::LOG_DEBUG;
+                options.logLevel = LogLevel::LOG_DEBUG;
             } else if (logLevel == "info") {
-                options.level = LogLevel::LOG_INFO;
+                options.logLevel = LogLevel::LOG_INFO;
             } else if (logLevel == "error") {
-                options.level = LogLevel::LOG_ERROR;
+                options.logLevel = LogLevel::LOG_ERROR;
             } else {
                 die("Bad log level `%s'", logLevel.c_str());
             }
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
     }
 
 #ifndef EGGS_DEBUG
-    if (options.level <= LogLevel::LOG_TRACE) {
+    if (options.logLevel <= LogLevel::LOG_TRACE) {
         die("Cannot use log level trace trace for non-debug builds (it won't work).");
     }
 #endif

@@ -51,12 +51,12 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
-				conn, err := mbs.BlockServiceConnection(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+				conn, err := mbs.GetBlockServiceConnection(log, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 				if err != nil {
 					return err
 				}
 				proof, err = mbs.EraseBlock(log, conn, block)
-				conn.Close()
+				mbs.ReleaseBlockServiceConnection(log, conn)
 				if err != nil {
 					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 				}

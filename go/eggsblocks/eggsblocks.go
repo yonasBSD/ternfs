@@ -576,6 +576,17 @@ func main() {
 	}
 	log := eggs.NewLogger(*verbose, logOut)
 
+	log.Info("Running block service with options:")
+	log.Info("  failureDomain = %v", *failureDomainStr)
+	log.Info("  noTimeCheck = %v", *noTimeCheck)
+	log.Info("  ownIp1 = '%v'", *ownIp1Str)
+	log.Info("  port1 = %v", *port1)
+	log.Info("  ownIp2 = %v", *ownIp2Str)
+	log.Info("  port2 = %v", *port2)
+	log.Info("  verbose = %v", *verbose)
+	log.Info("  logFile = '%v'", *logFile)
+	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
+
 	blockServices := make(map[msgs.BlockServiceId]blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
 		dir := flag.Args()[i]

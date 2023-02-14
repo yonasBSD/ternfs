@@ -21,7 +21,7 @@ func noRunawayArgs() {
 
 func main() {
 	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind.")
-	verbose := flag.Bool("verbose", false, "Note that verbose won't do much for the shard unless you build with debug.")
+	verbose := flag.Bool("verbose", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 0).")
 	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 0).")
@@ -46,10 +46,6 @@ func main() {
 	validPort(*shuckleBincodePort)
 	validPort(*shuckleHttpPort)
 	validPort(*startingPort)
-
-	if *verbose && *buildType != "debug" {
-		fmt.Printf("We're building with build type %v, which is not \"debug\", and you also passed in -verbose.\nBe aware that you won't get debug messages for C++ binaries.\n\n", *buildType)
-	}
 
 	if *dataDir == "" {
 		dir, err := os.MkdirTemp("", "eggsrun.")
@@ -127,7 +123,7 @@ func main() {
 		opts := eggs.CDCOpts{
 			Exe:            cppExes.CDCExe,
 			Dir:            path.Join(*dataDir, "cdc"),
-			Verbose:        *verbose && *buildType == "debug",
+			Verbose:        *verbose,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,
 			OwnIp:          *ownIp,
@@ -145,7 +141,7 @@ func main() {
 		opts := eggs.ShardOpts{
 			Exe:            cppExes.ShardExe,
 			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:        *verbose && *buildType == "debug",
+			Verbose:        *verbose,
 			Shid:           shid,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,

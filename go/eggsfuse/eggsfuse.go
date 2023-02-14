@@ -6,12 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
 	"runtime/pprof"
 	"sync"
 	"syscall"
+	"time"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 
@@ -296,7 +296,7 @@ func (n *eggsNode) Mkdir(
 }
 
 func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	log.Debug("getattr inode=%v, name=%v", n.id)
+	log.Debug("getattr inode=%v", n.id)
 
 	out.Ino = uint64(n.id)
 	out.Mode = inodeTypeToMode(n.id.Type())
@@ -371,12 +371,12 @@ func (f *transientFile) writeSpan(policy *msgs.SpanPolicy) syscall.Errno {
 			Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
 		}
 		for i, block := range initiateResp.Blocks {
-			conn, err := eggs.BlockServiceConnection(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+			conn, err := client.GetBlockServiceConnection(log, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 			if err != nil {
 				return syscall.EIO
 			}
 			proof, err := eggs.WriteBlock(log, conn, &block, bytes.NewReader(data), uint32(len(data)), crc)
-			conn.Close()
+			client.ReleaseBlockServiceConnection(log, conn)
 			if err != nil {
 				log.Error("writing block failed with error %v", err)
 				return syscall.EIO
@@ -547,10 +547,8 @@ type openFile struct {
 
 	// We keep the latest span/block service around, we might just need
 	// the next bit in sequential reads.
-	spans                   msgs.FileSpansResp
-	currentSpanIx           int // index in list above
-	currentBlockService     *msgs.BlockService
-	currentBlockServiceConn *net.TCPConn
+	spans         msgs.FileSpansResp
+	currentSpanIx int // index in list above
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -568,34 +566,6 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 		return nil, 0, err
 	}
 	return &of, 0, 0
-}
-
-func (of *openFile) resetBlockService() syscall.Errno {
-	if of.currentBlockService != nil {
-		if err := of.currentBlockServiceConn.Close(); err != nil {
-			panic(err)
-		}
-	}
-	of.currentBlockService = nil
-	of.currentBlockServiceConn = nil
-	return 0
-}
-
-func (of *openFile) ensureBlockService(bs *msgs.BlockService) syscall.Errno {
-	if of.currentBlockService == nil || of.currentBlockService.Id != bs.Id {
-		if of.currentBlockService != nil {
-			if err := of.currentBlockServiceConn.Close(); err != nil {
-				panic(err)
-			}
-		}
-		conn, err := eggs.BlockServiceConnection(log, bs.Id, bs.Ip1, bs.Port1, bs.Ip2, bs.Port2)
-		if err != nil {
-			panic(err)
-		}
-		of.currentBlockServiceConn = conn
-		of.currentBlockService = bs
-	}
-	return 0
 }
 
 // One step of reading, will go through at most one span.
@@ -647,27 +617,27 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 	}
 
 	if currentSpan.StorageClass == msgs.INLINE_STORAGE {
-		if err := of.resetBlockService(); err != 0 {
-			return 0, err
-		}
 		return int64(copy(dest, currentSpan.BodyBytes[spanOffset:])), 0
 	} else {
 		if currentSpan.Parity.DataBlocks() != 1 {
 			panic(fmt.Errorf("unsupported parity %v", currentSpan.Parity))
 		}
 		block := &currentSpan.BodyBlocks[0]
-		if err := of.ensureBlockService(&of.spans.BlockServices[block.BlockServiceIx]); err != 0 {
-			return 0, err
-		}
+		blockService := &of.spans.BlockServices[block.BlockServiceIx]
 		toRead := uint32(remainingInSpan)
 		if len(dest) < int(toRead) {
 			toRead = uint32(len(dest))
 		}
-		if err := eggs.FetchBlock(log, of.currentBlockServiceConn, of.currentBlockService, block.BlockId, block.Crc32, uint32(spanOffset), toRead); err != nil {
+		conn, err := client.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+		if err != nil {
+			panic(err)
+		}
+		defer client.ReleaseBlockServiceConnection(log, conn)
+		if err := eggs.FetchBlock(log, conn, blockService, block.BlockId, block.Crc32, uint32(spanOffset), toRead); err != nil {
 			panic(err)
 		}
 		dest = dest[:toRead]
-		if _, err := io.ReadFull(of.currentBlockServiceConn, dest); err != nil {
+		if _, err := io.ReadFull(conn, dest); err != nil {
 			panic(err)
 		}
 		return int64(len(dest)), 0
@@ -695,16 +665,8 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 	return fuse.ReadResultData(dest[:internalOff]), 0
 }
 
-func (of *openFile) Flush(ctx context.Context) syscall.Errno {
-	log.Debug("flush file=%v", of.id)
-
-	of.mu.Lock()
-	defer of.mu.Unlock()
-	return of.resetBlockService()
-}
-
 func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
-	log.Debug("unlink dir=%v, name=%v", n, n.id, name)
+	log.Debug("unlink dir=%v, name=%v", n.id, name)
 
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
@@ -720,7 +682,7 @@ func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
-	log.Debug("rmdir dir=%v, name=%v", n, n.id, name)
+	log.Debug("rmdir dir=%v, name=%v", n.id, name)
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
 		return err
@@ -769,11 +731,11 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 		}
 		block := span.BodyBlocks[0]
 		blockService := resp.BlockServices[block.BlockServiceIx]
-		conn, err := eggs.BlockServiceConnection(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+		conn, err := client.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 		if err != nil {
 			panic(err)
 		}
-		defer conn.Close()
+		defer client.ReleaseBlockServiceConnection(log, conn)
 		if err := eggs.FetchBlock(log, conn, &blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
 			panic(err)
 		}
@@ -803,7 +765,6 @@ var _ = (fs.FileWriter)((*transientFile)(nil))
 var _ = (fs.FileFlusher)((*transientFile)(nil))
 
 var _ = (fs.FileReader)((*openFile)(nil))
-var _ = (fs.FileFlusher)((*openFile)(nil))
 
 func terminate(server *fuse.Server, terminated *bool) {
 	log.Info("terminating")
@@ -867,8 +828,10 @@ func main() {
 		pprof.StartCPUProfile(f) // we stop in terminate()
 	}
 
+	counters := &eggs.ClientCounters{}
+
 	var err error
-	client, err = eggs.NewClient(log, *shuckleAddress, nil, nil, nil)
+	client, err = eggs.NewClient(log, *shuckleAddress, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -891,6 +854,74 @@ func main() {
 		if err := syscall.Kill(os.Getppid(), syscall.SIGUSR1); err != nil {
 			panic(err)
 		}
+	}
+
+	// print out stats when sent USR1
+	{
+		statsChan := make(chan os.Signal, 1)
+		signal.Notify(statsChan, syscall.SIGUSR1)
+		go func() {
+			for {
+				<-statsChan
+				formatCounters := func(c *eggs.ReqCounters) {
+					totalCount := uint64(0)
+					for i := 0; i < c.Timings.Buckets(); i++ {
+						_, count, _ := c.Timings.Bucket(i)
+						totalCount += count
+					}
+					log.Info("    count: %v", totalCount)
+					log.Info("    attempts: %v (%v)", c.Attempts, float64(c.Attempts)/float64(totalCount))
+					log.Info("    total time: %v", time.Duration(c.Timings.TotalTime()))
+					log.Info("    avg time: %v", time.Duration(uint64(c.Timings.TotalTime())/totalCount))
+					hist := bytes.NewBuffer([]byte{})
+					first := true
+					countSoFar := uint64(0)
+					for i := 0; i < c.Timings.Buckets(); i++ {
+						lowerBound, count, upperBound := c.Timings.Bucket(i)
+						if count == 0 {
+							continue
+						}
+						countSoFar += count
+						if first {
+							fmt.Fprintf(hist, "%v < ", lowerBound)
+						} else {
+							fmt.Fprintf(hist, ", ")
+						}
+						first = false
+						fmt.Fprintf(hist, "%v (%0.2f%%) < %v", count, float64(countSoFar*100)/float64(totalCount), upperBound)
+					}
+					log.Info("    hist: %v", hist.String())
+				}
+				var shardTime time.Duration
+				for i := 0; i < len(counters.Shard[:]); i++ {
+					shardTime += counters.Shard[i].Timings.TotalTime()
+				}
+				log.Info("Shard stats (total shard time %v):", shardTime)
+				for i := 0; i < len(counters.Shard[:]); i++ {
+					c := &counters.Shard[i]
+					if c.Attempts == 0 {
+						continue
+					}
+					kind := msgs.ShardMessageKind(i)
+					log.Info("  %v", kind)
+					formatCounters(c)
+				}
+				var cdcTime time.Duration
+				for i := 0; i < len(counters.CDC[:]); i++ {
+					cdcTime += counters.CDC[i].Timings.TotalTime()
+				}
+				log.Info("CDC stats (total CDC time %v):", cdcTime)
+				for i := 0; i < len(counters.CDC[:]); i++ {
+					c := &counters.CDC[i]
+					if c.Attempts == 0 {
+						continue
+					}
+					kind := msgs.CDCMessageKind(i)
+					log.Info("  %v", kind)
+					formatCounters(c)
+				}
+			}
+		}()
 	}
 
 	terminated := false

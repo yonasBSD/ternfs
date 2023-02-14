@@ -121,7 +121,8 @@ func handleRegisterShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.Regis
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.shards[req.Id] = req.Info
+	s.shards[req.Id].Ip = req.Info.Ip
+	s.shards[req.Id].Port = req.Info.Port
 	s.shards[req.Id].LastSeen = msgs.Now()
 
 	return &msgs.RegisterShardResp{}
@@ -195,7 +196,7 @@ func noRunawayArgs() {
 //go:embed shuckleface.png
 var shuckleFacePngStr []byte
 
-//go:embed bootstrap.min.css
+//go:embed bootstrap.5.0.2.min.css
 var bootstrapCssStr []byte
 
 type pageData struct {
@@ -874,7 +875,7 @@ func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Req
 				blockService.Ip2 = blockServiceInfo.Ip2
 				blockService.Port2 = blockServiceInfo.Port2
 				var err error
-				conn, err = eggs.BlockServiceConnection(log, blockServiceId, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+				conn, err = eggs.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}
@@ -905,9 +906,10 @@ func setupRouting(log *eggs.Logger, st *state) {
 
 	// Static assets
 	http.HandleFunc(
-		"/bootstrap.min.css",
+		"/bootstrap.5.0.2.min.css",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			w.Header().Set("Cache-Control", "max-age=31536000")
 			w.Write(bootstrapCssStr)
 		},
 	)
@@ -961,6 +963,12 @@ func main() {
 	}
 
 	ll := eggs.NewLogger(*verbose, logOut)
+
+	ll.Info("Running shuckle with options:")
+	ll.Info("  bincodePort = %v", *bincodePort)
+	ll.Info("  httpPort = %v", *httpPort)
+	ll.Info("  logFile = '%v'", *logFile)
+	ll.Info("  verbose = %v", *verbose)
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

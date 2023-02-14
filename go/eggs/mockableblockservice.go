@@ -4,6 +4,8 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"io"
+	"net"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -11,11 +13,15 @@ type MockableBlockServiceConn interface {
 	io.Writer
 	io.Reader
 	io.ReaderFrom
-	io.Closer
 }
 
 type MockableBlockServices interface {
-	BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error)
+	GetBlockServiceConnection(
+		log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16,
+	) (MockableBlockServiceConn, error)
+	ReleaseBlockServiceConnection(
+		log *Logger, conn MockableBlockServiceConn,
+	) error
 	WriteBlock(
 		logger *Logger,
 		conn MockableBlockServiceConn,
@@ -50,13 +56,75 @@ type MockableBlockServices interface {
 	) ([8]byte, error)
 }
 
-type RealBlockServices struct{}
-
-func (RealBlockServices) BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
-	return BlockServiceConnection(log, id, ip1, port1, ip2, port2)
+func (c *Client) existingBlockServiceConnection(ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) *blockServiceConn {
+	c.blockServicesLock.RLock()
+	defer c.blockServicesLock.RUnlock()
+	conn1, found1 := c.blockServicesConns[blockServicesConnsKey(ip1, port1)]
+	if found1 {
+		conn1.lastActive = time.Now()
+		return conn1
+	}
+	conn2, found2 := c.blockServicesConns[blockServicesConnsKey(ip2, port2)]
+	if found2 {
+		conn2.lastActive = time.Now()
+		return conn2
+	}
+	return nil
 }
 
-func (RealBlockServices) WriteBlock(
+func (c *Client) newBlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*blockServiceConn, error) {
+	conn, err := BlockServiceConnection(log, ip1, port1, ip2, port2)
+	if err != nil {
+		return nil, err
+	}
+	c.blockServicesLock.Lock()
+	defer c.blockServicesLock.Unlock()
+	k := blockServicesConnsKeyFromConn(conn)
+	otherConn, found := c.blockServicesConns[k] // somebody got here first
+	if found {
+		conn.Close()
+		otherConn.lastActive = time.Now()
+		return otherConn, nil
+	}
+	bsConn := &blockServiceConn{
+		conn:       conn,
+		lastActive: time.Now(),
+	}
+	c.blockServicesConns[k] = bsConn
+	return bsConn, nil
+}
+
+// The first ip1/port1 cannot be zeroed, the second one can. One of them
+// will be tried at random.
+func (c *Client) GetBlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
+	conn := c.existingBlockServiceConnection(ip1, port1, ip2, port2)
+	if conn == nil {
+		var err error
+		conn, err = c.newBlockServiceConnection(log, ip1, port1, ip2, port2)
+		if err != nil {
+			return nil, err
+		}
+	}
+	conn.mu.Lock()
+	return conn.conn, nil
+}
+
+func (c *Client) ReleaseBlockServiceConnection(log *Logger, conn0 MockableBlockServiceConn) error {
+	conn := conn0.(*net.TCPConn)
+	c.blockServicesLock.RLock()
+	defer c.blockServicesLock.RUnlock()
+	bsConn, found := c.blockServicesConns[blockServicesConnsKeyFromConn(conn)]
+	if !found {
+		panic(fmt.Errorf("could not find connection for %v", conn.RemoteAddr()))
+	}
+	// Theoretical race -- the reaper might have closed this conn in the meantime. But amazingly
+	// unlikely for a minute to pass between getting the conn and here. Note that we can't lock
+	// inside the map or we'd hog the map lock.
+	bsConn.mu.Unlock()
+	return nil
+}
+
+func (c *Client) WriteBlock(
 	logger *Logger,
 	conn MockableBlockServiceConn,
 	block *msgs.BlockInfo,
@@ -67,7 +135,7 @@ func (RealBlockServices) WriteBlock(
 	return WriteBlock(logger, conn, block, r, size, crc)
 }
 
-func (RealBlockServices) FetchBlock(
+func (c *Client) FetchBlock(
 	logger *Logger,
 	conn MockableBlockServiceConn,
 	blockService *msgs.BlockService,
@@ -79,7 +147,7 @@ func (RealBlockServices) FetchBlock(
 	return FetchBlock(logger, conn, blockService, blockId, blockCrc, offset, count)
 }
 
-func (RealBlockServices) EraseBlock(
+func (c *Client) EraseBlock(
 	logger *Logger,
 	conn MockableBlockServiceConn,
 	block msgs.BlockInfo,
@@ -87,7 +155,7 @@ func (RealBlockServices) EraseBlock(
 	return EraseBlock(logger, conn, block)
 }
 
-func (RealBlockServices) CopyBlock(
+func (c *Client) CopyBlock(
 	logger *Logger,
 	sourceConn MockableBlockServiceConn,
 	sourceBlockService *msgs.BlockService,
@@ -100,7 +168,7 @@ func (RealBlockServices) CopyBlock(
 	return CopyBlock(logger, sourceConn, sourceBlockService, sourceBlockId, sourceBlockCrc, sourceBlockSize, dstConn, dstBlock)
 }
 
-var _ = (MockableBlockServices)(RealBlockServices{})
+var _ = (MockableBlockServices)((*Client)(nil))
 
 type MockedBlockServices struct {
 	Keys map[msgs.BlockServiceId]cipher.Block
@@ -124,8 +192,12 @@ func (dummyConn) ReadFrom(r io.Reader) (n int64, err error) {
 	return 0, nil
 }
 
-func (mbs *MockedBlockServices) BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
+func (mbs *MockedBlockServices) GetBlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
 	return dummyConn{}, nil
+}
+
+func (mbs *MockedBlockServices) ReleaseBlockServiceConnection(log *Logger, conn MockableBlockServiceConn) error {
+	return nil
 }
 
 func (mbs *MockedBlockServices) WriteBlock(

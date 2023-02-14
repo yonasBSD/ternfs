@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -336,11 +337,11 @@ type fileHistoryTestOpts struct {
 func fileHistoryTest(
 	log *eggs.Logger,
 	shuckleAddress string,
-	mbs0 eggs.MockableBlockServices,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	opts *fileHistoryTestOpts,
 	counters *eggs.ClientCounters,
 ) {
-	mbs := mbs0.(*eggs.MockedBlockServices)
+	mbs := &eggs.MockedBlockServices{Keys: blockServicesKeys}
 
 	terminateChan := make(chan any, 1)
 

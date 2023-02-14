@@ -5,6 +5,7 @@
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/write_batch.h>
+#include <rocksdb/table.h>
 #include <system_error>
 #include <xxhash.h>
 
@@ -251,6 +252,7 @@ struct ShardDBImpl {
         options.create_missing_column_families = true;
         options.compression = rocksdb::kLZ4Compression;
         options.bottommost_compression = rocksdb::kZSTD;
+
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{

@@ -126,21 +126,21 @@ func createFile(
 			var proof1 [8]byte
 			var err error
 			var conn eggs.MockableBlockServiceConn
-			conn, err = mbs.BlockServiceConnection(log, block0.BlockServiceId, block0.BlockServiceIp1, block0.BlockServicePort1, block0.BlockServiceIp2, block0.BlockServicePort2)
+			conn, err = mbs.GetBlockServiceConnection(log, block0.BlockServiceIp1, block0.BlockServicePort1, block0.BlockServiceIp2, block0.BlockServicePort2)
 			if err != nil {
 				panic(err)
 			}
 			proof0, err = mbs.WriteBlock(log, conn, block0, data0, uint32(thisSpanSize), crc)
-			conn.Close()
+			mbs.ReleaseBlockServiceConnection(log, conn)
 			if err != nil {
 				panic(err)
 			}
-			conn, err = mbs.BlockServiceConnection(log, block1.BlockServiceId, block1.BlockServiceIp1, block1.BlockServicePort1, block1.BlockServiceIp2, block1.BlockServicePort2)
+			conn, err = mbs.GetBlockServiceConnection(log, block1.BlockServiceIp1, block1.BlockServicePort1, block1.BlockServiceIp2, block1.BlockServicePort2)
 			if err != nil {
 				panic(err)
 			}
 			proof1, err = mbs.WriteBlock(log, conn, block1, data1, uint32(thisSpanSize), crc)
-			conn.Close()
+			mbs.ReleaseBlockServiceConnection(log, conn)
 			if err != nil {
 				panic(err)
 			}
@@ -189,12 +189,12 @@ func readFile(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServi
 			} else {
 				block := &span.BodyBlocks[0]
 				blockService := &spansResp.BlockServices[block.BlockServiceIx]
-				conn, err := mbs.BlockServiceConnection(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+				conn, err := mbs.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}
 				if err := mbs.FetchBlock(log, conn, blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
-					conn.Close()
+					mbs.ReleaseBlockServiceConnection(log, conn)
 					panic(err)
 				}
 				lr := &io.LimitedReader{
@@ -202,10 +202,10 @@ func readFile(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServi
 					N: int64(span.BlockSize),
 				}
 				if _, err := data.ReadFrom(lr); err != nil {
-					conn.Close()
+					mbs.ReleaseBlockServiceConnection(log, conn)
 					panic(err)
 				}
-				conn.Close()
+				mbs.ReleaseBlockServiceConnection(log, conn)
 			}
 		}
 		if spansResp.NextOffset == 0 {

@@ -11,11 +11,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-// TODO connection pool rather than opening a new one each time
-
-// The first ip1/port1 cannot be zeroed, the second one can. One of them
-// will be tried at random.
-func BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
+func BlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
 	if port1 == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
@@ -38,7 +34,7 @@ func BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, po
 		if errs[i%2] == nil {
 			return sock, nil
 		}
-		log.RaiseAlert(fmt.Errorf("Could not connect to block service %v:%v: %w. Might try other ip/port.", ip, port, errs[i%2]))
+		log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i%2]))
 	}
 	// return one of the two errors, we don't want to mess with them too much and they are alerts
 	for _, err := range errs {

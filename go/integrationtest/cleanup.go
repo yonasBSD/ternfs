@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
@@ -46,7 +47,7 @@ func cleanupAfterTest(
 	log *eggs.Logger,
 	shuckleAddress string,
 	counters *eggs.ClientCounters,
-	mbs eggs.MockableBlockServices,
+	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 ) {
 	client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
@@ -85,6 +86,12 @@ func cleanupAfterTest(
 	// Collect everything
 	if err := eggs.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
 		panic(err)
+	}
+	var mbs eggs.MockableBlockServices
+	if blockServicesKeys == nil {
+		mbs = client
+	} else {
+		mbs = &eggs.MockedBlockServices{Keys: blockServicesKeys}
 	}
 	if err := eggs.DestructFilesInAllShards(log, shuckleAddress, counters, mbs); err != nil {
 		panic(err)

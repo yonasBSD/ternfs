@@ -510,6 +510,27 @@ struct ShardInfo {
 
 std::ostream& operator<<(std::ostream& out, const ShardInfo& x);
 
+struct RegisterShardInfo {
+    BincodeFixedBytes<4> ip;
+    uint16_t port;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip + port
+
+    RegisterShardInfo() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
+        _size += 2; // port
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RegisterShardInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RegisterShardInfo& x);
+
 struct LookupReq {
     InodeId dirId;
     BincodeBytes name;
@@ -2304,9 +2325,9 @@ std::ostream& operator<<(std::ostream& out, const ShardsResp& x);
 
 struct RegisterShardReq {
     ShardId id;
-    ShardInfo info;
+    RegisterShardInfo info;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + ShardInfo::STATIC_SIZE; // id + info
+    static constexpr uint16_t STATIC_SIZE = 1 + RegisterShardInfo::STATIC_SIZE; // id + info
 
     RegisterShardReq() { clear(); }
     uint16_t packedSize() const {

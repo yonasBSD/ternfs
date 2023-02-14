@@ -410,7 +410,23 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         logOut = &fileOut;
     }
-    Logger logger(options.level, *logOut);
+    Logger logger(options.logLevel, *logOut);
+
+    {
+        Env env(logger, "startup");
+        LOG_INFO(env, "Running shard %s with options:", shid);
+        LOG_INFO(env, "  level = %s", options.logLevel);
+        LOG_INFO(env, "  logFile = '%s'", options.logFile);
+        LOG_INFO(env, "  port = %s", options.port);
+        LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
+        LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
+        {
+            char ip[INET_ADDRSTRLEN];
+            LOG_INFO(env, "  ownIp = %s", inet_ntop(AF_INET, &options.ownIp, ip, INET_ADDRSTRLEN));
+        }
+        LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
+        LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
+    }
 
     ShardDB db(logger, shid, dbDir);
 

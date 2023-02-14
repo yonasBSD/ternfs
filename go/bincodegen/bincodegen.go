@@ -1162,6 +1162,7 @@ func main() {
 		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
 		reflect.TypeOf(msgs.ShardInfo{}),
+		reflect.TypeOf(msgs.RegisterShardInfo{}),
 	}
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, extras)

@@ -705,6 +705,28 @@ std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
     return out;
 }
 
+void RegisterShardInfo::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<4>(ip);
+    buf.packScalar<uint16_t>(port);
+}
+void RegisterShardInfo::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<4>(ip);
+    port = buf.unpackScalar<uint16_t>();
+}
+void RegisterShardInfo::clear() {
+    ip.clear();
+    port = uint16_t(0);
+}
+bool RegisterShardInfo::operator==(const RegisterShardInfo& rhs) const {
+    if (ip != rhs.ip) { return false; };
+    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const RegisterShardInfo& x) {
+    out << "RegisterShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ")";
+    return out;
+}
+
 void LookupReq::pack(BincodeBuf& buf) const {
     dirId.pack(buf);
     buf.packBytes(name);

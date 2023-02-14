@@ -6,6 +6,7 @@
 #include <fstream>
 #include <chrono>
 #include <thread>
+#include <arpa/inet.h>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -52,6 +53,7 @@ private:
     Env _env;
     ShardShared& _shared;
     ShardId _shid;
+    std::array<uint8_t, 4> _ownIp;
     uint16_t _desiredPort;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
@@ -61,6 +63,7 @@ public:
         _env(logger, "server"),
         _shared(shared),
         _shid(shid),
+        _ownIp(options.ownIp),
         _desiredPort(options.port),
         _packetDropRand((int)shid.u8 + 1), // CDC is 0
         _incomingPacketDropProbability(0),
@@ -98,10 +101,11 @@ public:
         }
         struct sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
-        serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+        memcpy(&serverAddr.sin_addr.s_addr, _ownIp.data(), sizeof(_ownIp));
         serverAddr.sin_port = htons(_desiredPort);
         if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
-            throw SYSCALL_EXCEPTION("cannot bind socket to port %s", _desiredPort);
+            char ip[INET_ADDRSTRLEN];
+            throw SYSCALL_EXCEPTION("cannot bind socket to addr %s:%s", inet_ntop(AF_INET, &serverAddr.sin_addr, ip, INET_ADDRSTRLEN), _desiredPort);
         }
         {
             socklen_t addrLen = sizeof(serverAddr);
@@ -139,7 +143,7 @@ public:
             memset(&clientAddr, 0, sizeof(clientAddr));
             socklen_t addrLen = sizeof(clientAddr);
             int read = recvfrom(sock, recvBuf.data(), recvBuf.size(), 0, (struct sockaddr*)&clientAddr, &addrLen);
-            if (read < 0 && errno == EAGAIN) {
+            if (read < 0 && (errno == EAGAIN || errno == EINTR)) {
                 continue;
             }
             if (read < 0) {
@@ -173,7 +177,7 @@ public:
             // Now, try to parse the body
             try {
                 reqContainer->unpack(reqBbuf, reqHeader.kind);
-                LOG_DEBUG(_env, "parsed request: %s", *reqContainer);
+                LOG_TRACE(_env, "parsed request: %s", *reqContainer);
             } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "Could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);

@@ -457,8 +457,9 @@ struct BlockServiceInfo {
     uint64_t availableBytes;
     uint64_t blocks;
     BincodeBytes path;
+    EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path + lastSeen
 
     BlockServiceInfo() { clear(); }
     uint16_t packedSize() const {
@@ -475,6 +476,7 @@ struct BlockServiceInfo {
         _size += 8; // availableBytes
         _size += 8; // blocks
         _size += path.packedSize(); // path
+        _size += 8; // lastSeen
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -488,14 +490,16 @@ std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x);
 struct ShardInfo {
     BincodeFixedBytes<4> ip;
     uint16_t port;
+    EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip + port
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
 
     ShardInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
         _size += 2; // port
+        _size += 8; // lastSeen
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2430,14 +2434,16 @@ std::ostream& operator<<(std::ostream& out, const CdcReq& x);
 struct CdcResp {
     BincodeFixedBytes<4> ip;
     uint16_t port;
+    EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip + port
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
 
     CdcResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
         _size += 2; // port
+        _size += 8; // lastSeen
         return _size;
     }
     void pack(BincodeBuf& buf) const;

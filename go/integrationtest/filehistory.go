@@ -161,7 +161,7 @@ func checkCheckpoint(prefix string, files *fileHistoryFiles, allEdges []edge) {
 	}
 }
 
-func runCheckpoint(log eggs.LogLevels, client *eggs.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
+func runCheckpoint(log *eggs.Logger, client *eggs.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
 	edges := readDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	checkCheckpoint(prefix, files, edges)
 	resp := msgs.StatDirectoryResp{}
@@ -171,7 +171,7 @@ func runCheckpoint(log eggs.LogLevels, client *eggs.Client, prefix string, files
 	}
 }
 
-func runStep(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockServices, files *fileHistoryFiles, stepAny any) any {
+func runStep(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServices, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
 	case fileHistoryCreateFile:
 		// 10 MiB spans
@@ -268,7 +268,7 @@ func replayStep(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, st
 	}
 }
 
-func fileHistoryStepSingle(log eggs.LogLevels, client *eggs.Client, mbs *eggs.MockedBlockServices, opts *fileHistoryTestOpts, seed int64, filePrefix string) {
+func fileHistoryStepSingle(log *eggs.Logger, client *eggs.Client, mbs *eggs.MockedBlockServices, opts *fileHistoryTestOpts, seed int64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -334,7 +334,7 @@ type fileHistoryTestOpts struct {
 }
 
 func fileHistoryTest(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	shuckleAddress string,
 	mbs0 eggs.MockableBlockServices,
 	opts *fileHistoryTestOpts,

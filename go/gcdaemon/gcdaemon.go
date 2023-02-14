@@ -54,10 +54,7 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
+	log := eggs.NewLogger(*verbose, logOut)
 
 	panicChan := make(chan error)
 	finishedChan := make(chan struct{})

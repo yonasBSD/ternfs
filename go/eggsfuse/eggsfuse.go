@@ -20,7 +20,7 @@ import (
 )
 
 var client *eggs.Client
-var log eggs.LogLevels
+var log *eggs.Logger
 var dirInfoCache *eggs.DirInfoCache
 
 func eggsErrToErrno(err error) syscall.Errno {
@@ -826,11 +826,7 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	logger := eggs.NewLogger(logOut)
-	log = &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  logger,
-	}
+	log = eggs.NewLogger(*verbose, logOut)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -852,7 +848,7 @@ func main() {
 	root := eggsNode{
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
-	server, err := fs.Mount(mountPoint, &root, &fs.Options{Logger: logger})
+	server, err := fs.Mount(mountPoint, &root, &fs.Options{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not mount: %v", err)
 		os.Exit(1)

@@ -131,7 +131,7 @@ func closeOut(out io.Writer) {
 	}
 }
 
-func (procs *ManagedProcesses) Start(ll LogLevels, args *ManagedProcessArgs) *ManagedProcess {
+func (procs *ManagedProcesses) Start(ll *Logger, args *ManagedProcessArgs) *ManagedProcess {
 	exitedChan := make(chan struct{}, 1)
 
 	procs.processes = append(procs.processes, ManagedProcess{
@@ -244,7 +244,7 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 }
 
 func (procs *ManagedProcesses) StartPythonScript(
-	ll LogLevels, name string, script string, args []string, mpArgs *ManagedProcessArgs,
+	ll *Logger, name string, script string, args []string, mpArgs *ManagedProcessArgs,
 ) {
 	mpArgs.Name = name
 	mpArgs.Exe = "python"
@@ -276,7 +276,7 @@ func createDataDir(dir string) {
 	}
 }
 
-func (procs *ManagedProcesses) StartBlockService(ll LogLevels, opts *BlockServiceOpts) {
+func (procs *ManagedProcesses) StartBlockService(ll *Logger, opts *BlockServiceOpts) {
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
@@ -318,7 +318,7 @@ type FuseOpts struct {
 	Profile        bool
 }
 
-func (procs *ManagedProcesses) StartFuse(ll LogLevels, opts *FuseOpts) string {
+func (procs *ManagedProcesses) StartFuse(ll *Logger, opts *FuseOpts) string {
 	createDataDir(opts.Path)
 	mountPoint := path.Join(opts.Path, "mnt")
 	createDataDir(mountPoint)
@@ -363,7 +363,7 @@ type ShuckleOpts struct {
 	HttpPort    uint16
 }
 
-func (procs *ManagedProcesses) StartShuckle(ll LogLevels, opts *ShuckleOpts) {
+func (procs *ManagedProcesses) StartShuckle(ll *Logger, opts *ShuckleOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-bincode-port", fmt.Sprintf("%d", opts.BincodePort),
@@ -383,7 +383,7 @@ func (procs *ManagedProcesses) StartShuckle(ll LogLevels, opts *ShuckleOpts) {
 	})
 }
 
-func BuildShuckleExe(ll LogLevels) string {
+func BuildShuckleExe(ll *Logger) string {
 	buildCmd := exec.Command("go", "build", ".")
 	buildCmd.Dir = path.Join(goDir(), "eggsshuckle")
 	ll.Info("building shuckle")
@@ -395,7 +395,7 @@ func BuildShuckleExe(ll LogLevels) string {
 	return path.Join(buildCmd.Dir, "eggsshuckle")
 }
 
-func BuildBlockServiceExe(ll LogLevels) string {
+func BuildBlockServiceExe(ll *Logger) string {
 	buildCmd := exec.Command("go", "build", ".")
 	buildCmd.Dir = path.Join(goDir(), "eggsblocks")
 	ll.Info("building block service")
@@ -407,7 +407,7 @@ func BuildBlockServiceExe(ll LogLevels) string {
 	return path.Join(buildCmd.Dir, "eggsblocks")
 }
 
-func BuildEggsFuseExe(ll LogLevels) string {
+func BuildEggsFuseExe(ll *Logger) string {
 	buildCmd := exec.Command("go", "build", ".")
 	buildCmd.Dir = path.Join(goDir(), "eggsfuse")
 	ll.Info("building eggsfuse")
@@ -433,7 +433,7 @@ type ShardOpts struct {
 	Port               uint16
 }
 
-func (procs *ManagedProcesses) StartShard(ll LogLevels, opts *ShardOpts) {
+func (procs *ManagedProcesses) StartShard(ll *Logger, opts *ShardOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -503,7 +503,7 @@ type CDCOpts struct {
 	Port           uint16
 }
 
-func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
+func (procs *ManagedProcesses) StartCDC(ll *Logger, opts *CDCOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -557,7 +557,7 @@ func (procs *ManagedProcesses) StartCDC(ll LogLevels, opts *CDCOpts) {
 	procs.Start(ll, &mpArgs)
 }
 
-func WaitForShard(log LogLevels, shuckleAddress string, shid msgs.ShardId, timeout time.Duration) {
+func WaitForShard(log *Logger, shuckleAddress string, shid msgs.ShardId, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client
@@ -594,7 +594,7 @@ type BuildCppOpts struct {
 }
 
 // Returns build dir
-func buildCpp(ll LogLevels, buildType string, targets []string) string {
+func buildCpp(ll *Logger, buildType string, targets []string) string {
 	cppDir := cppDir()
 	buildArgs := append([]string{buildType}, targets...)
 	buildCmd := exec.Command("./build.py", buildArgs...)
@@ -613,7 +613,7 @@ type CppExes struct {
 	CDCExe   string
 }
 
-func BuildCppExes(ll LogLevels, buildType string) *CppExes {
+func BuildCppExes(ll *Logger, buildType string) *CppExes {
 	buildDir := buildCpp(ll, buildType, []string{"shard/eggsshard", "cdc/eggscdc"})
 	return &CppExes{
 		ShardExe: path.Join(buildDir, "shard/eggsshard"),

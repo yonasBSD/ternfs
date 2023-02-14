@@ -13,7 +13,7 @@ type DestructionStats struct {
 }
 
 func DestructFile(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *DestructionStats,
@@ -83,7 +83,7 @@ func DestructFile(
 }
 
 func destructFilesInternal(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	shid msgs.ShardId,
 	stats *DestructionStats,
@@ -114,7 +114,7 @@ func destructFilesInternal(
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
 func DestructFiles(
-	log LogLevels, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
+	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
 ) error {
 	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
@@ -130,7 +130,7 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log LogLevels,
+	log *Logger,
 	shuckleAddress string,
 	counters *ClientCounters,
 	blockService MockableBlockServices,
@@ -160,7 +160,7 @@ type CollectStats struct {
 
 // returns whether all the edges were removed
 func applyPolicy(
-	log LogLevels, client *Client, stats *CollectStats,
+	log *Logger, client *Client, stats *CollectStats,
 	dirId msgs.InodeId, dirInfo *msgs.DirectoryInfoBody, edges []msgs.Edge,
 ) (bool, error) {
 	policy := SnapshotPolicy{
@@ -219,7 +219,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log LogLevels, client *Client, dirInfoCache *DirInfoCache, stats *CollectStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	stats.VisitedDirectories++
 
@@ -296,7 +296,7 @@ func CollectDirectory(log LogLevels, client *Client, dirInfoCache *DirInfoCache,
 	return nil
 }
 
-func collectDirectoriesInternal(log LogLevels, client *Client, stats *CollectStats, shid msgs.ShardId) error {
+func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats, shid msgs.ShardId) error {
 	dirInfoCache := NewDirInfoCache()
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
@@ -324,7 +324,7 @@ func collectDirectoriesInternal(log LogLevels, client *Client, stats *CollectSta
 	return nil
 }
 
-func CollectDirectories(log LogLevels, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
+func CollectDirectories(log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
 	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
 		return err
@@ -338,7 +338,7 @@ func CollectDirectories(log LogLevels, shuckleAddress string, counters *ClientCo
 	return nil
 }
 
-func CollectDirectoriesInAllShards(log LogLevels, shuckleAddress string, counters *ClientCounters) error {
+func CollectDirectoriesInAllShards(log *Logger, shuckleAddress string, counters *ClientCounters) error {
 	client, err := NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
 		return err

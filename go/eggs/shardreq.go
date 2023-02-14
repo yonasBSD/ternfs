@@ -85,7 +85,7 @@ func newRequestId() uint64 {
 }
 
 func (c *Client) checkDeletedEdge(
-	logger LogLevels,
+	logger *Logger,
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
@@ -117,7 +117,7 @@ func (c *Client) checkDeletedEdge(
 }
 
 func (c *Client) checkNewEdgeAfterRename(
-	logger LogLevels,
+	logger *Logger,
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
@@ -139,7 +139,7 @@ func (c *Client) checkNewEdgeAfterRename(
 }
 
 func (c *Client) checkRepeatedShardRequestError(
-	logger LogLevels,
+	logger *Logger,
 	// these are already filled in by now
 	req shardRequest,
 	resp msgs.ShardResponse,
@@ -179,7 +179,7 @@ func (c *Client) checkRepeatedShardRequestError(
 }
 
 func (c *Client) ShardRequest(
-	logger LogLevels,
+	logger *Logger,
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 	// Result will be written in here. If an error is returned, no guarantees
@@ -216,7 +216,8 @@ func (c *Client) ShardRequest(
 			body:      reqBody,
 		}
 		reqBytes := packShardRequest(&req, c.cdcKey)
-		logger.Debug("about to send request id %v (%T, %+v) to shard %v, after %v attempts", requestId, reqBody, reqBody, shid, attempts)
+		logger.Debug("about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, sock.RemoteAddr(), sock.LocalAddr(), attempts)
+		logger.Trace("reqBody %+v", reqBody)
 		written, err := sock.Write(reqBytes)
 		if err != nil {
 			return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)

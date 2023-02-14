@@ -4,6 +4,7 @@
 #include <memory>
 #include <signal.h>
 #include <list>
+#include <mutex>
 
 #include "SBRMUnix.hpp"
 

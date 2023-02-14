@@ -56,7 +56,7 @@ type Client struct {
 // is that there won't be much contention otherwise you might as well create
 // a socket each time. TODO not sure this is the best way forward
 func NewClient(
-	log LogLevels,
+	log *Logger,
 	shuckleAddress string,
 	shid *msgs.ShardId,
 	counters *ClientCounters,
@@ -69,7 +69,7 @@ func NewClient(
 	{
 		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not request shards from shuckle: %w", err)
 		}
 		shards := resp.(*msgs.ShardsResp)
 		for i, shard := range shards.Shards {
@@ -81,7 +81,7 @@ func NewClient(
 		}
 		resp, err = ShuckleRequest(log, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
 		cdc := resp.(*msgs.CdcResp)
 		if cdc.Port == 0 {
@@ -94,7 +94,7 @@ func NewClient(
 }
 
 func NewClientDirect(
-	log LogLevels,
+	log *Logger,
 	shid *msgs.ShardId,
 	counters *ClientCounters,
 	cdcKey cipher.Block,
@@ -263,7 +263,7 @@ func (c *shardSpecificFactory) releaseShardSocket(shid msgs.ShardId, sock *net.U
 }
 
 // nil if the directory has no directory info (i.e. if it is inherited)
-func GetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
+func GetDirectoryInfo(log *Logger, c *Client, id msgs.InodeId) (*msgs.DirectoryInfoBody, error) {
 	req := msgs.StatDirectoryReq{
 		Id: id,
 	}
@@ -281,7 +281,7 @@ func GetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId) (*msgs.Director
 	return &info, nil
 }
 
-func SetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId, inherited bool, info *msgs.DirectoryInfoBody) error {
+func SetDirectoryInfo(log *Logger, c *Client, id msgs.InodeId, inherited bool, info *msgs.DirectoryInfoBody) error {
 	var buf []byte
 	if inherited {
 		if info != nil {
@@ -306,7 +306,7 @@ func SetDirectoryInfo(log LogLevels, c *Client, id msgs.InodeId, inherited bool,
 }
 
 func ResolveDirectoryInfo(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
 	dirId msgs.InodeId,
@@ -321,7 +321,7 @@ func ResolveDirectoryInfo(
 }
 
 func resolveDirectoryInfo(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
 	dirId msgs.InodeId,

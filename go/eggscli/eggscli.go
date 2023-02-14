@@ -41,7 +41,7 @@ func main() {
 	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	verbose := flag.Bool("verbose", false, "")
 
-	var log eggs.LogLevels
+	var log *eggs.Logger
 
 	commands = make(map[string]commandSpec)
 
@@ -148,6 +148,36 @@ func main() {
 		run:   migrateRun,
 	}
 
+	shardReqCmd := flag.NewFlagSet("shard-req", flag.ExitOnError)
+	shardReqShard := shardReqCmd.Uint("shard", 0, "Shard to send the req too")
+	shardReqKind := shardReqCmd.String("kind", "", "")
+	shardReqReq := shardReqCmd.String("req", "", "Request body, in JSON")
+	shardReqRun := func() {
+		req, resp := msgs.MkShardMessage(*shardReqKind)
+		if err := json.Unmarshal([]byte(*shardReqReq), &req); err != nil {
+			panic(fmt.Errorf("could not decode shard req: %w", err))
+		}
+		shard := msgs.ShardId(*shardReqShard)
+		client, err := eggs.NewClient(log, *shuckleAddress, &shard, nil, nil)
+		if err != nil {
+			panic(err)
+		}
+		defer client.Close()
+		if err := client.ShardRequest(log, shard, req, resp); err != nil {
+			panic(err)
+		}
+		out, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			panic(fmt.Errorf("could not encode response %+v to json: %w", resp, err))
+		}
+		os.Stdout.Write(out)
+		fmt.Println()
+	}
+	commands["shard-req"] = commandSpec{
+		flags: shardReqCmd,
+		run:   shardReqRun,
+	}
+
 	setPolicyCmd := flag.NewFlagSet("set-policy", flag.ExitOnError)
 	setPolicyIdU64 := setPolicyCmd.Uint64("id", 0, "InodeId for the directory to set the policy of.")
 	setPolicyPolicy := setPolicyCmd.String("policy", "", "Policy, in JSON")
@@ -224,10 +254,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	log = &eggs.LogLogger{
-		Logger:  eggs.NewLogger(os.Stdout),
-		Verbose: *verbose,
-	}
+	log = eggs.NewLogger(*verbose, os.Stdout)
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {

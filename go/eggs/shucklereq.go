@@ -12,7 +12,7 @@ import (
 const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
 
 func ReadShuckleRequest(
-	log LogLevels,
+	log *Logger,
 	r io.Reader,
 ) (msgs.ShuckleRequest, error) {
 	var protocol uint32
@@ -56,7 +56,7 @@ func ReadShuckleRequest(
 	return req, nil
 }
 
-func WriteShuckleRequest(log LogLevels, w io.Writer, req msgs.ShuckleRequest) error {
+func WriteShuckleRequest(log *Logger, w io.Writer, req msgs.ShuckleRequest) error {
 	// serialize
 	bytes := bincode.Pack(req)
 	// write out
@@ -76,7 +76,7 @@ func WriteShuckleRequest(log LogLevels, w io.Writer, req msgs.ShuckleRequest) er
 }
 
 func ReadShuckleResponse(
-	log LogLevels,
+	log *Logger,
 	r io.Reader,
 ) (msgs.ShuckleResponse, error) {
 	var protocol uint32
@@ -120,7 +120,7 @@ func ReadShuckleResponse(
 	return resp, nil
 }
 
-func WriteShuckleResponse(log LogLevels, w io.Writer, resp msgs.ShuckleResponse) error {
+func WriteShuckleResponse(log *Logger, w io.Writer, resp msgs.ShuckleResponse) error {
 	// serialize
 	bytes := bincode.Pack(resp)
 	// write out
@@ -140,7 +140,7 @@ func WriteShuckleResponse(log LogLevels, w io.Writer, resp msgs.ShuckleResponse)
 }
 
 func ShuckleRequest(
-	log LogLevels,
+	log *Logger,
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {

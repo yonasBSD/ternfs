@@ -75,10 +75,7 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
+	log := eggs.NewLogger(*verbose, logOut)
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 

@@ -70,7 +70,7 @@ const maxCDCSingleTimeout = 500 * time.Millisecond
 const cdcMaxElapsed = 25 * time.Second // TODO these are a bit ridicolous now because of the valgrind test, adjust
 
 func (c *Client) checkRepeatedCDCRequestError(
-	logger LogLevels,
+	logger *Logger,
 	// these are already filled in by now
 	req cdcRequest,
 	resp msgs.CDCResponse,
@@ -128,7 +128,7 @@ func (c *Client) checkRepeatedCDCRequestError(
 }
 
 func (c *Client) CDCRequest(
-	logger LogLevels,
+	logger *Logger,
 	reqBody msgs.CDCRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.
@@ -164,7 +164,8 @@ func (c *Client) CDCRequest(
 			body:      reqBody,
 		}
 		reqBytes := bincode.Pack(&req)
-		logger.Debug("about to send request id %v (%T, %+v) to CDC, after %v attempts", requestId, reqBody, reqBody, attempts)
+		logger.Debug("about to send request id %v (type %T) to CDC, after %v attempts", requestId, reqBody, attempts)
+		logger.Trace("reqBody %+v", reqBody)
 		written, err := sock.Write(reqBytes)
 		if err != nil {
 			return fmt.Errorf("couldn't send request: %w", err)

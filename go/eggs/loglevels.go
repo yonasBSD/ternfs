@@ -6,93 +6,66 @@ import (
 	"log"
 )
 
-type LogLevels interface {
-	Info(format string, v ...any)
-	InfoStack(calldepth int, format string, v ...any)
-	Debug(format string, v ...any)
-	DebugStack(calldepth int, format string, v ...any)
-	RaiseAlert(err any)
-	RaiseAlertStack(calldepth int, err any)
+type LogLevel uint8
+
+const TRACE LogLevel = 0
+const DEBUG LogLevel = 1
+const INFO LogLevel = 2
+const ERROR LogLevel = 3
+
+type Logger struct {
+	logger *log.Logger
+	level  LogLevel
 }
 
-func Log(log LogLevels, debug bool, format string, v ...any) {
-	if debug {
-		log.Debug(format, v...)
+func NewLogger(verbose bool, out io.Writer) *Logger {
+	l := Logger{
+		logger: log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
+	}
+	if verbose {
+		l.level = DEBUG
 	} else {
-		log.Info(format, v...)
+		l.level = INFO
+	}
+	return &l
+}
+
+func (l *Logger) shouldLog(level LogLevel) bool {
+	return level >= l.level
+}
+
+func (l *Logger) Log(level LogLevel, format string, v ...any) {
+	if l.shouldLog(level) {
+		l.logger.Output(2, fmt.Sprintf(format, v...))
 	}
 }
 
-type LogToStdout struct {
-	Verbose bool
-}
-
-func (*LogToStdout) Info(format string, v ...any) {
-	fmt.Printf(format, v...)
-	fmt.Println()
-}
-
-func (*LogToStdout) InfoStack(calldepth int, format string, v ...any) {
-	fmt.Printf(format, v...)
-	fmt.Println()
-}
-
-func (s *LogToStdout) Debug(format string, v ...any) {
-	if s.Verbose {
-		fmt.Printf(format, v...)
-		fmt.Println()
+func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any) {
+	if l.shouldLog(level) {
+		l.logger.Output(2+calldepth, fmt.Sprintf(format, v...))
 	}
 }
 
-func (s *LogToStdout) DebugStack(calldepth int, format string, v ...any) {
-	if s.Verbose {
-		fmt.Printf(format, v...)
-		fmt.Println()
-	}
+func (l *Logger) Trace(format string, v ...any) {
+	l.LogStack(1, TRACE, format, v...)
 }
 
-func (s *LogToStdout) RaiseAlert(err any) {
-	fmt.Printf("ALERT %v\n", err)
+func (l *Logger) Debug(format string, v ...any) {
+	l.LogStack(1, DEBUG, format, v...)
 }
 
-func (s *LogToStdout) RaiseAlertStack(calldepth int, err any) {
-	s.RaiseAlert(err)
+func (l *Logger) Info(format string, v ...any) {
+	l.LogStack(1, INFO, format, v...)
 }
 
-// Creates a logger with the formatting we want
-func NewLogger(out io.Writer) *log.Logger {
-	return log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+func (l *Logger) Error(format string, v ...any) {
+	l.LogStack(1, ERROR, format, v...)
 }
 
-type LogLogger struct {
-	Verbose bool
-	Logger  *log.Logger
+func (l *Logger) RaiseAlert(err any) {
+	l.logger.Output(2, fmt.Sprintf("ALERT %v\n", err))
 }
 
-func (l *LogLogger) Info(format string, v ...any) {
-	l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
-}
-
-func (l *LogLogger) InfoStack(calldepth int, format string, v ...any) {
-	l.Logger.Output(2+calldepth, fmt.Sprintf(format+"\n", v...))
-}
-
-func (l *LogLogger) Debug(format string, v ...any) {
-	if l.Verbose {
-		l.Logger.Output(2, fmt.Sprintf(format+"\n", v...))
-	}
-}
-
-func (l *LogLogger) DebugStack(calldepth int, format string, v ...any) {
-	if l.Verbose {
-		l.Logger.Output(2+calldepth, fmt.Sprintf(format+"\n", v...))
-	}
-}
-
-func (l *LogLogger) RaiseAlert(err any) {
-	l.Logger.Output(2, fmt.Sprintf("ALERT %v\n", err))
-}
-
-func (l *LogLogger) RaiseAlertStack(calldepth int, err any) {
-	l.Logger.Output(2+calldepth, fmt.Sprintf("ALERT %v\n", err))
+func (l *Logger) RaiseAlertStack(calldepth int, err any) {
+	l.logger.Output(2+calldepth, fmt.Sprintf("ALERT %v\n", err))
 }

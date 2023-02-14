@@ -19,14 +19,14 @@ type fullEdge struct {
 	creationTime msgs.EggsTime
 }
 
-func shardReq(log eggs.LogLevels, client *eggs.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
+func shardReq(log *eggs.Logger, client *eggs.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
 	err := client.ShardRequest(log, shid, reqBody, respBody)
 	if err != nil {
 		panic(err)
 	}
 }
 
-func cdcReq(log eggs.LogLevels, client *eggs.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
+func cdcReq(log *eggs.Logger, client *eggs.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
 	err := client.CDCRequest(log, reqBody, respBody)
 	if err != nil {
 		panic(err)
@@ -55,7 +55,7 @@ func createFileData(
 */
 
 func createFile(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	client *eggs.Client,
 	mbs eggs.MockableBlockServices,
 	dirId msgs.InodeId,
@@ -175,7 +175,7 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockServices, id msgs.InodeId) []byte {
+func readFile(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServices, id msgs.InodeId) []byte {
 	data := bytes.NewBuffer([]byte{})
 	spansReq := msgs.FileSpansReq{
 		FileId: id,
@@ -215,7 +215,7 @@ func readFile(log eggs.LogLevels, client *eggs.Client, mbs eggs.MockableBlockSer
 	return data.Bytes()
 }
 
-func readDir(log eggs.LogLevels, client *eggs.Client, dir msgs.InodeId) []edge {
+func readDir(log *eggs.Logger, client *eggs.Client, dir msgs.InodeId) []edge {
 	req := msgs.ReadDirReq{
 		DirId:     dir,
 		StartHash: 0,
@@ -238,7 +238,7 @@ func readDir(log eggs.LogLevels, client *eggs.Client, dir msgs.InodeId) []edge {
 	return edges
 }
 
-func fullReadDir(log eggs.LogLevels, client *eggs.Client, dirId msgs.InodeId) []fullEdge {
+func fullReadDir(log *eggs.Logger, client *eggs.Client, dirId msgs.InodeId) []fullEdge {
 	req := msgs.FullReadDirReq{
 		DirId: msgs.ROOT_DIR_INODE_ID,
 	}

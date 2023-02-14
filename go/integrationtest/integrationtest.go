@@ -44,7 +44,7 @@ func formatNanos(nanos int64) string {
 
 var stacktraceLock sync.Mutex
 
-func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
+func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err)
 		stacktraceLock.Lock()
@@ -68,7 +68,7 @@ func formatCounters(what string, counters *eggs.ReqCounters) {
 }
 
 func runTest(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	shuckleAddress string,
 	mbs eggs.MockableBlockServices,
 	filter *regexp.Regexp,
@@ -113,7 +113,7 @@ func runTest(
 	}
 }
 
-func runTests(terminateChan chan any, log eggs.LogLevels, shuckleAddress string, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
+func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 
 	blockServicesKeys := make(map[msgs.BlockServiceId]cipher.Block)
@@ -272,10 +272,7 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
+	log := eggs.NewLogger(*verbose, logOut)
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 	cppExes := eggs.BuildCppExes(log, *buildType)

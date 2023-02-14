@@ -15,7 +15,7 @@ type scratchFile struct {
 	size   uint64
 }
 
-func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, file *scratchFile) error {
+func ensureScratchFile(log *Logger, client *Client, migratingIn msgs.InodeId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
@@ -39,7 +39,7 @@ func ensureScratchFile(log LogLevels, client *Client, migratingIn msgs.InodeId, 
 }
 
 func copyBlock(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	file *scratchFile,
@@ -106,7 +106,7 @@ type keepScratchFileAlive struct {
 }
 
 func startToKeepScratchFileAlive(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	scratchFile *scratchFile,
 ) keepScratchFileAlive {
@@ -165,7 +165,7 @@ func (k *keepScratchFileAlive) stop() {
 }
 
 func migrateBlocksInFileInternal(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *MigrateStats,
@@ -252,7 +252,7 @@ type MigrateStats struct {
 // If the source block service it's still healthy, it'll just copy the block over, otherwise
 // it'll be recovered from the other. If possible, anyway.
 func MigrateBlocksInFile(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *MigrateStats,
@@ -268,7 +268,7 @@ func MigrateBlocksInFile(
 // Tries to migrate as many blocks as possible from that block service in a certain
 // shard.
 func migrateBlocksInternal(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *MigrateStats,
@@ -302,7 +302,7 @@ func migrateBlocksInternal(
 }
 
 func MigrateBlocks(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *MigrateStats,
@@ -317,7 +317,7 @@ func MigrateBlocks(
 }
 
 func MigrateBlocksInAllShards(
-	log LogLevels,
+	log *Logger,
 	client *Client,
 	mbs MockableBlockServices,
 	stats *MigrateStats,

@@ -6,7 +6,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
+func deleteDir(log *eggs.Logger, client *eggs.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
 		DirId: dirId,
 	}
@@ -43,7 +43,7 @@ func deleteDir(log eggs.LogLevels, client *eggs.Client, ownerId msgs.InodeId, na
 }
 
 func cleanupAfterTest(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	shuckleAddress string,
 	counters *eggs.ClientCounters,
 	mbs eggs.MockableBlockServices,

@@ -15,7 +15,7 @@ import (
 
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
-func BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
+func BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
 	if port1 == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
@@ -98,7 +98,7 @@ func bsExpect[V uint8 | uint32 | uint64](what string, sock io.Reader, x V) error
 }
 
 func WriteBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn interface {
 		io.ReaderFrom
 		io.Reader
@@ -142,7 +142,7 @@ func WriteBlock(
 
 // Won't actually fetch the block -- it'll be readable from `conn` as this function terminates.
 func FetchBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn interface {
 		io.Reader
 		io.Writer
@@ -171,7 +171,7 @@ func FetchBlock(
 }
 
 func EraseBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn interface {
 		io.Writer
 		io.Reader
@@ -200,7 +200,7 @@ func EraseBlock(
 
 // returns the write proof
 func CopyBlock(
-	logger LogLevels,
+	logger *Logger,
 	sourceConn interface {
 		io.Reader
 		io.Writer

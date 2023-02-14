@@ -79,7 +79,9 @@ int main(int argc, char** argv) {
             options.level = std::min<LogLevel>(LogLevel::LOG_DEBUG, options.level);
         } else if (arg == "-log-level") {
             std::string logLevel = getNextArg();
-            if (logLevel == "debug") {
+            if (logLevel == "trace") {
+                options.level = LogLevel::LOG_TRACE;
+            } else if (logLevel == "debug") {
                 options.level = LogLevel::LOG_DEBUG;
             } else if (logLevel == "info") {
                 options.level = LogLevel::LOG_INFO;
@@ -107,8 +109,8 @@ int main(int argc, char** argv) {
     }
 
 #ifndef EGGS_DEBUG
-    if (options.level <= LogLevel::LOG_DEBUG) {
-        die("Cannot use -verbose for non-debug builds (it won't work).");
+    if (options.level <= LogLevel::LOG_TRACE) {
+        die("Cannot use log level trace trace for non-debug builds (it won't work).");
     }
 #endif
 

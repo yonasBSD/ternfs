@@ -28,7 +28,7 @@ import (
 
 var stacktraceLock sync.Mutex
 
-func handleRecover(log eggs.LogLevels, terminateChan chan any, err any) {
+func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err.(error))
 		stacktraceLock.Lock()
@@ -80,7 +80,7 @@ func countBlocks(basePath string) uint64 {
 }
 
 func registerPeriodically(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	ip1 [4]byte,
 	port1 uint16,
 	ip2 [4]byte,
@@ -162,7 +162,7 @@ func blockIdToPath(basePath string, blockId msgs.BlockId) string {
 	return path.Join(path.Join(basePath, dir), hex)
 }
 
-func eraseBlock(log eggs.LogLevels, basePath string, blockId msgs.BlockId) {
+func eraseBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId) {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
@@ -199,7 +199,7 @@ func deserFetchBlock(r io.Reader) (blockId msgs.BlockId, offset uint32, count ui
 	return blockId, offset, count, nil
 }
 
-func sendFetchBlock(log eggs.LogLevels, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
+func sendFetchBlock(log *eggs.Logger, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
@@ -269,7 +269,7 @@ func deserWriteBlock(cipher cipher.Block, blockServiceId msgs.BlockServiceId, ki
 	return blockId, crc, size, nil
 }
 
-func writeBlock(log eggs.LogLevels, basePath string, blockId msgs.BlockId, expectedCrc [4]byte, size uint32, conn *net.TCPConn) error {
+func writeBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId, expectedCrc [4]byte, size uint32, conn *net.TCPConn) error {
 	filePath := blockIdToPath(basePath, blockId)
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
@@ -322,7 +322,7 @@ func serWriteCert(blockServiceId msgs.BlockServiceId, key cipher.Block, blockId 
 	return nil
 }
 
-func handleReqError(log eggs.LogLevels, err error) {
+func handleReqError(log *eggs.Logger, err error) {
 	log.RaiseAlertStack(1, fmt.Errorf("error while handling request: %w", err))
 }
 
@@ -333,7 +333,7 @@ const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
 const MAX_OBJECT_SIZE uint32 = 100e6
 
 func handleRequest(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]blockService,
 	conn *net.TCPConn,
@@ -437,7 +437,7 @@ Options:`
 	flag.PrintDefaults()
 }
 
-func retrieveOrCreateKey(log eggs.LogLevels, dir string) [16]byte {
+func retrieveOrCreateKey(log *eggs.Logger, dir string) [16]byte {
 	var err error
 	var keyFile *os.File
 	keyFilePath := path.Join(dir, "secret.key")
@@ -575,10 +575,7 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
+	log := eggs.NewLogger(*verbose, logOut)
 
 	blockServices := make(map[msgs.BlockServiceId]blockService)
 	for i := 0; i < flag.NArg(); i += 2 {

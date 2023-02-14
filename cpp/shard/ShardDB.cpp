@@ -1525,7 +1525,8 @@ struct ShardDBImpl {
         }
 
         if (err == NO_ERROR) {
-            LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s: %s", logEntryBody.kind(), req.kind(), logEntryBody);
+            LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s", logEntryBody.kind(), req.kind());
+            LOG_TRACE(_env, "log entry body: %s", logEntryBody);
         } else {
             LOG_INFO(_env, "could not prepare log entry for request of kind %s: %s", req.kind(), err);
         }
@@ -2954,7 +2955,7 @@ struct ShardDBImpl {
         EggsTime time = logEntry.time;
         const auto& logEntryBody = logEntry.body;
 
-        LOG_DEBUG(_env, "about to apply log entry %s", logEntryBody);
+        LOG_TRACE(_env, "about to apply log entry %s", logEntryBody);
 
         switch (logEntryBody.kind()) {
         case ShardLogEntryKind::CONSTRUCT_FILE:

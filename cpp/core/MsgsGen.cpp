@@ -626,6 +626,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(availableBytes);
     buf.packScalar<uint64_t>(blocks);
     buf.packBytes(path);
+    lastSeen.pack(buf);
 }
 void BlockServiceInfo::unpack(BincodeBuf& buf) {
     id = buf.unpackScalar<uint64_t>();
@@ -640,6 +641,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     availableBytes = buf.unpackScalar<uint64_t>();
     blocks = buf.unpackScalar<uint64_t>();
     buf.unpackBytes(path);
+    lastSeen.unpack(buf);
 }
 void BlockServiceInfo::clear() {
     id = uint64_t(0);
@@ -654,6 +656,7 @@ void BlockServiceInfo::clear() {
     availableBytes = uint64_t(0);
     blocks = uint64_t(0);
     path.clear();
+    lastSeen = EggsTime();
 }
 bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((uint64_t)this->id != (uint64_t)rhs.id) { return false; };
@@ -668,32 +671,37 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
     if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
     if (path != rhs.path) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << x.path << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << x.path << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
 void ShardInfo::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(ip);
     buf.packScalar<uint16_t>(port);
+    lastSeen.pack(buf);
 }
 void ShardInfo::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(ip);
     port = buf.unpackScalar<uint16_t>();
+    lastSeen.unpack(buf);
 }
 void ShardInfo::clear() {
     ip.clear();
     port = uint16_t(0);
+    lastSeen = EggsTime();
 }
 bool ShardInfo::operator==(const ShardInfo& rhs) const {
     if (ip != rhs.ip) { return false; };
     if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
-    out << "ShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ")";
+    out << "ShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -2682,22 +2690,26 @@ std::ostream& operator<<(std::ostream& out, const CdcReq& x) {
 void CdcResp::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(ip);
     buf.packScalar<uint16_t>(port);
+    lastSeen.pack(buf);
 }
 void CdcResp::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(ip);
     port = buf.unpackScalar<uint16_t>();
+    lastSeen.unpack(buf);
 }
 void CdcResp::clear() {
     ip.clear();
     port = uint16_t(0);
+    lastSeen = EggsTime();
 }
 bool CdcResp::operator==(const CdcResp& rhs) const {
     if (ip != rhs.ip) { return false; };
     if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
-    out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ")";
+    out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 

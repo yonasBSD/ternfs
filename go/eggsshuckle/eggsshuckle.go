@@ -51,6 +51,7 @@ type state struct {
 	shards        [256]msgs.ShardInfo
 	cdcIp         [4]byte
 	cdcPort       uint16
+	cdcLastSeen   msgs.EggsTime
 }
 
 func newState() *state {
@@ -60,7 +61,7 @@ func newState() *state {
 	}
 }
 
-func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
+func handleBlockServicesForShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -77,7 +78,7 @@ func handleBlockServicesForShard(ll eggs.LogLevels, s *state, w io.Writer, req *
 	return &resp
 }
 
-func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
+func handleAllBlockServicesReq(ll *eggs.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -93,18 +94,20 @@ func handleAllBlockServicesReq(ll eggs.LogLevels, s *state, w io.Writer, req *ms
 	return &resp
 }
 
-func handleRegisterBlockServices(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
+func handleRegisterBlockServices(ll *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	now := msgs.Now()
 	for _, bs := range req.BlockServices {
+		bs.LastSeen = now
 		s.blockServices[bs.Id] = bs
 	}
 
 	return &msgs.RegisterBlockServicesResp{}
 }
 
-func handleShards(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
+func handleShards(ll *eggs.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -114,16 +117,17 @@ func handleShards(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.ShardsReq)
 	return &resp
 }
 
-func handleRegisterShard(ll eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
+func handleRegisterShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	s.shards[req.Id] = req.Info
+	s.shards[req.Id].LastSeen = msgs.Now()
 
 	return &msgs.RegisterShardResp{}
 }
 
-func handleCdcReq(log eggs.LogLevels, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
+func handleCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -134,17 +138,18 @@ func handleCdcReq(log eggs.LogLevels, s *state, w io.Writer, req *msgs.CdcReq) *
 	return &resp
 }
 
-func handleRegisterCdcReq(log eggs.LogLevels, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
+func handleRegisterCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	s.cdcIp = req.Ip
 	s.cdcPort = req.Port
+	s.cdcLastSeen = msgs.Now()
 
 	return &msgs.RegisterCdcResp{}
 }
 
-func handleRequest(log eggs.LogLevels, s *state, conn *net.TCPConn) {
+func handleRequest(log *eggs.Logger, s *state, conn *net.TCPConn) {
 	conn.SetLinger(0) // poor man error handling for now
 	defer conn.Close()
 
@@ -222,10 +227,10 @@ func sendPage(
 }
 
 func handleWithRecover(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
-	handle func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int),
+	handle func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
 	statusPtr := new(int)
 	var content io.ReadCloser
@@ -266,7 +271,7 @@ func handleWithRecover(
 }
 
 func handlePage(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
 	// third result is status code
@@ -274,7 +279,7 @@ func handlePage(
 ) {
 	handleWithRecover(
 		log, w, r,
-		func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int) {
+		func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			return sendPage(page(query))
 		},
 	)
@@ -299,6 +304,12 @@ type indexBlockService struct {
 	AvailableBytes string
 	Path           string
 	Blocks         uint64
+	LastSeen       string
+}
+
+type indexShard struct {
+	Addr     string
+	LastSeen string
 }
 
 type indexData struct {
@@ -308,8 +319,9 @@ type indexData struct {
 	TotalUsed           string
 	TotalUsedPercentage string
 	CDCAddr             string
+	CDCLastSeen         string
 	BlockServices       []indexBlockService
-	ShardsAddrs         []string
+	ShardsAddrs         []indexShard
 	Blocks              uint64
 }
 
@@ -354,7 +366,32 @@ func formatPreciseSize(bytes uint64) string {
 
 var indexTemplate *template.Template
 
-func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http.Request) {
+func formatNanos(nanos uint64) string {
+	var amount float64
+	var unit string
+	if nanos < 1e3 {
+		amount = float64(nanos)
+		unit = "ns"
+	} else if nanos < 1e6 {
+		amount = float64(nanos) / 1e3
+		unit = "µs"
+	} else if nanos < 1e9 {
+		amount = float64(nanos) / 1e6
+		unit = "ms"
+	} else if nanos < 1e12 {
+		amount = float64(nanos) / 1e9
+		unit = "s "
+	} else if nanos < 1e12*60 {
+		amount = float64(nanos) / (1e9 * 60.0)
+		unit = "m"
+	} else {
+		amount = float64(nanos) / (1e9 * 60.0 * 60.0)
+		unit = "h"
+	}
+	return fmt.Sprintf("%7.2f%s", amount, unit)
+}
+
+func handleIndex(ll *eggs.Logger, state *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		ll, w, r,
 		func(_ url.Values) (*template.Template, *pageData, int) {
@@ -368,7 +405,12 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 			data := indexData{
 				NumBlockServices: len(state.blockServices),
 			}
+			now := msgs.Now()
+			formatLastSeen := func(t msgs.EggsTime) string {
+				return formatNanos(uint64(now) - uint64(t))
+			}
 			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
+			data.CDCLastSeen = formatLastSeen(state.cdcLastSeen)
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
 			failureDomainsBytes := make(map[string]struct{})
@@ -383,6 +425,7 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 					AvailableBytes: formatSize(bs.AvailableBytes),
 					Path:           bs.Path,
 					Blocks:         bs.Blocks,
+					LastSeen:       formatLastSeen(bs.LastSeen),
 				})
 				failureDomainsBytes[string(bs.FailureDomain[:])] = struct{}{}
 				totalAvailableBytes += bs.AvailableBytes
@@ -407,7 +450,10 @@ func handleIndex(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http
 				},
 			)
 			for _, shard := range state.shards {
-				data.ShardsAddrs = append(data.ShardsAddrs, fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port))
+				data.ShardsAddrs = append(data.ShardsAddrs, indexShard{
+					Addr:     fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port),
+					LastSeen: formatLastSeen(shard.LastSeen),
+				})
 			}
 			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
 			data.TotalCapacity = formatSize(totalAvailableBytes)
@@ -496,7 +542,7 @@ type directoryData struct {
 	Info         directoryInfo
 }
 
-func newClient(log eggs.LogLevels, state *state) *eggs.Client {
+func newClient(log *eggs.Logger, state *state) *eggs.Client {
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
 
@@ -527,7 +573,7 @@ func normalizePath(path string) string {
 	return newPath
 }
 
-func lookup(log eggs.LogLevels, client *eggs.Client, path string) *msgs.InodeId {
+func lookup(log *eggs.Logger, client *eggs.Client, path string) *msgs.InodeId {
 	id := msgs.ROOT_DIR_INODE_ID
 	if path == "" {
 		return &id
@@ -571,7 +617,7 @@ func pathSegments(path string) []pathSegment {
 	return pathSegments
 }
 
-func lookupDirectoryInfo(log eggs.LogLevels, client *eggs.Client, id msgs.InodeId) (msgs.InodeId, *msgs.DirectoryInfoBody) {
+func lookupDirectoryInfo(log *eggs.Logger, client *eggs.Client, id msgs.InodeId) (msgs.InodeId, *msgs.DirectoryInfoBody) {
 	req := msgs.StatDirectoryReq{Id: id}
 	resp := msgs.StatDirectoryResp{}
 	for {
@@ -595,7 +641,7 @@ var fileTemplate *template.Template
 var directoryTemplate *template.Template
 
 func handleInode(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	state *state,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -614,8 +660,14 @@ func handleInode(
 				}
 				id = msgs.InodeId(i)
 			}
-			if id != msgs.NULL_INODE_ID && path != "" {
+			if id != msgs.NULL_INODE_ID && id != msgs.ROOT_DIR_INODE_ID && path == "/" {
+				path = "" // path not provided
+			}
+			if id != msgs.NULL_INODE_ID && id != msgs.ROOT_DIR_INODE_ID && path != "" {
 				return errorPage(http.StatusBadRequest, "cannot specify both id and path")
+			}
+			if id == msgs.ROOT_DIR_INODE_ID && path != "/" {
+				return errorPage(http.StatusBadRequest, "bat root inode id")
 			}
 			client := newClient(log, state)
 			if id == msgs.NULL_INODE_ID {
@@ -776,10 +828,10 @@ func handleInode(
 	)
 }
 
-func handleBlock(log eggs.LogLevels, st *state, w http.ResponseWriter, r *http.Request) {
+func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
 		log, w, r,
-		func(log eggs.LogLevels, query url.Values) (io.ReadCloser, int64, int) {
+		func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "blocks" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -838,13 +890,13 @@ func handleBlock(log eggs.LogLevels, st *state, w http.ResponseWriter, r *http.R
 	)
 }
 
-func setupRouting(log eggs.LogLevels, st *state) {
+func setupRouting(log *eggs.Logger, st *state) {
 	errorTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "error", body: errorTemplateStr},
 	)
 
-	setupPage := func(path string, handle func(ll eggs.LogLevels, state *state, w http.ResponseWriter, r *http.Request)) {
+	setupPage := func(path string, handle func(ll *eggs.Logger, state *state, w http.ResponseWriter, r *http.Request)) {
 		http.HandleFunc(
 			path,
 			func(w http.ResponseWriter, r *http.Request) { handle(log, st, w, r) },
@@ -908,10 +960,7 @@ func main() {
 		}
 	}
 
-	ll := &eggs.LogLogger{
-		Verbose: *verbose,
-		Logger:  eggs.NewLogger(logOut),
-	}
+	ll := eggs.NewLogger(*verbose, logOut)
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

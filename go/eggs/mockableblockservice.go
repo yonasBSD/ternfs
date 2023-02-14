@@ -15,9 +15,9 @@ type MockableBlockServiceConn interface {
 }
 
 type MockableBlockServices interface {
-	BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error)
+	BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error)
 	WriteBlock(
-		logger LogLevels,
+		logger *Logger,
 		conn MockableBlockServiceConn,
 		block *msgs.BlockInfo,
 		r io.Reader,
@@ -25,7 +25,7 @@ type MockableBlockServices interface {
 		crc [4]byte,
 	) ([8]byte, error)
 	FetchBlock(
-		logger LogLevels,
+		logger *Logger,
 		conn MockableBlockServiceConn,
 		blockService *msgs.BlockService,
 		blockId msgs.BlockId,
@@ -34,12 +34,12 @@ type MockableBlockServices interface {
 		count uint32,
 	) error
 	EraseBlock(
-		logger LogLevels,
+		logger *Logger,
 		conn MockableBlockServiceConn,
 		block msgs.BlockInfo,
 	) ([8]byte, error)
 	CopyBlock(
-		logger LogLevels,
+		logger *Logger,
 		sourceConn MockableBlockServiceConn,
 		sourceBlockService *msgs.BlockService,
 		sourceBlockId msgs.BlockId,
@@ -52,12 +52,12 @@ type MockableBlockServices interface {
 
 type RealBlockServices struct{}
 
-func (RealBlockServices) BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
+func (RealBlockServices) BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
 	return BlockServiceConnection(log, id, ip1, port1, ip2, port2)
 }
 
 func (RealBlockServices) WriteBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	block *msgs.BlockInfo,
 	r io.Reader,
@@ -68,7 +68,7 @@ func (RealBlockServices) WriteBlock(
 }
 
 func (RealBlockServices) FetchBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	blockService *msgs.BlockService,
 	blockId msgs.BlockId,
@@ -80,7 +80,7 @@ func (RealBlockServices) FetchBlock(
 }
 
 func (RealBlockServices) EraseBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	block msgs.BlockInfo,
 ) ([8]byte, error) {
@@ -88,7 +88,7 @@ func (RealBlockServices) EraseBlock(
 }
 
 func (RealBlockServices) CopyBlock(
-	logger LogLevels,
+	logger *Logger,
 	sourceConn MockableBlockServiceConn,
 	sourceBlockService *msgs.BlockService,
 	sourceBlockId msgs.BlockId,
@@ -124,12 +124,12 @@ func (dummyConn) ReadFrom(r io.Reader) (n int64, err error) {
 	return 0, nil
 }
 
-func (mbs *MockedBlockServices) BlockServiceConnection(log LogLevels, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
+func (mbs *MockedBlockServices) BlockServiceConnection(log *Logger, id msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (MockableBlockServiceConn, error) {
 	return dummyConn{}, nil
 }
 
 func (mbs *MockedBlockServices) WriteBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	block *msgs.BlockInfo,
 	r io.Reader,
@@ -157,7 +157,7 @@ func (mbs *MockedBlockServices) WriteBlock(
 }
 
 func (mbs *MockedBlockServices) FetchBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	blockService *msgs.BlockService,
 	blockId msgs.BlockId,
@@ -169,7 +169,7 @@ func (mbs *MockedBlockServices) FetchBlock(
 }
 
 func (mbs *MockedBlockServices) EraseBlock(
-	logger LogLevels,
+	logger *Logger,
 	conn MockableBlockServiceConn,
 	block msgs.BlockInfo,
 ) ([8]byte, error) {
@@ -181,7 +181,7 @@ func (mbs *MockedBlockServices) EraseBlock(
 }
 
 func (mbs *MockedBlockServices) CopyBlock(
-	logger LogLevels,
+	logger *Logger,
 	sourceConn MockableBlockServiceConn,
 	sourceBlockService *msgs.BlockService,
 	sourceBlockId msgs.BlockId,

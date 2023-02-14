@@ -24,13 +24,13 @@ type fsTestOpts struct {
 }
 
 type fsTestHarness[Id comparable] interface {
-	createDirectory(log eggs.LogLevels, owner Id, name string) (Id, msgs.EggsTime)
-	rename(log eggs.LogLevels, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
-	createFile(log eggs.LogLevels, owner Id, spanSize uint64, name string, size uint64, genData func(size uint64) []byte) (Id, msgs.EggsTime)
+	createDirectory(log *eggs.Logger, owner Id, name string) (Id, msgs.EggsTime)
+	rename(log *eggs.Logger, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
+	createFile(log *eggs.Logger, owner Id, spanSize uint64, name string, size uint64, genData func(size uint64) []byte) (Id, msgs.EggsTime)
 	// if false, the harness does not support reading files (e.g. we're mocking block services)
-	checkFileData(log eggs.LogLevels, id Id, size uint64, genData func(size uint64) []byte)
+	checkFileData(log *eggs.Logger, id Id, size uint64, genData func(size uint64) []byte)
 	// files, directories
-	readDirectory(log eggs.LogLevels, dir Id) ([]string, []string)
+	readDirectory(log *eggs.Logger, dir Id) ([]string, []string)
 }
 
 type apiFsTestHarness struct {
@@ -38,7 +38,7 @@ type apiFsTestHarness struct {
 	mbs    eggs.MockableBlockServices
 }
 
-func (c *apiFsTestHarness) createDirectory(log eggs.LogLevels, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.EggsTime) {
+func (c *apiFsTestHarness) createDirectory(log *eggs.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	req := msgs.MakeDirectoryReq{
 		OwnerId: owner,
 		Name:    name,
@@ -50,7 +50,7 @@ func (c *apiFsTestHarness) createDirectory(log eggs.LogLevels, owner msgs.InodeI
 }
 
 func (c *apiFsTestHarness) rename(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	targetId msgs.InodeId,
 	oldOwner msgs.InodeId,
 	oldCreationTime msgs.EggsTime,
@@ -97,12 +97,12 @@ func (c *apiFsTestHarness) rename(
 }
 
 func (c *apiFsTestHarness) createFile(
-	log eggs.LogLevels, owner msgs.InodeId, spanSize uint64, name string, size uint64, genData func(size uint64) []byte,
+	log *eggs.Logger, owner msgs.InodeId, spanSize uint64, name string, size uint64, genData func(size uint64) []byte,
 ) (msgs.InodeId, msgs.EggsTime) {
 	return createFile(log, c.client, c.mbs, owner, spanSize, name, size, genData)
 }
 
-func (c *apiFsTestHarness) readDirectory(log eggs.LogLevels, dir msgs.InodeId) (files []string, dirs []string) {
+func (c *apiFsTestHarness) readDirectory(log *eggs.Logger, dir msgs.InodeId) (files []string, dirs []string) {
 	edges := readDir(log, c.client, dir)
 	for _, edge := range edges {
 		if edge.targetId.Type() == msgs.DIRECTORY {
@@ -133,7 +133,7 @@ func checkFileData(actualData []byte, expectedData []byte) {
 
 }
 
-func (c *apiFsTestHarness) checkFileData(log eggs.LogLevels, id msgs.InodeId, size uint64, genData func(size uint64) []byte) {
+func (c *apiFsTestHarness) checkFileData(log *eggs.Logger, id msgs.InodeId, size uint64, genData func(size uint64) []byte) {
 	_, isFake := c.mbs.(*eggs.MockedBlockServices)
 	if isFake {
 		return
@@ -147,9 +147,9 @@ var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
 type posixFsTestHarness struct{}
 
-func (*posixFsTestHarness) createDirectory(log eggs.LogLevels, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
+func (*posixFsTestHarness) createDirectory(log *eggs.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
 	fullPath = path.Join(owner, name)
-	log.DebugStack(1, "posix mkdir %v", fullPath)
+	log.LogStack(1, eggs.DEBUG, "posix mkdir %v", fullPath)
 	if err := os.Mkdir(fullPath, 0777); err != nil {
 		panic(err)
 	}
@@ -157,7 +157,7 @@ func (*posixFsTestHarness) createDirectory(log eggs.LogLevels, owner string, nam
 }
 
 func (*posixFsTestHarness) rename(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	targetFullPath string,
 	oldDir string,
 	oldCreationTime msgs.EggsTime,
@@ -169,7 +169,7 @@ func (*posixFsTestHarness) rename(
 		panic(fmt.Errorf("mismatching %v and %v", targetFullPath, path.Join(oldDir, oldName)))
 	}
 	newFullPath := path.Join(newDir, newName)
-	log.DebugStack(1, "posix rename %v -> %v", targetFullPath, newFullPath)
+	log.LogStack(1, eggs.DEBUG, "posix rename %v -> %v", targetFullPath, newFullPath)
 	if err := os.Rename(targetFullPath, path.Join(newDir, newName)); err != nil {
 		panic(err)
 	}
@@ -177,19 +177,19 @@ func (*posixFsTestHarness) rename(
 }
 
 func (c *posixFsTestHarness) createFile(
-	log eggs.LogLevels, dirFullPath string, spanSize uint64, name string, size uint64, genData func(size uint64) []byte,
+	log *eggs.Logger, dirFullPath string, spanSize uint64, name string, size uint64, genData func(size uint64) []byte,
 ) (fileFullPath string, t msgs.EggsTime) {
 	data := genData(size)
 	fileFullPath = path.Join(dirFullPath, name)
-	log.DebugStack(1, "posix create file %v", fileFullPath)
+	log.LogStack(1, eggs.DEBUG, "posix create file %v", fileFullPath)
 	if err := os.WriteFile(fileFullPath, data, 0644); err != nil {
 		panic(err)
 	}
 	return fileFullPath, 0
 }
 
-func (c *posixFsTestHarness) readDirectory(log eggs.LogLevels, dirFullPath string) (files []string, dirs []string) {
-	log.DebugStack(1, "posix readdir for %v", dirFullPath)
+func (c *posixFsTestHarness) readDirectory(log *eggs.Logger, dirFullPath string) (files []string, dirs []string) {
+	log.LogStack(1, eggs.DEBUG, "posix readdir for %v", dirFullPath)
 	fileInfo, err := ioutil.ReadDir(dirFullPath)
 	if err != nil {
 		panic(err)
@@ -204,7 +204,7 @@ func (c *posixFsTestHarness) readDirectory(log eggs.LogLevels, dirFullPath strin
 	return files, dirs
 }
 
-func (c *posixFsTestHarness) checkFileData(log eggs.LogLevels, fullFilePath string, size uint64, genData func(size uint64) []byte) {
+func (c *posixFsTestHarness) checkFileData(log *eggs.Logger, fullFilePath string, size uint64, genData func(size uint64) []byte) {
 	allData := genData(size)
 	fileData := make([]byte, len(allData))
 	f, err := os.Open(fullFilePath)
@@ -291,7 +291,7 @@ func (s *fsTestState[Id]) dir(path []int) *fsTestDir[Id] {
 	return s.rootDir.dir(path)
 }
 
-func (state *fsTestState[Id]) incrementDirs(log eggs.LogLevels, opts *fsTestOpts) {
+func (state *fsTestState[Id]) incrementDirs(log *eggs.Logger, opts *fsTestOpts) {
 	if state.totalDirs >= opts.numDirs {
 		panic("ran out of dirs!")
 	}
@@ -301,7 +301,7 @@ func (state *fsTestState[Id]) incrementDirs(log eggs.LogLevels, opts *fsTestOpts
 	}
 }
 
-func (state *fsTestState[Id]) makeDir(log eggs.LogLevels, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int) []int {
+func (state *fsTestState[Id]) makeDir(log *eggs.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int) []int {
 	state.incrementDirs(log, opts)
 	dir := state.dir(parent)
 	_, dirExists := dir.children.directories[name]
@@ -322,7 +322,7 @@ func (state *fsTestState[Id]) makeDir(log eggs.LogLevels, harness fsTestHarness[
 	return path
 }
 
-func (state *fsTestState[Id]) makeDirFromTemp(log eggs.LogLevels, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int, tmpParent []int) []int {
+func (state *fsTestState[Id]) makeDirFromTemp(log *eggs.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int, tmpParent []int) []int {
 	dir := state.dir(parent)
 	_, dirExists := dir.children.directories[name]
 	if dirExists {
@@ -349,7 +349,7 @@ func (state *fsTestState[Id]) makeDirFromTemp(log eggs.LogLevels, harness fsTest
 	return path
 }
 
-func (state *fsTestState[Id]) incrementFiles(log eggs.LogLevels, opts *fsTestOpts) {
+func (state *fsTestState[Id]) incrementFiles(log *eggs.Logger, opts *fsTestOpts) {
 	if state.totalFiles >= opts.numFiles {
 		panic("ran out of files!")
 	}
@@ -368,7 +368,7 @@ func genDataWithSeed(seed int64, size uint64) []byte {
 	return data
 }
 
-func (state *fsTestState[Id]) makeFile(log eggs.LogLevels, harness fsTestHarness[Id], opts *fsTestOpts, rand *rand.Rand, dirPath []int, name int) {
+func (state *fsTestState[Id]) makeFile(log *eggs.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *rand.Rand, dirPath []int, name int) {
 	state.incrementFiles(log, opts)
 	dir := state.dir(dirPath)
 	_, dirExists := dir.children.directories[name]
@@ -395,7 +395,7 @@ func (state *fsTestState[Id]) makeFile(log eggs.LogLevels, harness fsTestHarness
 	}
 }
 
-func (state *fsTestState[Id]) makeFileFromTemp(log eggs.LogLevels, harness fsTestHarness[Id], opts *fsTestOpts, rand *rand.Rand, dirPath []int, name int, tmpDirPath []int) {
+func (state *fsTestState[Id]) makeFileFromTemp(log *eggs.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *rand.Rand, dirPath []int, name int, tmpDirPath []int) {
 	state.incrementFiles(log, opts)
 	dir := state.dir(dirPath)
 	_, dirExists := dir.children.directories[name]
@@ -430,7 +430,7 @@ func (state *fsTestState[Id]) makeFileFromTemp(log eggs.LogLevels, harness fsTes
 	}
 }
 
-func (d *fsTestDir[Id]) check(log eggs.LogLevels, harness fsTestHarness[Id]) {
+func (d *fsTestDir[Id]) check(log *eggs.Logger, harness fsTestHarness[Id]) {
 	files, dirs := harness.readDirectory(log, d.id)
 	if len(files)+len(dirs) != len(d.children.files)+len(d.children.directories) {
 		panic(fmt.Errorf("bad number of edges -- got %v + %v, expected %v + %v", len(files), len(dirs), len(d.children.files), len(d.children.files)))
@@ -466,7 +466,7 @@ func (d *fsTestDir[Id]) check(log eggs.LogLevels, harness fsTestHarness[Id]) {
 }
 
 // Just the first block service id we can find
-func findBlockServiceToPurge(log eggs.LogLevels, client *eggs.Client) msgs.BlockServiceId {
+func findBlockServiceToPurge(log *eggs.Logger, client *eggs.Client) msgs.BlockServiceId {
 	filesReq := msgs.VisitFilesReq{}
 	filesResp := msgs.VisitFilesResp{}
 	for {
@@ -492,7 +492,7 @@ func findBlockServiceToPurge(log eggs.LogLevels, client *eggs.Client) msgs.Block
 }
 
 func fsTestInternal[Id comparable](
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,
@@ -583,7 +583,7 @@ func fsTestInternal[Id comparable](
 }
 
 func fsTest(
-	log eggs.LogLevels,
+	log *eggs.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *eggs.ClientCounters,

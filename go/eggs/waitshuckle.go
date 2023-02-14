@@ -13,7 +13,7 @@ type ShuckleInfo struct {
 	BlockServices []msgs.BlockServiceInfo
 }
 
-func WaitForShuckle(ll LogLevels, shuckleAddress string, expectedBlockServices int, timeout time.Duration) *ShuckleInfo {
+func WaitForShuckle(ll *Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) *ShuckleInfo {
 	info := ShuckleInfo{}
 	t0 := time.Now()
 	var err error

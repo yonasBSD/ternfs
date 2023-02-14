@@ -217,21 +217,21 @@ func reqRespEnum(rr reqRespType) string {
 	return reqEnum
 }
 
-func generateGoMsgKind(out io.Writer, typeName string, reqResps []reqRespType) {
+func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, respInterface string, mkName string, reqResps []reqRespType) {
 	seenKinds := map[uint8]bool{}
 
-	fmt.Fprintf(out, "func (k %s) String() string {\n", typeName)
+	fmt.Fprintf(out, "func (k %s) String() string {\n", kindTypeName)
 	fmt.Fprintf(out, "\tswitch k {\n")
 	for _, reqResp := range reqResps {
 		present := seenKinds[reqResp.kind]
 		if present {
-			panic(fmt.Errorf("duplicate kind %d for %s", reqResp.kind, typeName))
+			panic(fmt.Errorf("duplicate kind %d for %s", reqResp.kind, kindTypeName))
 		}
 		fmt.Fprintf(out, "\tcase %v:\n", reqResp.kind)
 		fmt.Fprintf(out, "\t\treturn \"%s\"\n", reqRespEnum(reqResp))
 	}
 	fmt.Fprintf(out, "\tdefault:\n")
-	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"%s(%%d)\", k)\n", typeName)
+	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"%s(%%d)\", k)\n", kindTypeName)
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 
@@ -239,9 +239,20 @@ func generateGoMsgKind(out io.Writer, typeName string, reqResps []reqRespType) {
 
 	fmt.Fprintf(out, "const (\n")
 	for _, reqResp := range reqResps {
-		fmt.Fprintf(out, "\t%s %s = 0x%X\n", reqRespEnum(reqResp), typeName, reqResp.kind)
+		fmt.Fprintf(out, "\t%s %s = 0x%X\n", reqRespEnum(reqResp), kindTypeName, reqResp.kind)
 	}
 	fmt.Fprintf(out, ")\n\n")
+
+	fmt.Fprintf(out, "func %s(k string) (%s, %s) {\n", mkName, reqInterface, respInterface)
+	fmt.Fprintf(out, "\tswitch {\n")
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "\tcase k == %q:\n", reqRespEnum(reqResp))
+		fmt.Fprintf(out, "\t\treturn &%v{}, &%v{}\n", reqResp.req.Name(), reqResp.resp.Name())
+	}
+	fmt.Fprintf(out, "\tdefault:\n")
+	fmt.Fprintf(out, "\t\tpanic(fmt.Errorf(\"bad kind string %%s\", k))\n")
+	fmt.Fprintf(out, "\t}\n")
+	fmt.Fprintf(out, "}\n\n")
 }
 
 type reqRespType struct {
@@ -293,9 +304,9 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 	generateGoErrorCodes(out, errors)
 
-	generateGoMsgKind(out, "ShardMessageKind", shardReqResps)
-	generateGoMsgKind(out, "CDCMessageKind", cdcReqResps)
-	generateGoMsgKind(out, "ShuckleMessageKind", shuckleReqResps)
+	generateGoMsgKind(out, "ShardMessageKind", "ShardRequest", "ShardResponse", "MkShardMessage", shardReqResps)
+	generateGoMsgKind(out, "CDCMessageKind", "CDCRequest", "CDCResponse", "MkCDCMessage", cdcReqResps)
+	generateGoMsgKind(out, "ShuckleMessageKind", "ShuckleRequest", "ShuckleResponse", "MkShuckleMessage", shuckleReqResps)
 
 	for _, reqResp := range shardReqResps {
 		generateGoReqResp(out, reqResp, "ShardMessageKind", "ShardRequestKind", "ShardResponseKind")

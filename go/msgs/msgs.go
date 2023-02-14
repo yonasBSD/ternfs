@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 	"xtx/eggsfs/bincode"
 )
@@ -91,6 +92,23 @@ func (id InodeId) Shard() ShardId {
 
 func (id InodeId) String() string {
 	return fmt.Sprintf("0x%X", uint64(id))
+}
+
+func (id InodeId) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("%q", id.String())), nil
+}
+
+func (id *InodeId) UnmarshalJSON(b []byte) error {
+	var ids string
+	if err := json.Unmarshal(b, &ids); err != nil {
+		return err
+	}
+	idu, err := strconv.ParseUint(ids, 0, 63)
+	if err != nil {
+		return err
+	}
+	*id = InodeId(idu)
+	return nil
 }
 
 func (id BlockServiceId) String() string {
@@ -1159,6 +1177,7 @@ type BlockServiceInfo struct {
 	AvailableBytes uint64
 	Blocks         uint64 // how many blocks we have
 	Path           string
+	LastSeen       EggsTime
 }
 
 type UpdateBlockServicesEntry struct {
@@ -1259,8 +1278,9 @@ type RegisterBlockServicesResp struct{}
 type ShardsReq struct{}
 
 type ShardInfo struct {
-	Ip   [4]byte
-	Port uint16
+	Ip       [4]byte
+	Port     uint16
+	LastSeen EggsTime
 }
 
 type ShardsResp struct {
@@ -1286,6 +1306,7 @@ type RegisterCdcResp struct{}
 type CdcReq struct{}
 
 type CdcResp struct {
-	Ip   [4]byte
-	Port uint16
+	Ip       [4]byte
+	Port     uint16
+	LastSeen EggsTime
 }

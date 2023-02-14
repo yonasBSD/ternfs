@@ -11,10 +11,12 @@
         <thead>
             <tr>
                 <th>Address</th>
+                <th>LastSeen</th>
             </tr>
         <tbody>
             <tr>
                 <td><code>{{.CDCAddr}}</code></td>
+                <td>{{.CDCLastSeen}}</td>
             </tr>
         </tbody>
     </table>
@@ -24,12 +26,14 @@
             <tr>
                 <th>Id</th>
                 <th>Address</th>
+                <th>LastSeen</th>
             </tr>
         <tbody>
-            {{ range $id, $addr := .ShardsAddrs }}
+            {{ range $id, $shard := .ShardsAddrs }}
                 <tr>
                     <td><code>{{printf "%03v" $id}}</code></td>
-                    <td><code>{{$addr}}</code></td>
+                    <td><code>{{$shard.Addr}}</code></td>
+                    <td>{{$shard.LastSeen}}</td>
                 </tr>
             {{end}}
         </tbody>
@@ -47,6 +51,7 @@
                 <th class="text-end">Blocks</th>
                 <th class="text-end">Capacity</th>
                 <th class="text-end">Available</th>
+                <th>LastSeen</th>
             </tr>
         <tbody>
             {{ range .BlockServices }}
@@ -60,6 +65,7 @@
                     <td class="text-end">{{.Blocks}}</td>
                     <td class="text-end">{{.CapacityBytes}}</td>
                     <td class="text-end">{{.AvailableBytes}}</td>
+                    <td>{{.LastSeen}}</td>
                 </tr>
             {{end}}
         </tbody>

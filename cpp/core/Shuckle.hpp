@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 
 // The host here is the scheme + host + port, e.g. `http://localhost:5000`.
 //
@@ -27,12 +26,20 @@ std::string registerShard(
     uint16_t shardPort
 );
 
+struct CDCStatus {
+    uint64_t queuedTxns;
+    // if non-zero, the following field is set too
+    CDCMessageKind executingTxnKind;
+    uint8_t executingTxnStep;
+};
+
 std::string registerCDC(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     const std::array<uint8_t, 4>& cdcAddr,
-    uint16_t cdcPort
+    uint16_t cdcPort,
+    const CDCStatus& status
 );
 
 std::string fetchShards(

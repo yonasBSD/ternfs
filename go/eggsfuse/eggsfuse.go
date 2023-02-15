@@ -11,7 +11,6 @@ import (
 	"runtime/pprof"
 	"sync"
 	"syscall"
-	"time"
 	"xtx/eggsfs/eggs"
 	"xtx/eggsfs/msgs"
 
@@ -863,63 +862,7 @@ func main() {
 		go func() {
 			for {
 				<-statsChan
-				formatCounters := func(c *eggs.ReqCounters) {
-					totalCount := uint64(0)
-					for i := 0; i < c.Timings.Buckets(); i++ {
-						_, count, _ := c.Timings.Bucket(i)
-						totalCount += count
-					}
-					log.Info("    count: %v", totalCount)
-					log.Info("    attempts: %v (%v)", c.Attempts, float64(c.Attempts)/float64(totalCount))
-					log.Info("    total time: %v", time.Duration(c.Timings.TotalTime()))
-					log.Info("    avg time: %v", time.Duration(uint64(c.Timings.TotalTime())/totalCount))
-					hist := bytes.NewBuffer([]byte{})
-					first := true
-					countSoFar := uint64(0)
-					for i := 0; i < c.Timings.Buckets(); i++ {
-						lowerBound, count, upperBound := c.Timings.Bucket(i)
-						if count == 0 {
-							continue
-						}
-						countSoFar += count
-						if first {
-							fmt.Fprintf(hist, "%v < ", lowerBound)
-						} else {
-							fmt.Fprintf(hist, ", ")
-						}
-						first = false
-						fmt.Fprintf(hist, "%v (%0.2f%%) < %v", count, float64(countSoFar*100)/float64(totalCount), upperBound)
-					}
-					log.Info("    hist: %v", hist.String())
-				}
-				var shardTime time.Duration
-				for i := 0; i < len(counters.Shard[:]); i++ {
-					shardTime += counters.Shard[i].Timings.TotalTime()
-				}
-				log.Info("Shard stats (total shard time %v):", shardTime)
-				for i := 0; i < len(counters.Shard[:]); i++ {
-					c := &counters.Shard[i]
-					if c.Attempts == 0 {
-						continue
-					}
-					kind := msgs.ShardMessageKind(i)
-					log.Info("  %v", kind)
-					formatCounters(c)
-				}
-				var cdcTime time.Duration
-				for i := 0; i < len(counters.CDC[:]); i++ {
-					cdcTime += counters.CDC[i].Timings.TotalTime()
-				}
-				log.Info("CDC stats (total CDC time %v):", cdcTime)
-				for i := 0; i < len(counters.CDC[:]); i++ {
-					c := &counters.CDC[i]
-					if c.Attempts == 0 {
-						continue
-					}
-					kind := msgs.CDCMessageKind(i)
-					log.Info("  %v", kind)
-					formatCounters(c)
-				}
+				counters.Log(log)
 			}
 		}()
 	}

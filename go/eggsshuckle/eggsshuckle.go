@@ -45,13 +45,20 @@ func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
 	return tmpl
 }
 
+type cdcState struct {
+	ip             [4]byte
+	port           uint16
+	lastSeen       msgs.EggsTime
+	queuedTxns     uint64
+	currentTxnKind msgs.CDCMessageKind
+	currentTxnStep uint8
+}
+
 type state struct {
 	mutex         sync.RWMutex
 	blockServices map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	shards        [256]msgs.ShardInfo
-	cdcIp         [4]byte
-	cdcPort       uint16
-	cdcLastSeen   msgs.EggsTime
+	cdc           cdcState
 }
 
 func newState() *state {
@@ -133,8 +140,8 @@ func handleCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.CdcReq) *ms
 	defer s.mutex.RUnlock()
 
 	resp := msgs.CdcResp{}
-	resp.Ip = s.cdcIp
-	resp.Port = s.cdcPort
+	resp.Ip = s.cdc.ip
+	resp.Port = s.cdc.port
 
 	return &resp
 }
@@ -143,9 +150,12 @@ func handleRegisterCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.Reg
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.cdcIp = req.Ip
-	s.cdcPort = req.Port
-	s.cdcLastSeen = msgs.Now()
+	s.cdc.ip = req.Ip
+	s.cdc.port = req.Port
+	s.cdc.currentTxnKind = req.CurrentTransactionKind
+	s.cdc.currentTxnStep = req.CurrentTransactionStep
+	s.cdc.queuedTxns = req.QueuedTransactions
+	s.cdc.lastSeen = msgs.Now()
 
 	return &msgs.RegisterCdcResp{}
 }
@@ -314,16 +324,19 @@ type indexShard struct {
 }
 
 type indexData struct {
-	NumBlockServices    int
-	NumFailureDomains   int
-	TotalCapacity       string
-	TotalUsed           string
-	TotalUsedPercentage string
-	CDCAddr             string
-	CDCLastSeen         string
-	BlockServices       []indexBlockService
-	ShardsAddrs         []indexShard
-	Blocks              uint64
+	NumBlockServices          int
+	NumFailureDomains         int
+	TotalCapacity             string
+	TotalUsed                 string
+	TotalUsedPercentage       string
+	CDCAddr                   string
+	CDCLastSeen               string
+	CDCCurrentTransactionKind string
+	CDCCurrentTransactionStep string
+	CDCQueuedTransactions     uint64
+	BlockServices             []indexBlockService
+	ShardsAddrs               []indexShard
+	Blocks                    uint64
 }
 
 //go:embed index.html
@@ -410,8 +423,13 @@ func handleIndex(ll *eggs.Logger, state *state, w http.ResponseWriter, r *http.R
 			formatLastSeen := func(t msgs.EggsTime) string {
 				return formatNanos(uint64(now) - uint64(t))
 			}
-			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdcIp[:]), state.cdcPort)
-			data.CDCLastSeen = formatLastSeen(state.cdcLastSeen)
+			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdc.ip[:]), state.cdc.port)
+			data.CDCLastSeen = formatLastSeen(state.cdc.lastSeen)
+			data.CDCQueuedTransactions = state.cdc.queuedTxns
+			if state.cdc.currentTxnKind != 0 {
+				data.CDCCurrentTransactionKind = state.cdc.currentTxnKind.String()
+				data.CDCCurrentTransactionStep = fmt.Sprintf("%v", state.cdc.currentTxnStep)
+			}
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
 			failureDomainsBytes := make(map[string]struct{})
@@ -553,7 +571,7 @@ func newClient(log *eggs.Logger, state *state) *eggs.Client {
 		shardIps[i] = si.Ip
 		shardPorts[i] = si.Port
 	}
-	client, err := eggs.NewClientDirect(log, nil, nil, nil, state.cdcIp, state.cdcPort, &shardIps, &shardPorts)
+	client, err := eggs.NewClientDirect(log, nil, nil, nil, state.cdc.ip, state.cdc.port, &shardIps, &shardPorts)
 	if err != nil {
 		panic(err)
 	}
@@ -650,7 +668,7 @@ func handleInode(
 	handlePage(
 		log, w, r,
 		func(query url.Values) (*template.Template, *pageData, int) {
-			path := r.URL.Path[len("/inode"):]
+			path := r.URL.Path[len("/browse"):]
 			path = normalizePath(path)
 			var id msgs.InodeId
 			idStr := query.Get("id")
@@ -917,6 +935,7 @@ func setupRouting(log *eggs.Logger, st *state) {
 		"/shuckle-face.png",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "max-age=300")
 			w.Write(shuckleFacePngStr)
 		},
 	)
@@ -942,7 +961,7 @@ func setupRouting(log *eggs.Logger, st *state) {
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "directory", body: directoryTemplateStr},
 	)
-	setupPage("/inode/", handleInode)
+	setupPage("/browse/", handleInode)
 }
 
 func main() {

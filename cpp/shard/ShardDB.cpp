@@ -17,7 +17,6 @@
 #include "Assert.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
@@ -2097,7 +2096,7 @@ struct ShardDBImpl {
     }
 
     EggsError _applyRemoveFileInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
-        ALWAYS_ASSERT(entry.id.type() == InodeType::FILE || entry.id.type() == InodeType::DIRECTORY);
+        ALWAYS_ASSERT(entry.id.type() == InodeType::FILE || entry.id.type() == InodeType::SYMLINK);
 
         // we demand for the file to be transient, for the deadline to have passed, and for it to have
         // no spans

@@ -6,12 +6,12 @@
                     <th>Path</th>
                     <td>
                         <code>
-                            <a href="/inode">/</a>
+                            <a href="/browse">/</a>
                             {{range $segment := .PathSegments}}
                                 {{if eq $segment.PathSoFar $.Path}}
-                                    <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a>
+                                    <a href="/browse{{$segment.PathSoFar}}">{{$segment.Segment}}</a>
                                 {{else}}
-                                    <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
+                                    <a href="/browse{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
                                 {{end}}
                             {{end}}
                         </code>

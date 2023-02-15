@@ -6,9 +6,9 @@
                     <th>Path</th>
                     <td>
                         <code>
-                            <a href="/inode">/</a>
+                            <a href="/browse">/</a>
                             {{range $segment := .PathSegments}}
-                                <a href="/inode{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
+                                <a href="/browse{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
                             {{end}}
                         </code>
                     </td>
@@ -24,7 +24,7 @@
                     {{if eq .Owner "0x0"}}
                         <code>NONE</code>
                     {{else}}
-                        <a href="/inode?id={{.Owner}}"><code>{{.Owner}}</code></a>
+                        <a href="/browse?id={{.Owner}}"><code>{{.Owner}}</code></a>
                     {{end}}
                 </td>
             </tr>
@@ -40,7 +40,7 @@
                             {{if not (eq .Info.InheritedFrom "")}}
                                 <tr>
                                     <th>Inherited from</th>
-                                    <td><a href="/inode?id={{.Info.InheritedFrom}}"><code>{{.Info.InheritedFrom}}</code></a></td>
+                                    <td><a href="/browse?id={{.Info.InheritedFrom}}"><code>{{.Info.InheritedFrom}}</code></a></td>
                                 </tr>
                             {{end}}
                             <tr>
@@ -113,9 +113,9 @@
                             <code>{{$edge.Name}}</code>
                         {{else}}
                             {{if and $edge.Current $.Path}}
-                                <a href="/inode{{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
+                                <a href="/browse{{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
                             {{else}}
-                                <a href="/inode?id={{$edge.TargetId}}"><code>{{$edge.Name}}</code></a>
+                                <a href="/browse?id={{$edge.TargetId}}"><code>{{$edge.Name}}</code></a>
                             {{end}}
                         {{end}}
                     </td>

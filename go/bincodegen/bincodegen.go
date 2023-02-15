@@ -349,7 +349,7 @@ func generateC(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRe
 }
 
 func cppType(t reflect.Type) string {
-	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" {
 		return t.Name()
 	}
 	switch t.Kind() {
@@ -727,7 +727,6 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, what string, types []re
 }
 
 func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []reqRespType) {
-	generateCppKind(hpp, cpp, what, reqResps)
 	reqContainerTypes := make([]containerType, len(reqResps))
 	for i, reqResp := range reqResps {
 		reqContainerTypes[i] = containerType{
@@ -782,6 +781,10 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintf(cppOut, "    }\n")
 	fmt.Fprintf(cppOut, "    return out;\n")
 	fmt.Fprintf(cppOut, "}\n\n")
+
+	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
+	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)
+	generateCppKind(hppOut, cppOut, "Shuckle", shuckleReqResps)
 
 	for _, typ := range extras {
 		generateCppSingle(hppOut, cppOut, typ)

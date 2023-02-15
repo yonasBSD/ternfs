@@ -19,7 +19,6 @@
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "Time.hpp"
 #include "Undertaker.hpp"
 #include "CDCDB.hpp"
@@ -585,7 +584,9 @@ public:
                 continue;
             }
             LOG_INFO(_env, "Registering ourselves (CDC, port %s) with shuckle", port);
-            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp, port);
+            CDCStatus status;
+            _shared.db.status(status);
+            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp, port, status);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 EggsTime successfulIterationAt = 0;

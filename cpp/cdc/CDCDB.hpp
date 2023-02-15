@@ -1,12 +1,9 @@
 #pragma once
 
-#include <cstdint>
-#include <variant>
-
 #include "Bincode.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
-#include "MsgsGen.hpp"
+#include "Shuckle.hpp"
 
 struct CDCShardReq {
     ShardId shid;
@@ -86,7 +83,8 @@ public:
 
     // Advances the CDC state using the given shard response.
     //
-    // This function crashes hard if the caller passes it a response it's not expecting.
+    // This function crashes hard if the caller passes it a response it's not expecting. So the caller
+    // should track responses and make sure only the correct one is passed in.
     void processShardResp(
         bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
@@ -97,7 +95,9 @@ public:
         CDCStep& step
     );
 
-    // Starts the next transaction in line (if any).
+    // Does what it can to advance the state of the system, by starting the next
+    // transaction in line (if any). In any case, it returns what there is to do next
+    // in `step`.
     //
     // It's fine to call this function even if there's nothing to do -- and in fact
     // you should do that when starting up the CDC, to make sure to finish
@@ -111,4 +111,6 @@ public:
 
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
+
+    void status(CDCStatus& resp);
 };

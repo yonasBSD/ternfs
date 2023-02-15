@@ -12,11 +12,15 @@
             <tr>
                 <th>Address</th>
                 <th>LastSeen</th>
+                <th>QueuedTransactions</th>
+                <th>CurrentTransaction</th>
             </tr>
         <tbody>
             <tr>
                 <td><code>{{.CDCAddr}}</code></td>
                 <td>{{.CDCLastSeen}}</td>
+                <td>{{.CDCQueuedTransactions}}</td>
+                <td>{{.CDCCurrentTransactionKind}} {{.CDCCurrentTransactionStep}}</td>
             </tr>
         </tbody>
     </table>

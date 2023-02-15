@@ -1302,8 +1302,11 @@ type RegisterShardReq struct {
 type RegisterShardResp struct{}
 
 type RegisterCdcReq struct {
-	Ip   [4]byte
-	Port uint16
+	Ip                     [4]byte
+	Port                   uint16
+	CurrentTransactionKind CDCMessageKind // if 0, nothing is executing
+	CurrentTransactionStep uint8
+	QueuedTransactions     uint64
 }
 
 type RegisterCdcResp struct{}

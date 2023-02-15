@@ -1,6 +1,7 @@
 package eggs
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/msgs"
 )
@@ -113,20 +114,39 @@ func destructFilesInternal(
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
-func DestructFiles(
-	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockService MockableBlockServices,
+func destructFiles(
+	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockServiceKeys map[msgs.BlockServiceId]cipher.Block,
 ) error {
+	log.Info("starting to destruct files in shard %v", shid)
 	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 	stats := DestructionStats{}
-	if err := destructFilesInternal(log, client, shid, &stats, blockService); err != nil {
+	var mbs MockableBlockServices
+	if blockServiceKeys == nil {
+		mbs = client
+	} else {
+		mbs = &MockedBlockServices{Keys: blockServiceKeys}
+	}
+	if err := destructFilesInternal(log, client, shid, &stats, mbs); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
 	return nil
+}
+
+func DestructFiles(
+	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId,
+) error {
+	return destructFiles(log, shuckleAddress, counters, shid, nil)
+}
+
+func DestructFilesMockedBlockServices(
+	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockServiceKeys map[msgs.BlockServiceId]cipher.Block,
+) error {
+	return destructFiles(log, shuckleAddress, counters, shid, blockServiceKeys)
 }
 
 func DestructFilesInAllShards(
@@ -325,6 +345,7 @@ func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats
 }
 
 func CollectDirectories(log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
+	log.Info("starting to collect directories in shard %v", shid)
 	client, err := NewClient(log, shuckleAddress, &shid, counters, nil)
 	if err != nil {
 		return err

@@ -161,6 +161,174 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
+    switch (kind) {
+    case ShardMessageKind::LOOKUP:
+        out << "LOOKUP";
+        break;
+    case ShardMessageKind::STAT_FILE:
+        out << "STAT_FILE";
+        break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        out << "STAT_TRANSIENT_FILE";
+        break;
+    case ShardMessageKind::STAT_DIRECTORY:
+        out << "STAT_DIRECTORY";
+        break;
+    case ShardMessageKind::READ_DIR:
+        out << "READ_DIR";
+        break;
+    case ShardMessageKind::CONSTRUCT_FILE:
+        out << "CONSTRUCT_FILE";
+        break;
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        out << "ADD_SPAN_INITIATE";
+        break;
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        out << "ADD_SPAN_CERTIFY";
+        break;
+    case ShardMessageKind::LINK_FILE:
+        out << "LINK_FILE";
+        break;
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        out << "SOFT_UNLINK_FILE";
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        out << "FILE_SPANS";
+        break;
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        out << "SAME_DIRECTORY_RENAME";
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        out << "SET_DIRECTORY_INFO";
+        break;
+    case ShardMessageKind::SNAPSHOT_LOOKUP:
+        out << "SNAPSHOT_LOOKUP";
+        break;
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+        out << "EXPIRE_TRANSIENT_FILE";
+        break;
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        out << "VISIT_DIRECTORIES";
+        break;
+    case ShardMessageKind::VISIT_FILES:
+        out << "VISIT_FILES";
+        break;
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        out << "VISIT_TRANSIENT_FILES";
+        break;
+    case ShardMessageKind::FULL_READ_DIR:
+        out << "FULL_READ_DIR";
+        break;
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        out << "REMOVE_NON_OWNED_EDGE";
+        break;
+    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
+        out << "SAME_SHARD_HARD_FILE_UNLINK";
+        break;
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        out << "REMOVE_SPAN_INITIATE";
+        break;
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        out << "REMOVE_SPAN_CERTIFY";
+        break;
+    case ShardMessageKind::SWAP_BLOCKS:
+        out << "SWAP_BLOCKS";
+        break;
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        out << "BLOCK_SERVICE_FILES";
+        break;
+    case ShardMessageKind::REMOVE_INODE:
+        out << "REMOVE_INODE";
+        break;
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        out << "CREATE_DIRECTORY_INODE";
+        break;
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        out << "SET_DIRECTORY_OWNER";
+        break;
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        out << "REMOVE_DIRECTORY_OWNER";
+        break;
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        out << "CREATE_LOCKED_CURRENT_EDGE";
+        break;
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        out << "LOCK_CURRENT_EDGE";
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        out << "UNLOCK_CURRENT_EDGE";
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        out << "REMOVE_OWNED_SNAPSHOT_FILE_EDGE";
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        out << "MAKE_FILE_TRANSIENT";
+        break;
+    default:
+        out << "ShardMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
+    switch (kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        out << "MAKE_DIRECTORY";
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        out << "RENAME_FILE";
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        out << "SOFT_UNLINK_DIRECTORY";
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        out << "RENAME_DIRECTORY";
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << "HARD_UNLINK_DIRECTORY";
+        break;
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        out << "CROSS_SHARD_HARD_UNLINK_FILE";
+        break;
+    default:
+        out << "CDCMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
+    switch (kind) {
+    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+        out << "BLOCK_SERVICES_FOR_SHARD";
+        break;
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        out << "REGISTER_BLOCK_SERVICES";
+        break;
+    case ShuckleMessageKind::SHARDS:
+        out << "SHARDS";
+        break;
+    case ShuckleMessageKind::REGISTER_SHARD:
+        out << "REGISTER_SHARD";
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        out << "ALL_BLOCK_SERVICES";
+        break;
+    case ShuckleMessageKind::REGISTER_CDC:
+        out << "REGISTER_CDC";
+        break;
+    case ShuckleMessageKind::CDC:
+        out << "CDC";
+        break;
+    default:
+        out << "ShuckleMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
 void TransientFile::pack(BincodeBuf& buf) const {
     id.pack(buf);
     buf.packFixedBytes<8>(cookie);
@@ -2662,22 +2830,34 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
 void RegisterCdcReq::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(ip);
     buf.packScalar<uint16_t>(port);
+    buf.packScalar<CDCMessageKind>(currentTransactionKind);
+    buf.packScalar<uint8_t>(currentTransactionStep);
+    buf.packScalar<uint64_t>(queuedTransactions);
 }
 void RegisterCdcReq::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(ip);
     port = buf.unpackScalar<uint16_t>();
+    currentTransactionKind = buf.unpackScalar<CDCMessageKind>();
+    currentTransactionStep = buf.unpackScalar<uint8_t>();
+    queuedTransactions = buf.unpackScalar<uint64_t>();
 }
 void RegisterCdcReq::clear() {
     ip.clear();
     port = uint16_t(0);
+    currentTransactionKind = CDCMessageKind(0);
+    currentTransactionStep = uint8_t(0);
+    queuedTransactions = uint64_t(0);
 }
 bool RegisterCdcReq::operator==(const RegisterCdcReq& rhs) const {
     if (ip != rhs.ip) { return false; };
     if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if ((CDCMessageKind)this->currentTransactionKind != (CDCMessageKind)rhs.currentTransactionKind) { return false; };
+    if ((uint8_t)this->currentTransactionStep != (uint8_t)rhs.currentTransactionStep) { return false; };
+    if ((uint64_t)this->queuedTransactions != (uint64_t)rhs.queuedTransactions) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x) {
-    out << "RegisterCdcReq(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ")";
+    out << "RegisterCdcReq(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "CurrentTransactionKind=" << x.currentTransactionKind << ", " << "CurrentTransactionStep=" << (int)x.currentTransactionStep << ", " << "QueuedTransactions=" << x.queuedTransactions << ")";
     return out;
 }
 
@@ -2732,117 +2912,6 @@ bool CdcResp::operator==(const CdcResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
     out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
-    return out;
-}
-
-std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
-    switch (kind) {
-    case ShardMessageKind::LOOKUP:
-        out << "LOOKUP";
-        break;
-    case ShardMessageKind::STAT_FILE:
-        out << "STAT_FILE";
-        break;
-    case ShardMessageKind::STAT_TRANSIENT_FILE:
-        out << "STAT_TRANSIENT_FILE";
-        break;
-    case ShardMessageKind::STAT_DIRECTORY:
-        out << "STAT_DIRECTORY";
-        break;
-    case ShardMessageKind::READ_DIR:
-        out << "READ_DIR";
-        break;
-    case ShardMessageKind::CONSTRUCT_FILE:
-        out << "CONSTRUCT_FILE";
-        break;
-    case ShardMessageKind::ADD_SPAN_INITIATE:
-        out << "ADD_SPAN_INITIATE";
-        break;
-    case ShardMessageKind::ADD_SPAN_CERTIFY:
-        out << "ADD_SPAN_CERTIFY";
-        break;
-    case ShardMessageKind::LINK_FILE:
-        out << "LINK_FILE";
-        break;
-    case ShardMessageKind::SOFT_UNLINK_FILE:
-        out << "SOFT_UNLINK_FILE";
-        break;
-    case ShardMessageKind::FILE_SPANS:
-        out << "FILE_SPANS";
-        break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME:
-        out << "SAME_DIRECTORY_RENAME";
-        break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
-        out << "SET_DIRECTORY_INFO";
-        break;
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
-        out << "SNAPSHOT_LOOKUP";
-        break;
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
-        out << "EXPIRE_TRANSIENT_FILE";
-        break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
-        out << "VISIT_DIRECTORIES";
-        break;
-    case ShardMessageKind::VISIT_FILES:
-        out << "VISIT_FILES";
-        break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
-        out << "VISIT_TRANSIENT_FILES";
-        break;
-    case ShardMessageKind::FULL_READ_DIR:
-        out << "FULL_READ_DIR";
-        break;
-    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
-        out << "REMOVE_NON_OWNED_EDGE";
-        break;
-    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
-        out << "SAME_SHARD_HARD_FILE_UNLINK";
-        break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
-        out << "REMOVE_SPAN_INITIATE";
-        break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
-        out << "REMOVE_SPAN_CERTIFY";
-        break;
-    case ShardMessageKind::SWAP_BLOCKS:
-        out << "SWAP_BLOCKS";
-        break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
-        out << "BLOCK_SERVICE_FILES";
-        break;
-    case ShardMessageKind::REMOVE_INODE:
-        out << "REMOVE_INODE";
-        break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
-        out << "CREATE_DIRECTORY_INODE";
-        break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
-        out << "SET_DIRECTORY_OWNER";
-        break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
-        out << "REMOVE_DIRECTORY_OWNER";
-        break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
-        out << "CREATE_LOCKED_CURRENT_EDGE";
-        break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
-        out << "LOCK_CURRENT_EDGE";
-        break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
-        out << "UNLOCK_CURRENT_EDGE";
-        break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
-        out << "REMOVE_OWNED_SNAPSHOT_FILE_EDGE";
-        break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
-        out << "MAKE_FILE_TRANSIENT";
-        break;
-    default:
-        out << "ShardMessageKind(" << ((int)kind) << ")";
-        break;
-    }
     return out;
 }
 
@@ -4334,33 +4403,6 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     return out;
 }
 
-std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
-    switch (kind) {
-    case CDCMessageKind::MAKE_DIRECTORY:
-        out << "MAKE_DIRECTORY";
-        break;
-    case CDCMessageKind::RENAME_FILE:
-        out << "RENAME_FILE";
-        break;
-    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
-        out << "SOFT_UNLINK_DIRECTORY";
-        break;
-    case CDCMessageKind::RENAME_DIRECTORY:
-        out << "RENAME_DIRECTORY";
-        break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        out << "HARD_UNLINK_DIRECTORY";
-        break;
-    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
-        out << "CROSS_SHARD_HARD_UNLINK_FILE";
-        break;
-    default:
-        out << "CDCMessageKind(" << ((int)kind) << ")";
-        break;
-    }
-    return out;
-}
-
 const MakeDirectoryReq& CDCReqContainer::getMakeDirectory() const {
     ALWAYS_ASSERT(_kind == CDCMessageKind::MAKE_DIRECTORY, "%s != %s", _kind, CDCMessageKind::MAKE_DIRECTORY);
     return std::get<0>(_data);
@@ -4669,36 +4711,6 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
         break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
-    }
-    return out;
-}
-
-std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
-    switch (kind) {
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        out << "BLOCK_SERVICES_FOR_SHARD";
-        break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        out << "REGISTER_BLOCK_SERVICES";
-        break;
-    case ShuckleMessageKind::SHARDS:
-        out << "SHARDS";
-        break;
-    case ShuckleMessageKind::REGISTER_SHARD:
-        out << "REGISTER_SHARD";
-        break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << "ALL_BLOCK_SERVICES";
-        break;
-    case ShuckleMessageKind::REGISTER_CDC:
-        out << "REGISTER_CDC";
-        break;
-    case ShuckleMessageKind::CDC:
-        out << "CDC";
-        break;
-    default:
-        out << "ShuckleMessageKind(" << ((int)kind) << ")";
-        break;
     }
     return out;
 }

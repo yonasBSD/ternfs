@@ -58,6 +58,71 @@ enum class EggsError : uint16_t {
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
 
+enum class ShardMessageKind : uint8_t {
+    ERROR = 0,
+    LOOKUP = 1,
+    STAT_FILE = 2,
+    STAT_TRANSIENT_FILE = 10,
+    STAT_DIRECTORY = 8,
+    READ_DIR = 3,
+    CONSTRUCT_FILE = 4,
+    ADD_SPAN_INITIATE = 5,
+    ADD_SPAN_CERTIFY = 6,
+    LINK_FILE = 7,
+    SOFT_UNLINK_FILE = 12,
+    FILE_SPANS = 13,
+    SAME_DIRECTORY_RENAME = 14,
+    SET_DIRECTORY_INFO = 15,
+    SNAPSHOT_LOOKUP = 9,
+    EXPIRE_TRANSIENT_FILE = 11,
+    VISIT_DIRECTORIES = 21,
+    VISIT_FILES = 32,
+    VISIT_TRANSIENT_FILES = 22,
+    FULL_READ_DIR = 33,
+    REMOVE_NON_OWNED_EDGE = 23,
+    SAME_SHARD_HARD_FILE_UNLINK = 24,
+    REMOVE_SPAN_INITIATE = 25,
+    REMOVE_SPAN_CERTIFY = 26,
+    SWAP_BLOCKS = 34,
+    BLOCK_SERVICE_FILES = 35,
+    REMOVE_INODE = 36,
+    CREATE_DIRECTORY_INODE = 128,
+    SET_DIRECTORY_OWNER = 129,
+    REMOVE_DIRECTORY_OWNER = 137,
+    CREATE_LOCKED_CURRENT_EDGE = 130,
+    LOCK_CURRENT_EDGE = 131,
+    UNLOCK_CURRENT_EDGE = 132,
+    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 134,
+    MAKE_FILE_TRANSIENT = 135,
+};
+
+std::ostream& operator<<(std::ostream& out, ShardMessageKind kind);
+
+enum class CDCMessageKind : uint8_t {
+    ERROR = 0,
+    MAKE_DIRECTORY = 1,
+    RENAME_FILE = 2,
+    SOFT_UNLINK_DIRECTORY = 3,
+    RENAME_DIRECTORY = 4,
+    HARD_UNLINK_DIRECTORY = 5,
+    CROSS_SHARD_HARD_UNLINK_FILE = 6,
+};
+
+std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
+
+enum class ShuckleMessageKind : uint8_t {
+    ERROR = 0,
+    BLOCK_SERVICES_FOR_SHARD = 1,
+    REGISTER_BLOCK_SERVICES = 2,
+    SHARDS = 3,
+    REGISTER_SHARD = 4,
+    ALL_BLOCK_SERVICES = 5,
+    REGISTER_CDC = 6,
+    CDC = 7,
+};
+
+std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
+
 struct TransientFile {
     InodeId id;
     BincodeFixedBytes<8> cookie;
@@ -2400,14 +2465,20 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x);
 struct RegisterCdcReq {
     BincodeFixedBytes<4> ip;
     uint16_t port;
+    CDCMessageKind currentTransactionKind;
+    uint8_t currentTransactionStep;
+    uint64_t queuedTransactions;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip + port
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + 1 + 8; // ip + port + currentTransactionKind + currentTransactionStep + queuedTransactions
 
     RegisterCdcReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
         _size += 2; // port
+        _size += 1; // currentTransactionKind
+        _size += 1; // currentTransactionStep
+        _size += 8; // queuedTransactions
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2474,46 +2545,6 @@ struct CdcResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const CdcResp& x);
-
-enum class ShardMessageKind : uint8_t {
-    ERROR = 0,
-    LOOKUP = 1,
-    STAT_FILE = 2,
-    STAT_TRANSIENT_FILE = 10,
-    STAT_DIRECTORY = 8,
-    READ_DIR = 3,
-    CONSTRUCT_FILE = 4,
-    ADD_SPAN_INITIATE = 5,
-    ADD_SPAN_CERTIFY = 6,
-    LINK_FILE = 7,
-    SOFT_UNLINK_FILE = 12,
-    FILE_SPANS = 13,
-    SAME_DIRECTORY_RENAME = 14,
-    SET_DIRECTORY_INFO = 15,
-    SNAPSHOT_LOOKUP = 9,
-    EXPIRE_TRANSIENT_FILE = 11,
-    VISIT_DIRECTORIES = 21,
-    VISIT_FILES = 32,
-    VISIT_TRANSIENT_FILES = 22,
-    FULL_READ_DIR = 33,
-    REMOVE_NON_OWNED_EDGE = 23,
-    SAME_SHARD_HARD_FILE_UNLINK = 24,
-    REMOVE_SPAN_INITIATE = 25,
-    REMOVE_SPAN_CERTIFY = 26,
-    SWAP_BLOCKS = 34,
-    BLOCK_SERVICE_FILES = 35,
-    REMOVE_INODE = 36,
-    CREATE_DIRECTORY_INODE = 128,
-    SET_DIRECTORY_OWNER = 129,
-    REMOVE_DIRECTORY_OWNER = 137,
-    CREATE_LOCKED_CURRENT_EDGE = 130,
-    LOCK_CURRENT_EDGE = 131,
-    UNLOCK_CURRENT_EDGE = 132,
-    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 134,
-    MAKE_FILE_TRANSIENT = 135,
-};
-
-std::ostream& operator<<(std::ostream& out, ShardMessageKind kind);
 
 struct ShardReqContainer {
 private:
@@ -2683,18 +2714,6 @@ public:
 
 std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x);
 
-enum class CDCMessageKind : uint8_t {
-    ERROR = 0,
-    MAKE_DIRECTORY = 1,
-    RENAME_FILE = 2,
-    SOFT_UNLINK_DIRECTORY = 3,
-    RENAME_DIRECTORY = 4,
-    HARD_UNLINK_DIRECTORY = 5,
-    CROSS_SHARD_HARD_UNLINK_FILE = 6,
-};
-
-std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
-
 struct CDCReqContainer {
 private:
     CDCMessageKind _kind = (CDCMessageKind)0;
@@ -2750,19 +2769,6 @@ public:
 };
 
 std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
-
-enum class ShuckleMessageKind : uint8_t {
-    ERROR = 0,
-    BLOCK_SERVICES_FOR_SHARD = 1,
-    REGISTER_BLOCK_SERVICES = 2,
-    SHARDS = 3,
-    REGISTER_SHARD = 4,
-    ALL_BLOCK_SERVICES = 5,
-    REGISTER_CDC = 6,
-    CDC = 7,
-};
-
-std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
 struct ShuckleReqContainer {
 private:

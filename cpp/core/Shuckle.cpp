@@ -17,7 +17,6 @@
 #include "Bincode.hpp"
 #include "Env.hpp"
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "Shuckle.hpp"
 #include "Exception.hpp"
 
@@ -214,7 +213,7 @@ std::string registerShard(
     return {};
 }
 
-std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, const std::array<uint8_t, 4>& cdcAddr, uint16_t cdcPort) {
+std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, const std::array<uint8_t, 4>& cdcAddr, uint16_t cdcPort, const CDCStatus& status) {
     std::string errString;
     auto sock = shuckleSock(host, port, timeout, errString);
     if (sock.fd < 0) {
@@ -225,6 +224,9 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
     auto& req = reqContainer.setRegisterCdc();
     req.ip.data = cdcAddr;
     req.port = cdcPort;
+    req.currentTransactionKind = status.executingTxnKind;
+    req.currentTransactionStep = status.executingTxnStep;
+    req.queuedTransactions = status.queuedTxns;
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -eu -o pipefail
 
+echo "$(tput bold)building requisites$(tput sgr0)"
+./cpp/build.py go rs # build rs library
+(cd go/msgs && go generate ./...) # build cpp files
+
 echo "$(tput bold)go tests$(tput sgr0)"
 (cd go && go test ./...)
 

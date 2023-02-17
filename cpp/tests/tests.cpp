@@ -638,11 +638,13 @@ TEST_CASE("crc32c") {
 
 TEST_CASE("RS") {
     uint64_t rand = 0;
+    int maxBlockSize = 100;
+    std::vector<uint8_t> buf(maxBlockSize*(16+16)); // all blocks
     for (int i = 0; i < 16*16*100; i++) {
         int numData = 2 + splitmix64(rand)%(16-2);
         int numParity = 1 + splitmix64(rand)%(16-1);
         int blockSize = 1 + splitmix64(rand)%100;
-        std::vector<uint8_t> data(blockSize*(numData+numParity)); // all blocks
+        std::vector<uint8_t> data(buf.begin(), buf.begin() + blockSize*(numData+numParity));
         for (size_t i = 0; i < numData*blockSize; i++) { // fill data blocks with random bytes
             data[i] = splitmix64(rand) & 0xFF;
         }

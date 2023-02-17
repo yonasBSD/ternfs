@@ -67,10 +67,10 @@ void rs_compute_parity(
 void rs_recover(
     struct rs* rs,
     uint64_t size,
-    const uint8_t* have_blocks, // [0, B)[D], must be sorted.
-    const uint8_t** blocks,     // uint8_t[D][size]
+    const uint8_t* have_blocks, // [0, B)[D], sorted and distinct
+    const uint8_t** have,       // uint8_t[D][size]
     uint8_t want_block,         // [0, B) and not in `have_blocks`
-    uint8_t* block              // uint8_t[size]
+    uint8_t* want               // uint8_t[size]
 );
 
 #ifdef __cplusplus

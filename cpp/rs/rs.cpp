@@ -137,12 +137,16 @@ void rs_recover(
     uint8_t want_block,
     uint8_t* want
 ) {
-    int d = rs_data_blocks(r->parity);
-    int b = rs_blocks(r->parity);
+    int D = rs_data_blocks(r->parity);
+    int B = rs_blocks(r->parity);
+    // Create some space
+    uint8_t* scratch = (uint8_t*)malloc(D*D + D*D);
+    uint8_t* mat_1 = scratch;
+    uint8_t* mat_2 = scratch + D*D;
     // Preliminary checks
-    for (int i = 0; i < d; i++) {
-        if (have_blocks[i] >= b) {
-            die("have_blocks[%d]=%d >= %d\n", i, have_blocks[i], b);
+    for (int i = 0; i < D; i++) {
+        if (have_blocks[i] >= B) {
+            die("have_blocks[%d]=%d >= %d\n", i, have_blocks[i], B);
         }
         if (have_blocks[i] == want_block) {
             die("have_blocks[%d]=%d == want_block=%d\n", i, have_blocks[i], want_block);
@@ -155,42 +159,39 @@ void rs_recover(
         }
     }
     // below in the dimensionality annotation we paper over transposes
-    uint8_t* mat_1 = (uint8_t*)malloc_or_die(d*d, "mat_1");
-    uint8_t* mat_2 = (uint8_t*)malloc_or_die(d*d, "mat_2");
     // [DxD] matrix going from the data blocks to the blocks we currently have
     uint8_t* data_to_have = mat_1;
-    for (int i = 0, have_cursor = 0; i < b; i++) {
-        if (have_cursor >= d || have_blocks[have_cursor] != i) {
+    for (int i = 0, have_cursor = 0; i < B; i++) {
+        if (have_cursor >= D || have_blocks[have_cursor] != i) {
             continue;
         }
-        memcpy(data_to_have + have_cursor*d, r->matrix + i*d, d);
+        memcpy(data_to_have + have_cursor*D, r->matrix + i*D, D);
         have_cursor++;
     }
     // [DxD] matrix going from what we have to the original data blocks
     uint8_t* have_to_data = mat_2;
-    if (!gf_invert_matrix(data_to_have, have_to_data, d)) {
+    if (!gf_invert_matrix(data_to_have, have_to_data, D)) {
         die("unexpected singular matrix");
     }
     data_to_have = nullptr;
     // [Dx1] matrix going from the data blocks to the block we want
-    uint8_t* data_to_want = &r->matrix[want_block*d];
+    uint8_t* data_to_want = &r->matrix[want_block*D];
     // have_to_want = data_to_want * have_to_data
     // [Dx1] matrix going from `blocks` to the block we're into
     uint8_t* have_to_want = mat_1;
-    for (int i = 0; i < d; i++) {
+    for (int i = 0; i < D; i++) {
         have_to_want[i] = 0;
-        for (int j = 0; j < d; j++) {
-            have_to_want[i] ^= gf_mul(data_to_want[j], have_to_data[j*d + i]);
+        for (int j = 0; j < D; j++) {
+            have_to_want[i] ^= gf_mul(data_to_want[j], have_to_data[j*D + i]);
         }
     }
     // want = have_to_want * have
     for (size_t i = 0; i < size; i++) {
         want[i] = 0;
-        for (int j = 0; j < d; j++) {
+        for (int j = 0; j < D; j++) {
             want[i] ^= gf_mul(have_to_want[j], have[j][i]);
         }
     }
     // We're done.
-    free(mat_1);
-    free(mat_2);
+    free(scratch);
 }

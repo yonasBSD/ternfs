@@ -8,7 +8,7 @@ echo "$(tput bold)building requisites$(tput sgr0)"
 echo "$(tput bold)go tests$(tput sgr0)"
 (cd go && go test ./...)
 
-./cpp/run-tests.sh
+./cpp/tests.sh
 
 (cd go/integrationtest && go build .)
 

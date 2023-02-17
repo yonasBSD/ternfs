@@ -143,17 +143,17 @@ func (r *Rs) RecoverInto(
 		panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(block)))
 	}
 	for i, haveBlock := range haveBlocks {
-		if int(haveBlock) >= r.Parity().DataBlocks() {
-			panic(fmt.Errorf("have_blocks[%d]=%d >= %d", i, haveBlock, r.Parity().ParityBlocks()))
+		if int(haveBlock) >= r.Parity().Blocks() {
+			panic(fmt.Errorf("haveBlocks[%d]=%d >= %d", i, haveBlock, r.Parity().ParityBlocks()))
 		}
 		if haveBlock == wantBlock {
-			panic(fmt.Errorf("have_blocks[%d]=%d == want_block=%d", i, haveBlock, wantBlock))
+			panic(fmt.Errorf("haveBlocks[%d]=%d == want_block=%d", i, haveBlock, wantBlock))
 		}
 		if i == 0 {
 			continue
 		}
 		if haveBlock <= haveBlocks[i-1] {
-			panic(fmt.Errorf("have_blocks[%d]=%d <= have_blocks[%d-1]=%d", i, haveBlock, i, haveBlocks[i-1]))
+			panic(fmt.Errorf("haveBlocks[%d]=%d <= haveBlocks[%d-1]=%d", i, haveBlock, i, haveBlocks[i-1]))
 		}
 	}
 	blocksPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().DataBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))

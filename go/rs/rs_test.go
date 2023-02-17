@@ -16,12 +16,13 @@ func TestGet(t *testing.T) {
 
 func TestComputeParity(t *testing.T) {
 	rand := rand.New(rand.NewSource(0))
+	maxBlockSize := 100
+	buf := make([]byte, maxBlockSize*(16+16))
 	for i := 0; i < 16*16*100; i++ {
 		numData := int(2 + rand.Uint32()%(16-2))
 		numParity := int(1 + rand.Uint32()%(16-1))
 		blockSize := 1 + int(rand.Uint32()%100)
-		data := make([]byte, blockSize*(numData+numParity))
-		rand.Read(data[:blockSize*numData])
+		data := buf[:blockSize*numData]
 		blocks := make([][]byte, numData+numParity)
 		for i := range blocks {
 			blocks[i] = data[i*blockSize : (i+1)*blockSize]

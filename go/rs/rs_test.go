@@ -19,31 +19,23 @@ func TestComputeParity(t *testing.T) {
 	for i := 0; i < 16*16*100; i++ {
 		numData := int(2 + rand.Uint32()%(16-2))
 		numParity := int(1 + rand.Uint32()%(16-1))
-		data := make([]byte, 1+int(rand.Uint32()%1000))
-		rand.Read(data)
+		blockSize := 1 + int(rand.Uint32()%100)
+		data := make([]byte, blockSize*(numData+numParity))
+		rand.Read(data[:blockSize*numData])
+		blocks := make([][]byte, numData+numParity)
+		for i := range blocks {
+			blocks[i] = data[i*blockSize : (i+1)*blockSize]
+		}
 		rs := GetRs(MkParity(uint8(numData), uint8(numParity)))
-		dataBlocks := rs.SplitData(data)
-		parityBlocks := rs.ComputeParity(dataBlocks)
-		allBlocks := append(append([][]byte{}, dataBlocks...), parityBlocks...)
-		assert.Equal(t, rs.Parity().DataBlocks(), len(dataBlocks))
-		assert.Equal(t, rs.Parity().ParityBlocks(), len(parityBlocks))
-		// Verify that the concatenation is the original data
-		concatData := []byte{}
-		for _, dataBlock := range dataBlocks {
-			concatData = append(concatData, dataBlock...)
-		}
-		assert.Equal(t, data, concatData[:len(data)])
-		for _, b := range concatData[len(data):] {
-			assert.Equal(t, uint8(0), b)
-		}
+		rs.ComputeParityInto(blocks[:numData], blocks[numData:])
 		// Verify that the first parity block is the XOR of all the data blocks
-		expectedParity0 := make([]byte, len(dataBlocks[0]))
-		for _, dataBlock := range dataBlocks {
-			for i, b := range dataBlock {
-				expectedParity0[i] ^= b
+		expectedParity0 := make([]byte, blockSize)
+		for i := 0; i < numData; i++ {
+			for j, b := range blocks[i] {
+				expectedParity0[j] ^= b
 			}
 		}
-		assert.Equal(t, expectedParity0, parityBlocks[0])
+		assert.Equal(t, expectedParity0, blocks[numData])
 		// Restore a random block
 		{
 			haveBlocks := make([]uint8, numData+numParity)
@@ -62,10 +54,10 @@ func TestComputeParity(t *testing.T) {
 			sort.Slice(haveBlocks, func(i, j int) bool { return haveBlocks[i] < haveBlocks[j] })
 			have := make([][]byte, numData)
 			for i := range have {
-				have[i] = allBlocks[haveBlocks[i]]
+				have[i] = blocks[haveBlocks[i]]
 			}
 			recoveredBlock := rs.Recover(haveBlocks, have, wantBlock)
-			assert.Equal(t, allBlocks[wantBlock], recoveredBlock)
+			assert.Equal(t, blocks[wantBlock], recoveredBlock)
 		}
 	}
 }

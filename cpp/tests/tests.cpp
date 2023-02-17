@@ -639,54 +639,45 @@ TEST_CASE("crc32c") {
 TEST_CASE("RS") {
     uint64_t rand = 0;
     for (int i = 0; i < 16*16*100; i++) {
-        uint8_t numData = 2 + splitmix64(rand)%(16-2);
-        uint8_t numParity = 1 + splitmix64(rand)%(16-1);
-        std::vector<uint8_t> data(1 + splitmix64(rand)%1000);
-        for (size_t i = 0; i < data.size(); i++) {
+        int numData = 2 + splitmix64(rand)%(16-2);
+        int numParity = 1 + splitmix64(rand)%(16-1);
+        int blockSize = 1 + splitmix64(rand)%100;
+        std::vector<uint8_t> data(blockSize*(numData+numParity)); // all blocks
+        for (size_t i = 0; i < numData*blockSize; i++) { // fill data blocks with random bytes
             data[i] = splitmix64(rand) & 0xFF;
         }
-        Parity parity(numData, numParity);
-        auto rs = rs_get(parity.u8);
-        size_t blockSize = rs_block_size(rs, data.size());
-        // prepare data blocks
-        std::vector<uint8_t> blocks(blockSize*parity.blocks(), 0);
-        memcpy(&blocks[0], &data[0], data.size());
-        std::vector<const uint8_t*> dataBlocksPtrs(parity.dataBlocks());
-        for (int i = 0; i < parity.dataBlocks(); i++) {
-            dataBlocksPtrs[i] = &blocks[i*blockSize];
+        auto rs = rs_get(Parity(numData, numParity).u8);
+        std::vector<uint8_t*> blocksPtrs(numData+numParity);
+        for (int i = 0; i < numData+numParity; i++) {
+            blocksPtrs[i] = &data[i*blockSize];
         }
-        // prepare parity blocks
-        std::vector<uint8_t*> parityBlocksPtrs(parity.parityBlocks());
-        for (int i = 0; i < parity.parityBlocks(); i++) {
-            parityBlocksPtrs[i] = &blocks[(parity.dataBlocks()+i)*blockSize];
-        }
-        rs_compute_parity(rs, blockSize, &dataBlocksPtrs[0], &parityBlocksPtrs[0]);
+        rs_compute_parity(rs, blockSize, (const uint8_t**)&blocksPtrs[0], &blocksPtrs[numData]);
         // verify that the first parity block is the XOR of all the original data
         for (size_t i = 0; i < blockSize; i++) {
             uint8_t expectedParity = 0;
-            for (int j = 0; j < parity.dataBlocks(); j++) {
-                expectedParity ^= dataBlocksPtrs[j][i];
+            for (int j = 0; j < numData; j++) {
+                expectedParity ^= data[j*blockSize + i];
             }
-            REQUIRE(expectedParity == parityBlocksPtrs[0][i]);
+            REQUIRE(expectedParity == data[numData*blockSize + i]);
         }
         // restore a random block, using random blocks.
         {
-            std::vector<uint8_t> allBlocks(parity.blocks());
-            for (int i = 0; i < parity.blocks(); i++) {
+            std::vector<uint8_t> allBlocks(numData+numParity);
+            for (int i = 0; i < allBlocks.size(); i++) {
                 allBlocks[i] = i;
             }
-            for (int i = 0; i < std::min(parity.dataBlocks()+1, parity.blocks()-1); i++) {
-                std::swap(allBlocks[i], allBlocks[i+1+ splitmix64(rand)%(parity.blocks()-1-i)]);
+            for (int i = 0; i < std::min(numData+1, numData+numParity-1); i++) {
+                std::swap(allBlocks[i], allBlocks[i+1+ splitmix64(rand)%(numData+numParity-1-i)]);
             }
-            std::sort(allBlocks.begin(), allBlocks.begin()+parity.dataBlocks());
-            std::vector<const uint8_t*> havePtrs(parity.dataBlocks());
-            for (int i = 0; i < parity.dataBlocks(); i++) {
-                havePtrs[i] = &blocks[allBlocks[i]*blockSize];
+            std::sort(allBlocks.begin(), allBlocks.begin()+numData);
+            std::vector<const uint8_t*> havePtrs(numData);
+            for (int i = 0; i < numData; i++) {
+                havePtrs[i] = &data[allBlocks[i]*blockSize];
             }
-            uint8_t wantBlock = allBlocks[parity.dataBlocks()];
+            uint8_t wantBlock = allBlocks[numData];
             std::vector<uint8_t> recoveredBlock(blockSize);
             rs_recover(rs, blockSize, &allBlocks[0], &havePtrs[0], wantBlock, &recoveredBlock[0]);
-            std::vector<uint8_t> expectedBlock(blocks.begin() + wantBlock*blockSize, blocks.begin() + (wantBlock+1)*blockSize);
+            std::vector<uint8_t> expectedBlock(data.begin() + wantBlock*blockSize, data.begin() + (wantBlock+1)*blockSize);
             REQUIRE(expectedBlock == recoveredBlock);
         }
     }

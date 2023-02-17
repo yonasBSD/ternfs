@@ -1207,25 +1207,27 @@ struct ShardDBImpl {
                 }
             }
         } else {
-            // consistency check for the general case
-            //
-            // For parity mode 1+M (mirroring), for any M, the server can validate
-            // that the CRC of the span equals the CRC of every block.
-            // For N+M in the general case, it can probably validate that the CRC of
-            // the span equals the concatenation of the CRCs of the N, and that the
-            // CRC of the 1st of the M equals the XOR of the CRCs of the N.
-            // It cannot validate anything about the rest of the M though (scrubbing
-            // can validate the rest, if it wants to, but it would be too expensive
-            // for the shard to validate).
+            // Consistency check for the general case. Given what we do in
+            // `rs.h`, we know that the span is the concatenation of the
+            // data blocks, and that the first parity block is the XOR of the
+            // data blocks. We can't check the rest without the data though.
             std::array<uint8_t, 4> blocksCrc32;
             memset(&blocksCrc32[0], 0, 4);
+            std::array<uint8_t, 4> parity0Crc32;
+            memset(&parity0Crc32[0], 0, 4);
             for (const auto& block: req.bodyBlocks.els) {
                 blocksCrc32 = crc32cCombine(blocksCrc32, block.crc32.data, req.blockSize);
+                parity0Crc32[0] ^= blocksCrc32[0];
+                parity0Crc32[1] ^= blocksCrc32[1];
+                parity0Crc32[2] ^= blocksCrc32[2];
+                parity0Crc32[3] ^= blocksCrc32[3];
             }
             if (req.crc32.data != blocksCrc32) {
                 return false;
             }
-            // TODO check parity block CRC32
+            if (req.bodyBlocks.els[req.parity.dataBlocks()].crc32.data != parity0Crc32) {
+                return false;
+            }
         }
 
         return true;

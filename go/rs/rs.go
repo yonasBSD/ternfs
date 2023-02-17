@@ -73,30 +73,6 @@ func (r *Rs) Parity() Parity {
 	return Parity(C.rs_parity(r.r))
 }
 
-func (r *Rs) BlockSize(size int) int {
-	if size < 0 {
-		panic(fmt.Errorf("negative size %v", size))
-	}
-	return int(C.rs_block_size(r.r, C.ulong(size)))
-}
-
-func (r *Rs) SplitData(data []byte) [][]byte {
-	if len(data) == 0 {
-		panic("empty data")
-	}
-	dataBlocks := make([][]byte, r.Parity().DataBlocks())
-	blockSize := r.BlockSize(len(data))
-	for i := range dataBlocks {
-		dataBlocks[i] = make([]byte, blockSize)
-		// some blocks might be entirely empty, if the data is small and the number
-		// of data blocks is large
-		if i*blockSize <= len(data) {
-			copy(dataBlocks[i], data[i*blockSize:])
-		}
-	}
-	return dataBlocks
-}
-
 func (r *Rs) ComputeParity(data [][]byte) [][]byte {
 	parity := make([][]byte, r.Parity().ParityBlocks())
 	blockSize := len(data[0])
@@ -115,7 +91,7 @@ func (r *Rs) checkBlockSize(data [][]byte, parity [][]byte) int {
 	blockSize := len(data[0])
 	for i := range data {
 		if len(data[i]) != blockSize {
-			panic(fmt.Errorf("bad block size, expected %v, got %v", blockSize, len(data[i])))
+			panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(data[i])))
 		}
 	}
 	if parity != nil {
@@ -124,13 +100,9 @@ func (r *Rs) checkBlockSize(data [][]byte, parity [][]byte) int {
 		}
 		for i := range parity {
 			if len(parity[i]) != blockSize {
-				panic(fmt.Errorf("bad block size, expected %v, got %v", blockSize, len(parity[i])))
+				panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(parity[i])))
 			}
 		}
-	}
-	expectedBlockSize := r.BlockSize(blockSize * len(data))
-	if expectedBlockSize != blockSize {
-		panic(fmt.Errorf("bad block size, expected %v, got %v", expectedBlockSize, blockSize))
 	}
 	return blockSize
 }
@@ -168,9 +140,22 @@ func (r *Rs) RecoverInto(
 ) {
 	blockSize := r.checkBlockSize(blocks, nil)
 	if len(block) != blockSize {
-		panic(fmt.Errorf("bad block size, expected %v, got %v", blockSize, len(block)))
+		panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(block)))
 	}
-	// TODO check forr sortedness etc.
+	for i, haveBlock := range haveBlocks {
+		if int(haveBlock) >= r.Parity().DataBlocks() {
+			panic(fmt.Errorf("have_blocks[%d]=%d >= %d", i, haveBlock, r.Parity().ParityBlocks()))
+		}
+		if haveBlock == wantBlock {
+			panic(fmt.Errorf("have_blocks[%d]=%d == want_block=%d", i, haveBlock, wantBlock))
+		}
+		if i == 0 {
+			continue
+		}
+		if haveBlock <= haveBlocks[i-1] {
+			panic(fmt.Errorf("have_blocks[%d]=%d <= have_blocks[%d-1]=%d", i, haveBlock, i, haveBlocks[i-1]))
+		}
+	}
 	blocksPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().DataBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))
 	for i := range blocks {
 		C.set_ptr(blocksPtrs, C.ulong(i), (*C.uchar)(&blocks[i][0]))

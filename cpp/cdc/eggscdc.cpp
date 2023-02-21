@@ -11,8 +11,8 @@
 void usage(const char* binary) {
     fprintf(stderr, "Usage: %s DIRECTORY\n\n", binary);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, " -log-level debug|info|error\n");
-    fprintf(stderr, "    	Note that 'debug' will only work for debug builds.\n");
+    fprintf(stderr, " -log-level trace|debug|info|error\n");
+    fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
     fprintf(stderr, " -verbose\n");
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
     fprintf(stderr, " -shuckle host:port\n");

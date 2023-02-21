@@ -32,3 +32,20 @@ std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr) {
     out << buf << ":" << ntohs(addr.sin_port);
     return out;
 }
+
+std::ostream& goLangBytesFmt(std::ostream& out, const char* str, size_t len) {
+    out << "[";
+    const uint8_t* data = (const uint8_t*)str;
+    for (int i = 0; i < len; i++) {
+        if (i > 0) {
+            out << " ";
+        }
+        out << (int)data[i];
+    }
+    out << "]";
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const GoLangBytesFmt& bytes) {
+    return goLangBytesFmt(out, bytes.str, bytes.len);
+}

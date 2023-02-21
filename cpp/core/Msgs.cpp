@@ -36,3 +36,10 @@ static const std::unordered_map<std::string, uint8_t> STORAGE_CLASSES_BY_NAME = 
 uint8_t storageClassByName(const char* name) {
     return STORAGE_CLASSES_BY_NAME.at(name);
 }
+
+std::ostream& operator<<(std::ostream& out, Crc crc) {
+    char buf[9];
+    sprintf(buf, "%08x", crc.u32);
+    out << buf;
+    return out;
+}

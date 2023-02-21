@@ -33,49 +33,28 @@
                 <td><code>{{.Mtime}}</code></td>
             </tr>
             <tr>
-                <th>Policy</th>
+                <th>Info</th>
                 <td>
                     <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <td></td>
+                                <th>Inherited from</th>
+                                <th>Body</th>
+                            </tr>
+                        </thead>
                         <tbody>
-                            {{if not (eq .Info.InheritedFrom "")}}
+                            {{range $entry := .Info}}
                                 <tr>
-                                    <th>Inherited from</th>
-                                    <td><a href="/browse?id={{.Info.InheritedFrom}}"><code>{{.Info.InheritedFrom}}</code></a></td>
+                                    <td>{{$entry.Tag}}</td> 
+                                    <td>
+                                        {{if $entry.InheritedFrom}}
+                                            <a href="/browse?id={{$entry.InheritedFrom}}"><code>{{$entry.InheritedFrom}}</code></a>
+                                        {{end}}
+                                    </td>
+                                    <td>{{$entry.Body}}</td>
                                 </tr>
                             {{end}}
-                            <tr>
-                                <th>DeleteAfterVersions</th>
-                                <td>{{.Info.DeleteAfterVersions}}</td>
-                            </tr>
-                            <tr>
-                                <th>DeleteAfterTime</th>
-                                <td>{{.Info.DeleteAfterTime}}</td>
-                            </tr>
-                            <tr>
-                                <th>SpanPolicies</th>
-                                <td>
-                                    <table class="table table-sm mb-0">
-                                        <tr>
-                                            <th>MaxSize</th>
-                                            {{range $policy := .Info.SpanPolicies}}
-                                                <td>{{$policy.MaxSize}}</td>
-                                            {{end}}
-                                        </tr>
-                                        <tr>
-                                            <th>StorageClass</th>
-                                            {{range $policy := .Info.SpanPolicies}}
-                                                <td>{{$policy.StorageClass}}</td>
-                                            {{end}}
-                                        </tr>
-                                        <tr>
-                                            <th>Parity</th>
-                                            {{range $policy := .Info.SpanPolicies}}
-                                                <td>{{$policy.Parity}}</td>
-                                            {{end}}
-                                        </tr>
-                                    </table>
-                                </td>
-                            </tr>
                         </tbody>
                     </table>    
                 </td>

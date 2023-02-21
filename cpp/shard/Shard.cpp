@@ -20,8 +20,8 @@
 #include "Shuckle.hpp"
 #include "Time.hpp"
 #include "Undertaker.hpp"
-#include "splitmix64.hpp"
 #include "Time.hpp"
+#include "wyhash.h"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -162,7 +162,7 @@ public:
                 continue;
             }
 
-            if (splitmix64(_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
+            if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
                 LOG_DEBUG(_env, "artificially dropping request %s", reqHeader.requestId);
                 continue;
             }
@@ -215,7 +215,8 @@ public:
 
             BincodeBuf respBbuf(sendBuf.data(), sendBuf.size());
             if (err == NO_ERROR) {
-                LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s: %s", reqHeader.requestId, respContainer->kind(), elapsed, *respContainer);
+                LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s", reqHeader.requestId, respContainer->kind(), elapsed);
+                LOG_TRACE(_env, "resp body: %s", *respContainer);
                 ShardResponseHeader(reqHeader.requestId, respContainer->kind()).pack(respBbuf);
                 respContainer->pack(respBbuf);
             } else {
@@ -224,7 +225,7 @@ public:
                 respBbuf.packScalar<uint16_t>((uint16_t)err);
             }
 
-            if (splitmix64(_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
+            if (wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
                 LOG_DEBUG(_env, "artificially dropping response %s", reqHeader.requestId);
                 continue;
             }

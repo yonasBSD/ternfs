@@ -44,7 +44,7 @@ struct ShardInfoBody {
     void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
 
     U8_VAL    (ShardId, shardId,      setShardId,   0)
-    FBYTES_VAL(16,      secretKey,    setSecretKey, 1)
+    FBYTES_VAL(16,    secretKey,   setSecretKey, 1)
 };
 
 struct BlockServiceKey {
@@ -184,10 +184,77 @@ struct SpanKey {
     BE64_VAL(uint64_t, offset, setOffset, 8)
 };
 
-struct PACKED BlockBody {
-    uint64_t blockId;
-    uint64_t blockServiceId;
-    std::array<uint8_t, 4> crc32;
+struct BlockBody {
+    char* _data;
+
+    static constexpr size_t SIZE =
+        sizeof(uint64_t) +
+        sizeof(uint64_t) +
+        sizeof(uint32_t);
+
+    LE_VAL(uint64_t, blockService, setBlockService, 0);
+    LE_VAL(uint64_t, blockId,      setBlockId,      8);
+    LE_VAL(uint32_t, crc,          setCrc,         16);
+};
+
+struct SpanBlocksBody {
+    char* _data;
+
+    static constexpr size_t MIN_SIZE =
+        sizeof(uint8_t) +               // parity
+        sizeof(uint8_t) +               // stripes
+        sizeof(uint32_t);               // cellSize
+        // after this:
+        // * []BlockBody blocks
+        // * []u32 stripesCrc
+
+    U8_VAL(Parity,   parity,    setParity,      0)
+    U8_VAL(uint8_t,  stripes,   setStripes,     1)
+    LE_VAL(uint32_t, cellSize,  setCellSize,    2)
+
+    SpanBlocksBody(char* data) : _data(data) {}
+
+    static size_t calcSize(Parity parity, uint8_t stripes) {
+        ALWAYS_ASSERT(stripes > 0 && stripes < 16);
+        ALWAYS_ASSERT(parity.dataBlocks() > 0);
+        return MIN_SIZE + BlockBody::SIZE*parity.blocks() + sizeof(uint32_t)*stripes;
+    }
+
+    void afterAlloc(Parity parity, uint8_t stripes) {
+        setParity(parity.u8);
+        setStripes(stripes);
+    }
+
+    size_t size() const {
+        return MIN_SIZE + BlockBody::SIZE*parity().blocks() + sizeof(uint32_t)*stripes();
+    }
+
+    const BlockBody block(uint64_t ix) const {
+        ALWAYS_ASSERT(ix < parity().blocks());
+        BlockBody b;
+        b._data = _data + MIN_SIZE + ix * BlockBody::SIZE;
+        return b;
+    }
+    BlockBody block(uint64_t ix) {
+        ALWAYS_ASSERT(ix < parity().blocks());
+        BlockBody b;
+        b._data = _data + MIN_SIZE + ix * BlockBody::SIZE;
+        return b;
+    }
+
+    uint32_t stripeCrc(uint64_t ix) const {
+        static_assert(std::endian::native == std::endian::little);
+        ALWAYS_ASSERT(ix < stripes());
+        uint32_t crc;
+        memcpy(&crc, _data + MIN_SIZE + parity().blocks()*BlockBody::SIZE + ix*sizeof(uint32_t), sizeof(uint32_t));
+        return crc;
+    }
+
+    void setStripeCrc(uint64_t ix, uint32_t crc) {
+        static_assert(std::endian::native == std::endian::little);
+        ALWAYS_ASSERT(ix < stripes());
+        memcpy(_data + MIN_SIZE + parity().blocks()*BlockBody::SIZE + ix*sizeof(uint32_t), &crc, sizeof(uint32_t));
+    }
 };
 
 struct SpanBody {
@@ -195,62 +262,15 @@ struct SpanBody {
 
     static constexpr size_t MIN_SIZE =
         sizeof(uint32_t) +               // size
-        sizeof(uint32_t) +               // blockSize
-        sizeof(std::array<uint8_t, 4>) + // crc32
-        sizeof(uint8_t) +                // storageClass
-        sizeof(Parity);                  // parity
+        sizeof(uint32_t) +               // crc
+        sizeof(uint8_t);                 // storageClass
         // after this:
-        // * Nothing for zero spans
-        // * inline body for inline spans
-        // * the blocks otherwise
-    
-    static constexpr size_t BLOCK_BODY_SIZE = sizeof(BlockBody);
-
-    void checkSize(size_t sz) {
-        ALWAYS_ASSERT(sz >= MIN_SIZE);
-        if (storageClass() == INLINE_STORAGE) {
-            ALWAYS_ASSERT(sz >= MIN_SIZE+1); // length
-        }
-        ALWAYS_ASSERT(sz == size());
-    }
-
-    static size_t calcSize(uint8_t storageClass, Parity parity, const BincodeBytes& inlineBody) {
-        ALWAYS_ASSERT(storageClass != EMPTY_STORAGE);
-        if (storageClass == INLINE_STORAGE) {
-            ALWAYS_ASSERT(parity == Parity());
-            ALWAYS_ASSERT(inlineBody.size() > 0);
-            return MIN_SIZE + 1 + inlineBody.size();
-        } else {
-            ALWAYS_ASSERT(inlineBody.size() == 0);
-            ALWAYS_ASSERT(parity.blocks() > 0);
-            return MIN_SIZE + BLOCK_BODY_SIZE*parity.blocks();
-        }
-    }
-
-    void afterAlloc(uint8_t storageClass, Parity parity, const BincodeBytesRef& inlineBody) {
-        setStorageClass(storageClass);
-        setParity(parity);
-        if (storageClass == INLINE_STORAGE) {
-            setInlineBody(inlineBody);
-        }
-    }
-
-    size_t size() const {
-        ALWAYS_ASSERT(storageClass() != EMPTY_STORAGE);
-        size_t sz = MIN_SIZE;
-        if (storageClass() == INLINE_STORAGE) {
-            sz += 1 + (uint8_t)(int)*(_data + MIN_SIZE);
-        } else {
-            sz += BLOCK_BODY_SIZE * parity().blocks();
-        }
-        return sz;
-    }
+        // * Inline body for inline spans (bytes)
+        // * Blocks for normal spans
 
     LE_VAL(uint32_t, spanSize,     setSpanSize,      0)
-    LE_VAL(uint32_t, blockSize,    setBlockSize,     4)
-    FBYTES_VAL(4,    crc32,        setCrc32,         8)
-    U8_VAL(uint8_t,  storageClass, setStorageClass, 12)
-    U8_VAL(Parity,   parity,       setParity,       13)
+    LE_VAL(uint32_t, crc,          setCrc,           4)
+    U8_VAL(uint8_t,  storageClass, setStorageClass,  8)
 
     BincodeBytesRef inlineBody() const {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
@@ -264,17 +284,50 @@ struct SpanBody {
         memcpy(_data+offset+1, body.data(), body.size());
     }
 
-    BlockBody block(uint64_t ix) const {
-        ALWAYS_ASSERT(storageClass() != INLINE_STORAGE);
-        ALWAYS_ASSERT(ix < parity().blocks());
-        BlockBody b;
-        memcpy(&b, _data + MIN_SIZE + ix * sizeof(BlockBody), sizeof(BlockBody));
-        return b;
+    void checkSize(size_t sz) {
+        ALWAYS_ASSERT(sz >= MIN_SIZE);
+        if (storageClass() == INLINE_STORAGE) {
+            ALWAYS_ASSERT(sz >= MIN_SIZE+1); // length
+        }
+        ALWAYS_ASSERT(sz == size());
     }
-    void setBlock(uint64_t ix, const BlockBody& b) {
+
+    // inline
+    static size_t calcSize(const BincodeBytesRef& inlineBody) {
+        return MIN_SIZE + 1 + inlineBody.size();
+    }
+    void afterAlloc(const BincodeBytesRef& inlineBody) {
+        setStorageClass(INLINE_STORAGE);
+        setInlineBody(inlineBody);
+    }
+
+    // blocks
+    static size_t calcSize(uint8_t storageClass, Parity parity, uint8_t stripes) {
+        ALWAYS_ASSERT(storageClass != EMPTY_STORAGE && storageClass != INLINE_STORAGE);
+        return MIN_SIZE + SpanBlocksBody::calcSize(parity, stripes);
+    }
+    void afterAlloc(uint8_t storageClass, Parity parity, uint8_t stripes) {
+        setStorageClass(storageClass);
+        blocksBody().afterAlloc(parity, stripes);
+    }
+    SpanBlocksBody blocksBody() {
         ALWAYS_ASSERT(storageClass() != INLINE_STORAGE);
-        ALWAYS_ASSERT(ix < parity().blocks());
-        memcpy(_data + MIN_SIZE + ix * sizeof(BlockBody), &b, sizeof(BlockBody));
+        return SpanBlocksBody(_data + MIN_SIZE);
+    }
+    const SpanBlocksBody blocksBody() const {
+        ALWAYS_ASSERT(storageClass() != INLINE_STORAGE);
+        return SpanBlocksBody(_data + MIN_SIZE);
+    }
+
+    size_t size() const {
+        ALWAYS_ASSERT(storageClass() != EMPTY_STORAGE);
+        size_t sz = MIN_SIZE;
+        if (storageClass() == INLINE_STORAGE) {
+            sz += 1 + (uint8_t)(int)*(_data + MIN_SIZE);
+        } else {
+            sz += blocksBody().size();
+        }
+        return sz;
     }
 };
 
@@ -286,51 +339,41 @@ enum class HashMode : uint8_t {
 struct DirectoryBody {
     char* _data;
 
-    // `infoInherited` tells us whether we should inherit the info from the
-    // parent directory. Moreover, we might have a directory with no owner
-    // (a snapshot directory). So, there are two cases where we have directory
-    // info:
-    //
-    // * `inherited == false`;
-    // * `ownerId == NULL_INODE_ID`.
-    //
-    // In any case, after the fields below we have a BincodeBytes, which must be
-    // empty if neither of the two conditions above are met.
+    // After the static data we have a u16 length of the directory info, and then
+    // the directory info in bincode form, that is to say [tag: u8; len: u8; bytes; ...].
 
     static constexpr size_t MIN_SIZE =
         sizeof(InodeId) +  // ownerId
         sizeof(EggsTime) + // mtime
         sizeof(HashMode) + // hashMode
-        sizeof(bool) +     // infoInherited
-        sizeof(uint8_t);   // infoLength
-    static constexpr size_t MAX_SIZE = MIN_SIZE + 255;
+        sizeof(uint16_t);  // infoLength
 
     LE_VAL(InodeId,  ownerId,          setOwnerId,           0)
     LE_VAL(EggsTime, mtime,            setMtime,             8)
     U8_VAL(HashMode, hashMode,         setHashMode,         16)
-    U8_VAL(bool,     infoInherited,    setInfoInherited,    17)
-    BYTES_VAL(infoUnchecked, setInfoUnchecked,              18)
+    LE_VAL(uint16_t, infoLength,       setInfoLength,       17)
 
     size_t size() const {
-        return MIN_SIZE + infoUnchecked().size();
+        return MIN_SIZE + infoLength();
     }
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE);
         ALWAYS_ASSERT(sz == size());
     }
-    
-    bool mustHaveInfo() const {
-        return !infoInherited();
+
+    static size_t calcSize(const DirectoryInfo& dirInfo) {
+        return MIN_SIZE + dirInfo.packedSize();
     }
 
-    BincodeBytesRef info() const {
-        ALWAYS_ASSERT(!mustHaveInfo() || (infoUnchecked().size() > 0));
-        return infoUnchecked();
+    void afterAlloc(const DirectoryInfo& dirInfo) {
+        setInfoLength(dirInfo.packedSize());
+        BincodeBuf bbuf(_data+MIN_SIZE, infoLength());
+        dirInfo.pack(bbuf);
     }
 
-    void setInfo(const BincodeBytesRef& bytes) {
-        ALWAYS_ASSERT(!mustHaveInfo() || (bytes.size() > 0));
-        setInfoUnchecked(bytes);
+    void info(DirectoryInfo& i) const {
+        BincodeBuf bbuf(_data+MIN_SIZE, infoLength());
+        i.unpack(bbuf);
     }
 };
 

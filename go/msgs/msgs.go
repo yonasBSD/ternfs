@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/rs"
 )
 
 //go:generate go run ../bincodegen
@@ -21,11 +22,11 @@ type InodeType uint8
 type InodeId uint64
 type InodeIdExtra uint64 // 64th bit is used to mark whether the inode is owned.
 type ShardId uint8
-type Parity uint8
 type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
 type BlockServiceId uint64
+type Crc uint32
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -55,6 +56,14 @@ const SHUCKLE_REQ_PROTOCOL_VERSION uint32 = 0x554853
 // >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
 // '1554853'
 const SHUCKLE_RESP_PROTOCOL_VERSION uint32 = 0x1554853
+
+// >>> format(struct.unpack('<I', b'BLO\0')[0], 'x')
+// '4f4c42'
+const BLOCKS_REQ_PROTOCOL_VERSION uint32 = 0x4f4c42
+
+// >>> format(struct.unpack('<I', b'BLO\1')[0], 'x')
+// '14f4c42'
+const BLOCKS_RESP_PROTOCOL_VERSION uint32 = 0x14f4c42
 
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
@@ -177,66 +186,15 @@ func (t EggsTime) String() string {
 
 type ErrCode uint16
 
-func (err *ErrCode) Pack(w io.Writer) error {
-	return bincode.PackScalar(w, uint16(*err))
-}
-
-func (errCode *ErrCode) Unpack(r io.Reader) error {
-	var c uint16
-	if err := bincode.UnpackScalar(r, &c); err != nil {
-		return err
-	}
-	*errCode = ErrCode(c)
-	return nil
-}
-
 type ShardMessageKind uint8
 
 type CDCMessageKind uint8
 
 type ShuckleMessageKind uint8
 
+type BlocksMessageKind uint8
+
 const ERROR uint8 = 0
-
-func MkParity(dataBlocks uint8, parityBlocks uint8) Parity {
-	if dataBlocks == 0 || dataBlocks >= 16 {
-		panic(fmt.Errorf("bad data blocks %v", dataBlocks))
-	}
-	if parityBlocks >= 16 {
-		panic(fmt.Errorf("bad parity blocks %v", parityBlocks))
-	}
-	return Parity(dataBlocks | (parityBlocks << 4))
-}
-
-func (parity Parity) DataBlocks() int {
-	return int(parity) & 0x0F
-}
-func (parity Parity) ParityBlocks() int {
-	return int(parity) >> 4
-}
-func (parity Parity) Blocks() int {
-	return parity.DataBlocks() + parity.ParityBlocks()
-}
-
-func (parity Parity) String() string {
-	return fmt.Sprintf("(%v,%v)", parity.DataBlocks(), parity.ParityBlocks())
-}
-
-func (p Parity) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]int{p.DataBlocks(), p.ParityBlocks()})
-}
-
-func (p *Parity) UnmarshalJSON(b []byte) error {
-	var nums []uint8
-	if err := json.Unmarshal(b, &nums); err != nil {
-		return err
-	}
-	if len(nums) != 2 {
-		return fmt.Errorf("expecting a list of 2 numbers for parity value, got %v", nums)
-	}
-	*p = MkParity(nums[0], nums[1])
-	return nil
-}
 
 const (
 	EMPTY_STORAGE  StorageClass = 0
@@ -275,20 +233,16 @@ func (s StorageClass) String() string {
 	}
 }
 
+func (crc Crc) String() string {
+	return fmt.Sprintf("%08x", uint32(crc))
+}
+
+func (crc *Crc) Unpack(r io.Reader) error {
+	return bincode.UnpackScalar(r, (*uint32)(crc))
+}
+
 // --------------------------------------------------------------------
 // Shard requests/responses
-
-type ShardRequest interface {
-	bincode.Packable
-	bincode.Unpackable
-	ShardRequestKind() ShardMessageKind
-}
-
-type ShardResponse interface {
-	bincode.Packable
-	bincode.Unpackable
-	ShardResponseKind() ShardMessageKind
-}
 
 // Given directory inode and name, returns inode from outgoing
 // current edge. Does not consider non-current directories and
@@ -359,26 +313,22 @@ type StatDirectoryReq struct {
 	Id InodeId
 }
 
-type SetDirectoryInfo struct {
-	// If `Inherited = true`, `Body` should be empty, and vice-versa.
-	//
-	// Note that while we keep the directory info opaque in all the
-	// shard/cdc APIs, we do define the relevant data structure here,
-	// since we need them among other things to perform GC
-	// (see `DirectoryInfoBody`).
-	Inherited bool
-	Body      []byte
+type DirectoryInfoEntry struct {
+	Tag  DirectoryInfoTag
+	Body []byte
+}
+
+// The directory info is a bunch of tagged entries. If we want a tag
+// for a directory, if we don't have it in the current directory we
+// need to traverse upwards until we find it.
+type DirectoryInfo struct {
+	Entries []DirectoryInfoEntry
 }
 
 type StatDirectoryResp struct {
 	Mtime EggsTime
 	Owner InodeId // if NULL_INODE_ID, the directory is currently snapshot
-	// If this is empty, then the client should traverse upwards and
-	// ask the owner to find out what the info is (this might require
-	// multiple hops).
-	//
-	// If `Owner = NULL_INODE_ID`, then `DirectoryInfo` will not be empty.
-	Info []byte
+	Info  DirectoryInfo
 }
 
 // Does not consider snaphsot/transient directories, unlike `StatDirectoryReq`.
@@ -416,9 +366,17 @@ type ConstructFileResp struct {
 	Cookie [8]byte
 }
 
-type NewBlockInfo struct {
-	Crc32 [4]byte
+type AddInlineSpanReq struct {
+	FileId       InodeId
+	Cookie       [8]byte
+	StorageClass StorageClass // Either EMPTY_STORAGE or INLINE_STORAGE
+	ByteOffset   uint64
+	Size         uint32
+	Crc          Crc
+	Body         []byte
 }
+
+type AddInlineSpanResp struct{}
 
 type BlockServiceBlacklist struct {
 	Id BlockServiceId
@@ -435,29 +393,24 @@ type BlockServiceBlacklist struct {
 // * The span size can be greater than the sum of data blocks, in which case trailing
 //     zeros are added. This is to support cheap creation of gaps in the file.
 //
-// The empty storage class (EMPTY_STORAGE) is only used for heartbeats -- it never produces
-// spans in the file. So all spans you can read will be with storage class > 0.
-//
-// The inline storage class (INLINE_STORAGE) allows small files (< 256 bytes) to be stored
-// directly in the metadata.
+// The storage class must not be EMPTY_STORAGE or INLINE_STORAGE.
 type AddSpanInitiateReq struct {
 	FileId       InodeId
 	Cookie       [8]byte
-	ByteOffset   uint64 `bincode:"varint"`
+	ByteOffset   uint64
+	Size         uint32
+	Crc          Crc
 	StorageClass StorageClass
 	// A single element of these matches if all the nonzero elements in it match.
 	// This is useful when the kernel knows it cannot communicate with a certain block
 	// service (because it noticed that it is broken before shuckle/shard did, or
 	// because of some transient network problem, or...).
 	Blacklist []BlockServiceBlacklist
-	Parity    Parity
-	Crc32     [4]byte
-	Size      uint64 `bincode:"varint"`
-	BlockSize uint64 `bincode:"varint"`
-	// empty if storage class not inline
-	BodyBytes []byte
-	// empty if storage class zero/inline
-	BodyBlocks []NewBlockInfo
+	Parity    rs.Parity
+	Stripes   uint8 // [1, 15]
+	CellSize  uint32
+	// Stripes x Parity.Blocks() array with the CRCs for every cell -- row-major.
+	Crcs []Crc
 }
 
 type BlockInfo struct {
@@ -485,7 +438,7 @@ type BlockProof struct {
 type AddSpanCertifyReq struct {
 	FileId     InodeId
 	Cookie     [8]byte
-	ByteOffset uint64 `bincode:"varint"`
+	ByteOffset uint64
 	Proofs     []BlockProof
 }
 
@@ -497,7 +450,7 @@ type RemoveSpanInitiateReq struct {
 }
 
 type RemoveSpanInitiateResp struct {
-	ByteOffset uint64 `bincode:"varint"`
+	ByteOffset uint64
 	// If empty, this is a blockless span, and no certification is required
 	Blocks []BlockInfo
 }
@@ -505,7 +458,7 @@ type RemoveSpanInitiateResp struct {
 type RemoveSpanCertifyReq struct {
 	FileId     InodeId
 	Cookie     [8]byte
-	ByteOffset uint64 `bincode:"varint"`
+	ByteOffset uint64
 	Proofs     []BlockProof
 }
 
@@ -547,29 +500,52 @@ type SoftUnlinkFileResp struct{}
 // somewhere without hunting for the right span).
 type FileSpansReq struct {
 	FileId     InodeId
-	ByteOffset uint64 `bincode:"varint"`
+	ByteOffset uint64
 }
 
 type FetchedBlock struct {
 	BlockServiceIx uint8 // Index into `BlockServices`
 	BlockId        BlockId
-	Crc32          [4]byte
+	Crc            Crc
 }
 
-// If the storage class is zero-filled, BodyBytes and BodyBlocks are empty.
-// If the storage class is inline, BodyBlocks is empty.
-// If the storage class is not inline, BodyBytes is empty.
-type FetchedSpan struct {
-	ByteOffset   uint64 `bincode:"varint"`
-	Parity       Parity
+type FetchedInlineSpan struct {
+	Body []byte
+}
+
+func (f *FetchedInlineSpan) String() string {
+	return fmt.Sprintf("%v", f.Body)
+}
+
+type FetchedBlocksSpan struct {
+	Parity     rs.Parity
+	Stripes    uint8 // [0, 16)
+	CellSize   uint32
+	Blocks     []FetchedBlock
+	StripesCrc []Crc
+}
+
+func (f *FetchedBlocksSpan) String() string {
+	return fmt.Sprintf("%+v", *f)
+}
+
+type IsFetchedSpanBody interface {
+	bincode.Packable
+	bincode.Unpackable
+}
+
+type FetchedSpanHeader struct {
+	ByteOffset   uint64
+	Size         uint32
+	Crc          Crc
 	StorageClass StorageClass
-	Crc32        [4]byte
-	Size         uint64 `bincode:"varint"`
-	// See comment for AddSpanInitiateReq for explanations regarding span
-	// vs block size, and also body bytes vs. body blocks
-	BlockSize  uint64 `bincode:"varint"`
-	BodyBytes  []byte
-	BodyBlocks []FetchedBlock
+}
+
+// If StorageClass is `INLINE_STORAGE`, then the `Body` will be `FetchedInlineSpan`.
+// Otherwise it'll be `FetchedBlockSpan`.
+type FetchedSpan struct {
+	Header FetchedSpanHeader
+	Body   IsFetchedSpanBody
 }
 
 type BlockService struct {
@@ -586,7 +562,7 @@ type BlockService struct {
 }
 
 type FileSpansResp struct {
-	NextOffset    uint64 `bincode:"varint"`
+	NextOffset    uint64
 	BlockServices []BlockService
 	Spans         []FetchedSpan
 }
@@ -697,7 +673,7 @@ type FullReadDirResp struct {
 type CreateDirectoryInodeReq struct {
 	Id      InodeId
 	OwnerId InodeId
-	Info    SetDirectoryInfo
+	Info    DirectoryInfo
 }
 
 type CreateDirectoryInodeResp struct {
@@ -716,9 +692,9 @@ type SetDirectoryOwnerResp struct{}
 // This is needed to remove directories -- but again, it can break invariants.
 type RemoveDirectoryOwnerReq struct {
 	DirId InodeId
-	// We need this since we're removing the OwnerId. This field must
-	// be non-empty.
-	Info []byte
+	// We need the full directory info when removing a directory since we won't
+	// be able to inherit it anymore.
+	Info DirectoryInfo
 }
 
 type RemoveDirectoryOwnerResp struct{}
@@ -814,7 +790,7 @@ type MakeFileTransientResp struct{}
 
 type SetDirectoryInfoReq struct {
 	Id   InodeId
-	Info SetDirectoryInfo
+	Info DirectoryInfo
 }
 
 type SetDirectoryInfoResp struct{}
@@ -854,22 +830,10 @@ type ExpireTransientFileResp struct{}
 // --------------------------------------------------------------------
 // CDC requests/responses
 
-type CDCRequest interface {
-	bincode.Packable
-	bincode.Unpackable
-	CDCRequestKind() CDCMessageKind
-}
-
-type CDCResponse interface {
-	bincode.Packable
-	bincode.Unpackable
-	CDCResponseKind() CDCMessageKind
-}
-
 type MakeDirectoryReq struct {
 	OwnerId InodeId
 	Name    string
-	Info    SetDirectoryInfo
+	Info    DirectoryInfo
 }
 
 type MakeDirectoryResp struct {
@@ -942,10 +906,41 @@ type CrossShardHardUnlinkFileResp struct{}
 // --------------------------------------------------------------------
 // directory info
 
-type SpanPolicy struct {
-	MaxSize      uint64
-	StorageClass StorageClass
-	Parity       Parity
+type DirectoryInfoTag uint8
+
+const SNAPSHOT_POLICY_TAG DirectoryInfoTag = 1
+const SPAN_POLICY_TAG DirectoryInfoTag = 2
+const BLOCK_POLICY_TAG DirectoryInfoTag = 3
+const STRIPE_POLICY_TAG DirectoryInfoTag = 4
+
+func (d DirectoryInfoTag) String() string {
+	switch d {
+	case SNAPSHOT_POLICY_TAG:
+		return "SNAPSHOT"
+	case SPAN_POLICY_TAG:
+		return "SPAN"
+	case BLOCK_POLICY_TAG:
+		return "BLOCK"
+	case STRIPE_POLICY_TAG:
+		return "STRIPE"
+	default:
+		return fmt.Sprintf("DirectoryInfoTag(%v)", uint8(d))
+	}
+}
+
+func DirInfoTagFromName(s string) DirectoryInfoTag {
+	switch s {
+	case "SNAPSHOT":
+		return SNAPSHOT_POLICY_TAG
+	case "SPAN":
+		return SPAN_POLICY_TAG
+	case "BLOCK":
+		return BLOCK_POLICY_TAG
+	case "STRIPE":
+		return STRIPE_POLICY_TAG
+	default:
+		panic(fmt.Errorf("bad dir info tag string '%v'", s))
+	}
 }
 
 // MSB: whether this policy is active or not. After: nanoseconds.
@@ -978,26 +973,6 @@ func ActiveDeleteAfterTime(duration time.Duration) DeleteAfterTime {
 	return DeleteAfterTime((uint64(1) << 63) | uint64(duration.Nanoseconds()))
 }
 
-func (dat *DeleteAfterTime) UnmarshalJSON(b []byte) error {
-	var spec struct {
-		Active bool
-		Time   string
-	}
-	if err := json.Unmarshal(b, &spec); err != nil {
-		return err
-	}
-	if spec.Active {
-		dur, err := time.ParseDuration(spec.Time)
-		if err != nil {
-			return err
-		}
-		*dat = ActiveDeleteAfterTime(dur)
-	} else {
-		*dat = InactiveDeleteAfterTime()
-	}
-	return nil
-}
-
 // MSB: whether this policy is active or not. After: nanoseconds.
 type DeleteAfterVersions uint16
 
@@ -1028,35 +1003,111 @@ func ActiveDeleteAfterVersions(versions int16) DeleteAfterVersions {
 	return DeleteAfterVersions((uint16(1) << 15) | uint16(versions))
 }
 
-func (dat *DeleteAfterVersions) UnmarshalJSON(b []byte) error {
+// If multiple policies are present, the file will be deleted if
+// any of the policies are not respected.
+//
+// If neither policies are active, then snapshots will be kept forever.
+//
+// Also note that you can use either policy to delete all snapshots, by
+// setting either to zero.
+type SnapshotPolicy struct {
+	DeleteAfterTime     DeleteAfterTime
+	DeleteAfterVersions DeleteAfterVersions
+}
+
+func (p *SnapshotPolicy) Tag() DirectoryInfoTag {
+	return SNAPSHOT_POLICY_TAG
+}
+
+func (p *SnapshotPolicy) UnmarshalJSON(b []byte) error {
 	var spec struct {
-		Active   bool
-		Versions uint16
+		DeleteAfterVersions *uint16
+		DeleteAfterTime     *string
 	}
 	if err := json.Unmarshal(b, &spec); err != nil {
 		return err
 	}
-	if spec.Active {
-		*dat = ActiveDeleteAfterVersions(int16(spec.Versions))
+	if spec.DeleteAfterVersions != nil {
+		p.DeleteAfterVersions = ActiveDeleteAfterVersions(int16(*spec.DeleteAfterVersions))
 	} else {
-		*dat = InactiveDeleteAfterVersions()
+		p.DeleteAfterVersions = InactiveDeleteAfterVersions()
+	}
+	if spec.DeleteAfterTime != nil {
+		dur, err := time.ParseDuration(*spec.DeleteAfterTime)
+		if err != nil {
+			return err
+		}
+		p.DeleteAfterTime = ActiveDeleteAfterTime(dur)
+	} else {
+		p.DeleteAfterTime = InactiveDeleteAfterTime()
 	}
 	return nil
 }
 
-// See SnapshotPolicy for the meaning of `DeleteAfterTime` and
-// `DeleteAfterVersions`
-type DirectoryInfoBody struct {
-	// We store a version number for this serialized data structure
-	// since it is opaque to the server and therefore we might want
-	// to evolve it separatedly. Right now it's 1 for this data structure.
-	Version             uint8
-	DeleteAfterTime     DeleteAfterTime
-	DeleteAfterVersions DeleteAfterVersions
-	// Sorted by MaxSize. There's always an implicit policy for inline
-	// spans (max size 255). Which means that the first `MaxSize`
-	// must be > 255.
-	SpanPolicies []SpanPolicy
+// 100MiB
+const MAX_BLOCK_SIZE uint32 = 100 << 20
+
+type BlockPolicyEntry struct {
+	StorageClass StorageClass
+	// The minimum amount of block size we want in this storage class. For spinning
+	// disks, a function of seek latency and sustained data rate.
+	MinSize uint32
+}
+
+// Sorted by MinSize.
+type BlockPolicy struct {
+	Entries []BlockPolicyEntry
+}
+
+func (p *BlockPolicy) Tag() DirectoryInfoTag {
+	return BLOCK_POLICY_TAG
+}
+
+func (p *BlockPolicy) Pick(size uint32) (entry *BlockPolicyEntry) {
+	if size > MAX_BLOCK_SIZE {
+		panic(fmt.Errorf("size %v is greater than overall maximum size %v", size, MAX_BLOCK_SIZE))
+	}
+	for i := len(p.Entries) - 1; i >= 0; i-- {
+		if size > p.Entries[i].MinSize {
+			return &p.Entries[i]
+		}
+	}
+	return &p.Entries[0]
+}
+
+type SpanPolicyEntry struct {
+	MaxSize uint32
+	Parity  rs.Parity
+}
+
+type SpanPolicy struct {
+	Entries []SpanPolicyEntry
+}
+
+func (p *SpanPolicy) Pick(size uint32) (entry *SpanPolicyEntry) {
+	if p.Entries[len(p.Entries)-1].MaxSize < size {
+		panic(fmt.Errorf("size %v is greater than overall maximum size %v", size, p.Entries[len(p.Entries)-1].MaxSize))
+	}
+	for i := len(p.Entries) - 2; i >= 0; i-- {
+		if size > p.Entries[i].MaxSize {
+			return &p.Entries[i+1]
+		}
+	}
+	return &p.Entries[0]
+}
+
+func (p *SpanPolicy) Tag() DirectoryInfoTag {
+	return SPAN_POLICY_TAG
+}
+
+// This will in essence determine how much data we need to read from the block
+// services before being able to return to the client.
+type StripePolicy struct {
+	TargetStripeSize uint32
+}
+
+func (p *StripePolicy) Tag() DirectoryInfoTag {
+	return STRIPE_POLICY_TAG
 }
 
 // --------------------------------------------------------------------
@@ -1099,7 +1150,7 @@ type SoftUnlinkFileEntry struct {
 type CreateDirectoryInodeEntry struct {
 	Id      InodeId
 	OwnerId InodeId
-	Info    SetDirectoryInfo
+	Info    DirectoryInfo
 }
 
 type CreateLockedCurrentEdgeEntry struct {
@@ -1129,7 +1180,7 @@ type LockCurrentEdgeEntry struct {
 
 type RemoveDirectoryOwnerEntry struct {
 	DirId InodeId
-	Info  []byte
+	Info  DirectoryInfo
 }
 
 type RemoveInodeEntry struct {
@@ -1143,7 +1194,7 @@ type SetDirectoryOwnerEntry struct {
 
 type SetDirectoryInfoEntry struct {
 	DirId InodeId
-	Info  SetDirectoryInfo
+	Info  DirectoryInfo
 }
 
 type RemoveNonOwnedEdgeEntry struct {
@@ -1162,6 +1213,15 @@ type SameShardHardFileUnlinkEntry struct {
 
 type RemoveSpanInitiateEntry struct {
 	FileId InodeId
+}
+
+type AddInlineSpanEntry struct {
+	FileId       InodeId
+	StorageClass StorageClass // Either EMPTY_STORAGE or INLINE_STORAGE
+	ByteOffset   uint64
+	Size         uint32
+	Crc          Crc
+	Body         []byte
 }
 
 type BlockServiceInfo struct {
@@ -1186,21 +1246,20 @@ type UpdateBlockServicesEntry struct {
 
 type EntryNewBlockInfo struct {
 	BlockServiceId uint64
-	Crc32          [4]byte
+	Crc            Crc
 }
 
 type AddSpanInitiateEntry struct {
 	FileId       InodeId
 	ByteOffset   uint64
-	StorageClass StorageClass
-	Parity       Parity
-	Crc32        [4]byte
 	Size         uint32
-	BlockSize    uint32
-	// empty unless StorageClass == INLINE_STORAGE
-	BodyBytes []byte
-	// empty unless StorageClass not in (EMPTY_STORAGE, INLINE_STORAGE)
-	BodyBlocks []EntryNewBlockInfo
+	Crc          Crc
+	StorageClass StorageClass
+	Parity       rs.Parity
+	Stripes      uint8 // [1, 16]
+	CellSize     uint32
+	BodyBlocks   []EntryNewBlockInfo
+	BodyStripes  []Crc // the CRCs
 }
 
 type AddSpanCertifyEntry struct {
@@ -1317,4 +1376,54 @@ type CdcResp struct {
 	Ip       [4]byte
 	Port     uint16
 	LastSeen EggsTime
+}
+
+// --------------------------------------------------------------------
+// block service requests/responses
+
+type BlocksRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	BlocksRequestKind() BlocksMessageKind
+}
+
+type BlocksResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	BlocksResponseKind() BlocksMessageKind
+}
+
+type EraseBlockReq struct {
+	BlockId     BlockId
+	Certificate [8]byte
+}
+
+type EraseBlockResp struct {
+	Proof [8]byte
+}
+
+type FetchBlockReq struct {
+	BlockId BlockId
+	Offset  uint32
+	Count   uint32
+}
+
+// Followed by data
+type FetchBlockResp struct{}
+
+type WriteBlockReq struct {
+	BlockId     BlockId
+	Crc         Crc
+	Size        uint32
+	Certificate [8]byte
+}
+
+// This does _not_ include the proof: that comes after the write.
+// However, we want to get a go-ahead before starting to write.
+type WriteBlockResp struct{}
+
+type BlockWrittenReq struct{}
+
+type BlockWrittenResp struct {
+	Proof [8]byte
 }

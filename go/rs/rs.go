@@ -21,6 +21,9 @@ func MkParity(dataBlocks uint8, parityBlocks uint8) Parity {
 	if parityBlocks >= 16 {
 		panic(fmt.Errorf("bad parity blocks %v", parityBlocks))
 	}
+	if dataBlocks > 1 && parityBlocks == 0 {
+		panic(fmt.Errorf("got %v data blocks but no parity blocks -- we do not support striping", dataBlocks))
+	}
 	return Parity(dataBlocks | (parityBlocks << 4))
 }
 
@@ -60,7 +63,7 @@ type Rs struct {
 
 type Parity uint8
 
-func GetRs(parity Parity) *Rs {
+func Get(parity Parity) *Rs {
 	if parity.DataBlocks() < 2 {
 		panic(fmt.Errorf("bad parity, expected at least 2 data blocks, got %v", parity))
 	}

@@ -198,9 +198,34 @@ constexpr uint8_t INLINE_STORAGE = 1;
 
 uint8_t storageClassByName(const char* name);
 
+struct Crc {
+    uint32_t u32;
+
+    Crc() : u32(0) {}
+    Crc(uint32_t x) : u32(x) {}
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar(u32);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u32 = buf.unpackScalar<uint32_t>();
+    }
+
+    uint16_t packedSize() const {
+        return sizeof(u32);
+    }
+
+    bool operator==(Crc other) const {
+        return u32 == other.u32;
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, Crc crc);
+
 #include "MsgsGen.hpp"
 
-// We sometimes use this as a optional<EggsError>;
+// We often use this as a optional<EggsError>;
 constexpr EggsError NO_ERROR = (EggsError)0;
 
 constexpr bool isPrivilegedRequestKind(ShardMessageKind kind) {
@@ -314,3 +339,9 @@ struct CDCResponseHeader {
         buf.packScalar<uint8_t>((uint8_t)kind);
     }
 };
+
+static constexpr uint8_t SNAPSHOT_POLICY_TAG = 1;
+static constexpr uint8_t SPAN_POLICY_TAG = 2;
+static constexpr uint8_t BLOCK_POLICY_TAG = 3;
+static constexpr uint8_t STRIPE_POLICY_TAG = 4;
+static std::array<uint8_t, 4> REQUIRED_DIR_INFO_TAGS = {SNAPSHOT_POLICY_TAG, SPAN_POLICY_TAG, BLOCK_POLICY_TAG, STRIPE_POLICY_TAG};

@@ -10,8 +10,11 @@
 #include <xxhash.h>
 
 #include "Bincode.hpp"
+#include "Common.hpp"
 #include "Crypto.hpp"
 #include "Env.hpp"
+#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "ShardDB.hpp"
 #include "ShardDBData.hpp"
 #include "Assert.hpp"
@@ -21,8 +24,8 @@
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
 #include "AssertiveLock.hpp"
-#include "crc32c.hpp"
-#include "splitmix64.hpp"
+#include "crc32c.h"
+#include "wyhash.h"
 
 // TODO maybe revisit all those ALWAYS_ASSERTs
 
@@ -65,10 +68,11 @@
 //         sense to have a different column family: otherwise we couldn't easily
 //         traverse the transient files with them without stepping over spans.
 //     - { id: InodeId, byte_offset: uint64_t } (16 bytes): SpanBody
+//         * SpanBody is 7 bytes + 10*(4+20) = 256bytes
 //         * SpanBody is 22 bytes of header, plus 0-255 inline body, or ~(10+4)*12 = 168 bytes for blocks
-//         * Say an average of 200 bytes for key + body, being a bit conservative
-//         * Let's also say that the max block size is 100MiB
-//         * Total size: 10EiB / 100MiB / 256 shards * 200 bytes ~ 100GiB
+//         * Say an average of 300 bytes for key + body, being a bit conservative
+//         * Let's also say that the max span size is 100MiB
+//         * Total size: 10EiB / 100MiB / 256 shards * 200 bytes ~ 130GiB
 //         * However the above is quite optimistic, assuming no fragmentation -- the average file will probably
 //             be something like 10MiB. So the total dataset for spans will probably be around 1TiB in
 //             reality.
@@ -343,13 +347,11 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
             if (!keyExists(_directoriesCf, k.toSlice())) {
                 LOG_INFO(_env, "creating root directory, since it does not exist");
-                auto info = defaultDirectoryInfo();
-                StaticValue<DirectoryBody> dirBody;
+                DirectoryInfo info = defaultDirectoryInfo();
+                OwnedValue<DirectoryBody> dirBody(info);
                 dirBody().setOwnerId(NULL_INODE_ID);
                 dirBody().setMtime({});
                 dirBody().setHashMode(HashMode::XXH3_63);
-                dirBody().setInfoInherited(false);
-                dirBody().setInfo(info.ref());
                 auto k = InodeIdKey::Static(ROOT_DIR_INODE_ID);
                 ROCKS_DB_CHECKED(_db->Put({}, _directoriesCf, k.toSlice(), dirBody.toSlice()));
             }
@@ -462,7 +464,7 @@ struct ShardDBImpl {
         }
         resp.mtime = dir().mtime();
         resp.owner = dir().ownerId();
-        resp.info = dir().info();
+        dir().info(resp.info);
         return NO_ERROR;
     }
 
@@ -730,33 +732,43 @@ struct ShardDBImpl {
                     break;
                 }
                 auto value = ExternalValue<SpanBody>::FromSlice(it->value());
+                if (key().offset()+value().size() < req.byteOffset) { // can only happens if the first cursor is out of bounds
+                    break;
+                }
                 auto& respSpan = resp.spans.els.emplace_back();
-                respSpan.byteOffset = key().offset();
-                respSpan.parity = value().parity();
-                respSpan.storageClass = value().storageClass();
-                respSpan.crc32 = value().crc32();
-                respSpan.size = value().spanSize();
-                respSpan.blockSize = value().blockSize();
+                respSpan.header.byteOffset = key().offset();
+                respSpan.header.size = value().spanSize();
+                respSpan.header.crc = value().crc();
                 if (value().storageClass() == INLINE_STORAGE) {
-                    respSpan.bodyBytes = value().inlineBody();
+                    auto& respSpanInline = respSpan.setInlineSpan();
+                    respSpanInline.body = value().inlineBody();
                 } else {
-                    respSpan.bodyBytes.clear();
-                    for (int i = 0; i < value().parity().blocks(); i++) {
-                        auto block = value().block(i);
-                        int blockServiceIx = addBlockService(block.blockServiceId);
+                    const auto& spanBlock = value().blocksBody();
+                    auto& respSpanBlock = respSpan.setBlocksSpan(value().storageClass());
+                    respSpanBlock.parity = spanBlock.parity();
+                    respSpanBlock.stripes = spanBlock.stripes();
+                    respSpanBlock.cellSize = spanBlock.cellSize();
+                    respSpanBlock.blocks.els.resize(spanBlock.parity().blocks());
+                    for (int i = 0; i < spanBlock.parity().blocks(); i++) {
+                        auto block = spanBlock.block(i);
+                        int blockServiceIx = addBlockService(block.blockService());
                         if (blockServiceIx < 0) {
                             break; // no need to break in outer loop -- we will break out anyway because budget < 0
                         }
                         ALWAYS_ASSERT(blockServiceIx < 256);
-                        auto& respBlock = respSpan.bodyBlocks.els.emplace_back();
-                        respBlock.blockId = block.blockId;
+                        auto& respBlock = respSpanBlock.blocks.els[i];
+                        respBlock.blockId = block.blockId();
                         respBlock.blockServiceIx = blockServiceIx;
-                        respBlock.crc32 = block.crc32;
+                        respBlock.crc = block.crc();
+                    }
+                    respSpanBlock.stripesCrc.els.resize(spanBlock.stripes());
+                    for (int i = 0; i < spanBlock.stripes(); i++) {
+                        respSpanBlock.stripesCrc.els[i] = spanBlock.stripeCrc(i);
                     }
                 }
                 budget -= respSpan.packedSize();
                 if (budget < 0) {
-                    resp.nextOffset = respSpan.byteOffset;
+                    resp.nextOffset = respSpan.header.byteOffset;
                     resp.spans.els.pop_back();
                     break;
                 }
@@ -798,6 +810,7 @@ struct ShardDBImpl {
         ) {
             auto key = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
             int64_t blocks = ExternalValue<I64Value>::FromSlice(it->value())().i64();
+            LOG_DEBUG(_env, "we have %s blocks in file %s for block service %s", blocks, key().fileId(), req.blockServiceId);
             ALWAYS_ASSERT(blocks >= 0);
             if (blocks == 0) { continue; } // this can happen when we migrate block services/remove spans
             resp.fileIds.els.emplace_back(key().fileId());
@@ -1003,13 +1016,9 @@ struct ShardDBImpl {
         if (req.id.type() != InodeType::DIRECTORY || req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
-        if (req.info.inherited != (req.info.body.size() == 0)) {
-            return EggsError::BAD_DIRECTORY_INFO;
-        }
         entry.id = req.id;
         entry.ownerId = req.ownerId;
-        entry.info.inherited = req.info.inherited;
-        entry.info.body = req.info.body;
+        entry.info = req.info;
         return NO_ERROR;
     }
 
@@ -1066,9 +1075,6 @@ struct ShardDBImpl {
         if (req.dirId.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
-        if (req.info.size() == 0) {
-            return EggsError::BAD_DIRECTORY_INFO;
-        }
         ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID); // TODO proper error
         entry.dirId = req.dirId;
         entry.info = req.info;
@@ -1108,15 +1114,8 @@ struct ShardDBImpl {
         if (req.id.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
-        if (req.info.inherited && req.id == ROOT_DIR_INODE_ID) {
-            return EggsError::BAD_DIRECTORY_INFO;
-        }
-        if (req.info.inherited != (req.info.body.size() == 0)) {
-            return EggsError::BAD_DIRECTORY_INFO;
-        }
         entry.dirId = req.id;
-        entry.info.inherited = req.info.inherited;
-        entry.info.body = req.info.body;
+        entry.info = req.info;
         return NO_ERROR;
     }
 
@@ -1171,39 +1170,27 @@ struct ShardDBImpl {
         // Note that the span size might be bigger or smaller than
         // the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
         // for details.
-
-        // The two special cases
-        if (req.storageClass == EMPTY_STORAGE) {
-            if (req.bodyBytes.size() != 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != 0 || req.blockSize != 0) {
-                return false;
-            }
-            if (req.crc32.data != crc32c("", 0)) {
-                return false;
-            }
-            return true;
-        }
-        if (req.storageClass == INLINE_STORAGE) {
-            if (req.bodyBytes.size() == 0 || req.bodyBlocks.els.size() != 0 || req.parity != Parity(0) || req.size != req.bodyBytes.size() || req.blockSize != 0) {
-                LOG_DEBUG(_env, "bad inline span body because of bad blocks/parity/size, req.bodyBytes.size()=%s, req.bodyBlocks.els.size()=%s, req.parity=%s, req.size=%s, req.blockSize=%s", (int)req.bodyBytes.size(), req.bodyBlocks.els.size(), req.parity, req.size, req.blockSize);
-                return false;
-            }
-            auto expectedCrc32 = crc32c(req.bodyBytes.data(), req.bodyBytes.size());
-            if (req.crc32.data != expectedCrc32) {
-                LOG_DEBUG(_env, "bad inline span body because of bad crc32c");
-                return false;
-            }
-            return true;
-        }
-
-        if (req.parity.blocks() != req.bodyBlocks.els.size()) {
+        if (req.size > MAXIMUM_SPAN_SIZE) {
+            LOG_DEBUG(_env, "req.size=%s > MAXIMUM_SPAN_SIZE=%s", req.size, MAXIMUM_SPAN_SIZE);
             return false;
         }
 
+        if (req.crcs.els.size() != ((int)req.stripes)*req.parity.blocks()) {
+            LOG_DEBUG(_env, "len(crcs)=%s != stripes*blocks=%s", req.crcs.els.size(), ((int)req.stripes)*req.parity.blocks());
+            return false;
+        }
+
+        uint32_t spanCrc = 0;
         if (req.parity.dataBlocks() == 1) {
             // mirroring blocks should all be the same
-            for (const auto& block: req.bodyBlocks.els) {
-                if (block.crc32 != req.crc32) {
-                    return false;
+            for (int s = 0; s < req.stripes; s++) {
+                uint32_t stripeCrc = req.crcs.els[s*req.parity.blocks()].u32;
+                spanCrc = crc32c_append(spanCrc, stripeCrc, req.cellSize);
+                for (int p = 0; p < req.parity.parityBlocks(); p++) {
+                    if (req.crcs.els[s*req.parity.blocks() + 1+p].u32 != stripeCrc) {
+                        LOG_DEBUG(_env, "mismatched CRC for mirrored block, expected %s, got %s", Crc(stripeCrc), req.crcs.els[s*req.parity.blocks() + 1+p]);
+                        return false;
+                    }
                 }
             }
         } else {
@@ -1211,23 +1198,23 @@ struct ShardDBImpl {
             // `rs.h`, we know that the span is the concatenation of the
             // data blocks, and that the first parity block is the XOR of the
             // data blocks. We can't check the rest without the data though.
-            std::array<uint8_t, 4> blocksCrc32;
-            memset(&blocksCrc32[0], 0, 4);
-            std::array<uint8_t, 4> parity0Crc32;
-            memset(&parity0Crc32[0], 0, 4);
-            for (const auto& block: req.bodyBlocks.els) {
-                blocksCrc32 = crc32cCombine(blocksCrc32, block.crc32.data, req.blockSize);
-                parity0Crc32[0] ^= blocksCrc32[0];
-                parity0Crc32[1] ^= blocksCrc32[1];
-                parity0Crc32[2] ^= blocksCrc32[2];
-                parity0Crc32[3] ^= blocksCrc32[3];
+            for (int s = 0; s < req.stripes; s++) {
+                uint32_t parity0Crc;
+                for (int d = 0; d < req.parity.dataBlocks(); d++) {
+                    uint32_t cellCrc = req.crcs.els[s*req.parity.blocks() + d].u32;
+                    spanCrc = crc32c_append(spanCrc, cellCrc, req.cellSize);
+                    parity0Crc = d == 0 ? cellCrc : crc32c_xor(parity0Crc, cellCrc, req.cellSize);
+                }
+                if (parity0Crc != req.crcs.els[s*req.parity.blocks() + req.parity.dataBlocks()].u32) {
+                    LOG_DEBUG(_env, "bad parity 0 CRC, expected %s, got %s", Crc(parity0Crc), req.crcs.els[s*req.parity.blocks() + req.parity.dataBlocks()]);
+                    return false;
+                }
             }
-            if (req.crc32.data != blocksCrc32) {
-                return false;
-            }
-            if (req.bodyBlocks.els[req.parity.dataBlocks()].crc32.data != parity0Crc32) {
-                return false;
-            }
+        }
+        spanCrc = crc32c_zero_extend(spanCrc, (ssize_t)req.size - (ssize_t)(req.cellSize * req.stripes * req.parity.dataBlocks()));
+        if (spanCrc != req.crc) {
+            LOG_DEBUG(_env, "bad span CRC, expected %s, got %s", Crc(spanCrc), req.crc);
+            return false;
         }
 
         return true;
@@ -1240,6 +1227,52 @@ struct ShardDBImpl {
             }
         }
         return false;
+    }
+
+    EggsError _prepareAddInlineSpan(EggsTime time, const AddInlineSpanReq& req, AddInlineSpanEntry& entry) {
+        if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.fileId.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        {
+            EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+
+        if (req.storageClass == EMPTY_STORAGE) {
+            if (req.size != 0) {
+                LOG_DEBUG(_env, "empty span has size != 0: %s", req.size);
+                return EggsError::BAD_SPAN_BODY;
+            }
+        } else if (req.storageClass == INLINE_STORAGE) {
+            if (req.size == 0 || req.size < req.body.size()) {
+                LOG_DEBUG(_env, "inline span has req.size=%s == 0 || req.size=%s < req.body.size()=%s", req.size, req.size, (int)req.body.size());
+                return EggsError::BAD_SPAN_BODY;
+            }
+        } else {
+            LOG_DEBUG(_env, "inline span has bad storage class %s", req.storageClass);
+            return EggsError::BAD_SPAN_BODY;
+        }
+
+        uint32_t expectedCrc = crc32c(0, req.body.data(), req.body.size());
+        expectedCrc = crc32c_zero_extend(expectedCrc, req.size - req.body.size());
+        if (expectedCrc != req.crc.u32) {
+            LOG_DEBUG(_env, "inline span expected CRC %s, got %s", Crc(expectedCrc), req.crc);
+            return EggsError::BAD_SPAN_BODY;
+        }
+
+        entry.fileId = req.fileId;
+        entry.storageClass = req.storageClass;
+        entry.byteOffset = req.byteOffset;
+        entry.size = req.size;
+        entry.body = req.body;
+        entry.crc = req.crc;
+
+        return NO_ERROR;
     }
 
     EggsError _prepareAddSpanInitiate(EggsTime time, const AddSpanInitiateReq& req, AddSpanInitiateEntry& entry) {
@@ -1255,6 +1288,10 @@ struct ShardDBImpl {
                 return err;
             }
         }
+        if (req.storageClass == INLINE_STORAGE || req.storageClass == EMPTY_STORAGE) {
+            LOG_DEBUG(_env, "bad storage class %s for blocks span", (int)req.storageClass);
+            return EggsError::BAD_SPAN_BODY;
+        }
         if (!_checkSpanBody(req)) {
             return EggsError::BAD_SPAN_BODY;
         }
@@ -1264,16 +1301,25 @@ struct ShardDBImpl {
         entry.byteOffset = req.byteOffset;
         entry.storageClass = req.storageClass;
         entry.parity = req.parity;
-        entry.crc32 = req.crc32;
         entry.size = req.size;
-        entry.blockSize = req.blockSize;
-        entry.bodyBytes = req.bodyBytes;
+        entry.cellSize = req.cellSize;
+        entry.crc = req.crc;
+        entry.stripes = req.stripes;
+
+        // fill stripe CRCs
+        for (int s = 0; s < req.stripes; s++) {
+            uint32_t stripeCrc = 0;
+            for (int d = 0; d < req.parity.dataBlocks(); d++) {
+                stripeCrc = crc32c_append(stripeCrc, req.crcs.els[s*req.parity.blocks() + d].u32, req.cellSize);
+            }
+            entry.bodyStripes.els.emplace_back(stripeCrc);
+        }
 
         // Now fill in the block services. Generally we want to try to keep them the same
         // throughout the file, if possible, so that the likelihood of data loss is minimized.
         //
         // TODO factor failure domains in the decision
-        if (entry.storageClass != INLINE_STORAGE && entry.storageClass != EMPTY_STORAGE) {
+        {
             std::vector<uint64_t> candidateBlockServices;
             candidateBlockServices.reserve(_currentBlockServices.size());
             LOG_DEBUG(_env, "Starting out with %s current block services", _currentBlockServices.size());
@@ -1289,7 +1335,7 @@ struct ShardDBImpl {
                 }
                 candidateBlockServices.emplace_back(id);
             }
-            LOG_DEBUG(_env, "Starting out with %s block service candidates", candidateBlockServices.size());
+            LOG_DEBUG(_env, "Starting out with %s block service candidates, parity %s", candidateBlockServices.size(), entry.parity);
             std::vector<uint64_t> pickedBlockServices;
             pickedBlockServices.reserve(req.parity.blocks());
             // Try to get the first span to copy its block services -- this should be the
@@ -1305,21 +1351,27 @@ struct ShardDBImpl {
                 } else {
                     ROCKS_DB_CHECKED(status);
                     ExternalValue<SpanBody> span(v);
-                    for (
-                        int i = 0;
-                        i < span().parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
-                        i++
-                    ) {
-                        BlockBody spanBlock = span().block(i);
-                        auto isCandidate = std::find(candidateBlockServices.begin(), candidateBlockServices.end(), spanBlock.blockServiceId);
-                        if (isCandidate == candidateBlockServices.end()) {
-                            continue;
+                    // TODO this means that if the first span is inline or smaller, all the other
+                    // spans will get block services generated at random, which is not ideal. We
+                    // should probably look further.
+                    if (span().storageClass() != INLINE_STORAGE) {
+                        const auto blocks = span().blocksBody();
+                        for (
+                            int i = 0;
+                            i < blocks.parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
+                            i++
+                        ) {
+                            const BlockBody spanBlock = blocks.block(i);
+                            auto isCandidate = std::find(candidateBlockServices.begin(), candidateBlockServices.end(), spanBlock.blockService());
+                            if (isCandidate == candidateBlockServices.end()) {
+                                continue;
+                            }
+                            LOG_DEBUG(_env, "(1) Picking block service candidate %s", spanBlock.blockService());
+                            uint64_t blockServiceId = spanBlock.blockService();
+                            pickedBlockServices.emplace_back(blockServiceId);
+                            std::iter_swap(isCandidate, candidateBlockServices.end()-1);
+                            candidateBlockServices.pop_back();
                         }
-                        LOG_DEBUG(_env, "(1) Picking block service candidate %s", spanBlock.blockServiceId);
-                        uint64_t blockServiceId = spanBlock.blockServiceId;
-                        pickedBlockServices.emplace_back(blockServiceId);
-                        std::iter_swap(isCandidate, candidateBlockServices.end()-1);
-                        candidateBlockServices.pop_back();
                     }
                 }
             }
@@ -1328,7 +1380,7 @@ struct ShardDBImpl {
             {
                 uint64_t rand = time.ns;
                 while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
-                    uint64_t ix = splitmix64(rand) % candidateBlockServices.size();
+                    uint64_t ix = wyhash64(&rand) % candidateBlockServices.size();
                     LOG_DEBUG(_env, "(2) Picking block service candidate %s", candidateBlockServices[ix]);
                     pickedBlockServices.emplace_back(candidateBlockServices[ix]);
                     std::iter_swap(candidateBlockServices.begin()+ix, candidateBlockServices.end()-1);
@@ -1342,10 +1394,13 @@ struct ShardDBImpl {
             // Now generate the blocks
             entry.bodyBlocks.els.resize(req.parity.blocks());
             for (int i = 0; i < req.parity.blocks(); i++) {
-                const auto& reqBlock = req.bodyBlocks.els[i];
                 auto& block = entry.bodyBlocks.els[i];
                 block.blockServiceId = pickedBlockServices[i];
-                block.crc32 = reqBlock.crc32;
+                uint32_t blockCrc = 0;
+                for (int s = 0; s < req.stripes; s++) {
+                    blockCrc = crc32c_append(blockCrc, req.crcs.els[s*req.parity.blocks() + i].u32, req.cellSize);
+                }
+                block.crc = blockCrc;
             }
         }
 
@@ -1501,6 +1556,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::REMOVE_SPAN_INITIATE:
             err = _prepareRemoveSpanInitiate(time, req.getRemoveSpanInitiate(), logEntryBody.setRemoveSpanInitiate());
+            break;
+        case ShardMessageKind::ADD_INLINE_SPAN:
+            err = _prepareAddInlineSpan(time, req.getAddInlineSpan(), logEntryBody.setAddInlineSpan());
             break;
         case ShardMessageKind::ADD_SPAN_INITIATE:
             err = _prepareAddSpanInitiate(time, req.getAddSpanInitiate(), logEntryBody.setAddSpanInitiate());
@@ -1885,13 +1943,10 @@ struct ShardDBImpl {
 
         {
             auto dirKey = InodeIdKey::Static(entry.id);
-            StaticValue<DirectoryBody> dir;
+            OwnedValue<DirectoryBody> dir(entry.info);
             dir().setOwnerId(entry.ownerId);
             dir().setMtime(time);
             dir().setHashMode(HashMode::XXH3_63);
-            dir().setInfoInherited(entry.info.inherited);
-            LOG_DEBUG(_env, "inherited: %s, hasInfo: %s, body: %s", entry.info.inherited, dir().mustHaveInfo(), entry.info.body.ref());
-            dir().setInfo(entry.info.body.ref());
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, dirKey.toSlice(), dir.toSlice()));
         }
 
@@ -2034,15 +2089,12 @@ struct ShardDBImpl {
             }
         }
 
-        // we need to create a new DirectoryBody rather than modify the old one, the materialized
-        // info might have changed size
+        // we need to create a new DirectoryBody rather than modify the old one, the info might have changed size
         {
-            StaticValue<DirectoryBody> newDir;
+            OwnedValue<DirectoryBody> newDir(entry.info);
             newDir().setOwnerId(NULL_INODE_ID);
             newDir().setMtime(time);
             newDir().setHashMode(dir().hashMode());
-            newDir().setInfoInherited(dir().infoInherited());
-            newDir().setInfo(entry.info.ref());
             auto k = InodeIdKey::Static(entry.dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
         }
@@ -2171,20 +2223,13 @@ struct ShardDBImpl {
                 return err;
             }
         }
-        // set the owner, and restore the directory entry if needed.
-        StaticValue<DirectoryBody> newDir;
-        newDir().setOwnerId(entry.ownerId);
-        newDir().setMtime(dir().mtime());
-        newDir().setHashMode(dir().hashMode());
-        newDir().setInfoInherited(dir().infoInherited());
-        // remove directory info if it was inherited, now that we have an
-        // owner again.
-        if (dir().infoInherited()) {
-            newDir().setInfo({});
-        }
+        // Set the owner. Note that we don't know whether the directory info was set because we deleted
+        // the owner first -- i.e. we might mistakenly end with a non-inherited directory info. But this
+        // ought to be uncommon enough to not be a problem.
+        dir().setOwnerId(entry.ownerId);
         {
             auto k = InodeIdKey::Static(entry.dirId);
-            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
+            ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), dir.toSlice()));
         }
         return NO_ERROR;
     }
@@ -2201,17 +2246,10 @@ struct ShardDBImpl {
             }
         }
 
-        StaticValue<DirectoryBody> newDir;
+        OwnedValue<DirectoryBody> newDir(entry.info);
         newDir().setOwnerId(dir().ownerId());
         newDir().setMtime(dir().mtime());
         newDir().setHashMode(dir().hashMode());
-        newDir().setInfoInherited(entry.info.inherited);
-        // For snapshot directories, we need to preserve the last known info if inherited.
-        // It'll be reset when it's made non-snapshot again.
-        if (!entry.info.inherited || (dir().ownerId() != NULL_INODE_ID)) {
-            newDir().setInfo(entry.info.body.ref());
-        }
-
         {
             auto k = InodeIdKey::Static(entry.dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
@@ -2342,6 +2380,7 @@ struct ShardDBImpl {
         // otherwise we might spend a lot of time poring through the SSTs
         // making sure there are no spans.
         if (file().fileSize() == 0) {
+            LOG_DEBUG(_env, "exiting early from remove span since file is empty");
             return EggsError::FILE_EMPTY;
         }
         
@@ -2375,6 +2414,7 @@ struct ShardDBImpl {
             }
             return NO_ERROR;
         }
+        const auto blocks = span().blocksBody();
         
         // Otherwise, we need to condemn it first, and then certify the deletion.
         // Note that we allow to remove dirty spans -- this is important to deal well with
@@ -2386,18 +2426,18 @@ struct ShardDBImpl {
         }
 
         // Fill in the response blocks
-        resp.blocks.els.reserve(span().parity().blocks());
-        for (int i = 0; i < span().parity().blocks(); i++) {
-            const auto& block = span().block(i);
-            const auto& cache = _blockServicesCache.at(block.blockServiceId);
+        resp.blocks.els.reserve(blocks.parity().blocks());
+        for (int i = 0; i < blocks.parity().blocks(); i++) {
+            const auto block = blocks.block(i);
+            const auto& cache = _blockServicesCache.at(block.blockService());
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceIp1 = cache.ip1;
             respBlock.blockServicePort1 = cache.port1;
             respBlock.blockServiceIp2 = cache.ip2;
             respBlock.blockServicePort2 = cache.port2;
-            respBlock.blockServiceId = block.blockServiceId;
-            respBlock.blockId = block.blockId;
-            respBlock.certificate = _blockEraseCertificate(span().blockSize(), block, cache.secretKey);
+            respBlock.blockServiceId = block.blockService();
+            respBlock.blockId = block.blockId();
+            respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
         }
 
         return NO_ERROR;
@@ -2461,20 +2501,20 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), v.toSlice()));
     }
 
-    void _fillInAddSpanInitiate(const SpanBody& spanBody, AddSpanInitiateResp& resp) {
-        resp.blocks.els.reserve(spanBody.parity().blocks());
+    void _fillInAddSpanInitiate(const SpanBlocksBody blocks, AddSpanInitiateResp& resp) {
+        resp.blocks.els.reserve(blocks.parity().blocks());
         BlockBody block;
-        for (int i = 0; i < spanBody.parity().blocks(); i++) {
-            BlockBody block = spanBody.block(i);
+        for (int i = 0; i < blocks.parity().blocks(); i++) {
+            const BlockBody block = blocks.block(i);
             auto& respBlock = resp.blocks.els.emplace_back();
-            respBlock.blockServiceId = block.blockServiceId;
-            respBlock.blockId = block.blockId;
-            const auto& cache = _blockServicesCache.at(block.blockServiceId);
+            respBlock.blockServiceId = block.blockService();
+            respBlock.blockId = block.blockId();
+            const auto& cache = _blockServicesCache.at(block.blockService());
             respBlock.blockServiceIp1 = cache.ip1;
             respBlock.blockServicePort1 = cache.port1;
             respBlock.blockServiceIp2 = cache.ip2;
             respBlock.blockServicePort2 = cache.port2;
-            respBlock.certificate.data = _blockWriteCertificate(spanBody.blockSize(), block, cache.secretKey);
+            respBlock.certificate.data = _blockWriteCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
         }
     }
 
@@ -2488,7 +2528,7 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Merge(_blockServicesToFilesCf, k.toSlice(), v.toSlice()));
     }
 
-    EggsError _applyAddSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanInitiateEntry& entry, AddSpanInitiateResp& resp) {
+    EggsError _applyAddInlineSpan(EggsTime time, rocksdb::WriteBatch& batch, const AddInlineSpanEntry& entry, AddInlineSpanResp& resp) {
         std::string fileValue;
         ExternalValue<TransientFileBody> file;
         {
@@ -2499,7 +2539,7 @@ struct ShardDBImpl {
         }
 
         // Special case -- for empty spans we have nothing to do
-        if (entry.size == 0) {
+        if (entry.body.size() == 0) {
             return NO_ERROR;
         }
 
@@ -2529,14 +2569,13 @@ struct ShardDBImpl {
                 ExternalValue<SpanBody> existingSpan(spanValue);
                 if (
                     existingSpan().spanSize() != entry.size ||
-                    existingSpan().blockSize() != entry.blockSize ||
-                    existingSpan().parity() != entry.parity ||
-                    existingSpan().crc32() != entry.crc32
+                    existingSpan().storageClass() != INLINE_STORAGE ||
+                    existingSpan().crc() != entry.crc ||
+                    existingSpan().inlineBody() != entry.body
                 ) {
                     LOG_DEBUG(_env, "file size does not match, and existing span does not match");
                     return EggsError::SPAN_NOT_FOUND;
                 }
-                _fillInAddSpanInitiate(existingSpan(), resp);
                 return NO_ERROR;
             }
             LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
@@ -2548,12 +2587,86 @@ struct ShardDBImpl {
             return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
         }
 
-        // Update the file with the new file size and set the last span state to dirty, 
-        // if we're not blockless
+        // Update the file with the new file size, no need to set the thing to dirty since it's inline
         file().setFileSize(entry.byteOffset+entry.size);
-        if (entry.storageClass != EMPTY_STORAGE && entry.storageClass != INLINE_STORAGE) {
-            file().setLastSpanState(SpanState::DIRTY);
+        {
+            auto k = InodeIdKey::Static(entry.fileId);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
         }
+
+        // Now manufacture and add the span
+        OwnedValue<SpanBody> spanBody(entry.body.ref());
+        {
+            spanBody().setSpanSize(entry.size);
+            spanBody().setCrc(entry.crc.u32);
+            spanBody().setStorageClass(entry.storageClass);
+            ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), spanBody.toSlice()));
+        }
+
+        return NO_ERROR;
+
+    }
+
+    EggsError _applyAddSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanInitiateEntry& entry, AddSpanInitiateResp& resp) {
+        std::string fileValue;
+        ExternalValue<TransientFileBody> file;
+        {
+            EggsError err = _initiateTransientFileModification(time, false, batch, entry.fileId, fileValue, file);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+
+        StaticValue<SpanKey> spanKey;
+        spanKey().setFileId(entry.fileId);
+        spanKey().setOffset(entry.byteOffset);
+
+        // Check that the file is where where we expect it
+        if (file().fileSize() != entry.byteOffset) {
+            // Special case: we're trying to add the same span again. This is acceptable
+            // in the name of idempotency, but we return the blocks we've previously
+            // computed.
+            //
+            // We _must_ return the blocks we've first returned, and ignored whatever
+            // comes next, even if a new blacklist might have influenced the decision.
+            //
+            // This is since we need to be certain that we don't leak blocks. So either
+            // the client needs to migrate the blocks, or just throw away the file.
+            if (file().fileSize() == entry.byteOffset+entry.size) {
+                std::string spanValue;
+                auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
+                if (status.IsNotFound()) {
+                    LOG_DEBUG(_env, "file size does not match, but could not find existing span");
+                    return EggsError::SPAN_NOT_FOUND;
+                }
+                ROCKS_DB_CHECKED(status);
+                ExternalValue<SpanBody> existingSpan(spanValue);
+                if (
+                    existingSpan().spanSize() != entry.size ||
+                    existingSpan().storageClass() == INLINE_STORAGE ||
+                    existingSpan().crc() != entry.crc ||
+                    existingSpan().blocksBody().cellSize() != entry.cellSize ||
+                    existingSpan().blocksBody().stripes() != entry.stripes ||
+                    existingSpan().blocksBody().parity() != entry.parity
+                ) {
+                    LOG_DEBUG(_env, "file size does not match, and existing span does not match");
+                    return EggsError::SPAN_NOT_FOUND;
+                }
+                _fillInAddSpanInitiate(existingSpan().blocksBody(), resp);
+                return NO_ERROR;
+            }
+            LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
+            return EggsError::SPAN_NOT_FOUND;
+        }
+
+        // We're actually adding a new span -- the span state must be clean.
+        if (file().lastSpanState() != SpanState::CLEAN) {
+            return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
+        }
+
+        // Update the file with the new file size and set the last span state to dirty
+        file().setFileSize(entry.byteOffset+entry.size);
+        file().setLastSpanState(SpanState::DIRTY);
         {
             auto k = InodeIdKey::Static(entry.fileId);
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
@@ -2561,42 +2674,48 @@ struct ShardDBImpl {
 
         // Now manufacture and add the span, also recording the blocks
         // in the block service -> files index.
-        OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.bodyBytes.ref());
+        OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.stripes);
         {
             spanBody().setSpanSize(entry.size);
-            spanBody().setBlockSize(entry.blockSize);
-            spanBody().setCrc32(entry.crc32.data);
+            spanBody().setCrc(entry.crc.u32);
+            spanBody().setStorageClass(entry.storageClass);
+            auto blocks = spanBody().blocksBody();
+            blocks.setParity(entry.parity);
+            blocks.setStripes(entry.stripes);
+            blocks.setCellSize(entry.cellSize);
             uint64_t nextBlockId = _getNextBlockId();
-            BlockBody block;
             for (int i = 0; i < entry.parity.blocks(); i++) {
-                auto& entryBlock = entry.bodyBlocks.els[i];
-                block.blockId = _updateNextBlockId(time, nextBlockId);
-                block.blockServiceId = entryBlock.blockServiceId;
-                block.crc32 = entryBlock.crc32.data;
-                spanBody().setBlock(i, block);
+                const auto& entryBlock = entry.bodyBlocks.els[i];
+                auto block = blocks.block(i);
+                block.setBlockId(_updateNextBlockId(time, nextBlockId));
+                block.setBlockService(entryBlock.blockServiceId);
+                block.setCrc(entryBlock.crc.u32);
                 _addBlockServicesToFiles(batch, entryBlock.blockServiceId, entry.fileId, 1);
             }
             _writeNextBlockId(batch, nextBlockId);
+            for (int i = 0; i < entry.stripes; i++) {
+                blocks.setStripeCrc(i, entry.bodyStripes.els[i].u32);
+            }
             ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), spanBody.toSlice()));
         }
 
         // Fill in the response
-        _fillInAddSpanInitiate(spanBody(), resp);
+        _fillInAddSpanInitiate(spanBody().blocksBody(), resp);
 
         return NO_ERROR;
     }
 
-    std::array<uint8_t, 8> _blockWriteCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
+    std::array<uint8_t, 8> _blockWriteCertificate(uint32_t blockSize, const BlockBody block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ4sI', b, 0, block['block_service_id'], b'w', block['block_id'], crc32_from_int(block['crc32']), block_size)
-        bbuf.packScalar<uint64_t>(block.blockServiceId);
+        bbuf.packScalar<uint64_t>(block.blockService());
         bbuf.packScalar<char>('w');
-        bbuf.packScalar<uint64_t>(block.blockId);
-        bbuf.packFixedBytes<4>({block.crc32});
+        bbuf.packScalar<uint64_t>(block.blockId());
+        bbuf.packScalar<uint32_t>(block.crc());
         bbuf.packScalar<uint32_t>(blockSize);
-
+ 
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
@@ -2615,14 +2734,14 @@ struct ShardDBImpl {
         return proof.proof == expectedProof;
     }
 
-    std::array<uint8_t, 8> _blockEraseCertificate(uint32_t blockSize, const BlockBody& block, const AES128Key& secretKey) {
+    std::array<uint8_t, 8> _blockEraseCertificate(uint32_t blockSize, const BlockBody block, const AES128Key& secretKey) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'e', block['block_id'])
-        bbuf.packScalar<uint64_t>(block.blockServiceId);
+        bbuf.packScalar<uint64_t>(block.blockService());
         bbuf.packScalar<char>('e');
-        bbuf.packScalar<uint64_t>(block.blockId);
+        bbuf.packScalar<uint64_t>(block.blockId());
 
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
@@ -2685,13 +2804,14 @@ struct ShardDBImpl {
             if (span().storageClass() == INLINE_STORAGE) {
                 return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
             }
-            if (span().parity().blocks() != entry.proofs.els.size()) {
+            auto blocks = span().blocksBody();
+            if (blocks.parity().blocks() != entry.proofs.els.size()) {
                 return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
             }
             BlockBody block;
-            for (int i = 0; i < span().parity().blocks(); i++) {
-                BlockBody block = span().block(i);
-                if (!_checkBlockAddProof(block.blockServiceId, entry.proofs.els[i])) {
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                auto block = blocks.block(i);
+                if (!_checkBlockAddProof(block.blockService(), entry.proofs.els[i])) {
                     return EggsError::BAD_BLOCK_PROOF;
                 }
             }
@@ -2773,6 +2893,7 @@ struct ShardDBImpl {
         if (span().storageClass() == INLINE_STORAGE) {
             return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
         }
+        auto blocks = span().blocksBody();
 
         // Make sure we're condemned
         if (file().lastSpanState() != SpanState::CONDEMNED) {
@@ -2780,21 +2901,21 @@ struct ShardDBImpl {
         }
 
         // Verify proofs
-        if (entry.proofs.els.size() != span().parity().blocks()) {
+        if (entry.proofs.els.size() != blocks.parity().blocks()) {
             return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
         }
-        for (int i = 0; i < span().parity().blocks(); i++) {
-            const auto& block = span().block(i);
+        for (int i = 0; i < blocks.parity().blocks(); i++) {
+            const auto block = blocks.block(i);
             const auto& proof = entry.proofs.els[i];
-            if (block.blockId != proof.blockId) {
-                RAISE_ALERT(_env, "bad block proof id, expected %s, got %s", block.blockId, proof.blockId);
+            if (block.blockId() != proof.blockId) {
+                RAISE_ALERT(_env, "bad block proof id, expected %s, got %s", block.blockId(), proof.blockId);
                 return EggsError::BAD_BLOCK_PROOF;
             }
-            if (!_checkBlockDeleteProof(block.blockServiceId, proof)) {
+            if (!_checkBlockDeleteProof(block.blockService(), proof)) {
                 return EggsError::BAD_BLOCK_PROOF;
             }
             // record balance change in block service to files
-            _addBlockServicesToFiles(batch, block.blockServiceId, entry.fileId, -1);
+            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId, -1);
         }
 
         // Delete span, set new size, and go back to clean state
@@ -2840,6 +2961,7 @@ struct ShardDBImpl {
             spanKey().setOffset(byteOffset);
             auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
             if (status.IsNotFound()) {
+                LOG_DEBUG(_env, "could not find span at offset %s in file %s", byteOffset, fileId);
                 return false;
             }
             ROCKS_DB_CHECKED(status);
@@ -2858,7 +2980,13 @@ struct ShardDBImpl {
         if (!fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        ALWAYS_ASSERT(span1().blockSize() == span2().blockSize());
+        ALWAYS_ASSERT(span1().storageClass() != INLINE_STORAGE); // TODO better errors
+        auto blocks1 = span1().blocksBody();
+        ALWAYS_ASSERT(span2().storageClass() != INLINE_STORAGE);
+        auto blocks2 = span2().blocksBody();
+        uint32_t blockSize1 = blocks1.cellSize()*blocks1.stripes();
+        uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
+        ALWAYS_ASSERT(blockSize1 == blockSize2);
         // Fetch span state
         const auto fetchState = [this, time](InodeId fileId, uint64_t spanEnd) -> SpanState {
             // See if it's a normal file first
@@ -2884,37 +3012,43 @@ struct ShardDBImpl {
         // We don't want to put not-certified blocks in clean spans, or similar
         ALWAYS_ASSERT(state1 == state2);
         // Find blocks
-        const auto findBlock = [](const SpanBody& span, uint64_t blockId, BlockBody& block) -> int {
-            for (int i = 0; i < span.parity().blocks(); i++) {
-                block = span.block(i);
-                if (block.blockId == blockId) {
+        const auto findBlock = [](const SpanBlocksBody blocks, uint64_t blockId, BlockBody& block) -> int {
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                block = blocks.block(i);
+                if (block.blockId() == blockId) {
                     return i;
                 }
             }
             return -1;
         };
         BlockBody block1;
-        int block1Ix = findBlock(span1(), entry.blockId1, block1);
+        int block1Ix = findBlock(blocks1, entry.blockId1, block1);
         BlockBody block2;
-        int block2Ix = findBlock(span2(), entry.blockId2, block2);
+        int block2Ix = findBlock(blocks2, entry.blockId2, block2);
         if (block1Ix < 0 || block2Ix < 0) {
             // if neither are found, check if we haven't swapped already, for idempotency
             if (block1Ix < 0 && block2Ix < 0) {
-                if (findBlock(span1(), entry.blockId2, block1) >= 0 && findBlock(span2(), entry.blockId1, block2) >= 0) {
+                if (findBlock(blocks1, entry.blockId2, block1) >= 0 && findBlock(blocks2, entry.blockId1, block2) >= 0) {
                     return NO_ERROR;
                 }
             }
             throw EGGS_EXCEPTION("blocks not found");
         }
+        if (block1.crc() != block2.crc()) {
+            throw EGGS_EXCEPTION("mismatching blocks CRCs");
+        }
+        // Record the block counts
+        _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId1, -1);
+        _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId1, +1);
+        _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId2, +1);
+        _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId2, -1);
         // Finally, swap the blocks
-        span1().setBlock(block1Ix, block2);
+        char* tmp = (char*)malloc(decltype(block1)::SIZE); ALWAYS_ASSERT(tmp);
+        memcpy(tmp, block1._data, decltype(block1)::SIZE);
+        memcpy(block1._data, block2._data, decltype(block1)::SIZE);
+        memcpy(block2._data, tmp, decltype(block1)::SIZE);
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span1.toSlice()));
-        _addBlockServicesToFiles(batch, block1.blockServiceId, entry.fileId1, -1);
-        _addBlockServicesToFiles(batch, block2.blockServiceId, entry.fileId1, +1);
-        span2().setBlock(block2Ix, block1);
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
-        _addBlockServicesToFiles(batch, block1.blockServiceId, entry.fileId2, +1);
-        _addBlockServicesToFiles(batch, block2.blockServiceId, entry.fileId2, -1);
         return NO_ERROR;
     }
 
@@ -3009,6 +3143,9 @@ struct ShardDBImpl {
         case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
             // no resp here -- the callers are internal
             _applyUpdateBlockServices(time, batch, logEntryBody.getUpdateBlockServices());
+            break;
+        case ShardLogEntryKind::ADD_INLINE_SPAN:
+            err = _applyAddInlineSpan(time, batch, logEntryBody.getAddInlineSpan(), resp.setAddInlineSpan());
             break;
         case ShardLogEntryKind::ADD_SPAN_INITIATE:
             err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), resp.setAddSpanInitiate());
@@ -3158,29 +3295,52 @@ struct ShardDBImpl {
     }
 };
 
-BincodeBytes defaultDirectoryInfo() {
-    char buf[255];
-    DirectoryInfoBody info;
-    info.version = 0;
+DirectoryInfo defaultDirectoryInfo() {
+    DirectoryInfo info;
+    const auto addSegment = [&info](uint8_t tag, const auto& segment) {
+        char buf[255];
+        BincodeBuf bbuf(buf, 255);
+        segment.pack(bbuf);
+        auto& entry = info.entries.els.emplace_back();
+        entry.tag = tag;
+        entry.body.copy(buf, bbuf.len());
+    };
+
+    // Snapshot
+    SnapshotPolicy snapshot;
     // delete after 30 days
-    info.deleteAfterTime = (30ull /*days*/ * 24 /*hours*/ * 60 /*minutes*/ * 60 /*seconds*/ * 1'000'000'000 /*ns*/) | (1ull<<63);
+    snapshot.deleteAfterTime = (30ull /*days*/ * 24 /*hours*/ * 60 /*minutes*/ * 60 /*seconds*/ * 1'000'000'000 /*ns*/) | (1ull<<63);
     // do not delete after N versions
-    info.deleteAfterVersions = 0;
-    // up to 1MiB flash, up to 10MiB HDD (should be 100MiB really, it's nicer to test with smaller
-    // spans now).
-    auto& flashPolicy = info.spanPolicies.els.emplace_back();
-    flashPolicy.maxSize = 1ull << 20; // 1MiB
-    flashPolicy.storageClass = storageClassByName("FLASH");
-    flashPolicy.parity = Parity(1, 1); // RAID1
-    auto& hddPolicy = info.spanPolicies.els.emplace_back();
-    hddPolicy.maxSize = 10ull << 20; // 10MiB
-    hddPolicy.storageClass = storageClassByName("HDD");
-    hddPolicy.parity = Parity(1, 1); // RAID1
+    snapshot.deleteAfterVersions = 0;
+    addSegment(SNAPSHOT_POLICY_TAG, snapshot);
 
-    BincodeBuf bbuf(buf, 255);
-    info.pack(bbuf);
+    // Block policy: up to 5MiB: FLASH. Up to 100MiB: HDD. This is the maximum block size.
+    BlockPolicy blockPolicy;
+    auto& flashBlocks = blockPolicy.entries.els.emplace_back();
+    flashBlocks.minSize = 0;
+    flashBlocks.storageClass = storageClassByName("FLASH");
+    auto& hddBlocks = blockPolicy.entries.els.emplace_back();
+    hddBlocks.minSize = 5 << 20;
+    hddBlocks.storageClass = storageClassByName("HDD");
+    addSegment(BLOCK_POLICY_TAG, blockPolicy);
 
-    return BincodeBytes(buf, bbuf.len());
+    // Span policy: up to 10MiB: RS(4,4), up to 100MiB (max span size): RS(10,4)
+    SpanPolicy spanPolicy;
+    auto& smallSpans = spanPolicy.entries.els.emplace_back();
+    smallSpans.maxSize = 10 << 20;
+    smallSpans.parity = Parity(4, 4);
+    auto& bigSpans = spanPolicy.entries.els.emplace_back();
+    bigSpans.maxSize = 100 << 20;
+    bigSpans.parity = Parity(10, 4);
+    addSegment(SPAN_POLICY_TAG, spanPolicy);
+
+    // Stripe policy: try to have 1MiB stripes (they'll be larger the vast majority
+    // of the times).
+    StripePolicy stripePolicy;
+    stripePolicy.targetStripeSize = 1 << 20;
+    addSegment(STRIPE_POLICY_TAG, stripePolicy);
+
+    return info;
 }
 
 bool readOnlyShardReq(const ShardMessageKind kind) {
@@ -3201,6 +3361,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::CONSTRUCT_FILE:
     case ShardMessageKind::ADD_SPAN_INITIATE:
     case ShardMessageKind::ADD_SPAN_CERTIFY:
+    case ShardMessageKind::ADD_INLINE_SPAN:
     case ShardMessageKind::LINK_FILE:
     case ShardMessageKind::SOFT_UNLINK_FILE:
     case ShardMessageKind::SAME_DIRECTORY_RENAME:

@@ -1,7 +1,11 @@
 package main
 
+func main() {
+
+}
+
+/*
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -11,16 +15,16 @@ import (
 	"runtime/pprof"
 	"sync"
 	"syscall"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-var client *eggs.Client
-var log *eggs.Logger
-var dirInfoCache *eggs.DirInfoCache
+var client *lib.Client
+var log *lib.Logger
+var dirInfoCache *lib.DirInfoCache
 
 func eggsErrToErrno(err error) syscall.Errno {
 	switch err {
@@ -126,15 +130,17 @@ func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 }
 
 type transientFile struct {
-	mu      sync.Mutex
-	dir     msgs.InodeId
-	valid   bool
-	id      msgs.InodeId
-	cookie  [8]byte
-	name    string
-	written uint64
-	buf     *bytes.Buffer
-	dirInfo *msgs.DirectoryInfoBody
+	mu           sync.Mutex
+	dir          msgs.InodeId
+	valid        bool
+	id           msgs.InodeId
+	cookie       [8]byte
+	name         string
+	written      uint64 // what's already in spans
+	data         []byte
+	spanPolicy   *msgs.SpanPolicy
+	blockPolicy  *msgs.BlockPolicy
+	stripePolicy *msgs.StripePolicy
 }
 
 type eggsNode struct {
@@ -232,8 +238,16 @@ func (n *eggsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, errno syscall.Errno) {
 	// TODO would probably be better to check the mode/flags and return
 	// EINVAL if it doesn't match what we want.
-	dirInfo, err := eggs.ResolveDirectoryInfo(log, client, dirInfoCache, n.id)
-	if err != nil {
+	spanPolicy := &msgs.SpanPolicy{}
+	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, spanPolicy); err != nil {
+		return nil, eggsErrToErrno(err)
+	}
+	blockPolicy := &msgs.BlockPolicy{}
+	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, blockPolicy); err != nil {
+		return nil, eggsErrToErrno(err)
+	}
+	stripePolicy := &msgs.StripePolicy{}
+	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, stripePolicy); err != nil {
 		return nil, eggsErrToErrno(err)
 	}
 	req := msgs.ConstructFileReq{Note: name}
@@ -249,13 +263,15 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 		return nil, err
 	}
 	transient := transientFile{
-		id:      resp.Id,
-		cookie:  resp.Cookie,
-		valid:   true,
-		name:    name,
-		dir:     n.id,
-		buf:     bytes.NewBuffer([]byte{}),
-		dirInfo: dirInfo,
+		id:           resp.Id,
+		cookie:       resp.Cookie,
+		valid:        true,
+		name:         name,
+		dir:          n.id,
+		data:         []byte{},
+		spanPolicy:   spanPolicy,
+		blockPolicy:  blockPolicy,
+		stripePolicy: stripePolicy,
 	}
 	return &transient, 0
 }
@@ -285,7 +301,6 @@ func (n *eggsNode) Mkdir(
 	req := msgs.MakeDirectoryReq{
 		OwnerId: n.id,
 		Name:    name,
-		Info:    msgs.SetDirectoryInfo{Inherited: true},
 	}
 	resp := msgs.MakeDirectoryResp{}
 	if err := cdcRequest(&req, &resp); err != 0 {
@@ -321,85 +336,26 @@ func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 	return 0
 }
 
-// If policy=nil, we want an inline span
-func (f *transientFile) writeSpan(policy *msgs.SpanPolicy) syscall.Errno {
-	if policy != nil && policy.Parity.DataBlocks() != 1 {
-		panic(fmt.Errorf("only mirroring supported"))
+func (f *transientFile) writeSpan() syscall.Errno {
+	spanSize := uint32(len(f.data))
+	var err error
+	f.data, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, f.data)
+	if err != nil {
+		f.valid = false
+		return eggsErrToErrno(err)
 	}
-
-	maxSize := 255
-	if policy != nil {
-		maxSize = int(policy.MaxSize)
-	}
-	data := f.buf.Next(maxSize)
-	crc := eggs.CRC32C(data)
-
-	initiateReq := msgs.AddSpanInitiateReq{
-		FileId:     f.id,
-		Cookie:     f.cookie,
-		ByteOffset: f.written,
-		Crc32:      crc,
-		Size:       uint64(len(data)),
-	}
-	if len(data) < 256 {
-		if policy != nil {
-			panic(fmt.Errorf("unexpected non-nil policy"))
-		}
-		initiateReq.StorageClass = msgs.INLINE_STORAGE
-		initiateReq.BodyBytes = data
-	} else {
-		initiateReq.BlockSize = uint64(len(data))
-		initiateReq.StorageClass = policy.StorageClass
-		initiateReq.Parity = policy.Parity
-		initiateReq.BodyBlocks = make([]msgs.NewBlockInfo, policy.Parity.Blocks())
-		for i := 0; i < policy.Parity.Blocks(); i++ {
-			initiateReq.BodyBlocks[i].Crc32 = crc
-		}
-	}
-	initiateResp := msgs.AddSpanInitiateResp{}
-
-	if err := shardRequest(f.id.Shard(), &initiateReq, &initiateResp); err != 0 {
-		return err
-	}
-
-	if len(data) > 255 {
-		certifyReq := msgs.AddSpanCertifyReq{
-			FileId:     f.id,
-			Cookie:     f.cookie,
-			ByteOffset: f.written,
-			Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
-		}
-		for i, block := range initiateResp.Blocks {
-			conn, err := client.GetBlockServiceConnection(log, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
-			if err != nil {
-				return syscall.EIO
-			}
-			proof, err := eggs.WriteBlock(log, conn, &block, bytes.NewReader(data), uint32(len(data)), crc)
-			client.ReleaseBlockServiceConnection(log, conn)
-			if err != nil {
-				log.Error("writing block failed with error %v", err)
-				return syscall.EIO
-			}
-			certifyReq.Proofs[i].BlockId = block.BlockId
-			certifyReq.Proofs[i].Proof = proof
-		}
-		if err := shardRequest(f.id.Shard(), &certifyReq, &msgs.AddSpanCertifyResp{}); err != 0 {
-			return err
-		}
-	}
-
-	f.written += uint64(len(data))
+	f.written += uint64(spanSize)
+	f.data = f.data[:1]
 
 	return 0
 }
 
 func (f *transientFile) writeSpanIfNecessary() syscall.Errno {
-	biggestSpan := f.dirInfo.SpanPolicies[len(f.dirInfo.SpanPolicies)-1]
-	if len(f.buf.Bytes()) < int(biggestSpan.MaxSize) {
+	biggestSpan := f.spanPolicy.Entries[len(f.spanPolicy.Entries)-1]
+	if len(f.data) < int(biggestSpan.MaxSize) {
 		return 0
 	}
-
-	return f.writeSpan(&biggestSpan)
+	return f.writeSpan()
 }
 
 func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
@@ -413,12 +369,12 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 	}
 
 	// TODO support writing in the middle (and flushing out the span later)
-	if off != int64(f.written)+int64(len(f.buf.Bytes())) {
+	if off != int64(f.written)+int64(len(f.data)) {
 		log.Info("refusing to write in the past")
 		return 0, syscall.EINVAL
 	}
 
-	f.buf.Write(data)
+	f.data = append(f.data, data...)
 
 	if err := f.writeSpanIfNecessary(); err != 0 {
 		log.Debug("writing span failed with error %v, invalidating %v", err, f.id)
@@ -440,24 +396,8 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 		return syscall.EBADF
 	}
 
-	for len(f.buf.Bytes()) > 255 {
-		var policy *msgs.SpanPolicy
-		for _, currPolicy := range f.dirInfo.SpanPolicies {
-			policy = &currPolicy
-			if int(currPolicy.MaxSize) > len(f.buf.Bytes()) {
-				break
-			}
-		}
-		if err := f.writeSpan(policy); err != 0 {
-			f.valid = false
-			return err
-		}
-	}
-	if len(f.buf.Bytes()) > 0 {
-		if err := f.writeSpan(nil); err != 0 {
-			f.valid = false
-			return err
-		}
+	if err := f.writeSpan(); err != 0 {
+		return err
 	}
 
 	req := msgs.LinkFileReq{
@@ -544,10 +484,12 @@ type openFile struct {
 	id   msgs.InodeId
 	size uint64 // total size of file
 
-	// We keep the latest span/block service around, we might just need
-	// the next bit in sequential reads.
-	spans         msgs.FileSpansResp
-	currentSpanIx int // index in list above
+	offset int64
+
+	// We store the last successful span resp
+	spans         *msgs.FileSpansResp
+	currentSpanIx int
+	reader        io.ReadCloser
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -558,89 +500,51 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 		return nil, 0, err
 	}
 	of := openFile{
-		id:   n.id,
-		size: statResp.Size,
-	}
-	if err := shardRequest(n.id.Shard(), &msgs.FileSpansReq{FileId: n.id}, &of.spans); err != 0 {
-		return nil, 0, err
+		id:     n.id,
+		size:   statResp.Size,
+		offset: -1,
 	}
 	return &of, 0, 0
 }
 
+func (of *openFile) ensureSpan(off int64) syscall.Errno {
+
+}
+
 // One step of reading, will go through at most one span.
 func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) {
+	if len(dest) == 0 {
+		return 0, 0
+	}
+
 	// Check if we're still within the file: if not, we can just exit
 	if off >= int64(of.size) {
 		log.Debug("%v is beyond %v, nothing to read", off, of.size)
 		return 0, 0
 	}
 
-	// Check if we're still within the current span
-	currentSpan := of.spans.Spans[of.currentSpanIx]
-	if off < int64(currentSpan.ByteOffset) || off >= int64(currentSpan.ByteOffset+currentSpan.Size) {
-		log.Debug("offset %v is not within the current span bounds [%v, %v)", off, currentSpan.ByteOffset, currentSpan.ByteOffset+currentSpan.Size)
-		firstSpan := of.spans.Spans[0]
-		lastSpan := of.spans.Spans[len(of.spans.Spans)-1]
-		if off < int64(firstSpan.ByteOffset) || off >= int64(lastSpan.ByteOffset+lastSpan.Size) {
-			log.Debug("offset %v is not within the current spanS bounds [%v, %v), will refresh", off, firstSpan.ByteOffset, lastSpan.ByteOffset+lastSpan.Size)
-			// we need to refresh the spans
-			if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(off)}, &of.spans); err != 0 {
-				return 0, err
-			}
-			of.currentSpanIx = 0
-			// restart
-			return of.readInternal(dest, off)
-		} else {
-			log.Debug("offset %v is within the current spanS bounds [%v, %v), will look for span starting from ix %v", off, firstSpan.ByteOffset, lastSpan.ByteOffset+lastSpan.Size, of.currentSpanIx)
-			// we need to look for the correct span
-			change := 1
-			if off < int64(currentSpan.ByteOffset) {
-				change = -1
-			}
-			for {
-				currentSpan = of.spans.Spans[of.currentSpanIx]
-				if off >= int64(currentSpan.ByteOffset) && off < int64(currentSpan.ByteOffset+currentSpan.Size) {
-					break
-				}
-				of.currentSpanIx += change
-			}
-			// restart
-			return of.readInternal(dest, off)
+	// If the offset has changed, reset
+	if off != of.offset {
+		of.reader.Close()
+		of.currentSpanIx = -1
+		if err := of.ensureSpan(off); err != 0 {
+			return 0, err
 		}
 	}
 
-	spanOffset := off - int64(currentSpan.ByteOffset)
-	remainingInSpan := int64(currentSpan.Size) - spanOffset
-	if spanOffset < 0 || spanOffset > int64(currentSpan.Size) || remainingInSpan <= 0 {
-		panic(fmt.Errorf("unexpected out of bounds spanOffset/remainingInSpan"))
+	read, err := of.reader.Read(dest)
+	if err == io.EOF {
+		of.reader.Close()
+		of.currentSpanIx = -1
+		if err := of.ensureSpan(off); err != 0 {
+			return 0, err
+		}
 	}
 
-	if currentSpan.StorageClass == msgs.INLINE_STORAGE {
-		return int64(copy(dest, currentSpan.BodyBytes[spanOffset:])), 0
-	} else {
-		if currentSpan.Parity.DataBlocks() != 1 {
-			panic(fmt.Errorf("unsupported parity %v", currentSpan.Parity))
-		}
-		block := &currentSpan.BodyBlocks[0]
-		blockService := &of.spans.BlockServices[block.BlockServiceIx]
-		toRead := uint32(remainingInSpan)
-		if len(dest) < int(toRead) {
-			toRead = uint32(len(dest))
-		}
-		conn, err := client.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
-		if err != nil {
-			panic(err)
-		}
-		defer client.ReleaseBlockServiceConnection(log, conn)
-		if err := eggs.FetchBlock(log, conn, blockService, block.BlockId, block.Crc32, uint32(spanOffset), toRead); err != nil {
-			panic(err)
-		}
-		dest = dest[:toRead]
-		if _, err := io.ReadFull(conn, dest); err != nil {
-			panic(err)
-		}
-		return int64(len(dest)), 0
+	if err != nil {
+		return int64(read), eggsErrToErrno(err)
 	}
+	return int64(read), 0
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -657,7 +561,7 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 			return nil, err
 		}
 		internalOff += read
-		if read == 0 {
+		if internalOff == int64(len(dest)) || read == 0 {
 			break
 		}
 	}
@@ -787,6 +691,7 @@ func usage() {
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
+	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
@@ -816,7 +721,14 @@ func main() {
 		defer logOut.Close()
 	}
 	logger := eggs.NewLoggerLogger(logOut)
-	log = eggs.NewLoggerFromLogger(*verbose, logger)
+	level := eggs.INFO
+	if *verbose {
+		level = eggs.DEBUG
+	}
+	if *trace {
+		level = eggs.TRACE
+	}
+	log = eggs.NewLoggerFromLogger(level, logger)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -827,7 +739,7 @@ func main() {
 		pprof.StartCPUProfile(f) // we stop in terminate()
 	}
 
-	counters := &eggs.ClientCounters{}
+	counters := &lib.ClientCounters{}
 
 	var err error
 	client, err = eggs.NewClient(log, *shuckleAddress, nil, counters, nil)
@@ -882,3 +794,4 @@ func main() {
 
 	server.Wait()
 }
+*/

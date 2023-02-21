@@ -2,7 +2,7 @@
 set -eu -o pipefail
 
 echo "$(tput bold)building requisites$(tput sgr0)"
-./cpp/build.py go rs # build rs library
+./cpp/build.py go rs crc32c # build libs for go
 (cd go/msgs && go generate ./...) # build cpp files
 
 echo "$(tput bold)go tests$(tput sgr0)"

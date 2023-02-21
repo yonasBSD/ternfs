@@ -1,0 +1,116 @@
+// Automatically generated with go run bincodegen.
+// Run `go generate ./...` from the go/ directory to regenerate it.
+package msgs
+
+import (
+	"fmt"
+	"io"
+	"xtx/eggsfs/bincode"
+)
+
+// This file specifies
+type ShardRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShardRequestKind() ShardMessageKind
+}
+
+type ShardResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	ShardResponseKind() ShardMessageKind
+}
+
+type CDCRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	CDCRequestKind() CDCMessageKind
+}
+
+type CDCResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	CDCResponseKind() CDCMessageKind
+}
+
+type IsDirectoryInfoEntry interface {
+	bincode.Packable
+	bincode.Unpackable
+	Tag() DirectoryInfoTag
+}
+
+func TagToDirInfoEntry(tag DirectoryInfoTag) IsDirectoryInfoEntry {
+	switch tag {
+	case SNAPSHOT_POLICY_TAG:
+		return &SnapshotPolicy{}
+	case SPAN_POLICY_TAG:
+		return &SpanPolicy{}
+	case BLOCK_POLICY_TAG:
+		return &BlockPolicy{}
+	default:
+		panic(fmt.Errorf("unknown policy tag %v", tag))
+	}
+}
+
+func (err ErrCode) Error() string {
+	return err.String()
+}
+
+func (err *ErrCode) Pack(w io.Writer) error {
+	return bincode.PackScalar(w, uint16(*err))
+}
+	
+func (errCode *ErrCode) Unpack(r io.Reader) error {
+	var c uint16
+	if err := bincode.UnpackScalar(r, &c); err != nil {
+		return err
+	}
+	*errCode = ErrCode(c)
+	return nil
+}	
+	
+func (fs *FetchedSpan) Pack(w io.Writer) error {
+	if fs.Header.StorageClass == EMPTY_STORAGE {
+		return fmt.Errorf("cannot have EMPTY_STORAGE in fetched span")
+	}
+	if err := fs.Header.Pack(w); err != nil {
+		return err
+	}
+	switch b := fs.Body.(type) {
+	case *FetchedBlocksSpan:
+		if fs.Header.StorageClass == INLINE_STORAGE {
+			return fmt.Errorf("got INLINE storage class with blocks body")
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	case *FetchedInlineSpan:
+		if fs.Header.StorageClass != INLINE_STORAGE {
+			return fmt.Errorf("got non-INLINE storage (%v) with inline body", fs.Header.StorageClass)
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unexpected FetchedSpan body of type %T", b)
+	}
+	return nil
+}
+
+func (fs *FetchedSpan) Unpack(r io.Reader) error {
+	if err := fs.Header.Unpack(r); err != nil {
+		return err
+	}
+	if fs.Header.StorageClass == EMPTY_STORAGE {
+		return fmt.Errorf("unexpected EMPTY_STORAGE in unpacked FetchedSpan")
+	}
+	if fs.Header.StorageClass == INLINE_STORAGE {
+		fs.Body = &FetchedInlineSpan{}
+	} else {
+		fs.Body = &FetchedBlocksSpan{}
+	}
+	if err := fs.Body.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}

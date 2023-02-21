@@ -73,7 +73,7 @@ public:
     }
 };
 
-#ifdef EGGS_TRACE
+#ifdef EGGS_DEBUG
     #define LOG_TRACE(env, ...) \
         do { \
             if (unlikely((env)._shouldLog(LogLevel::LOG_TRACE))) { \

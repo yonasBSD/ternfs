@@ -2,13 +2,18 @@
 // while hopefully not leaking processes left and right when this process dies.
 package main
 
+func main() {
+
+}
+
+/*
 import (
 	"flag"
 	"fmt"
 	"os"
 	"path"
 	"time"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -22,9 +27,10 @@ func noRunawayArgs() {
 func main() {
 	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind.")
 	verbose := flag.Bool("verbose", false, "")
+	trace := flag.Bool("trace", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
-	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services (default 0).")
-	flashBlockServices := flag.Uint("flash-block-services", 5, "Number of HDD block services (default 0).")
+	hddBlockServices := flag.Uint("hdd-block-services", 20, "Number of HDD block services.")
+	flashBlockServices := flag.Uint("flash-block-services", 20, "Number of HDD block services.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	ownIp := flag.String("own-ip", "127.0.0.1", "What IP to advertise to shuckle for these services.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
@@ -71,24 +77,32 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := eggs.NewLogger(*verbose, logOut)
+	level := lib.INFO
+	if *verbose {
+		level = lib.DEBUG
+	}
+	if *trace {
+		level = lib.TRACE
+	}
+	log := lib.NewLogger(level, logOut)
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 
-	cppExes := eggs.BuildCppExes(log, *buildType)
-	shuckleExe := eggs.BuildShuckleExe(log)
-	blockServiceExe := eggs.BuildBlockServiceExe(log)
+	cppExes := lib.BuildCppExes(log, *buildType)
+	shuckleExe := lib.BuildShuckleExe(log)
+	blockServiceExe := lib.BuildBlockServiceExe(log)
+	eggsFuseExe := lib.BuildEggsFuseExe(log)
 
 	terminateChan := make(chan any, 1)
 
-	procs := eggs.NewManagedProcesses(terminateChan)
+	procs := lib.NewManagedProcesses(terminateChan)
 	defer procs.Close()
 
 	fmt.Printf("starting components\n")
 
 	// Start shuckle
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", *shuckleBincodePort)
-	procs.StartShuckle(log, &eggs.ShuckleOpts{
+	procs.StartShuckle(log, &lib.ShuckleOpts{
 		Exe:         shuckleExe,
 		BincodePort: uint16(*shuckleBincodePort),
 		HttpPort:    uint16(*shuckleHttpPort),
@@ -102,7 +116,7 @@ func main() {
 		if i >= *hddBlockServices {
 			storageClass = msgs.FLASH_STORAGE
 		}
-		opts := eggs.BlockServiceOpts{
+		opts := lib.BlockServiceOpts{
 			Exe:            blockServiceExe,
 			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			StorageClass:   storageClass,
@@ -120,7 +134,7 @@ func main() {
 
 	// Start CDC
 	{
-		opts := eggs.CDCOpts{
+		opts := lib.CDCOpts{
 			Exe:            cppExes.CDCExe,
 			Dir:            path.Join(*dataDir, "cdc"),
 			Verbose:        *verbose,
@@ -138,7 +152,7 @@ func main() {
 	// Start shards
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		opts := eggs.ShardOpts{
+		opts := lib.ShardOpts{
 			Exe:            cppExes.ShardExe,
 			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
 			Verbose:        *verbose,
@@ -159,7 +173,16 @@ func main() {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	eggs.WaitForShuckle(log, shuckleAddress, int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
+	lib.WaitForShuckle(log, shuckleAddress, int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
+
+	procs.StartFuse(log, &lib.FuseOpts{
+		Exe:            eggsFuseExe,
+		Path:           path.Join(*dataDir, "eggsfuse"),
+		Verbose:        *verbose,
+		Wait:           true,
+		ShuckleAddress: shuckleAddress,
+		Profile:        *profile,
+	})
 
 	fmt.Printf("operational 🤖\n")
 
@@ -168,3 +191,4 @@ func main() {
 		panic(err)
 	}
 }
+*/

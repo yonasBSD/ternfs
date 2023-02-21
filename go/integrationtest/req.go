@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
-	"io"
-	"xtx/eggsfs/eggs"
+	"fmt"
+	"xtx/eggsfs/crc32c"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 )
 
 type edge struct {
@@ -19,14 +21,14 @@ type fullEdge struct {
 	creationTime msgs.EggsTime
 }
 
-func shardReq(log *eggs.Logger, client *eggs.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
+func shardReq(log *lib.Logger, client *lib.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
 	err := client.ShardRequest(log, shid, reqBody, respBody)
 	if err != nil {
 		panic(err)
 	}
 }
 
-func cdcReq(log *eggs.Logger, client *eggs.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
+func cdcReq(log *lib.Logger, client *lib.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
 	err := client.CDCRequest(log, reqBody, respBody)
 	if err != nil {
 		panic(err)
@@ -55,14 +57,15 @@ func createFileData(
 */
 
 func createFile(
-	log *eggs.Logger,
-	client *eggs.Client,
-	mbs eggs.MockableBlockServices,
+	log *lib.Logger,
+	client *lib.Client,
+	dirInfoCache *lib.DirInfoCache,
 	dirId msgs.InodeId,
-	spanSize uint64,
+	spanSize uint32,
 	name string,
 	size uint64,
-	genData func(size uint64) []byte,
+	dataSeed uint64,
+	buf *[]byte,
 ) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	// construct
 	constructReq := msgs.ConstructFileReq{
@@ -71,96 +74,36 @@ func createFile(
 	}
 	constructResp := msgs.ConstructFileResp{}
 	shardReq(log, client, dirId.Shard(), &constructReq, &constructResp)
-	// add spans
-	if size < 256 {
-		bytes := genData(size)
-		addSpanReq := msgs.AddSpanInitiateReq{
-			FileId:       constructResp.Id,
-			Cookie:       constructResp.Cookie,
-			ByteOffset:   0,
-			StorageClass: msgs.INLINE_STORAGE,
-			Parity:       0,
-			Crc32:        eggs.CRC32C(bytes),
-			Size:         size,
-			BlockSize:    0,
-			BodyBytes:    bytes,
+	rand := wyhash.New(dataSeed)
+	if size > 0 {
+		var spanPolicy msgs.SpanPolicy
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicy); err != nil {
+			panic(err)
 		}
-		shardReq(log, client, dirId.Shard(), &addSpanReq, &msgs.AddSpanInitiateResp{})
-	} else {
-		// We do this because just allocating this data each time is very slow.
-		_, isMocked := mbs.(*eggs.MockedBlockServices)
-		var allSpansData []byte
-		if !isMocked {
-			allSpansData = genData(size)
+		var blockPolicies msgs.BlockPolicy
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
+			panic(err)
 		}
-		for offset := uint64(0); offset < size; offset += spanSize {
-			thisSpanSize := eggs.Min(spanSize, size-offset)
-			var data0 io.Reader
-			var data1 io.Reader
-			var crc [4]byte
-			if isMocked {
-				data0 = noopReader{}
-				data1 = noopReader{}
-			} else {
-				bs := allSpansData[offset : offset+thisSpanSize]
-				crc = eggs.CRC32C(bs)
-				data0 = bytes.NewReader(bs)
-				data1 = bytes.NewReader(bs)
+		var stripePolicy msgs.StripePolicy
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
+			panic(err)
+		}
+		// add spans
+		for offset := uint64(0); offset < size; offset += uint64(spanSize) {
+			thisSpanSize := spanSize
+			if uint32(size-offset) < thisSpanSize {
+				thisSpanSize = uint32(size - offset)
 			}
-			addSpanReq := msgs.AddSpanInitiateReq{
-				FileId:       constructResp.Id,
-				Cookie:       constructResp.Cookie,
-				ByteOffset:   offset,
-				StorageClass: 2,
-				Parity:       msgs.MkParity(1, 1),
-				Crc32:        crc,
-				Size:         thisSpanSize,
-				BlockSize:    thisSpanSize,
-				BodyBlocks:   []msgs.NewBlockInfo{{Crc32: crc}, {Crc32: crc}},
+			if len(*buf) < int(thisSpanSize) {
+				*buf = append(*buf, make([]byte, int(thisSpanSize)-len(*buf))...)
 			}
-			addSpanResp := msgs.AddSpanInitiateResp{}
-			shardReq(log, client, dirId.Shard(), &addSpanReq, &addSpanResp)
-			block0 := &addSpanResp.Blocks[0]
-			block1 := &addSpanResp.Blocks[1]
-			var proof0 [8]byte
-			var proof1 [8]byte
+			spanBuf := (*buf)[:thisSpanSize]
+			rand.Read(spanBuf)
 			var err error
-			var conn eggs.MockableBlockServiceConn
-			conn, err = mbs.GetBlockServiceConnection(log, block0.BlockServiceIp1, block0.BlockServicePort1, block0.BlockServiceIp2, block0.BlockServicePort2)
+			*buf, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
 			if err != nil {
 				panic(err)
 			}
-			proof0, err = mbs.WriteBlock(log, conn, block0, data0, uint32(thisSpanSize), crc)
-			mbs.ReleaseBlockServiceConnection(log, conn)
-			if err != nil {
-				panic(err)
-			}
-			conn, err = mbs.GetBlockServiceConnection(log, block1.BlockServiceIp1, block1.BlockServicePort1, block1.BlockServiceIp2, block1.BlockServicePort2)
-			if err != nil {
-				panic(err)
-			}
-			proof1, err = mbs.WriteBlock(log, conn, block1, data1, uint32(thisSpanSize), crc)
-			mbs.ReleaseBlockServiceConnection(log, conn)
-			if err != nil {
-				panic(err)
-			}
-			certifySpanReq := msgs.AddSpanCertifyReq{
-				FileId:     constructResp.Id,
-				Cookie:     constructResp.Cookie,
-				ByteOffset: offset,
-				Proofs: []msgs.BlockProof{
-					{
-						BlockId: block0.BlockId,
-						Proof:   proof0,
-					},
-					{
-						BlockId: block1.BlockId,
-						Proof:   proof1,
-					},
-				},
-			}
-			certifySpanResp := msgs.AddSpanCertifyResp{}
-			shardReq(log, client, dirId.Shard(), &certifySpanReq, &certifySpanResp)
 		}
 	}
 	// link
@@ -175,47 +118,49 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServices, id msgs.InodeId) []byte {
-	data := bytes.NewBuffer([]byte{})
+func readFile(log *lib.Logger, client *lib.Client, id msgs.InodeId, buf *[]byte) []byte {
+	statResp := msgs.StatFileResp{}
+	shardReq(log, client, id.Shard(), &msgs.StatFileReq{Id: id}, &statResp)
+	if len(*buf) < int(statResp.Size) {
+		*buf = append(*buf, make([]byte, int(statResp.Size)-len(*buf))...)
+	}
 	spansReq := msgs.FileSpansReq{
 		FileId: id,
 	}
+	readSoFar := 0
 	spansResp := msgs.FileSpansResp{}
 	for {
 		shardReq(log, client, id.Shard(), &spansReq, &spansResp)
-		for _, span := range spansResp.Spans {
-			if span.StorageClass == msgs.INLINE_STORAGE {
-				data.Write(span.BodyBytes)
-			} else {
-				block := &span.BodyBlocks[0]
-				blockService := &spansResp.BlockServices[block.BlockServiceIx]
-				conn, err := mbs.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
-				if err != nil {
-					panic(err)
-				}
-				if err := mbs.FetchBlock(log, conn, blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
-					mbs.ReleaseBlockServiceConnection(log, conn)
-					panic(err)
-				}
-				lr := &io.LimitedReader{
-					R: conn,
-					N: int64(span.BlockSize),
-				}
-				if _, err := data.ReadFrom(lr); err != nil {
-					mbs.ReleaseBlockServiceConnection(log, conn)
-					panic(err)
-				}
-				mbs.ReleaseBlockServiceConnection(log, conn)
+		for i := range spansResp.Spans {
+			span := &spansResp.Spans[i]
+			// TODO random blacklist
+			spanR, err := client.ReadSpan(log, []msgs.BlockServiceBlacklist{}, id, spansResp.BlockServices, span)
+			if err != nil {
+				panic(err)
 			}
+			read, err := bytes.NewBuffer((*buf)[readSoFar:readSoFar]).ReadFrom(spanR)
+			spanR.Close()
+			if err != nil {
+				panic(err)
+			}
+			spanCrc := msgs.Crc(crc32c.Sum(0, (*buf)[readSoFar:readSoFar+int(read)]))
+			if spanCrc != span.Header.Crc {
+				panic(fmt.Errorf("expected crc %v for span, but got %v", span.Header.Crc, spanCrc))
+			}
+			readSoFar += int(read)
 		}
 		if spansResp.NextOffset == 0 {
 			break
 		}
+		spansReq.ByteOffset = spansResp.NextOffset
 	}
-	return data.Bytes()
+	if readSoFar != int(statResp.Size) {
+		panic(fmt.Errorf("readSoFar=%v != statResp.Size=%v", readSoFar, statResp.Size))
+	}
+	return (*buf)[:readSoFar]
 }
 
-func readDir(log *eggs.Logger, client *eggs.Client, dir msgs.InodeId) []edge {
+func readDir(log *lib.Logger, client *lib.Client, dir msgs.InodeId) []edge {
 	req := msgs.ReadDirReq{
 		DirId:     dir,
 		StartHash: 0,
@@ -238,7 +183,7 @@ func readDir(log *eggs.Logger, client *eggs.Client, dir msgs.InodeId) []edge {
 	return edges
 }
 
-func fullReadDir(log *eggs.Logger, client *eggs.Client, dirId msgs.InodeId) []fullEdge {
+func fullReadDir(log *lib.Logger, client *lib.Client, dirId msgs.InodeId) []fullEdge {
 	req := msgs.FullReadDirReq{
 		DirId: msgs.ROOT_DIR_INODE_ID,
 	}

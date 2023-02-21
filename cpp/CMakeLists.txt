@@ -50,6 +50,7 @@ add_link_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 include(thirdparty.cmake)
 
 add_subdirectory(rs)
+add_subdirectory(crc32c)
 add_subdirectory(core)
 add_subdirectory(shard)
 add_subdirectory(cdc)

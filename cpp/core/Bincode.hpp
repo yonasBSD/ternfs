@@ -10,6 +10,7 @@
 #include <bit>
 #include <vector>
 #include <array>
+#include <bit>
 
 #include "Common.hpp"
 #include "Assert.hpp"

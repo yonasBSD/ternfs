@@ -15,9 +15,7 @@
 #include "Time.hpp"
 #include "Undertaker.hpp"
 #include "CDCKey.hpp"
-#include "crc32c.hpp"
-#include "splitmix64.hpp"
-#include "rs.h"
+#include "wyhash.h"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -72,9 +70,7 @@ TEST_CASE("BincodeBytes") {
     uint8_t buf[255];
     uint64_t rand = 0;
     for (int i = 0; i < 10; i++) {
-        for (int j = 0; j < i; j++) {
-            buf[j] = splitmix64(rand) % 256;
-        }
+        wyhash64_bytes(&rand, &buf[0], i);
         bytes = BincodeBytes((const char*)buf, i);
         CHECK(bytes.size() == i);
         CHECK(strncmp(bytes.data(), (const char*)buf, bytes.size()) == 0);
@@ -260,7 +256,6 @@ TEST_CASE("ShardDB data") {
             CHECK(lhs.crc32 == rhs.crc32);
         }
     }
-    */
 
     SUBCASE("Directory") {
         InodeId id(InodeType::DIRECTORY, ShardId(3), 5);
@@ -289,7 +284,6 @@ TEST_CASE("ShardDB data") {
         CHECK(readDir().infoInherited() == dir().infoInherited());
     }
 
-    /*
     SUBCASE("Edges") {
         InodeId dirId(InodeType::DIRECTORY, ShardId(3), 5);
 
@@ -585,6 +579,7 @@ TEST_CASE("test fmt") {
     REQUIRE(ss.str() == "2020-01-01T00:00:00.000000000");
 }
 
+/*
 TEST_CASE("make/rm directory") {
     // not actually the full lifecycle, just some ad hoc tests
 
@@ -629,58 +624,4 @@ TEST_CASE("make/rm directory") {
         NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
 }
-
-TEST_CASE("crc32c") {
-    std::array<uint8_t, 4> expectedCrc32{0x68, 0xc0, 0x0e, 0x6c};
-    const char* str = "bazzer\n";
-    CHECK(expectedCrc32 == crc32c(str, strlen(str)));
-}
-
-TEST_CASE("RS") {
-    uint64_t rand = 0;
-    int maxBlockSize = 100;
-    std::vector<uint8_t> buf(maxBlockSize*(16+16)); // all blocks
-    for (int i = 0; i < 16*16*100; i++) {
-        int numData = 2 + splitmix64(rand)%(16-2);
-        int numParity = 1 + splitmix64(rand)%(16-1);
-        int blockSize = 1 + splitmix64(rand)%100;
-        std::vector<uint8_t> data(buf.begin(), buf.begin() + blockSize*(numData+numParity));
-        for (size_t i = 0; i < numData*blockSize; i++) { // fill data blocks with random bytes
-            data[i] = splitmix64(rand) & 0xFF;
-        }
-        auto rs = rs_get(Parity(numData, numParity).u8);
-        std::vector<uint8_t*> blocksPtrs(numData+numParity);
-        for (int i = 0; i < numData+numParity; i++) {
-            blocksPtrs[i] = &data[i*blockSize];
-        }
-        rs_compute_parity(rs, blockSize, (const uint8_t**)&blocksPtrs[0], &blocksPtrs[numData]);
-        // verify that the first parity block is the XOR of all the original data
-        for (size_t i = 0; i < blockSize; i++) {
-            uint8_t expectedParity = 0;
-            for (int j = 0; j < numData; j++) {
-                expectedParity ^= data[j*blockSize + i];
-            }
-            REQUIRE(expectedParity == data[numData*blockSize + i]);
-        }
-        // restore a random block, using random blocks.
-        {
-            std::vector<uint8_t> allBlocks(numData+numParity);
-            for (int i = 0; i < allBlocks.size(); i++) {
-                allBlocks[i] = i;
-            }
-            for (int i = 0; i < std::min(numData+1, numData+numParity-1); i++) {
-                std::swap(allBlocks[i], allBlocks[i+1+ splitmix64(rand)%(numData+numParity-1-i)]);
-            }
-            std::sort(allBlocks.begin(), allBlocks.begin()+numData);
-            std::vector<const uint8_t*> havePtrs(numData);
-            for (int i = 0; i < numData; i++) {
-                havePtrs[i] = &data[allBlocks[i]*blockSize];
-            }
-            uint8_t wantBlock = allBlocks[numData];
-            std::vector<uint8_t> recoveredBlock(blockSize);
-            rs_recover(rs, blockSize, &allBlocks[0], &havePtrs[0], wantBlock, &recoveredBlock[0]);
-            std::vector<uint8_t> expectedBlock(data.begin() + wantBlock*blockSize, data.begin() + (wantBlock+1)*blockSize);
-            REQUIRE(expectedBlock == recoveredBlock);
-        }
-    }
-}
+*/

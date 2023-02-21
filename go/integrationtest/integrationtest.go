@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"flag"
 	"fmt"
 	"os"
@@ -13,8 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
+	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
+
+	"golang.org/x/exp/constraints"
 )
 
 func formatNanos(nanos uint64) string {
@@ -44,7 +45,7 @@ func formatNanos(nanos uint64) string {
 
 var stacktraceLock sync.Mutex
 
-func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
+func handleRecover(log *lib.Logger, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err)
 		stacktraceLock.Lock()
@@ -57,18 +58,18 @@ func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
 	}
 }
 
-func formatCounters(what string, counters []eggs.ReqCounters) {
+func formatCounters[K constraints.Integer](what string, counters []lib.ReqCounters) {
 	fmt.Printf("    %s reqs count/attempts/avg/total:\n", what)
 	for i := 0; i < len(counters); i++ {
 		count := &counters[i]
 		if count.Attempts == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", msgs.ShardMessageKind(i), count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())/count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())))
+		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", K(i), count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())/count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())))
 	}
 }
 
-func totalRequests(c []eggs.ReqCounters) uint64 {
+func totalRequests(c []lib.ReqCounters) uint64 {
 	total := uint64(0)
 	for i := 0; i < len(c); i++ {
 		total += c[i].Timings.TotalCount()
@@ -77,61 +78,65 @@ func totalRequests(c []eggs.ReqCounters) uint64 {
 }
 
 func runTest(
-	log *eggs.Logger,
+	log *lib.Logger,
 	shuckleAddress string,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	filter *regexp.Regexp,
 	name string,
 	extra string,
-	run func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters),
+	run func(counters *lib.ClientCounters),
 ) {
 	if !filter.Match([]byte(name)) {
 		fmt.Printf("skipping test %s\n", name)
 		return
 	}
 
-	counters := &eggs.ClientCounters{}
+	counters := &lib.ClientCounters{}
 
 	fmt.Printf("running %s, %s\n", name, extra)
 	t0 := time.Now()
-	run(blockServicesKeys, counters)
+	run(counters)
 	elapsed := time.Since(t0)
 
 	totalShardRequests := totalRequests(counters.Shard[:])
 	totalCDCRequests := totalRequests(counters.CDC[:])
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", counters.Shard[:])
+		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard[:])
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", counters.CDC[:])
+		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC[:])
 	}
 
-	counters = &eggs.ClientCounters{}
+	counters = &lib.ClientCounters{}
 	t0 = time.Now()
-	cleanupAfterTest(log, shuckleAddress, counters, blockServicesKeys)
+	cleanupAfterTest(log, shuckleAddress, counters)
 	elapsed = time.Since(t0)
 	totalShardRequests = totalRequests(counters.Shard[:])
 	totalCDCRequests = totalRequests(counters.CDC[:])
 	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", counters.Shard[:])
+		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard[:])
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", counters.CDC[:])
+		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC[:])
 	}
 }
 
-func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, blockServices []msgs.BlockServiceInfo, fuseMountPoint string, short bool, filter *regexp.Regexp) {
+func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fuseMountPoint string, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 
-	blockServicesKeys := make(map[msgs.BlockServiceId]cipher.Block)
-	for _, blockService := range blockServices {
-		cipher, err := aes.NewCipher(blockService.SecretKey[:])
+	// We want to immediately clean up everything when we run the GC manually
+	{
+		client, err := lib.NewClient(log, shuckleAddress, nil, nil, nil)
 		if err != nil {
-			panic(fmt.Errorf("could not create AES-128 key: %w", err))
+			panic(err)
 		}
-		blockServicesKeys[blockService.Id] = cipher
+		snapshotPolicy := &msgs.SnapshotPolicy{
+			DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0),
+		}
+		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
+			panic(err)
+		}
 	}
 
 	fileHistoryOpts := fileHistoryTestOpts{
@@ -147,68 +152,54 @@ func runTests(terminateChan chan any, log *eggs.Logger, shuckleAddress string, b
 	runTest(
 		log,
 		shuckleAddress,
-		blockServicesKeys,
 		filter,
 		"file history test",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
-		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
-			fileHistoryTest(log, shuckleAddress, blockServicesKeys, &fileHistoryOpts, counters)
+		func(counters *lib.ClientCounters) {
+			fileHistoryTest(log, shuckleAddress, &fileHistoryOpts, counters)
 		},
 	)
 
-	noBlocksFsTestOpts := fsTestOpts{
-		numDirs:     1 * 1000,  // we need at least 256 directories, to have at least one dir per shard
-		numFiles:    20 * 1000, // around 20 files per dir
-		depth:       4,
-		maxFileSize: 100 << 20, // 100MiB
-		spanSize:    10 << 20,  // 10MiB
+	fsTestOpts := fsTestOpts{
+		numDirs:  1 * 1000,  // we need at least 256 directories, to have at least one dir per shard
+		numFiles: 20 * 1000, // around 20 files per dir
+		depth:    4,
+		// 0.03 * 20*1000 * 5MiB = ~3GiB of file data
+		emptyFileProb:  0.8,
+		inlineFileProb: 0.17,
+		maxFileSize:    10 << 20, // 10MiB
+		spanSize:       1 << 20,  // 1MiB
 	}
 	if short {
-		noBlocksFsTestOpts.numDirs = 200
-		noBlocksFsTestOpts.numFiles = 10 * 200
+		fsTestOpts.numDirs = 200
+		fsTestOpts.numFiles = 10 * 200
+		fsTestOpts.emptyFileProb = 0.1
+		fsTestOpts.inlineFileProb = 0.3
 	}
 	runTest(
 		log,
 		shuckleAddress,
-		blockServicesKeys,
 		filter,
-		"simple fs test",
-		fmt.Sprintf("%v dirs, %v files, %v depth", noBlocksFsTestOpts.numDirs, noBlocksFsTestOpts.numFiles, noBlocksFsTestOpts.depth),
-		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &noBlocksFsTestOpts, counters, blockServicesKeys, "")
+		"fs test",
+		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+		func(counters *lib.ClientCounters) {
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
 		},
 	)
 
-	blocksFsTestOpts := fsTestOpts{
-		numDirs:     50,
-		numFiles:    1000,
-		depth:       2,
-		maxFileSize: 10 << 20, // 10MiB
-		spanSize:    1 << 20,  // 1MiB
-	}
-	runTest(
-		log,
-		shuckleAddress,
-		nil,
-		filter,
-		"fs test with blocks",
-		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, "")
-		},
-	)
-
-	runTest(
-		log,
-		shuckleAddress,
-		nil,
-		filter,
-		"fs test with fuse",
-		fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-		func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *eggs.ClientCounters) {
-			fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, fuseMountPoint)
-		},
-	)
+	/*
+		runTest(
+			log,
+			shuckleAddress,
+			nil,
+			filter,
+			"fs test with fuse",
+			fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
+			func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *lib.ClientCounters) {
+				fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, fuseMountPoint)
+			},
+		)
+	*/
 
 	terminateChan <- nil
 }
@@ -223,9 +214,11 @@ func noRunawayArgs() {
 func main() {
 	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind")
 	verbose := flag.Bool("verbose", false, "")
+	trace := flag.Bool("trace", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
+	profileTest := flag.Bool("profile-test", false, "Run the test driver with profiling. Implies -preserve-data-dir")
 	profile := flag.Bool("profile", false, "Run with profiling (this includes the C++ and Go binaries and the test driver). Implies -preserve-data-dir")
 	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
@@ -254,7 +247,7 @@ func main() {
 		}
 	}()
 
-	if *profile {
+	if *profileTest {
 		f, err := os.Create(path.Join(*dataDir, "test-profile"))
 		if err != nil {
 			panic(err)
@@ -269,50 +262,55 @@ func main() {
 		var err error
 		logOut, err = os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not open file %v: %v", logFile, err)
+			fmt.Fprintf(os.Stderr, "could not open file %v: %v\n", logFile, err)
 			os.Exit(1)
 		}
 		defer logOut.Close()
 	}
-	log := eggs.NewLogger(*verbose, logOut)
+	level := lib.INFO
+	if *verbose {
+		level = lib.DEBUG
+	}
+	if *trace {
+		level = lib.TRACE
+	}
+	log := lib.NewLogger(level, logOut)
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
-	cppExes := eggs.BuildCppExes(log, *buildType)
-	shuckleExe := eggs.BuildShuckleExe(log)
-	blockServiceExe := eggs.BuildBlockServiceExe(log)
-	eggsFuseExe := eggs.BuildEggsFuseExe(log)
+	cppExes := managedprocess.BuildCppExes(log, *buildType)
+	shuckleExe := managedprocess.BuildShuckleExe(log)
+	blockServiceExe := managedprocess.BuildBlockServiceExe(log)
+	// eggsFuseExe := managedprocess.BuildEggsFuseExe(log)
 
 	terminateChan := make(chan any, 1)
 
-	procs := eggs.NewManagedProcesses(terminateChan)
+	procs := managedprocess.NewManagedProcesses(terminateChan)
 	defer procs.Close()
 
 	// Start shuckle
 	shucklePort := uint16(55555)
 	shuckleAddress := fmt.Sprintf("localhost:%v", shucklePort)
-	procs.StartShuckle(log, &eggs.ShuckleOpts{
+	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
 		Exe:         shuckleExe,
 		BincodePort: shucklePort,
-		Verbose:     *verbose,
+		LogLevel:    level,
 		Dir:         path.Join(*dataDir, "shuckle"),
 	})
 
-	// Start block services. Right now this is just used for shuckle to
-	// get block services, since we don't actually write to the block services
-	// yet (it's just too slow).
-	hddBlockServices := 10
-	flashBlockServices := 5
+	// Start block services. 32 to cover RS(16,16).
+	hddBlockServices := 32
+	flashBlockServices := 32
 	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
 		storageClass := msgs.HDD_STORAGE
 		if i >= hddBlockServices {
 			storageClass = msgs.FLASH_STORAGE
 		}
-		procs.StartBlockService(log, &eggs.BlockServiceOpts{
+		procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
 			Exe:            blockServiceExe,
 			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			StorageClass:   storageClass,
 			FailureDomain:  fmt.Sprintf("%d", i),
-			Verbose:        *verbose,
+			LogLevel:       level,
 			ShuckleAddress: fmt.Sprintf("localhost:%d", shucklePort),
 			NoTimeCheck:    true,
 			OwnIp1:         "127.0.0.1",
@@ -329,10 +327,10 @@ func main() {
 	}
 
 	// Start CDC
-	procs.StartCDC(log, &eggs.CDCOpts{
+	procs.StartCDC(log, &managedprocess.CDCOpts{
 		Exe:            cppExes.CDCExe,
 		Dir:            path.Join(*dataDir, "cdc"),
-		Verbose:        *verbose,
+		LogLevel:       level,
 		Valgrind:       *buildType == "valgrind",
 		Perf:           *profile,
 		ShuckleAddress: shuckleAddress,
@@ -343,10 +341,10 @@ func main() {
 	numShards := 256
 	for i := 0; i < numShards; i++ {
 		shid := msgs.ShardId(i)
-		shopts := eggs.ShardOpts{
+		shopts := managedprocess.ShardOpts{
 			Exe:                cppExes.ShardExe,
 			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			Verbose:            *verbose,
+			LogLevel:           level,
 			Shid:               shid,
 			Valgrind:           *buildType == "valgrind",
 			Perf:               *profile,
@@ -363,22 +361,25 @@ func main() {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	blockServices := eggs.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor).BlockServices
+	lib.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
 
-	fuseMountPoint := procs.StartFuse(log, &eggs.FuseOpts{
-		Exe:            eggsFuseExe,
-		Path:           path.Join(*dataDir, "eggsfuse"),
-		Verbose:        *verbose,
-		Wait:           true,
-		ShuckleAddress: shuckleAddress,
-		Profile:        *profile,
-	})
+	/*
+		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+			Exe:            eggsFuseExe,
+			Path:           path.Join(*dataDir, "eggsfuse"),
+			Verbose:        *verbose,
+			Wait:           true,
+			ShuckleAddress: shuckleAddress,
+			Profile:        *profile,
+		})
+	*/
+	fuseMountPoint := ""
 
 	fmt.Printf("operational 🤖\n")
 
 	// start tests
 	go func() {
-		runTests(terminateChan, log, shuckleAddress, blockServices, fuseMountPoint, *short, filterRe)
+		runTests(terminateChan, log, shuckleAddress, fuseMountPoint, *short, filterRe)
 	}()
 
 	// wait for things to finish
@@ -387,5 +388,5 @@ func main() {
 		panic(err)
 	}
 	// we haven't panicked, allow to cleanup the db dir if appropriate
-	cleanupDbDir = tmpDataDir && !*preserveDbDir && !*profile
+	cleanupDbDir = tmpDataDir && !*preserveDbDir && !*profile && !*profileTest
 }

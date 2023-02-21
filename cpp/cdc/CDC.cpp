@@ -24,7 +24,6 @@
 #include "CDCDB.hpp"
 #include "Crypto.hpp"
 #include "CDCKey.hpp"
-#include "splitmix64.hpp"
 #include "Shuckle.hpp"
 
 struct CDCShared {

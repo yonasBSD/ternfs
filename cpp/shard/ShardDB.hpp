@@ -19,7 +19,10 @@ struct ShardLogEntry {
 
 bool readOnlyShardReq(const ShardMessageKind kind);
 
-BincodeBytes defaultDirectoryInfo();
+DirectoryInfo defaultDirectoryInfo();
+
+// 100MiB. Important to enforce this since we often need to fetch the span upfront.
+constexpr uint32_t MAXIMUM_SPAN_SIZE = 100 << 20;
 
 struct ShardDB {
 private:

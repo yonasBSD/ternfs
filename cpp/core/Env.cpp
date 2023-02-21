@@ -3,6 +3,9 @@
 
 std::ostream& operator<<(std::ostream& out, LogLevel ll) {
     switch (ll) {
+    case LogLevel::LOG_TRACE:
+        out << "TRACE";
+        break;
     case LogLevel::LOG_DEBUG:
         out << "DEBUG";
         break;

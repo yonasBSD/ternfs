@@ -20,15 +20,35 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/crc32c"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
 	"golang.org/x/sys/unix"
 )
 
+func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
+	buf := bytes.NewBuffer([]byte{})
+	// struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
+	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
+	buf.Write([]byte{'W'})
+	binary.Write(buf, binary.LittleEndian, uint64(blockId))
+	return lib.CBCMAC(key, buf.Bytes())
+}
+
+func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
+	buf := bytes.NewBuffer([]byte{})
+	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
+	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
+	buf.Write([]byte{'E'})
+	binary.Write(buf, binary.LittleEndian, uint64(blockId))
+
+	return lib.CBCMAC(key, buf.Bytes())
+}
+
 var stacktraceLock sync.Mutex
 
-func handleRecover(log *eggs.Logger, terminateChan chan any, err any) {
+func handleRecover(log *lib.Logger, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(err.(error))
 		stacktraceLock.Lock()
@@ -79,7 +99,7 @@ func countBlocks(basePath string) uint64 {
 }
 
 func registerPeriodically(
-	log *eggs.Logger,
+	log *lib.Logger,
 	ip1 [4]byte,
 	port1 uint16,
 	ip2 [4]byte,
@@ -117,7 +137,7 @@ func registerPeriodically(
 			bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
 		}
 		log.Debug("registering with %+v", req)
-		_, err := eggs.ShuckleRequest(log, shuckleAddress, &req)
+		_, err := lib.ShuckleRequest(log, shuckleAddress, &req)
 		if err != nil {
 			log.RaiseAlert(fmt.Errorf("could not register block services with %+v: %w", shuckleAddress, err))
 			time.Sleep(100 * time.Millisecond)
@@ -128,25 +148,18 @@ func registerPeriodically(
 	}
 }
 
-func deserEraseBlock(blockServiceId msgs.BlockServiceId, cipher cipher.Block, kind byte, r io.Reader) (blockId msgs.BlockId, err error) {
-	// Extract blockId and MAC
-	if err := binary.Read(r, binary.LittleEndian, (*uint64)(&blockId)); err != nil {
-		return 0, err
-	}
-	var mac [8]byte
-	if _, err := io.ReadFull(r, mac[:]); err != nil {
-		return 0, err
-	}
+func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) msgs.ErrCode {
 	// compute mac
 	w := bytes.NewBuffer([]byte{})
 	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
-	w.Write([]byte{kind})
-	binary.Write(w, binary.LittleEndian, uint64(blockId))
-	expectedMac := eggs.CBCMAC(cipher, w.Bytes())
-	if expectedMac != mac {
-		return 0, fmt.Errorf("bad MAC, got %v, expected %v", mac, expectedMac)
+	w.Write([]byte{'e'})
+	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
+	expectedMac := lib.CBCMAC(cipher, w.Bytes())
+	if expectedMac != req.Certificate {
+		log.RaiseAlert(fmt.Errorf("bad MAC, got %v, expected %v", req.Certificate, expectedMac))
+		return msgs.BAD_CERTIFICATE
 	}
-	return blockId, nil
+	return 0
 }
 
 func blockIdToPath(basePath string, blockId msgs.BlockId) string {
@@ -161,7 +174,7 @@ func blockIdToPath(basePath string, blockId msgs.BlockId) string {
 	return path.Join(path.Join(basePath, dir), hex)
 }
 
-func eraseBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId) {
+func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
@@ -169,36 +182,7 @@ func eraseBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId) {
 	}
 }
 
-func serEraseCert(blockServiceId msgs.BlockServiceId, key cipher.Block, blockId msgs.BlockId, conn *net.TCPConn) error {
-	// confirm block_id was erased
-	// prefix=E
-	if err := binary.Write(conn, binary.LittleEndian, uint64(blockServiceId)); err != nil {
-		return nil
-	}
-	if _, err := conn.Write([]byte{'E'}); err != nil {
-		return err
-	}
-	proof := eggs.BlockEraseProof(blockServiceId, blockId, key)
-	if _, err := conn.Write(proof[:]); err != nil {
-		return err
-	}
-	return nil
-}
-
-func deserFetchBlock(r io.Reader) (blockId msgs.BlockId, offset uint32, count uint32, err error) {
-	if err := binary.Read(r, binary.LittleEndian, (*uint64)(&blockId)); err != nil {
-		return 0, 0, 0, err
-	}
-	if err := binary.Read(r, binary.LittleEndian, (*uint32)(&offset)); err != nil {
-		return 0, 0, 0, err
-	}
-	if err := binary.Read(r, binary.LittleEndian, (*uint32)(&count)); err != nil {
-		return 0, 0, 0, err
-	}
-	return blockId, offset, count, nil
-}
-
-func sendFetchBlock(log *eggs.Logger, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
+func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
@@ -211,19 +195,19 @@ func sendFetchBlock(log *eggs.Logger, blockServiceId msgs.BlockServiceId, basePa
 	}
 	remainingSize := int(fi.Size()) - int(offset)
 	if int(count) > remainingSize {
-		return fmt.Errorf("was requested %v bytes, but only got %v", count, remainingSize)
+		log.RaiseAlert(fmt.Errorf("was requested %v bytes, but only got %v", count, remainingSize))
+		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		return nil
 	}
 	if remainingSize < 0 {
-		return fmt.Errorf("trying to read beyond EOF")
+		log.RaiseAlert(fmt.Errorf("trying to read beyond EOF"))
+		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		return nil
 	}
 	if _, err := f.Seek(int64(offset), 0); err != nil {
 		return err
 	}
-	// prefix=F
-	if err := binary.Write(conn, binary.LittleEndian, uint64(blockServiceId)); err != nil {
-		return nil
-	}
-	if _, err := conn.Write([]byte{'F'}); err != nil {
+	if err := lib.WriteBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
 		return err
 	}
 	lf := io.LimitedReader{
@@ -236,39 +220,28 @@ func sendFetchBlock(log *eggs.Logger, blockServiceId msgs.BlockServiceId, basePa
 	return nil
 }
 
-func deserWriteBlock(cipher cipher.Block, blockServiceId msgs.BlockServiceId, kind uint8, r io.Reader) (blockId msgs.BlockId, crc [4]byte, size uint32, err error) {
-	// deser block id
-	if err := binary.Read(r, binary.LittleEndian, (*uint64)(&blockId)); err != nil {
-		return 0, crc, 0, err
-	}
-	// deser crc
-	if _, err := io.ReadFull(r, crc[:]); err != nil {
-		return 0, crc, 0, err
-	}
-	// deser size
-	if err := binary.Read(r, binary.LittleEndian, &size); err != nil {
-		return 0, crc, 0, err
-	}
-	// deser MAC
-	var mac [8]byte
-	if _, err := io.ReadFull(r, mac[:]); err != nil {
-		return 0, crc, 0, err
-	}
+func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) msgs.ErrCode {
 	// Compute mac
 	w := bytes.NewBuffer([]byte{})
 	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
-	binary.Write(w, binary.LittleEndian, kind)
-	binary.Write(w, binary.LittleEndian, uint64(blockId))
-	w.Write(crc[:])
-	binary.Write(w, binary.LittleEndian, size)
-	expectedMac := eggs.CBCMAC(cipher, w.Bytes())
-	if expectedMac != mac {
-		return 0, crc, 0, fmt.Errorf("bad MAC for %v, got %v, expected %v", w.Bytes(), mac, expectedMac)
+	w.Write([]byte{'w'})
+	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
+	binary.Write(w, binary.LittleEndian, uint32(req.Crc))
+	binary.Write(w, binary.LittleEndian, uint32(req.Size))
+	expectedMac := lib.CBCMAC(cipher, w.Bytes())
+	if expectedMac != req.Certificate {
+		log.Debug("mac computed for %v %v %v %v", uint64(blockServiceId), uint64(req.BlockId), uint32(req.Crc), uint32(req.Size))
+		log.RaiseAlert(fmt.Errorf("bad MAC for %v, got %v, expected %v", w.Bytes(), req.Certificate, expectedMac))
+		return msgs.BAD_CERTIFICATE
 	}
-	return blockId, crc, size, nil
+	return 0
 }
 
-func writeBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId, expectedCrc [4]byte, size uint32, conn *net.TCPConn) error {
+func writeBlock(
+	log *lib.Logger, bufPool *sync.Pool,
+	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
+	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
+) error {
 	filePath := blockIdToPath(basePath, blockId)
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
@@ -283,15 +256,32 @@ func writeBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId, expecte
 		f.Close()
 		os.Remove(tmpName)
 	}()
-	buf := make([]byte, int(size))
-	if _, err := io.ReadFull(conn, buf); err != nil {
-		return err
+	bufPtr := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bufPtr)
+	readSoFar := 0
+	crc := uint32(0)
+	for {
+		buf := *bufPtr
+		if len(buf) > int(size)-readSoFar {
+			buf = buf[:int(size)-readSoFar]
+		}
+		read, err := conn.Read(buf)
+		if err != nil {
+			return err
+		}
+		readSoFar += read
+		crc = crc32c.Sum(crc, buf[:read])
+		if _, err := f.Write(buf[:read]); err != nil {
+			return err
+		}
+		if readSoFar == int(size) {
+			break
+		}
 	}
-	if eggs.CRC32C(buf) != expectedCrc {
-		return fmt.Errorf("bad crc for block %v", blockId)
-	}
-	if _, err := f.Write(buf); err != nil {
-		return err
+	if msgs.Crc(crc) != expectedCrc {
+		log.RaiseAlert(fmt.Errorf("bad crc for block %v, expected %v, got %v", blockId, expectedCrc, msgs.Crc(crc)))
+		lib.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
+		return nil
 	}
 	if err := f.Sync(); err != nil {
 		return err
@@ -302,37 +292,31 @@ func writeBlock(log *eggs.Logger, basePath string, blockId msgs.BlockId, expecte
 	if err := os.Rename(f.Name(), filePath); err != nil {
 		return err
 	}
-	return nil
-}
-
-func serWriteCert(blockServiceId msgs.BlockServiceId, key cipher.Block, blockId msgs.BlockId, conn *net.TCPConn) error {
-	// confirm block was written
-	// prefix=W
-	if err := binary.Write(conn, binary.LittleEndian, uint64(blockServiceId)); err != nil {
-		return nil
-	}
-	if _, err := conn.Write([]byte{'W'}); err != nil {
-		return err
-	}
-	proof := eggs.BlockWriteProof(blockServiceId, blockId, key)
-	if _, err := conn.Write(proof[:]); err != nil {
+	if err := lib.WriteBlocksResponse(log, conn, &msgs.BlockWrittenResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
 	return nil
-}
-
-func handleReqError(log *eggs.Logger, err error) {
-	log.RaiseAlertStack(1, fmt.Errorf("error while handling request: %w", err))
 }
 
 const ONE_HOUR_IN_NS uint64 = 60 * 60 * 1000 * 1000 * 1000
 const PAST_CUTOFF uint64 = ONE_HOUR_IN_NS * 22
 const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
 
-const MAX_OBJECT_SIZE uint32 = (1 << 20) * 100
+const MAX_OBJECT_SIZE uint32 = 100 << 20
+
+func handleInternalError(
+	log *lib.Logger,
+	conn *net.TCPConn,
+	err error,
+) {
+	log.RaiseAlert(err)
+	// attempt to say goodbye
+	lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+}
 
 func handleRequest(
-	log *eggs.Logger,
+	log *lib.Logger,
+	bufPool *sync.Pool,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]blockService,
 	conn *net.TCPConn,
@@ -340,83 +324,78 @@ func handleRequest(
 ) {
 	defer conn.Close()
 
-	// We currently do not have error responses, we just close the
-	// connection.
-	conn.SetLinger(0)
-
+NextRequest:
 	for {
-		var blockServiceId msgs.BlockServiceId
-		if err := binary.Read(conn, binary.LittleEndian, (*uint64)(&blockServiceId)); err != nil {
-			if err == io.EOF {
-				log.Debug("got EOF, terminating")
-			} else {
-				handleReqError(log, err)
+		blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
+		if err != nil {
+			switch v := err.(type) {
+			case msgs.ErrCode:
+				lib.WriteBlocksResponseError(log, conn, v)
+				return
+			default:
+				if err == io.EOF {
+					log.Debug("got EOF, terminating")
+					return
+				} else {
+					log.RaiseAlert(fmt.Errorf("got error %w when reading request, terminating", err))
+					return
+				}
 			}
-			return
 		}
 		blockService, found := blockServices[blockServiceId]
 		if !found {
-			handleReqError(log, fmt.Errorf("received unknown block service id %v", blockServiceId))
+			log.RaiseAlert(fmt.Errorf("received unknown block service id %v", blockServiceId))
+			lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_SERVICE_NOT_FOUND)
+			continue
+		}
+		log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
+		switch whichReq := req.(type) {
+		case *msgs.EraseBlockReq:
+			if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != 0 {
+				lib.WriteBlocksResponseError(log, conn, err)
+				continue NextRequest
+			}
+			if timeCheck && uint64(whichReq.BlockId) <= (uint64(msgs.Now())+FUTURE_CUTOFF) {
+				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted", whichReq.BlockId))
+				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+				continue NextRequest
+			}
+			eraseBlock(log, blockService.path, whichReq.BlockId) // can never fail
+			resp := msgs.EraseBlockResp{
+				Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
+			}
+			if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+				handleInternalError(log, conn, fmt.Errorf("could not send blocks response to %v: %w", conn.RemoteAddr(), err))
+				return
+			}
+		case *msgs.FetchBlockReq:
+			if err := sendFetchBlock(log, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
+				handleInternalError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
+				return
+			}
+		case *msgs.WriteBlockReq:
+			if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != 0 {
+				lib.WriteBlocksResponseError(log, conn, err)
+				continue NextRequest
+			}
+			if whichReq.Size > MAX_OBJECT_SIZE {
+				log.RaiseAlert(fmt.Errorf("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE))
+				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_BIG)
+				continue NextRequest
+			}
+			if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{}); err != nil {
+				handleInternalError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
+				return
+			}
+			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
+				handleInternalError(log, conn, fmt.Errorf("could not write block: %w", err))
+				return
+			}
+		default:
+			handleInternalError(log, conn, fmt.Errorf("bad request type %T", req))
 			return
 		}
-		var kind byte
-		if err := binary.Read(conn, binary.LittleEndian, &kind); err != nil {
-			handleReqError(log, err)
-			return
-		}
-		log.Debug("servicing request of kind %v from %v", string([]byte{kind}), conn.RemoteAddr())
-		switch kind {
-		case 'e':
-			// erase block
-			// (block_id, mac) -> data
-			blockId, err := deserEraseBlock(blockServiceId, blockService.cipher, kind, conn)
-			if err != nil {
-				handleReqError(log, err)
-				return
-			}
-			if timeCheck && uint64(blockId) <= (uint64(msgs.Now())+FUTURE_CUTOFF) {
-				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted", blockId))
-				return
-			}
-			eraseBlock(log, blockService.path, blockId) // can never fail
-			if err := serEraseCert(blockServiceId, blockService.cipher, blockId, conn); err != nil {
-				handleReqError(log, err)
-				return
-			}
-		case 'f':
-			// fetch block (no MAC is required)
-			// block_id, offset, count -> data
-			blockId, offset, count, err := deserFetchBlock(conn)
-			if err != nil {
-				handleReqError(log, err)
-				return
-			}
-			if err := sendFetchBlock(log, blockServiceId, blockService.path, blockId, offset, count, conn); err != nil {
-				handleReqError(log, err)
-				return
-			}
-		case 'w':
-			// write block
-			// (block_id, crc, size, mac) -> data
-			blockId, crc, size, err := deserWriteBlock(blockService.cipher, blockServiceId, kind, conn)
-			if err != nil {
-				handleReqError(log, err)
-				return
-			}
-			if size > MAX_OBJECT_SIZE {
-				handleReqError(log, fmt.Errorf("block %v exceeds max object size: %v > %v", blockId, size, MAX_OBJECT_SIZE))
-				return
-			}
-			if err := writeBlock(log, blockService.path, blockId, crc, size, conn); err != nil {
-				handleReqError(log, err)
-				return
-			}
-			if err := serWriteCert(blockServiceId, blockService.cipher, blockId, conn); err != nil {
-				handleReqError(log, err)
-				return
-			}
-		}
-		log.Debug("serviced request of kind %v from %v", string([]byte{kind}), conn.RemoteAddr())
+		log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())
 	}
 }
 
@@ -436,7 +415,7 @@ Options:`
 	flag.PrintDefaults()
 }
 
-func retrieveOrCreateKey(log *eggs.Logger, dir string) [16]byte {
+func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 	var err error
 	var keyFile *os.File
 	keyFilePath := path.Join(dir, "secret.key")
@@ -487,8 +466,9 @@ func main() {
 	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll advertise to shuckle. If it is not provided, we will only bind to the first IP.")
 	port2 := flag.Uint("port-2", 0, "Port on which to run on. By default it will be picked automatically.")
 	verbose := flag.Bool("verbose", false, "")
+	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
-	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
@@ -546,24 +526,6 @@ func main() {
 		}
 	}
 
-	if *profileFile != "" {
-		f, err := os.Create(*profileFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not open profile file %v", *profileFile)
-			os.Exit(1)
-		}
-		pprof.StartCPUProfile(f)
-		// Save CPU profile if we get killed by a signal
-		signalChan := make(chan os.Signal, 1)
-		signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
-		go func() {
-			sig := <-signalChan
-			signal.Stop(signalChan)
-			pprof.StopCPUProfile()
-			syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
-		}()
-	}
-
 	logOut := os.Stdout
 	if *logFile != "" {
 		var err error
@@ -574,7 +536,37 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	log := eggs.NewLogger(*verbose, logOut)
+	level := lib.INFO
+	if *verbose {
+		level = lib.DEBUG
+	}
+	if *trace {
+		level = lib.TRACE
+	}
+	log := lib.NewLogger(level, logOut)
+
+	if *profileFile != "" {
+		f, err := os.Create(*profileFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open profile file %v", *profileFile)
+			os.Exit(1)
+		}
+		pprof.StartCPUProfile(f)
+		stopCpuProfile := func() {
+			log.Info("stopping cpu profile")
+			pprof.StopCPUProfile()
+		}
+		defer stopCpuProfile()
+		// Save CPU profile if we get killed by a signal
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
+		go func() {
+			sig := <-signalChan
+			signal.Stop(signalChan)
+			stopCpuProfile()
+			syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
+		}()
+	}
 
 	log.Info("Running block service with options:")
 	log.Info("  failureDomain = %v", *failureDomainStr)
@@ -583,7 +575,7 @@ func main() {
 	log.Info("  port1 = %v", *port1)
 	log.Info("  ownIp2 = %v", *ownIp2Str)
 	log.Info("  port2 = %v", *port2)
-	log.Info("  verbose = %v", *verbose)
+	log.Info("  logLevel = %v", level)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
 
@@ -613,7 +605,7 @@ func main() {
 	}
 
 	if len(blockServices) != flag.NArg()/2 {
-		panic(fmt.Errorf("duplicate block services!"))
+		panic(fmt.Errorf("duplicate block services"))
 	}
 
 	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *port1))
@@ -640,6 +632,13 @@ func main() {
 
 	terminateChan := make(chan any)
 
+	bufPool := &sync.Pool{
+		New: func() any {
+			buf := make([]byte, 1<<20)
+			return &buf
+		},
+	}
+
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
 		registerPeriodically(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices, *shuckleAddress)
@@ -654,7 +653,7 @@ func main() {
 			}
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
-				handleRequest(log, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
+				handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
 			}()
 		}
 	}()
@@ -669,7 +668,7 @@ func main() {
 				}
 				go func() {
 					defer func() { handleRecover(log, terminateChan, recover()) }()
-					handleRequest(log, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
+					handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
 				}()
 			}
 		}()

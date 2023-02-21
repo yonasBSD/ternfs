@@ -23,6 +23,7 @@
 #define EGGS_RS
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,20 @@ inline uint8_t rs_parity_blocks(uint8_t parity) {
 inline uint8_t rs_blocks(uint8_t parity) {
     return rs_data_blocks(parity) + rs_parity_blocks(parity);
 }
+
+inline uint8_t rs_mk_parity(uint8_t data, uint8_t parity) {
+    return (parity << 4) | data;
+}
+
+enum rs_cpu_level {
+    RS_CPU_SCALAR = 1,
+    RS_CPU_AVX2 = 2,
+    RS_CPU_GFNI = 3,
+};
+
+bool rs_has_cpu_level(enum rs_cpu_level level);
+void rs_set_cpu_level(enum rs_cpu_level cpu_level);
+enum rs_cpu_level rs_get_cpu_level();
 
 // Will crash (SIGABRT) if:
 //

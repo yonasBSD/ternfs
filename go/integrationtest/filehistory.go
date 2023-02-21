@@ -1,21 +1,19 @@
-// A simple tests creating files and also looking at the history
+// A simple tests creating files looking at the history
 package main
 
 import (
-	"crypto/cipher"
 	"fmt"
-	"math/rand"
 	"strings"
 	"sync"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 )
 
 // actions
 
 type fileHistoryCreateFile struct {
 	name string
-	size uint64
 }
 
 type fileHistoryDeleteFile struct {
@@ -95,34 +93,26 @@ func (files *fileHistoryFiles) deleteFile(name string) {
 	delete(files.byName, name)
 }
 
-func genCreateFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryCreateFile {
+func genCreateFile(filePrefix string, rand *wyhash.Rand, files *fileHistoryFiles) fileHistoryCreateFile {
 	var name string
 	for {
 		name = fmt.Sprintf("%s%x", filePrefix, rand.Uint32())
 		_, wasPresent := files.byName[name]
 		if !wasPresent {
 			delete(files.byName, name)
-			var size uint64
-			// one out of three files as inline storage
-			if rand.Uint64()%3 == 0 {
-				size = 1 + rand.Uint64()%255
-			} else {
-				size = 1 + rand.Uint64()%(uint64(100)<<20) // up to 20MiB
-			}
 			return fileHistoryCreateFile{
 				name: name,
-				size: size,
 			}
 		}
 	}
 }
 
-func genDeleteFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryDeleteFile {
+func genDeleteFile(filePrefix string, rand *wyhash.Rand, files *fileHistoryFiles) fileHistoryDeleteFile {
 	file := &files.files[int(rand.Uint32())%len(files.files)]
 	return fileHistoryDeleteFile{name: file.name}
 }
 
-func genRenameFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
+func genRenameFile(filePrefix string, rand *wyhash.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
 	oldName := genDeleteFile(filePrefix, rand, files).name
 	newName := genCreateFile(filePrefix, rand, files).name
 	return fileHistoryRenameFile{
@@ -131,7 +121,7 @@ func genRenameFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) 
 	}
 }
 
-func genRenameOverrideFile(filePrefix string, rand *rand.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
+func genRenameOverrideFile(filePrefix string, rand *wyhash.Rand, files *fileHistoryFiles) fileHistoryRenameFile {
 	oldName := genDeleteFile(filePrefix, rand, files).name
 	newName := genDeleteFile(filePrefix, rand, files).name
 	if oldName == newName {
@@ -162,7 +152,7 @@ func checkCheckpoint(prefix string, files *fileHistoryFiles, allEdges []edge) {
 	}
 }
 
-func runCheckpoint(log *eggs.Logger, client *eggs.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
+func runCheckpoint(log *lib.Logger, client *lib.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
 	edges := readDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	checkCheckpoint(prefix, files, edges)
 	resp := msgs.StatDirectoryResp{}
@@ -172,17 +162,10 @@ func runCheckpoint(log *eggs.Logger, client *eggs.Client, prefix string, files *
 	}
 }
 
-func runStep(log *eggs.Logger, client *eggs.Client, mbs eggs.MockableBlockServices, files *fileHistoryFiles, stepAny any) any {
+func runStep(log *lib.Logger, client *lib.Client, dirInfoCache *lib.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
 	case fileHistoryCreateFile:
-		// 10 MiB spans
-		id, creationTime := createFile(
-			log, client, mbs,
-			msgs.ROOT_DIR_INODE_ID, uint64(10)<<20, step.name, step.size,
-			func(size uint64) []byte {
-				return make([]byte, size)
-			},
-		)
+		id, creationTime := createFile(log, client, dirInfoCache, msgs.ROOT_DIR_INODE_ID, 0, step.name, 0, 0, nil)
 		files.addFile(step.name, id, creationTime)
 		return fileHistoryCreatedFile{
 			name:         step.name,
@@ -269,7 +252,7 @@ func replayStep(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, st
 	}
 }
 
-func fileHistoryStepSingle(log *eggs.Logger, client *eggs.Client, mbs *eggs.MockedBlockServices, opts *fileHistoryTestOpts, seed int64, filePrefix string) {
+func fileHistoryStepSingle(log *lib.Logger, client *lib.Client, dirInfoCache *lib.DirInfoCache, opts *fileHistoryTestOpts, seed uint64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -284,8 +267,7 @@ func fileHistoryStepSingle(log *eggs.Logger, client *eggs.Client, mbs *eggs.Mock
 		files:  []fileHistoryFile{},
 		byName: make(map[string]int),
 	}
-	source := rand.NewSource(seed)
-	rand := rand.New(source)
+	rand := wyhash.New(seed)
 	for stepIx := 0; stepIx < opts.steps; stepIx++ {
 		if stepIx%opts.checkpointEvery == 0 {
 			log.Info("%v: reached checkpoint at step %v", filePrefix, stepIx)
@@ -314,7 +296,7 @@ func fileHistoryStepSingle(log *eggs.Logger, client *eggs.Client, mbs *eggs.Mock
 			}
 		}
 		reachedTargetFiles = reachedTargetFiles || len(fls.files) >= opts.targetFiles
-		trace = append(trace, runStep(log, client, mbs, &fls, step))
+		trace = append(trace, runStep(log, client, dirInfoCache, &fls, step))
 	}
 	fls = fileHistoryFiles{
 		files:  []fileHistoryFile{},
@@ -335,15 +317,13 @@ type fileHistoryTestOpts struct {
 }
 
 func fileHistoryTest(
-	log *eggs.Logger,
+	log *lib.Logger,
 	shuckleAddress string,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
 	opts *fileHistoryTestOpts,
-	counters *eggs.ClientCounters,
+	counters *lib.ClientCounters,
 ) {
-	mbs := &eggs.MockedBlockServices{Keys: blockServicesKeys}
-
 	terminateChan := make(chan any, 1)
+	dirInfoCache := lib.NewDirInfoCache()
 
 	go func() {
 		defer func() { handleRecover(log, terminateChan, recover()) }()
@@ -355,16 +335,16 @@ func fileHistoryTest(
 		wait.Add(numTests)
 		for i := 0; i < numTests; i++ {
 			prefix := fmt.Sprintf("%x", i)
-			seed := int64(i)
+			seed := uint64(i)
 			go func() {
 				defer func() { handleRecover(log, terminateChan, recover()) }()
 				shid := msgs.ShardId(0)
-				client, err := eggs.NewClient(log, shuckleAddress, &shid, counters, nil)
+				client, err := lib.NewClient(log, shuckleAddress, &shid, counters, nil)
 				if err != nil {
 					panic(err)
 				}
 				defer client.Close()
-				fileHistoryStepSingle(log, client, mbs, opts, seed, prefix)
+				fileHistoryStepSingle(log, client, dirInfoCache, opts, seed, prefix)
 				wait.Done()
 			}()
 		}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/bits"
 )
 
 type Packable interface {
@@ -15,26 +14,6 @@ type Packable interface {
 
 func PackScalar[V bool | uint8 | uint16 | uint32 | uint64](w io.Writer, x V) error {
 	return binary.Write(w, binary.LittleEndian, x)
-}
-
-func PackVarU61(w io.Writer, x uint64) error {
-	bits := bits.Len64(x)
-	if bits > 61 {
-		panic(fmt.Sprintf("uint64 too large for PackU61Var: %v", x))
-	}
-	neededBytes := ((bits + 3) + 8 - 1) / 8
-	x = (x << 3) | uint64(neededBytes-1)
-	first := true
-	var data [8]byte
-	i := 0
-	for first || x > 0 {
-		first = false
-		data[i] = byte(x)
-		x = x >> 8
-		i++
-	}
-	_, err := w.Write(data[:i])
-	return err
 }
 
 func PackBytes(w io.Writer, bs []byte) error {
@@ -67,24 +46,6 @@ func PackLength(w io.Writer, l int) error {
 
 func UnpackScalar[V bool | uint8 | uint16 | uint32 | uint64](r io.Reader, x *V) error {
 	return binary.Read(r, binary.LittleEndian, x)
-}
-
-func UnpackVarU61(r io.Reader, x *uint64) error {
-	var b uint8
-	if err := UnpackScalar(r, &b); err != nil {
-		return err
-	}
-	remaining := b & (8 - 1)
-	var buf [8]byte
-	if _, err := io.ReadFull(r, buf[:remaining]); err != nil {
-		return err
-	}
-	*x = uint64(b)
-	for i := 0; i <= int(remaining); i++ {
-		*x = *x | (uint64(buf[i]) << ((i + 1) * 8))
-	}
-	*x = *x >> 3
-	return nil
 }
 
 // This function will discard what's in `data`, and just

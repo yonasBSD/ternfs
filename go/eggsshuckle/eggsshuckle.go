@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -68,7 +68,7 @@ func newState() *state {
 	}
 }
 
-func handleBlockServicesForShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
+func handleBlockServicesForShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -85,7 +85,7 @@ func handleBlockServicesForShard(ll *eggs.Logger, s *state, w io.Writer, req *ms
 	return &resp
 }
 
-func handleAllBlockServicesReq(ll *eggs.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
+func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -101,7 +101,7 @@ func handleAllBlockServicesReq(ll *eggs.Logger, s *state, w io.Writer, req *msgs
 	return &resp
 }
 
-func handleRegisterBlockServices(ll *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
+func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -114,7 +114,7 @@ func handleRegisterBlockServices(ll *eggs.Logger, s *state, w io.Writer, req *ms
 	return &msgs.RegisterBlockServicesResp{}
 }
 
-func handleShards(ll *eggs.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
+func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -124,7 +124,7 @@ func handleShards(ll *eggs.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *
 	return &resp
 }
 
-func handleRegisterShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
+func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -135,7 +135,7 @@ func handleRegisterShard(ll *eggs.Logger, s *state, w io.Writer, req *msgs.Regis
 	return &msgs.RegisterShardResp{}
 }
 
-func handleCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
+func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -146,7 +146,7 @@ func handleCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.CdcReq) *ms
 	return &resp
 }
 
-func handleRegisterCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
+func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -160,11 +160,11 @@ func handleRegisterCdcReq(log *eggs.Logger, s *state, w io.Writer, req *msgs.Reg
 	return &msgs.RegisterCdcResp{}
 }
 
-func handleRequest(log *eggs.Logger, s *state, conn *net.TCPConn) {
+func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	conn.SetLinger(0) // poor man error handling for now
 	defer conn.Close()
 
-	req, err := eggs.ReadShuckleRequest(log, conn)
+	req, err := lib.ReadShuckleRequest(log, conn)
 	if err != nil {
 		log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
 		return
@@ -191,7 +191,7 @@ func handleRequest(log *eggs.Logger, s *state, conn *net.TCPConn) {
 		log.RaiseAlert(fmt.Errorf("bad req type %T", req))
 	}
 	log.Debug("sending back response %T", resp)
-	if err := eggs.WriteShuckleResponse(log, conn, resp); err != nil {
+	if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
 		log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
 	}
 }
@@ -238,10 +238,10 @@ func sendPage(
 }
 
 func handleWithRecover(
-	log *eggs.Logger,
+	log *lib.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
-	handle func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int),
+	handle func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
 	statusPtr := new(int)
 	var content io.ReadCloser
@@ -282,7 +282,7 @@ func handleWithRecover(
 }
 
 func handlePage(
-	log *eggs.Logger,
+	log *lib.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
 	// third result is status code
@@ -290,7 +290,7 @@ func handlePage(
 ) {
 	handleWithRecover(
 		log, w, r,
-		func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			return sendPage(page(query))
 		},
 	)
@@ -405,7 +405,7 @@ func formatNanos(nanos uint64) string {
 	return fmt.Sprintf("%7.2f%s", amount, unit)
 }
 
-func handleIndex(ll *eggs.Logger, state *state, w http.ResponseWriter, r *http.Request) {
+func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		ll, w, r,
 		func(_ url.Values) (*template.Template, *pageData, int) {
@@ -544,11 +544,20 @@ type spanPolicy struct {
 	Parity       string
 }
 
-type directoryInfo struct {
-	InheritedFrom       string
+type snapshotPolicy struct {
 	DeleteAfterTime     string
 	DeleteAfterVersions string
-	SpanPolicies        []spanPolicy
+}
+
+type sizePolicy struct {
+	MaxSize string
+	Body    string
+}
+
+type directoryInfoEntry struct {
+	Tag           string
+	Body          string
+	InheritedFrom string
 }
 
 type directoryData struct {
@@ -558,10 +567,10 @@ type directoryData struct {
 	Mtime        string
 	Owner        string
 	Edges        []directoryEdge
-	Info         directoryInfo
+	Info         []directoryInfoEntry
 }
 
-func newClient(log *eggs.Logger, state *state) *eggs.Client {
+func newClient(log *lib.Logger, state *state) *lib.Client {
 	state.mutex.RLock()
 	defer state.mutex.RUnlock()
 
@@ -571,7 +580,7 @@ func newClient(log *eggs.Logger, state *state) *eggs.Client {
 		shardIps[i] = si.Ip
 		shardPorts[i] = si.Port
 	}
-	client, err := eggs.NewClientDirect(log, nil, nil, nil, state.cdc.ip, state.cdc.port, &shardIps, &shardPorts)
+	client, err := lib.NewClientDirect(log, nil, nil, nil, state.cdc.ip, state.cdc.port, &shardIps, &shardPorts)
 	if err != nil {
 		panic(err)
 	}
@@ -592,7 +601,7 @@ func normalizePath(path string) string {
 	return newPath
 }
 
-func lookup(log *eggs.Logger, client *eggs.Client, path string) *msgs.InodeId {
+func lookup(log *lib.Logger, client *lib.Client, path string) *msgs.InodeId {
 	id := msgs.ROOT_DIR_INODE_ID
 	if path == "" {
 		return &id
@@ -636,31 +645,11 @@ func pathSegments(path string) []pathSegment {
 	return pathSegments
 }
 
-func lookupDirectoryInfo(log *eggs.Logger, client *eggs.Client, id msgs.InodeId) (msgs.InodeId, *msgs.DirectoryInfoBody) {
-	req := msgs.StatDirectoryReq{Id: id}
-	resp := msgs.StatDirectoryResp{}
-	for {
-		if err := client.ShardRequest(log, req.Id.Shard(), &req, &resp); err != nil {
-			panic(err)
-		}
-		if len(resp.Info) == 0 {
-			req.Id = resp.Owner
-		} else {
-			break
-		}
-	}
-	info := msgs.DirectoryInfoBody{}
-	if err := bincode.Unpack(resp.Info, &info); err != nil {
-		panic(err)
-	}
-	return req.Id, &info
-}
-
 var fileTemplate *template.Template
 var directoryTemplate *template.Template
 
 func handleInode(
-	log *eggs.Logger,
+	log *lib.Logger,
 	state *state,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -685,8 +674,8 @@ func handleInode(
 			if id != msgs.NULL_INODE_ID && id != msgs.ROOT_DIR_INODE_ID && path != "" {
 				return errorPage(http.StatusBadRequest, "cannot specify both id and path")
 			}
-			if id == msgs.ROOT_DIR_INODE_ID && path != "/" {
-				return errorPage(http.StatusBadRequest, "bat root inode id")
+			if id == msgs.ROOT_DIR_INODE_ID && path != "/" && path != "" {
+				return errorPage(http.StatusBadRequest, "bad root inode id")
 			}
 			client := newClient(log, state)
 			if id == msgs.NULL_INODE_ID {
@@ -763,25 +752,66 @@ func handleInode(
 						}
 					}
 				}
-				{
-					inheritedFrom, info := lookupDirectoryInfo(log, client, id)
-					if inheritedFrom != id {
-						data.Info.InheritedFrom = fmt.Sprintf("%v", inheritedFrom)
+				/*
+					{
+						data.Info = []directoryInfoEntry{}
+						dirInfoCache := lib.NewDirInfoCache()
+						snapshot := &msgs.SnapshotPolicy{}
+						inheritedFrom, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, snapshot)
+						if err != nil {
+							panic(err)
+						}
+						snapshotData := snapshotPolicy{}
+						if snapshot.DeleteAfterTime.Active() {
+							snapshotData.DeleteAfterTime = snapshot.DeleteAfterTime.Time().String()
+						}
+						if snapshot.DeleteAfterVersions.Active() {
+							snapshotData.DeleteAfterVersions = fmt.Sprintf("%v", snapshot.DeleteAfterVersions.Versions())
+						}
+						entry := directoryInfoEntry{
+							Tag:  snapshot.Tag().String(),
+							Body: fmt.Sprintf("%+v", snapshotData),
+						}
+						if inheritedFrom != id {
+							entry.InheritedFrom = inheritedFrom.String()
+						}
+						data.Info = append(data.Info, entry)
+						span := &msgs.SpanPolicy{}
+						inheritedFrom, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, span)
+						if err != nil {
+							panic(err)
+						}
+						spanData := []sizePolicy{}
+						for _, s := range span.Entries {
+							spanData = append(spanData, sizePolicy{MaxSize: formatPreciseSize(uint64(s.MaxSize)), Body: s.Parity.String()})
+						}
+						entry = directoryInfoEntry{
+							Tag:  span.Tag().String(),
+							Body: fmt.Sprintf("%+v", spanData),
+						}
+						if inheritedFrom != id {
+							entry.InheritedFrom = inheritedFrom.String()
+						}
+						data.Info = append(data.Info, entry)
+						block := &msgs.BlockPolicy{}
+						inheritedFrom, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, block)
+						if err != nil {
+							panic(err)
+						}
+						blockData := []sizePolicy{}
+						for _, s := range block.Entries {
+							blockData = append(blockData, sizePolicy{MaxSize: formatPreciseSize(uint64(s.MaxSize)), Body: s.StorageClass.String()})
+						}
+						entry = directoryInfoEntry{
+							Tag:  block.Tag().String(),
+							Body: fmt.Sprintf("%+v", blockData),
+						}
+						if inheritedFrom != id {
+							entry.InheritedFrom = inheritedFrom.String()
+						}
+						data.Info = append(data.Info, entry)
 					}
-					if info.DeleteAfterTime.Active() {
-						data.Info.DeleteAfterTime = info.DeleteAfterTime.Time().String()
-					}
-					if info.DeleteAfterVersions.Active() {
-						data.Info.DeleteAfterVersions = fmt.Sprintf("%v", info.DeleteAfterVersions.Versions())
-					}
-					for _, policy := range info.SpanPolicies {
-						data.Info.SpanPolicies = append(data.Info.SpanPolicies, spanPolicy{
-							MaxSize:      formatPreciseSize(policy.MaxSize),
-							StorageClass: policy.StorageClass.String(),
-							Parity:       policy.Parity.String(),
-						})
-					}
-				}
+				*/
 				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			} else {
 				data := fileData{
@@ -799,58 +829,60 @@ func handleInode(
 					data.Mtime = resp.Mtime.String()
 					data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
 				}
-				{
-					req := msgs.FileSpansReq{FileId: id}
-					resp := msgs.FileSpansResp{}
-					for {
-						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
-							panic(err)
-						}
-						for _, span := range resp.Spans {
-							fs := fileSpan{
-								Offset:       formatPreciseSize(span.ByteOffset),
-								Size:         formatPreciseSize(span.Size),
-								Crc32:        hex.EncodeToString(span.Crc32[:]),
-								StorageClass: span.StorageClass.String(),
-								BlockSize:    formatPreciseSize(span.BlockSize),
-								DataBlocks:   span.Parity.DataBlocks(),
-								ParityBlocks: span.Parity.ParityBlocks(),
-							}
-							if len(span.BodyBytes) > 0 {
-								fs.BodyBytes = fmt.Sprintf("%q", span.BodyBytes)
-							} else {
-								data.AllInline = false
-							}
-
-							for _, block := range span.BodyBlocks {
-								blockService := resp.BlockServices[block.BlockServiceIx]
-								crcStr := hex.EncodeToString(block.Crc32[:])
-								fb := fileBlock{
-									Id:           block.BlockId.String(),
-									BlockService: blockService.Id.String(),
-									Crc32:        crcStr,
-									Link:         fmt.Sprintf("/blocks/%v/%v?size=%v&crc=%v", blockService.Id, block.BlockId, span.BlockSize, crcStr),
+				/*
+					{
+						req := msgs.FileSpansReq{FileId: id}
+						resp := msgs.FileSpansResp{}
+							for {
+								if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+									panic(err)
 								}
-								fs.BodyBlocks = append(fs.BodyBlocks, fb)
+								for _, span := range resp.Spans {
+									fs := fileSpan{
+										Offset:       formatPreciseSize(span.ByteOffset),
+										Size:         formatPreciseSize(uint64(span.Size)),
+										Crc32:        hex.EncodeToString(span.Crc32[:]),
+										StorageClass: span.StorageClass.String(),
+										BlockSize:    formatPreciseSize(uint64(span.BlockSize)),
+										DataBlocks:   span.Parity.DataBlocks(),
+										ParityBlocks: span.Parity.ParityBlocks(),
+									}
+									if len(span.BodyBytes) > 0 {
+										fs.BodyBytes = fmt.Sprintf("%q", span.BodyBytes)
+									} else {
+										data.AllInline = false
+									}
+
+									for _, block := range span.BodyBlocks {
+										blockService := resp.BlockServices[block.BlockServiceIx]
+										crcStr := hex.EncodeToString(block.Crc32[:])
+										fb := fileBlock{
+											Id:           block.BlockId.String(),
+											BlockService: blockService.Id.String(),
+											Crc32:        crcStr,
+											Link:         fmt.Sprintf("/blocks/%v/%v?size=%v&crc=%v", blockService.Id, block.BlockId, span.BlockSize, crcStr),
+										}
+										fs.BodyBlocks = append(fs.BodyBlocks, fb)
+									}
+									data.Spans = append(data.Spans, fs)
+								}
+								req.ByteOffset = resp.NextOffset
+								if req.ByteOffset == 0 {
+									break
+								}
 							}
-							data.Spans = append(data.Spans, fs)
-						}
-						req.ByteOffset = resp.NextOffset
-						if req.ByteOffset == 0 {
-							break
-						}
 					}
-				}
+				*/
 				return fileTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			}
 		},
 	)
 }
 
-func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
 		log, w, r,
-		func(log *eggs.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "blocks" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -876,8 +908,10 @@ func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Req
 			if err != nil || len(crcBytes) != 4 {
 				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad crc '%v'", query.Get("crc"))))
 			}
-			var crc [4]byte
-			copy(crc[:], crcBytes)
+			var crc msgs.Crc
+			if err := bincode.Unpack(crcBytes, &crc); err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad crc '%v'", query.Get("crc"))))
+			}
 			var blockService msgs.BlockService
 			var conn *net.TCPConn
 			{
@@ -893,12 +927,12 @@ func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Req
 				blockService.Ip2 = blockServiceInfo.Ip2
 				blockService.Port2 = blockServiceInfo.Port2
 				var err error
-				conn, err = eggs.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+				conn, err = lib.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}
 			}
-			if err := eggs.FetchBlock(log, conn, &blockService, blockId, crc, 0, uint32(size)); err != nil {
+			if err := lib.FetchBlock(log, conn, &blockService, blockId, crc, 0, uint32(size)); err != nil {
 				panic(err)
 			}
 			w.Header().Set("Content-Type", "application/x-binary")
@@ -909,13 +943,13 @@ func handleBlock(log *eggs.Logger, st *state, w http.ResponseWriter, r *http.Req
 	)
 }
 
-func setupRouting(log *eggs.Logger, st *state) {
+func setupRouting(log *lib.Logger, st *state) {
 	errorTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "error", body: errorTemplateStr},
 	)
 
-	setupPage := func(path string, handle func(ll *eggs.Logger, state *state, w http.ResponseWriter, r *http.Request)) {
+	setupPage := func(path string, handle func(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Request)) {
 		http.HandleFunc(
 			path,
 			func(w http.ResponseWriter, r *http.Request) { handle(log, st, w, r) },
@@ -969,6 +1003,7 @@ func main() {
 	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
+	trace := flag.Bool("trace", false, "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -981,13 +1016,20 @@ func main() {
 		}
 	}
 
-	ll := eggs.NewLogger(*verbose, logOut)
+	level := lib.INFO
+	if *verbose {
+		level = lib.DEBUG
+	}
+	if *trace {
+		level = lib.TRACE
+	}
+	ll := lib.NewLogger(level, logOut)
 
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)
 	ll.Info("  httpPort = %v", *httpPort)
 	ll.Info("  logFile = '%v'", *logFile)
-	ll.Info("  verbose = %v", *verbose)
+	ll.Info("  logLevel = %v", level)
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

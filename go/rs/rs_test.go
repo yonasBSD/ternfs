@@ -10,7 +10,7 @@ import (
 
 func TestGet(t *testing.T) {
 	parity := MkParity(10, 4)
-	rs := GetRs(parity)
+	rs := Get(parity)
 	assert.Equal(t, parity, rs.Parity())
 }
 
@@ -27,13 +27,13 @@ func TestComputeParity(t *testing.T) {
 		for i := range blocks {
 			blocks[i] = data[i*blockSize : (i+1)*blockSize]
 		}
-		rs := GetRs(MkParity(uint8(numData), uint8(numParity)))
+		rs := Get(MkParity(uint8(numData), uint8(numParity)))
 		rs.ComputeParityInto(blocks[:numData], blocks[numData:])
 		// Verify that the first parity block is the XOR of all the data blocks
 		expectedParity0 := make([]byte, blockSize)
 		for i := 0; i < numData; i++ {
-			for j, b := range blocks[i] {
-				expectedParity0[j] ^= b
+			for j := range blocks[i] {
+				expectedParity0[j] ^= blocks[i][j]
 			}
 		}
 		assert.Equal(t, expectedParity0, blocks[numData])

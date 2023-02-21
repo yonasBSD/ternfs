@@ -1,13 +1,12 @@
 package main
 
 import (
-	"crypto/cipher"
 	"fmt"
-	"xtx/eggsfs/eggs"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
-func deleteDir(log *eggs.Logger, client *eggs.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
+func deleteDir(log *lib.Logger, client *lib.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
 		DirId: dirId,
 	}
@@ -44,56 +43,23 @@ func deleteDir(log *eggs.Logger, client *eggs.Client, ownerId msgs.InodeId, name
 }
 
 func cleanupAfterTest(
-	log *eggs.Logger,
+	log *lib.Logger,
 	shuckleAddress string,
-	counters *eggs.ClientCounters,
-	blockServicesKeys map[msgs.BlockServiceId]cipher.Block,
+	counters *lib.ClientCounters,
 ) {
-	client, err := eggs.NewClient(log, shuckleAddress, nil, counters, nil)
+	client, err := lib.NewClient(log, shuckleAddress, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
 	defer client.Close()
 	// Delete all current things
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
-	// Make all historical stuff die immediately for all directories
-	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		visitDirsReq := msgs.VisitDirectoriesReq{}
-		visitDirsResp := msgs.VisitDirectoriesResp{}
-		for {
-			if err := client.ShardRequest(log, shid, &visitDirsReq, &visitDirsResp); err != nil {
-				panic(err)
-			}
-			for _, dirId := range visitDirsResp.Ids {
-				dirInfo, err := eggs.GetDirectoryInfo(log, client, dirId)
-				if err != nil {
-					panic(err)
-				}
-				if dirInfo == nil { // inherited
-					continue
-				}
-				dirInfo.DeleteAfterVersions = msgs.ActiveDeleteAfterVersions(0)
-				if err := eggs.SetDirectoryInfo(log, client, dirId, false, dirInfo); err != nil {
-					panic(fmt.Errorf("could not set directory info for dir %v, shard %v: %v", dirId, dirId.Shard(), err))
-				}
-			}
-			if visitDirsResp.NextId == 0 {
-				break
-			}
-		}
-	}
-	// Collect everything
-	if err := eggs.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
+	// Collect everything -- this relies on the snapshot policy being immediate, which we do
+	// in integrationtest.go
+	if err := lib.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
 		panic(err)
 	}
-	var mbs eggs.MockableBlockServices
-	if blockServicesKeys == nil {
-		mbs = client
-	} else {
-		mbs = &eggs.MockedBlockServices{Keys: blockServicesKeys}
-	}
-	if err := eggs.DestructFilesInAllShards(log, shuckleAddress, counters, mbs); err != nil {
+	if err := lib.DestructFilesInAllShards(log, shuckleAddress, counters); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left

@@ -264,8 +264,7 @@ struct MakeDirectoryStateMachine {
     void createDirectoryInode() {
         auto& shardReq = env.needsShard(MAKE_DIRECTORY_CREATE_DIR, state.dirId().shard()).setCreateDirectoryInode();
         shardReq.id = state.dirId();
-        shardReq.info.inherited = req.info.inherited;
-        shardReq.info.body = req.info.body;
+        shardReq.info = req.info;
         shardReq.ownerId = req.ownerId;
     }
 
@@ -593,6 +592,7 @@ struct SoftUnlinkDirectoryStateMachine {
     StateMachineEnv& env;
     const SoftUnlinkDirectoryReq& req;
     SoftUnlinkDirectoryState state;
+    DirectoryInfo info;
 
     SoftUnlinkDirectoryStateMachine(StateMachineEnv& env_, const SoftUnlinkDirectoryReq& req_, SoftUnlinkDirectoryState state_):
         env(env_), req(req_), state(state_)
@@ -607,7 +607,7 @@ struct SoftUnlinkDirectoryStateMachine {
             switch (env.txnStep) {
                 case SOFT_UNLINK_DIRECTORY_LOCK_EDGE: lockEdge(); break;
                 case SOFT_UNLINK_DIRECTORY_STAT: stat(); break;
-                // We don't store the directory info, so we need to restart the stating when resuming
+                // We don't persist the directory info, so we need to restart the stating when resuming
                 case SOFT_UNLINK_DIRECTORY_REMOVE_OWNER: stat(); break;
                 case SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE: unlockEdge(); break;
                 case SOFT_UNLINK_DIRECTORY_ROLLBACK: rollback(); break;
@@ -664,10 +664,23 @@ struct SoftUnlinkDirectoryStateMachine {
         } else {
             ALWAYS_ASSERT(err == NO_ERROR);
             const auto& statResp = resp->getStatDirectory();
-            if (statResp.info.size() > 0) {
+            // insert tags
+            for (const auto& newEntry : statResp.info.entries.els) {
+                bool found = false;
+                for (const auto& entry: info.entries.els) {
+                    if (entry.tag == newEntry.tag) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    info.entries.els.emplace_back(newEntry);
+                }
+            }
+            if (info.entries.els.size() == REQUIRED_DIR_INFO_TAGS.size()) { // we've found everything
                 auto& shardReq = env.needsShard(SOFT_UNLINK_DIRECTORY_REMOVE_OWNER, req.targetId.shard()).setRemoveDirectoryOwner();
                 shardReq.dirId = req.targetId;
-                shardReq.info = statResp.info;
+                shardReq.info = info;
             } else {
                 ALWAYS_ASSERT(statResp.owner != NULL_INODE_ID);
                 // keep walking upwards

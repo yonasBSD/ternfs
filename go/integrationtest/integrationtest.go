@@ -187,19 +187,16 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		},
 	)
 
-	/*
-		runTest(
-			log,
-			shuckleAddress,
-			nil,
-			filter,
-			"fs test with fuse",
-			fmt.Sprintf("%v dirs, %v files, %v depth, ~%vMiB stored", blocksFsTestOpts.numDirs, blocksFsTestOpts.numFiles, blocksFsTestOpts.depth, (blocksFsTestOpts.maxFileSize*blocksFsTestOpts.numFiles)>>21),
-			func(blockServicesKeys map[msgs.BlockServiceId]cipher.Block, counters *lib.ClientCounters) {
-				fsTest(log, shuckleAddress, &blocksFsTestOpts, counters, blockServicesKeys, fuseMountPoint)
-			},
-		)
-	*/
+	runTest(
+		log,
+		shuckleAddress,
+		filter,
+		"fs test with fuse",
+		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+		func(counters *lib.ClientCounters) {
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, fuseMountPoint)
+		},
+	)
 
 	terminateChan <- nil
 }
@@ -280,11 +277,11 @@ func main() {
 	cppExes := managedprocess.BuildCppExes(log, *buildType)
 	shuckleExe := managedprocess.BuildShuckleExe(log)
 	blockServiceExe := managedprocess.BuildBlockServiceExe(log)
-	// eggsFuseExe := managedprocess.BuildEggsFuseExe(log)
+	eggsFuseExe := managedprocess.BuildEggsFuseExe(log)
 
 	terminateChan := make(chan any, 1)
 
-	procs := managedprocess.NewManagedProcesses(terminateChan)
+	procs := managedprocess.New(terminateChan)
 	defer procs.Close()
 
 	// Start shuckle
@@ -363,17 +360,14 @@ func main() {
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
 	lib.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
 
-	/*
-		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-			Exe:            eggsFuseExe,
-			Path:           path.Join(*dataDir, "eggsfuse"),
-			Verbose:        *verbose,
-			Wait:           true,
-			ShuckleAddress: shuckleAddress,
-			Profile:        *profile,
-		})
-	*/
-	fuseMountPoint := ""
+	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+		Exe:            eggsFuseExe,
+		Path:           path.Join(*dataDir, "eggsfuse"),
+		LogLevel:       level,
+		Wait:           true,
+		ShuckleAddress: shuckleAddress,
+		Profile:        *profile,
+	})
 
 	fmt.Printf("operational 🤖\n")
 

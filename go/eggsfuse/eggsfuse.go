@@ -1,10 +1,5 @@
 package main
 
-func main() {
-
-}
-
-/*
 import (
 	"context"
 	"flag"
@@ -25,6 +20,8 @@ import (
 var client *lib.Client
 var log *lib.Logger
 var dirInfoCache *lib.DirInfoCache
+var readBufPool *lib.ReadSpanBufPool
+var writeBufPool *sync.Pool
 
 func eggsErrToErrno(err error) syscall.Errno {
 	switch err {
@@ -137,7 +134,7 @@ type transientFile struct {
 	cookie       [8]byte
 	name         string
 	written      uint64 // what's already in spans
-	data         []byte
+	data         *[]byte
 	spanPolicy   *msgs.SpanPolicy
 	blockPolicy  *msgs.BlockPolicy
 	stripePolicy *msgs.StripePolicy
@@ -262,13 +259,15 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 	if err := shardRequest(n.id.Shard(), &req, &resp); err != 0 {
 		return nil, err
 	}
+	data := writeBufPool.Get().(*[]byte)
+	log.Debug("gotten data %p", data)
 	transient := transientFile{
 		id:           resp.Id,
 		cookie:       resp.Cookie,
 		valid:        true,
 		name:         name,
 		dir:          n.id,
-		data:         []byte{},
+		data:         data,
 		spanPolicy:   spanPolicy,
 		blockPolicy:  blockPolicy,
 		stripePolicy: stripePolicy,
@@ -337,22 +336,28 @@ func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 }
 
 func (f *transientFile) writeSpan() syscall.Errno {
-	spanSize := uint32(len(f.data))
+	if f.data == nil {
+		return 0 // happens when dup is called on file
+	}
+	spanSize := uint32(len(*f.data))
+	if spanSize == 0 {
+		return 0
+	}
 	var err error
-	f.data, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, f.data)
+	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, *f.data)
 	if err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)
 	}
 	f.written += uint64(spanSize)
-	f.data = f.data[:1]
+	*f.data = (*f.data)[:0]
 
 	return 0
 }
 
 func (f *transientFile) writeSpanIfNecessary() syscall.Errno {
 	biggestSpan := f.spanPolicy.Entries[len(f.spanPolicy.Entries)-1]
-	if len(f.data) < int(biggestSpan.MaxSize) {
+	if len(*f.data) < int(biggestSpan.MaxSize) {
 		return 0
 	}
 	return f.writeSpan()
@@ -369,12 +374,12 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 	}
 
 	// TODO support writing in the middle (and flushing out the span later)
-	if off != int64(f.written)+int64(len(f.data)) {
+	if off != int64(f.written)+int64(len(*f.data)) {
 		log.Info("refusing to write in the past")
 		return 0, syscall.EINVAL
 	}
 
-	f.data = append(f.data, data...)
+	*f.data = append(*f.data, data...)
 
 	if err := f.writeSpanIfNecessary(); err != 0 {
 		log.Debug("writing span failed with error %v, invalidating %v", err, f.id)
@@ -396,6 +401,12 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 		return syscall.EBADF
 	}
 
+	defer func() {
+		writeBufPool.Put(f.data)
+		f.data = nil
+		f.valid = false
+	}()
+
 	if err := f.writeSpan(); err != 0 {
 		return err
 	}
@@ -407,7 +418,6 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 		Name:    f.name,
 	}
 	if err := shardRequest(f.dir.Shard(), &req, &msgs.LinkFileResp{}); err != 0 {
-		f.valid = false
 		return err
 	}
 
@@ -484,12 +494,13 @@ type openFile struct {
 	id   msgs.InodeId
 	size uint64 // total size of file
 
-	offset int64
-
 	// We store the last successful span resp
-	spans         *msgs.FileSpansResp
+	spans *msgs.FileSpansResp
+
+	// The span we're currently in
 	currentSpanIx int
-	reader        io.ReadCloser
+	spanReader    io.ReadCloser // the span reader
+	offset        int64         // the current reading offset
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -507,8 +518,50 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	return &of, 0, 0
 }
 
-func (of *openFile) ensureSpan(off int64) syscall.Errno {
-
+// ensures that the span reader is at the current offset.
+func (of *openFile) ensureSpan() syscall.Errno {
+	if of.offset < 0 || of.offset >= int64(of.size) {
+		panic(fmt.Errorf("of.offset=%v < 0 || of.offset=%v >= of.size=%v", of.offset, of.offset, of.size))
+	}
+	of.currentSpanIx = -1
+	// check if we're within current span index
+	if of.spans != nil {
+		for i := 0; i < len(of.spans.Spans); i++ {
+			span := &of.spans.Spans[i]
+			if int64(span.Header.ByteOffset) <= of.offset && of.offset < int64(span.Header.ByteOffset)+int64(span.Header.Size) {
+				of.currentSpanIx = i
+				break
+			}
+		}
+	}
+	// we're not within the span index, download new batch of spans
+	if of.currentSpanIx < 0 {
+		of.spans = &msgs.FileSpansResp{}
+		if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(of.offset)}, of.spans); err != 0 {
+			return eggsErrToErrno(err)
+		}
+		of.currentSpanIx = 0
+	}
+	span := &of.spans.Spans[of.currentSpanIx]
+	var err error
+	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceBlacklist{}, of.id, of.spans.BlockServices, span)
+	if err != nil {
+		return eggsErrToErrno(err)
+	}
+	currentOffset := int64(span.Header.ByteOffset)
+	var buf [256]byte
+	for currentOffset < of.offset {
+		end := 256
+		if of.offset-currentOffset < 256 {
+			end = int(of.offset - currentOffset)
+		}
+		read, err := of.spanReader.Read(buf[:end])
+		if err != nil {
+			return eggsErrToErrno(err)
+		}
+		currentOffset += int64(read)
+	}
+	return 0
 }
 
 // One step of reading, will go through at most one span.
@@ -525,18 +578,21 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 
 	// If the offset has changed, reset
 	if off != of.offset {
-		of.reader.Close()
-		of.currentSpanIx = -1
-		if err := of.ensureSpan(off); err != 0 {
+		log.Debug("mismatching offset (%v vs %v), will reset span", off, of.offset)
+		if of.spanReader != nil {
+			of.spanReader.Close()
+		}
+		of.offset = off
+		if err := of.ensureSpan(); err != 0 {
 			return 0, err
 		}
 	}
 
-	read, err := of.reader.Read(dest)
-	if err == io.EOF {
-		of.reader.Close()
-		of.currentSpanIx = -1
-		if err := of.ensureSpan(off); err != 0 {
+	read, err := of.spanReader.Read(dest)
+	if err == io.EOF { // load next span
+		log.Debug("finished reading current span, loading next")
+		of.spanReader.Close()
+		if err := of.ensureSpan(); err != 0 {
 			return 0, err
 		}
 	}
@@ -545,6 +601,15 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 		return int64(read), eggsErrToErrno(err)
 	}
 	return int64(read), 0
+}
+
+func (of *openFile) Flush(ctx context.Context) syscall.Errno {
+	if of.spanReader != nil {
+		if err := of.spanReader.Close(); err != nil {
+			return eggsErrToErrno(err)
+		}
+	}
+	return 0
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -617,7 +682,10 @@ func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.E
 func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	log.Debug("readlink file=%v", n.id)
 
-	var data []byte
+	if n.id.Type() != msgs.SYMLINK {
+		return nil, syscall.EINVAL
+	}
+
 	resp := msgs.FileSpansResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.FileSpansReq{FileId: n.id}, &resp); err != 0 {
 		return nil, err
@@ -625,29 +693,16 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	if len(resp.Spans) > 1 {
 		panic(fmt.Errorf("more than one span for symlink"))
 	}
-	span := resp.Spans[0]
-	if len(span.BodyBytes) > 0 {
-		data = span.BodyBytes
-	} else {
-		if span.Parity.DataBlocks() > 1 {
-			panic(fmt.Errorf("multiple data blocks not supported yet"))
-		}
-		block := span.BodyBlocks[0]
-		blockService := resp.BlockServices[block.BlockServiceIx]
-		conn, err := client.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
-		if err != nil {
-			panic(err)
-		}
-		defer client.ReleaseBlockServiceConnection(log, conn)
-		if err := eggs.FetchBlock(log, conn, &blockService, block.BlockId, block.Crc32, 0, uint32(span.BlockSize)); err != nil {
-			panic(err)
-		}
-		data = make([]byte, span.BlockSize)
-		if _, err := io.ReadFull(conn, data); err != nil {
-			panic(err)
-		}
+	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceBlacklist{}, n.id, resp.BlockServices, &resp.Spans[0])
+	if err != nil {
+		return nil, eggsErrToErrno(err)
+
 	}
-	return data, 0
+	bs, err := io.ReadAll(spanReader)
+	if err != nil {
+		return nil, eggsErrToErrno(err)
+	}
+	return bs, 0
 }
 
 var _ = (fs.InodeEmbedder)((*eggsNode)(nil))
@@ -668,6 +723,7 @@ var _ = (fs.FileWriter)((*transientFile)(nil))
 var _ = (fs.FileFlusher)((*transientFile)(nil))
 
 var _ = (fs.FileReader)((*openFile)(nil))
+var _ = (fs.FileFlusher)((*openFile)(nil))
 
 func terminate(server *fuse.Server, terminated *bool) {
 	log.Info("terminating")
@@ -694,7 +750,7 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
-	shuckleAddress := flag.String("shuckle", eggs.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	flag.Usage = usage
 	flag.Parse()
@@ -720,15 +776,15 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	logger := eggs.NewLoggerLogger(logOut)
-	level := eggs.INFO
+	logger := lib.NewLoggerLogger(logOut)
+	level := lib.INFO
 	if *verbose {
-		level = eggs.DEBUG
+		level = lib.DEBUG
 	}
 	if *trace {
-		level = eggs.TRACE
+		level = lib.TRACE
 	}
-	log = eggs.NewLoggerFromLogger(level, logger)
+	log = lib.NewLoggerFromLogger(level, logger)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -742,12 +798,21 @@ func main() {
 	counters := &lib.ClientCounters{}
 
 	var err error
-	client, err = eggs.NewClient(log, *shuckleAddress, nil, counters, nil)
+	client, err = lib.NewClient(log, *shuckleAddress, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
 
-	dirInfoCache = eggs.NewDirInfoCache()
+	dirInfoCache = lib.NewDirInfoCache()
+
+	writeBufPool = &sync.Pool{
+		New: func() any {
+			buf := []byte{}
+			return &buf
+		},
+	}
+
+	readBufPool = lib.NewReadSpanBufPool()
 
 	root := eggsNode{
 		id: msgs.ROOT_DIR_INODE_ID,
@@ -794,4 +859,3 @@ func main() {
 
 	server.Wait()
 }
-*/

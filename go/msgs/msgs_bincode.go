@@ -59,7 +59,7 @@ func (err ErrCode) Error() string {
 func (err *ErrCode) Pack(w io.Writer) error {
 	return bincode.PackScalar(w, uint16(*err))
 }
-
+	
 func (errCode *ErrCode) Unpack(r io.Reader) error {
 	var c uint16
 	if err := bincode.UnpackScalar(r, &c); err != nil {
@@ -67,8 +67,8 @@ func (errCode *ErrCode) Unpack(r io.Reader) error {
 	}
 	*errCode = ErrCode(c)
 	return nil
-}
-
+}	
+	
 func (fs *FetchedSpan) Pack(w io.Writer) error {
 	if fs.Header.StorageClass == EMPTY_STORAGE {
 		return fmt.Errorf("cannot have EMPTY_STORAGE in fetched span")
@@ -114,64 +114,63 @@ func (fs *FetchedSpan) Unpack(r io.Reader) error {
 	}
 	return nil
 }
-
 const (
-	INTERNAL_ERROR                    ErrCode = 10
-	FATAL_ERROR                       ErrCode = 11
-	TIMEOUT                           ErrCode = 12
-	MALFORMED_REQUEST                 ErrCode = 13
-	MALFORMED_RESPONSE                ErrCode = 14
-	NOT_AUTHORISED                    ErrCode = 15
-	UNRECOGNIZED_REQUEST              ErrCode = 16
-	FILE_NOT_FOUND                    ErrCode = 17
-	DIRECTORY_NOT_FOUND               ErrCode = 18
-	NAME_NOT_FOUND                    ErrCode = 19
-	EDGE_NOT_FOUND                    ErrCode = 20
-	EDGE_IS_LOCKED                    ErrCode = 21
-	TYPE_IS_DIRECTORY                 ErrCode = 22
-	TYPE_IS_NOT_DIRECTORY             ErrCode = 23
-	BAD_COOKIE                        ErrCode = 24
+	INTERNAL_ERROR ErrCode = 10
+	FATAL_ERROR ErrCode = 11
+	TIMEOUT ErrCode = 12
+	MALFORMED_REQUEST ErrCode = 13
+	MALFORMED_RESPONSE ErrCode = 14
+	NOT_AUTHORISED ErrCode = 15
+	UNRECOGNIZED_REQUEST ErrCode = 16
+	FILE_NOT_FOUND ErrCode = 17
+	DIRECTORY_NOT_FOUND ErrCode = 18
+	NAME_NOT_FOUND ErrCode = 19
+	EDGE_NOT_FOUND ErrCode = 20
+	EDGE_IS_LOCKED ErrCode = 21
+	TYPE_IS_DIRECTORY ErrCode = 22
+	TYPE_IS_NOT_DIRECTORY ErrCode = 23
+	BAD_COOKIE ErrCode = 24
 	INCONSISTENT_STORAGE_CLASS_PARITY ErrCode = 25
-	LAST_SPAN_STATE_NOT_CLEAN         ErrCode = 26
-	COULD_NOT_PICK_BLOCK_SERVICES     ErrCode = 27
-	BAD_SPAN_BODY                     ErrCode = 28
-	SPAN_NOT_FOUND                    ErrCode = 29
-	BLOCK_SERVICE_NOT_FOUND           ErrCode = 30
-	CANNOT_CERTIFY_BLOCKLESS_SPAN     ErrCode = 31
-	BAD_NUMBER_OF_BLOCKS_PROOFS       ErrCode = 32
-	BAD_BLOCK_PROOF                   ErrCode = 33
-	CANNOT_OVERRIDE_NAME              ErrCode = 34
-	NAME_IS_LOCKED                    ErrCode = 35
-	MTIME_IS_TOO_RECENT               ErrCode = 36
-	MISMATCHING_TARGET                ErrCode = 37
-	MISMATCHING_OWNER                 ErrCode = 38
-	MISMATCHING_CREATION_TIME         ErrCode = 39
-	DIRECTORY_NOT_EMPTY               ErrCode = 40
-	FILE_IS_TRANSIENT                 ErrCode = 41
-	OLD_DIRECTORY_NOT_FOUND           ErrCode = 42
-	NEW_DIRECTORY_NOT_FOUND           ErrCode = 43
-	LOOP_IN_DIRECTORY_RENAME          ErrCode = 44
-	DIRECTORY_HAS_OWNER               ErrCode = 45
-	FILE_IS_NOT_TRANSIENT             ErrCode = 46
-	FILE_NOT_EMPTY                    ErrCode = 47
-	CANNOT_REMOVE_ROOT_DIRECTORY      ErrCode = 48
-	FILE_EMPTY                        ErrCode = 49
-	CANNOT_REMOVE_DIRTY_SPAN          ErrCode = 50
-	BAD_SHARD                         ErrCode = 51
-	BAD_NAME                          ErrCode = 52
-	MORE_RECENT_SNAPSHOT_EDGE         ErrCode = 53
-	MORE_RECENT_CURRENT_EDGE          ErrCode = 54
-	BAD_DIRECTORY_INFO                ErrCode = 55
-	DEADLINE_NOT_PASSED               ErrCode = 56
-	SAME_SOURCE_AND_DESTINATION       ErrCode = 57
-	SAME_DIRECTORIES                  ErrCode = 58
-	SAME_SHARD                        ErrCode = 59
-	BAD_PROTOCOL_VERSION              ErrCode = 60
-	BAD_CERTIFICATE                   ErrCode = 61
-	BLOCK_TOO_RECENT_FOR_DELETION     ErrCode = 62
-	BLOCK_FETCH_OUT_OF_BOUNDS         ErrCode = 63
-	BAD_BLOCK_CRC                     ErrCode = 64
-	BLOCK_TOO_BIG                     ErrCode = 65
+	LAST_SPAN_STATE_NOT_CLEAN ErrCode = 26
+	COULD_NOT_PICK_BLOCK_SERVICES ErrCode = 27
+	BAD_SPAN_BODY ErrCode = 28
+	SPAN_NOT_FOUND ErrCode = 29
+	BLOCK_SERVICE_NOT_FOUND ErrCode = 30
+	CANNOT_CERTIFY_BLOCKLESS_SPAN ErrCode = 31
+	BAD_NUMBER_OF_BLOCKS_PROOFS ErrCode = 32
+	BAD_BLOCK_PROOF ErrCode = 33
+	CANNOT_OVERRIDE_NAME ErrCode = 34
+	NAME_IS_LOCKED ErrCode = 35
+	MTIME_IS_TOO_RECENT ErrCode = 36
+	MISMATCHING_TARGET ErrCode = 37
+	MISMATCHING_OWNER ErrCode = 38
+	MISMATCHING_CREATION_TIME ErrCode = 39
+	DIRECTORY_NOT_EMPTY ErrCode = 40
+	FILE_IS_TRANSIENT ErrCode = 41
+	OLD_DIRECTORY_NOT_FOUND ErrCode = 42
+	NEW_DIRECTORY_NOT_FOUND ErrCode = 43
+	LOOP_IN_DIRECTORY_RENAME ErrCode = 44
+	DIRECTORY_HAS_OWNER ErrCode = 45
+	FILE_IS_NOT_TRANSIENT ErrCode = 46
+	FILE_NOT_EMPTY ErrCode = 47
+	CANNOT_REMOVE_ROOT_DIRECTORY ErrCode = 48
+	FILE_EMPTY ErrCode = 49
+	CANNOT_REMOVE_DIRTY_SPAN ErrCode = 50
+	BAD_SHARD ErrCode = 51
+	BAD_NAME ErrCode = 52
+	MORE_RECENT_SNAPSHOT_EDGE ErrCode = 53
+	MORE_RECENT_CURRENT_EDGE ErrCode = 54
+	BAD_DIRECTORY_INFO ErrCode = 55
+	DEADLINE_NOT_PASSED ErrCode = 56
+	SAME_SOURCE_AND_DESTINATION ErrCode = 57
+	SAME_DIRECTORIES ErrCode = 58
+	SAME_SHARD ErrCode = 59
+	BAD_PROTOCOL_VERSION ErrCode = 60
+	BAD_CERTIFICATE ErrCode = 61
+	BLOCK_TOO_RECENT_FOR_DELETION ErrCode = 62
+	BLOCK_FETCH_OUT_OF_BOUNDS ErrCode = 63
+	BAD_BLOCK_CRC ErrCode = 64
+	BLOCK_TOO_BIG ErrCode = 65
 )
 
 func (err ErrCode) String() string {
@@ -370,42 +369,43 @@ func (k ShardMessageKind) String() string {
 	}
 }
 
+
 const (
-	LOOKUP                          ShardMessageKind = 0x1
-	STAT_FILE                       ShardMessageKind = 0x2
-	STAT_TRANSIENT_FILE             ShardMessageKind = 0x3
-	STAT_DIRECTORY                  ShardMessageKind = 0x4
-	READ_DIR                        ShardMessageKind = 0x5
-	CONSTRUCT_FILE                  ShardMessageKind = 0x6
-	ADD_SPAN_INITIATE               ShardMessageKind = 0x7
-	ADD_SPAN_CERTIFY                ShardMessageKind = 0x8
-	LINK_FILE                       ShardMessageKind = 0x9
-	SOFT_UNLINK_FILE                ShardMessageKind = 0xA
-	FILE_SPANS                      ShardMessageKind = 0xB
-	SAME_DIRECTORY_RENAME           ShardMessageKind = 0xC
-	SET_DIRECTORY_INFO              ShardMessageKind = 0xD
-	SNAPSHOT_LOOKUP                 ShardMessageKind = 0xE
-	EXPIRE_TRANSIENT_FILE           ShardMessageKind = 0xF
-	ADD_INLINE_SPAN                 ShardMessageKind = 0x10
-	VISIT_DIRECTORIES               ShardMessageKind = 0x70
-	VISIT_FILES                     ShardMessageKind = 0x71
-	VISIT_TRANSIENT_FILES           ShardMessageKind = 0x72
-	FULL_READ_DIR                   ShardMessageKind = 0x73
-	REMOVE_NON_OWNED_EDGE           ShardMessageKind = 0x74
-	SAME_SHARD_HARD_FILE_UNLINK     ShardMessageKind = 0x75
-	REMOVE_SPAN_INITIATE            ShardMessageKind = 0x76
-	REMOVE_SPAN_CERTIFY             ShardMessageKind = 0x77
-	SWAP_BLOCKS                     ShardMessageKind = 0x78
-	BLOCK_SERVICE_FILES             ShardMessageKind = 0x79
-	REMOVE_INODE                    ShardMessageKind = 0x7A
-	CREATE_DIRECTORY_INODE          ShardMessageKind = 0x80
-	SET_DIRECTORY_OWNER             ShardMessageKind = 0x81
-	REMOVE_DIRECTORY_OWNER          ShardMessageKind = 0x89
-	CREATE_LOCKED_CURRENT_EDGE      ShardMessageKind = 0x82
-	LOCK_CURRENT_EDGE               ShardMessageKind = 0x83
-	UNLOCK_CURRENT_EDGE             ShardMessageKind = 0x84
+	LOOKUP ShardMessageKind = 0x1
+	STAT_FILE ShardMessageKind = 0x2
+	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
+	STAT_DIRECTORY ShardMessageKind = 0x4
+	READ_DIR ShardMessageKind = 0x5
+	CONSTRUCT_FILE ShardMessageKind = 0x6
+	ADD_SPAN_INITIATE ShardMessageKind = 0x7
+	ADD_SPAN_CERTIFY ShardMessageKind = 0x8
+	LINK_FILE ShardMessageKind = 0x9
+	SOFT_UNLINK_FILE ShardMessageKind = 0xA
+	FILE_SPANS ShardMessageKind = 0xB
+	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
+	SET_DIRECTORY_INFO ShardMessageKind = 0xD
+	SNAPSHOT_LOOKUP ShardMessageKind = 0xE
+	EXPIRE_TRANSIENT_FILE ShardMessageKind = 0xF
+	ADD_INLINE_SPAN ShardMessageKind = 0x10
+	VISIT_DIRECTORIES ShardMessageKind = 0x70
+	VISIT_FILES ShardMessageKind = 0x71
+	VISIT_TRANSIENT_FILES ShardMessageKind = 0x72
+	FULL_READ_DIR ShardMessageKind = 0x73
+	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
+	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
+	REMOVE_SPAN_INITIATE ShardMessageKind = 0x76
+	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x77
+	SWAP_BLOCKS ShardMessageKind = 0x78
+	BLOCK_SERVICE_FILES ShardMessageKind = 0x79
+	REMOVE_INODE ShardMessageKind = 0x7A
+	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
+	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
+	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
+	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
+	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
+	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
 	REMOVE_OWNED_SNAPSHOT_FILE_EDGE ShardMessageKind = 0x86
-	MAKE_FILE_TRANSIENT             ShardMessageKind = 0x87
+	MAKE_FILE_TRANSIENT ShardMessageKind = 0x87
 )
 
 func MkShardMessage(k string) (ShardRequest, ShardResponse) {
@@ -504,12 +504,13 @@ func (k CDCMessageKind) String() string {
 	}
 }
 
+
 const (
-	MAKE_DIRECTORY               CDCMessageKind = 0x1
-	RENAME_FILE                  CDCMessageKind = 0x2
-	SOFT_UNLINK_DIRECTORY        CDCMessageKind = 0x3
-	RENAME_DIRECTORY             CDCMessageKind = 0x4
-	HARD_UNLINK_DIRECTORY        CDCMessageKind = 0x5
+	MAKE_DIRECTORY CDCMessageKind = 0x1
+	RENAME_FILE CDCMessageKind = 0x2
+	SOFT_UNLINK_DIRECTORY CDCMessageKind = 0x3
+	RENAME_DIRECTORY CDCMessageKind = 0x4
+	HARD_UNLINK_DIRECTORY CDCMessageKind = 0x5
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
 )
 
@@ -553,14 +554,15 @@ func (k ShuckleMessageKind) String() string {
 	}
 }
 
+
 const (
 	BLOCK_SERVICES_FOR_SHARD ShuckleMessageKind = 0x1
-	REGISTER_BLOCK_SERVICES  ShuckleMessageKind = 0x2
-	SHARDS                   ShuckleMessageKind = 0x3
-	REGISTER_SHARD           ShuckleMessageKind = 0x4
-	ALL_BLOCK_SERVICES       ShuckleMessageKind = 0x5
-	REGISTER_CDC             ShuckleMessageKind = 0x6
-	CDC                      ShuckleMessageKind = 0x7
+	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x2
+	SHARDS ShuckleMessageKind = 0x3
+	REGISTER_SHARD ShuckleMessageKind = 0x4
+	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
+	REGISTER_CDC ShuckleMessageKind = 0x6
+	CDC ShuckleMessageKind = 0x7
 )
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse) {
@@ -599,10 +601,11 @@ func (k BlocksMessageKind) String() string {
 	}
 }
 
+
 const (
-	ERASE_BLOCK   BlocksMessageKind = 0x1
-	FETCH_BLOCK   BlocksMessageKind = 0x2
-	WRITE_BLOCK   BlocksMessageKind = 0x3
+	ERASE_BLOCK BlocksMessageKind = 0x1
+	FETCH_BLOCK BlocksMessageKind = 0x2
+	WRITE_BLOCK BlocksMessageKind = 0x3
 	BLOCK_WRITTEN BlocksMessageKind = 0x4
 )
 
@@ -4018,3 +4021,4 @@ func (v *BlockWrittenResp) Unpack(r io.Reader) error {
 	}
 	return nil
 }
+

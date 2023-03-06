@@ -118,7 +118,7 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *lib.Logger, client *lib.Client, id msgs.InodeId, buf *[]byte) []byte {
+func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client, id msgs.InodeId, buf *[]byte) []byte {
 	statResp := msgs.StatFileResp{}
 	shardReq(log, client, id.Shard(), &msgs.StatFileReq{Id: id}, &statResp)
 	if len(*buf) < int(statResp.Size) {
@@ -134,7 +134,7 @@ func readFile(log *lib.Logger, client *lib.Client, id msgs.InodeId, buf *[]byte)
 		for i := range spansResp.Spans {
 			span := &spansResp.Spans[i]
 			// TODO random blacklist
-			spanR, err := client.ReadSpan(log, []msgs.BlockServiceBlacklist{}, id, spansResp.BlockServices, span)
+			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceBlacklist{}, id, spansResp.BlockServices, span)
 			if err != nil {
 				panic(err)
 			}

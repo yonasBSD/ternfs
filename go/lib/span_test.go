@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
@@ -16,7 +17,8 @@ import (
 // Simulates block service conns, which will wait forever when reading past the block
 // unless we issue other requests.
 type mockedBlockConn struct {
-	data []byte
+	data      []byte
+	openConns *int64
 }
 
 func (mbc *mockedBlockConn) Read(p []byte) (int, error) {
@@ -31,12 +33,14 @@ func (mbc *mockedBlockConn) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func (*mockedBlockConn) Close() error {
+func (c *mockedBlockConn) Close() error {
+	atomic.AddInt64(c.openConns, -1)
 	return nil
 }
 
 func testSpan(
 	t *testing.T,
+	bufPool *ReadSpanBufPool,
 	rand *rand.Rand,
 	parity rs.Parity,
 	spanSize uint32,
@@ -134,21 +138,22 @@ func testSpan(
 			}
 		}
 	}
+	openBlockConns := int64(0)
 	spanReader, err := readSpanFromBlocks(
-		sizeWithZeros, req.Crc, req.Parity, req.Stripes, req.CellSize, blocksCrcs, stripesCrcs,
+		bufPool, sizeWithZeros, req.Crc, req.Parity, req.Stripes, req.CellSize, blocksCrcs, stripesCrcs,
 		func(i int, offset uint32, size uint32) (io.ReadCloser, error) {
 			for _, b := range badConnections {
 				if int(b) == i {
 					return nil, nil
 				}
 			}
-			return &mockedBlockConn{data: blocksToRead[i][int(offset):int(offset+size)]}, nil
+			openBlockConns++
+			return &mockedBlockConn{data: blocksToRead[i][int(offset):int(offset+size)], openConns: &openBlockConns}, nil
 		},
 	)
 	if !assert.NoError(t, err) {
 		return
 	}
-	defer spanReader.Close()
 	cursor := 0
 	for {
 		read, err := spanReader.Read(tmpBuf)
@@ -162,9 +167,12 @@ func testSpan(
 		cursor += read
 	}
 	assert.Equal(t, len(data), cursor)
+	spanReader.Close()
+	assert.Equal(t, int64(0), openBlockConns)
 }
 
 func TestSpan(t *testing.T) {
+	bufPool := NewReadSpanBufPool()
 	rand := rand.New(rand.NewSource(0))
 	for i := 0; i < 2000; i++ {
 		D := 1 + uint8(rand.Uint32()%15)
@@ -177,6 +185,6 @@ func TestSpan(t *testing.T) {
 		parity := rs.MkParity(D, P)
 		size := 256 + rand.Uint32()%(100<<10) // up to 100KiB
 		stripeSize := 1 + rand.Uint32()%(size*2)
-		testSpan(t, rand, parity, size, stripeSize)
+		testSpan(t, bufPool, rand, parity, size, stripeSize)
 	}
 }

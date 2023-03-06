@@ -42,6 +42,7 @@ type apiFsTestHarness struct {
 	dirInfoCache *lib.DirInfoCache
 	// buffer we use both to create and to read files.
 	fileContentsBuf []byte
+	readBufPool     *lib.ReadSpanBufPool
 }
 
 func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.EggsTime) {
@@ -140,7 +141,7 @@ func checkFileData(actualData []byte, expectedData []byte) {
 }
 
 func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
-	fileData := readFile(log, c.client, id, &c.fileContentsBuf)
+	fileData := readFile(log, c.readBufPool, c.client, id, &c.fileContentsBuf)
 	if len(c.fileContentsBuf) < int(size) {
 		c.fileContentsBuf = append(c.fileContentsBuf, make([]byte, int(size)-len(c.fileContentsBuf))...)
 	}
@@ -607,6 +608,7 @@ func fsTest(
 		harness := &apiFsTestHarness{
 			client:       client,
 			dirInfoCache: lib.NewDirInfoCache(),
+			readBufPool:  lib.NewReadSpanBufPool(),
 		}
 		fsTestInternal[msgs.InodeId](log, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {

@@ -69,7 +69,7 @@ type ManagedProcesses struct {
 
 // This function will take over signals in a possibly surprising way!
 // See installSignalHandlers().
-func NewManagedProcesses(terminateChan chan any) *ManagedProcesses {
+func New(terminateChan chan any) *ManagedProcesses {
 	procs := ManagedProcesses{
 		terminateChan: terminateChan,
 	}
@@ -316,7 +316,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 type FuseOpts struct {
 	Exe            string
 	Path           string
-	Verbose        bool
+	LogLevel       lib.LogLevel
 	Wait           bool
 	ShuckleAddress string
 	Profile        bool
@@ -336,8 +336,11 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 		signalChan = make(chan os.Signal, 1)
 		signal.Notify(signalChan, syscall.SIGUSR1)
 	}
-	if opts.Verbose {
+	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")
+	}
+	if opts.LogLevel == lib.TRACE {
+		args = append(args, "-trace")
 	}
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))

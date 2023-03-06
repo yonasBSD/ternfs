@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/rs"
@@ -57,6 +58,21 @@ func (c *Client) createInlineSpan(
 	return nil
 }
 
+func ensureLen(buf []byte, l int) []byte {
+	lenBefore := len(buf)
+	if l <= cap(buf) {
+		buf = buf[:l]
+	} else {
+		buf = buf[:cap(buf)]
+		buf = append(buf, make([]byte, l-len(buf))...)
+	}
+	// memset? what's that?
+	for i := lenBefore; i < len(buf); i++ {
+		buf[i] = 0
+	}
+	return buf
+}
+
 func prepareSpanInitiateReq(
 	blacklist []msgs.BlockServiceBlacklist,
 	spanPolicies *msgs.SpanPolicy,
@@ -91,7 +107,7 @@ func prepareSpanInitiateReq(
 	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
 
 	// Pad the data with zeros
-	data = append(data, make([]byte, (S*D*cellSize)-len(data))...)
+	data = ensureLen(data, S*D*cellSize)
 
 	initiateReq := msgs.AddSpanInitiateReq{
 		FileId:       id,
@@ -116,7 +132,7 @@ func prepareSpanInitiateReq(
 		}
 	} else { // RS
 		// Make space for the parity blocks after the data blocks
-		data = append(data, make([]byte, blockSize*P)...)
+		data = ensureLen(data, blockSize*B)
 		rs := rs.Get(spanPolicy.Parity)
 		dataSrcs := make([][]byte, D)
 		parityDests := make([][]byte, P)
@@ -259,7 +275,7 @@ type mirroredSpanReader struct {
 	cursor    int
 	block     int
 	blockConn io.ReadCloser
-	cellBuf   []byte
+	cellBuf   *[]byte
 	cellCrcs  []msgs.Crc // starting from the _next_ stripe crc
 }
 
@@ -268,16 +284,21 @@ func (r *mirroredSpanReader) Close() error {
 }
 
 type rsNormalSpanReader struct {
+	bufPool           *ReadSpanBufPool
 	cursor            int
 	haveBlocks        []uint8 // which blocks are we fetching. most of the times it'll just be the data blocks
 	blockConns        []io.ReadCloser
 	blocksRunningCrcs []msgs.Crc
-	stripeBuf         []byte
+	stripeBuf         *[]byte
 	stripeCrcs        []msgs.Crc // starting from the _next_ stripe CRC.
-	parityBuffers     [][]byte   // buffers in which to temporarily place the parity blocks. usually empty
+	parityBuffers     []*[]byte  // buffers in which to temporarily place the parity blocks. usually empty
 }
 
 func (sr *rsNormalSpanReader) Close() error {
+	sr.bufPool.put(sr.stripeBuf)
+	for _, b := range sr.parityBuffers {
+		sr.bufPool.put(b)
+	}
 	var lastErr error
 	for _, c := range sr.blockConns {
 		if err := c.Close(); err != nil {
@@ -292,16 +313,21 @@ func (sr *rsNormalSpanReader) Close() error {
 // the remainder of the span in its entirety to find out which block is broken,
 // and then resume.
 type rsCorruptedSpanReader struct {
-	startStripe int // at which stripe we switched to sad reading
+	bufPool     *ReadSpanBufPool
+	startStripe int // at which stripe we switched to said reading
 	cursor      int
-	dataBlocks  [][]byte
+	dataBlocks  []*[]byte
 }
 
 func (r *rsCorruptedSpanReader) Close() error {
+	for _, b := range r.dataBlocks {
+		r.bufPool.put(b)
+	}
 	return nil
 }
 
 type spanReader struct {
+	bufPool    *ReadSpanBufPool
 	spanSize   uint32
 	spanCrc    msgs.Crc
 	readBytes  uint32
@@ -319,10 +345,11 @@ func (sr *spanReader) Close() error {
 }
 
 func (sr *spanReader) repairCorruptedStripe(
+	bufPool *ReadSpanBufPool,
 	// the broken stripe
 	stripe int,
-	stripeData []byte,
-	parityData [][]byte,
+	stripeData *[]byte,
+	parityData []*[]byte,
 	haveBlocks []uint8, // the blocks we have been using so far
 	haveBlocksCrc []msgs.Crc, // the CRCs so far for the blocks that we have
 	haveBlocksConns []io.ReadCloser, // the connections to the blocks we already have
@@ -333,20 +360,28 @@ func (sr *spanReader) repairCorruptedStripe(
 	remainingBlockSize := (int(sr.stripes) - stripe) * int(sr.cellSize)
 	goodBlocks := make([]bool, B) // _known_ good blocks
 	badBlocks := make([]bool, B)  // _known_ bad blocks
-	blocksData := make([][]byte, B)
+	blocksData := make([]*[]byte, B)
+	defer func() {
+		for i := D; i < B; i++ {
+			b := blocksData[i]
+			if b != nil {
+				bufPool.put(b)
+			}
+		}
+	}()
 	// make space for full sized remaining data blocks
 	for b := 0; b < D; b++ {
-		blocksData[b] = make([]byte, remainingBlockSize)
+		blocksData[b] = bufPool.get(remainingBlockSize)
 	}
 	// load current stripe data into the blocks buffers
 	{
 		parityIx := 0
 		for _, b := range haveBlocks {
 			if int(b) < D {
-				copy(blocksData[int(b)], stripeData[int(b)*int(sr.cellSize):])
+				copy(*blocksData[int(b)], (*stripeData)[int(b)*int(sr.cellSize):])
 			} else {
-				blocksData[b] = make([]byte, remainingBlockSize)
-				copy(blocksData[int(b)], parityData[parityIx])
+				blocksData[b] = bufPool.get(remainingBlockSize)
+				copy(*blocksData[int(b)], *parityData[parityIx])
 				parityIx++
 			}
 		}
@@ -360,13 +395,13 @@ func (sr *spanReader) repairCorruptedStripe(
 		}
 		allDone := true
 		for i, b := range haveBlocks {
-			read, err := haveBlocksConns[i].Read(blocksData[int(b)][cursors[i]:])
+			read, err := haveBlocksConns[i].Read((*blocksData[int(b)])[cursors[i]:])
 			if err != io.EOF && err != nil {
 				return nil, err
 			}
-			haveBlocksCrc[i] = msgs.Crc(crc32c.Sum(uint32(haveBlocksCrc[i]), blocksData[int(b)][cursors[i]:cursors[i]+read]))
+			haveBlocksCrc[i] = msgs.Crc(crc32c.Sum(uint32(haveBlocksCrc[i]), (*blocksData[int(b)])[cursors[i]:cursors[i]+read]))
 			cursors[i] += read
-			if cursors[i] < len(blocksData[int(b)]) {
+			if cursors[i] < len(*blocksData[int(b)]) {
 				allDone = false
 			} else if msgs.Crc(haveBlocksCrc[i]) != sr.blocksCrcs[b] {
 				badBlocks[int(b)] = true
@@ -380,6 +415,8 @@ func (sr *spanReader) repairCorruptedStripe(
 		}
 	}
 	// Find and download blocks to recover
+	var tmpBuf *[]byte
+	defer bufPool.put(tmpBuf)
 	for b := 0; b < B && numGoodBlocks < D; b++ {
 		if badBlocks[b] || goodBlocks[b] { // we know this is bad
 			continue
@@ -395,18 +432,21 @@ func (sr *spanReader) repairCorruptedStripe(
 			badBlocks[b] = true
 			continue
 		}
-		buf := make([]byte, blockSize)
-		blocksData[b] = buf[blockStart:]
-		if _, err := io.ReadFull(conn, buf); err != nil {
+		if tmpBuf == nil {
+			tmpBuf = bufPool.get(int(blockSize))
+		}
+		if _, err := io.ReadFull(conn, *tmpBuf); err != nil {
 			conn.Close()
 			return nil, err
 		}
 		if err := conn.Close(); err != nil {
 			return nil, err
 		}
-		crc := crc32c.Sum(0, buf)
+		crc := crc32c.Sum(0, *tmpBuf)
 		if crc == uint32(sr.blocksCrcs[b]) {
 			// this is a good one
+			blocksData[b] = bufPool.get(remainingBlockSize)
+			copy(*blocksData[b], (*tmpBuf)[blockStart:])
 			goodBlocks[b] = true
 			numGoodBlocks++
 		} else {
@@ -423,16 +463,17 @@ func (sr *spanReader) repairCorruptedStripe(
 			continue
 		}
 		newHaveBlocks = append(newHaveBlocks, uint8(b))
-		newHaveBlocksData = append(newHaveBlocksData, blocksData[b])
+		newHaveBlocksData = append(newHaveBlocksData, *blocksData[b])
 	}
 	rs := rs.Get(sr.parity)
 	for b := 0; b < D; b++ {
 		if goodBlocks[b] {
 			continue
 		}
-		rs.RecoverInto(newHaveBlocks, newHaveBlocksData, uint8(b), blocksData[b])
+		rs.RecoverInto(newHaveBlocks, newHaveBlocksData, uint8(b), *blocksData[b])
 	}
 	r := rsCorruptedSpanReader{
+		bufPool:     bufPool,
 		startStripe: stripe,
 		cursor:      stripe * D * int(sr.cellSize),
 		dataBlocks:  blocksData[:D],
@@ -452,15 +493,13 @@ func (sr *spanReader) loadStripe(nsr *rsNormalSpanReader) error {
 			if int(b) < D { // data block, already ready
 				stripeStart := int(b)*int(sr.cellSize) + blocksCursors[b]
 				stripeEnd := (int(b) + 1) * int(sr.cellSize)
-				buf = nsr.stripeBuf[stripeStart:stripeEnd]
+				buf = (*nsr.stripeBuf)[stripeStart:stripeEnd]
 			} else { // parity block
 				needsRecover = true
-				buf = nsr.parityBuffers[parityIx][blocksCursors[i]:]
+				buf = (*nsr.parityBuffers[parityIx])[blocksCursors[i]:]
 				parityIx++
 			}
-			// fmt.Printf("trying to read %v bytes from block %v, conn %v (index)\n", len(buf), nsr.blockConns[i].(*net.TCPConn).RemoteAddr(), i)
 			blockRead, err := nsr.blockConns[i].Read(buf)
-			// fmt.Printf("read %v bytes from block %v (index)\n", blockRead, i)
 			if err != nil {
 				return err
 			}
@@ -482,9 +521,9 @@ func (sr *spanReader) loadStripe(nsr *rsNormalSpanReader) error {
 			if int(b) < D {
 				stripeStart := int(b) * int(sr.cellSize)
 				stripeEnd := (int(b) + 1) * int(sr.cellSize)
-				bufs[i] = nsr.stripeBuf[stripeStart:stripeEnd]
+				bufs[i] = (*nsr.stripeBuf)[stripeStart:stripeEnd]
 			} else {
-				bufs[i] = nsr.parityBuffers[parityIx]
+				bufs[i] = *nsr.parityBuffers[parityIx]
 				parityIx++
 			}
 		}
@@ -496,15 +535,16 @@ func (sr *spanReader) loadStripe(nsr *rsNormalSpanReader) error {
 			for ; lastDataBlock < nsr.haveBlocks[i]; lastDataBlock++ {
 				stripeStart := int(lastDataBlock) * int(sr.cellSize)
 				stripeEnd := (int(lastDataBlock) + 1) * int(sr.cellSize)
-				rs.RecoverInto(nsr.haveBlocks, bufs, lastDataBlock, nsr.stripeBuf[stripeStart:stripeEnd])
+				rs.RecoverInto(nsr.haveBlocks, bufs, lastDataBlock, (*nsr.stripeBuf)[stripeStart:stripeEnd])
 			}
 			lastDataBlock++
 		}
 	}
-	crc := crc32c.Sum(0, nsr.stripeBuf)
+	crc := crc32c.Sum(0, *nsr.stripeBuf)
 	if crc != uint32(nsr.stripeCrcs[0]) {
 		var err error
 		sr.r, err = sr.repairCorruptedStripe(
+			sr.bufPool,
 			nsr.cursor/(int(sr.cellSize)*D),
 			nsr.stripeBuf,
 			nsr.parityBuffers,
@@ -512,6 +552,7 @@ func (sr *spanReader) loadStripe(nsr *rsNormalSpanReader) error {
 			nsr.blocksRunningCrcs,
 			nsr.blockConns,
 		)
+		nsr.Close() // close connections
 		if err != nil {
 			return err
 		}
@@ -525,13 +566,13 @@ func (sr *spanReader) loadCell(mr *mirroredSpanReader) error {
 	l := func() (bool, error) {
 		cursor := 0
 		for cursor < int(sr.cellSize) {
-			read, err := mr.blockConn.Read(mr.cellBuf[cursor:])
+			read, err := mr.blockConn.Read((*mr.cellBuf)[cursor:])
 			if err != nil {
 				return false, err
 			}
 			cursor += read
 		}
-		crc := crc32c.Sum(0, mr.cellBuf)
+		crc := crc32c.Sum(0, *mr.cellBuf)
 		good := crc == uint32(mr.cellCrcs[0])
 		if !good {
 			if err := mr.blockConn.Close(); err != nil {
@@ -587,13 +628,13 @@ func (sr *spanReader) readMirrored(mr *mirroredSpanReader, p []byte) (int, error
 	}
 	currentCell := mr.cursor / int(sr.cellSize)
 	cellPos := mr.cursor % int(sr.cellSize)
-	remainingCell := mr.cellBuf[cellPos:]
+	remainingCell := (*mr.cellBuf)[cellPos:]
 	if mr.cursor+len(remainingCell) > int(sr.spanSize) { // zero padding
 		remainingCell = remainingCell[:int(sr.spanSize)-mr.cursor]
 	}
 	read := copy(p, remainingCell)
 	mr.cursor += read
-	if cellPos+read == len(mr.cellBuf) && currentCell+1 < int(sr.stripes) {
+	if cellPos+read == len(*mr.cellBuf) && currentCell+1 < int(sr.stripes) {
 		if err := sr.loadCell(mr); err != nil {
 			return read, err
 		}
@@ -617,13 +658,13 @@ func (sr *spanReader) readRsHappy(nsr *rsNormalSpanReader, p []byte) (int, error
 	}
 	currentStripe := nsr.cursor / (D * int(sr.cellSize))
 	stripePos := nsr.cursor % (D * int(sr.cellSize))
-	remainingStripe := nsr.stripeBuf[stripePos:]
+	remainingStripe := (*nsr.stripeBuf)[stripePos:]
 	if nsr.cursor+len(remainingStripe) > int(sr.spanSize) { // zero padding
 		remainingStripe = remainingStripe[:int(sr.spanSize)-nsr.cursor]
 	}
 	read := copy(p, remainingStripe)
 	nsr.cursor += read
-	if stripePos+read == len(nsr.stripeBuf) && currentStripe+1 < int(sr.stripes) {
+	if stripePos+read == len(*nsr.stripeBuf) && currentStripe+1 < int(sr.stripes) {
 		if err := sr.loadStripe(nsr); err != nil {
 			return read, err
 		}
@@ -631,7 +672,7 @@ func (sr *spanReader) readRsHappy(nsr *rsNormalSpanReader, p []byte) (int, error
 	return read, nil
 }
 
-func (sr *spanReader) readRsSad(wsr *rsCorruptedSpanReader, p []byte) (int, error) {
+func (sr *spanReader) readRsCorrupted(wsr *rsCorruptedSpanReader, p []byte) (int, error) {
 	D := sr.parity.DataBlocks()
 	if wsr.cursor >= int(sr.spanSize) {
 		return 0, io.EOF
@@ -649,7 +690,7 @@ func (sr *spanReader) readRsSad(wsr *rsCorruptedSpanReader, p []byte) (int, erro
 	stripePos := wsr.cursor % (D * int(sr.cellSize))
 	currentBlock := stripePos / int(sr.cellSize)
 	cellPos := stripePos % int(sr.cellSize)
-	remainingCell := wsr.dataBlocks[currentBlock][int(sr.cellSize)*(currentStripe-wsr.startStripe)+cellPos : int(sr.cellSize)*(currentStripe-wsr.startStripe+1)]
+	remainingCell := (*wsr.dataBlocks[currentBlock])[int(sr.cellSize)*(currentStripe-wsr.startStripe)+cellPos : int(sr.cellSize)*(currentStripe-wsr.startStripe+1)]
 	if wsr.cursor+len(remainingCell) > int(sr.spanSize) { // zero padding
 		remainingCell = remainingCell[:int(sr.spanSize)-wsr.cursor]
 	}
@@ -667,7 +708,7 @@ func (sr *spanReader) Read(p []byte) (int, error) {
 	case *rsNormalSpanReader:
 		read, err = sr.readRsHappy(r, p)
 	case *rsCorruptedSpanReader:
-		read, err = sr.readRsSad(r, p)
+		read, err = sr.readRsCorrupted(r, p)
 	default:
 		panic(fmt.Errorf("bad reader %T", sr.r))
 	}
@@ -685,6 +726,7 @@ func (sr *spanReader) Read(p []byte) (int, error) {
 // Given a way to start streaming a block, produces a stream with the span
 // contents. Will automatically repair the span if CRC errors are detected.
 func readSpanFromBlocks(
+	bufPool *ReadSpanBufPool,
 	spanSize uint32,
 	spanCrc msgs.Crc,
 	parity rs.Parity,
@@ -702,6 +744,7 @@ func readSpanFromBlocks(
 	D := parity.DataBlocks()
 	B := parity.Blocks()
 	sr := spanReader{
+		bufPool:    bufPool,
 		spanSize:   spanSize,
 		spanCrc:    spanCrc,
 		stripes:    stripes,
@@ -713,7 +756,7 @@ func readSpanFromBlocks(
 	if D == 1 {
 		mr := &mirroredSpanReader{
 			cursor:   0,
-			cellBuf:  make([]byte, cellSize),
+			cellBuf:  sr.bufPool.get(int(cellSize)),
 			cellCrcs: stripesCrc,
 		}
 		for b := 0; b < B; b++ {
@@ -737,7 +780,7 @@ func readSpanFromBlocks(
 	} else {
 		conns := make([]io.ReadCloser, 0)
 		haveBlocks := make([]uint8, 0)
-		parityBuffers := make([][]byte, 0)
+		parityBuffers := []*[]byte{}
 		for i := 0; i < B; i++ {
 			conn, err := blockConn(i, 0, uint32(cellSize)*uint32(stripes))
 			if err != nil {
@@ -749,7 +792,7 @@ func readSpanFromBlocks(
 			conns = append(conns, conn)
 			haveBlocks = append(haveBlocks, uint8(i))
 			if i >= D {
-				parityBuffers = append(parityBuffers, make([]byte, int(cellSize)))
+				parityBuffers = append(parityBuffers, sr.bufPool.get(int(cellSize)))
 			}
 			if len(haveBlocks) == D {
 				break
@@ -758,8 +801,9 @@ func readSpanFromBlocks(
 		if len(haveBlocks) != D {
 			return nil, fmt.Errorf("couldn't get enough block connections (need at least %v, got %v)", D, len(conns))
 		}
-		stripeBuf := make([]byte, int(cellSize)*D)
+		stripeBuf := sr.bufPool.get(int(cellSize) * D)
 		rsr := &rsNormalSpanReader{
+			bufPool:           sr.bufPool,
 			cursor:            0,
 			blockConns:        conns,
 			haveBlocks:        haveBlocks,
@@ -804,8 +848,44 @@ func (r *inlineSpanReader) Close() error {
 	return nil
 }
 
+type ReadSpanBufPool struct {
+	pool sync.Pool
+}
+
+func NewReadSpanBufPool() *ReadSpanBufPool {
+	pool := ReadSpanBufPool{
+		pool: sync.Pool{
+			New: func() any {
+				buf := []byte{}
+				return &buf
+			},
+		},
+	}
+	return &pool
+}
+
+// This does _not_ zero the memory in the bufs -- i.e. there might
+// be garbage in it.
+func (pool *ReadSpanBufPool) get(l int) *[]byte {
+	buf := pool.pool.Get().(*[]byte)
+	if cap(*buf) >= l {
+		*buf = (*buf)[:l]
+	} else {
+		*buf = (*buf)[:cap(*buf)]
+		*buf = append(*buf, make([]byte, l-len(*buf))...)
+	}
+	return buf
+}
+
+func (pool *ReadSpanBufPool) put(buf *[]byte) {
+	if buf != nil {
+		pool.pool.Put(buf)
+	}
+}
+
 func (c *Client) ReadSpan(
 	log *Logger,
+	bufPool *ReadSpanBufPool,
 	blacklist []msgs.BlockServiceBlacklist,
 	id msgs.InodeId,
 	blockServices []msgs.BlockService,
@@ -848,5 +928,5 @@ func (c *Client) ReadSpan(
 		}
 		return conn, err
 	}
-	return readSpanFromBlocks(fetchedSpan.Header.Size, fetchedSpan.Header.Crc, body.Parity, body.Stripes, body.CellSize, blocksCrcs, body.StripesCrc, blockConn)
+	return readSpanFromBlocks(bufPool, fetchedSpan.Header.Size, fetchedSpan.Header.Crc, body.Parity, body.Stripes, body.CellSize, blocksCrcs, body.StripesCrc, blockConn)
 }

@@ -251,7 +251,7 @@ func (c *Client) CreateSpan(
 		Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
 	}
 	for i, block := range initiateResp.Blocks {
-		conn, err := c.GetBlockServiceConnection(log, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+		conn, err := c.GetBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 		if err != nil {
 			return data, err
 		}
@@ -918,7 +918,7 @@ func (c *Client) ReadSpan(
 				return nil, nil
 			}
 		}
-		conn, err := c.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+		conn, err := c.GetBlocksConn(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 		if err != nil {
 			return nil, err
 		}

@@ -51,7 +51,7 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
-				conn, err := client.GetBlockServiceConnection(log, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+				conn, err := client.GetBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 				if err != nil {
 					return err
 				}

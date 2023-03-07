@@ -60,7 +60,7 @@ func fetchBlock(
 ) error {
 	blockService := &blockServices[block.BlockServiceIx]
 	var err error
-	srcConn, err := client.GetBlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+	srcConn, err := client.GetBlocksConn(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func writeBlock(
 		return 0, err
 	}
 	dstBlock := &initiateSpanResp.Blocks[0]
-	dstConn, err := client.GetBlockServiceConnection(log, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
+	dstConn, err := client.GetBlocksConn(log, dstBlock.BlockServiceId, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
 	if err != nil {
 		return 0, err
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -95,6 +96,103 @@ func (counters *ClientCounters) Log(log *Logger) {
 
 }
 
+type timedBlocksConn struct {
+	conn     any
+	lastSeen time.Time
+}
+
+const maxBlocksConns int = 3
+const blocksConnsTimeout time.Duration = 10 * time.Second
+
+// ring buffer, oldest conn is at the `head`.
+type cachedBlocksConns struct {
+	buf  [maxBlocksConns]timedBlocksConn
+	size int
+	head int
+}
+
+func (conns *cachedBlocksConns) purge(now time.Time) {
+	for conns.size > 0 {
+		conn := &conns.buf[conns.head]
+		if now.Sub(conn.lastSeen) > blocksConnsTimeout {
+			conns.pop()
+		} else {
+			break
+		}
+	}
+}
+
+func (conns *cachedBlocksConns) pop() any {
+	if conns.size > 0 {
+		conn := &conns.buf[conns.head]
+		v := conn.conn
+		conn.conn = nil
+		conn.lastSeen = time.Time{}
+		conns.size--
+		conns.head = (conns.head + 1) % maxBlocksConns
+		return v
+	} else {
+		return nil
+	}
+}
+
+func (conns *cachedBlocksConns) push(tcpConn any, now time.Time) {
+	if conns.size < maxBlocksConns {
+		// add new entry
+		conn := &conns.buf[(conns.head+conns.size)%maxBlocksConns]
+		conn.conn = tcpConn
+		conn.lastSeen = now
+		conns.size++
+	} else {
+		// replace oldest entry
+		conn := &conns.buf[conns.head]
+		conn.conn = tcpConn
+		conn.lastSeen = now
+		conns.head = (conns.head + 1) % maxBlocksConns
+	}
+}
+
+type blocksConnFactory struct {
+	mu     sync.Mutex
+	cached map[msgs.BlockServiceId]*cachedBlocksConns
+}
+
+// must be locked
+func (factory *blocksConnFactory) lookup(blockService msgs.BlockServiceId, now time.Time) *cachedBlocksConns {
+	conns, found := factory.cached[blockService]
+	if !found {
+		conns = &cachedBlocksConns{}
+		factory.cached[blockService] = conns
+	}
+	conns.purge(now)
+	return conns
+}
+
+func (factory *blocksConnFactory) get(blockServiceId msgs.BlockServiceId, now time.Time, getConn func() (any, error)) (any, error) {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+
+	conns := factory.lookup(blockServiceId, now)
+	conn := conns.pop()
+	if conn != nil {
+		return conn, nil
+	}
+	var err error
+	conn, err = getConn()
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (factory *blocksConnFactory) put(blockServiceId msgs.BlockServiceId, now time.Time, conn any) {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+
+	conns := factory.lookup(blockServiceId, now)
+	conns.push(conn, now)
+}
+
 type Client struct {
 	shardIps           [256][4]byte
 	shardPorts         [256]uint16
@@ -105,6 +203,7 @@ type Client struct {
 	cdcLock            sync.Mutex
 	counters           *ClientCounters
 	cdcKey             cipher.Block
+	blocksConns        blocksConnFactory
 }
 
 // If `shid` is present, the client will only create a socket for that shard,
@@ -170,6 +269,9 @@ func NewClientDirect(
 		shardPorts: *shardPorts,
 		cdcIp:      cdcIp,
 		cdcPort:    cdcPort,
+		blocksConns: blocksConnFactory{
+			cached: make(map[msgs.BlockServiceId]*cachedBlocksConns),
+		},
 	}
 	c.cdcSocket, err = CreateCDCSocket(c.cdcIp, c.cdcPort)
 	if err != nil {
@@ -410,14 +512,6 @@ TraverseDirectories:
 	return inheritedFrom, nil
 }
 
-func blockServicesConnsKey(ip [4]byte, port uint16) string {
-	return fmt.Sprintf("%v:%v", net.IP(ip[:]), port)
-}
-
-func blockServicesConnsKeyFromConn(conn *net.TCPConn) string {
-	return conn.RemoteAddr().String()
-}
-
 func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error) {
 	if !filepath.IsAbs(path) {
 		return msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
@@ -436,8 +530,66 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, nil
 }
 
+type BlocksConn interface {
+	io.Writer
+	io.Reader
+	io.ReaderFrom
+	io.Closer
+}
+
+type trackedBlocksConn struct {
+	blockService msgs.BlockServiceId
+	conn         *net.TCPConn
+	tainted      bool
+	factory      *blocksConnFactory
+}
+
+func (c *trackedBlocksConn) Read(p []byte) (int, error) {
+	read, err := c.conn.Read(p)
+	if err != nil {
+		c.tainted = true
+	}
+	return read, err
+}
+
+func (c *trackedBlocksConn) Write(p []byte) (int, error) {
+	written, err := c.conn.Write(p)
+	if err != nil {
+		c.tainted = true
+	}
+	return written, err
+}
+
+func (c *trackedBlocksConn) ReadFrom(r io.Reader) (int64, error) {
+	n, err := c.conn.ReadFrom(r)
+	if err != nil {
+		c.tainted = true
+	}
+	return n, err
+}
+
+func (c *trackedBlocksConn) Close() error {
+	if c.tainted {
+		return c.conn.Close()
+	} else {
+		c.factory.put(c.blockService, time.Now(), c.conn)
+		return nil
+	}
+}
+
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
-func (c *Client) GetBlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
-	return BlockServiceConnection(log, ip1, port1, ip2, port2)
+func (c *Client) GetBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
+	conn, err := c.blocksConns.get(blockServiceId, time.Now(), func() (any, error) {
+		return BlockServiceConnection(log, ip1, port1, ip2, port2)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &trackedBlocksConn{
+		blockService: blockServiceId,
+		conn:         conn.(*net.TCPConn),
+		tainted:      false,
+		factory:      &c.blocksConns,
+	}, nil
 }

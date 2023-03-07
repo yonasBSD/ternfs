@@ -180,7 +180,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		log,
 		shuckleAddress,
 		filter,
-		"fs test",
+		"direct fs test",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
 			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
@@ -191,7 +191,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		log,
 		shuckleAddress,
 		filter,
-		"fs test with fuse",
+		"fuse fs test",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
 			fsTest(log, shuckleAddress, &fsTestOpts, counters, fuseMountPoint)

@@ -4,6 +4,10 @@
 //
 // It's especially not great because currently all the data will go in a single block
 // service. We should really have it so we change scratch file every 1TiB or whatever.
+//
+// TODO the other problem is that we don't preserve the property that files only have
+// one set of blocks when swapping blocks in. We should use some "whitelist" thing
+// to enforce that.
 package lib
 
 import (
@@ -82,13 +86,12 @@ func writeBlock(
 	log *Logger,
 	client *Client,
 	file *scratchFile,
-	blockServices []msgs.BlockService,
+	blacklist []msgs.BlockServiceId,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 	newContents io.Reader,
 ) (msgs.BlockId, error) {
-	blockService := &blockServices[block.BlockServiceIx]
 	initiateSpanReq := msgs.AddSpanInitiateReq{
 		FileId:       file.id,
 		Cookie:       file.cookie,
@@ -96,7 +99,7 @@ func writeBlock(
 		Size:         blockSize,
 		Crc:          block.Crc,
 		StorageClass: storageClass,
-		Blacklist:    []msgs.BlockServiceBlacklist{{Id: blockService.Id}},
+		Blacklist:    blacklist,
 		Parity:       rs.MkParity(1, 0),
 		Stripes:      1,
 		CellSize:     blockSize,
@@ -142,6 +145,7 @@ func copyBlock(
 	bufPool *sync.Pool,
 	file *scratchFile,
 	blockServices []msgs.BlockService,
+	blacklist []msgs.BlockServiceId,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
@@ -152,7 +156,7 @@ func copyBlock(
 	if err := fetchBlock(log, client, blockServices, blockSize, block, buf); err != nil {
 		return 0, nil
 	}
-	return writeBlock(log, client, file, blockServices, blockSize, storageClass, block, buf)
+	return writeBlock(log, client, file, blacklist, blockSize, storageClass, block, buf)
 }
 
 func reconstructBlock(
@@ -161,6 +165,7 @@ func reconstructBlock(
 	bufPool *sync.Pool,
 	file *scratchFile,
 	blockServices []msgs.BlockService,
+	blacklist []msgs.BlockServiceId,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	parity rs.Parity,
@@ -185,7 +190,7 @@ func reconstructBlock(
 	wantBuf.Grow(int(blockSize))
 	wantBytes := wantBuf.Bytes()[:blockSize]
 	rs.RecoverInto(haveBlocksIx, haveBlocks, wantBlockIx, wantBytes)
-	return writeBlock(log, client, file, blockServices, blockSize, storageClass, &blocks[wantBlockIx], bytes.NewReader(wantBytes))
+	return writeBlock(log, client, file, blacklist, blockSize, storageClass, &blocks[wantBlockIx], bytes.NewReader(wantBytes))
 }
 
 type keepScratchFileAlive struct {
@@ -291,6 +296,11 @@ func migrateBlocksInFileInternal(
 			log.Debug("will migrate block %v in file %v out of block service %v", blockToMigrateId, fileId, blockServiceId)
 			D := body.Parity.DataBlocks()
 			P := body.Parity.ParityBlocks()
+			B := body.Parity.Blocks()
+			blacklist := make([]msgs.BlockServiceId, B)
+			for blockIx, block := range body.Blocks {
+				blacklist[blockIx] = fileSpansResp.BlockServices[block.BlockServiceIx].Id
+			}
 			newBlock := msgs.BlockId(0)
 			scratchOffset := scratchFile.size
 			if P == 0 {
@@ -309,7 +319,7 @@ func migrateBlocksInFileInternal(
 							return err
 						}
 						var err error
-						newBlock, err = copyBlock(log, client, bufPool, scratchFile, fileSpansResp.BlockServices, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
+						newBlock, err = copyBlock(log, client, bufPool, scratchFile, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
 						if err != nil {
 							return err
 						}
@@ -345,6 +355,7 @@ func migrateBlocksInFileInternal(
 					bufPool,
 					scratchFile,
 					fileSpansResp.BlockServices,
+					blacklist,
 					body.CellSize*uint32(body.Stripes),
 					span.Header.StorageClass,
 					body.Parity,

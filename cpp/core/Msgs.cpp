@@ -43,3 +43,10 @@ std::ostream& operator<<(std::ostream& out, Crc crc) {
     out << buf;
     return out;
 }
+
+std::ostream& operator<<(std::ostream& out, BlockServiceId id) {
+    char buf[19];
+    sprintf(buf, "0x%016lx", id.u64);
+    out << buf;
+    return out;
+}

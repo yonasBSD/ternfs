@@ -492,7 +492,7 @@ void BlockInfo::pack(BincodeBuf& buf) const {
     buf.packScalar<uint16_t>(blockServicePort1);
     buf.packFixedBytes<4>(blockServiceIp2);
     buf.packScalar<uint16_t>(blockServicePort2);
-    buf.packScalar<uint64_t>(blockServiceId);
+    blockServiceId.pack(buf);
     buf.packScalar<uint64_t>(blockId);
     buf.packFixedBytes<8>(certificate);
 }
@@ -501,7 +501,7 @@ void BlockInfo::unpack(BincodeBuf& buf) {
     blockServicePort1 = buf.unpackScalar<uint16_t>();
     buf.unpackFixedBytes<4>(blockServiceIp2);
     blockServicePort2 = buf.unpackScalar<uint16_t>();
-    blockServiceId = buf.unpackScalar<uint64_t>();
+    blockServiceId.unpack(buf);
     blockId = buf.unpackScalar<uint64_t>();
     buf.unpackFixedBytes<8>(certificate);
 }
@@ -510,7 +510,7 @@ void BlockInfo::clear() {
     blockServicePort1 = uint16_t(0);
     blockServiceIp2.clear();
     blockServicePort2 = uint16_t(0);
-    blockServiceId = uint64_t(0);
+    blockServiceId = BlockServiceId(0);
     blockId = uint64_t(0);
     certificate.clear();
 }
@@ -519,7 +519,7 @@ bool BlockInfo::operator==(const BlockInfo& rhs) const {
     if ((uint16_t)this->blockServicePort1 != (uint16_t)rhs.blockServicePort1) { return false; };
     if (blockServiceIp2 != rhs.blockServiceIp2) { return false; };
     if ((uint16_t)this->blockServicePort2 != (uint16_t)rhs.blockServicePort2) { return false; };
-    if ((uint64_t)this->blockServiceId != (uint64_t)rhs.blockServiceId) { return false; };
+    if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
     if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
     if (certificate != rhs.certificate) { return false; };
     return true;
@@ -673,30 +673,12 @@ std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x) {
     return out;
 }
 
-void BlockServiceBlacklist::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(id);
-}
-void BlockServiceBlacklist::unpack(BincodeBuf& buf) {
-    id = buf.unpackScalar<uint64_t>();
-}
-void BlockServiceBlacklist::clear() {
-    id = uint64_t(0);
-}
-bool BlockServiceBlacklist::operator==(const BlockServiceBlacklist& rhs) const {
-    if ((uint64_t)this->id != (uint64_t)rhs.id) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockServiceBlacklist& x) {
-    out << "BlockServiceBlacklist(" << "Id=" << x.id << ")";
-    return out;
-}
-
 void BlockService::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(ip1);
     buf.packScalar<uint16_t>(port1);
     buf.packFixedBytes<4>(ip2);
     buf.packScalar<uint16_t>(port2);
-    buf.packScalar<uint64_t>(id);
+    id.pack(buf);
     buf.packScalar<uint8_t>(flags);
 }
 void BlockService::unpack(BincodeBuf& buf) {
@@ -704,7 +686,7 @@ void BlockService::unpack(BincodeBuf& buf) {
     port1 = buf.unpackScalar<uint16_t>();
     buf.unpackFixedBytes<4>(ip2);
     port2 = buf.unpackScalar<uint16_t>();
-    id = buf.unpackScalar<uint64_t>();
+    id.unpack(buf);
     flags = buf.unpackScalar<uint8_t>();
 }
 void BlockService::clear() {
@@ -712,7 +694,7 @@ void BlockService::clear() {
     port1 = uint16_t(0);
     ip2.clear();
     port2 = uint16_t(0);
-    id = uint64_t(0);
+    id = BlockServiceId(0);
     flags = uint8_t(0);
 }
 bool BlockService::operator==(const BlockService& rhs) const {
@@ -720,7 +702,7 @@ bool BlockService::operator==(const BlockService& rhs) const {
     if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
     if (ip2 != rhs.ip2) { return false; };
     if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
-    if ((uint64_t)this->id != (uint64_t)rhs.id) { return false; };
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
     return true;
 }
@@ -760,19 +742,19 @@ std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x) {
 }
 
 void EntryNewBlockInfo::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(blockServiceId);
+    blockServiceId.pack(buf);
     crc.pack(buf);
 }
 void EntryNewBlockInfo::unpack(BincodeBuf& buf) {
-    blockServiceId = buf.unpackScalar<uint64_t>();
+    blockServiceId.unpack(buf);
     crc.unpack(buf);
 }
 void EntryNewBlockInfo::clear() {
-    blockServiceId = uint64_t(0);
+    blockServiceId = BlockServiceId(0);
     crc = Crc(0);
 }
 bool EntryNewBlockInfo::operator==(const EntryNewBlockInfo& rhs) const {
-    if ((uint64_t)this->blockServiceId != (uint64_t)rhs.blockServiceId) { return false; };
+    if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
     if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
     return true;
 }
@@ -804,7 +786,7 @@ std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x) {
 }
 
 void BlockServiceInfo::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(id);
+    id.pack(buf);
     buf.packFixedBytes<4>(ip1);
     buf.packScalar<uint16_t>(port1);
     buf.packFixedBytes<4>(ip2);
@@ -819,7 +801,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     lastSeen.pack(buf);
 }
 void BlockServiceInfo::unpack(BincodeBuf& buf) {
-    id = buf.unpackScalar<uint64_t>();
+    id.unpack(buf);
     buf.unpackFixedBytes<4>(ip1);
     port1 = buf.unpackScalar<uint16_t>();
     buf.unpackFixedBytes<4>(ip2);
@@ -834,7 +816,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     lastSeen.unpack(buf);
 }
 void BlockServiceInfo::clear() {
-    id = uint64_t(0);
+    id = BlockServiceId(0);
     ip1.clear();
     port1 = uint16_t(0);
     ip2.clear();
@@ -849,7 +831,7 @@ void BlockServiceInfo::clear() {
     lastSeen = EggsTime();
 }
 bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
-    if ((uint64_t)this->id != (uint64_t)rhs.id) { return false; };
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if (ip1 != rhs.ip1) { return false; };
     if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
     if (ip2 != rhs.ip2) { return false; };
@@ -1304,7 +1286,7 @@ void AddSpanInitiateReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint32_t>(size);
     crc.pack(buf);
     buf.packScalar<uint8_t>(storageClass);
-    buf.packList<BlockServiceBlacklist>(blacklist);
+    buf.packList<BlockServiceId>(blacklist);
     parity.pack(buf);
     buf.packScalar<uint8_t>(stripes);
     buf.packScalar<uint32_t>(cellSize);
@@ -1317,7 +1299,7 @@ void AddSpanInitiateReq::unpack(BincodeBuf& buf) {
     size = buf.unpackScalar<uint32_t>();
     crc.unpack(buf);
     storageClass = buf.unpackScalar<uint8_t>();
-    buf.unpackList<BlockServiceBlacklist>(blacklist);
+    buf.unpackList<BlockServiceId>(blacklist);
     parity.unpack(buf);
     stripes = buf.unpackScalar<uint8_t>();
     cellSize = buf.unpackScalar<uint32_t>();
@@ -2174,19 +2156,19 @@ std::ostream& operator<<(std::ostream& out, const SwapBlocksResp& x) {
 }
 
 void BlockServiceFilesReq::pack(BincodeBuf& buf) const {
-    buf.packScalar<uint64_t>(blockServiceId);
+    blockServiceId.pack(buf);
     startFrom.pack(buf);
 }
 void BlockServiceFilesReq::unpack(BincodeBuf& buf) {
-    blockServiceId = buf.unpackScalar<uint64_t>();
+    blockServiceId.unpack(buf);
     startFrom.unpack(buf);
 }
 void BlockServiceFilesReq::clear() {
-    blockServiceId = uint64_t(0);
+    blockServiceId = BlockServiceId(0);
     startFrom = InodeId();
 }
 bool BlockServiceFilesReq::operator==(const BlockServiceFilesReq& rhs) const {
-    if ((uint64_t)this->blockServiceId != (uint64_t)rhs.blockServiceId) { return false; };
+    if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
     if ((InodeId)this->startFrom != (InodeId)rhs.startFrom) { return false; };
     return true;
 }

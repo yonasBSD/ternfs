@@ -335,7 +335,7 @@ func generateC(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRe
 }
 
 func cppType(t reflect.Type) string {
-	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" || t.Name() == "BlockServiceId" {
 		return t.Name()
 	}
 	switch t.Kind() {
@@ -409,7 +409,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// pack/unpack
 	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
 	// when unpacking
-	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" || expr.typ.Name() == "Crc" {
+	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" || expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" {
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
@@ -1186,7 +1186,6 @@ func main() {
 		reflect.TypeOf(msgs.BlockProof{}),
 		reflect.TypeOf(msgs.DirectoryInfoEntry{}),
 		reflect.TypeOf(msgs.DirectoryInfo{}),
-		reflect.TypeOf(msgs.BlockServiceBlacklist{}),
 		reflect.TypeOf(msgs.BlockService{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),

@@ -253,18 +253,3 @@ uint32_t crc32c_xor(uint32_t crc_a, uint32_t crc_b, size_t len) {
     uint32_t crc_0 = ~crc32c_mult_mod_p(~(uint32_t)0, x2n_mod_p(len, 3));
     return crc_a ^ crc_b ^ crc_0;
 }
-
-void crc32c_xor_bytes(uint8_t* bytes_a, const uint8_t* bytes_b, size_t len) {
-    size_t leftover = len%32;
-    for (ssize_t i = 0; i < len-leftover; i += 32) {
-        _mm256_storeu_si256(
-            (__m256i*)bytes_a,
-            _mm256_xor_si256(_mm256_lddqu_si256((const __m256i*)bytes_a), _mm256_lddqu_si256((const __m256i*)bytes_b))
-        );
-        bytes_a += 32;
-        bytes_b += 32;
-    }
-    for (size_t i = 0; i < leftover; i++) {
-        bytes_a[i] ^= bytes_b[i];
-    }
-}

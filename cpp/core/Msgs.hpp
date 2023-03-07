@@ -223,6 +223,31 @@ struct Crc {
 
 std::ostream& operator<<(std::ostream& out, Crc crc);
 
+struct BlockServiceId {
+    uint64_t u64;
+
+    BlockServiceId(): u64(0) {}
+    BlockServiceId(uint64_t x): u64(x) {}
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar(u64);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u64 = buf.unpackScalar<uint64_t>();
+    }
+
+    uint16_t packedSize() const {
+        return sizeof(u64);
+    }
+
+    bool operator==(BlockServiceId other) const {
+        return u64 == other.u64;
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, BlockServiceId crc);
+
 #include "MsgsGen.hpp"
 
 // We often use this as a optional<EggsError>;

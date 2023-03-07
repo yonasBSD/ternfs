@@ -243,7 +243,7 @@ struct BlockInfo {
     uint16_t blockServicePort1;
     BincodeFixedBytes<4> blockServiceIp2;
     uint16_t blockServicePort2;
-    uint64_t blockServiceId;
+    BlockServiceId blockServiceId;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
@@ -509,31 +509,12 @@ struct DirectoryInfo {
 
 std::ostream& operator<<(std::ostream& out, const DirectoryInfo& x);
 
-struct BlockServiceBlacklist {
-    uint64_t id;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // id
-
-    BlockServiceBlacklist() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockServiceBlacklist&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockServiceBlacklist& x);
-
 struct BlockService {
     BincodeFixedBytes<4> ip1;
     uint16_t port1;
     BincodeFixedBytes<4> ip2;
     uint16_t port2;
-    uint64_t id;
+    BlockServiceId id;
     uint8_t flags;
 
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip1 + port1 + ip2 + port2 + id + flags
@@ -583,7 +564,7 @@ struct FullReadDirCursor {
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x);
 
 struct EntryNewBlockInfo {
-    uint64_t blockServiceId;
+    BlockServiceId blockServiceId;
     Crc crc;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 4; // blockServiceId + crc
@@ -625,7 +606,7 @@ struct SnapshotLookupEdge {
 std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
 
 struct BlockServiceInfo {
-    uint64_t id;
+    BlockServiceId id;
     BincodeFixedBytes<4> ip1;
     uint16_t port1;
     BincodeFixedBytes<4> ip2;
@@ -1088,13 +1069,13 @@ struct AddSpanInitiateReq {
     uint32_t size;
     Crc crc;
     uint8_t storageClass;
-    BincodeList<BlockServiceBlacklist> blacklist;
+    BincodeList<BlockServiceId> blacklist;
     Parity parity;
     uint8_t stripes;
     uint32_t cellSize;
     BincodeList<Crc> crcs;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 4 + 4 + 1 + BincodeList<BlockServiceBlacklist>::STATIC_SIZE + 1 + 1 + 4 + BincodeList<Crc>::STATIC_SIZE; // fileId + cookie + byteOffset + size + crc + storageClass + blacklist + parity + stripes + cellSize + crcs
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 4 + 4 + 1 + BincodeList<BlockServiceId>::STATIC_SIZE + 1 + 1 + 4 + BincodeList<Crc>::STATIC_SIZE; // fileId + cookie + byteOffset + size + crc + storageClass + blacklist + parity + stripes + cellSize + crcs
 
     AddSpanInitiateReq() { clear(); }
     uint16_t packedSize() const {
@@ -1900,7 +1881,7 @@ struct SwapBlocksResp {
 std::ostream& operator<<(std::ostream& out, const SwapBlocksResp& x);
 
 struct BlockServiceFilesReq {
-    uint64_t blockServiceId;
+    BlockServiceId blockServiceId;
     InodeId startFrom;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // blockServiceId + startFrom

@@ -698,7 +698,7 @@ struct ShardDBImpl {
 
         int budget = UDP_MTU - ShardResponseHeader::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
-        const auto addBlockService = [this, &resp, &budget](uint64_t blockServiceId) -> int {
+        const auto addBlockService = [this, &resp, &budget](BlockServiceId blockServiceId) -> int {
             // See if we've placed it already
             for (int i = 0; i < resp.blockServices.els.size(); i++) {
                 if (resp.blockServices.els.at(i).id == blockServiceId) {
@@ -711,7 +711,7 @@ struct ShardDBImpl {
                 return -1;
             }
             auto& blockService = resp.blockServices.els.emplace_back();
-            const auto& cache = _blockServicesCache.at(blockServiceId);
+            const auto& cache = _blockServicesCache.at(blockServiceId.u64);
             blockService.id = blockServiceId;
             blockService.ip1 = cache.ip1;
             blockService.port1 = cache.port1;
@@ -793,10 +793,10 @@ struct ShardDBImpl {
         resp.fileIds.els.reserve(maxFiles);
 
         StaticValue<BlockServiceToFileKey> beginKey;
-        beginKey().setBlockServiceId(req.blockServiceId);
+        beginKey().setBlockServiceId(req.blockServiceId.u64);
         beginKey().setFileId(req.startFrom);
         StaticValue<BlockServiceToFileKey> endKey;
-        endKey().setBlockServiceId(req.blockServiceId+1);
+        endKey().setBlockServiceId(req.blockServiceId.u64+1);
         endKey().setFileId(NULL_INODE_ID);
         auto endKeySlice = endKey.toSlice();
 
@@ -1220,9 +1220,9 @@ struct ShardDBImpl {
         return true;
     }
 
-    bool _blockServiceMatchesBlacklist(const std::vector<BlockServiceBlacklist>& blacklists, uint64_t blockServiceId, const BlockServiceCache& cache) {
+    bool _blockServiceMatchesBlacklist(const std::vector<BlockServiceId>& blacklists, BlockServiceId blockServiceId, const BlockServiceCache& cache) {
         for (const auto& blacklist: blacklists) {
-            if (blacklist.id == blockServiceId) {
+            if (blacklist == blockServiceId) {
                 return true;
             }
         }
@@ -1320,11 +1320,11 @@ struct ShardDBImpl {
         //
         // TODO factor failure domains in the decision
         {
-            std::vector<uint64_t> candidateBlockServices;
+            std::vector<BlockServiceId> candidateBlockServices;
             candidateBlockServices.reserve(_currentBlockServices.size());
             LOG_DEBUG(_env, "Starting out with %s current block services", _currentBlockServices.size());
-            for (uint64_t id: _currentBlockServices) {
-                const auto& cache = _blockServicesCache.at(id);
+            for (BlockServiceId id: _currentBlockServices) {
+                const auto& cache = _blockServicesCache.at(id.u64);
                 if (cache.storageClass != entry.storageClass) {
                     LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
                     continue;
@@ -1336,7 +1336,7 @@ struct ShardDBImpl {
                 candidateBlockServices.emplace_back(id);
             }
             LOG_DEBUG(_env, "Starting out with %s block service candidates, parity %s", candidateBlockServices.size(), entry.parity);
-            std::vector<uint64_t> pickedBlockServices;
+            std::vector<BlockServiceId> pickedBlockServices;
             pickedBlockServices.reserve(req.parity.blocks());
             // Try to get the first span to copy its block services -- this should be the
             // very common case past the first span.
@@ -1367,7 +1367,7 @@ struct ShardDBImpl {
                                 continue;
                             }
                             LOG_DEBUG(_env, "(1) Picking block service candidate %s", spanBlock.blockService());
-                            uint64_t blockServiceId = spanBlock.blockService();
+                            BlockServiceId blockServiceId = spanBlock.blockService();
                             pickedBlockServices.emplace_back(blockServiceId);
                             std::iter_swap(isCandidate, candidateBlockServices.end()-1);
                             candidateBlockServices.pop_back();
@@ -2429,7 +2429,7 @@ struct ShardDBImpl {
         resp.blocks.els.reserve(blocks.parity().blocks());
         for (int i = 0; i < blocks.parity().blocks(); i++) {
             const auto block = blocks.block(i);
-            const auto& cache = _blockServicesCache.at(block.blockService());
+            const auto& cache = _blockServicesCache.at(block.blockService().u64);
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceIp1 = cache.ip1;
             respBlock.blockServicePort1 = cache.port1;
@@ -2460,10 +2460,10 @@ struct ShardDBImpl {
         StaticValue<BlockServiceBody> blockBody;
         for (int i = 0; i < entry.blockServices.els.size(); i++) {
             const auto& entryBlock = entry.blockServices.els[i];
-            currentBody().set(i, entryBlock.id);
-            _currentBlockServices[i] = entryBlock.id;
-            blockKey().setBlockServiceId(entryBlock.id);
-            blockBody().setId(entryBlock.id);
+            currentBody().set(i, entryBlock.id.u64);
+            _currentBlockServices[i] = entryBlock.id.u64;
+            blockKey().setBlockServiceId(entryBlock.id.u64);
+            blockBody().setId(entryBlock.id.u64);
             blockBody().setIp1(entryBlock.ip1.data);
             blockBody().setPort1(entryBlock.port1);
             blockBody().setIp2(entryBlock.ip2.data);
@@ -2472,7 +2472,7 @@ struct ShardDBImpl {
             blockBody().setFailureDomain(entryBlock.failureDomain.data);
             blockBody().setSecretKey(entryBlock.secretKey.data);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
-            auto& cache = _blockServicesCache[entryBlock.id];
+            auto& cache = _blockServicesCache[entryBlock.id.u64];
             expandKey(entryBlock.secretKey.data, cache.secretKey);
             cache.ip1 = entryBlock.ip1.data;
             cache.port1 = entryBlock.port1;
@@ -2509,7 +2509,7 @@ struct ShardDBImpl {
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceId = block.blockService();
             respBlock.blockId = block.blockId();
-            const auto& cache = _blockServicesCache.at(block.blockService());
+            const auto& cache = _blockServicesCache.at(block.blockService().u64);
             respBlock.blockServiceIp1 = cache.ip1;
             respBlock.blockServicePort1 = cache.port1;
             respBlock.blockServiceIp2 = cache.ip2;
@@ -2518,7 +2518,7 @@ struct ShardDBImpl {
         }
     }
 
-    void _addBlockServicesToFiles(rocksdb::WriteBatch& batch, uint64_t blockServiceId, InodeId fileId, int64_t delta) {
+    void _addBlockServicesToFiles(rocksdb::WriteBatch& batch, BlockServiceId blockServiceId, InodeId fileId, int64_t delta) {
         StaticValue<BlockServiceToFileKey> k;
         k().setBlockServiceId(blockServiceId);
         k().setFileId(fileId);
@@ -2688,9 +2688,9 @@ struct ShardDBImpl {
                 const auto& entryBlock = entry.bodyBlocks.els[i];
                 auto block = blocks.block(i);
                 block.setBlockId(_updateNextBlockId(time, nextBlockId));
-                block.setBlockService(entryBlock.blockServiceId);
+                block.setBlockService(entryBlock.blockServiceId.u64);
                 block.setCrc(entryBlock.crc.u32);
-                _addBlockServicesToFiles(batch, entryBlock.blockServiceId, entry.fileId, 1);
+                _addBlockServicesToFiles(batch, entryBlock.blockServiceId.u64, entry.fileId, 1);
             }
             _writeNextBlockId(batch, nextBlockId);
             for (int i = 0; i < entry.stripes; i++) {
@@ -2710,7 +2710,7 @@ struct ShardDBImpl {
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ4sI', b, 0, block['block_service_id'], b'w', block['block_id'], crc32_from_int(block['crc32']), block_size)
-        bbuf.packScalar<uint64_t>(block.blockService());
+        bbuf.packScalar<uint64_t>(block.blockService().u64);
         bbuf.packScalar<char>('w');
         bbuf.packScalar<uint64_t>(block.blockId());
         bbuf.packScalar<uint32_t>(block.crc());
@@ -2719,16 +2719,16 @@ struct ShardDBImpl {
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
-    bool _checkBlockAddProof(uint64_t blockServiceId, const BlockProof& proof) {
+    bool _checkBlockAddProof(BlockServiceId blockServiceId, const BlockProof& proof) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
-        bbuf.packScalar<uint64_t>(blockServiceId);
+        bbuf.packScalar<uint64_t>(blockServiceId.u64);
         bbuf.packScalar<char>('W');
         bbuf.packScalar<uint64_t>(proof.blockId);
     
-        const auto& cache = _blockServicesCache.at(blockServiceId);
+        const auto& cache = _blockServicesCache.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
         return proof.proof == expectedProof;
@@ -2739,23 +2739,23 @@ struct ShardDBImpl {
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'e', block['block_id'])
-        bbuf.packScalar<uint64_t>(block.blockService());
+        bbuf.packScalar<uint64_t>(block.blockService().u64);
         bbuf.packScalar<char>('e');
         bbuf.packScalar<uint64_t>(block.blockId());
 
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
-    bool _checkBlockDeleteProof(uint64_t blockServiceId, const BlockProof& proof) {
+    bool _checkBlockDeleteProof(BlockServiceId blockServiceId, const BlockProof& proof) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
         // struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
-        bbuf.packScalar<uint64_t>(blockServiceId);
+        bbuf.packScalar<uint64_t>(blockServiceId.u64);
         bbuf.packScalar<char>('E');
         bbuf.packScalar<uint64_t>(proof.blockId);
     
-        const auto& cache = _blockServicesCache.at(blockServiceId);
+        const auto& cache = _blockServicesCache.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
         bool good = proof.proof == expectedProof;
@@ -3034,9 +3034,19 @@ struct ShardDBImpl {
             }
             throw EGGS_EXCEPTION("blocks not found");
         }
-        if (block1.crc() != block2.crc()) {
-            throw EGGS_EXCEPTION("mismatching blocks CRCs");
-        }
+        ALWAYS_ASSERT(block1.crc() == block2.crc());
+        // Check that we're not creating a situation where we have two blocks in the same block service
+        const auto checkNoDuplicateBlockServices = [](const auto blocks, int blockToBeReplacedIx, const auto newBlock) {
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                if (i == blockToBeReplacedIx) {
+                    continue;
+                }
+                const auto block = blocks.block(i);
+                ALWAYS_ASSERT(block.blockService() != newBlock.blockService());
+            }
+        };
+        checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
+        checkNoDuplicateBlockServices(blocks2, block2Ix, block1);
         // Record the block counts
         _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId1, -1);
         _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId1, +1);

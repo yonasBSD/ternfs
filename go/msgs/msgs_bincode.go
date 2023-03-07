@@ -947,7 +947,7 @@ func (v *AddSpanInitiateReq) Pack(w io.Writer) error {
 		return err
 	}
 	for i := 0; i < len1; i++ {
-		if err := v.Blacklist[i].Pack(w); err != nil {
+		if err := bincode.PackScalar(w, uint64(v.Blacklist[i])); err != nil {
 			return err
 		}
 	}
@@ -997,7 +997,7 @@ func (v *AddSpanInitiateReq) Unpack(r io.Reader) error {
 	}
 	bincode.EnsureLength(&v.Blacklist, len1)
 	for i := 0; i < len1; i++ {
-		if err := v.Blacklist[i].Unpack(r); err != nil {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.Blacklist[i])); err != nil {
 			return err
 		}
 	}
@@ -3156,20 +3156,6 @@ func (v *DirectoryInfo) Unpack(r io.Reader) error {
 		if err := v.Entries[i].Unpack(r); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (v *BlockServiceBlacklist) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *BlockServiceBlacklist) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
-		return err
 	}
 	return nil
 }

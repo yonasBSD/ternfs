@@ -100,7 +100,7 @@ func createFile(
 			spanBuf := (*buf)[:thisSpanSize]
 			rand.Read(spanBuf)
 			var err error
-			*buf, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
+			*buf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
 			if err != nil {
 				panic(err)
 			}
@@ -134,7 +134,7 @@ func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client,
 		for i := range spansResp.Spans {
 			span := &spansResp.Spans[i]
 			// TODO random blacklist
-			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceBlacklist{}, id, spansResp.BlockServices, span)
+			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceId{}, id, spansResp.BlockServices, span)
 			if err != nil {
 				panic(err)
 			}

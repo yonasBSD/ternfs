@@ -74,7 +74,7 @@ func ensureLen(buf []byte, l int) []byte {
 }
 
 func prepareSpanInitiateReq(
-	blacklist []msgs.BlockServiceBlacklist,
+	blacklist []msgs.BlockServiceId,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
 	stripePolicy *msgs.StripePolicy,
@@ -207,7 +207,7 @@ func mkBlockReader(
 // buffer is returned, regardless of whether the error is nil or not.
 func (c *Client) CreateSpan(
 	log *Logger,
-	blacklist []msgs.BlockServiceBlacklist,
+	blacklist []msgs.BlockServiceId,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
 	stripePolicy *msgs.StripePolicy,
@@ -886,7 +886,7 @@ func (pool *ReadSpanBufPool) put(buf *[]byte) {
 func (c *Client) ReadSpan(
 	log *Logger,
 	bufPool *ReadSpanBufPool,
-	blacklist []msgs.BlockServiceBlacklist,
+	blacklist []msgs.BlockServiceId,
 	id msgs.InodeId,
 	blockServices []msgs.BlockService,
 	fetchedSpan *msgs.FetchedSpan,
@@ -914,7 +914,7 @@ func (c *Client) ReadSpan(
 		block := body.Blocks[blockIx]
 		blockService := blockServices[block.BlockServiceIx]
 		for _, blacklisted := range blacklist {
-			if blockService.Id == blacklisted.Id {
+			if blockService.Id == blacklisted {
 				return nil, nil
 			}
 		}

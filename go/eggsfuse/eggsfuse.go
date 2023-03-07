@@ -344,7 +344,7 @@ func (f *transientFile) writeSpan() syscall.Errno {
 		return 0
 	}
 	var err error
-	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, *f.data)
+	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, *f.data)
 	if err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)
@@ -544,7 +544,7 @@ func (of *openFile) ensureSpan() syscall.Errno {
 	}
 	span := &of.spans.Spans[of.currentSpanIx]
 	var err error
-	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceBlacklist{}, of.id, of.spans.BlockServices, span)
+	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, of.id, of.spans.BlockServices, span)
 	if err != nil {
 		return eggsErrToErrno(err)
 	}
@@ -617,6 +617,7 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 
 	of.mu.Lock()
 	defer of.mu.Unlock()
+
 	internalOff := int64(0)
 	// TODO for some reason go-fuse does not seem to support partial reads in the middle of the
 	// file, which is weird. So we fully drain it. But we should understand what's going on.
@@ -693,7 +694,7 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	if len(resp.Spans) > 1 {
 		panic(fmt.Errorf("more than one span for symlink"))
 	}
-	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceBlacklist{}, n.id, resp.BlockServices, &resp.Spans[0])
+	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, n.id, resp.BlockServices, &resp.Spans[0])
 	if err != nil {
 		return nil, eggsErrToErrno(err)
 

@@ -100,7 +100,7 @@ func (id InodeId) Shard() ShardId {
 }
 
 func (id InodeId) String() string {
-	return fmt.Sprintf("0x%X", uint64(id))
+	return fmt.Sprintf("0x%x", uint64(id))
 }
 
 func (id InodeId) MarshalJSON() ([]byte, error) {
@@ -378,10 +378,6 @@ type AddInlineSpanReq struct {
 
 type AddInlineSpanResp struct{}
 
-type BlockServiceBlacklist struct {
-	Id BlockServiceId
-}
-
 // Add span. The file must be transient.
 //
 // Generally speaking, the num_data_blocks*BlockSize == Size. However, there are two
@@ -405,7 +401,7 @@ type AddSpanInitiateReq struct {
 	// This is useful when the kernel knows it cannot communicate with a certain block
 	// service (because it noticed that it is broken before shuckle/shard did, or
 	// because of some transient network problem, or...).
-	Blacklist []BlockServiceBlacklist
+	Blacklist []BlockServiceId
 	Parity    rs.Parity
 	Stripes   uint8 // [1, 15]
 	CellSize  uint32
@@ -1245,7 +1241,7 @@ type UpdateBlockServicesEntry struct {
 }
 
 type EntryNewBlockInfo struct {
-	BlockServiceId uint64
+	BlockServiceId BlockServiceId
 	Crc            Crc
 }
 

@@ -192,9 +192,9 @@ struct BlockBody {
         sizeof(uint64_t) +
         sizeof(uint32_t);
 
-    LE_VAL(uint64_t, blockService, setBlockService, 0);
-    LE_VAL(uint64_t, blockId,      setBlockId,      8);
-    LE_VAL(uint32_t, crc,          setCrc,         16);
+    LE_VAL(BlockServiceId, blockService, setBlockService, 0);
+    LE_VAL(uint64_t,       blockId,      setBlockId,      8);
+    LE_VAL(uint32_t,       crc,          setCrc,         16);
 };
 
 struct SpanBlocksBody {
@@ -475,6 +475,6 @@ struct BlockServiceToFileKey {
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
 
-    BE64_VAL(uint64_t, blockServiceId, setBlockServiceId, 0)
-    BE64_VAL(InodeId,  fileId,         setFileId,         8)
+    BE64_VAL(BlockServiceId, blockServiceId, setBlockServiceId, 0)
+    BE64_VAL(InodeId,        fileId,         setFileId,         8)
 };

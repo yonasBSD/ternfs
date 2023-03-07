@@ -20,7 +20,7 @@ build_dir.mkdir(parents=True, exist_ok=True)
 
 if build_type == 'alpine' and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
     subprocess.run(
-        ['docker', 'run', '-i', '--mount', f'type=bind,src={cpp_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/build.py', 'alpine'],
+        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={cpp_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/build.py', 'alpine'],
         check=True,
     )
 else:

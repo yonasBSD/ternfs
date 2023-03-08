@@ -25,13 +25,13 @@ func main() {
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
-	hddBlockServices := flag.Uint("hdd-block-services", 20, "Number of HDD block services.")
-	flashBlockServices := flag.Uint("flash-block-services", 20, "Number of HDD block services.")
+	hddBlockServices := flag.Uint("hdd-block-services", 32, "Number of HDD block services.")
+	flashBlockServices := flag.Uint("flash-block-services", 32, "Number of HDD block services.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	ownIp := flag.String("own-ip", "127.0.0.1", "What IP to advertise to shuckle for these services.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
 	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
-	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. Otherwise ports will be chosen randomly.")
+	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -173,7 +173,7 @@ func main() {
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            eggsFuseExe,
-		Path:           path.Join(*dataDir, "eggsfuse"),
+		Path:           path.Join(*dataDir, "fuse"),
 		LogLevel:       level,
 		Wait:           true,
 		ShuckleAddress: shuckleAddress,

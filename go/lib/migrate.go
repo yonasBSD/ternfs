@@ -65,7 +65,7 @@ func fetchBlock(
 		return err
 	}
 	defer srcConn.Close()
-	if err := FetchBlock(log, srcConn, blockService, block.BlockId, block.Crc, 0, blockSize); err != nil {
+	if err := FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
 		return err
 	}
 	readBytes, err := buf.ReadFrom(io.LimitReader(srcConn, int64(blockSize)))

@@ -30,9 +30,9 @@ type fsTestOpts struct {
 type fsTestHarness[Id comparable] interface {
 	createDirectory(log *lib.Logger, owner Id, name string) (Id, msgs.EggsTime)
 	rename(log *lib.Logger, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
-	createFile(log *lib.Logger, owner Id, spanSize uint32, name string, size uint64, dataSeed uint64) (Id, msgs.EggsTime)
+	createFile(log *lib.Logger, owner Id, spanSize uint32, name string, size uint64, trailingZeros uint32, dataSeed uint64) (Id, msgs.EggsTime)
 	// if false, the harness does not support reading files (e.g. we're mocking block services)
-	checkFileData(log *lib.Logger, id Id, size uint64, dataSeed uint64)
+	checkFileData(log *lib.Logger, id Id, size uint64, trailingZeros uint32, dataSeed uint64)
 	// files, directories
 	readDirectory(log *lib.Logger, dir Id) ([]string, []string)
 }
@@ -104,9 +104,9 @@ func (c *apiFsTestHarness) rename(
 }
 
 func (c *apiFsTestHarness) createFile(
-	log *lib.Logger, owner msgs.InodeId, spanSize uint32, name string, size uint64, dataSeed uint64,
+	log *lib.Logger, owner msgs.InodeId, spanSize uint32, name string, size uint64, trailingZeros uint32, dataSeed uint64,
 ) (msgs.InodeId, msgs.EggsTime) {
-	return createFile(log, c.client, c.dirInfoCache, owner, spanSize, name, size, dataSeed, &c.fileContentsBuf)
+	return createFile(log, c.client, c.dirInfoCache, owner, spanSize, name, size, trailingZeros, dataSeed, &c.fileContentsBuf)
 }
 
 func (c *apiFsTestHarness) readDirectory(log *lib.Logger, dir msgs.InodeId) (files []string, dirs []string) {
@@ -140,19 +140,36 @@ func checkFileData(actualData []byte, expectedData []byte) {
 
 }
 
-func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
-	fileData := readFile(log, c.readBufPool, c.client, id, &c.fileContentsBuf)
-	if len(c.fileContentsBuf) < int(size) {
-		c.fileContentsBuf = append(c.fileContentsBuf, make([]byte, int(size)-len(c.fileContentsBuf))...)
+func ensureLen(buf []byte, l int) []byte {
+	lenBefore := len(buf)
+	if l <= cap(buf) {
+		buf = buf[:l]
+	} else {
+		buf = buf[:cap(buf)]
+		buf = append(buf, make([]byte, l-len(buf))...)
 	}
-	expectedData := c.fileContentsBuf[:size]
-	wyhash.New(dataSeed).Read(expectedData)
+	// memset? what's that?
+	for i := lenBefore; i < len(buf); i++ {
+		buf[i] = 0
+	}
+	return buf
+}
+
+func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, trailingZeros uint32, dataSeed uint64) {
+	fileData := readFile(log, c.readBufPool, c.client, id, &c.fileContentsBuf)
+	fullSize := int(size) + int(trailingZeros)
+	c.fileContentsBuf = ensureLen(c.fileContentsBuf, fullSize)
+	expectedData := c.fileContentsBuf[:int(size)]
+	wyhash.New(dataSeed).Read(expectedData[:int(size)])
 	checkFileData(fileData, expectedData)
 }
 
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
-type posixFsTestHarness struct{}
+type posixFsTestHarness struct {
+	expectedDataBuf []byte
+	actualDataBuf   []byte
+}
 
 func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
 	fullPath = path.Join(owner, name)
@@ -184,13 +201,13 @@ func (*posixFsTestHarness) rename(
 }
 
 func (c *posixFsTestHarness) createFile(
-	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
+	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, trailingZeros uint32, dataSeed uint64,
 ) (fileFullPath string, t msgs.EggsTime) {
-	data := make([]byte, size)
-	wyhash.New(dataSeed).Read(data)
+	c.actualDataBuf = ensureLen(c.actualDataBuf, int(size)+int(trailingZeros))
+	wyhash.New(dataSeed).Read(c.actualDataBuf[:size])
 	fileFullPath = path.Join(dirFullPath, name)
 	log.LogStack(1, lib.DEBUG, "posix create file %v", fileFullPath)
-	if err := os.WriteFile(fileFullPath, data, 0644); err != nil {
+	if err := os.WriteFile(fileFullPath, c.actualDataBuf, 0644); err != nil {
 		panic(err)
 	}
 	return fileFullPath, 0
@@ -212,31 +229,31 @@ func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) 
 	return files, dirs
 }
 
-func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string, size uint64, dataSeed uint64) {
-	allData := make([]byte, size)
-	wyhash.New(dataSeed).Read(allData)
-	fileData := make([]byte, len(allData))
+func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string, size uint64, trailingZeros uint32, dataSeed uint64) {
+	fullSize := int(size) + int(trailingZeros)
+	c.expectedDataBuf = ensureLen(c.expectedDataBuf, fullSize)
+	wyhash.New(dataSeed).Read(c.expectedDataBuf[:int(size)])
+	c.actualDataBuf = ensureLen(c.actualDataBuf, fullSize)
 	f, err := os.Open(fullFilePath)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
 	// First we check the whole thing
-	if _, err := io.ReadFull(f, fileData); err != nil {
+	if _, err := io.ReadFull(f, c.actualDataBuf); err != nil {
 		panic(err)
 	}
-	checkFileData(fileData, allData)
+	checkFileData(c.expectedDataBuf, c.actualDataBuf)
 	// then we start doing random reads around
-	if len(allData) > 1 {
-		rand := rand.New(rand.NewSource(int64(size)))
+	if fullSize > 1 {
 		for i := 0; i < 10; i++ {
-			offset := rand.Int() % (len(allData) - 1)
-			size := 1 + rand.Int()%(len(allData)-offset-1)
+			offset := int(rand.Uint64()) % (fullSize - 1)
+			size := 1 + int(rand.Uint64())%(fullSize-offset-1)
 			if _, err := f.Seek(int64(offset), 0); err != nil {
 				panic(err)
 			}
-			expectedPartialData := allData[offset : offset+size]
-			actualPartialData := fileData[offset : offset+size]
+			expectedPartialData := c.expectedDataBuf[offset : offset+size]
+			actualPartialData := c.actualDataBuf[offset : offset+size]
 			if _, err := io.ReadFull(f, actualPartialData); err != nil {
 				panic(err)
 			}
@@ -258,9 +275,10 @@ type fsTestChild[T any] struct {
 }
 
 type fsTestFile[Id comparable] struct {
-	id       Id
-	size     uint64
-	dataSeed uint64
+	id            Id
+	size          uint64
+	trailingZeros uint32
+	dataSeed      uint64
 }
 
 // We always use integers as names
@@ -369,6 +387,21 @@ func (state *fsTestState[Id]) incrementFiles(log *lib.Logger, opts *fsTestOpts) 
 	}
 }
 
+func (state *fsTestState[Id]) calcFileSize(log *lib.Logger, opts *fsTestOpts, rand *wyhash.Rand) (size uint64, trailingZeros uint32) {
+	p := rand.Float64()
+	if p < opts.emptyFileProb {
+		size = 0
+	} else if p < opts.emptyFileProb+opts.inlineFileProb {
+		size = 1 + rand.Uint64()%254
+	} else {
+		size = 1 + rand.Uint64()%uint64(opts.maxFileSize)
+	}
+	trailingZeros = rand.Uint32() % 100
+	state.totalFilesSize += size
+	log.Debug("creating file with size %v, trailing zeros %v, total size %v", size, trailingZeros, state.totalFilesSize)
+	return size, trailingZeros
+}
+
 func (state *fsTestState[Id]) makeFile(log *lib.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *wyhash.Rand, dirPath []int, name int) {
 	state.incrementFiles(log, opts)
 	dir := state.dir(dirPath)
@@ -380,26 +413,17 @@ func (state *fsTestState[Id]) makeFile(log *lib.Logger, harness fsTestHarness[Id
 	if fileExists {
 		panic("conflicting name (files)")
 	}
-	var size uint64
-	p := rand.Float64()
-	if p < opts.emptyFileProb {
-		size = 0
-	} else if p < opts.emptyFileProb+opts.inlineFileProb {
-		size = 1 + rand.Uint64()%254
-	} else {
-		size = 1 + rand.Uint64()%uint64(opts.maxFileSize)
-	}
-	state.totalFilesSize += size
-	log.Debug("creating file with size %v, total size %v", size, state.totalFilesSize)
+	size, trailingZeros := state.calcFileSize(log, opts, rand)
 	dataSeed := rand.Uint64()
 	id, creationTime := harness.createFile(
-		log, dir.id, uint32(opts.spanSize), strconv.Itoa(name), size, dataSeed,
+		log, dir.id, uint32(opts.spanSize), strconv.Itoa(name), size, trailingZeros, dataSeed,
 	)
 	dir.children.files[name] = fsTestChild[fsTestFile[Id]]{
 		body: fsTestFile[Id]{
-			id:       id,
-			size:     size,
-			dataSeed: dataSeed,
+			id:            id,
+			size:          size,
+			trailingZeros: trailingZeros,
+			dataSeed:      dataSeed,
 		},
 		creationTime: creationTime,
 	}
@@ -416,24 +440,19 @@ func (state *fsTestState[Id]) makeFileFromTemp(log *lib.Logger, harness fsTestHa
 	if fileExists {
 		panic("conflicting name (files)")
 	}
-	var size uint64
-	// one out of three files as inline storage
-	if rand.Uint64()%3 == 0 {
-		size = 1 + rand.Uint64()%256
-	} else {
-		size = 1 + rand.Uint64()%uint64(opts.maxFileSize)
-	}
+	size, trailingZeros := state.calcFileSize(log, opts, rand)
 	dataSeed := rand.Uint64()
 	tmpParentId := state.dir(tmpDirPath).id
 	id, creationTime := harness.createFile(
-		log, tmpParentId, uint32(opts.spanSize), "tmp", size, dataSeed,
+		log, tmpParentId, uint32(opts.spanSize), "tmp", size, trailingZeros, dataSeed,
 	)
 	newId, creationTime := harness.rename(log, id, tmpParentId, creationTime, "tmp", dir.id, strconv.Itoa(name))
 	dir.children.files[name] = fsTestChild[fsTestFile[Id]]{
 		body: fsTestFile[Id]{
-			id:       newId,
-			size:     size,
-			dataSeed: dataSeed,
+			id:            newId,
+			size:          size,
+			trailingZeros: trailingZeros,
+			dataSeed:      dataSeed,
 		},
 		creationTime: creationTime,
 	}
@@ -455,7 +474,7 @@ func (d *fsTestDir[Id]) check(log *lib.Logger, harness fsTestHarness[Id]) {
 			panic(fmt.Errorf("file %v not found", name))
 		}
 		harness.checkFileData(
-			log, file.body.id, file.body.size, file.body.dataSeed,
+			log, file.body.id, file.body.size, file.body.trailingZeros, file.body.dataSeed,
 		)
 	}
 	for _, dirName := range dirs {

@@ -213,7 +213,6 @@ func FetchBlock(
 	},
 	blockService *msgs.BlockService,
 	blockId msgs.BlockId,
-	crc32 msgs.Crc,
 	offset uint32,
 	count uint32,
 ) error {

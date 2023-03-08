@@ -30,6 +30,9 @@
                 <th>Mtime</th>
                 <td><code>{{.Mtime}}</code></td>
             </tr>
+            <tr>
+                <td><a href="{{.DownloadLink}}">Download</a></td>
+            </tr>
         </tbody>
     </table>
     <h2>Spans</h2>
@@ -38,10 +41,11 @@
             <tr>
                 <th class="text-end">Offset</th>
                 <th class="text-end">Size</th>
-                <th>Crc32</th>
+                <th>Crc</th>
                 <th>Storage</th>
                 {{if not $.AllInline}}
-                    <th class="text-end">BlockSize</th>
+                    <th class="text-end">Stripes</th>
+                    <th class="text-end">CellSize</th>
                 {{end}}
                 <th>Body</th>
             </tr>
@@ -51,12 +55,17 @@
                 <tr>
                     <td class="text-end">{{$span.Offset}}</td>
                     <td class="text-end">{{$span.Size}}</td>
-                    <td><code>{{$span.Crc32}}</code></td>
+                    <td><code>{{$span.Crc}}</code></td>
                     <td>{{$span.StorageClass}}</td>
                     {{if not $.AllInline}}
                         <td class="text-end">
-                            {{if $span.BlockSize}}
-                                {{$span.BlockSize}}
+                            {{if $span.Stripes}}
+                                {{$span.Stripes}}
+                            {{end}}
+                        </td>
+                        <td class="text-end">
+                            {{if $span.CellSize}}
+                                {{$span.CellSize}}
                             {{end}}
                         </td>
                     {{end}}
@@ -87,9 +96,9 @@
                                             {{end}}
                                         </tr>
                                         <tr>
-                                            <th>Crc32</th>
+                                            <th>Crc</th>
                                             {{range $block := $span.BodyBlocks}}
-                                                <td><code>{{$block.Crc32}}<code></td>
+                                                <td><code>{{$block.Crc}}<code></td>
                                             {{end}}
                                         </tr>
                                         <tr>

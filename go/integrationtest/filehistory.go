@@ -165,7 +165,7 @@ func runCheckpoint(log *lib.Logger, client *lib.Client, prefix string, files *fi
 func runStep(log *lib.Logger, client *lib.Client, dirInfoCache *lib.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
 	case fileHistoryCreateFile:
-		id, creationTime := createFile(log, client, dirInfoCache, msgs.ROOT_DIR_INODE_ID, 0, step.name, 0, 0, nil)
+		id, creationTime := createFile(log, client, dirInfoCache, msgs.ROOT_DIR_INODE_ID, 0, step.name, 0, 0, 0, nil)
 		files.addFile(step.name, id, creationTime)
 		return fileHistoryCreatedFile{
 			name:         step.name,

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -263,132 +266,131 @@ func main() {
 		run:   removeDirInfoRun,
 	}
 
-	/*
-		cpIntoCmd := flag.NewFlagSet("cp-into", flag.ExitOnError)
-		cpIntoInput := cpIntoCmd.String("i", "", "What to copy, if empty stdin.")
-		cpIntoOut := cpIntoCmd.String("o", "", "Where to write the file to in Eggs")
-		cpIntoRun := func() {
-			path := filepath.Clean("/" + *cpIntoOut)
-			dirPath := filepath.Dir(path)
-			fileName := filepath.Base(path)
-			if fileName == dirPath {
-				fmt.Fprintf(os.Stderr, "Bad output path '%v'.\n", *cpIntoOut)
-				os.Exit(2)
-			}
-			client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+	cpIntoCmd := flag.NewFlagSet("cp-into", flag.ExitOnError)
+	cpIntoInput := cpIntoCmd.String("i", "", "What to copy, if empty stdin.")
+	cpIntoOut := cpIntoCmd.String("o", "", "Where to write the file to in Eggs")
+	cpIntoRun := func() {
+		path := filepath.Clean("/" + *cpIntoOut)
+		dirPath := filepath.Dir(path)
+		fileName := filepath.Base(path)
+		if fileName == dirPath {
+			fmt.Fprintf(os.Stderr, "Bad output path '%v'.\n", *cpIntoOut)
+			os.Exit(2)
+		}
+		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		if err != nil {
+			panic(err)
+		}
+		dirId, err := client.ResolvePath(log, dirPath)
+		if err != nil {
+			panic(err)
+		}
+		dirInfoCache := lib.NewDirInfoCache()
+		spanPolicies := msgs.SpanPolicy{}
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
+			panic(err)
+		}
+		blockPolicies := msgs.BlockPolicy{}
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
+			panic(err)
+		}
+		stripePolicy := msgs.StripePolicy{}
+		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
+			panic(err)
+		}
+		fileResp := msgs.ConstructFileResp{}
+		if err := client.ShardRequest(log, dirId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
+			panic(err)
+		}
+		fileId := fileResp.Id
+		cookie := fileResp.Cookie
+		var input io.Reader
+		if *cpIntoInput == "" {
+			input = os.Stdin
+		} else {
+			var err error
+			input, err = os.Open(*cpIntoInput)
 			if err != nil {
 				panic(err)
 			}
-			dirId, err := client.ResolvePath(log, dirPath)
-			if err != nil {
-				panic(err)
-			}
-			dirInfoCache := lib.NewDirInfoCache()
-			spanPolicies := msgs.SpanPolicy{}
-			if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
-				panic(err)
-			}
-			blockPolicies := msgs.BlockPolicy{}
-			if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
-				panic(err)
-			}
-			fileResp := msgs.ConstructFileResp{}
-			if err := client.ShardRequest(log, dirId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
-				panic(err)
-			}
-			fileId := fileResp.Id
-			cookie := fileResp.Cookie
-			var input io.Reader
-			if *cpIntoInput == "" {
-				input = os.Stdin
-			} else {
-				var err error
-				input, err = os.Open(*cpIntoInput)
-				if err != nil {
-					panic(err)
-				}
-			}
-			maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
-			spanBuf := make([]byte, maxSpanSize+16) // 16 = max zero padding
+		}
+		maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
+		spanBuf := make([]byte, maxSpanSize)
+		offset := uint64(0)
+		for {
 			spanBuf = spanBuf[:maxSpanSize]
-			offset := uint64(0)
-			for {
-				read, err := io.ReadFull(input, spanBuf)
-				if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-					panic(err)
-				}
-				if err == io.EOF {
-					break
-				}
-				spanBuf, err = client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, fileId, cookie, offset, &spanPolicies, &blockPolicies, offset, read, spanBuf[:read])
-				if err := client.CreateSpan(log, []msgs.BlockServiceBlacklist{}, fileId, cookie, offset, &spanPolicies, &blockPolicies, spanBuf[:read]); err != nil {
-					panic(err)
-				}
-				offset += uint64(read)
-				if read < len(spanBuf) {
-					break
-				}
-			}
-			if err := client.ShardRequest(log, dirId.Shard(), &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: dirId, Name: fileName}, &msgs.LinkFileResp{}); err != nil {
+			read, err := io.ReadFull(input, spanBuf)
+			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 				panic(err)
 			}
+			if err == io.EOF {
+				break
+			}
+			spanBuf, err = client.CreateSpan(
+				log, []msgs.BlockServiceId{}, &spanPolicies, &blockPolicies, &stripePolicy,
+				fileId, cookie, offset, uint32(read), spanBuf[:read],
+			)
+			if err != nil {
+				panic(err)
+			}
+			offset += uint64(read)
+			if read < len(spanBuf) {
+				break
+			}
 		}
-		commands["cp-into"] = commandSpec{
-			flags: cpIntoCmd,
-			run:   cpIntoRun,
+		if err := client.ShardRequest(log, dirId.Shard(), &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: dirId, Name: fileName}, &msgs.LinkFileResp{}); err != nil {
+			panic(err)
 		}
+	}
+	commands["cp-into"] = commandSpec{
+		flags: cpIntoCmd,
+		run:   cpIntoRun,
+	}
 
-		cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
-		cpOutofInput := cpOutofCmd.String("i", "", "What to copy from lib.")
-		cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
-		cpOutofExclude := cpOutofCmd.String("exclude", "", "What (if any) block services to exclude")
-		cpOutofRun := func() {
-			exclude := []msgs.BlockServiceBlacklist{}
-			if *cpOutofExclude != "" {
-				for _, s := range strings.Split(*cpOutofExclude, ",") {
-					u, err := strconv.ParseUint(s, 0, 64)
-					if err != nil {
-						panic(err)
-					}
-					exclude = append(exclude, msgs.BlockServiceBlacklist{Id: msgs.BlockServiceId(u)})
-				}
-			}
-			out := os.Stdout
-			if *cpOutofOut != "" {
-				var err error
-				out, err = os.Create(*cpOutofOut)
+	cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
+	cpOutofInput := cpOutofCmd.String("i", "", "What to copy from eggs.")
+	cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
+	cpOutofExclude := cpOutofCmd.String("exclude", "", "What (if any) block services to exclude")
+	cpOutofRun := func() {
+		exclude := []msgs.BlockServiceId{}
+		if *cpOutofExclude != "" {
+			for _, s := range strings.Split(*cpOutofExclude, ",") {
+				u, err := strconv.ParseUint(s, 0, 64)
 				if err != nil {
 					panic(err)
 				}
+				exclude = append(exclude, msgs.BlockServiceId(u))
 			}
-			client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		}
+		out := os.Stdout
+		if *cpOutofOut != "" {
+			var err error
+			out, err = os.Create(*cpOutofOut)
 			if err != nil {
 				panic(err)
 			}
-			id, err := client.ResolvePath(log, *cpOutofInput)
-			if err != nil {
-				panic(err)
-			}
-			offset := uint64(0)
-			buf := make([]byte, 100<<20+16)
-			for {
-				var data []byte
-				_, data, err = client.ReadSpan(log, exclude, id, offset, buf)
-				if err == msgs.SPAN_NOT_FOUND {
-					break
-				}
-				if err != nil {
-					panic(err)
-				}
-				out.Write(data)
-				offset += uint64(len(data))
-			}
 		}
-		commands["cp-outof"] = commandSpec{
-			flags: cpOutofCmd,
-			run:   cpOutofRun,
+		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		if err != nil {
+			panic(err)
 		}
-	*/
+		id, err := client.ResolvePath(log, *cpOutofInput)
+		if err != nil {
+			panic(err)
+		}
+		bufPool := lib.NewReadSpanBufPool()
+		r, err := client.ReadFile(log, bufPool, exclude, id)
+		if err != nil {
+			panic(err)
+		}
+		if _, err := out.ReadFrom(r); err != nil {
+			panic(err)
+		}
+	}
+	commands["cp-outof"] = commandSpec{
+		flags: cpOutofCmd,
+		run:   cpOutofRun,
+	}
 
 	flag.Parse()
 

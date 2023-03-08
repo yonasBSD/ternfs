@@ -544,7 +544,7 @@ func (of *openFile) ensureSpan() syscall.Errno {
 	}
 	span := &of.spans.Spans[of.currentSpanIx]
 	var err error
-	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, of.id, of.spans.BlockServices, span)
+	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, of.spans.BlockServices, span)
 	if err != nil {
 		return eggsErrToErrno(err)
 	}
@@ -694,7 +694,7 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	if len(resp.Spans) > 1 {
 		panic(fmt.Errorf("more than one span for symlink"))
 	}
-	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, n.id, resp.BlockServices, &resp.Spans[0])
+	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, resp.BlockServices, &resp.Spans[0])
 	if err != nil {
 		return nil, eggsErrToErrno(err)
 

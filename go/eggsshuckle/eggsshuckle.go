@@ -3,22 +3,22 @@ package main
 import (
 	"bytes"
 	_ "embed"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -492,7 +492,7 @@ var fileTemplateStr string
 
 type fileBlock struct {
 	Id           string
-	Crc32        string
+	Crc          string
 	BlockService string
 	Link         string
 }
@@ -500,13 +500,14 @@ type fileBlock struct {
 type fileSpan struct {
 	Offset       string
 	Size         string
-	Crc32        string
+	Crc          string
 	StorageClass string
-	BlockSize    string
+	CellSize     string
 	BodyBlocks   []fileBlock
 	BodyBytes    string
 	ParityBlocks int
 	DataBlocks   int
+	Stripes      uint8
 }
 
 type pathSegment struct {
@@ -519,6 +520,7 @@ type fileData struct {
 	Path         string // might be empty
 	Size         string
 	Mtime        string
+	DownloadLink string
 	AllInline    bool
 	Spans        []fileSpan
 	PathSegments []pathSegment
@@ -829,50 +831,50 @@ func handleInode(
 					data.Mtime = resp.Mtime.String()
 					data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
 				}
-				/*
-					{
-						req := msgs.FileSpansReq{FileId: id}
-						resp := msgs.FileSpansResp{}
-							for {
-								if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
-									panic(err)
-								}
-								for _, span := range resp.Spans {
-									fs := fileSpan{
-										Offset:       formatPreciseSize(span.ByteOffset),
-										Size:         formatPreciseSize(uint64(span.Size)),
-										Crc32:        hex.EncodeToString(span.Crc32[:]),
-										StorageClass: span.StorageClass.String(),
-										BlockSize:    formatPreciseSize(uint64(span.BlockSize)),
-										DataBlocks:   span.Parity.DataBlocks(),
-										ParityBlocks: span.Parity.ParityBlocks(),
+				data.DownloadLink = fmt.Sprintf("/files/%v?name=%v", id, data.PathSegments[len(data.PathSegments)-1].Segment)
+				{
+					req := msgs.FileSpansReq{FileId: id}
+					resp := msgs.FileSpansResp{}
+					for {
+						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+							panic(err)
+						}
+						for _, span := range resp.Spans {
+							fs := fileSpan{
+								Offset:       formatPreciseSize(span.Header.ByteOffset),
+								Size:         formatPreciseSize(uint64(span.Header.Size)),
+								Crc:          span.Header.Crc.String(),
+								StorageClass: span.Header.StorageClass.String(),
+							}
+							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+								fs.BodyBytes = fmt.Sprintf("%q", span.Body.(*msgs.FetchedInlineSpan).Body)
+							} else {
+								data.AllInline = false
+								body := span.Body.(*msgs.FetchedBlocksSpan)
+								fs.CellSize = formatPreciseSize(uint64(body.CellSize))
+								fs.DataBlocks = body.Parity.DataBlocks()
+								fs.ParityBlocks = body.Parity.ParityBlocks()
+								fs.Stripes = body.Stripes
+								blockSize := body.CellSize * uint32(body.Stripes)
+								for _, block := range body.Blocks {
+									blockService := resp.BlockServices[block.BlockServiceIx]
+									fb := fileBlock{
+										Id:           block.BlockId.String(),
+										BlockService: blockService.Id.String(),
+										Crc:          block.Crc.String(),
+										Link:         fmt.Sprintf("/blocks/%v/%v?size=%v", blockService.Id, block.BlockId, blockSize),
 									}
-									if len(span.BodyBytes) > 0 {
-										fs.BodyBytes = fmt.Sprintf("%q", span.BodyBytes)
-									} else {
-										data.AllInline = false
-									}
-
-									for _, block := range span.BodyBlocks {
-										blockService := resp.BlockServices[block.BlockServiceIx]
-										crcStr := hex.EncodeToString(block.Crc32[:])
-										fb := fileBlock{
-											Id:           block.BlockId.String(),
-											BlockService: blockService.Id.String(),
-											Crc32:        crcStr,
-											Link:         fmt.Sprintf("/blocks/%v/%v?size=%v&crc=%v", blockService.Id, block.BlockId, span.BlockSize, crcStr),
-										}
-										fs.BodyBlocks = append(fs.BodyBlocks, fb)
-									}
-									data.Spans = append(data.Spans, fs)
-								}
-								req.ByteOffset = resp.NextOffset
-								if req.ByteOffset == 0 {
-									break
+									fs.BodyBlocks = append(fs.BodyBlocks, fb)
 								}
 							}
+							data.Spans = append(data.Spans, fs)
+						}
+						req.ByteOffset = resp.NextOffset
+						if req.ByteOffset == 0 {
+							break
+						}
 					}
-				*/
+				}
 				return fileTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			}
 		},
@@ -904,14 +906,6 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 			if err != nil {
 				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad block size '%v'", query.Get("size"))))
 			}
-			crcBytes, err := hex.DecodeString(query.Get("crc"))
-			if err != nil || len(crcBytes) != 4 {
-				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad crc '%v'", query.Get("crc"))))
-			}
-			var crc msgs.Crc
-			if err := bincode.Unpack(crcBytes, &crc); err != nil {
-				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Bad crc '%v'", query.Get("crc"))))
-			}
 			var blockService msgs.BlockService
 			var conn *net.TCPConn
 			{
@@ -932,13 +926,64 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 					panic(err)
 				}
 			}
-			if err := lib.FetchBlock(log, conn, &blockService, blockId, crc, 0, uint32(size)); err != nil {
+			if err := lib.FetchBlock(log, conn, &blockService, blockId, 0, uint32(size)); err != nil {
 				panic(err)
 			}
 			w.Header().Set("Content-Type", "application/x-binary")
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%016x\"", uint64(blockId)))
 			log.Info("serving block of size %v", size)
 			return conn, int64(size), http.StatusOK
+		},
+	)
+}
+
+var readSpanBufPool *lib.ReadSpanBufPool
+
+func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+	handleWithRecover(
+		log, w, r,
+		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+			segments := strings.Split(r.URL.Path, "/")[1:]
+			if segments[0] != "files" {
+				panic(fmt.Errorf("bad path %v", r.URL.Path))
+			}
+			if len(segments) != 2 {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /files/<fileid>, got %v", r.URL.Path)))
+			}
+			fileIdU, err := strconv.ParseUint(segments[1], 0, 64)
+			if err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /blocks/<fileid>, got %v", r.URL.Path)))
+			}
+			fileId := msgs.InodeId(fileIdU)
+			fname := query.Get("name")
+			mimeType := mime.TypeByExtension(path.Ext(fname))
+			if fname == "" {
+				fname = fileId.String()
+			}
+			if mimeType == "" {
+				mimeType = "application/x-binary"
+			}
+
+			client := newClient(log, st)
+
+			statResp := msgs.StatFileResp{}
+			err = client.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &statResp)
+			if err == msgs.FILE_NOT_FOUND {
+				return sendPage(errorPage(http.StatusNotFound, fmt.Sprintf("could not find file %v", fileId)))
+			}
+			if err != nil {
+				panic(err)
+			}
+
+			r, err := client.ReadFile(log, readSpanBufPool, []msgs.BlockServiceId{}, fileId)
+			if err != nil {
+				panic(err)
+			}
+
+			w.Header().Set("Content-Type", mimeType)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fname))
+
+			return r, int64(statResp.Size), http.StatusOK
 		},
 	)
 }
@@ -978,6 +1023,12 @@ func setupRouting(log *lib.Logger, st *state) {
 	http.HandleFunc(
 		"/blocks/",
 		func(w http.ResponseWriter, r *http.Request) { handleBlock(log, st, w, r) },
+	)
+
+	// file serving
+	http.HandleFunc(
+		"/files/",
+		func(w http.ResponseWriter, r *http.Request) { handleFile(log, st, w, r) },
 	)
 
 	// pages
@@ -1030,6 +1081,8 @@ func main() {
 	ll.Info("  httpPort = %v", *httpPort)
 	ll.Info("  logFile = '%v'", *logFile)
 	ll.Info("  logLevel = %v", level)
+
+	readSpanBufPool = lib.NewReadSpanBufPool()
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {

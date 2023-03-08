@@ -887,7 +887,6 @@ func (c *Client) ReadSpan(
 	log *Logger,
 	bufPool *ReadSpanBufPool,
 	blacklist []msgs.BlockServiceId,
-	id msgs.InodeId,
 	blockServices []msgs.BlockService,
 	fetchedSpan *msgs.FetchedSpan,
 ) (io.ReadCloser, error) {
@@ -922,11 +921,86 @@ func (c *Client) ReadSpan(
 		if err != nil {
 			return nil, err
 		}
-		if err := FetchBlock(log, conn, &blockService, block.BlockId, block.Crc, offset, size); err != nil {
+		if err := FetchBlock(log, conn, &blockService, block.BlockId, offset, size); err != nil {
 			conn.Close()
 			return nil, err
 		}
 		return conn, err
 	}
 	return readSpanFromBlocks(bufPool, fetchedSpan.Header.Size, fetchedSpan.Header.Crc, body.Parity, body.Stripes, body.CellSize, blocksCrcs, body.StripesCrc, blockConn)
+}
+
+type fileReader struct {
+	client     *Client
+	log        *Logger
+	bufPool    *ReadSpanBufPool
+	blacklist  []msgs.BlockServiceId
+	fileId     msgs.InodeId
+	spansResp  msgs.FileSpansResp
+	spanReader io.ReadCloser
+}
+
+func (f *fileReader) Close() error {
+	if f.spanReader != nil {
+		return f.spanReader.Close()
+	}
+	return nil
+}
+
+func (f *fileReader) loadNextSpanAndRead(p []byte) (int, error) {
+	if len(f.spansResp.Spans) == 0 { // no remaining spans
+		if f.spansResp.NextOffset == 0 { // no remaining spans, and no next batch of spans available
+			return 0, io.EOF
+		} else { // request next spans and try again
+			req := msgs.FileSpansReq{FileId: f.fileId, ByteOffset: f.spansResp.NextOffset}
+			if err := f.client.ShardRequest(f.log, f.fileId.Shard(), &req, &f.spansResp); err != nil {
+				return 0, err
+			}
+			return f.Read(p)
+		}
+	} else { // load next span
+		if f.spanReader != nil {
+			if err := f.spanReader.Close(); err != nil {
+				return 0, err
+			}
+		}
+		var err error
+		f.spanReader, err = f.client.ReadSpan(f.log, f.bufPool, f.blacklist, f.spansResp.BlockServices, &f.spansResp.Spans[0])
+		if err != nil {
+			return 0, err
+		}
+		f.spansResp.Spans = f.spansResp.Spans[1:]
+		return f.Read(p)
+	}
+}
+
+func (f *fileReader) Read(p []byte) (int, error) {
+	if f.spanReader == nil {
+		return f.loadNextSpanAndRead(p)
+	}
+	spanRead, err := f.spanReader.Read(p)
+	if err == io.EOF {
+		return f.loadNextSpanAndRead(p)
+	}
+	return spanRead, err
+}
+
+func (c *Client) ReadFile(
+	log *Logger,
+	bufPool *ReadSpanBufPool,
+	blacklist []msgs.BlockServiceId,
+	id msgs.InodeId,
+) (io.ReadCloser, error) {
+	r := &fileReader{
+		client:    c,
+		log:       log,
+		bufPool:   bufPool,
+		blacklist: blacklist,
+		fileId:    id,
+	}
+	req := msgs.FileSpansReq{FileId: r.fileId, ByteOffset: r.spansResp.NextOffset}
+	if err := r.client.ShardRequest(r.log, r.fileId.Shard(), &req, &r.spansResp); err != nil {
+		return nil, err
+	}
+	return r, nil
 }

@@ -535,6 +535,8 @@ type BlocksConn interface {
 	io.Reader
 	io.ReaderFrom
 	io.Closer
+
+	Taint()
 }
 
 type trackedBlocksConn struct {
@@ -577,8 +579,18 @@ func (c *trackedBlocksConn) Close() error {
 	}
 }
 
+func (c *trackedBlocksConn) Taint() {
+	c.tainted = true
+}
+
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
+//
+// The connections might be cached, assuming no errors are present when
+// doing read/write/etc. This means that, before closing, you need to
+// consume the current stream fully for future users. If you explicitly
+// do not want to do that, call `Taint()` to prevent the caching after
+// `Close()`.
 func (c *Client) GetBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
 	conn, err := c.blocksConns.get(blockServiceId, time.Now(), func() (any, error) {
 		return BlockServiceConnection(log, ip1, port1, ip2, port2)

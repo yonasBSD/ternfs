@@ -22,7 +22,7 @@ func printCrc32(name string, r io.Reader) {
 		}
 		crc = crc32c.Sum(crc, buf[:read])
 	}
-	fmt.Printf("%v %v\n", name, msgs.Crc(crc))
+	fmt.Printf("%v %v\n", msgs.Crc(crc), name)
 }
 
 func main() {

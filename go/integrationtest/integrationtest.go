@@ -92,7 +92,7 @@ func runTest(
 
 	counters := &lib.ClientCounters{}
 
-	fmt.Printf("running %s, %s\n", name, extra)
+	fmt.Printf("running %s test, %s\n", name, extra)
 	t0 := time.Now()
 	run(counters)
 	elapsed := time.Since(t0)
@@ -153,7 +153,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		log,
 		shuckleAddress,
 		filter,
-		"file history test",
+		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(counters *lib.ClientCounters) {
 			fileHistoryTest(log, shuckleAddress, &fileHistoryOpts, counters)
@@ -180,7 +180,7 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		log,
 		shuckleAddress,
 		filter,
-		"direct fs test",
+		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
 			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
@@ -191,10 +191,24 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		log,
 		shuckleAddress,
 		filter,
-		"fuse fs test",
+		"fuse fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
 			fsTest(log, shuckleAddress, &fsTestOpts, counters, fuseMountPoint)
+		},
+	)
+
+	largeFileOpts := largeFileTestOpts{
+		fileSize: 1 << 30, // 1GiB
+	}
+	runTest(
+		log,
+		shuckleAddress,
+		filter,
+		"large file",
+		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
+		func(counters *lib.ClientCounters) {
+			largeFileTest(log, shuckleAddress, &largeFileOpts, counters, fuseMountPoint)
 		},
 	)
 
@@ -362,7 +376,7 @@ func main() {
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            eggsFuseExe,
-		Path:           path.Join(*dataDir, "eggsfuse"),
+		Path:           path.Join(*dataDir, "fuse"),
 		LogLevel:       level,
 		Wait:           true,
 		ShuckleAddress: shuckleAddress,

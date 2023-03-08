@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
@@ -271,10 +272,76 @@ func (c *Client) CreateSpan(
 	return data, nil
 }
 
+func (c *Client) CreateFile(
+	log *Logger,
+	dirInfoCache *DirInfoCache,
+	path string, // must be absolute
+	r io.Reader,
+) (msgs.InodeId, error) {
+	if path[0] != '/' {
+		return 0, fmt.Errorf("non-absolute file path %v", path)
+	}
+	dirPath := filepath.Dir(path)
+	fileName := filepath.Base(path)
+	if fileName == dirPath {
+		return 0, fmt.Errorf("bad file path %v", path)
+	}
+	dirId, err := c.ResolvePath(log, dirPath)
+	if err != nil {
+		return 0, err
+	}
+	spanPolicies := msgs.SpanPolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
+		return 0, err
+	}
+	blockPolicies := msgs.BlockPolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
+		return 0, err
+	}
+	stripePolicy := msgs.StripePolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
+		return 0, err
+	}
+	fileResp := msgs.ConstructFileResp{}
+	if err := c.ShardRequest(log, dirId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
+		return 0, err
+	}
+	fileId := fileResp.Id
+	cookie := fileResp.Cookie
+	maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
+	spanBuf := make([]byte, maxSpanSize)
+	offset := uint64(0)
+	for {
+		spanBuf = spanBuf[:maxSpanSize]
+		read, err := io.ReadFull(r, spanBuf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return 0, err
+		}
+		if err == io.EOF {
+			break
+		}
+		spanBuf, err = c.CreateSpan(
+			log, []msgs.BlockServiceId{}, &spanPolicies, &blockPolicies, &stripePolicy,
+			fileId, cookie, offset, uint32(read), spanBuf[:read],
+		)
+		if err != nil {
+			return 0, err
+		}
+		offset += uint64(read)
+		if read < int(maxSpanSize) {
+			break
+		}
+	}
+	if err := c.ShardRequest(log, dirId.Shard(), &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: dirId, Name: fileName}, &msgs.LinkFileResp{}); err != nil {
+		return 0, err
+	}
+	return fileId, nil
+}
+
 type mirroredSpanReader struct {
 	cursor    int
 	block     int
-	blockConn io.ReadCloser
+	blockConn TaintableReadCloser
 	cellBuf   *[]byte
 	cellCrcs  []msgs.Crc // starting from the _next_ stripe crc
 }
@@ -283,11 +350,15 @@ func (r *mirroredSpanReader) Close() error {
 	return r.blockConn.Close()
 }
 
+func (r *mirroredSpanReader) Taint() {
+	r.blockConn.Taint()
+}
+
 type rsNormalSpanReader struct {
 	bufPool           *ReadSpanBufPool
 	cursor            int
 	haveBlocks        []uint8 // which blocks are we fetching. most of the times it'll just be the data blocks
-	blockConns        []io.ReadCloser
+	blockConns        []TaintableReadCloser
 	blocksRunningCrcs []msgs.Crc
 	stripeBuf         *[]byte
 	stripeCrcs        []msgs.Crc // starting from the _next_ stripe CRC.
@@ -309,6 +380,12 @@ func (sr *rsNormalSpanReader) Close() error {
 	return lastErr
 }
 
+func (sr *rsNormalSpanReader) Taint() {
+	for _, c := range sr.blockConns {
+		c.Taint()
+	}
+}
+
 // This is when we actively detect a bad CRC, and we have no choice but to load
 // the remainder of the span in its entirety to find out which block is broken,
 // and then resume.
@@ -326,6 +403,8 @@ func (r *rsCorruptedSpanReader) Close() error {
 	return nil
 }
 
+func (*rsCorruptedSpanReader) Taint() {}
+
 type spanReader struct {
 	bufPool    *ReadSpanBufPool
 	spanSize   uint32
@@ -336,12 +415,16 @@ type spanReader struct {
 	stripes    uint8
 	cellSize   uint32
 	blocksCrcs []msgs.Crc
-	blockConn  func(block int, offset uint32, size uint32) (io.ReadCloser, error)
-	r          io.Closer
+	blockConn  func(block int, offset uint32, size uint32) (TaintableReadCloser, error)
+	r          TaintableCloser
 }
 
 func (sr *spanReader) Close() error {
 	return sr.r.Close()
+}
+
+func (sr *spanReader) Taint() {
+	sr.r.Taint()
 }
 
 func (sr *spanReader) repairCorruptedStripe(
@@ -352,7 +435,7 @@ func (sr *spanReader) repairCorruptedStripe(
 	parityData []*[]byte,
 	haveBlocks []uint8, // the blocks we have been using so far
 	haveBlocksCrc []msgs.Crc, // the CRCs so far for the blocks that we have
-	haveBlocksConns []io.ReadCloser, // the connections to the blocks we already have
+	haveBlocksConns []TaintableReadCloser, // the connections to the blocks we already have
 ) (*rsCorruptedSpanReader, error) {
 	D := sr.parity.DataBlocks()
 	B := sr.parity.Blocks()
@@ -739,8 +822,8 @@ func readSpanFromBlocks(
 	//
 	// We currently make the assumption that the connections that are available
 	// at the beginning will be available throughout the duration of span reading.
-	blockConn func(block int, offset uint32, size uint32) (io.ReadCloser, error),
-) (io.ReadCloser, error) {
+	blockConn func(block int, offset uint32, size uint32) (TaintableReadCloser, error),
+) (TaintableReadCloser, error) {
 	D := parity.DataBlocks()
 	B := parity.Blocks()
 	sr := spanReader{
@@ -778,7 +861,7 @@ func readSpanFromBlocks(
 			return nil, err
 		}
 	} else {
-		conns := make([]io.ReadCloser, 0)
+		conns := make([]TaintableReadCloser, 0)
 		haveBlocks := make([]uint8, 0)
 		parityBuffers := []*[]byte{}
 		for i := 0; i < B; i++ {
@@ -844,9 +927,11 @@ func (r *inlineSpanReader) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func (r *inlineSpanReader) Close() error {
+func (*inlineSpanReader) Close() error {
 	return nil
 }
+
+func (*inlineSpanReader) Taint() {}
 
 type ReadSpanBufPool struct {
 	pool sync.Pool
@@ -889,7 +974,8 @@ func (c *Client) ReadSpan(
 	blacklist []msgs.BlockServiceId,
 	blockServices []msgs.BlockService,
 	fetchedSpan *msgs.FetchedSpan,
-) (io.ReadCloser, error) {
+) (TaintableReadCloser, error) {
+	log.DebugStack(1, "starting to read span")
 	if fetchedSpan.Header.StorageClass == msgs.INLINE_STORAGE {
 		data := fetchedSpan.Body.(*msgs.FetchedInlineSpan).Body
 		dataCrc := msgs.Crc(crc32c.Sum(0, data))
@@ -909,7 +995,8 @@ func (c *Client) ReadSpan(
 	for i := range blocksCrcs {
 		blocksCrcs[i] = body.Blocks[i].Crc
 	}
-	blockConn := func(blockIx int, offset uint32, size uint32) (io.ReadCloser, error) {
+	blockConn := func(blockIx int, offset uint32, size uint32) (TaintableReadCloser, error) {
+		log.DebugStack(1, "requested connection for block ix %v, offset %v, size %v", blockIx, offset, size)
 		block := body.Blocks[blockIx]
 		blockService := blockServices[block.BlockServiceIx]
 		for _, blacklisted := range blacklist {

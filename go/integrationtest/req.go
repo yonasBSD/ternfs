@@ -64,7 +64,6 @@ func createFile(
 	spanSize uint32,
 	name string,
 	size uint64,
-	trailingZeros uint32,
 	dataSeed uint64,
 	buf *[]byte,
 ) (id msgs.InodeId, creationTime msgs.EggsTime) {
@@ -76,7 +75,7 @@ func createFile(
 	constructResp := msgs.ConstructFileResp{}
 	shardReq(log, client, dirId.Shard(), &constructReq, &constructResp)
 	rand := wyhash.New(dataSeed)
-	if size+uint64(trailingZeros) > 0 {
+	if size > 0 {
 		var spanPolicy msgs.SpanPolicy
 		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicy); err != nil {
 			panic(err)
@@ -92,10 +91,8 @@ func createFile(
 		// add spans
 		for offset := uint64(0); offset < size; offset += uint64(spanSize) {
 			thisSpanSize := spanSize
-			spanTrailingZeros := uint32(0)
 			if uint32(size-offset) < thisSpanSize {
 				thisSpanSize = uint32(size - offset)
-				spanTrailingZeros = trailingZeros
 			}
 			if len(*buf) < int(thisSpanSize) {
 				*buf = append(*buf, make([]byte, int(thisSpanSize)-len(*buf))...)
@@ -103,7 +100,7 @@ func createFile(
 			spanBuf := (*buf)[:thisSpanSize]
 			rand.Read(spanBuf)
 			var err error
-			*buf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize+spanTrailingZeros), spanBuf)
+			*buf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
 			if err != nil {
 				panic(err)
 			}
@@ -137,7 +134,7 @@ func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client,
 		for i := range spansResp.Spans {
 			span := &spansResp.Spans[i]
 			// TODO random blacklist
-			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceId{}, id, spansResp.BlockServices, span)
+			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceId{}, spansResp.BlockServices, span)
 			if err != nil {
 				panic(err)
 			}

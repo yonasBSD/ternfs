@@ -732,7 +732,8 @@ struct ShardDBImpl {
                     break;
                 }
                 auto value = ExternalValue<SpanBody>::FromSlice(it->value());
-                if (key().offset()+value().size() < req.byteOffset) { // can only happens if the first cursor is out of bounds
+                if (key().offset()+value().spanSize() < req.byteOffset) { // can only happens if the first cursor is out of bounds
+                    LOG_DEBUG(_env, "exiting early from spans since current key starts at %s and ends at %s, which is less than offset %s", key().offset(), key().offset()+value().spanSize(), req.byteOffset);
                     break;
                 }
                 auto& respSpan = resp.spans.els.emplace_back();

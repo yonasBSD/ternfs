@@ -530,13 +530,26 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, nil
 }
 
+type Taintable interface {
+	Taint()
+}
+
+type TaintableReadCloser interface {
+	io.ReadCloser
+	Taintable
+}
+
+type TaintableCloser interface {
+	io.Closer
+	Taintable
+}
+
 type BlocksConn interface {
 	io.Writer
 	io.Reader
 	io.ReaderFrom
 	io.Closer
-
-	Taint()
+	Taintable
 }
 
 type trackedBlocksConn struct {

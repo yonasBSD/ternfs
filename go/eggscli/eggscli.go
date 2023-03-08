@@ -271,39 +271,10 @@ func main() {
 	cpIntoOut := cpIntoCmd.String("o", "", "Where to write the file to in Eggs")
 	cpIntoRun := func() {
 		path := filepath.Clean("/" + *cpIntoOut)
-		dirPath := filepath.Dir(path)
-		fileName := filepath.Base(path)
-		if fileName == dirPath {
-			fmt.Fprintf(os.Stderr, "Bad output path '%v'.\n", *cpIntoOut)
-			os.Exit(2)
-		}
 		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
 		if err != nil {
 			panic(err)
 		}
-		dirId, err := client.ResolvePath(log, dirPath)
-		if err != nil {
-			panic(err)
-		}
-		dirInfoCache := lib.NewDirInfoCache()
-		spanPolicies := msgs.SpanPolicy{}
-		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
-			panic(err)
-		}
-		blockPolicies := msgs.BlockPolicy{}
-		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
-			panic(err)
-		}
-		stripePolicy := msgs.StripePolicy{}
-		if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
-			panic(err)
-		}
-		fileResp := msgs.ConstructFileResp{}
-		if err := client.ShardRequest(log, dirId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
-			panic(err)
-		}
-		fileId := fileResp.Id
-		cookie := fileResp.Cookie
 		var input io.Reader
 		if *cpIntoInput == "" {
 			input = os.Stdin
@@ -314,33 +285,11 @@ func main() {
 				panic(err)
 			}
 		}
-		maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
-		spanBuf := make([]byte, maxSpanSize)
-		offset := uint64(0)
-		for {
-			spanBuf = spanBuf[:maxSpanSize]
-			read, err := io.ReadFull(input, spanBuf)
-			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-				panic(err)
-			}
-			if err == io.EOF {
-				break
-			}
-			spanBuf, err = client.CreateSpan(
-				log, []msgs.BlockServiceId{}, &spanPolicies, &blockPolicies, &stripePolicy,
-				fileId, cookie, offset, uint32(read), spanBuf[:read],
-			)
-			if err != nil {
-				panic(err)
-			}
-			offset += uint64(read)
-			if read < len(spanBuf) {
-				break
-			}
-		}
-		if err := client.ShardRequest(log, dirId.Shard(), &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: dirId, Name: fileName}, &msgs.LinkFileResp{}); err != nil {
+		fileId, err := client.CreateFile(log, lib.NewDirInfoCache(), path, input)
+		if err != nil {
 			panic(err)
 		}
+		log.Info("File created as %v", fileId)
 	}
 	commands["cp-into"] = commandSpec{
 		flags: cpIntoCmd,

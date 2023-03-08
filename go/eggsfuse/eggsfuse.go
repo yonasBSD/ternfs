@@ -23,6 +23,14 @@ var dirInfoCache *lib.DirInfoCache
 var readBufPool *lib.ReadSpanBufPool
 var writeBufPool *sync.Pool
 
+type statCache struct {
+	size  uint64
+	mtime msgs.EggsTime
+}
+
+var fileStatCacheMu sync.RWMutex
+var fileStatCache map[msgs.InodeId]statCache
+
 func eggsErrToErrno(err error) syscall.Errno {
 	switch err {
 	case msgs.INTERNAL_ERROR:
@@ -319,12 +327,24 @@ func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 			return err
 		}
 	} else {
-		resp := msgs.StatFileResp{}
-		if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &resp); err != 0 {
-			return err
+		fileStatCacheMu.RLock()
+		cached, found := fileStatCache[n.id]
+		fileStatCacheMu.RUnlock()
+
+		if !found {
+			resp := msgs.StatFileResp{}
+			if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &resp); err != 0 {
+				return err
+			}
+			cached.mtime = resp.Mtime
+			cached.size = resp.Size
+			fileStatCacheMu.Lock()
+			fileStatCache[n.id] = cached
+			fileStatCacheMu.Unlock()
 		}
-		out.Size = resp.Size
-		mtime := msgs.EGGS_EPOCH + uint64(resp.Mtime)
+
+		out.Size = cached.size
+		mtime := msgs.EGGS_EPOCH + uint64(cached.mtime)
 		mtimesec := mtime / 1000000000
 		mtimens := uint32(mtime % 1000000000)
 		out.Ctime = mtimesec
@@ -494,13 +514,11 @@ type openFile struct {
 	id   msgs.InodeId
 	size uint64 // total size of file
 
-	// We store the last successful span resp
-	spans *msgs.FileSpansResp
+	spanReader lib.TaintableReadCloser // the span we're currently reading from
+	readOffset int64                   // the offset we're currently reading at, in the span reader above
 
-	// The span we're currently in
-	currentSpanIx int
-	spanReader    io.ReadCloser // the span reader
-	offset        int64         // the current reading offset
+	// We store the last successful span resp, to avoid re-issuing it if we can
+	spans *msgs.FileSpansResp
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -511,55 +529,76 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 		return nil, 0, err
 	}
 	of := openFile{
-		id:     n.id,
-		size:   statResp.Size,
-		offset: -1,
+		id:         n.id,
+		size:       statResp.Size,
+		readOffset: -1,
 	}
 	return &of, 0, 0
 }
 
-// ensures that the span reader is at the current offset.
-func (of *openFile) ensureSpan() syscall.Errno {
-	if of.offset < 0 || of.offset >= int64(of.size) {
-		panic(fmt.Errorf("of.offset=%v < 0 || of.offset=%v >= of.size=%v", of.offset, of.offset, of.size))
+func (of *openFile) lookupSpan(offset int64) ([]msgs.BlockService, *msgs.FetchedSpan) {
+	for i := 0; i < len(of.spans.Spans); i++ {
+		span := &of.spans.Spans[i]
+		if int64(span.Header.ByteOffset) <= offset && offset < int64(span.Header.ByteOffset)+int64(span.Header.Size) {
+			log.Debug("picking span starting at %v, of size %v", span.Header.ByteOffset, span.Header.Size)
+			return of.spans.BlockServices, span
+		}
 	}
-	of.currentSpanIx = -1
+	return nil, nil
+}
+
+func (of *openFile) getSpan(offset int64) ([]msgs.BlockService, *msgs.FetchedSpan, syscall.Errno) {
 	// check if we're within current span index
 	if of.spans != nil {
-		for i := 0; i < len(of.spans.Spans); i++ {
-			span := &of.spans.Spans[i]
-			if int64(span.Header.ByteOffset) <= of.offset && of.offset < int64(span.Header.ByteOffset)+int64(span.Header.Size) {
-				of.currentSpanIx = i
-				break
-			}
+		blockServices, span := of.lookupSpan(offset)
+		if blockServices != nil {
+			return blockServices, span, 0
 		}
 	}
-	// we're not within the span index, download new batch of spans
-	if of.currentSpanIx < 0 {
-		of.spans = &msgs.FileSpansResp{}
-		if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(of.offset)}, of.spans); err != 0 {
+	// we need to fetch the spans again
+	of.spans = &msgs.FileSpansResp{}
+	if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(offset)}, of.spans); err != 0 {
+		return nil, nil, eggsErrToErrno(err)
+	}
+	blockServices, span := of.lookupSpan(offset)
+	if blockServices == nil {
+		panic(fmt.Errorf("couldn't get span at offset %v", offset))
+	}
+	return blockServices, span, 0
+}
+
+// ensures that the span reader is at the current offset.
+func (of *openFile) getSpanReaderAt(offset int64) syscall.Errno {
+	if offset < 0 || offset >= int64(of.size) {
+		panic(fmt.Errorf("offset=%v < 0 || offset=%v >= of.size=%v", offset, offset, of.size))
+	}
+	if of.spanReader != nil {
+		panic(fmt.Errorf("we already have a span reader, close it explicitly first (it's non obvious how to from here)"))
+	}
+	blockServices, fetchedSpan, err := of.getSpan(offset)
+	if err != 0 {
+		return err
+	}
+	{
+		var err error
+		of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, blockServices, fetchedSpan)
+		if err != nil {
 			return eggsErrToErrno(err)
 		}
-		of.currentSpanIx = 0
 	}
-	span := &of.spans.Spans[of.currentSpanIx]
-	var err error
-	of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, of.spans.BlockServices, span)
-	if err != nil {
-		return eggsErrToErrno(err)
-	}
-	currentOffset := int64(span.Header.ByteOffset)
+	of.readOffset = int64(fetchedSpan.Header.ByteOffset)
+	// fast forward to what we're interested
 	var buf [256]byte
-	for currentOffset < of.offset {
+	for of.readOffset < offset {
 		end := 256
-		if of.offset-currentOffset < 256 {
-			end = int(of.offset - currentOffset)
+		if offset-of.readOffset < 256 {
+			end = int(offset - of.readOffset)
 		}
 		read, err := of.spanReader.Read(buf[:end])
 		if err != nil {
 			return eggsErrToErrno(err)
 		}
-		currentOffset += int64(read)
+		of.readOffset += int64(read)
 	}
 	return 0
 }
@@ -577,13 +616,14 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 	}
 
 	// If the offset has changed, reset
-	if off != of.offset {
-		log.Debug("mismatching offset (%v vs %v), will reset span", off, of.offset)
+	if off != of.readOffset {
+		log.Debug("mismatching offset (%v vs %v), will reset span", off, of.readOffset)
 		if of.spanReader != nil {
+			of.spanReader.Taint()
 			of.spanReader.Close()
+			of.spanReader = nil
 		}
-		of.offset = off
-		if err := of.ensureSpan(); err != 0 {
+		if err := of.getSpanReaderAt(off); err != 0 {
 			return 0, err
 		}
 	}
@@ -591,11 +631,16 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 	read, err := of.spanReader.Read(dest)
 	if err == io.EOF { // load next span
 		log.Debug("finished reading current span, loading next")
+		// close normally here so that we can reuse the connections
 		of.spanReader.Close()
-		if err := of.ensureSpan(); err != 0 {
+		of.spanReader = nil
+		if err := of.getSpanReaderAt(off); err != 0 {
 			return 0, err
 		}
+		read, err = of.spanReader.Read(dest)
 	}
+
+	of.readOffset += int64(read)
 
 	if err != nil {
 		return int64(read), eggsErrToErrno(err)
@@ -605,9 +650,8 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
 	if of.spanReader != nil {
-		if err := of.spanReader.Close(); err != nil {
-			return eggsErrToErrno(err)
-		}
+		of.spanReader.Taint()
+		of.spanReader.Close()
 	}
 	return 0
 }
@@ -631,6 +675,7 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 			break
 		}
 	}
+	log.Debug("read %v bytes", internalOff)
 	return fuse.ReadResultData(dest[:internalOff]), 0
 }
 
@@ -805,6 +850,8 @@ func main() {
 	}
 
 	dirInfoCache = lib.NewDirInfoCache()
+
+	fileStatCache = make(map[msgs.InodeId]statCache)
 
 	writeBufPool = &sync.Pool{
 		New: func() any {

@@ -754,66 +754,25 @@ func handleInode(
 						}
 					}
 				}
-				/*
-					{
-						data.Info = []directoryInfoEntry{}
-						dirInfoCache := lib.NewDirInfoCache()
-						snapshot := &msgs.SnapshotPolicy{}
-						inheritedFrom, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, snapshot)
+				{
+					data.Info = []directoryInfoEntry{}
+					dirInfoCache := lib.NewDirInfoCache()
+					populateInfo := func(info msgs.IsDirectoryInfoEntry) {
+						inheritedFrom, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, info)
 						if err != nil {
 							panic(err)
 						}
-						snapshotData := snapshotPolicy{}
-						if snapshot.DeleteAfterTime.Active() {
-							snapshotData.DeleteAfterTime = snapshot.DeleteAfterTime.Time().String()
-						}
-						if snapshot.DeleteAfterVersions.Active() {
-							snapshotData.DeleteAfterVersions = fmt.Sprintf("%v", snapshot.DeleteAfterVersions.Versions())
-						}
-						entry := directoryInfoEntry{
-							Tag:  snapshot.Tag().String(),
-							Body: fmt.Sprintf("%+v", snapshotData),
-						}
-						if inheritedFrom != id {
-							entry.InheritedFrom = inheritedFrom.String()
-						}
-						data.Info = append(data.Info, entry)
-						span := &msgs.SpanPolicy{}
-						inheritedFrom, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, span)
-						if err != nil {
-							panic(err)
-						}
-						spanData := []sizePolicy{}
-						for _, s := range span.Entries {
-							spanData = append(spanData, sizePolicy{MaxSize: formatPreciseSize(uint64(s.MaxSize)), Body: s.Parity.String()})
-						}
-						entry = directoryInfoEntry{
-							Tag:  span.Tag().String(),
-							Body: fmt.Sprintf("%+v", spanData),
-						}
-						if inheritedFrom != id {
-							entry.InheritedFrom = inheritedFrom.String()
-						}
-						data.Info = append(data.Info, entry)
-						block := &msgs.BlockPolicy{}
-						inheritedFrom, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, block)
-						if err != nil {
-							panic(err)
-						}
-						blockData := []sizePolicy{}
-						for _, s := range block.Entries {
-							blockData = append(blockData, sizePolicy{MaxSize: formatPreciseSize(uint64(s.MaxSize)), Body: s.StorageClass.String()})
-						}
-						entry = directoryInfoEntry{
-							Tag:  block.Tag().String(),
-							Body: fmt.Sprintf("%+v", blockData),
-						}
-						if inheritedFrom != id {
-							entry.InheritedFrom = inheritedFrom.String()
-						}
-						data.Info = append(data.Info, entry)
+						data.Info = append(data.Info, directoryInfoEntry{
+							Tag:           info.Tag().String(),
+							Body:          fmt.Sprintf("%+v", info),
+							InheritedFrom: fmt.Sprintf("%v", inheritedFrom),
+						})
 					}
-				*/
+					populateInfo(&msgs.SnapshotPolicy{})
+					populateInfo(&msgs.SpanPolicy{})
+					populateInfo(&msgs.BlockPolicy{})
+					populateInfo(&msgs.StripePolicy{})
+				}
 				return directoryTemplate, &pageData{Title: title, Body: &data}, http.StatusOK
 			} else {
 				data := fileData{

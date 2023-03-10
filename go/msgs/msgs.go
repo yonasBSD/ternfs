@@ -120,6 +120,15 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (sclass *StorageClass) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*sclass = StorageClassFromString(s)
+	return nil
+}
+
 func (id BlockServiceId) String() string {
 	return fmt.Sprintf("0x%016x", uint64(id))
 }

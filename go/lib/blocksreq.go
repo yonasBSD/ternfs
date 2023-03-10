@@ -187,6 +187,7 @@ func WriteBlock(
 	if err := ReadBlocksResponse(logger, conn, &msgs.WriteBlockResp{}); err != nil {
 		return proof, err
 	}
+	logger.Debug("got blocks response, starting to write data")
 	lr := io.LimitedReader{
 		R: r,
 		N: int64(size),
@@ -194,10 +195,12 @@ func WriteBlock(
 	if _, err := conn.ReadFrom(&lr); err != nil {
 		return proof, fmt.Errorf("could not write block data to: %w", err)
 	}
+	logger.Debug("data written, getting proof")
 	writtenResp := msgs.BlockWrittenResp{}
 	if err := ReadBlocksResponse(logger, conn, &writtenResp); err != nil {
 		return proof, err
 	}
+	logger.Debug("proof received")
 	proof = writtenResp.Proof
 	return proof, nil
 }

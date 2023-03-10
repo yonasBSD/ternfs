@@ -19,9 +19,7 @@ type largeFileTestOpts struct {
 
 func largeFileTest(
 	log *lib.Logger,
-	shuckleAddress string,
 	opts *largeFileTestOpts,
-	counters *lib.ClientCounters,
 	mountPoint string,
 ) {
 	// create single 1GiB file

@@ -11,13 +11,13 @@ project(eggsfs)
 if(NOT CMAKE_BUILD_TYPE)
     set(
         CMAKE_BUILD_TYPE release CACHE STRING
-        "Choose the type of build, options are: 'debug', 'release', 'alpine', 'valgrind', 'sanitized', 'go'."
+        "Choose the type of build, options are: 'debug', 'release', 'alpine', 'valgrind', 'sanitized'."
         FORCE
     )
 endif()
 
-if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|sanitized|valgrind|go)$"))
-    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, go, got ${CMAKE_BUILD_TYPE}")
+if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|sanitized|valgrind)$"))
+    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, got ${CMAKE_BUILD_TYPE}")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -26,7 +26,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_SHARED_LIBS OFF)
 set(POSITION_INDEPENDENT_CODE off)
 add_compile_options(-fno-stack-protector -fdiagnostics-color=always -fno-stack-protector -g -gdwarf -Wall -Wextra -Wno-sign-compare -Wno-unused-parameter -Wno-unused-variable -Wno-gnu-string-literal-operator-template -Wno-format-security)
-add_link_options("$<$<NOT:$<CONFIG:go>>:-no-pie>")
 add_link_options(-fuse-ld=lld -pthread)
 
 # valgrind we currently use cannot digest certain instructions
@@ -40,7 +39,7 @@ add_compile_options("$<$<CONFIG:debug>:-O;-DEGGS_DEBUG>")
 # We build the release build statically in Alpine
 add_compile_options("$<$<CONFIG:alpine>:-DEGGS_ALPINE>")
 add_link_options("$<$<CONFIG:alpine>:-static>")
-add_link_options("$<$<NOT:$<CONFIG:alpine,go>>:-no-pie>")
+add_link_options("$<$<NOT:$<CONFIG:alpine>>:-no-pie>")
 
 # sanitizer options
 set(SANITIZE_OPTIONS "-fsanitize=undefined,address,integer,function;-fno-sanitize-recover=all;-fsanitize-blacklist=${CMAKE_SOURCE_DIR}/ubsan-ignorelist")

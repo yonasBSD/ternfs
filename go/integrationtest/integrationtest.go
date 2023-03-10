@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"strings"
@@ -208,7 +209,39 @@ func runTests(terminateChan chan any, log *lib.Logger, shuckleAddress string, fu
 		"large file",
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
 		func(counters *lib.ClientCounters) {
-			largeFileTest(log, shuckleAddress, &largeFileOpts, counters, fuseMountPoint)
+			largeFileTest(log, &largeFileOpts, fuseMountPoint)
+		},
+	)
+
+	rsyncOpts := rsyncTestOpts{
+		maxFileSize: 200 << 20, // 200MiB
+		numFiles:    100,       // 20GiB
+		numDirs:     10,
+	}
+	runTest(
+		log,
+		shuckleAddress,
+		filter,
+		"rsync large files",
+		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
+		func(counters *lib.ClientCounters) {
+			rsyncTest(log, &rsyncOpts, fuseMountPoint)
+		},
+	)
+
+	rsyncOpts = rsyncTestOpts{
+		maxFileSize: 1 << 20, // 1Mib
+		numFiles:    10000,   // 10GiB
+		numDirs:     1000,
+	}
+	runTest(
+		log,
+		shuckleAddress,
+		filter,
+		"rsync small files",
+		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
+		func(counters *lib.ClientCounters) {
+			rsyncTest(log, &rsyncOpts, fuseMountPoint)
 		},
 	)
 
@@ -234,6 +267,7 @@ func main() {
 	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
+	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -267,6 +301,14 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	if *repoDir == "" {
+		_, filename, _, ok := runtime.Caller(0)
+		if !ok {
+			panic("no caller information")
+		}
+		*repoDir = path.Dir(path.Dir(path.Dir(filename)))
+	}
+
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File
 	{
@@ -288,10 +330,8 @@ func main() {
 	log := lib.NewLogger(level, logOut)
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
-	cppExes := managedprocess.BuildCppExes(log, *buildType)
-	shuckleExe := managedprocess.BuildShuckleExe(log)
-	blockServiceExe := managedprocess.BuildBlockServiceExe(log)
-	eggsFuseExe := managedprocess.BuildEggsFuseExe(log)
+	cppExes := managedprocess.BuildCppExes(log, *repoDir, *buildType)
+	goExes := managedprocess.BuildGoExes(log, *repoDir)
 
 	terminateChan := make(chan any, 1)
 
@@ -302,7 +342,7 @@ func main() {
 	shucklePort := uint16(55555)
 	shuckleAddress := fmt.Sprintf("localhost:%v", shucklePort)
 	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
-		Exe:         shuckleExe,
+		Exe:         goExes.ShuckleExe,
 		BincodePort: shucklePort,
 		LogLevel:    level,
 		Dir:         path.Join(*dataDir, "shuckle"),
@@ -317,7 +357,7 @@ func main() {
 			storageClass = msgs.FLASH_STORAGE
 		}
 		procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
-			Exe:            blockServiceExe,
+			Exe:            goExes.BlocksExe,
 			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			StorageClass:   storageClass,
 			FailureDomain:  fmt.Sprintf("%d", i),
@@ -338,7 +378,7 @@ func main() {
 	}
 
 	// Start CDC
-	procs.StartCDC(log, &managedprocess.CDCOpts{
+	procs.StartCDC(log, *repoDir, &managedprocess.CDCOpts{
 		Exe:            cppExes.CDCExe,
 		Dir:            path.Join(*dataDir, "cdc"),
 		LogLevel:       level,
@@ -364,7 +404,7 @@ func main() {
 			ShuckleAddress:     shuckleAddress,
 			OwnIp:              "127.0.0.1",
 		}
-		procs.StartShard(log, &shopts)
+		procs.StartShard(log, *repoDir, &shopts)
 	}
 
 	waitShuckleFor := 5 * time.Second
@@ -375,7 +415,7 @@ func main() {
 	lib.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-		Exe:            eggsFuseExe,
+		Exe:            goExes.FuseExe,
 		Path:           path.Join(*dataDir, "fuse"),
 		LogLevel:       level,
 		Wait:           true,

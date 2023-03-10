@@ -14,13 +14,14 @@ else:
     build_type = sys.argv[1]
 
 cpp_dir = Path(__file__).parent
+repo_dir = cpp_dir.parent
 
 build_dir = cpp_dir / 'build' / build_type
 build_dir.mkdir(parents=True, exist_ok=True)
 
 if build_type == 'alpine' and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
     subprocess.run(
-        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={cpp_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/build.py', 'alpine'],
+        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/cpp/build.py', 'alpine'] + sys.argv[2:],
         check=True,
     )
 else:

@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,28 +21,12 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func pythonDir() string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("no caller information")
-	}
-	return path.Join(path.Dir(path.Dir(path.Dir(filename))), "python")
+func goDir(repoDir string) string {
+	return path.Join(repoDir, "go")
 }
 
-func goDir() string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("no caller information")
-	}
-	return path.Dir(path.Dir(filename))
-}
-
-func cppDir() string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("no caller information")
-	}
-	return path.Join(path.Dir(path.Dir(path.Dir(filename))), "cpp")
+func cppDir(repoDir string) string {
+	return path.Join(repoDir, "cpp")
 }
 
 type ManagedProcess struct {
@@ -244,16 +227,6 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 	}()
 }
 
-func (procs *ManagedProcesses) StartPythonScript(
-	ll *lib.Logger, name string, script string, args []string, mpArgs *ManagedProcessArgs,
-) {
-	mpArgs.Name = name
-	mpArgs.Exe = "python"
-	mpArgs.Args = append([]string{script}, args...)
-	mpArgs.Dir = pythonDir()
-	procs.Start(ll, mpArgs)
-}
-
 type BlockServiceOpts struct {
 	Exe            string
 	Path           string
@@ -393,40 +366,26 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	})
 }
 
-func BuildShuckleExe(ll *lib.Logger) string {
-	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "eggsshuckle")
-	ll.Info("building shuckle")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Printf("build output:\n")
-		os.Stdout.Write(out)
-		panic(fmt.Errorf("could not build shuckle: %w", err))
-	}
-	return path.Join(buildCmd.Dir, "eggsshuckle")
+type GoExes struct {
+	ShuckleExe string
+	BlocksExe  string
+	FuseExe    string
 }
 
-func BuildBlockServiceExe(ll *lib.Logger) string {
-	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "eggsblocks")
-	ll.Info("building block service")
+func BuildGoExes(ll *lib.Logger, repoDir string) *GoExes {
+	buildCmd := exec.Command("./build.py", "eggsshuckle", "eggsblocks", "eggsfuse")
+	buildCmd.Dir = goDir(repoDir)
+	ll.Info("building shuckle/blocks/fuse")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
-		panic(fmt.Errorf("could not build block service: %w", err))
+		panic(fmt.Errorf("could not build shucke/blocks/fuse: %w", err))
 	}
-	return path.Join(buildCmd.Dir, "eggsblocks")
-}
-
-func BuildEggsFuseExe(ll *lib.Logger) string {
-	buildCmd := exec.Command("go", "build", ".")
-	buildCmd.Dir = path.Join(goDir(), "eggsfuse")
-	ll.Info("building eggsfuse")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Printf("build output:\n")
-		os.Stdout.Write(out)
-		panic(fmt.Errorf("could not build eggsfuse: %w", err))
+	return &GoExes{
+		ShuckleExe: path.Join(goDir(repoDir), "eggsshuckle", "eggsshuckle"),
+		BlocksExe:  path.Join(goDir(repoDir), "eggsblocks", "eggsblocks"),
+		FuseExe:    path.Join(goDir(repoDir), "eggsfuse", "eggsfuse"),
 	}
-	return path.Join(buildCmd.Dir, "eggsfuse")
 }
 
 type ShardOpts struct {
@@ -443,7 +402,7 @@ type ShardOpts struct {
 	Port               uint16
 }
 
-func (procs *ManagedProcesses) StartShard(ll *lib.Logger, opts *ShardOpts) {
+func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -470,7 +429,7 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, opts *ShardOpts) {
 		opts.Dir,
 		fmt.Sprintf("%d", int(opts.Shid)),
 	)
-	cppDir := cppDir()
+	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("shard %v", opts.Shid),
 		Exe:             opts.Exe,
@@ -521,7 +480,7 @@ type CDCOpts struct {
 	Port           uint16
 }
 
-func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, opts *CDCOpts) {
+func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -543,7 +502,7 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, opts *CDCOpts) {
 		args = append(args, "-log-level", "error")
 	}
 	args = append(args, opts.Dir)
-	cppDir := cppDir()
+	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
 		Name:            "cdc",
 		Exe:             opts.Exe,
@@ -619,8 +578,8 @@ type BuildCppOpts struct {
 }
 
 // Returns build dir
-func buildCpp(ll *lib.Logger, buildType string, targets []string) string {
-	cppDir := cppDir()
+func buildCpp(ll *lib.Logger, repoDir string, buildType string, targets []string) string {
+	cppDir := cppDir(repoDir)
 	buildArgs := append([]string{buildType}, targets...)
 	buildCmd := exec.Command("./build.py", buildArgs...)
 	buildCmd.Dir = cppDir
@@ -638,8 +597,8 @@ type CppExes struct {
 	CDCExe   string
 }
 
-func BuildCppExes(ll *lib.Logger, buildType string) *CppExes {
-	buildDir := buildCpp(ll, buildType, []string{"shard/eggsshard", "cdc/eggscdc"})
+func BuildCppExes(ll *lib.Logger, repoDir string, buildType string) *CppExes {
+	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/eggsshard", "cdc/eggscdc"})
 	return &CppExes{
 		ShardExe: path.Join(buildDir, "shard/eggsshard"),
 		CDCExe:   path.Join(buildDir, "cdc/eggscdc"),

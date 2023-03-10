@@ -2,7 +2,7 @@
 set -eu -o pipefail
 
 echo "$(tput bold)building requisites$(tput sgr0)"
-./cpp/build.py go rs crc32c # build libs for go
+./cpp/build.py alpine rs crc32c # build libs for go
 (cd go/msgs && go generate ./...) # build cpp files
 
 echo "$(tput bold)go tests$(tput sgr0)"
@@ -10,19 +10,19 @@ echo "$(tput bold)go tests$(tput sgr0)"
 
 ./cpp/tests.sh
 
-(cd go/integrationtest && go build .)
+./go/build.py integrationtest
 
 echo "$(tput bold)integration tests$(tput sgr0)"
 set -x
-./go/integrationtest/integrationtest
+./go/integrationtest/integrationtest -repo-dir $(pwd)
 set +x
 
 echo "$(tput bold)integration tests, sanitized, packet drop$(tput sgr0)"
 set -x
-./go/integrationtest/integrationtest -build-type sanitized -outgoing-packet-drop 0.1 -short
+./go/integrationtest/integrationtest -repo-dir $(pwd) -build-type sanitized -outgoing-packet-drop 0.1 -short
 set +x
 
 echo "$(tput bold)integration tests, valgrind$(tput sgr0)"
 set -x
-./go/integrationtest/integrationtest -build-type valgrind -short
+./go/integrationtest/integrationtest -repo-dir $(pwd) -build-type valgrind -short
 set +x

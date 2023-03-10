@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
@@ -32,6 +33,7 @@ func main() {
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
 	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
 	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
+	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -48,6 +50,14 @@ func main() {
 	validPort(*shuckleBincodePort)
 	validPort(*shuckleHttpPort)
 	validPort(*startingPort)
+
+	if *repoDir == "" {
+		_, filename, _, ok := runtime.Caller(0)
+		if !ok {
+			panic("no caller information")
+		}
+		*repoDir = path.Dir(path.Dir(path.Dir(filename)))
+	}
 
 	if *dataDir == "" {
 		dir, err := os.MkdirTemp("", "eggsrun.")
@@ -84,10 +94,8 @@ func main() {
 
 	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 
-	cppExes := managedprocess.BuildCppExes(log, *buildType)
-	shuckleExe := managedprocess.BuildShuckleExe(log)
-	blockServiceExe := managedprocess.BuildBlockServiceExe(log)
-	eggsFuseExe := managedprocess.BuildEggsFuseExe(log)
+	cppExes := managedprocess.BuildCppExes(log, *repoDir, *buildType)
+	goExes := managedprocess.BuildGoExes(log, *repoDir)
 
 	terminateChan := make(chan any, 1)
 
@@ -99,7 +107,7 @@ func main() {
 	// Start shuckle
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", *shuckleBincodePort)
 	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
-		Exe:         shuckleExe,
+		Exe:         goExes.ShuckleExe,
 		BincodePort: uint16(*shuckleBincodePort),
 		HttpPort:    uint16(*shuckleHttpPort),
 		LogLevel:    level,
@@ -113,7 +121,7 @@ func main() {
 			storageClass = msgs.FLASH_STORAGE
 		}
 		opts := managedprocess.BlockServiceOpts{
-			Exe:            blockServiceExe,
+			Exe:            goExes.BlocksExe,
 			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
 			StorageClass:   storageClass,
 			FailureDomain:  fmt.Sprintf("%d", i),
@@ -142,7 +150,7 @@ func main() {
 		if *startingPort != 0 {
 			opts.Port = uint16(*startingPort)
 		}
-		procs.StartCDC(log, &opts)
+		procs.StartCDC(log, *repoDir, &opts)
 	}
 
 	// Start shards
@@ -161,7 +169,7 @@ func main() {
 		if *startingPort != 0 {
 			opts.Port = uint16(*startingPort) + 1 + uint16(i)
 		}
-		procs.StartShard(log, &opts)
+		procs.StartShard(log, *repoDir, &opts)
 	}
 
 	waitShuckleFor := 5 * time.Second
@@ -172,7 +180,7 @@ func main() {
 	lib.WaitForShuckle(log, shuckleAddress, int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-		Exe:            eggsFuseExe,
+		Exe:            goExes.FuseExe,
 		Path:           path.Join(*dataDir, "fuse"),
 		LogLevel:       level,
 		Wait:           true,

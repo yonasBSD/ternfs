@@ -777,7 +777,7 @@ func terminate(server *fuse.Server, terminated *bool) {
 		log.Info("already terminated")
 		return
 	}
-	log.Info("stopping cpu pofile")
+	log.Info("stopping cpu profile")
 	pprof.StopCPUProfile()
 	log.Info("about to terminate")
 	*terminated = true

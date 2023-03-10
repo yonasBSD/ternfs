@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -80,4 +81,37 @@ func (l *Logger) RaiseAlert(err any) {
 
 func (l *Logger) RaiseAlertStack(calldepth int, err any) {
 	l.logger.Output(2+calldepth, fmt.Sprintf("ALERT %v\n", err))
+}
+
+type loggerSink struct {
+	logger *Logger
+	level  LogLevel
+	buf    *bytes.Buffer
+}
+
+func (sink *loggerSink) Write(p []byte) (int, error) {
+	if !sink.logger.shouldLog(sink.level) {
+		return len(p), nil
+	}
+	lineBegin := 0
+	lineEnd := sink.buf.Len()
+	sink.buf.Write(p)
+	bytes := sink.buf.Bytes()
+	for lineEnd < len(bytes) {
+		if bytes[lineEnd] == '\n' {
+			sink.logger.logger.Output(2, string(bytes[lineBegin:lineEnd+1]))
+			lineBegin = lineEnd + 1
+		}
+		lineEnd++
+	}
+	sink.buf.Next(lineBegin)
+	return len(p), nil
+}
+
+func (l *Logger) Sink(level LogLevel) io.Writer {
+	return &loggerSink{
+		logger: l,
+		level:  level,
+		buf:    bytes.NewBuffer([]byte{}),
+	}
 }

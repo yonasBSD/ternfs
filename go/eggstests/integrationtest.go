@@ -268,6 +268,7 @@ func main() {
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests (useful with packet drop flags)")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
+	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -329,9 +330,23 @@ func main() {
 	}
 	log := lib.NewLogger(level, logOut)
 
-	fmt.Printf("building shard/cdc/blockservice/shuckle\n")
-	cppExes := managedprocess.BuildCppExes(log, *repoDir, *buildType)
-	goExes := managedprocess.BuildGoExes(log, *repoDir)
+	var cppExes *managedprocess.CppExes
+	var goExes *managedprocess.GoExes
+	if *binariesDir != "" {
+		cppExes = &managedprocess.CppExes{
+			ShardExe: path.Join(*binariesDir, "eggsshard"),
+			CDCExe:   path.Join(*binariesDir, "eggscdc"),
+		}
+		goExes = &managedprocess.GoExes{
+			ShuckleExe: path.Join(*binariesDir, "eggsshuckle"),
+			BlocksExe:  path.Join(*binariesDir, "eggsblocks"),
+			FuseExe:    path.Join(*binariesDir, "eggsfuse"),
+		}
+	} else {
+		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
+		cppExes = managedprocess.BuildCppExes(log, *repoDir, *buildType)
+		goExes = managedprocess.BuildGoExes(log, *repoDir)
+	}
 
 	terminateChan := make(chan any, 1)
 

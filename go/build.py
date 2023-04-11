@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+import sys
+import os
+from pathlib import Path
+import subprocess
+
+go_dir = Path(__file__).parent
+repo_dir = go_dir.parent
+
+paths = sys.argv[1:]
+if len(paths) == 0:
+    for path in os.listdir(str(go_dir)):
+        if os.path.isdir(os.path.join(str(go_dir), path)):
+            paths.append(path)
+
+if 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
+    subprocess.run(
+        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/go/build.py'] + paths,
+        check=True,
+    )
+else:
+    for path_str in paths:
+        print(f'Building {path_str}')
+        path = go_dir / Path(path_str)
+        subprocess.run(
+            ['go', 'build', '-ldflags=-extldflags=-static', '.'],
+            cwd=str(path),
+            check=True,
+        )

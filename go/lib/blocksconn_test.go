@@ -3,9 +3,8 @@ package lib
 import (
 	"testing"
 	"time"
+	"xtx/eggsfs/assert"
 	"xtx/eggsfs/msgs"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestBlocksConn(t *testing.T) {
@@ -23,11 +22,11 @@ func TestBlocksConn(t *testing.T) {
 		return "conn2", nil
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, "conn1", conn)
+	assert.Equal(t, "conn1", conn.(string))
 	factory.put(bs, t0.Add(3*blocksConnsTimeout/10), conn)
 	conn, err = factory.get(bs, t0.Add(blocksConnsTimeout*2), func() (any, error) {
 		return "conn3", nil
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, "conn3", conn)
+	assert.Equal(t, "conn3", conn.(string))
 }

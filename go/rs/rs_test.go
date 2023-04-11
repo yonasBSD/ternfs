@@ -4,8 +4,7 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"xtx/eggsfs/assert"
 )
 
 func TestGet(t *testing.T) {
@@ -36,7 +35,7 @@ func TestComputeParity(t *testing.T) {
 				expectedParity0[j] ^= blocks[i][j]
 			}
 		}
-		assert.Equal(t, expectedParity0, blocks[numData])
+		assert.EqualBytes(t, expectedParity0, blocks[numData])
 		// Restore a random block
 		{
 			haveBlocks := make([]uint8, numData+numParity)
@@ -58,7 +57,7 @@ func TestComputeParity(t *testing.T) {
 				have[i] = blocks[haveBlocks[i]]
 			}
 			recoveredBlock := rs.Recover(haveBlocks, have, wantBlock)
-			assert.Equal(t, blocks[wantBlock], recoveredBlock)
+			assert.EqualBytes(t, blocks[wantBlock], recoveredBlock)
 		}
 	}
 }

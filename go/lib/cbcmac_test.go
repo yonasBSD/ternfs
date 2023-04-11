@@ -3,8 +3,7 @@ package lib
 import (
 	"crypto/aes"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"xtx/eggsfs/assert"
 )
 
 // Sanity check to ensure that the block cipher we're using is the correct one

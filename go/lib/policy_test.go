@@ -3,9 +3,8 @@ package lib
 import (
 	"testing"
 	"time"
+	"xtx/eggsfs/assert"
 	"xtx/eggsfs/msgs"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func inodeId(id uint64) msgs.InodeIdExtra {

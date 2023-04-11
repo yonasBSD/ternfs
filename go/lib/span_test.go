@@ -7,11 +7,10 @@ import (
 	"math/rand"
 	"sync/atomic"
 	"testing"
+	"xtx/eggsfs/assert"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/rs"
-
-	"github.com/stretchr/testify/assert"
 )
 
 // Simulates block service conns, which will wait forever when reading past the block

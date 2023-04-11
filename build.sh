@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -eu -o pipefail
 
-# generate C++ files
-(cd go/msgs && go generate ./...) # build cpp files
+./cpp/build.py alpine rs crc32c # build libs for go
+(cd go/msgs && go generate ./...) # generate C++ files
 
 # build C++, all variants
 ./cpp/build.py alpine

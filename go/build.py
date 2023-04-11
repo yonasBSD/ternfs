@@ -10,6 +10,8 @@ repo_dir = go_dir.parent
 paths = sys.argv[1:]
 if len(paths) == 0:
     for path in os.listdir(str(go_dir)):
+        if path == 'vendor':
+            continue
         if os.path.isdir(os.path.join(str(go_dir), path)):
             paths.append(path)
 

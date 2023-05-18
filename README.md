@@ -1,3 +1,5 @@
+**BEWARE!** What's below is already outdated, sadly. If you want to try out EggsFS, ask fmazzol.
+
 # EggsFS
 
 See the [proposal](https://xtxmarketscom.sharepoint.com/:w:/s/ECN/EdVNBAzB7klPsVw6CxkfAvwB0LGu4pbtf-Gafr0tMnWNKw?e=2LaGl8) for more info on eggsfs.

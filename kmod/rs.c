@@ -1,15 +1,20 @@
 #include "rs.h"
 
+#ifdef __KERNEL__
+
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <asm/fpu/api.h>
 
-#include "log.h"
-#include "intrshims.h"
-
 #define rs_malloc(sz) kmalloc(sz, GFP_KERNEL)
 #define rs_free(p) kfree(p)
 #define die(...) BUG()
+
+#include "log.h"
+
+#endif // __KERNEL__
+
+#include "intrshims.h"
 
 enum rs_cpu_level {
     RS_CPU_SCALAR = 1,
@@ -24,7 +29,7 @@ static inline bool rs_detect_valgrind(void) {
 #define broadcast_u8(x) \
     ((__m256i)__builtin_ia32_pbroadcastb256((__v16qi){x,0,0,0,0,0,0,0,0,0,0,0,0,0,0}))
 
-static enum rs_cpu_level eggsfs_rs_cpu_level;
+int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
 
 #include "rs_core.c"
 
@@ -69,7 +74,7 @@ static enum rs_cpu_level eggsfs_rs_cpu_level;
             rs_compute_parity_gfni_##D##_##P(rs_##D##_##P, size, data, parity); \
             break; \
         default: \
-            BUG(); \
+            die("bad cpu level %d", eggsfs_rs_cpu_level); \
         } \
     }
 
@@ -117,14 +122,14 @@ int __init eggsfs_rs_init(void) {
     err = rs_init_4_4();
     if (err < 0) { return err; }
     err = rs_init_10_4();
-    if (err < 0) { kfree(rs_4_4); return err; }
+    if (err < 0) { rs_free(rs_4_4); return err; }
 
     return 0;
 }
 
 void __cold eggsfs_rs_exit(void) {
-    kfree(rs_4_4);
-    kfree(rs_10_4);
+    rs_free(rs_4_4);
+    rs_free(rs_10_4);
 }
 
 #include "gf_tables.c"

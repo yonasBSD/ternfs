@@ -5,6 +5,7 @@
 #include "log.h"
 
 int eggsfs_debug_output = 0;
+extern int eggsfs_rs_cpu_level;
 
 #if 0
 bool eggsfs_reclaim_span(void) { return false; }
@@ -48,6 +49,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .procname = "debug",
         .data = &eggsfs_debug_output,
         .maxlen = sizeof(eggsfs_debug_output),
+        .mode = 0644,
+        .proc_handler = proc_dointvec,
+    },
+
+    {
+        .procname = "rs_cpu_level",
+        .data = &eggsfs_rs_cpu_level,
+        .maxlen = sizeof(eggsfs_rs_cpu_level),
         .mode = 0644,
         .proc_handler = proc_dointvec,
     },

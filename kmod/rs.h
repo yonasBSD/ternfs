@@ -1,7 +1,11 @@
 #ifndef _EGGSFS_RS_H
 #define _EGGSFS_RS_H
 
+#ifdef __KERNEL__
 #include <linux/kernel.h>
+#endif
+
+extern int eggsfs_rs_cpu_level;
 
 static inline u8 eggsfs_data_blocks(u8 parity) {
     return parity & 0x0F;

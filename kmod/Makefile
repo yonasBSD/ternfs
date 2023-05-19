@@ -34,10 +34,13 @@ kmod:
 
 clean:
 	make -C $(KDIR) M=$(PWD) clean
-	rm -f bincode_tests
+	rm -f bincode_tests rs_tests
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
-	clang -Wall -g -O2 -fsanitize=undefined,address,integer,function -fno-sanitize-recover=all bincode_tests.c -o bincode_tests
+	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all bincode_tests.c -o bincode_tests
+
+rs_tests: rs_tests.c rs.c rs.h intrshims.h
+	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all rs_tests.c -o rs_tests
 
 writefile: writefile.c
 	gcc -Wall -g -O2 writefile.c -o writefile

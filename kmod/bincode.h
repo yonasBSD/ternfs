@@ -1,7 +1,7 @@
 #ifndef _EGGSFS_BINCODE_H
 #define _EGGSFS_BINCODE_H
 
-#ifndef EGGSFS_BINCODE_TESTS
+#ifdef __KERNEL__
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/bug.h>
@@ -139,5 +139,7 @@ static const u8 EGGSFS_FLASH_STORAGE  = 3;
 
 #define EGGSFS_GET_EXTRA(x) (((x) & (1ull<<63)) >> 63)
 #define EGGSFS_GET_EXTRA_ID(x) ((x) & ~(1ull<<63))
+
+#define EGGSFS_MAX_FILENAME 255
 
 #endif

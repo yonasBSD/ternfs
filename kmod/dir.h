@@ -3,8 +3,8 @@
 
 #include <linux/fs.h>
 
-#include "common.h"
 #include "inode.h"
+#include "log.h"
 
 extern struct file_operations eggsfs_dir_operations;
 

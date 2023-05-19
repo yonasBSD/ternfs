@@ -3,7 +3,7 @@
 #include <linux/highmem.h>
 
 #include "block.h"
-#include "common.h"
+#include "log.h"
 
 u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len) {
     struct skb_seq_state seq;

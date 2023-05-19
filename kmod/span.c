@@ -1,6 +1,6 @@
 
 #include "bincode.h"
-#include "common.h"
+#include "log.h"
 #include "span.h"
 #include "metadata.h"
 #include "rs.h"

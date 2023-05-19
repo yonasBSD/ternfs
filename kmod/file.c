@@ -4,7 +4,7 @@
 
 #include "bincode.h"
 #include "inode.h"
-#include "common.h"
+#include "log.h"
 #include "metadata.h"
 #include "err.h"
 #include "rs.h"
@@ -13,27 +13,30 @@
 #include "crc.h"
 #include "trace.h"
 #include "span.h"
+#include "wq.h"
 
 // open_mutex held here
 // really want atomic open for this
 static int eggsfs_file_open(struct inode* inode, struct file* filp) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
-    eggsfs_debug_print("enode=%p flags=%x owner=%p", enode, enode->flags, current->group_leader);
+    eggsfs_debug_print("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
 
-    if (enode->flags & EGGSFS_INODE_TRANSIENT) {
-        eggsfs_debug_print("trying to open transient file");
+    if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+        // TODO can this ever happen?
+        eggsfs_debug_print("trying to open file we're already writing");
         return -ENOENT;
     }
 
     if (filp->f_mode & FMODE_WRITE) {
         eggsfs_debug_print("opening file for writing");
-        if (!(enode->flags & EGGSFS_INODE_WRITEABLE)) {
+        if (enode->file.status != EGGSFS_FILE_STATUS_CREATED) {
             eggsfs_debug_print("trying to open for write non-writeable file");
             return -EPERM;
         }
-        enode->flags &= ~EGGSFS_INODE_WRITEABLE;
-        enode->flags |= EGGSFS_INODE_TRANSIENT;
+        enode->file.status = EGGSFS_FILE_STATUS_WRITING;
+    } else {
+        enode->file.status = EGGSFS_FILE_STATUS_READING;
     }
 
     return 0;
@@ -574,8 +577,7 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
         inode_lock(inode);
     }
 
-    // still a transient file
-    if (!(enode->flags & EGGSFS_INODE_TRANSIENT)) { err = -EPERM; goto out_err; }
+    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) { err = -EPERM; goto out_err; }
 
     // permanent error
     err = atomic_read(&enode->file.transient_err);
@@ -694,10 +696,18 @@ __must_check static int eggsfs_file_flush_init(struct eggsfs_inode* enode) {
 
     inode_lock(&enode->inode);
 
-    // Not a transient file, there's nothing to do, files are immutable
-    if (!(enode->flags & EGGSFS_INODE_TRANSIENT)) { res = 0; goto out; }
+    // Not writing, there's nothing to do, there's nothing to do, files are immutable
+    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
+        eggsfs_debug_print("status=%d, won't flush", enode->file.status);
+        res = 0;
+        goto out;
+    }
     // We are in another process, skip
-    if (enode->file.owner != current->group_leader) { res = 0; goto out; }
+    if (enode->file.owner != current->group_leader) {
+        eggsfs_debug_print("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
+        res = 0;
+        goto out;
+    }
 
     // Mark the last span as the last one, and queue work
     spin_lock(&enode->file.transient_spans_lock);
@@ -750,18 +760,24 @@ static int eggsfs_file_flush(struct file* filp, fl_owner_t id) { // can we get w
 
     inode_lock(&enode->inode);
     // somebody might have gotten here before us
-    if (enode->flags & EGGSFS_INODE_TRANSIENT) {
+    if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+        eggsfs_debug_print("linking file");
         res = eggsfs_error_to_linux(eggsfs_shard_link_file(
             (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
             enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
             &enode->edge_creation_time
         )); 
         if (res == 0) {
-            enode->flags &= ~EGGSFS_INODE_TRANSIENT;
+            enode->file.status = EGGSFS_FILE_STATUS_READING;
         }
+    } else {
+        eggsfs_debug_print("not linking file, status=%d", enode->file.status);
     }
     inode_unlock(&enode->inode);
 
+    if (unlikely(res < 0)) {
+        eggsfs_debug_print("flushing failed, err=%d", res);
+    }
     return res;
 }
 

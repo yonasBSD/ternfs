@@ -4,7 +4,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
-#include "common.h"
+#include "log.h"
 #include "inode.h"
 #include "metadata.h"
 #include "namei.h"

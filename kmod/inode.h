@@ -98,15 +98,22 @@ struct eggsfs_transient_span {
     u8 status;
 };
 
+#define EGGSFS_FILE_STATUS_NONE 0 // when we create the inode
+#define EGGSFS_FILE_STATUS_READING 1
+#define EGGSFS_FILE_STATUS_CREATED 2
+#define EGGSFS_FILE_STATUS_WRITING 3
+
 struct eggsfs_inode_file {
+    int status;
+
     // Normal file stuff
     struct rb_root spans;
     seqcount_t spans_seqcount; // to read in a lockless way
     struct mutex spans_wlock;  // to ensure there's only one thing fetching the spans when we can't find the span
 
-    // Transient stuff. Only initialized on file creation, otherwise it's garbage.
+    // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
     // Could be factored out to separate data structure.
-    //
+    u64 cookie;
     // List of spans, FIFO. There's always a "WRITING/LAST" span at the end,
     // and there's never a WRITING span which could be IDLE.
     struct list_head transient_spans;
@@ -123,7 +130,6 @@ struct eggsfs_inode_file {
     // Used to bound the number of in-flight spans (otherwise we
     // would eat quite a bit of memory for big files)
     struct semaphore in_flight_spans;
-    u64 cookie;
     // We use this to track where we should close the file from.
     struct task_struct* owner;
     // Size _apart from current span_.
@@ -167,8 +173,6 @@ struct eggsfs_inode {
 
     struct eggsfs_latch getattr_update_latch;
     int getattr_err;
-
-    int flags;
 };
 
 #define EGGSFS_I(ptr) container_of(ptr, struct eggsfs_inode, inode)

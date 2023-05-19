@@ -1,4 +1,4 @@
-KDIR ?= /data/home/fmazzol/src/eggsfs/kmod/linux-5.4.237/
+KDIR ?= /lib/modules/$(shell uname -r)/build
 LLVM ?= 0
 
 obj-m += eggsfs.o

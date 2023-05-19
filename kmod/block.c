@@ -14,12 +14,13 @@
 #include <net/sock.h>
 
 #include "block.h"
-#include "common.h"
+#include "log.h"
 #include "err.h"
 #include "skb.h"
 #include "super.h"
 #include "crc.h"
 #include "trace.h"
+#include "wq.h"
 
 #define EGGSFS_BLOCKS_REQ_HEADER_SIZE (4 + 8 + 1) // protocol + block service id + kind
 

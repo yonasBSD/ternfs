@@ -1,6 +1,6 @@
 #include "inode.h"
 
-#include "common.h"
+#include "log.h"
 #include "dir.h"
 #include "metadata.h"
 #include "namei.h"
@@ -17,7 +17,6 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
 
     enode = (struct eggsfs_inode*)kmem_cache_alloc(eggsfs_inode_cachep, GFP_NOFS);
     if (!enode) {
-        eggsfs_debug_print("err=ENOMEM");
         return NULL;
     }
 
@@ -36,11 +35,14 @@ void eggsfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        // error out in flight stuff
-        atomic_cmpxchg(&enode->file.transient_err, 0, -EINTR);
-        // wait for all writing operations to be done (we might be cleaning up)
-        down(&enode->file.done_flushing);
-        up(&enode->file.done_flushing);
+        if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+            // error out in flight stuff
+            atomic_cmpxchg(&enode->file.transient_err, 0, -EINTR);
+            // wait for all writing operations to be done (we might be cleaning up)
+            down(&enode->file.done_flushing);
+            up(&enode->file.done_flushing);
+        }
+        // TODO clear span stuff
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);
@@ -171,11 +173,14 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     struct inode* inode = eggsfs_get_inode(dentry->d_sb, ino); // new_inode
     if (IS_ERR(inode)) { err = PTR_ERR(inode); goto out_err; }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    enode->file.status = EGGSFS_FILE_STATUS_CREATED;
+
+    // Initialize all the transient specific fields
+    enode->file.cookie = cookie;
     INIT_LIST_HEAD(&enode->file.transient_spans);
     struct eggsfs_transient_span* span = eggsfs_add_new_span(&enode->file.transient_spans);
     if (IS_ERR(span)) { err = PTR_ERR(span); goto out_err; }
-    enode->flags = EGGSFS_INODE_WRITEABLE;
-    enode->file.cookie = cookie;
     enode->file.size_without_current_span = 0;
     spin_lock_init(&enode->file.transient_spans_lock);
     memcpy(&enode->block_policies, &parent_enode->block_policies, sizeof(parent_enode->block_policies));
@@ -186,7 +191,8 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     INIT_WORK(&enode->file.flusher, eggsfs_flush_transient_spans);
     sema_init(&enode->file.done_flushing, 0);
     atomic64_set(&enode->file.flushed_so_far, 0);
-    sema_init(&enode->file.in_flight_spans, 2); // fairly arbitrary, ~300MiB of memory max
+    // fairly arbitrary, this will cause at most three spans in flight, ~300MiB of memory max
+    sema_init(&enode->file.in_flight_spans, 2);
     
     d_instantiate(dentry, inode);
     d_invalidate(dentry);
@@ -282,7 +288,8 @@ struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino) {
             inode->i_op = &eggsfs_file_inode_ops;
             inode->i_fop = &eggsfs_filesimple_operations;
 
-            // init normal file stuff
+            enode->file.status = EGGSFS_FILE_STATUS_NONE;
+            // Init normal file stuff -- that's always there.
             enode->file.spans = RB_ROOT;
             seqcount_init(&enode->file.spans_seqcount);
             mutex_init(&enode->file.spans_wlock);

@@ -2,7 +2,7 @@
 
 #include "intrshims.h"
 
-#include "common.h"
+#include "log.h"
 #include "crc32c.c"
 
 u32 eggsfs_crc32c(u32 crc, const char* buf, size_t len) {

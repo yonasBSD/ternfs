@@ -3,7 +3,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 
-#include "common.h"
+#include "log.h"
 #include "err.h"
 #include "inode.h"
 #include "metadata.h"

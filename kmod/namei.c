@@ -1,6 +1,6 @@
 #include "namei.h"
 
-#include "common.h"
+#include "log.h"
 #include "dir.h"
 #include "err.h"
 #include "inode.h"

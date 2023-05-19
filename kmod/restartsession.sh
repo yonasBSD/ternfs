@@ -34,7 +34,7 @@ done
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
-make -j kmod
+make KDIR=$SCRIPT_DIR/linux-5.4.237 -j kmod
 
 pkill qemu || true
 tmux kill-session -t uovo || true
@@ -74,5 +74,4 @@ fi
 # Attach
 tmux attach-session -t uovo:1
 
-# 4349852
-# ./eggstests -kmod -filter mounted -cfg fsTest.checkThreads=1 -cfg fsTest.numDirs=10 -cfg fsTest.numFiles=100 -binaries-dir $(pwd)
+# ./eggstests -kmod -filter 'mounted|large|rsync' -short -binaries-dir $(pwd)

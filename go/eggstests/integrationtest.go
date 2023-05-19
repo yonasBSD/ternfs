@@ -364,6 +364,10 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		numFiles:    100,       // 20GiB
 		numDirs:     10,
 	}
+	if short {
+		rsyncOpts.numFiles = 10
+		rsyncOpts.numDirs = 1
+	}
 	runTest(
 		log,
 		shuckleAddress,
@@ -379,6 +383,10 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		maxFileSize: 1 << 20, // 1Mib
 		numFiles:    10000,   // 10GiB
 		numDirs:     1000,
+	}
+	if short {
+		rsyncOpts.numFiles /= 10
+		rsyncOpts.numDirs /= 10
 	}
 	runTest(
 		log,

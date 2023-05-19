@@ -2,7 +2,7 @@
 
 #include "bincode.h"
 #include "shuckle.h"
-#include "common.h"
+#include "log.h"
 
 void eggsfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
     put_unaligned_le32(EGGSFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;

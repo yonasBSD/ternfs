@@ -67,7 +67,6 @@ static inline void put_unaligned_be32(u32 x, void* p) {
     memcpy(p, &x, sizeof(x));
 }
 
-#define EGGSFS_BINCODE_TESTS
 #include "bincode.h"
 
 int main(void) {

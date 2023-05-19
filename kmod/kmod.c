@@ -3,7 +3,7 @@
 #include <linux/module.h>
 #include <linux/version.h>
 
-#include "common.h"
+#include "wq.h"
 #include "inode.h"
 #include "metadata.h"
 #include "block.h"
@@ -12,6 +12,7 @@
 #include "sysfs.h"
 #include "block.h"
 #include "rs.h"
+#include "log.h"
 
 MODULE_LICENSE("GPL");
 

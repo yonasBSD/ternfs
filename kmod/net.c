@@ -2,7 +2,7 @@
 
 #include <linux/version.h>
 
-#include "common.h"
+#include "log.h"
 #include "trace.h"
 
 static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket* s, u64 request_id) __must_hold(s->lock) {

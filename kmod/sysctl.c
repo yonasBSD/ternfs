@@ -2,8 +2,9 @@
 
 #include "dir.h"
 #include "span.h"
+#include "log.h"
 
-int eggsfs_max_request_retries = 3;
+int eggsfs_debug_output = 0;
 
 #if 0
 bool eggsfs_reclaim_span(void) { return false; }
@@ -44,9 +45,9 @@ static int eggsfs_drop_spancache_sysctl(struct ctl_table* table, int write, void
 
 static struct ctl_table eggsfs_cb_sysctls[] = {
     {
-        .procname = "max_request_retries",
-        .data = &eggsfs_max_request_retries,
-        .maxlen = sizeof(eggsfs_max_request_retries),
+        .procname = "debug",
+        .data = &eggsfs_debug_output,
+        .maxlen = sizeof(eggsfs_debug_output),
         .mode = 0644,
         .proc_handler = proc_dointvec,
     },

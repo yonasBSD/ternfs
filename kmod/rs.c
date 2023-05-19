@@ -4,7 +4,7 @@
 #include <linux/slab.h>
 #include <asm/fpu/api.h>
 
-#include "common.h"
+#include "log.h"
 #include "intrshims.h"
 
 #define rs_malloc(sz) kmalloc(sz, GFP_KERNEL)

@@ -6,7 +6,7 @@
 #include "super.h"
 #include "bincode.h"
 #include "err.h"
-#include "common.h"
+#include "log.h"
 #include "inode.h"
 #include "skb.h"
 #include "crc.h"

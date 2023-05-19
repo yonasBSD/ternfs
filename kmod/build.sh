@@ -3,5 +3,5 @@ set -eu -o pipefail
 
 set -x
 
-./sync.sh
-ssh uovo 'cd eggs-kmod && make -j kmod writefile'
+./sync.sh $1
+ssh $1 'cd fmazzol/eggs-kmod && make -j kmod writefile'

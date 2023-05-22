@@ -596,6 +596,8 @@ func (k BlocksMessageKind) String() string {
 		return "BLOCK_WRITTEN"
 	case 1:
 		return "ERASE_BLOCK"
+	case 5:
+		return "TEST_WRITE"
 	default:
 		return fmt.Sprintf("BlocksMessageKind(%d)", k)
 	}
@@ -607,6 +609,7 @@ const (
 	WRITE_BLOCK BlocksMessageKind = 0x3
 	BLOCK_WRITTEN BlocksMessageKind = 0x4
 	ERASE_BLOCK BlocksMessageKind = 0x1
+	TEST_WRITE BlocksMessageKind = 0x5
 )
 
 func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse) {
@@ -619,6 +622,8 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse) {
 		return &BlockWrittenReq{}, &BlockWrittenResp{}
 	case k == "ERASE_BLOCK":
 		return &EraseBlockReq{}, &EraseBlockResp{}
+	case k == "TEST_WRITE":
+		return &TestWriteReq{}, &TestWriteResp{}
 	default:
 		panic(fmt.Errorf("bad kind string %s", k))
 	}
@@ -4005,6 +4010,36 @@ func (v *EraseBlockResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 8, v.Proof[:]); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (v *TestWriteReq) BlocksRequestKind() BlocksMessageKind {
+	return TEST_WRITE
+}
+
+func (v *TestWriteReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Size)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *TestWriteReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Size)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *TestWriteResp) BlocksResponseKind() BlocksMessageKind {
+	return TEST_WRITE
+}
+
+func (v *TestWriteResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *TestWriteResp) Unpack(r io.Reader) error {
 	return nil
 }
 

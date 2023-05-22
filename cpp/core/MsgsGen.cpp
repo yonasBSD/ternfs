@@ -364,6 +364,9 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::ERASE_BLOCK:
         out << "ERASE_BLOCK";
         break;
+    case BlocksMessageKind::TEST_WRITE:
+        out << "TEST_WRITE";
+        break;
     default:
         out << "BlocksMessageKind(" << ((int)kind) << ")";
         break;
@@ -3248,6 +3251,38 @@ bool EraseBlockResp::operator==(const EraseBlockResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x) {
     out << "EraseBlockResp(" << "Proof=" << x.proof << ")";
+    return out;
+}
+
+void TestWriteReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(size);
+}
+void TestWriteReq::unpack(BincodeBuf& buf) {
+    size = buf.unpackScalar<uint64_t>();
+}
+void TestWriteReq::clear() {
+    size = uint64_t(0);
+}
+bool TestWriteReq::operator==(const TestWriteReq& rhs) const {
+    if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const TestWriteReq& x) {
+    out << "TestWriteReq(" << "Size=" << x.size << ")";
+    return out;
+}
+
+void TestWriteResp::pack(BincodeBuf& buf) const {
+}
+void TestWriteResp::unpack(BincodeBuf& buf) {
+}
+void TestWriteResp::clear() {
+}
+bool TestWriteResp::operator==(const TestWriteResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const TestWriteResp& x) {
+    out << "TestWriteResp(" << ")";
     return out;
 }
 

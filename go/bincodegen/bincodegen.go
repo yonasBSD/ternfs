@@ -1539,6 +1539,11 @@ func main() {
 			reflect.TypeOf(msgs.EraseBlockReq{}),
 			reflect.TypeOf(msgs.EraseBlockResp{}),
 		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.TestWriteReq{}),
+			reflect.TypeOf(msgs.TestWriteResp{}),
+		},
 	}...)
 
 	kernelExtras := []reflect.Type{

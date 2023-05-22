@@ -225,6 +225,49 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 	return 0
 }
 
+func writeToTemp(
+	log *lib.Logger, bufPool *sync.Pool, basePath string, size uint64, conn *net.TCPConn,
+) (tmpName string, crc uint32, err error) {
+	var f *os.File
+	f, err = os.CreateTemp(basePath, "tmp.")
+	if err != nil {
+		return tmpName, crc, err
+	}
+	tmpName = f.Name()
+	defer func() {
+		f.Close()
+		if err != nil {
+			os.Remove(tmpName)
+		}
+	}()
+	bufPtr := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bufPtr)
+	readSoFar := uint64(0)
+	for {
+		buf := *bufPtr
+		if uint64(len(buf)) > size-readSoFar {
+			buf = buf[:int(size-readSoFar)]
+		}
+		var read int
+		read, err = conn.Read(buf)
+		if err != nil {
+			return tmpName, crc, err
+		}
+		readSoFar += uint64(read)
+		crc = crc32c.Sum(crc, buf[:read])
+		if _, err = f.Write(buf[:read]); err != nil {
+			return tmpName, crc, err
+		}
+		if readSoFar == size {
+			break
+		}
+	}
+	if err = f.Sync(); err != nil {
+		return tmpName, crc, err
+	}
+	return tmpName, crc, err
+}
+
 func writeBlock(
 	log *lib.Logger, bufPool *sync.Pool,
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
@@ -235,52 +278,36 @@ func writeBlock(
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err
 	}
-	f, err := os.CreateTemp(basePath, "tmp.")
+	tmpName, crc, err := writeToTemp(log, bufPool, basePath, uint64(size), conn)
 	if err != nil {
 		return err
 	}
-	tmpName := f.Name()
-	defer func() {
-		f.Close()
-		os.Remove(tmpName)
-	}()
-	bufPtr := bufPool.Get().(*[]byte)
-	defer bufPool.Put(bufPtr)
-	readSoFar := 0
-	crc := uint32(0)
-	for {
-		buf := *bufPtr
-		if len(buf) > int(size)-readSoFar {
-			buf = buf[:int(size)-readSoFar]
-		}
-		read, err := conn.Read(buf)
-		if err != nil {
-			return err
-		}
-		readSoFar += read
-		crc = crc32c.Sum(crc, buf[:read])
-		if _, err := f.Write(buf[:read]); err != nil {
-			return err
-		}
-		if readSoFar == int(size) {
-			break
-		}
-	}
 	if msgs.Crc(crc) != expectedCrc {
+		os.Remove(tmpName)
 		log.RaiseAlert(fmt.Errorf("bad crc for block %v, expected %v, got %v", blockId, expectedCrc, msgs.Crc(crc)))
 		lib.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 		return nil
 	}
-	if err := f.Sync(); err != nil {
+	if err := os.Rename(tmpName, filePath); err != nil {
+		os.Remove(tmpName)
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), filePath); err != nil {
-		return err
-	}
+	defer os.Remove(tmpName)
 	if err := lib.WriteBlocksResponse(log, conn, &msgs.BlockWrittenResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func testWrite(
+	log *lib.Logger, bufPool *sync.Pool, basePath string, size uint64, conn *net.TCPConn,
+) error {
+	tmpName, _, err := writeToTemp(log, bufPool, basePath, size, conn)
+	if err != nil {
+		return err
+	}
+	os.Remove(tmpName)
+	if err := lib.WriteBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
 		return err
 	}
 	return nil
@@ -378,6 +405,11 @@ NextRequest:
 			}
 			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 				handleInternalError(log, conn, fmt.Errorf("could not write block: %w", err))
+				return
+			}
+		case *msgs.TestWriteReq:
+			if err := testWrite(log, bufPool, blockService.path, whichReq.Size, conn); err != nil {
+				handleInternalError(log, conn, fmt.Errorf("could not perform test write: %w", err))
 				return
 			}
 		default:

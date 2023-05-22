@@ -136,6 +136,7 @@ enum class BlocksMessageKind : uint8_t {
     WRITE_BLOCK = 3,
     BLOCK_WRITTEN = 4,
     ERASE_BLOCK = 1,
+    TEST_WRITE = 5,
 };
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
@@ -2967,6 +2968,42 @@ struct EraseBlockResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const EraseBlockResp& x);
+
+struct TestWriteReq {
+    uint64_t size;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // size
+
+    TestWriteReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // size
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const TestWriteReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const TestWriteReq& x);
+
+struct TestWriteResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    TestWriteResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const TestWriteResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 
 struct ShardReqContainer {
 private:

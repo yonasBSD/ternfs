@@ -74,6 +74,8 @@ func ReadBlocksRequest(
 		req = &msgs.WriteBlockReq{}
 	case msgs.BLOCK_WRITTEN:
 		req = &msgs.BlockWrittenReq{}
+	case msgs.TEST_WRITE:
+		req = &msgs.TestWriteReq{}
 	default:
 		log.RaiseAlert(fmt.Errorf("bad blocks request kind %v", kind))
 		return 0, nil, msgs.MALFORMED_REQUEST
@@ -260,4 +262,37 @@ func EraseBlock(
 	}
 	proof = resp.Proof
 	return proof, nil
+}
+
+func TestWrite(
+	logger *Logger,
+	conn interface {
+		io.ReaderFrom
+		io.Reader
+		io.Writer
+	},
+	bs msgs.BlockServiceId,
+	r io.Reader, // only `size` bytes will be read
+	size uint64,
+) error {
+	logger.Debug("writing request")
+	err := WriteBlocksRequest(logger, conn, bs, &msgs.TestWriteReq{Size: size})
+	if err != nil {
+		return err
+	}
+	logger.Debug("starting to write test data")
+	lr := io.LimitedReader{
+		R: r,
+		N: int64(size),
+	}
+	if _, err := conn.ReadFrom(&lr); err != nil {
+		return fmt.Errorf("could not write test data to: %w", err)
+	}
+	logger.Debug("data written, getting response")
+	resp := msgs.TestWriteResp{}
+	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
+		return err
+	}
+	logger.Debug("response received")
+	return nil
 }

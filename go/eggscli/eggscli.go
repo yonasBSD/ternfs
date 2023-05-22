@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"encoding/binary"
 	"encoding/json"
@@ -8,10 +9,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -380,6 +384,68 @@ func main() {
 	commands["write-block-req"] = commandSpec{
 		flags: blockReqCmd,
 		run:   blockReqRun,
+	}
+
+	testBlockWriteCmd := flag.NewFlagSet("test-block-write", flag.ExitOnError)
+	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
+	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
+	testBlockWriteRun := func() {
+		resp, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			panic(err)
+		}
+		blockServices := resp.(*msgs.AllBlockServicesResp)
+		bsInfos := []msgs.BlockServiceInfo{}
+		for _, str := range strings.Split(*testBlockWriteBlockService, ",") {
+			bsId, err := strconv.ParseUint(str, 0, 64)
+			if err != nil {
+				panic(err)
+			}
+			found := false
+			for _, bsInfo := range blockServices.BlockServices {
+				if bsInfo.Id == msgs.BlockServiceId(bsId) {
+					bsInfos = append(bsInfos, bsInfo)
+					found = true
+					break
+				}
+			}
+			if !found {
+				panic(fmt.Errorf("could not find block service %q", str))
+			}
+		}
+		conns := make([]*net.TCPConn, len(bsInfos))
+		for i := 0; i < len(conns); i++ {
+			conn, err := lib.BlockServiceConnection(log, bsInfos[i].Ip1, bsInfos[i].Port1, bsInfos[i].Ip2, bsInfos[i].Port2)
+			if err != nil {
+				panic(err)
+			}
+			conns[i] = conn
+		}
+		contents := make([]byte, *testBlockWriteSize)
+		var wait sync.WaitGroup
+		wait.Add(len(conns))
+		t := time.Now()
+		for i := 0; i < int(len(conns)); i++ {
+			conn := conns[i]
+			bsId := bsInfos[i].Id
+			go func() {
+				thisErr := lib.TestWrite(log, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
+				if thisErr != nil {
+					err = thisErr
+				}
+				wait.Done()
+			}()
+		}
+		wait.Wait()
+		elapsed := time.Since(t)
+		if err != nil {
+			panic(err)
+		}
+		log.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize)/1e9)/elapsed.Seconds())
+	}
+	commands["test-block-write"] = commandSpec{
+		flags: testBlockWriteCmd,
+		run:   testBlockWriteRun,
 	}
 
 	flag.Parse()

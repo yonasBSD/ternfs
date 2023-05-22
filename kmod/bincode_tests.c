@@ -116,9 +116,9 @@ int main(void) {
                 eggsfs_current_edge_put_start(&put_ctx, edge_start);
                 eggsfs_current_edge_put_target_id(&put_ctx, edge_start, target_id, i);
                 eggsfs_current_edge_put_name_hash(&put_ctx, target_id, name_hash, i + 42);
-                char name_str[1];
-                snprintf(name_str, 1, "%d", i);
-                eggsfs_current_edge_put_name(&put_ctx, name_hash, name, name_str, sizeof(name_str));
+                char name_str[2];
+                snprintf(name_str, 2, "%d", i);
+                eggsfs_current_edge_put_name(&put_ctx, name_hash, name, name_str, 1);
                 eggsfs_current_edge_put_creation_time(&put_ctx, name, creation_time, i + 1000);
                 eggsfs_current_edge_put_end(&put_ctx, creation_time, end);
             }
@@ -145,8 +145,9 @@ int main(void) {
                     BUG_ON(target_id.x != i);
                     BUG_ON(name_hash.x != i + 42);
                     BUG_ON(name.str.len != 1);
-                    char name_str[1];
-                    snprintf(name_str, 1, "%d", i);
+                    char name_str[11];
+                    snprintf(name_str, 11, "%d", i);
+                    BUG_ON(strlen(name_str) != 1);
                     BUG_ON(strncmp(name.str.buf, name_str, 1) != 0);
                     BUG_ON(creation_time.x != i + 1000);
                 }

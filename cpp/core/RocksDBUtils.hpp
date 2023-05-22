@@ -224,7 +224,6 @@ struct FieldToBE<1> {
 // for the reasoning behind this horror.
 
 #define PARENS ()
-#define COMMA ,
 
 #define EXPAND(arg) EXPAND1(EXPAND1(EXPAND1(EXPAND1(arg))))
 #define EXPAND1(arg) EXPAND2(EXPAND2(EXPAND2(EXPAND2(arg))))

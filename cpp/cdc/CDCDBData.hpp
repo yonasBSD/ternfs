@@ -34,19 +34,12 @@ inline rocksdb::Slice cdcMetadataKey(const CDCMetadataKey* k) {
 }
 
 struct MakeDirectoryState {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(InodeId) +  // dir id we've generated
-        sizeof(EggsTime) + // creation time for the edge
-        sizeof(EggsError); // exit error if we're rolling back
-    
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(InodeId,   dirId,        setDirId,         0)
-    LE_VAL(EggsTime,  creationTime, setCreationTime,  8)
-    LE_VAL(EggsError, exitError,    setExitError,    16)
+    FIELDS(
+        LE, InodeId,   dirId, setDirId,
+        LE, EggsTime,  creationTime, setCreationTime,
+        LE, EggsError, exitError, setExitError, // error if we're rolling back
+        END_STATIC
+    )
 
     void start() {
         setDirId(NULL_INODE_ID);
@@ -56,17 +49,11 @@ struct MakeDirectoryState {
 };
 
 struct RenameFileState {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(EggsTime) + // the time at which we created the current edge
-        sizeof(EggsError); // exit error if we're rolling back
-    
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(EggsTime,  newCreationTime,     setNewCreationTime,     0)
-    LE_VAL(EggsError, exitError,           setExitError,           8)
+    FIELDS(
+        LE, EggsTime,  newCreationTime, setNewCreationTime,
+        LE, EggsError, exitError, setExitError,
+        END_STATIC
+    )
 
     void start() {
         setExitError(NO_ERROR);
@@ -74,17 +61,11 @@ struct RenameFileState {
 };
 
 struct SoftUnlinkDirectoryState {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(InodeId) +  // what we're currently stat'ing
-        sizeof(EggsError); // exit error if we're rolling back
-    
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(InodeId,   statDirId,           setStatDirId,           0)
-    LE_VAL(EggsError, exitError,           setExitError,           8)
+    FIELDS(
+        LE, InodeId,   statDirId, setStatDirId,
+        LE, EggsError, exitError, setExitError,
+        END_STATIC
+    )
 
     void start() {
         setExitError(NO_ERROR);
@@ -92,17 +73,11 @@ struct SoftUnlinkDirectoryState {
 };
 
 struct RenameDirectoryState {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(EggsTime) + // time at which we created the old edge
-        sizeof(EggsError); // exit error if we're rolling back
-    
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(EggsTime,  newCreationTime,  setNewCreationTime,  0)
-    LE_VAL(EggsError, exitError,        setExitError,        8)
+    FIELDS(
+        LE, EggsTime,  newCreationTime, setNewCreationTime,
+        LE, EggsError, exitError, setExitError,
+        END_STATIC
+    )
 
     void start() {
         setNewCreationTime({});
@@ -111,18 +86,12 @@ struct RenameDirectoryState {
 };
 
 struct HardUnlinkDirectoryState {
-    char* _data;
-    static constexpr size_t MAX_SIZE = 0;
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+    FIELDS(END_STATIC)
     void start() {}
 };
 
 struct CrossShardHardUnlinkFileState {
-    char* _data;
-    static constexpr size_t MAX_SIZE = 0;
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+    FIELDS(END_STATIC)
     void start() {}
 };
 
@@ -136,17 +105,15 @@ constexpr size_t maxMaxSize() {
 }
 
 struct TxnState {
-    char* _data;
-
-    static constexpr size_t MIN_SIZE =
-        sizeof(CDCMessageKind) + // request type
-        sizeof(uint8_t);         // step
+    FIELDS(
+        LE, CDCMessageKind, reqKind, setReqKind,
+        LE, uint8_t,        step,    setStep,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
     static constexpr size_t MAX_SIZE =
         MIN_SIZE +
         maxMaxSize<MakeDirectoryState, RenameFileState, SoftUnlinkDirectoryState, RenameDirectoryState, HardUnlinkDirectoryState, CrossShardHardUnlinkFileState>();
-
-    U8_VAL(CDCMessageKind, reqKind,   setReqKind,   0);
-    U8_VAL(uint8_t,        step,      setStep,      1);
 
     size_t size() const {
         size_t sz = MIN_SIZE;

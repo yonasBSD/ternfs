@@ -351,6 +351,7 @@ struct ShardDBImpl {
                 LOG_INFO(_env, "creating root directory, since it does not exist");
                 DirectoryInfo info = defaultDirectoryInfo();
                 OwnedValue<DirectoryBody> dirBody(info);
+                dirBody().setVersion(0);
                 dirBody().setOwnerId(NULL_INODE_ID);
                 dirBody().setMtime({});
                 dirBody().setHashMode(HashMode::XXH3_63);
@@ -1643,11 +1644,12 @@ struct ShardDBImpl {
 
         // write to rocks
         StaticValue<TransientFileBody> transientFile;
+        transientFile().setVersion(0);
         transientFile().setFileSize(0);
         transientFile().setMtime(time);
         transientFile().setDeadline(entry.deadlineTime);
         transientFile().setLastSpanState(SpanState::CLEAN);
-        transientFile().setNote(entry.note.ref());
+        transientFile().setNoteDangerous(entry.note.ref());
         auto k = InodeIdKey::Static(id);
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
@@ -1704,6 +1706,7 @@ struct ShardDBImpl {
         auto fileKey = InodeIdKey::Static(entry.fileId);
         ROCKS_DB_CHECKED(batch.Delete(_transientCf, fileKey.toSlice()));
         StaticValue<FileBody> file;
+        file().setVersion(0);
         file().setMtime(time);
         file().setFileSize(transientFile().fileSize());
         ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
@@ -1839,6 +1842,7 @@ struct ShardDBImpl {
                     k().setName(name.ref());
                     k().setCreationTime(existingEdge().creationTime());
                     StaticValue<SnapshotEdgeBody> v;
+                    v().setVersion(0);
                     // this was current, so it's now owned.
                     v().setTargetIdWithOwned(InodeIdExtra(existingEdge().targetIdWithLocked().id(), true));
                     ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
@@ -1848,6 +1852,7 @@ struct ShardDBImpl {
 
         // OK, we're now ready to insert the current edge
         StaticValue<CurrentEdgeBody> edgeBody;
+        edgeBody().setVersion(0);
         edgeBody().setTargetIdWithLocked(InodeIdExtra(targetId, locked));
         edgeBody().setCreationTime(creationTime);
         ROCKS_DB_CHECKED(batch.Put(_edgesCf, edgeKey.toSlice(), edgeBody.toSlice()));
@@ -1922,6 +1927,7 @@ struct ShardDBImpl {
             k().setName(name.ref());
             k().setCreationTime(edgeBody().creationTime());
             StaticValue<SnapshotEdgeBody> v;
+            v().setVersion(0);
             v().setTargetIdWithOwned(InodeIdExtra(targetId, owned));
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
             k().setCreationTime(time);
@@ -1961,6 +1967,7 @@ struct ShardDBImpl {
         {
             auto dirKey = InodeIdKey::Static(entry.id);
             OwnedValue<DirectoryBody> dir(entry.info);
+            dir().setVersion(0);
             dir().setOwnerId(entry.ownerId);
             dir().setMtime(time);
             dir().setHashMode(HashMode::XXH3_63);
@@ -2025,6 +2032,7 @@ struct ShardDBImpl {
             snapshotKey().setName(entry.name.ref());
             snapshotKey().setCreationTime(edge().creationTime());
             StaticValue<SnapshotEdgeBody> snapshotBody;
+            snapshotBody().setVersion(0);
             snapshotBody().setTargetIdWithOwned(InodeIdExtra(entry.targetId, false));
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
             snapshotKey().setCreationTime(time);
@@ -2111,6 +2119,7 @@ struct ShardDBImpl {
         // we need to create a new DirectoryBody rather than modify the old one, the info might have changed size
         {
             OwnedValue<DirectoryBody> newDir(entry.info);
+            newDir().setVersion(0);
             newDir().setOwnerId(NULL_INODE_ID);
             newDir().setMtime(time);
             newDir().setHashMode(dir().hashMode());
@@ -2266,6 +2275,7 @@ struct ShardDBImpl {
         }
 
         OwnedValue<DirectoryBody> newDir(entry.info);
+        newDir().setVersion(0);
         newDir().setOwnerId(dir().ownerId());
         newDir().setMtime(dir().mtime());
         newDir().setHashMode(dir().hashMode());
@@ -2374,11 +2384,12 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(entry.targetId);
             ROCKS_DB_CHECKED(batch.Delete(_filesCf, k.toSlice()));
             StaticValue<TransientFileBody> v;
+            v().setVersion(0);
             v().setFileSize(file().fileSize());
             v().setMtime(time);
             v().setDeadline(0);
             v().setLastSpanState(SpanState::CLEAN);
-            v().setNote(entry.name.ref());
+            v().setNoteDangerous(entry.name.ref());
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
         }
 
@@ -2616,6 +2627,7 @@ struct ShardDBImpl {
         // Now manufacture and add the span
         OwnedValue<SpanBody> spanBody(entry.body.ref());
         {
+            spanBody().setVersion(0);
             spanBody().setSpanSize(entry.size);
             spanBody().setCrc(entry.crc.u32);
             spanBody().setStorageClass(entry.storageClass);
@@ -2695,6 +2707,7 @@ struct ShardDBImpl {
         // in the block service -> files index.
         OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.stripes);
         {
+            spanBody().setVersion(0);
             spanBody().setSpanSize(entry.size);
             spanBody().setCrc(entry.crc.u32);
             spanBody().setStorageClass(entry.storageClass);
@@ -2878,11 +2891,12 @@ struct ShardDBImpl {
 
         // make a transient one
         StaticValue<TransientFileBody> transientFile;
+        transientFile().setVersion(0);
         transientFile().setFileSize(file().fileSize());
         transientFile().setMtime(time);
         transientFile().setDeadline(0);
         transientFile().setLastSpanState(SpanState::CLEAN);
-        transientFile().setNote(entry.note.ref());
+        transientFile().setNoteDangerous(entry.note.ref());
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
         return NO_ERROR;

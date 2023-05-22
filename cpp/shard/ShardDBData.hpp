@@ -34,61 +34,41 @@ inline rocksdb::Slice shardMetadataKey(const ShardMetadataKey* k) {
 }
 
 struct ShardInfoBody {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(ShardId) + // shardId
-        sizeof(std::array<uint8_t, 16>); // secretKey
-
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    U8_VAL    (ShardId, shardId,      setShardId,   0)
-    FBYTES_VAL(16,    secretKey,   setSecretKey, 1)
+    FIELDS(
+        LE, ShardId, shardId, setShardId,
+        FBYTES, 16,  secretKey, setSecretKey,
+        END_STATIC
+    )
 };
 
 struct BlockServiceKey {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(ShardMetadataKey) + sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    U8_VAL(ShardMetadataKey, key,            setKey,            0) // always BLOCK_SERVICE_KEY
-    BE64_VAL(uint64_t,       blockServiceId, setBlockServiceId, 1)
+    FIELDS(
+        BE, ShardMetadataKey, key, setKey, // always BLOCK_SERVICE_KEY
+        BE, uint64_t,         blockServiceId, setBlockServiceId,
+        END_STATIC
+    )
 };
 
 struct BlockServiceBody {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(uint64_t) + // id
-        sizeof(char[4]) +  // ip1
-        sizeof(uint16_t) + // port1
-        sizeof(char[4]) +  // ip2
-        sizeof(uint16_t) + // port2
-        sizeof(uint8_t) +  // storage class
-        sizeof(char[16]) + // failure domain
-        sizeof(char[16]);  // secret key
-
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(uint64_t, id,               setId,             0)
-    FBYTES_VAL(4,    ip1,              setIp1,            8)
-    LE_VAL(uint16_t, port1,            setPort1,         12)
-    FBYTES_VAL(4,    ip2,              setIp2,           14)
-    LE_VAL(uint16_t, port2,            setPort2,         18)
-    U8_VAL(uint8_t,  storageClass,     setStorageClass,  20)
-    FBYTES_VAL(16,   failureDomain,    setFailureDomain, 21)
-    FBYTES_VAL(16,   secretKey,        setSecretKey,     37)
+    FIELDS(
+        LE, uint64_t, id,               setId,
+        FBYTES, 4,    ip1,              setIp1,
+        LE, uint16_t, port1,            setPort1,
+        FBYTES, 4,    ip2,              setIp2,
+        LE, uint16_t, port2,            setPort2,
+        LE, uint8_t,  storageClass,     setStorageClass,
+        FBYTES, 16,   failureDomain,    setFailureDomain,
+        FBYTES, 16,   secretKey,        setSecretKey,
+        END_STATIC
+    )
 };
 
 struct CurrentBlockServicesBody {
-    char* _data;
-
-    static constexpr size_t MIN_SIZE =
-        sizeof(uint8_t);               // number of current block services 
+    FIELDS(
+        LE, uint8_t, length, setLength,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
 
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE, "sz < MIN_SIZE (%s < %s)", sz, MIN_SIZE);
@@ -107,8 +87,6 @@ struct CurrentBlockServicesBody {
     size_t size() const {
         return MIN_SIZE + length()*sizeof(uint64_t);
     }
-
-    U8_VAL(uint8_t, length, setLength, 0)
 
     uint64_t at(uint64_t ix) const {
         ALWAYS_ASSERT(ix < length());
@@ -132,85 +110,67 @@ enum class SpanState : uint8_t {
 std::ostream& operator<<(std::ostream& out, SpanState state);
 
 struct TransientFileBody {
-    char* _data;
+    FIELDS(
+        LE, uint8_t,   version, setVersion,
+        LE, uint64_t,  fileSize, setFileSize,
+        LE, EggsTime,  mtime, setMtime,
+        LE, EggsTime,  deadline, setDeadline,
+        LE, SpanState, lastSpanState, setLastSpanState,
+        EMIT_OFFSET, STATIC_SIZE,
+        BYTES, note, setNoteDangerous, // dangerous because we might not have enough space
+        EMIT_SIZE, size,
+        END
+    )
 
     static constexpr size_t MIN_SIZE =
-        sizeof(uint64_t) + // size
-        sizeof(EggsTime) + // mtime
-        sizeof(EggsTime) + // deadline
-        sizeof(SpanState) + // lastSpanState
+        STATIC_SIZE +
         sizeof(uint8_t); // noteLength
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255; // max note size
-
-    size_t size() const {
-        return MIN_SIZE + note().size();
-    }
 
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE);
         ALWAYS_ASSERT(sz == size());
     }
-
-    LE_VAL(uint64_t,  fileSize,      setFileSize,       0)
-    LE_VAL(EggsTime,  mtime,         setMtime,          8)
-    LE_VAL(EggsTime,  deadline,      setDeadline,      16)
-    U8_VAL(SpanState, lastSpanState, setLastSpanState, 24)
-    BYTES_VAL(note, setNote,                           25)
 };
 
 struct FileBody {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(uint64_t) + // size
-        sizeof(EggsTime);  // mtime
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
-
-    LE_VAL(uint64_t, fileSize, setFileSize, 0)
-    LE_VAL(EggsTime, mtime,    setMtime,    8)
+    FIELDS(
+        LE, uint8_t,  version, setVersion,
+        LE, uint64_t, fileSize, setFileSize,
+        LE, EggsTime, mtime, setMtime,
+        END_STATIC
+    )
 };
 
 struct SpanKey {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(InodeId) + // id
-        sizeof(uint64_t); // offset
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
-
-    BE64_VAL(InodeId,  fileId, setFileId, 0)
-    BE64_VAL(uint64_t, offset, setOffset, 8)
+    FIELDS(
+        BE, InodeId,  fileId, setFileId,
+        BE, uint64_t, offset, setOffset,
+        END_STATIC
+    )
 };
 
 struct BlockBody {
-    char* _data;
-
-    static constexpr size_t SIZE =
-        sizeof(uint64_t) +
-        sizeof(uint64_t) +
-        sizeof(uint32_t);
-
-    LE_VAL(BlockServiceId, blockService, setBlockService, 0);
-    LE_VAL(uint64_t,       blockId,      setBlockId,      8);
-    LE_VAL(uint32_t,       crc,          setCrc,         16);
+    FIELDS(
+        LE, BlockServiceId, blockService, setBlockService,
+        LE, uint64_t,       blockId, setBlockId,
+        LE, uint32_t,       crc, setCrc,
+        END_STATIC
+    )
+    constexpr static size_t SIZE = MAX_SIZE;
 };
 
 struct SpanBlocksBody {
-    char* _data;
-
-    static constexpr size_t MIN_SIZE =
-        sizeof(uint8_t) +               // parity
-        sizeof(uint8_t) +               // stripes
-        sizeof(uint32_t);               // cellSize
-        // after this:
-        // * []BlockBody blocks
-        // * []u32 stripesCrc
-
-    U8_VAL(Parity,   parity,    setParity,      0)
-    U8_VAL(uint8_t,  stripes,   setStripes,     1)
-    LE_VAL(uint32_t, cellSize,  setCellSize,    2)
+    FIELDS(
+        LE, Parity,   parity, setParity,
+        LE, uint8_t,  stripes, setStripes,
+        LE, uint32_t, cellSize, setCellSize,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
+    // after this:
+    // * []BlockBody blocks
+    // * []u32 stripesCrc
 
     SpanBlocksBody(char* data) : _data(data) {}
 
@@ -258,19 +218,17 @@ struct SpanBlocksBody {
 };
 
 struct SpanBody {
-    char* _data;
-
-    static constexpr size_t MIN_SIZE =
-        sizeof(uint32_t) +               // size
-        sizeof(uint32_t) +               // crc
-        sizeof(uint8_t);                 // storageClass
-        // after this:
-        // * Inline body for inline spans (bytes)
-        // * Blocks for normal spans
-
-    LE_VAL(uint32_t, spanSize,     setSpanSize,      0)
-    LE_VAL(uint32_t, crc,          setCrc,           4)
-    U8_VAL(uint8_t,  storageClass, setStorageClass,  8)
+    FIELDS(
+        LE, uint8_t,  version, setVersion,
+        LE, uint32_t, spanSize, setSpanSize,
+        LE, uint32_t, crc, setCrc,
+        LE, uint8_t,  storageClass, setStorageClass,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
+    // after this:
+    // * Inline body for inline spans (bytes)
+    // * Blocks for normal spans
 
     BincodeBytesRef inlineBody() const {
         ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
@@ -337,21 +295,17 @@ enum class HashMode : uint8_t {
 };
 
 struct DirectoryBody {
-    char* _data;
-
+    FIELDS(
+        LE, uint8_t,  version, setVersion,
+        LE, InodeId,  ownerId, setOwnerId,
+        LE, EggsTime, mtime, setMtime,
+        LE, HashMode, hashMode, setHashMode,
+        LE, uint16_t, infoLength, setInfoLength,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
     // After the static data we have a u16 length of the directory info, and then
     // the directory info in bincode form, that is to say [tag: u8; len: u8; bytes; ...].
-
-    static constexpr size_t MIN_SIZE =
-        sizeof(InodeId) +  // ownerId
-        sizeof(EggsTime) + // mtime
-        sizeof(HashMode) + // hashMode
-        sizeof(uint16_t);  // infoLength
-
-    LE_VAL(InodeId,  ownerId,          setOwnerId,           0)
-    LE_VAL(EggsTime, mtime,            setMtime,             8)
-    U8_VAL(HashMode, hashMode,         setHashMode,         16)
-    LE_VAL(uint16_t, infoLength,       setInfoLength,       17)
 
     size_t size() const {
         return MIN_SIZE + infoLength();
@@ -378,11 +332,18 @@ struct DirectoryBody {
 };
 
 struct EdgeKey {
-    char* _data;
+    FIELDS(
+        // first 63 bits: dir id, then whether the edge is current
+        BE, uint64_t,  dirIdWithCurrentU64, setDirIdWithCurrentU64,
+        BE, uint64_t,  nameHash, setNameHash,
+        EMIT_OFFSET, STATIC_SIZE,
+        BYTES,        name, setName,
+        BE, EggsTime, creationTimeUnchecked, setCreationTimeUnchecked,
+        END
+    )
 
     static constexpr size_t MIN_SIZE =
-        sizeof(uint64_t) +  // first 63 bits: dirId, then whether the edge is current
-        sizeof(uint64_t) +  // nameHash
+        STATIC_SIZE +
         sizeof(uint8_t);    // nameLength
     // max name size, and an optional creation time if current=false
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255 + sizeof(EggsTime);
@@ -399,11 +360,6 @@ struct EdgeKey {
         ALWAYS_ASSERT(sz >= MIN_SIZE, "expected %s >= %s", sz, MIN_SIZE);
         ALWAYS_ASSERT(sz == size());
     }
-
-    BE64_VAL(uint64_t,  dirIdWithCurrentU64,   setDirIdWithCurrentU64,    0)
-    BE64_VAL(uint64_t,  nameHash,              setNameHash,               8)
-    BYTES_VAL(name, setName,                                             16)
-    BE64_VAL(EggsTime,  creationTimeUnchecked, setCreationTimeUnchecked, (16+1+name().size()))
 
     void setDirIdWithCurrent(InodeId id, bool current) {
         setDirIdWithCurrentU64((id.u64 << 1) | current);
@@ -435,27 +391,20 @@ struct EdgeKey {
 std::ostream& operator<<(std::ostream& out, const EdgeKey& edgeKey);
 
 struct SnapshotEdgeBody {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(InodeIdExtra); // target, and if owned
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
-
-    LE_VAL(InodeIdExtra, targetIdWithOwned, setTargetIdWithOwned, 0)
+    FIELDS(
+        LE, uint8_t,      version, setVersion,
+        LE, InodeIdExtra, targetIdWithOwned, setTargetIdWithOwned,
+        END_STATIC
+    )
 };
 
 struct CurrentEdgeBody {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE =
-        sizeof(InodeIdExtra) + // target, and if locked
-        sizeof(EggsTime);      // creationTime
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
-
-    LE_VAL(InodeIdExtra, targetIdWithLocked, setTargetIdWithLocked, 0)
-    LE_VAL(EggsTime,     creationTime,       setCreationTime,       8)
+    FIELDS(
+        LE, uint8_t,      version, setVersion,
+        LE, InodeIdExtra, targetIdWithLocked, setTargetIdWithLocked,
+        LE, EggsTime,     creationTime, setCreationTime,
+        END_STATIC
+    )
 
     bool locked() const {
         return targetIdWithLocked().extra();
@@ -475,6 +424,6 @@ struct BlockServiceToFileKey {
     size_t size() const { return MAX_SIZE; }
     void checkSize(size_t sz) { ALWAYS_ASSERT(sz == MAX_SIZE); }
 
-    BE64_VAL(BlockServiceId, blockServiceId, setBlockServiceId, 0)
-    BE64_VAL(InodeId,        fileId,         setFileId,         8)
+    BE_VAL(BlockServiceId, blockServiceId, setBlockServiceId, 0)
+    BE_VAL(InodeId,        fileId,         setFileId,         8)
 };

@@ -45,12 +45,6 @@ private:
     std::string _msg;
 };
 
-// We use byteswap to go from LE to BE, and vice-versa.
-static_assert(std::endian::native == std::endian::little);
-inline uint64_t byteswapU64(uint64_t x) {
-    return __builtin_bswap64(x);
-}
-
 template<typename T>
 struct StaticValue {
 private:
@@ -95,6 +89,8 @@ public:
         return ExternalValue((char*)slice.data(), slice.size());
     }
 
+    // TODO make this have some dangerous name, since it's easy to make mistakes
+    // when manipulating external values
     T operator()() {
         return _val;
     }
@@ -138,19 +134,10 @@ public:
     }
 };
 
-#define LE_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) > 1); \
-    type name() const { \
-        type x; \
-        memcpy(&x, _data+offset, sizeof(x)); \
-        return x; \
-    } \
-    void setName(type x) { \
-        memcpy(_data+offset, &x, sizeof(x)); \
-    }
+// We use byteswap to go from LE to BE, and vice-versa.
+static_assert(std::endian::native == std::endian::little);
 
-#define U8_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) == sizeof(uint8_t)); \
+#define LE_VAL(type, name, setName, offset) \
     type name() const { \
         type x; \
         memcpy(&x, _data+offset, sizeof(x)); \
@@ -169,42 +156,137 @@ public:
         memcpy(_data+offset+1, bytes.data(), bytes.size()); \
     }
 
+// Actually needed to avoid confusing cpp with commas 🤪
+template<size_t sz>
+using FBytesArr = std::array<uint8_t, sz>;
+
 #define FBYTES_VAL(sz, getName, setName, offset) \
-    std::array<uint8_t, sz> getName() const { \
-        std::array<uint8_t, sz> bs; \
+    FBytesArr<sz> getName() const { \
+        FBytesArr<sz> bs; \
         memcpy(bs.data(), _data+offset, sz); \
         return bs; \
     } \
-    void setName(const std::array<uint8_t, sz>& bs) { \
+    void setName(const FBytesArr<sz>& bs) { \
         memcpy(_data+offset, bs.data(), sz); \
     }
 
-#define BE64_VAL(type, name, setName, offset) \
-    static_assert(sizeof(type) == sizeof(uint64_t)); \
+template<size_t sz>
+struct FieldToBE;
+
+template<>
+struct FieldToBE<8> {
+    using Scalar = uint64_t;
+    static inline Scalar bswap(Scalar x) {
+        return __builtin_bswap64(x);
+    }
+};
+
+template<>
+struct FieldToBE<4> {
+    using Scalar = uint32_t;
+    static inline Scalar bswap(Scalar x) {
+        return __builtin_bswap32(x);
+    }
+};
+
+template<>
+struct FieldToBE<2> {
+    using Scalar = uint16_t;
+    static inline Scalar bswap(Scalar x) {
+        return __builtin_bswap16(x);
+    }
+};
+
+template<>
+struct FieldToBE<1> {
+    using Scalar = uint8_t;
+    static inline Scalar bswap(Scalar x) { return x; }
+};
+
+
+#define BE_VAL(type, name, setName, offset) \
     type name() const { \
-        uint64_t x; \
+        FieldToBE<sizeof(type)>::Scalar x; \
         memcpy(&x, _data+offset, sizeof(x)); \
-        x = byteswapU64(x); /* BE -> LE */ \
+        x = FieldToBE<sizeof(type)>::bswap(x); /* BE -> LE */ \
         type v; \
-        memcpy(&v, (char*)&x, sizeof(uint64_t)); \
+        memcpy(&v, (char*)&x, sizeof(x)); \
         return v; \
     } \
     void setName(type v) { \
-        uint64_t x; \
-        memcpy(&x, (char*)&v, sizeof(uint64_t)); \
-        x = byteswapU64(x); /* LE -> BE */ \
+        FieldToBE<sizeof(type)>::Scalar x; \
+        memcpy(&x, (char*)&v, sizeof(type)); \
+        x = FieldToBE<sizeof(type)>::bswap(x); /* LE -> BE */ \
         memcpy(_data+offset, &x, sizeof(x)); \
     }
 
+// See <https://www.scs.stanford.edu/~dm/blog/va-opt.html>
+// for the reasoning behind this horror.
+
+#define PARENS ()
+#define COMMA ,
+
+#define EXPAND(arg) EXPAND1(EXPAND1(EXPAND1(EXPAND1(arg))))
+#define EXPAND1(arg) EXPAND2(EXPAND2(EXPAND2(EXPAND2(arg))))
+#define EXPAND2(arg) EXPAND3(EXPAND3(EXPAND3(EXPAND3(arg))))
+#define EXPAND3(arg) EXPAND4(EXPAND4(EXPAND4(EXPAND4(arg))))
+#define EXPAND4(arg) arg
+
+#define FIELDS_HELPER(offset, which, ...) \
+  which##_FIELDS_AGAIN PARENS (offset __VA_OPT__(,) __VA_ARGS__)
+#define FIELDS_AGAIN() FIELDS_HELPER
+
+#define FIELDS(...) \
+    char* _data; \
+    EXPAND(FIELDS_HELPER(0, __VA_ARGS__))
+
+#define END_FIELDS(offset)
+#define END_FIELDS_AGAIN() END_FIELDS
+
+#define LE_FIELDS(offset, type, name, setName, ...) \
+    LE_VAL(type, name, setName, offset) \
+    FIELDS_AGAIN PARENS ((offset)+sizeof(type), __VA_ARGS__)
+#define LE_FIELDS_AGAIN() LE_FIELDS
+
+#define BYTES_FIELDS(offset, name, setName, ...) \
+    BYTES_VAL(name, setName, offset) \
+    FIELDS_AGAIN PARENS ((offset)+1+name().size(), __VA_ARGS__)
+#define BYTES_FIELDS_AGAIN() BYTES_FIELDS
+
+#define FBYTES_FIELDS(offset, sz, name, setName, ...) \
+    FBYTES_VAL(sz, name, setName, offset) \
+    FIELDS_AGAIN PARENS ((offset)+sz, __VA_ARGS__)
+#define FBYTES_FIELDS_AGAIN() FBYTES_FIELDS
+
+#define BE_FIELDS(offset, type, name, setName, ...) \
+    BE_VAL(type, name, setName, offset) \
+    FIELDS_AGAIN PARENS ((offset)+sizeof(type), __VA_ARGS__)
+#define BE_FIELDS_AGAIN() BE_FIELDS
+
+#define EMIT_OFFSET_FIELDS(offset, name, ...) \
+    static constexpr size_t name = offset; \
+    FIELDS_AGAIN PARENS ((offset), __VA_ARGS__)
+#define EMIT_OFFSET_FIELDS_AGAIN() EMIT_OFFSET_FIELDS
+
+#define EMIT_SIZE_FIELDS(offset, name, ...) \
+    inline size_t name() const { \
+        return (offset); \
+    }
+#define EMIT_SIZE_FIELDS_AGAIN() EMIT_SIZE_FIELDS
+
+// Useful for simple datatypes with a fixed, static size.
+#define END_STATIC_FIELDS(offset) \
+    static constexpr size_t MAX_SIZE = offset; \
+    size_t size() const { return MAX_SIZE; } \
+    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
+#define END_STATIC_FIELDS_AGAIN() END_STATIC_FIELDS
+
 // When we need a simple u64 value (e.g. log index)
 struct U64Value {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(uint64_t, u64, setU64, 0)
+    FIELDS(
+        LE, uint64_t, u64, setU64,
+        END_STATIC
+    )
 
     static StaticValue<U64Value> Static(uint64_t x) {
         auto v = StaticValue<U64Value>();
@@ -214,13 +296,10 @@ struct U64Value {
 };
 
 struct I64Value {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(int64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(int64_t, i64, setI64, 0)
+    FIELDS(
+        LE, int64_t, i64, setI64,
+        END_STATIC,
+    )
 
     static StaticValue<I64Value> Static(int64_t x) {
         auto v = StaticValue<I64Value>();
@@ -231,13 +310,10 @@ struct I64Value {
 
 // When we need a simple u64 key (e.g. log index)
 struct U64Key {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(uint64_t);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    BE64_VAL(uint64_t, u64, setU64, 0)
+    FIELDS(
+        BE, uint64_t, u64, setU64,
+        END_STATIC
+    )
 
     static StaticValue<U64Key> Static(uint64_t x) {
         auto v = StaticValue<U64Key>();
@@ -250,13 +326,10 @@ struct U64Key {
 // (and therefore BE), but it does make it a bit nicer to be able to traverse
 // them like that.
 struct InodeIdKey {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(InodeId);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    BE64_VAL(InodeId, id, setId, 0)
+    FIELDS(
+        BE, InodeId, id, setId,
+        END_STATIC
+    )
 
     static StaticValue<InodeIdKey> Static(InodeId id) {
         auto x = StaticValue<InodeIdKey>();
@@ -283,13 +356,10 @@ void bincodeFromRocksValue(const rocksdb::Slice& value, A& v) {
 }
 
 struct InodeIdValue {
-    char* _data;
-
-    static constexpr size_t MAX_SIZE = sizeof(InodeId);
-    size_t size() const { return MAX_SIZE; }
-    void checkSize(size_t size) { ALWAYS_ASSERT(size == MAX_SIZE); }
-
-    LE_VAL(InodeId, id, setId, 0)
+    FIELDS(
+        LE, InodeId, id, setId,
+        END_STATIC
+    )
 
     static StaticValue<InodeIdValue> Static(InodeId id) {
         auto x = StaticValue<InodeIdValue>();

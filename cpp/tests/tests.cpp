@@ -119,11 +119,12 @@ TEST_CASE("ShardDB data") {
         auto transientFileId = InodeIdKey::Static({InodeType::FILE, ShardId(), 0});
         BincodeBytes transientFileBodyNote("hello world");
         StaticValue<TransientFileBody> transientFileBody;
+        transientFileBody().setVersion(0);
         transientFileBody().setFileSize(123);
         transientFileBody().setMtime({456});
         transientFileBody().setDeadline({789});
         transientFileBody().setLastSpanState(SpanState::CLEAN);
-        transientFileBody().setNote(transientFileBodyNote.ref());
+        transientFileBody().setNoteDangerous(transientFileBodyNote.ref());
 
         ROCKS_DB_CHECKED(
             db.db->Put({}, transientFileId.toSlice(), transientFileBody.toSlice())
@@ -145,6 +146,7 @@ TEST_CASE("ShardDB data") {
     SUBCASE("File") {
         auto fileId = InodeIdKey::Static({InodeType::FILE, ShardId(), 0});
         StaticValue<FileBody> fileBody;
+        fileBody().setVersion(0);
         fileBody().setMtime(123);
         fileBody().setFileSize(456);
 

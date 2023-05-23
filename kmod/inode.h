@@ -107,18 +107,25 @@ struct eggsfs_inode_file {
     int status;
 
     // Normal file stuff
+
     struct rb_root spans;
     seqcount_t spans_seqcount; // to read in a lockless way
     struct mutex spans_wlock;  // to ensure there's only one thing fetching the spans when we can't find the span
 
-    // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
-    // Could be factored out to separate data structure.
-    u64 cookie;
+    // These two things which are really only concerning the transient files
+    // are always kept around since we check that they're empty when
+    // tearing down the inode.
+
     // List of spans, FIFO. There's always a "WRITING/LAST" span at the end,
     // and there's never a WRITING span which could be IDLE.
     struct list_head transient_spans;
     // Used to synchronize between things adding and removing to the list of spans.
     spinlock_t transient_spans_lock;
+
+    // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
+    // Could be factored out to separate data structure.
+
+    u64 cookie;
     // Worker which flushes the spans
     struct work_struct flusher;
     // To know when we're done flushing
@@ -132,6 +139,10 @@ struct eggsfs_inode_file {
     struct semaphore in_flight_spans;
     // We use this to track where we should close the file from.
     struct task_struct* owner;
+    // We store these one separatedly from `owner` above because when a process exits
+    // it frees the mm before it frees the files. And we need the mm to account the
+    // MM_FILEPAGES in the file flushing logic.
+    struct mm_struct* mm;
     // Size _apart from current span_.
     u64 size_without_current_span;
 };

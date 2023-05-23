@@ -160,7 +160,9 @@ static int eggsfs_fetch_block_receive_single_req(
 }
 
 void eggsfs_put_fetch_block_socket(struct eggsfs_block_socket *socket) {
-    // TODO terminate existing requests
+    spin_lock_bh(&socket->requests_lock);
+    BUG_ON(!list_empty(&socket->requests));
+    spin_unlock_bh(&socket->requests_lock);
 
     read_lock(&socket->sock->sk->sk_callback_lock);
     socket->sock->sk->sk_data_ready = socket->saved_data_ready;
@@ -264,7 +266,11 @@ struct eggsfs_block_socket* eggsfs_get_fetch_block_socket(struct eggsfs_block_se
         // Also this makes it easier to try both IPs immediately.
         err = kernel_connect(socket->sock, (struct sockaddr*)&socket->addr, sizeof(socket->addr), 0);
         if (err < 0) {
-            eggsfs_warn_print("could not connect to block service at %pI4:%d: %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
+            if (unlikely(err == -ERESTARTSYS)) {
+                eggsfs_debug_print("could not connect to block service at %pI4:%d: %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
+            } else {
+                eggsfs_warn_print("could not connect to block service at %pI4:%d: %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
+            }
         } else {
             break;
         }
@@ -668,6 +674,7 @@ struct eggsfs_block_socket* eggsfs_get_write_block_socket(struct eggsfs_block_se
 }
 
 void eggsfs_put_write_block_socket(struct eggsfs_block_socket* socket) {
+    cancel_work_sync(&socket->write_work);
     eggsfs_put_fetch_block_socket(socket);
 }
 

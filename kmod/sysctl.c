@@ -3,28 +3,24 @@
 #include "dir.h"
 #include "span.h"
 #include "log.h"
+#include "sysctl.h"
 
 int eggsfs_debug_output = 0;
 extern int eggsfs_rs_cpu_level;
 
-#if 0
-bool eggsfs_reclaim_span(void) { return false; }
+static int drop_cached_spans;
 
-static int eggsfs_drop_spancache_var;
-
-static int eggsfs_drop_spancache_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+static int eggsfs_reclaim_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
     int ret;
     ret = proc_dointvec_minmax(table, write, buffer, len, ppos);
-    if (ret)
+    if (ret) {
         return ret;
+    }
     if (write) {
-        int n_spans = 0;
-        while (eggsfs_reclaim_span()) { ++n_spans; }
-        printk(KERN_INFO "eggsfs: reclaimed %d spans\n", n_spans);
+        eggsfs_reclaim_all_spans();
     }
     return 0;
 }
-#endif
 
 #define EGGSFS_CTL_ULONG(_name) \
     { \
@@ -59,6 +55,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .maxlen = sizeof(eggsfs_rs_cpu_level),
         .mode = 0644,
         .proc_handler = proc_dointvec,
+    },
+
+    {
+        .procname = "drop_cached_spans",
+        .data = &drop_cached_spans,
+        .maxlen = sizeof(int),
+        .mode = 0200,
+        .proc_handler = eggsfs_reclaim_spans_sysctl,
     },
 
     EGGSFS_CTL_INT_TIME(dir_refresh_time),

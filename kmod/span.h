@@ -4,12 +4,21 @@
 #include <linux/kernel.h>
 
 #include "inode.h"
+#include "counter.h"
+
+EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_spans);
+EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_span_pages);
 
 struct eggsfs_span {
+    struct eggsfs_inode* enode;
     struct rb_node node;  // to look them up
     struct list_head lru; // to decide what to evict
     u64 start;
     u64 end;
+    // If -1, we're reclaiming this span.
+    s64 readers;
+    // If anybody's actually read some of this span 
+    bool actually_read;
     u8 storage_class; // used to determine which type of span this is enclosed in
 };
 
@@ -53,8 +62,13 @@ struct eggsfs_block_span {
 // be returned if we fail to fetch the span.
 struct eggsfs_span* eggsfs_get_span(struct eggsfs_inode* enode, u64 offset);
 
+// Makes the span available for reclamation.
+void eggsfs_put_span(struct eggsfs_span* span, bool was_read);
+
 // The page_ix is the page number inside the span.
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix);
+
+void eggsfs_reclaim_all_spans(void);
 
 void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, const uint32_t* stripes_crcs);
 void eggsfs_file_spans_cb_block(
@@ -65,5 +79,8 @@ void eggsfs_file_spans_cb_block(
     u64 block_id, u32 crc
 );
 void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body);
+
+// To be used on eviction, i.e. when we expect no contention.
+void eggsfs_free_spans(struct eggsfs_inode* enode);
 
 #endif

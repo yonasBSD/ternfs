@@ -1,6 +1,7 @@
 #include "file.h"
 
 #include <linux/uio.h>
+#include <linux/sched/mm.h>
 
 #include "bincode.h"
 #include "inode.h"
@@ -152,8 +153,8 @@ static struct page* eggsfs_alloc_write_page(struct eggsfs_inode_file* file) {
     // zeros, we could do it on demand but I can't be bothered.
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
     if (p == NULL) { return p; }
-    // this contributes to OOM score
-    inc_mm_counter(file->owner->mm, MM_FILEPAGES);
+    // This contributes to OOM score.
+    inc_mm_counter(file->mm, MM_FILEPAGES);
     return p;
 }
 
@@ -166,20 +167,21 @@ static void eggsfs_free_transient_span(struct eggsfs_inode_file* file, struct eg
         put_page(victim);
         num_pages++;
     }
-    add_mm_counter(file->owner->mm, MM_FILEPAGES, -num_pages);
+    add_mm_counter(file->mm, MM_FILEPAGES, -num_pages);
     // Free reqs
     eggsfs_block_writing_put_reqs(span);
     // Free the span itself
     kfree(span);
 }
 
-// Frees up everything after an error. Takes the inode lock.
-static void eggsfs_transient_error_cleanup(struct eggsfs_inode* enode) {
+// Frees up everything after an error. Takes the inode lock if cleanup was necessary.
+// Note that cleanup might not immediately terminate. The bool just tells us if we're
+// currently cleaning up.
+static bool eggsfs_transient_error_cleanup(struct eggsfs_inode* enode) {
     struct eggsfs_inode_file* file = &enode->file;
 
     if (atomic_read(&enode->file.transient_err) == 0) {
-        eggsfs_warn_print("Error cleanup function is running, but the transient file is not errored. This should not be happening.");
-        return;
+        return false;
     }
 
     // We need to take the exclusive lock to ensure nobody else is writing to the last span.
@@ -191,7 +193,7 @@ static void eggsfs_transient_error_cleanup(struct eggsfs_inode* enode) {
     struct eggsfs_transient_span* span;
     for (;;) {
         // Pick out first span (which is also the oldest, but doesn't matter anyway)
-        spin_lock(&file->transient_spans_lock);
+        spin_lock_bh(&file->transient_spans_lock);
         span = list_first_entry_or_null(&file->transient_spans, struct eggsfs_transient_span, list);
         if (span == NULL) {
             // we've cleared all the spans
@@ -209,10 +211,10 @@ static void eggsfs_transient_error_cleanup(struct eggsfs_inode* enode) {
         eggsfs_block_writing_put_reqs(span);
         // We can destroy this span.
         list_del(&span->list);
-        spin_unlock(&file->transient_spans_lock);
+        spin_unlock_bh(&file->transient_spans_lock);
         eggsfs_free_transient_span(file, span);
     }
-    spin_unlock(&file->transient_spans_lock);
+    spin_unlock_bh(&file->transient_spans_lock);
 
     inode_unlock(&enode->inode);
 
@@ -222,6 +224,8 @@ static void eggsfs_transient_error_cleanup(struct eggsfs_inode* enode) {
     } else {
         eggsfs_debug_print("not finished cleaning up");
     }
+
+    return true;
 }
 
 void eggsfs_flush_transient_spans(struct work_struct* work) {
@@ -230,15 +234,11 @@ void eggsfs_flush_transient_spans(struct work_struct* work) {
 
     eggsfs_debug_print("ino=%lu", enode->inode.i_ino);
 
-    if (atomic_read(&enode->file.transient_err) != 0) {
-        eggsfs_transient_error_cleanup(enode);
-        return;
-    }
-
 again:
-    spin_lock(&file->transient_spans_lock);
+    spin_lock_bh(&file->transient_spans_lock);
     struct eggsfs_transient_span* span = list_first_entry_or_null(&file->transient_spans, struct eggsfs_transient_span, list);
     bool good_to_go = false;
+    bool good_to_cleanup = true;
     if (span) {
         if (span->status == EGGSFS_SPAN_STATUS_IDLE) {
             good_to_go = true;
@@ -248,8 +248,16 @@ again:
             good_to_go = true;
             span->status = EGGSFS_SPAN_STATUS_FLUSHING_LAST;
         }
+        if (span->status == EGGSFS_SPAN_STATUS_FLUSHING || span->status == EGGSFS_SPAN_STATUS_FLUSHING_LAST) {
+            good_to_cleanup = false;
+        }
     }
-    spin_unlock(&file->transient_spans_lock);
+    spin_unlock_bh(&file->transient_spans_lock);
+
+    // Try to cleanup if we can (i.e. if nobody else is currently writing)
+    if (good_to_cleanup && eggsfs_transient_error_cleanup(enode)) {
+        return;
+    }
 
     if (!good_to_go) {
         eggsfs_debug_print("oldest span is not idle, terminating");
@@ -430,9 +438,9 @@ again:
 
     if (done) {
         // Free everything
-        spin_lock(&file->transient_spans_lock);
+        spin_lock_bh(&file->transient_spans_lock);
         list_del(&span->list);
-        spin_unlock(&file->transient_spans_lock);
+        spin_unlock_bh(&file->transient_spans_lock);
         // safe to do this without locks since there's only ever one
         // work queue working on any given span
         trace_eggsfs_span_flush_exit(enode->inode.i_ino, atomic64_read(&file->flushed_so_far), span->size, 0);
@@ -445,13 +453,13 @@ again:
             eggsfs_debug_print("finished");
             up(&file->done_flushing);
         } else {
-            eggsfs_debug_print("going to next span");
+            eggsfs_debug_print("will go to next span");
             goto again;
         }
     } else {
         eggsfs_debug_print("span not done");
         // restore status so that we can keep working on this
-        spin_lock(&file->transient_spans_lock);
+        spin_lock_bh(&file->transient_spans_lock);
         if (span->status == EGGSFS_SPAN_STATUS_FLUSHING) {
             span->status = EGGSFS_SPAN_STATUS_IDLE;
         } else if (span->status == EGGSFS_SPAN_STATUS_FLUSHING_LAST) {
@@ -459,7 +467,9 @@ again:
         } else {
             BUG();
         }
-        spin_unlock(&file->transient_spans_lock);
+        spin_unlock_bh(&file->transient_spans_lock);
+        // try to cleanup, we might have prevented another cleanup since we were running
+        eggsfs_transient_error_cleanup(enode);
     }
 
     return;
@@ -601,11 +611,11 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
     BUG_ON(max_span_size%PAGE_SIZE != 0); // needed for "new span" logic paired with page copying below, we could avoid it
 
     // get the span we're currently writing at
-    spin_lock(&enode->file.transient_spans_lock);
+    spin_lock_bh(&enode->file.transient_spans_lock);
     BUG_ON(list_empty(&enode->file.transient_spans));
     struct eggsfs_transient_span* span = list_last_entry(&enode->file.transient_spans, struct eggsfs_transient_span, list);
     int status = span->status;
-    spin_unlock(&enode->file.transient_spans_lock);
+    spin_unlock_bh(&enode->file.transient_spans_lock);
 
     if (status != EGGSFS_SPAN_STATUS_WRITING) { err = -EPERM; goto out_err; } // we've already declared this file done, we're just flushing it
 
@@ -642,14 +652,14 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
                 int err = down_killable(&enode->file.in_flight_spans);
                 if (err < 0) { goto out_err; }
             }
-            spin_lock(&enode->file.transient_spans_lock);
+            spin_lock_bh(&enode->file.transient_spans_lock);
             span->status = EGGSFS_SPAN_STATUS_IDLE;
             eggsfs_compute_spans_parameters(
                 &enode->block_policies, &enode->span_policies, enode->target_stripe_size,
                 span, current_span_size
             );
             struct eggsfs_transient_span* new_span = eggsfs_add_new_span(&enode->file.transient_spans);
-            spin_unlock(&enode->file.transient_spans_lock);
+            spin_unlock_bh(&enode->file.transient_spans_lock);
             enode->file.size_without_current_span += current_span_size;
             if (IS_ERR(new_span)) {
                 err = PTR_ERR(new_span);
@@ -681,7 +691,7 @@ out_err_permanent:
 
 out_err:
     inode_unlock(inode);
-    eggsfs_info_print("err=%d", err);
+    eggsfs_debug_print("err=%d", err);
     if (err == -EAGAIN && *ppos > ppos_before) {
         goto out; // we can just return what we've already written
     }
@@ -710,7 +720,15 @@ __must_check static int eggsfs_file_flush_init(struct eggsfs_inode* enode) {
     }
 
     // Mark the last span as the last one, and queue work
-    spin_lock(&enode->file.transient_spans_lock);
+    spin_lock_bh(&enode->file.transient_spans_lock);
+    if (list_empty(&enode->file.transient_spans)) {
+        // This can happen if flushing errored out, e.g. if
+        // we fail to link the file. We keep the status as
+        // writing, but we have nothing in it.
+        spin_unlock_bh(&enode->file.transient_spans_lock);
+        res = 0;
+        goto out;
+    }
     BUG_ON(list_empty(&enode->file.transient_spans));
     struct eggsfs_transient_span* span = list_last_entry(&enode->file.transient_spans, struct eggsfs_transient_span, list);
     // we might not be the first ones here -- every other operation is fine to do twice anyway.
@@ -726,7 +744,7 @@ __must_check static int eggsfs_file_flush_init(struct eggsfs_inode* enode) {
         );
         enode->file.size_without_current_span += current_span_size;
     }
-    spin_unlock(&enode->file.transient_spans_lock);
+    spin_unlock_bh(&enode->file.transient_spans_lock);
 
     inode_unlock(&enode->inode);
 
@@ -748,12 +766,23 @@ static int eggsfs_file_flush(struct file* filp, fl_owner_t id) { // can we get w
     if (res == 0) { return 0; }
     if (res < 0) { return res; }
 
+    // If the owner doesn't have an mm anymore, it means that the file
+    // is being torn down after the process has been terminated. In that case
+    // we shouldn't even link the file.
+    bool link = true;
+    if (enode->file.owner->mm != enode->file.mm) {
+        atomic_cmpxchg(&enode->file.transient_err, 0, -EINTR);
+        link = false;
+    }
+
     // Now we need to wait for things to be done
     eggsfs_debug_print("waiting for flush");
     res = down_killable(&enode->file.done_flushing);
     if (res < 0) { return res; }
     up(&enode->file.done_flushing); // allow others to wait on it again
     eggsfs_debug_print("flush done");
+    mmdrop(enode->file.mm); // we might be the last ones here if the process is already gone
+    enode->file.mm = NULL;
 
     res = atomic_read(&enode->file.transient_err);
     if (res < 0) { return res; }
@@ -761,12 +790,16 @@ static int eggsfs_file_flush(struct file* filp, fl_owner_t id) { // can we get w
     inode_lock(&enode->inode);
     // somebody might have gotten here before us
     if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-        eggsfs_debug_print("linking file");
-        res = eggsfs_error_to_linux(eggsfs_shard_link_file(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
-            enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
-            &enode->edge_creation_time
-        )); 
+        if (link) {
+            eggsfs_debug_print("linking file");
+            res = eggsfs_error_to_linux(eggsfs_shard_link_file(
+                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
+                enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
+                &enode->edge_creation_time
+            ));
+        } else {
+            eggsfs_debug_print("not linking file (we're probably being called after the task has been killed)");
+        }
         if (res == 0) {
             enode->file.status = EGGSFS_FILE_STATUS_READING;
         }
@@ -791,8 +824,10 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     if (unlikely(iocb->ki_flags & IOCB_DIRECT)) { return -ENOSYS; }
 
     eggsfs_debug_print("start of read loop, *ppos=%llu", *ppos);
+    struct eggsfs_span* span = NULL;
     while (*ppos < inode->i_size && iov_iter_count(to)) {
-        struct eggsfs_span* span = eggsfs_get_span(enode, *ppos);
+        if (span) { eggsfs_put_span(span, true); }
+        span = eggsfs_get_span(enode, *ppos);
         if (IS_ERR(span)) { written = PTR_ERR(span); goto out; }
         if (span == NULL) { goto out; }
         if (span->start%PAGE_SIZE != 0) {
@@ -820,7 +855,8 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
             struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
             if (block_span->cell_size%PAGE_SIZE != 0) {
                 eggsfs_warn_print("cell size not multiple of page size %u", block_span->cell_size);
-                return -EIO;
+                written = -EIO;
+                goto out;
             }
 
             u32 page_ix = span_offset/PAGE_SIZE;
@@ -855,6 +891,7 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
         eggsfs_debug_print("before loop end, remaining %lu", iov_iter_count(to));
     }
 out:
+    if (span) { eggsfs_put_span(span, true); }
     eggsfs_debug_print("out of the loop, written=%ld", written);
     if (written < 0) {
         eggsfs_debug_print("reading failed, err=%ld", written);

@@ -8,6 +8,7 @@
 #define EGGSFS_DEFINE_COUNTER(_name) DEFINE_PER_CPU(u64, _name)
 
 #define eggsfs_counter_inc(_counter) raw_cpu_inc(_counter)
+#define eggsfs_counter_dec(_counter) raw_cpu_dec(_counter)
 
 #define eggsfs_counter_get(_counter) ({ \
         u64 total = 0; \

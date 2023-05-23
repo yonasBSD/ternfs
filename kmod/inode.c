@@ -1,5 +1,7 @@
 #include "inode.h"
 
+#include <linux/sched/mm.h>
+
 #include "log.h"
 #include "dir.h"
 #include "metadata.h"
@@ -7,6 +9,8 @@
 #include "trace.h"
 #include "err.h"
 #include "file.h"
+#include "wq.h"
+#include "span.h"
 
 static struct kmem_cache* eggsfs_inode_cachep;
 
@@ -35,20 +39,27 @@ void eggsfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-            // error out in flight stuff
-            atomic_cmpxchg(&enode->file.transient_err, 0, -EINTR);
-            // wait for all writing operations to be done (we might be cleaning up)
-            down(&enode->file.done_flushing);
-            up(&enode->file.done_flushing);
-        }
-        // TODO clear span stuff
+        // While you might think that `enode->file.status` would have to be 
+        // EGGSFS_FILE_STATUS_NONE or EGGSFS_FILE_STATUS_READING here, it is not
+        // the case, since we might have failed to link the span for whatever reason.
+        //
+        // Regardless, we're reasonably certain that every temporary buffer for writing
+        // is already clear here.
+        //
+        // Locking isn't really needed at this stage, more of a sanity check
+        // than anything.
+        spin_lock_bh(&enode->file.transient_spans_lock);
+        BUG_ON(!list_empty(&enode->file.transient_spans));
+        spin_unlock_bh(&enode->file.transient_spans_lock);
+        // Free span cache
+        eggsfs_free_spans(enode);
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);
 }
 
 void eggsfs_inode_free(struct inode* inode) {
+    // We need to clear the spans
     struct eggsfs_inode* enode = EGGSFS_I(inode);
     eggsfs_debug_print("enode=%p", enode);
     kmem_cache_free(eggsfs_inode_cachep, enode);
@@ -178,16 +189,17 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
 
     // Initialize all the transient specific fields
     enode->file.cookie = cookie;
-    INIT_LIST_HEAD(&enode->file.transient_spans);
     struct eggsfs_transient_span* span = eggsfs_add_new_span(&enode->file.transient_spans);
     if (IS_ERR(span)) { err = PTR_ERR(span); goto out_err; }
     enode->file.size_without_current_span = 0;
-    spin_lock_init(&enode->file.transient_spans_lock);
     memcpy(&enode->block_policies, &parent_enode->block_policies, sizeof(parent_enode->block_policies));
     memcpy(&enode->span_policies, &parent_enode->span_policies, sizeof(parent_enode->span_policies));
     enode->target_stripe_size = parent_enode->target_stripe_size;
     atomic_set(&enode->file.transient_err, 0);
     enode->file.owner = current->group_leader;
+    enode->file.mm = current->group_leader->mm;
+    // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
+    mmgrab(enode->file.mm);
     INIT_WORK(&enode->file.flusher, eggsfs_flush_transient_spans);
     sema_init(&enode->file.done_flushing, 0);
     atomic64_set(&enode->file.flushed_so_far, 0);
@@ -293,6 +305,9 @@ struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino) {
             enode->file.spans = RB_ROOT;
             seqcount_init(&enode->file.spans_seqcount);
             mutex_init(&enode->file.spans_wlock);
+            // Transient-specific stuff which is also always there.
+            INIT_LIST_HEAD(&enode->file.transient_spans);
+            spin_lock_init(&enode->file.transient_spans_lock);
         }
 
         // FIXME

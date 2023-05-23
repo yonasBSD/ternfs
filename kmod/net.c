@@ -103,6 +103,7 @@ static void insert_shard_request(struct eggsfs_shard_socket* s, struct eggsfs_sh
 
 static_assert(HZ / 100 > 0);
 
+#if 0
 #define SHARD_ATTEMPTS 10
 const static u64 shard_timeouts_10ms[SHARD_ATTEMPTS] = {
     1, 2, 4, 8, 16, 32, 64, 100, 200, 200
@@ -113,6 +114,19 @@ const static u64 shard_timeouts_10ms[SHARD_ATTEMPTS] = {
 #define CDC_ATTEMPTS 10
 const static u64 cdc_timeouts_10ms[CDC_ATTEMPTS] = {
     5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000
+};
+#endif
+
+// higher timeouts since I'm testing in qemu with kasan
+
+#define SHARD_ATTEMPTS 10
+const static u64 shard_timeouts_10ms[SHARD_ATTEMPTS] = {
+    5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000
+};
+
+#define CDC_ATTEMPTS 10
+const static u64 cdc_timeouts_10ms[CDC_ATTEMPTS] = {
+    10, 20, 40, 80, 160, 320, 640, 1000, 1000, 1000
 };
 
 // Returns:
@@ -234,7 +248,7 @@ struct sk_buff* eggsfs_metadata_request(
             return req.skb;
         }
 
-        eggsfs_info_print("err=%d", err);
+        eggsfs_debug_print("err=%d", err);
         if (err != -ETIMEDOUT || *attempts >= max_attempts) {
             eggsfs_info_print("giving up after %d attempts due to err %d", *attempts, err);
             goto out_err;

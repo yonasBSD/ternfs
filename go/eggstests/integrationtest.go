@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -426,6 +427,7 @@ func main() {
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
+	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -510,6 +512,26 @@ func main() {
 
 	procs := managedprocess.New(terminateChan)
 	defer procs.Close()
+
+	// Start cached spans dropper
+	if *dropCachedSpansEvery != time.Duration(0) {
+		if !*kmod {
+			panic(fmt.Errorf("you provided -drop-cached-spans-every but you did't provide -kmod"))
+		}
+		fmt.Printf("will drop cached spans every %v\n", *dropCachedSpansEvery)
+		go func() {
+			for {
+				cmd := exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.drop_cached_spans=1")
+				cmd.Stdout = io.Discard
+				cmd.Stderr = io.Discard
+				if err := cmd.Run(); err != nil {
+					terminateChan <- err
+					return
+				}
+				time.Sleep(*dropCachedSpansEvery)
+			}
+		}()
+	}
 
 	// Start shuckle
 	shucklePort := uint16(55555)

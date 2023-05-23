@@ -4,6 +4,7 @@
 #include <linux/fs.h>
 
 #include "namei.h"
+#include "span.h"
 
 static struct kset* eggsfs_kset;
 
@@ -42,9 +43,13 @@ static umode_t eggsfs_stat_visible(struct kobject *kobj, struct attribute *attr,
 #define EGGSFS_SYSFS_COUNTER_PTR(_name) (&eggsfs_sysfs_counter_##_name.kobj_attr.attr)
 
 EGGSFS_SYSFS_COUNTER(dir_revalidations);
+EGGSFS_SYSFS_COUNTER(cached_spans);
+EGGSFS_SYSFS_COUNTER(cached_span_pages);
 
 static struct attribute* eggsfs_stat_attrs[] = {
     EGGSFS_SYSFS_COUNTER_PTR(dir_revalidations),
+    EGGSFS_SYSFS_COUNTER_PTR(cached_spans),
+    EGGSFS_SYSFS_COUNTER_PTR(cached_span_pages),
     NULL
 };
 

@@ -826,7 +826,7 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     eggsfs_debug_print("start of read loop, *ppos=%llu", *ppos);
     struct eggsfs_span* span = NULL;
     while (*ppos < inode->i_size && iov_iter_count(to)) {
-        if (span) { eggsfs_put_span(span, true); }
+        if (span) { eggsfs_span_put(span, true); }
         span = eggsfs_get_span(enode, *ppos);
         if (IS_ERR(span)) { written = PTR_ERR(span); goto out; }
         if (span == NULL) { goto out; }
@@ -891,7 +891,7 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
         eggsfs_debug_print("before loop end, remaining %lu", iov_iter_count(to));
     }
 out:
-    if (span) { eggsfs_put_span(span, true); }
+    if (span) { eggsfs_span_put(span, true); }
     eggsfs_debug_print("out of the loop, written=%ld", written);
     if (written < 0) {
         eggsfs_debug_print("reading failed, err=%ld", written);

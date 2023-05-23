@@ -15,10 +15,6 @@ struct eggsfs_span {
     struct list_head lru; // to decide what to evict
     u64 start;
     u64 end;
-    // If -1, we're reclaiming this span.
-    s64 readers;
-    // If anybody's actually read some of this span 
-    bool actually_read;
     u8 storage_class; // used to determine which type of span this is enclosed in
 };
 
@@ -46,6 +42,12 @@ struct eggsfs_block_span {
     struct eggsfs_latch stripe_latches[15];
     u32 cell_size;
     u32 stripes_crc[15];
+    // * 0: there are no readers, the span is in the LRU.
+    // * n > 0: there are readers, the span is _not_ in the LRU.
+    // * n < 0: the span is being reclaimed, it is _not_ in the LRU.
+    s64 readers;
+    // If anybody's actually read some of this span 
+    bool actually_read;
     u8 stripes;
     u8 parity;    
 };
@@ -63,12 +65,12 @@ struct eggsfs_block_span {
 struct eggsfs_span* eggsfs_get_span(struct eggsfs_inode* enode, u64 offset);
 
 // Makes the span available for reclamation.
-void eggsfs_put_span(struct eggsfs_span* span, bool was_read);
+void eggsfs_span_put(struct eggsfs_span* span, bool was_read);
 
 // The page_ix is the page number inside the span.
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix);
 
-void eggsfs_reclaim_all_spans(void);
+void eggsfs_drop_all_spans(void);
 
 void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, const uint32_t* stripes_crcs);
 void eggsfs_file_spans_cb_block(
@@ -81,6 +83,6 @@ void eggsfs_file_spans_cb_block(
 void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body);
 
 // To be used on eviction, i.e. when we expect no contention.
-void eggsfs_free_spans(struct eggsfs_inode* enode);
+void eggsfs_drop_spans(struct eggsfs_inode* enode);
 
 #endif

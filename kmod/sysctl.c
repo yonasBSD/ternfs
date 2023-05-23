@@ -10,14 +10,14 @@ extern int eggsfs_rs_cpu_level;
 
 static int drop_cached_spans;
 
-static int eggsfs_reclaim_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
     int ret;
     ret = proc_dointvec_minmax(table, write, buffer, len, ppos);
     if (ret) {
         return ret;
     }
     if (write) {
-        eggsfs_reclaim_all_spans();
+        eggsfs_drop_all_spans();
     }
     return 0;
 }
@@ -62,7 +62,7 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &drop_cached_spans,
         .maxlen = sizeof(int),
         .mode = 0200,
-        .proc_handler = eggsfs_reclaim_spans_sysctl,
+        .proc_handler = eggsfs_drop_spans_sysctl,
     },
 
     EGGSFS_CTL_INT_TIME(dir_refresh_time),

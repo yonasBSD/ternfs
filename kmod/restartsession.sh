@@ -76,4 +76,4 @@ tmux attach-session -t uovo:1
 
 # ./eggstests -kmod -filter 'mounted|large|rsync' -short -binaries-dir $(pwd)
 # sudo sysctl fs.eggsfs.debug=1
-# ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted' -cfg fsTest.checkThreads=1 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
+# ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)

@@ -52,7 +52,7 @@ void eggsfs_inode_evict(struct inode* inode) {
         BUG_ON(!list_empty(&enode->file.transient_spans));
         spin_unlock_bh(&enode->file.transient_spans_lock);
         // Free span cache
-        eggsfs_free_spans(enode);
+        eggsfs_drop_spans(enode);
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);

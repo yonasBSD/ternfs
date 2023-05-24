@@ -238,7 +238,14 @@ int eggsfs_unlink(struct inode* dir, struct dentry* dentry) {
     }
 
     struct eggsfs_inode* enode = EGGSFS_I(dentry->d_inode);
-    err = eggsfs_shard_unlink_file((struct eggsfs_fs_info*)dir->i_sb->s_fs_info, dir->i_ino, dentry->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len, enode->edge_creation_time);
+    err = eggsfs_shard_unlink_file(
+        (struct eggsfs_fs_info*)dir->i_sb->s_fs_info,
+        dir->i_ino,
+        dentry->d_inode->i_ino,
+        dentry->d_name.name,
+        dentry->d_name.len,
+        enode->edge_creation_time
+    );
     if (unlikely(err)) {
         if (err < 0) { goto out_err; }
         eggsfs_dcache_handle_error(dir, dentry, err);

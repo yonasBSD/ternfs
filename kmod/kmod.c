@@ -13,6 +13,7 @@
 #include "block.h"
 #include "rs.h"
 #include "log.h"
+#include "span.h"
 
 MODULE_LICENSE("GPL");
 
@@ -27,6 +28,8 @@ static int __init eggsfs_init(void) {
 
     eggsfs_wq = alloc_workqueue("eggsfs-wq", 0, 0);
     if (!eggsfs_wq) { return -ENOMEM; }
+
+    eggsfs_span_init();
 
     err = eggsfs_sysfs_init();
     if (err) { goto out_sysfs; }

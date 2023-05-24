@@ -1,4 +1,3 @@
-
 #include "bincode.h"
 #include "log.h"
 #include "span.h"
@@ -9,11 +8,26 @@
 #include "err.h"
 #include "counter.h"
 
-static DEFINE_SPINLOCK(eggsfs_span_lru_lock);
-static LIST_HEAD(eggsfs_span_lru);
-
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_spans);
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_span_pages);
+
+struct eggsfs_span_lru {
+    spinlock_t lock ____cacheline_aligned;
+    struct list_head lru ____cacheline_aligned;
+};
+
+// These are global locks, but the sharding should alleviate contention.
+#define EGGSFS_SPAN_BITS 7
+#define EGGSFS_SPAN_LRUS (1<<EGGSFS_SPAN_BITS) // 128
+
+static struct eggsfs_span_lru eggsfs_span_lrus[EGGSFS_SPAN_LRUS];
+
+static struct eggsfs_span_lru* eggsfs_get_span_lru(struct eggsfs_span* span) {
+    int h;
+    h  = hash_64(span->enode->inode.i_ino, EGGSFS_SPAN_BITS);
+    h ^= hash_64(span->start, EGGSFS_SPAN_BITS);
+    return &eggsfs_span_lrus[h%EGGSFS_SPAN_LRUS];
+}
 
 static struct eggsfs_span* eggsfs_lookup_span(struct rb_root* spans, u64 offset) {
     struct rb_node* node = spans->rb_node;
@@ -60,6 +74,7 @@ static void eggsfs_free_span(struct eggsfs_span* span) {
 }
 
 struct eggsfs_get_span_ctx {
+    struct eggsfs_inode* enode;
     struct list_head spans;
     int err;
 };
@@ -79,6 +94,7 @@ void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
         return;
     }
 
+    span->span.enode = ctx->enode;
     span->span.start = offset;
     span->span.end = offset + size;
     span->span.storage_class = storage_class;
@@ -129,6 +145,7 @@ void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     struct eggsfs_inline_span* span = kmalloc(sizeof(struct eggsfs_inline_span), GFP_KERNEL);
     if (!span) { ctx->err = -ENOMEM; return; }
 
+    span->span.enode = ctx->enode;
     span->span.start = offset;
     span->span.end = offset + size;
     span->span.storage_class = EGGSFS_INLINE_STORAGE;
@@ -141,10 +158,13 @@ void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
 // returns whether we could acquire it
 static bool eggsfs_span_acquire(struct eggsfs_span* span) {
     if (span->storage_class == EGGSFS_INLINE_STORAGE) { return true; }
+
     struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-    spin_lock_bh(&eggsfs_span_lru_lock);
+    struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
+
+    spin_lock_bh(&lru->lock);
     if (unlikely(block_span->readers < 0)) { // the reclaimer got here before us.
-        spin_unlock_bh(&eggsfs_span_lru_lock);
+        spin_unlock_bh(&lru->lock);
         return false;
     }
     block_span->readers++;
@@ -152,61 +172,90 @@ static bool eggsfs_span_acquire(struct eggsfs_span* span) {
         // we're the first ones here, take it out of the LRU
         list_del(&span->lru);
     }
-    spin_unlock_bh(&eggsfs_span_lru_lock);
+    spin_unlock_bh(&lru->lock);
+
     return true;
 }
 
 void eggsfs_span_put(struct eggsfs_span* span, bool was_read) {
     if (span->storage_class == EGGSFS_INLINE_STORAGE) { return; }
+
     struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-    spin_lock_bh(&eggsfs_span_lru_lock);
+    struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
+
+    spin_lock_bh(&lru->lock);
     block_span->actually_read = block_span->actually_read || was_read;
     BUG_ON(block_span->readers < 1);
     block_span->readers--;
     if (block_span->readers == 0) { // we need to put it back into the LRU
         if (block_span->actually_read) {
-            list_add_tail(&span->lru, &eggsfs_span_lru);
+            list_add_tail(&span->lru, &lru->lru);
         } else {
-            list_add(&span->lru, &eggsfs_span_lru);
+            list_add(&span->lru, &lru->lru);
         }
         block_span->actually_read = false;
     }
-    spin_unlock_bh(&eggsfs_span_lru_lock);
+    spin_unlock_bh(&lru->lock);
 }
 
 struct eggsfs_span* eggsfs_get_span(struct eggsfs_inode* enode, u64 offset) {
-    unsigned seq;
-    struct eggsfs_span* span;
     struct eggsfs_inode_file* file = &enode->file;
+    int err;
 
-    eggsfs_debug_print("ino=%016lx, pid=%d, mu=%p, off=%llu getting span", enode->inode.i_ino, get_current()->pid, &file->spans_wlock, offset);
+    eggsfs_debug_print("ino=%016lx, pid=%d, off=%llu getting span", enode->inode.i_ino, get_current()->pid, offset);
 
-    // Regarding the safety of manipulating RB-trees in a lockless
-    // way, see the comments at the top of `rbtree_latch.h`, and also
-    // "Notes on lockless lookups:" in `rbtree.c`.
+    // This helps below: it means that we _must_ have a span. So if we
+    // get NULL at any point, we can retry, because it means we're conflicting
+    // with a reclaimer.
+    if (offset >= enode->inode.i_size) { return NULL; }
+
+    u64 iterations = 0;
+
 retry:
-    seq = read_seqcount_begin(&file->spans_seqcount);
-    span = eggsfs_lookup_span(&file->spans, offset);
-    if (likely(span)) {
-        if (unlikely(!eggsfs_span_acquire(span))) { goto retry; }
-        return span;
+    iterations++;
+    if (unlikely(iterations > 10)) {
+        eggsfs_warn_print("we've been stuck on fetching spans for %llu iterations, something is wrong (reclaimer is running too often?)", iterations);
+        return ERR_PTR(-EIO);
     }
-    if (unlikely(read_seqcount_retry(&file->spans_seqcount, seq))) { goto retry; }
 
-    int err = mutex_lock_killable(&file->spans_wlock);
+    // Try to read the semaphore if it's already there.
+    err = down_read_killable(&enode->file.spans_lock);
+    if (err) { return ERR_PTR(err); }
+    {
+        struct eggsfs_span* span = eggsfs_lookup_span(&file->spans, offset);
+        if (likely(span)) {
+            if (unlikely(!eggsfs_span_acquire(span))) {
+                up_read(&enode->file.spans_lock);
+                goto retry;
+            }
+            up_read(&enode->file.spans_lock);
+            return span;
+        }
+        up_read(&enode->file.spans_lock);
+    }
+
+    // We need to fetch the spans.
+    err = down_write_killable(&file->spans_lock);
     if (err) { return ERR_PTR(err); }
 
-    span = eggsfs_lookup_span(&file->spans, offset);
-    if (unlikely(span)) { // somebody got here first
-        mutex_unlock(&file->spans_wlock);
-        if (unlikely(!eggsfs_span_acquire(span))) { goto retry; }
-        return span;
+    // Check if somebody go to it first.
+    {
+        struct eggsfs_span* span = eggsfs_lookup_span(&file->spans, offset);
+        if (unlikely(span)) {
+            if (unlikely(!eggsfs_span_acquire(span))) {
+                up_write(&file->spans_lock);
+                goto retry;
+            }
+            up_write(&file->spans_lock);
+            return span;
+        }
     }
 
-    // We always get the full set of spans, this simplifies prefetching.
-    struct eggsfs_get_span_ctx ctx = { .err = 0, };
+    // We always get the full set of spans, this simplifies prefetching (we just
+    // blindly assume the span is there, and if it's been reclaimed in the meantime
+    // we just don't care).
+    struct eggsfs_get_span_ctx ctx = { .err = 0, .enode = enode };
     INIT_LIST_HEAD(&ctx.spans);
-    struct eggsfs_span* tmp;
     u64 spans_offset;
     for (spans_offset = 0;;) {
         u64 next_offset;
@@ -216,130 +265,151 @@ retry:
         err = err ?: ctx.err;
         if (unlikely(err)) {
             eggsfs_debug_print("failed to get file spans at %llu err=%d", spans_offset, err);
-            list_for_each_entry_safe(span, tmp, &ctx.spans, lru) {
+            for (;;) {
+                struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
                 list_del(&span->lru);
                 eggsfs_free_span(span);
             }
-            span = ERR_PTR(err);
-            goto out;
+            up_write(&file->spans_lock);
+            return ERR_PTR(err);
         }
         if (next_offset == 0) { break; }
         spans_offset = next_offset;
     }
 
-    // Need to disable preemption around seqcount_t write critical section,
-    // see docs for seqcount_t.
-    preempt_disable();
-    write_seqcount_begin(&file->spans_seqcount);
-    list_for_each_entry_safe(span, tmp, &ctx.spans, lru) {
-        eggsfs_debug_print("inserting span start=%llu, end=%llu", span->start, span->end);
-        // It is safe to insert this with zero readers, since it's
-        // not in the LRU yet, and we won't try to drop the spans before
-        // this function terminates (the only circumstance where that 
-        // can happen is when we evict the inode).
+    for (;;) {
+        struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
+        if (span == NULL) { break; }
+        list_del(&span->lru);
         if (!eggsfs_insert_span(&file->spans, span)) {
-            // span already cached
-            list_del(&span->lru);
+            // Span is already cached
             eggsfs_free_span(span);
-        } else if (span->storage_class != EGGSFS_INLINE_STORAGE) {
-            eggsfs_counter_inc(eggsfs_stat_cached_spans);
-        }
-    }
-    write_seqcount_end(&file->spans_seqcount);
-    preempt_enable();
-
-    span = eggsfs_lookup_span(&file->spans, offset);
-
-out:
-    mutex_unlock(&file->spans_wlock);
-
-    // add spans to LRU
-    if (!list_empty(&ctx.spans)) {
-        spin_lock_bh(&eggsfs_span_lru_lock);
-        for (;;) {
-            struct eggsfs_span* entry = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
-            if (!entry) { break; }
-            entry->enode = enode;
-            list_del(&entry->lru);
-            if (entry->storage_class != EGGSFS_INLINE_STORAGE) {
-                struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(entry);
+        } else {
+            if (span->storage_class != EGGSFS_INLINE_STORAGE) {
+                // Not already cached, must add it to the LRU
+                eggsfs_counter_inc(eggsfs_stat_cached_spans);
+                struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+                struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
+                spin_lock_bh(&lru->lock);
                 block_span->readers = 0;
-                list_add(&entry->lru, &eggsfs_span_lru);
+                list_add(&span->lru, &lru->lru);
+                spin_unlock_bh(&lru->lock);
             }
         }
-        spin_unlock_bh(&eggsfs_span_lru_lock);
     }
 
-    // finally acquire the span
-    if (span && !IS_ERR(span)) {
-        if (unlikely(!eggsfs_span_acquire(span))) { goto retry; }
+    up_write(&file->spans_lock);
+
+    // We now restart, we know that the span must be there (unless the shard is broken).
+    // It might get reclaimed in the meantime though.
+    goto retry;
+}
+
+// If it returns -1, there are no spans to drop. Otherwise, returns the
+// next index to pass in to reclaim the next span.
+static int eggsfs_drop_one_span(int lru_ix) {
+    BUG_ON(lru_ix < 0 || lru_ix >= EGGSFS_SPAN_LRUS);
+
+    int i;
+    for (i = lru_ix; i < lru_ix + EGGSFS_SPAN_LRUS; i++) {
+        struct eggsfs_span_lru* lru = &eggsfs_span_lrus[i%EGGSFS_SPAN_LRUS];
+
+        struct eggsfs_span* candidate = NULL;
+        struct eggsfs_block_span* candidate_blocks = NULL;
+
+        // Pick a candidate from the LRU, mark it as reclaiming, take it out of
+        // the LRU.
+        spin_lock_bh(&lru->lock);
+        candidate = list_first_entry_or_null(&lru->lru, struct eggsfs_span, lru);
+        if (unlikely(candidate == NULL)) {
+            spin_unlock_bh(&lru->lock);
+        } else {
+            BUG_ON(candidate->storage_class == EGGSFS_INLINE_STORAGE); // no inline spans in LRU
+            candidate_blocks = EGGSFS_BLOCK_SPAN(candidate);
+            // we just got this from LRU, it must be readers == 0
+            BUG_ON(candidate_blocks->readers != 0);
+            candidate_blocks->readers = -1;
+            list_del(&candidate->lru);
+            spin_unlock_bh(&lru->lock);
+        }
+
+        if (candidate) {
+            // Take it out of the spans for the file
+            down_write(&candidate->enode->file.spans_lock);
+            rb_erase(&candidate->node, &candidate->enode->file.spans);
+            up_write(&candidate->enode->file.spans_lock);
+
+            // At this point we're free to do what we please with the span
+            // (it's fully private to us).
+            eggsfs_counter_dec(eggsfs_stat_cached_spans);
+            struct page* page;
+            unsigned long page_ix;
+            xa_for_each(&candidate_blocks->pages, page_ix, page) {
+                put_page(page);
+                xa_erase(&candidate_blocks->pages, page_ix);
+                eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
+            }
+            eggsfs_free_span(candidate);
+
+            i++;
+            break;
+        }
     }
 
-    return span;
+    // we've fully gone around without finding anything
+    if (i == lru_ix + EGGSFS_SPAN_LRUS) {
+        return -1;
+    }
+
+    // We've found something
+    return i%EGGSFS_SPAN_LRUS;
 }
 
 void eggsfs_drop_all_spans(void) {
-    u64 reclaimed_block_spans = 0;
-    u64 reclaimed_pages = 0;
+    s64 pages_begin = eggsfs_counter_get(&eggsfs_stat_cached_span_pages);
+    s64 spans_begin = eggsfs_counter_get(&eggsfs_stat_cached_spans);
+    int lru_ix = 0;
     for (;;) {
-        spin_lock_bh(&eggsfs_span_lru_lock);
-        struct eggsfs_span* span = list_first_entry_or_null(&eggsfs_span_lru, struct eggsfs_span, lru);
-        if (unlikely(span == NULL)) {
-            spin_unlock_bh(&eggsfs_span_lru_lock);
-            break;
-        }
-        BUG_ON(span->storage_class == EGGSFS_INLINE_STORAGE);
-        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-        // we just got this from LRU, it must be readers == 0
-        BUG_ON(block_span->readers != 0);
-        block_span->readers = -1;
-        list_del(&span->lru);
-        spin_unlock_bh(&eggsfs_span_lru_lock);
-        mutex_lock(&span->enode->file.spans_wlock);
-        // we have something to reclaim, first take it out of the map so readers won't fall
-        // for it anymore
-        preempt_disable();
-        write_seqcount_begin(&span->enode->file.spans_seqcount);
-        rb_erase(&span->node, &span->enode->file.spans);
-        write_seqcount_end(&span->enode->file.spans_seqcount);
-        preempt_enable();
-        mutex_unlock(&span->enode->file.spans_wlock);
-        // now we're safe, we can just put all the pages, if it's even necessary.
-        eggsfs_counter_dec(eggsfs_stat_cached_spans);
-        reclaimed_block_spans++;
-        struct page* page;
-        unsigned long page_ix;
-        xa_for_each(&block_span->pages, page_ix, page) {
-            put_page(page);
-            xa_erase(&block_span->pages, page_ix);
-            reclaimed_pages++;
-            eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
-        }
-        eggsfs_free_span(span);
+        lru_ix = eggsfs_drop_one_span(lru_ix);
+        if (lru_ix < 0) { break; }
     }
-    eggsfs_info_print("block spans: %llu, block pages: %llu", reclaimed_block_spans, reclaimed_pages);
+    s64 pages_end = eggsfs_counter_get(&eggsfs_stat_cached_span_pages);
+    s64 spans_end = eggsfs_counter_get(&eggsfs_stat_cached_spans);
+    eggsfs_info_print("reclaimed %llu pages, %llu spans (approx)", pages_begin-pages_end, spans_begin-spans_end);
 }
 
-// TODO not very nice to traverse n*log(n) like this, can be made linear
 void eggsfs_drop_spans(struct eggsfs_inode* enode) {
-    mutex_lock(&enode->file.spans_wlock);
+again:
+    down_write(&enode->file.spans_lock);
+
     for (;;) {
         struct rb_node* node = rb_first(&enode->file.spans);
         if (node == NULL) { break; }
+    
         struct eggsfs_span* span = rb_entry(node, struct eggsfs_span, node);
+        struct eggsfs_block_span* block_span = NULL;
         if (span->storage_class != EGGSFS_INLINE_STORAGE) {
-            struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-            spin_lock_bh(&eggsfs_span_lru_lock);
+            block_span = EGGSFS_BLOCK_SPAN(span);
+            struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
+            // This function is only called on eviction, so either this is being
+            // reclaimed, or it's in the LRU.
+            spin_lock_bh(&lru->lock);
             BUG_ON(block_span->readers > 0);
             if (unlikely(block_span->readers < 0)) {
                 // This is being reclaimed, we have to wait until the reclaimer
-                // cleans it up for us. Won't race much since the reclaimer immediately
-                // takes ownership by removing it from the tree.
-                spin_unlock_bh(&eggsfs_span_lru_lock);
-                continue;
+                // cleans it up for us.
+                spin_unlock_bh(&lru->lock);
+                up_write(&enode->file.spans_lock);
+                goto again;
             }
+            block_span->readers = -1;
             list_del(&span->lru);
-            spin_unlock_bh(&eggsfs_span_lru_lock);
+            spin_unlock_bh(&lru->lock);
+        }
+    
+        rb_erase(node, &enode->file.spans);
+
+        if (block_span) {
             eggsfs_counter_dec(eggsfs_stat_cached_spans);
             struct page* page;
             unsigned long page_ix;
@@ -349,14 +419,10 @@ void eggsfs_drop_spans(struct eggsfs_inode* enode) {
                 eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
             }
         }
-        preempt_disable();
-        write_seqcount_begin(&span->enode->file.spans_seqcount);
-        rb_erase(node, &enode->file.spans);
-        write_seqcount_end(&span->enode->file.spans_seqcount);
-        preempt_enable();
         eggsfs_free_span(span);
     }
-    mutex_unlock(&enode->file.spans_wlock);
+
+    up_write(&enode->file.spans_lock);
 }
 
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix) {
@@ -460,7 +526,7 @@ again:
     }
 
     // OK, we're good, now take ownership of the pages by emptying the pages in the requests
-    // so that they won't be free by `eggsfs_put_fetch_block_request`
+    // so that they won't be freed by `eggsfs_put_fetch_block_request`
     for (i = 0; i < D; i++) {
         struct list_head* pages = &reqs[i]->pages;
         while (!list_empty(pages)) {
@@ -493,4 +559,12 @@ out_err:
         xa_erase(&span->pages, curr_page);
     }
     goto out;
+}
+
+void eggsfs_span_init(void) {
+    int i;
+    for (i = 0; i < EGGSFS_SPAN_LRUS; i++) {
+        spin_lock_init(&eggsfs_span_lrus[i].lock);
+        INIT_LIST_HEAD(&eggsfs_span_lrus[i].lru);
+    }
 }

@@ -82,7 +82,9 @@ void eggsfs_file_spans_cb_block(
 );
 void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body);
 
-// To be used on eviction, i.e. when we expect no contention.
+// To be used when we know that the spans are not being used anymore (i.e. on inode eviction)
 void eggsfs_drop_spans(struct eggsfs_inode* enode);
+
+void __init eggsfs_span_init(void);
 
 #endif

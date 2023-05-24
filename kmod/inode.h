@@ -109,8 +109,7 @@ struct eggsfs_inode_file {
     // Normal file stuff
 
     struct rb_root spans;
-    seqcount_t spans_seqcount; // to read in a lockless way
-    struct mutex spans_wlock;  // to ensure there's only one thing fetching the spans when we can't find the span
+    struct rw_semaphore spans_lock;
 
     // These two things which are really only concerning the transient files
     // are always kept around since we check that they're empty when
@@ -123,7 +122,8 @@ struct eggsfs_inode_file {
     spinlock_t transient_spans_lock;
 
     // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
-    // Could be factored out to separate data structure.
+    // Could be factored out to separate data structure since it's completely useless
+    // when writing.
 
     u64 cookie;
     // Worker which flushes the spans

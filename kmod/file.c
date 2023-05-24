@@ -828,7 +828,11 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     while (*ppos < inode->i_size && iov_iter_count(to)) {
         if (span) { eggsfs_span_put(span, true); }
         span = eggsfs_get_span(enode, *ppos);
-        if (IS_ERR(span)) { written = PTR_ERR(span); goto out; }
+        if (IS_ERR(span)) {
+            span = NULL;
+            written = PTR_ERR(span);
+            goto out;
+        }
         if (span == NULL) { goto out; }
         if (span->start%PAGE_SIZE != 0) {
             eggsfs_warn_print("span start is not a multiple of page size %llu", span->start);

@@ -323,6 +323,7 @@ static bool check_new_edge_after_rename(
 }
 
 int eggsfs_shard_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time) {
+    eggsfs_debug_print("unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
     struct sk_buff* skb;
     u32 attempts;
     u64 req_id = alloc_request_id();

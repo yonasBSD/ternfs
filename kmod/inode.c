@@ -303,8 +303,7 @@ struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino) {
             enode->file.status = EGGSFS_FILE_STATUS_NONE;
             // Init normal file stuff -- that's always there.
             enode->file.spans = RB_ROOT;
-            seqcount_init(&enode->file.spans_seqcount);
-            mutex_init(&enode->file.spans_wlock);
+            init_rwsem(&enode->file.spans_lock);
             // Transient-specific stuff which is also always there.
             INIT_LIST_HEAD(&enode->file.transient_spans);
             spin_lock_init(&enode->file.transient_spans_lock);

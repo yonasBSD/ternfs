@@ -738,7 +738,7 @@ static void eggsfs_init_fetch_block_request_once(void *p) {
     init_completion(&req->comp);
 }
 
-int __init eggsfs_blocksimple_init(void) {
+int __init eggsfs_block_init(void) {
     int err;
     eggsfs_fetch_block_request_cachep = kmem_cache_create(
         "eggsfs_fetch_block_request_cache",
@@ -766,7 +766,7 @@ out_err:
     return err;   
 }
 
-void __cold eggsfs_blocksimple_exit(void) {
+void __cold eggsfs_block_exit(void) {
     // TODO: handle case where there still are requests in flight.
     kmem_cache_destroy(eggsfs_fetch_block_request_cachep);
     kmem_cache_destroy(eggsfs_write_block_request_cachep);

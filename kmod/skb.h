@@ -5,7 +5,7 @@
 
 struct eggsfs_block_request;
 
-// TODO possibly move this one to blocksimple.c
+// TODO possibly move this one to block.c
 u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len);
 
 #if 0

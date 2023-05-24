@@ -1,5 +1,5 @@
-#ifndef _EGGSFS_BLOCKSIMPLE_H
-#define _EGGSFS_BLOCKSIMPLE_H
+#ifndef _EGGSFS_BLOCK_H
+#define _EGGSFS_BLOCK_H
 
 #include <linux/kernel.h>
 #include <linux/completion.h>
@@ -48,7 +48,7 @@ struct eggsfs_fetch_block_request {
     // List node for list of requests enqueued for a given socket.
     struct list_head socket_requests;
 
-    // The caller and blocksimple.c both need to make sure the request is still there
+    // The caller and block.c both need to make sure the request is still there
     // when they need it. We need such a thing since we sometimes send fetch requests
     // from contexts we want to be killable (i.e. syscalls). So in those cases we
     // need to drop them on the floor.
@@ -167,7 +167,7 @@ struct eggsfs_write_block_request* eggsfs_write_block(
 // before the request is completed.
 void eggsfs_put_write_block_request(struct eggsfs_write_block_request* req);
 
-int __init eggsfs_blocksimple_init(void);
-void __cold eggsfs_blocksimple_exit(void);
+int __init eggsfs_block_init(void);
+void __cold eggsfs_block_exit(void);
 
 #endif

@@ -34,8 +34,8 @@ static int __init eggsfs_init(void) {
     err = eggsfs_sysctl_init();
     if (err) { goto out_sysctl; }
 
-    err = eggsfs_blocksimple_init();
-    if (err) { goto out_blocksimple; }
+    err = eggsfs_block_init();
+    if (err) { goto out_block; }
 
     err = eggsfs_inode_init();
     if (err) { goto out_inode; }
@@ -53,8 +53,8 @@ out_rs:
 out_fs:
     eggsfs_inode_exit();
 out_inode:
-    eggsfs_blocksimple_exit();
-out_blocksimple:
+    eggsfs_block_exit();
+out_block:
     eggsfs_sysctl_exit();
 out_sysctl:
     eggsfs_sysfs_exit();
@@ -66,7 +66,7 @@ out_sysfs:
 static void __exit eggsfs_exit(void) {
     eggsfs_fs_exit();
     eggsfs_inode_exit();
-    eggsfs_blocksimple_exit();
+    eggsfs_block_exit();
     eggsfs_sysctl_exit();
     eggsfs_sysfs_exit();
     destroy_workqueue(eggsfs_wq);

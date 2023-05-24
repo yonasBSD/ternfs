@@ -744,7 +744,7 @@ int eggsfs_shard_add_span_certify(
     return 0;
 }
 
-int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, void* data) {
+int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u64* next_offset, void* data) {
     struct sk_buff* skb;
     u32 attempts;
 
@@ -764,8 +764,11 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, v
     {
         PREPARE_SHARD_RESP_CTX();
         eggsfs_file_spans_resp_get_start(&ctx, start);
-        eggsfs_file_spans_resp_get_next_offset(&ctx, start, next_offset);
-        eggsfs_file_spans_resp_get_block_services(&ctx, next_offset, block_services);
+        eggsfs_file_spans_resp_get_next_offset(&ctx, start, resp_next_offset);
+        if (likely(ctx.err == 0)) {
+            *next_offset = resp_next_offset.x;
+        }
+        eggsfs_file_spans_resp_get_block_services(&ctx, resp_next_offset, block_services);
         char* bs_offset = ctx.buf;
         if (likely(ctx.err == 0)) {
             ctx.buf += EGGSFS_BLOCK_SERVICE_SIZE*block_services.len;

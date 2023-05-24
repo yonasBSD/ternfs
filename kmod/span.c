@@ -203,21 +203,28 @@ retry:
         return span;
     }
 
+    // We always get the full set of spans, this simplifies prefetching.
     struct eggsfs_get_span_ctx ctx = { .err = 0, };
     INIT_LIST_HEAD(&ctx.spans);
     struct eggsfs_span* tmp;
-    err = eggsfs_error_to_linux(eggsfs_shard_file_spans(
-        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, offset, &ctx
-    ));
-    err = err ?: ctx.err;
-    if (unlikely(err)) {
-        eggsfs_debug_print("failed to get file spans err=%d", err);
-        list_for_each_entry_safe(span, tmp, &ctx.spans, lru) {
-            list_del(&span->lru);
-            eggsfs_free_span(span);
+    u64 spans_offset;
+    for (spans_offset = 0;;) {
+        u64 next_offset;
+        err = eggsfs_error_to_linux(eggsfs_shard_file_spans(
+            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, spans_offset, &next_offset,&ctx
+        ));
+        err = err ?: ctx.err;
+        if (unlikely(err)) {
+            eggsfs_debug_print("failed to get file spans at %llu err=%d", spans_offset, err);
+            list_for_each_entry_safe(span, tmp, &ctx.spans, lru) {
+                list_del(&span->lru);
+                eggsfs_free_span(span);
+            }
+            span = ERR_PTR(err);
+            goto out;
         }
-        span = ERR_PTR(err);
-        goto out;
+        if (next_offset == 0) { break; }
+        spans_offset = next_offset;
     }
 
     // Need to disable preemption around seqcount_t write critical section,

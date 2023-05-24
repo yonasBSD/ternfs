@@ -23,7 +23,7 @@ int eggsfs_shard_getattr_dir(
 );
 int eggsfs_shard_getattr(struct eggsfs_fs_info* info, u64 id);
 int eggsfs_shard_create_file(struct eggsfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie);
-int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, void* data);
+int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u64* next_offset, void* data);
 int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cookie, u64 offset, u32 size, const char* data, u8 len);
 int eggsfs_shard_add_span_initiate(
     struct eggsfs_fs_info* info, void* data, u64 file, u64 cookie, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity,

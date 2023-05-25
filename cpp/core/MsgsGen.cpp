@@ -328,9 +328,6 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC:
         out << "CDC";
         break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        out << "BLOCK_SERVICES_FOR_SHARD";
-        break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << "REGISTER_BLOCK_SERVICES";
         break;
@@ -2914,42 +2911,6 @@ std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
     return out;
 }
 
-void BlockServicesForShardReq::pack(BincodeBuf& buf) const {
-    shard.pack(buf);
-}
-void BlockServicesForShardReq::unpack(BincodeBuf& buf) {
-    shard.unpack(buf);
-}
-void BlockServicesForShardReq::clear() {
-    shard = ShardId();
-}
-bool BlockServicesForShardReq::operator==(const BlockServicesForShardReq& rhs) const {
-    if ((ShardId)this->shard != (ShardId)rhs.shard) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockServicesForShardReq& x) {
-    out << "BlockServicesForShardReq(" << "Shard=" << x.shard << ")";
-    return out;
-}
-
-void BlockServicesForShardResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceInfo>(blockServices);
-}
-void BlockServicesForShardResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceInfo>(blockServices);
-}
-void BlockServicesForShardResp::clear() {
-    blockServices.clear();
-}
-bool BlockServicesForShardResp::operator==(const BlockServicesForShardResp& rhs) const {
-    if (blockServices != rhs.blockServices) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockServicesForShardResp& x) {
-    out << "BlockServicesForShardResp(" << "BlockServices=" << x.blockServices << ")";
-    return out;
-}
-
 void RegisterBlockServicesReq::pack(BincodeBuf& buf) const {
     buf.packList<BlockServiceInfo>(blockServices);
 }
@@ -5148,53 +5109,43 @@ CdcReq& ShuckleReqContainer::setCdc() {
     x.clear();
     return x;
 }
-const BlockServicesForShardReq& ShuckleReqContainer::getBlockServicesForShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
-    return std::get<2>(_data);
-}
-BlockServicesForShardReq& ShuckleReqContainer::setBlockServicesForShard() {
-    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
 const RegisterBlockServicesReq& ShuckleReqContainer::getRegisterBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<3>(_data);
+    return std::get<2>(_data);
 }
 RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
     _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = std::get<3>(_data);
+    auto& x = std::get<2>(_data);
     x.clear();
     return x;
 }
 const RegisterShardReq& ShuckleReqContainer::getRegisterShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<4>(_data);
+    return std::get<3>(_data);
 }
 RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
     _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = std::get<4>(_data);
+    auto& x = std::get<3>(_data);
     x.clear();
     return x;
 }
 const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<5>(_data);
+    return std::get<4>(_data);
 }
 AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
     _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<4>(_data);
     x.clear();
     return x;
 }
 const RegisterCdcReq& ShuckleReqContainer::getRegisterCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<6>(_data);
+    return std::get<5>(_data);
 }
 RegisterCdcReq& ShuckleReqContainer::setRegisterCdc() {
     _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = std::get<6>(_data);
+    auto& x = std::get<5>(_data);
     x.clear();
     return x;
 }
@@ -5204,16 +5155,14 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<0>(_data).packedSize();
     case ShuckleMessageKind::CDC:
         return std::get<1>(_data).packedSize();
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        return std::get<2>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return std::get<3>(_data).packedSize();
+        return std::get<2>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_SHARD:
-        return std::get<4>(_data).packedSize();
+        return std::get<3>(_data).packedSize();
     case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return std::get<5>(_data).packedSize();
+        return std::get<4>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_CDC:
-        return std::get<6>(_data).packedSize();
+        return std::get<5>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5227,20 +5176,17 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CDC:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        std::get<5>(_data).pack(buf);
-        break;
     case ShuckleMessageKind::REGISTER_CDC:
-        std::get<6>(_data).pack(buf);
+        std::get<5>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5256,20 +5202,17 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        std::get<5>(_data).unpack(buf);
-        break;
     case ShuckleMessageKind::REGISTER_CDC:
-        std::get<6>(_data).unpack(buf);
+        std::get<5>(_data).unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
@@ -5283,9 +5226,6 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::CDC:
         out << x.getCdc();
-        break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        out << x.getBlockServicesForShard();
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
@@ -5325,53 +5265,43 @@ CdcResp& ShuckleRespContainer::setCdc() {
     x.clear();
     return x;
 }
-const BlockServicesForShardResp& ShuckleRespContainer::getBlockServicesForShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD);
-    return std::get<2>(_data);
-}
-BlockServicesForShardResp& ShuckleRespContainer::setBlockServicesForShard() {
-    _kind = ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD;
-    auto& x = std::get<2>(_data);
-    x.clear();
-    return x;
-}
 const RegisterBlockServicesResp& ShuckleRespContainer::getRegisterBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<3>(_data);
+    return std::get<2>(_data);
 }
 RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
     _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = std::get<3>(_data);
+    auto& x = std::get<2>(_data);
     x.clear();
     return x;
 }
 const RegisterShardResp& ShuckleRespContainer::getRegisterShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<4>(_data);
+    return std::get<3>(_data);
 }
 RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
     _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = std::get<4>(_data);
+    auto& x = std::get<3>(_data);
     x.clear();
     return x;
 }
 const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<5>(_data);
+    return std::get<4>(_data);
 }
 AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
     _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = std::get<5>(_data);
+    auto& x = std::get<4>(_data);
     x.clear();
     return x;
 }
 const RegisterCdcResp& ShuckleRespContainer::getRegisterCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<6>(_data);
+    return std::get<5>(_data);
 }
 RegisterCdcResp& ShuckleRespContainer::setRegisterCdc() {
     _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = std::get<6>(_data);
+    auto& x = std::get<5>(_data);
     x.clear();
     return x;
 }
@@ -5381,16 +5311,14 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<0>(_data).packedSize();
     case ShuckleMessageKind::CDC:
         return std::get<1>(_data).packedSize();
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        return std::get<2>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return std::get<3>(_data).packedSize();
+        return std::get<2>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_SHARD:
-        return std::get<4>(_data).packedSize();
+        return std::get<3>(_data).packedSize();
     case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return std::get<5>(_data).packedSize();
+        return std::get<4>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_CDC:
-        return std::get<6>(_data).packedSize();
+        return std::get<5>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5404,20 +5332,17 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CDC:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        std::get<5>(_data).pack(buf);
-        break;
     case ShuckleMessageKind::REGISTER_CDC:
-        std::get<6>(_data).pack(buf);
+        std::get<5>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5433,20 +5358,17 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC:
         std::get<1>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<2>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<3>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
         std::get<4>(_data).unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        std::get<5>(_data).unpack(buf);
-        break;
     case ShuckleMessageKind::REGISTER_CDC:
-        std::get<6>(_data).unpack(buf);
+        std::get<5>(_data).unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
@@ -5460,9 +5382,6 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::CDC:
         out << x.getCdc();
-        break;
-    case ShuckleMessageKind::BLOCK_SERVICES_FOR_SHARD:
-        out << x.getBlockServicesForShard();
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();

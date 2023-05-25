@@ -1324,10 +1324,6 @@ type ShuckleResponse interface {
 	ShuckleResponseKind() ShuckleMessageKind
 }
 
-type BlockServicesForShardReq struct {
-	Shard ShardId
-}
-
 type BlockServicesForShardResp struct {
 	BlockServices []BlockServiceInfo
 }

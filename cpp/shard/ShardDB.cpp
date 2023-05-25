@@ -207,6 +207,7 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
 
 struct BlockServiceCache {
     AES128Key secretKey;
+    std::array<uint8_t, 16> failureDomain;
     std::array<uint8_t, 4> ip1;
     uint16_t port1;
     std::array<uint8_t, 4> ip2;
@@ -227,8 +228,12 @@ struct ShardDBImpl {
 
     // These two block services things change infrequently, and are used to add spans
     // -- keep them in memory.
-    std::vector<uint64_t> _currentBlockServices; // the block services we currently want to use to add new spans
+    //
+    // Note: we generally need to store all the block services at any time to conjure
+    // their full information when getting file spans.
     std::unordered_map<uint64_t, BlockServiceCache> _blockServicesCache;
+    // The block services we currently want to use.
+    std::vector<uint64_t> _currentBlockServices;
 
     rocksdb::DB* _db;
     rocksdb::ColumnFamilyHandle* _defaultCf;
@@ -1340,17 +1345,19 @@ struct ShardDBImpl {
             std::vector<BlockServiceId> candidateBlockServices;
             candidateBlockServices.reserve(_currentBlockServices.size());
             LOG_DEBUG(_env, "Starting out with %s current block services", _currentBlockServices.size());
-            for (BlockServiceId id: _currentBlockServices) {
-                const auto& cache = _blockServicesCache.at(id.u64);
-                if (cache.storageClass != entry.storageClass) {
-                    LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
-                    continue;
+            {
+                for (BlockServiceId id: _currentBlockServices) {
+                    const auto& cache = _blockServicesCache.at(id.u64);
+                    if (cache.storageClass != entry.storageClass) {
+                        LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
+                        continue;
+                    }
+                    if (_blockServiceMatchesBlacklist(req.blacklist.els, id, cache)) {
+                        LOG_DEBUG(_env, "Skipping %s because it matches blacklist", id);
+                        continue;
+                    }
+                    candidateBlockServices.emplace_back(id);
                 }
-                if (_blockServiceMatchesBlacklist(req.blacklist.els, id, cache)) {
-                    LOG_DEBUG(_env, "Skipping %s because it matches blacklist", id);
-                    continue;
-                }
-                candidateBlockServices.emplace_back(id);
             }
             LOG_DEBUG(_env, "Starting out with %s block service candidates, parity %s", candidateBlockServices.size(), entry.parity);
             std::vector<BlockServiceId> pickedBlockServices;
@@ -2473,26 +2480,48 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    void _updateCurrentBlockServices(EggsTime time, rocksdb::WriteBatch& batch) {
+        _currentBlockServices.clear();
+        // The scheme below is a very cheap way to always pick different failure domains
+        // for our block services: we just set the current block services to be all of
+        // different failure domains, sharded by storage type.
+        std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<uint64_t>>> blockServicesByFailureDomain;
+        for (const auto& [blockServiceId, blockService]: _blockServicesCache) {
+            __int128 failureDomain;
+            static_assert(sizeof(failureDomain) == sizeof(blockService.failureDomain));
+            memcpy(&failureDomain, &blockService.failureDomain[0], sizeof(failureDomain));
+            blockServicesByFailureDomain[blockService.storageClass][failureDomain].emplace_back(blockServiceId);
+        }
+        uint64_t rand = time.ns;
+        for (const auto& [storageClass, byFailureDomain]: blockServicesByFailureDomain) {
+            int added = 0;
+            for (const auto& [failureDomain, blockServices]: byFailureDomain) {
+                _currentBlockServices.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]);
+                added++;
+            }
+            // This actually gives us very little slack for RS(10,4), but it's just based on the fact that
+            // the only eggsfs deployment we have has 17 failure domains.
+            ALWAYS_ASSERT(added > 16);
+        }
+        ALWAYS_ASSERT(_currentBlockServices.size() < 256); // TODO handle this properly
+        OwnedValue<CurrentBlockServicesBody> currentBody(_currentBlockServices.size());
+        for (int i = 0; i < _currentBlockServices.size(); i++) {
+            currentBody().set(i, _currentBlockServices[i]);
+        }
+        ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
+    }
+
     // Important for this to never error: we rely on the write to go through since 
     // we write _currentBlockServices/_blockServicesCache, which we rely to be in
     // sync with RocksDB.
     void _applyUpdateBlockServices(EggsTime time, rocksdb::WriteBatch& batch, const UpdateBlockServicesEntry& entry) {
-        // The idea here is that we ask for some block services to use to shuckle once a minute,
-        // and then just pick at random within them. We shouldn't have many to pick from at any
-        // given point.
-        //
-        // The random part is not done yet.
-        ALWAYS_ASSERT(entry.blockServices.els.size() < 256); // TODO proper error
-        OwnedValue<CurrentBlockServicesBody> currentBody(entry.blockServices.els.size());
-        _currentBlockServices.resize(entry.blockServices.els.size());
         StaticValue<BlockServiceKey> blockKey;
         blockKey().setKey(BLOCK_SERVICE_KEY);
         StaticValue<BlockServiceBody> blockBody;
         for (int i = 0; i < entry.blockServices.els.size(); i++) {
             const auto& entryBlock = entry.blockServices.els[i];
-            currentBody().set(i, entryBlock.id.u64);
-            _currentBlockServices[i] = entryBlock.id.u64;
             blockKey().setBlockServiceId(entryBlock.id.u64);
+            blockBody().setVersion(0);
             blockBody().setId(entryBlock.id.u64);
             blockBody().setIp1(entryBlock.ip1.data);
             blockBody().setPort1(entryBlock.port1);
@@ -2509,8 +2538,9 @@ struct ShardDBImpl {
             cache.ip2 = entryBlock.ip2.data;
             cache.port2 = entryBlock.port2;
             cache.storageClass = entryBlock.storageClass;
+            cache.failureDomain = entryBlock.failureDomain.data;
         }
-        ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
+        _updateCurrentBlockServices(time, batch);
     }
 
     uint64_t _getNextBlockId() {

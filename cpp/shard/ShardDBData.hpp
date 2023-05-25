@@ -51,6 +51,7 @@ struct BlockServiceKey {
 
 struct BlockServiceBody {
     FIELDS(
+        LE, uint8_t,  version,          setVersion,
         LE, uint64_t, id,               setId,
         FBYTES, 4,    ip1,              setIp1,
         LE, uint16_t, port1,            setPort1,

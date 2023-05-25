@@ -166,8 +166,7 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setBlockServicesForShard();
-    req.shard = shid;
+    auto& req = reqContainer.setAllBlockServices();
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
@@ -179,7 +178,7 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
         return errString;
     }
 
-    blocks.blockServices = respContainer.getBlockServicesForShard().blockServices;
+    blocks.blockServices = respContainer.getAllBlockServices().blockServices;
 
     return {};
 }

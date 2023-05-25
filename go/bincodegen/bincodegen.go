@@ -1489,11 +1489,6 @@ func main() {
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{
 		{
-			0x01,
-			reflect.TypeOf(msgs.BlockServicesForShardReq{}),
-			reflect.TypeOf(msgs.BlockServicesForShardResp{}),
-		},
-		{
 			0x02,
 			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
 			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),

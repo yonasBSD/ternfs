@@ -68,23 +68,6 @@ func newState() *state {
 	}
 }
 
-func handleBlockServicesForShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.BlockServicesForShardReq) *msgs.BlockServicesForShardResp {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	resp := msgs.BlockServicesForShardResp{}
-	resp.BlockServices = make([]msgs.BlockServiceInfo, len(s.blockServices))
-
-	i := 0
-	for _, bs := range s.blockServices {
-		resp.BlockServices[i] = bs
-		i++
-	}
-
-	template.ParseFiles()
-	return &resp
-}
-
 func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
@@ -177,8 +160,6 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 		var resp msgs.ShuckleResponse
 
 		switch whichReq := req.(type) {
-		case *msgs.BlockServicesForShardReq:
-			resp = handleBlockServicesForShard(log, s, conn, whichReq)
 		case *msgs.RegisterBlockServicesReq:
 			resp = handleRegisterBlockServices(log, s, conn, whichReq)
 		case *msgs.ShardsReq:

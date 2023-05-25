@@ -33,8 +33,6 @@ func ReadShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.BLOCK_SERVICES_FOR_SHARD:
-		req = &msgs.BlockServicesForShardReq{}
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
 	case msgs.SHARDS:
@@ -99,8 +97,6 @@ func ReadShuckleResponse(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse
 	switch kind {
-	case msgs.BLOCK_SERVICES_FOR_SHARD:
-		resp = &msgs.BlockServicesForShardResp{}
 	case msgs.REGISTER_BLOCK_SERVICES:
 		resp = &msgs.RegisterBlockServicesResp{}
 	case msgs.SHARDS:

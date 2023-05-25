@@ -121,7 +121,6 @@ enum class ShuckleMessageKind : uint8_t {
     ERROR = 0,
     SHARDS = 3,
     CDC = 7,
-    BLOCK_SERVICES_FOR_SHARD = 1,
     REGISTER_BLOCK_SERVICES = 2,
     REGISTER_SHARD = 4,
     ALL_BLOCK_SERVICES = 5,
@@ -2619,44 +2618,6 @@ struct CdcResp {
 
 std::ostream& operator<<(std::ostream& out, const CdcResp& x);
 
-struct BlockServicesForShardReq {
-    ShardId shard;
-
-    static constexpr uint16_t STATIC_SIZE = 1; // shard
-
-    BlockServicesForShardReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 1; // shard
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockServicesForShardReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockServicesForShardReq& x);
-
-struct BlockServicesForShardResp {
-    BincodeList<BlockServiceInfo> blockServices;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE; // blockServices
-
-    BlockServicesForShardResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += blockServices.packedSize(); // blockServices
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockServicesForShardResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockServicesForShardResp& x);
-
 struct RegisterBlockServicesReq {
     BincodeList<BlockServiceInfo> blockServices;
 
@@ -3236,15 +3197,13 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsReq, CdcReq, BlockServicesForShardReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq> _data;
+    std::tuple<ShardsReq, CdcReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsReq& getShards() const;
     ShardsReq& setShards();
     const CdcReq& getCdc() const;
     CdcReq& setCdc();
-    const BlockServicesForShardReq& getBlockServicesForShard() const;
-    BlockServicesForShardReq& setBlockServicesForShard();
     const RegisterBlockServicesReq& getRegisterBlockServices() const;
     RegisterBlockServicesReq& setRegisterBlockServices();
     const RegisterShardReq& getRegisterShard() const;
@@ -3266,15 +3225,13 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsResp, CdcResp, BlockServicesForShardResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp> _data;
+    std::tuple<ShardsResp, CdcResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsResp& getShards() const;
     ShardsResp& setShards();
     const CdcResp& getCdc() const;
     CdcResp& setCdc();
-    const BlockServicesForShardResp& getBlockServicesForShard() const;
-    BlockServicesForShardResp& setBlockServicesForShard();
     const RegisterBlockServicesResp& getRegisterBlockServices() const;
     RegisterBlockServicesResp& setRegisterBlockServices();
     const RegisterShardResp& getRegisterShard() const;

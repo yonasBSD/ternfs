@@ -23,6 +23,21 @@ static ssize_t eggsfs_sysfs_counter_store(struct kobject *kobj, struct kobj_attr
     return -EPERM;
 }
 
+struct eggsfs_sysfs_atomic64 {
+    struct kobj_attribute kobj_attr;
+    atomic64_t* v;
+};
+
+static ssize_t eggsfs_sysfs_atomic64_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf) {
+    struct eggsfs_sysfs_atomic64* ettr = container_of(attr, struct eggsfs_sysfs_atomic64, kobj_attr);
+    u64 val = atomic64_read(ettr->v);
+    return snprintf(buf, PAGE_SIZE, "%llu\n", val);
+}
+
+static ssize_t eggsfs_sysfs_atomic64_store(struct kobject *kobj, struct kobj_attribute *a, const char *buf, size_t count) {
+    return -EPERM;
+}
+
 static umode_t eggsfs_stat_visible(struct kobject *kobj, struct attribute *attr, int unused) {
     return attr->mode;
 }
@@ -42,14 +57,22 @@ static umode_t eggsfs_stat_visible(struct kobject *kobj, struct attribute *attr,
 
 #define EGGSFS_SYSFS_COUNTER_PTR(_name) (&eggsfs_sysfs_counter_##_name.kobj_attr.attr)
 
+#define EGGSFS_SYSFS_ATOMIC64(_name) \
+    static struct eggsfs_sysfs_atomic64 eggsfs_sysfs_atomic64_##_name = { \
+        .kobj_attr = __INIT_KOBJ_ATTR(_name, S_IRUGO, eggsfs_sysfs_atomic64_show, eggsfs_sysfs_atomic64_store), \
+        .v = &eggsfs_stat_##_name, \
+    }
+
+#define EGGSFS_SYSFS_ATOMIC64_PTR(_name) (&eggsfs_sysfs_atomic64_##_name.kobj_attr.attr)
+
 EGGSFS_SYSFS_COUNTER(dir_revalidations);
 EGGSFS_SYSFS_COUNTER(cached_spans);
-EGGSFS_SYSFS_COUNTER(cached_span_pages);
+EGGSFS_SYSFS_ATOMIC64(cached_span_pages);
 
 static struct attribute* eggsfs_stat_attrs[] = {
     EGGSFS_SYSFS_COUNTER_PTR(dir_revalidations),
     EGGSFS_SYSFS_COUNTER_PTR(cached_spans),
-    EGGSFS_SYSFS_COUNTER_PTR(cached_span_pages),
+    EGGSFS_SYSFS_ATOMIC64_PTR(cached_span_pages),
     NULL
 };
 

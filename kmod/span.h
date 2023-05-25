@@ -1,5 +1,5 @@
-#ifndef _EGGSFS_SPANSIMPLE_H
-#define _EGGSFS_SPANSIMPLE_H
+#ifndef _EGGSFS_SPAN_H
+#define _EGGSFS_SPAN_H
 
 #include <linux/kernel.h>
 
@@ -7,7 +7,11 @@
 #include "counter.h"
 
 EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_spans);
-EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_span_pages);
+extern atomic64_t eggsfs_stat_cached_span_pages;
+extern unsigned long eggsfs_span_cache_max_size_async;
+extern unsigned long eggsfs_span_cache_min_avail_mem_async;
+extern unsigned long eggsfs_span_cache_max_size_sync;
+extern unsigned long eggsfs_span_cache_min_avail_mem_sync;
 
 struct eggsfs_span {
     struct eggsfs_inode* enode;
@@ -70,8 +74,6 @@ void eggsfs_span_put(struct eggsfs_span* span, bool was_read);
 // The page_ix is the page number inside the span.
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix);
 
-void eggsfs_drop_all_spans(void);
-
 void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, const uint32_t* stripes_crcs);
 void eggsfs_file_spans_cb_block(
     void* data, int block_ix,
@@ -83,8 +85,15 @@ void eggsfs_file_spans_cb_block(
 void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body);
 
 // To be used when we know that the spans are not being used anymore (i.e. on inode eviction)
-void eggsfs_drop_spans(struct eggsfs_inode* enode);
+void eggsfs_drop_file_spans(struct eggsfs_inode* enode);
 
-void __init eggsfs_span_init(void);
+// Drops all cached spans. Returns number of freed pages.
+u64 eggsfs_drop_all_spans(void);
+
+// Drops a reasonable amount of spans. Returns the number of freed pages.
+u64 eggsfs_drop_spans(void);
+
+int __init eggsfs_span_init(void);
+void __cold eggsfs_span_exit(void);
 
 #endif

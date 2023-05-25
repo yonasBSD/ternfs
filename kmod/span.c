@@ -7,14 +7,24 @@
 #include "crc.h"
 #include "err.h"
 #include "counter.h"
+#include "wq.h"
 
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_spans);
-EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_span_pages);
+
+// This currently also includes in-flight pages (i.e. pages that cannot be
+// reclaimed), just because the code is a bit simpler this way.
+atomic64_t eggsfs_stat_cached_span_pages = ATOMIC64_INIT(0);
+
+// These numbers do not mean anything in particular.
+unsigned long eggsfs_span_cache_max_size_async = (50ul << 30); // 50GiB
+unsigned long eggsfs_span_cache_min_avail_mem_async = (1ull << 30); // 2GiB
+unsigned long eggsfs_span_cache_max_size_sync = (100ul << 30); // 100GiB
+unsigned long eggsfs_span_cache_min_avail_mem_sync = (1ull << 30); // 1GiB
 
 struct eggsfs_span_lru {
-    spinlock_t lock ____cacheline_aligned;
-    struct list_head lru ____cacheline_aligned;
-};
+    spinlock_t lock;
+    struct list_head lru;
+} ____cacheline_aligned;
 
 // These are global locks, but the sharding should alleviate contention.
 #define EGGSFS_SPAN_BITS 7
@@ -307,7 +317,7 @@ retry:
 
 // If it returns -1, there are no spans to drop. Otherwise, returns the
 // next index to pass in to reclaim the next span.
-static int eggsfs_drop_one_span(int lru_ix) {
+static int eggsfs_drop_one_span(int lru_ix, u64* dropped_pages) {
     BUG_ON(lru_ix < 0 || lru_ix >= EGGSFS_SPAN_LRUS);
 
     int i;
@@ -347,7 +357,8 @@ static int eggsfs_drop_one_span(int lru_ix) {
             xa_for_each(&candidate_blocks->pages, page_ix, page) {
                 put_page(page);
                 xa_erase(&candidate_blocks->pages, page_ix);
-                eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
+                atomic64_dec(&eggsfs_stat_cached_span_pages);
+                (*dropped_pages)++;
             }
             eggsfs_free_span(candidate);
 
@@ -365,20 +376,71 @@ static int eggsfs_drop_one_span(int lru_ix) {
     return i%EGGSFS_SPAN_LRUS;
 }
 
-void eggsfs_drop_all_spans(void) {
-    s64 pages_begin = eggsfs_counter_get(&eggsfs_stat_cached_span_pages);
+// returns the number of dropped pages
+u64 eggsfs_drop_all_spans(void) {
+    u64 dropped_pages = 0;
     s64 spans_begin = eggsfs_counter_get(&eggsfs_stat_cached_spans);
     int lru_ix = 0;
     for (;;) {
-        lru_ix = eggsfs_drop_one_span(lru_ix);
+        lru_ix = eggsfs_drop_one_span(lru_ix, &dropped_pages);
         if (lru_ix < 0) { break; }
     }
-    s64 pages_end = eggsfs_counter_get(&eggsfs_stat_cached_span_pages);
     s64 spans_end = eggsfs_counter_get(&eggsfs_stat_cached_spans);
-    eggsfs_info_print("reclaimed %llu pages, %llu spans (approx)", pages_begin-pages_end, spans_begin-spans_end);
+    eggsfs_info_print("reclaimed %llu pages, %lld spans (approx)", dropped_pages, spans_begin-spans_end);
+    return dropped_pages;
 }
 
-void eggsfs_drop_spans(struct eggsfs_inode* enode) {
+u64 eggsfs_drop_spans(void) {
+    u64 dropped_pages = 0;
+    int lru_ix = 0;
+    for (;;) {
+        u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
+        // This is pretty lazy, we use the strict numbers so that we won't
+        // continuously trigger span drops.
+        if (
+            pages*PAGE_SIZE < eggsfs_span_cache_max_size_sync &&
+            si_mem_available() > eggsfs_span_cache_min_avail_mem_sync
+        ) {
+            break;
+        }
+        lru_ix = eggsfs_drop_one_span(lru_ix, &dropped_pages);
+        if (lru_ix < 0) { break; }
+    }
+    eggsfs_debug_print("dropped %llu pages", dropped_pages);
+    return dropped_pages;
+}
+
+static void eggsfs_reclaim_spans_async(struct work_struct* work) {
+    eggsfs_drop_spans();
+}
+
+static DECLARE_WORK(eggsfs_reclaim_spans_work, eggsfs_reclaim_spans_async);
+
+static unsigned long eggsfs_span_shrinker_count(struct shrinker* shrinker, struct shrink_control* sc) {
+    u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
+    if (pages == 0) { return SHRINK_EMPTY; }
+    // We won't do much if this is true
+    if (
+        pages*PAGE_SIZE < eggsfs_span_cache_max_size_sync &&
+        si_mem_available() > eggsfs_span_cache_min_avail_mem_sync
+    ) {
+        return 0;
+    }
+    return pages;
+}
+
+static unsigned long eggsfs_span_shrinker_scan(struct shrinker* shrinker, struct shrink_control* sc) {
+    return eggsfs_drop_spans();
+}
+
+static struct shrinker eggsfs_span_shrinker = {
+    .count_objects = eggsfs_span_shrinker_count,
+    .scan_objects = eggsfs_span_shrinker_scan,
+    .seeks = DEFAULT_SEEKS,
+    .flags = SHRINKER_NONSLAB, // what's this?
+};
+
+void eggsfs_drop_file_spans(struct eggsfs_inode* enode) {
 again:
     down_write(&enode->file.spans_lock);
 
@@ -416,7 +478,7 @@ again:
             xa_for_each(&block_span->pages, page_ix, page) {
                 put_page(page);
                 xa_erase(&block_span->pages, page_ix);
-                eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
+                atomic64_dec(&eggsfs_stat_cached_span_pages);
             }
         }
         eggsfs_free_span(span);
@@ -512,7 +574,7 @@ again:
                 eggsfs_debug_print("xa_store failed: %d", err);
                 goto out_err;
             }
-            eggsfs_counter_inc(eggsfs_stat_cached_span_pages);
+            atomic64_inc(&eggsfs_stat_cached_span_pages);
             BUG_ON(old_page != NULL); // the latch protects against this
             curr_page++;
         }
@@ -548,6 +610,21 @@ out:
         if (socks[i] == NULL) { continue; }
         eggsfs_put_fetch_block_socket(socks[i]);
     }
+
+    // Reclaim pages if we went over the limit
+    {
+        u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
+        long free_mem = si_mem_available();
+        if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_sync || free_mem < eggsfs_span_cache_min_avail_mem_sync) {
+            eggsfs_drop_spans();
+        }
+        if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_async || free_mem < eggsfs_span_cache_min_avail_mem_async) {
+            // TODO Is it a good idea to do it on system_long_wq rather than eggsfs_wq? The freeing
+            // job might face heavy contention, so maybe yes?
+            queue_work(system_long_wq, &eggsfs_reclaim_spans_work);
+        }
+    }
+
     return err == 0 ? page : ERR_PTR(err);
 
 out_err:
@@ -555,16 +632,25 @@ out_err:
     // we might have partially written the stripe, forget about them
     end_page = curr_page;
     for (curr_page = start_page; curr_page <= end_page; curr_page++) {
-        eggsfs_counter_dec(eggsfs_stat_cached_span_pages);
+        atomic64_dec(&eggsfs_stat_cached_span_pages);
         xa_erase(&span->pages, curr_page);
     }
     goto out;
 }
 
-void eggsfs_span_init(void) {
+int eggsfs_span_init(void) {
     int i;
     for (i = 0; i < EGGSFS_SPAN_LRUS; i++) {
         spin_lock_init(&eggsfs_span_lrus[i].lock);
         INIT_LIST_HEAD(&eggsfs_span_lrus[i].lru);
     }
+
+    int err = register_shrinker(&eggsfs_span_shrinker);
+    if (err) { return err; }
+
+    return 0;
+}
+
+void eggsfs_span_exit(void) {
+    unregister_shrinker(&eggsfs_span_shrinker);
 }

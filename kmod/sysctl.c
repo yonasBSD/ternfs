@@ -67,20 +67,10 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
 
     EGGSFS_CTL_INT_TIME(dir_refresh_time),
 
-#if 0
-    EGGSFS_CTL_ULONG(spancache_max_size_async),
-    EGGSFS_CTL_ULONG(spancache_min_avail_mem_async),
-    EGGSFS_CTL_ULONG(spancache_max_size_sync),
-    EGGSFS_CTL_ULONG(spancache_min_avail_mem_sync),
-
-    {
-        .procname = "drop_spancache",
-        .data = &eggsfs_drop_spancache_var,
-        .maxlen = sizeof(int),
-        .mode = 0200,
-        .proc_handler = eggsfs_drop_spancache_sysctl,
-    },
-#endif
+    EGGSFS_CTL_ULONG(span_cache_max_size_async),
+    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_async),
+    EGGSFS_CTL_ULONG(span_cache_max_size_sync),
+    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_sync),
 
     {}
 };

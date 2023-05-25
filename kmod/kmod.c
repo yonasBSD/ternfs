@@ -29,8 +29,6 @@ static int __init eggsfs_init(void) {
     eggsfs_wq = alloc_workqueue("eggsfs-wq", 0, 0);
     if (!eggsfs_wq) { return -ENOMEM; }
 
-    eggsfs_span_init();
-
     err = eggsfs_sysfs_init();
     if (err) { goto out_sysfs; }
 
@@ -39,6 +37,9 @@ static int __init eggsfs_init(void) {
 
     err = eggsfs_block_init();
     if (err) { goto out_block; }
+
+    err = eggsfs_span_init();
+    if (err) { goto out_span; }
 
     err = eggsfs_inode_init();
     if (err) { goto out_inode; }
@@ -49,6 +50,7 @@ static int __init eggsfs_init(void) {
     err = eggsfs_rs_init();
     if (err) { goto out_rs; }
 
+
     return 0;
 
 out_rs:
@@ -56,6 +58,8 @@ out_rs:
 out_fs:
     eggsfs_inode_exit();
 out_inode:
+    eggsfs_span_exit();
+out_span:
     eggsfs_block_exit();
 out_block:
     eggsfs_sysctl_exit();

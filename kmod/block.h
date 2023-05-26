@@ -23,7 +23,6 @@ struct eggsfs_block_service {
 struct eggsfs_block_socket;
 
 struct eggsfs_block_socket* eggsfs_get_fetch_block_socket(struct eggsfs_block_service* block_service);
-// Must have waited for all outstanding requests before putting.
 void eggsfs_put_fetch_block_socket(struct eggsfs_block_socket* socket);
 
 struct eggsfs_fetch_block_request {
@@ -88,6 +87,7 @@ struct eggsfs_fetch_block_request* eggsfs_fetch_block(
 void eggsfs_put_fetch_block_request(struct eggsfs_fetch_block_request* req);
 
 struct eggsfs_block_socket* eggsfs_get_write_block_socket(struct eggsfs_block_service* block_service);
+
 // Must have waited for all outstanding requests before putting.
 void eggsfs_put_write_block_socket(struct eggsfs_block_socket* socket);
 

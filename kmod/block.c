@@ -159,11 +159,7 @@ static int eggsfs_fetch_block_receive_single_req(
     return (len0-len) + block_bytes_read;
 }
 
-void eggsfs_put_fetch_block_socket(struct eggsfs_block_socket *socket) {
-    spin_lock_bh(&socket->requests_lock);
-    BUG_ON(!list_empty(&socket->requests));
-    spin_unlock_bh(&socket->requests_lock);
-
+static void eggsfs_put_socket(struct eggsfs_block_socket *socket) {
     read_lock(&socket->sock->sk->sk_callback_lock);
     socket->sock->sk->sk_data_ready = socket->saved_data_ready;
     socket->sock->sk->sk_state_change = socket->saved_state_change;
@@ -178,12 +174,13 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
     struct eggsfs_block_socket* socket = rd_desc->arg.data;
 
     int initial_len = len;
-    int sock_err = atomic_read(&socket->sock_err);
+    int sock_err;
     for (;;) {
+        sock_err = atomic_read(&socket->sock_err);
+        if (sock_err) { break; }
         spin_lock_bh(&socket->requests_lock);
-        struct eggsfs_fetch_block_request* req = list_empty(&socket->requests) ?
-            NULL :
-            list_first_entry(&socket->requests, struct eggsfs_fetch_block_request, socket_requests);
+        struct eggsfs_fetch_block_request* req = list_first_entry_or_null(&socket->requests, struct eggsfs_fetch_block_request, socket_requests);
+        if (req != NULL) { list_del(&req->socket_requests); } // to avoid races with eggsfs_put_fetch_block_socket
         spin_unlock_bh(&socket->requests_lock);
         if (req == NULL) { break; }
         int consumed = sock_err;
@@ -191,6 +188,7 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
             consumed = eggsfs_fetch_block_receive_single_req(req, skb, offset, len);
             if (consumed < 0) {
                 sock_err = consumed;
+                atomic_cmpxchg(&socket->sock_err, 0, sock_err);
             } else {
                 offset += consumed;
                 len -= consumed;
@@ -202,7 +200,6 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
             spin_lock_bh(&socket->requests_lock);
             BUG_ON(atomic_read(&req->refcount) < 1);
             bool should_free = atomic_dec_and_test(&req->refcount);
-            list_del(&req->socket_requests);
             spin_unlock_bh(&socket->requests_lock);
             complete_all(&req->comp);
             // Important to do the actual freeing after the completion: otherwise
@@ -213,6 +210,10 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
                 kmem_cache_free(eggsfs_fetch_block_request_cachep, req);
             }
         } else {
+            // Not done yet, add back again to the list
+            spin_lock_bh(&socket->requests_lock);
+            list_add(&req->socket_requests, &socket->requests);
+            spin_unlock_bh(&socket->requests_lock);
             break;
         }
     }
@@ -220,6 +221,27 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
         BUG_ON(len != 0); // can't have leftovers
     }
     return initial_len;
+}
+
+void eggsfs_put_fetch_block_socket(struct eggsfs_block_socket *socket) {
+    atomic_set(&socket->sock_err, -EINTR);
+    // We assume that at this point nobody else is traversing these
+    // (this will change when we start sharing sockets). TODO this is
+    // quite nasty: come up with something better when we start sharing
+    // sockets. The only reason why I'm doing this is that the fetching
+    // code in span.c would be pretty annoying to write if we were to
+    // have to wait on each request on failure.
+    for (;;) {
+        spin_lock_bh(&socket->requests_lock);
+        struct eggsfs_fetch_block_request* req = list_first_entry_or_null(&socket->requests, struct eggsfs_fetch_block_request, socket_requests);
+        if (req != NULL) { list_del(&req->socket_requests); }
+        spin_unlock_bh(&socket->requests_lock);
+        if (req == NULL) { break; }
+        put_pages_list(&req->pages);
+        kmem_cache_free(eggsfs_fetch_block_request_cachep, req);
+    }
+
+    eggsfs_put_socket(socket);
 }
 
 static void eggsfs_fetch_block_data_ready(struct sock* sk) {
@@ -365,7 +387,7 @@ out_err_pages:
     put_pages_list(&req->pages);
     kmem_cache_free(eggsfs_fetch_block_request_cachep, req);
 out_err:
-    eggsfs_info_print("couldn't start fetch block request, err=%d", req->err);
+    eggsfs_info_print("couldn't start fetch block request, err=%d", err);
     return ERR_PTR(err);
 }
 
@@ -675,7 +697,12 @@ struct eggsfs_block_socket* eggsfs_get_write_block_socket(struct eggsfs_block_se
 
 void eggsfs_put_write_block_socket(struct eggsfs_block_socket* socket) {
     cancel_work_sync(&socket->write_work);
-    eggsfs_put_fetch_block_socket(socket);
+
+    spin_lock_bh(&socket->requests_lock);
+    BUG_ON(!list_empty(&socket->requests));
+    spin_unlock_bh(&socket->requests_lock);
+
+    eggsfs_put_socket(socket);
 }
 
 struct eggsfs_write_block_request* eggsfs_write_block(

@@ -224,10 +224,10 @@ struct eggsfs_span* eggsfs_get_span(struct eggsfs_inode* enode, u64 offset) {
 retry:
     iterations++;
     // Sadly while this should be somewhat uncommon it can happen when we're busy
-    // looping while another task is between fetching the spans and adding them
-    // to the LRU.
+    // looping while another task is between inserting span in the span tree and
+    // adding it to the LRU.
     if (unlikely(iterations == 10)) {
-        eggsfs_warn_print("we've been stuck on fetching spans for %llu iterations, we're probably stuck on a yet-to-be enabled span we just fetched", iterations);
+        eggsfs_warn_print("we've been fetching the same span for %llu iterations, we're probably stuck on a yet-to-be enabled span we just fetched", iterations);
     }
 
     // Try to read the semaphore if it's already there.
@@ -528,9 +528,9 @@ again:
     }
 
     struct eggsfs_block_socket* socks[EGGSFS_MAX_DATA];
-    memset(socks, 0, sizeof(struct eggsfs_block_socket*)*EGGSFS_MAX_DATA);
+    memset(socks, 0, sizeof(socks));
     struct eggsfs_fetch_block_request* reqs[EGGSFS_MAX_DATA];
-    memset(reqs, 0, sizeof(struct eggsfs_fetch_block_request*)*EGGSFS_MAX_DATA);
+    memset(reqs, 0, sizeof(reqs));
 
     // get block services sockets
     int i;
@@ -538,6 +538,7 @@ again:
         socks[i] = eggsfs_get_fetch_block_socket(&span->blocks[i].bs);
         if (IS_ERR(socks[i])) {
             err = PTR_ERR(socks[i]);
+            socks[i] = NULL;
             goto out_err;
         }
     }
@@ -549,6 +550,7 @@ again:
         reqs[i] = eggsfs_fetch_block(socks[i], block->bs.id, block->id, block_offset, span->cell_size);
         if (IS_ERR(reqs[i])) {
             err = PTR_ERR(reqs[i]);
+            reqs[i] = NULL;
             goto out_err;
         }
     }

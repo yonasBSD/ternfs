@@ -425,7 +425,7 @@ func main() {
 		var wait sync.WaitGroup
 		wait.Add(len(conns))
 		t := time.Now()
-		for i := 0; i < int(len(conns)); i++ {
+		for i := 0; i < len(conns); i++ {
 			conn := conns[i]
 			bsId := bsInfos[i].Id
 			go func() {
@@ -441,7 +441,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		log.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize)/1e9)/elapsed.Seconds())
+		log.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize*uint(len(conns)))/1e9)/elapsed.Seconds())
 	}
 	commands["test-block-write"] = commandSpec{
 		flags: testBlockWriteCmd,

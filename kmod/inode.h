@@ -201,7 +201,7 @@ static inline u32 eggsfs_inode_shard(u64 ino) {
     return ino & 0xff;
 }
 
-struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino);
+struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* parent, u64 ino);
 
 
 // super ops

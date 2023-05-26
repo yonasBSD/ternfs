@@ -171,7 +171,7 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
         goto out_err;
     }
 
-    eggsfs_debug_print("creating %*s", dentry->d_name.len, dentry->d_name.name);
+    eggsfs_debug_print("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
 
     u64 ino, cookie;
     err = eggsfs_error_to_linux(eggsfs_shard_create_file(
@@ -181,7 +181,7 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     if (err) { return eggsfs_error_to_linux(err); }
     // make this dentry stick around?
 
-    struct inode* inode = eggsfs_get_inode(dentry->d_sb, ino); // new_inode
+    struct inode* inode = eggsfs_get_inode(parent->i_sb, parent_enode, ino); // new_inode
     if (IS_ERR(inode)) { err = PTR_ERR(inode); goto out_err; }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
@@ -192,9 +192,6 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     struct eggsfs_transient_span* span = eggsfs_add_new_span(&enode->file.transient_spans);
     if (IS_ERR(span)) { err = PTR_ERR(span); goto out_err; }
     enode->file.size_without_current_span = 0;
-    memcpy(&enode->block_policies, &parent_enode->block_policies, sizeof(parent_enode->block_policies));
-    memcpy(&enode->span_policies, &parent_enode->span_policies, sizeof(parent_enode->span_policies));
-    enode->target_stripe_size = parent_enode->target_stripe_size;
     atomic_set(&enode->file.transient_err, 0);
     enode->file.owner = current->group_leader;
     enode->file.mm = current->group_leader->mm;
@@ -203,7 +200,9 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     INIT_WORK(&enode->file.flusher, eggsfs_flush_transient_spans);
     sema_init(&enode->file.done_flushing, 0);
     atomic64_set(&enode->file.flushed_so_far, 0);
-    // fairly arbitrary, this will cause at most three spans in flight, ~300MiB of memory max
+    // Fairly arbitrary, this will cause at most three spans in flight, ~300MiB of memory max.
+    // We definitely want at least 2 (so that one span is uploading while one span is writing).
+    // Three offers some additional buffer space for uneven throughput.
     sema_init(&enode->file.in_flight_spans, 2);
     
     d_instantiate(dentry, inode);
@@ -266,7 +265,7 @@ static const struct inode_operations eggsfs_file_inode_ops = {
 
 extern struct file_operations eggsfs_dir_operations;
 
-struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino) {
+struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* parent, u64 ino) {
     trace_eggsfs_get_inode_enter(ino);
 
     struct inode* inode = iget_locked(sb, ino); // new_inode when possible?
@@ -312,6 +311,16 @@ struct inode* eggsfs_get_inode(struct super_block* sb, u64 ino) {
         // FIXME
         inode->i_uid = make_kuid(&init_user_ns, 1000);//65534);
         inode->i_gid = make_kgid(&init_user_ns, 1000);//65534);
+
+        // Only == NULL when we're getting the root inode    
+        if (parent) {
+            memcpy(&enode->block_policies, &parent->block_policies, sizeof(parent->block_policies));
+            memcpy(&enode->span_policies, &parent->span_policies, sizeof(parent->span_policies));
+            enode->target_stripe_size = parent->target_stripe_size;
+            BUG_ON(!enode->block_policies.len || !enode->span_policies.len || !enode->target_stripe_size);
+        } else {
+            BUG_ON(ino != EGGSFS_ROOT_INODE);
+        }
 
         unlock_new_inode(inode);
     }

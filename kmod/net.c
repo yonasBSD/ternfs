@@ -220,6 +220,8 @@ struct sk_buff* eggsfs_metadata_request(
     vec.iov_base = p;
     vec.iov_len = len;
 
+    u64 start = jiffies64_to_nsecs(get_jiffies_64());
+    u64 elapsed;
     int max_attempts = shard_id < 0 ? CDC_ATTEMPTS : SHARD_ATTEMPTS;
     const u64* timeouts_10ms = shard_id < 0 ? cdc_timeouts_10ms : shard_timeouts_10ms;
 
@@ -244,7 +246,8 @@ struct sk_buff* eggsfs_metadata_request(
         if (!err) {
             eggsfs_debug_print("got response");
             BUG_ON(!req.skb);
-            trace_eggsfs_metadata_request_exit(req_id, *attempts, req.skb->len, 0);
+            elapsed = jiffies64_to_nsecs(get_jiffies_64()) - start;
+            trace_eggsfs_metadata_request_exit(msg, req_id, len, shard_id, kind, elapsed, *attempts, req.skb->len, 0);
             return req.skb;
         }
 
@@ -264,7 +267,8 @@ out_unregister:
     spin_unlock_bh(&sock->lock);
 
 out_err:
-    trace_eggsfs_metadata_request_exit(req_id, *attempts, 0, err);
+    elapsed = jiffies64_to_nsecs(get_jiffies_64()) - start;
+    trace_eggsfs_metadata_request_exit(msg, req_id, len, shard_id, kind, elapsed, *attempts, 0, err);
     eggsfs_info_print("err=%d", err);
     return ERR_PTR(err);
 }

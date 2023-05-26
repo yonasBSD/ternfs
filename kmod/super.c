@@ -221,7 +221,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     sb->s_op = &eggsfs_super_ops;
     sb->s_d_op = &eggsfs_dentry_ops;
 
-    struct inode* root = eggsfs_get_inode(sb, EGGSFS_ROOT_INODE);
+    struct inode* root = eggsfs_get_inode(sb,  NULL, EGGSFS_ROOT_INODE);
     if (IS_ERR(root)) { err = PTR_ERR(root); goto out_sb; }
     
     struct eggsfs_inode* root_enode = EGGSFS_I(root);
@@ -229,9 +229,11 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     err = eggsfs_do_getattr(root_enode);
     if (err) { goto out_sb; }
 
-    BUG_ON(
-        !root_enode->block_policies.len || !root_enode->span_policies.len || !root_enode->target_stripe_size
-    );
+    if (!root_enode->block_policies.len || !root_enode->span_policies.len || !root_enode->target_stripe_size) {
+        eggsfs_warn_print("no policies for root directory!");
+        err = -EIO;
+        goto out_sb;
+    }
 
     sb->s_root = d_make_root(root);
     if (!sb->s_root) { err = -ENOMEM; goto out_sb; }

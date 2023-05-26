@@ -1340,7 +1340,8 @@ struct ShardDBImpl {
         // Now fill in the block services. Generally we want to try to keep them the same
         // throughout the file, if possible, so that the likelihood of data loss is minimized.
         //
-        // TODO factor failure domains in the decision
+        // Currently things are spread out in faiure domains nicely by just having the current
+        // block services to be all on different failure domains.
         {
             std::vector<BlockServiceId> candidateBlockServices;
             candidateBlockServices.reserve(_currentBlockServices.size());
@@ -2485,6 +2486,9 @@ struct ShardDBImpl {
         // The scheme below is a very cheap way to always pick different failure domains
         // for our block services: we just set the current block services to be all of
         // different failure domains, sharded by storage type.
+        //
+        // It does require having at least 14 failure domains (to do RS(10,4)), and gives
+        // very little slack with the current situation of 17 failure domains.
         std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<uint64_t>>> blockServicesByFailureDomain;
         for (const auto& [blockServiceId, blockService]: _blockServicesCache) {
             __int128 failureDomain;
@@ -2494,14 +2498,9 @@ struct ShardDBImpl {
         }
         uint64_t rand = time.ns;
         for (const auto& [storageClass, byFailureDomain]: blockServicesByFailureDomain) {
-            int added = 0;
             for (const auto& [failureDomain, blockServices]: byFailureDomain) {
                 _currentBlockServices.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]);
-                added++;
             }
-            // This actually gives us very little slack for RS(10,4), but it's just based on the fact that
-            // the only eggsfs deployment we have has 17 failure domains.
-            ALWAYS_ASSERT(added > 16);
         }
         ALWAYS_ASSERT(_currentBlockServices.size() < 256); // TODO handle this properly
         OwnedValue<CurrentBlockServicesBody> currentBody(_currentBlockServices.size());

@@ -164,6 +164,11 @@ static void update_dcache(struct dentry* parent, u64 dir_seqno, const char* name
     struct dentry* dentry;
     struct dentry* alias;
     DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+    struct inode* parent_inode = parent->d_inode;
+    if (unlikely(parent_inode == NULL)) { // TODO can this ever happen?
+        eggsfs_warn_print("got NULL in dentry parent (ino %016llx)", ino);
+        return;
+    }
 
     eggsfs_debug_print("parent=%pd name=%*pE ino=%llx", parent, name_len, name, ino);
 
@@ -187,7 +192,7 @@ again:
         goto again;
     } else {
         // new entry
-        struct inode* inode = eggsfs_get_inode(parent->d_sb, ino);
+        struct inode* inode = eggsfs_get_inode(parent->d_sb, EGGSFS_I(parent_inode), ino);
         // d_splice_alias propagates error in inode
         WRITE_ONCE(dentry->d_time, dir_seqno);
         alias = d_splice_alias(inode, dentry); 

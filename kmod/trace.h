@@ -255,22 +255,32 @@ TRACE_EVENT(eggsfs_metadata_request_enter,
 );
 
 TRACE_EVENT(eggsfs_metadata_request_exit,
-    TP_PROTO(u64 req_id, u32 n_attempts, u32 resp_len, int error),
-    TP_ARGS(req_id, n_attempts, resp_len, error),
+    TP_PROTO(struct msghdr* msg, u64 req_id, u32 len, s16 shard_id, u8 kind, u64 elapsed, u32 n_attempts, u32 resp_len, int error),
+    TP_ARGS(msg, req_id, len, shard_id, kind, elapsed, n_attempts, resp_len, error),
 
     TP_STRUCT__entry(
+        __array(u8, addr, sizeof(struct sockaddr_in))
         __field(u64, req_id)
+        __field(u32, len)
+        __field(s16, shard_id) // -1 is used for CDC
+        __field(u8, kind)
+        __field(u64, elapsed)
         __field(u32, n_attempts)
         __field(u32, resp_len)
         __field(int, error)
     ),
     TP_fast_assign(
+        memcpy(__entry->addr, msg->msg_name, sizeof(struct sockaddr_in));
         __entry->req_id = req_id;
+        __entry->len = len;
+        __entry->shard_id = shard_id;
+        __entry->kind = kind;
+        __entry->elapsed = elapsed;
         __entry->n_attempts = n_attempts;
         __entry->resp_len = resp_len;
         __entry->error = error;
     ),
-    TP_printk("req_id=%llu n_attempts=%u resp_len=%u error=%d", __entry->req_id, __entry->n_attempts, __entry->resp_len, __entry->error)
+    TP_printk("dst=%pISp req_id=%llu shard_id=%d kind=%d len=%u elapsed=%llu n_attempts=%u resp_len=%u error=%d", __entry->addr, __entry->req_id, __entry->shard_id, __entry->kind, __entry->len, __entry->elapsed, __entry->n_attempts, __entry->resp_len, __entry->error)
 );
 
 TRACE_EVENT(eggsfs_get_inode_enter,

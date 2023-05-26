@@ -126,7 +126,7 @@ struct dentry* eggsfs_lookup(struct inode* dir, struct dentry* dentry, unsigned 
         goto out_err;
     }
 
-    struct inode* inode = eggsfs_get_inode(dentry->d_sb, ino);
+    struct inode* inode = eggsfs_get_inode(dentry->d_sb, EGGSFS_I(dir), ino);
     if (IS_ERR(inode)) {
         err = PTR_ERR(inode);
         goto out_err;
@@ -175,13 +175,10 @@ int eggsfs_mkdir(struct inode* dir, struct dentry* dentry, umode_t mode) {
     }
     eggsfs_dir_drop_cache(EGGSFS_I(dir));
 
-    struct inode* inode = eggsfs_get_inode(dentry->d_sb, ino);
+    struct inode* inode = eggsfs_get_inode(dentry->d_sb, EGGSFS_I(dir), ino);
     if (IS_ERR(inode)) { err = PTR_ERR(inode); goto out_err; }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
     enode->edge_creation_time = creation_time;
-    memcpy(&enode->block_policies, &dir_enode->block_policies, sizeof(enode->block_policies));
-    memcpy(&enode->span_policies, &dir_enode->span_policies, sizeof(enode->span_policies));
-    enode->target_stripe_size = dir_enode->target_stripe_size;
     dentry->d_time = dir_enode->mtime;
     d_instantiate(dentry, inode);
 
@@ -268,56 +265,56 @@ int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode
 
     trace_eggsfs_vfs_rename_enter(old_dir, old_dentry, new_dir, new_dentry);
 
-    BUG_ON(!old_dentry->d_inode);
+    if (!old_dentry->d_inode) { // TODO can this ever happen?
+        eggsfs_warn_print("got no inodes for old dentry!");
+        return -EIO;
+    }
+    struct eggsfs_inode* enode = EGGSFS_I(old_dentry->d_inode);
+    u64 ino = enode->inode.i_ino;
 
     if (flags) { err = -EINVAL; goto out; }
 
-    u64 old_creation_time = EGGSFS_I(old_dentry->d_inode)->edge_creation_time;
+    u64 old_creation_time = enode->edge_creation_time;
     u64 new_creation_time;
     struct eggsfs_fs_info* info = old_dir->i_sb->s_fs_info;
     if (old_dir == new_dir) {
-        err = eggsfs_shard_rename(
+        err = eggsfs_error_to_linux(eggsfs_shard_rename(
             info,
             old_dir->i_ino,
-            old_dentry->d_inode->i_ino, old_dentry->d_name.name, old_dentry->d_name.len,
+            ino, old_dentry->d_name.name, old_dentry->d_name.len,
             old_creation_time,
             new_dentry->d_name.name, new_dentry->d_name.len,
             &new_creation_time
-        );
+        ));
     } else if (S_ISDIR(old_dentry->d_inode->i_mode)) {
-        // TODO update block policies/span policies here, it's kind of a no brainer in this case
-        err = eggsfs_cdc_rename_directory(
+        err = eggsfs_error_to_linux(eggsfs_cdc_rename_directory(
             info,
-            old_dentry->d_inode->i_ino,
+            ino,
             old_dir->i_ino, new_dir->i_ino,
             old_dentry->d_name.name, old_dentry->d_name.len, old_creation_time,
             new_dentry->d_name.name, new_dentry->d_name.len,
             &new_creation_time
-        );
+        ));
     } else {
-        err = eggsfs_cdc_rename_file(
+        err = eggsfs_error_to_linux(eggsfs_cdc_rename_file(
             info,
-            old_dentry->d_inode->i_ino,
+            ino,
             old_dir->i_ino, new_dir->i_ino,
             old_dentry->d_name.name, old_dentry->d_name.len, old_creation_time,
             new_dentry->d_name.name, new_dentry->d_name.len,
             &new_creation_time
-        );
+        ));
     }
-    err = eggsfs_error_to_linux(err);
-    if (err) {
-        if (err == -ENOENT) {
- //           eggsfs_dentry_handle_enoent(old_dentry);
-        } else {
-            d_drop(old_dentry);
-            d_drop(new_dentry); //?
-        }
-        // new entry? drop as well
-    } else {
-        old_dentry->d_time = new_creation_time;
-        if (new_dentry->d_inode) { inode_dec_link_count(new_dentry->d_inode); }
+    // TODO do we need to drop the dentries in case of error? The old code
+    // thought so, but I'm not sure.
+    if (!err) {
+        old_dentry->d_time = new_creation_time; // used by d_revalidate
+        struct eggsfs_inode* new_edir = EGGSFS_I(new_dir);
+        memcpy(&enode->block_policies, &new_edir->block_policies, sizeof(new_edir->block_policies));
+        memcpy(&enode->span_policies, &new_edir->span_policies, sizeof(new_edir->span_policies));
+        enode->target_stripe_size = new_edir->target_stripe_size;
+        BUG_ON(!enode->block_policies.len || !enode->span_policies.len || !enode->target_stripe_size);
         d_move(old_dentry, new_dentry);
-        // negative old dentry?
     }
 
 out:

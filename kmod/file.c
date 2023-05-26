@@ -829,8 +829,8 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
         if (span) { eggsfs_span_put(span, true); }
         span = eggsfs_get_span(enode, *ppos);
         if (IS_ERR(span)) {
-            span = NULL;
             written = PTR_ERR(span);
+            span = NULL; // important to not trip the eggsfs_span_put below
             goto out;
         }
         if (span == NULL) { goto out; }

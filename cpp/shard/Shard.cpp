@@ -410,7 +410,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut);
+    Logger logger(options.logLevel, *logOut, true);
 
     {
         Env env(logger, "startup");

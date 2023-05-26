@@ -399,7 +399,7 @@ struct TempShardDB {
     ShardId shid;
     std::unique_ptr<ShardDB> db;
 
-    TempShardDB(LogLevel level, ShardId shid_): logger(level, std::cerr), shid(shid_) {
+    TempShardDB(LogLevel level, ShardId shid_): logger(level, std::cerr, false), shid(shid_) {
         dbDir = std::string("temp-shard-db.XXXXXX");
         if (mkdtemp(dbDir.data()) == nullptr) {
             throw SYSCALL_EXCEPTION("mkdtemp");

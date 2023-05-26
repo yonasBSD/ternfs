@@ -614,7 +614,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         }
         logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut);
+    Logger logger(options.logLevel, *logOut, true);
 
     {
         Env env(logger, "startup");

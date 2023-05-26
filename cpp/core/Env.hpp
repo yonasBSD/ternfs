@@ -4,8 +4,10 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <signal.h>
 
 #include "Common.hpp"
+#include "Exception.hpp"
 #include "Time.hpp"
 
 enum class LogLevel : uint32_t {
@@ -17,13 +19,25 @@ enum class LogLevel : uint32_t {
 
 std::ostream& operator<<(std::ostream& out, LogLevel ll);
 
+void installLoggerSignalHandler(void* logger);
+void tearDownLoggerSignalHandler(void* logger);
+
 struct Logger {
 private:
     LogLevel _logLevel;
+    LogLevel _savedLogLevel;
     std::ostream& _out;
     std::mutex _mutex;
 public:
-    Logger(LogLevel logLevel, std::ostream& out): _logLevel(logLevel), _out(out) {}
+    Logger(LogLevel logLevel, std::ostream& out, bool usr1ToDebug): _logLevel(logLevel), _savedLogLevel(logLevel), _out(out) {
+        if (usr1ToDebug) {
+            installLoggerSignalHandler(this);
+        }
+    }
+
+    ~Logger() {
+        tearDownLoggerSignalHandler(this);
+    }
 
     template<typename ...Args>
     void _log(LogLevel level, const std::string& prefix, const char* fmt, Args&&... args) {
@@ -45,6 +59,8 @@ public:
         std::scoped_lock lock(_mutex);
         _out.flush();
     }
+
+    void toggleDebug();
 };
 
 struct Env {

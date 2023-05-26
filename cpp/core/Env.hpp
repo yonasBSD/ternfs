@@ -29,8 +29,8 @@ private:
     std::ostream& _out;
     std::mutex _mutex;
 public:
-    Logger(LogLevel logLevel, std::ostream& out, bool usr1ToDebug): _logLevel(logLevel), _savedLogLevel(logLevel), _out(out) {
-        if (usr1ToDebug) {
+    Logger(LogLevel logLevel, std::ostream& out, bool usr2ToDebug): _logLevel(logLevel), _savedLogLevel(logLevel), _out(out) {
+        if (usr2ToDebug) {
             installLoggerSignalHandler(this);
         }
     }

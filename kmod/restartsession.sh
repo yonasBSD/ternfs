@@ -68,7 +68,7 @@ fi
 # Create shells
 tmux new-window -t uovo:1 'ssh -t uovo'
 if [[ "$run" = true ]]; then
-    tmux new-window -t uovo:2 'ssh -t uovo "cd eggs && ./eggsrun -trace -binaries-dir ~/eggs -data-dir ~/eggs-data/"'
+    tmux new-window -t uovo:2 'ssh -t uovo "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/"'
 fi
 
 # Attach

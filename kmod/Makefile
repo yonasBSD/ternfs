@@ -41,6 +41,3 @@ bincode_tests: bincode_tests.c bincodegen.h bincode.h
 
 rs_tests: rs_tests.c rs.c rs.h intrshims.h
 	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all rs_tests.c -o rs_tests
-
-writefile: writefile.c
-	gcc -Wall -g -O2 writefile.c -o writefile

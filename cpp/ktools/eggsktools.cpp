@@ -1,0 +1,93 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string>
+#include <limits.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string.h>
+
+#define die(fmt, ...) do { fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(false)
+
+const char* exe = NULL;
+
+#define badUsage(...) do { \
+        fprintf(stderr, "Bad usage, expecting %s writefile <command arguments>\n", exe); \
+        __VA_OPT__(fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n");) \
+        exit(2); \
+    } while(0) \
+
+// Just a super dumb file test, to have a controlled environment
+// where every syscall is accounted for.
+static void writeFile(int argc, const char** argv) {
+    ssize_t fileSize = -1;
+    ssize_t bufSize = -1; // if -1, all in one go
+    const char* filename = NULL;
+
+    for (int i = 0; i < argc; i++) {
+        if (std::string(argv[i]) == "-buf-size") {
+            if (i+1 >= argc) { badUsage("No argument after -buf-size"); } i++;
+            bufSize = strtoull(argv[i], NULL, 0);
+            if (bufSize == ULLONG_MAX) {
+                badUsage("Bad -buf-size: %d (%s)", errno, strerror(errno));
+            }
+        } else if (std::string(argv[i]) == "-size") {
+            if (i+1 >= argc) { badUsage("No argument after -size"); } i++;
+            fileSize = strtoull(argv[i], NULL, 0);
+            if (fileSize == ULLONG_MAX) {
+                badUsage("Bad -size: %d (%s)", errno, strerror(errno));
+            }
+        } else {
+            if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
+            filename = argv[i];
+        }
+    }
+
+    if (bufSize < 0) { bufSize = fileSize; }
+    if (fileSize < 0 || filename == NULL) { badUsage("No -size specified"); }
+
+    printf("writing %ld bytes with bufsize %ld to %s\n", fileSize, bufSize, filename);
+
+    int fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (fd < 0) {
+        die("could not open file %s: %d (%s)", filename, errno, strerror(errno));
+    }
+
+    uint8_t* buffer = (uint8_t*)malloc(bufSize);
+    if (buffer == NULL) {
+        die("could not allocate: %d (%s)", errno, strerror(errno));
+    }
+
+    while (fileSize > 0) {
+        ssize_t res = write(fd, buffer, fileSize > bufSize ? bufSize : fileSize);
+        if (res < 0) {
+            die("couldn't write %s: %d (%s)", filename, errno, strerror(errno));
+        }
+        fileSize -= res;
+    }
+
+    printf("finished writing, will now close\n");
+
+    if (close(fd) < 0) {
+        die("couldn't close %s: %d (%s)", filename, errno, strerror(errno));
+    }
+
+    printf("done.\n");
+}
+
+int main(int argc, const char** argv) {
+    exe = argv[0];
+
+    if (argc < 2) { badUsage("No command"); }
+
+    std::string cmd(argv[1]);
+
+    if (cmd == "writefile") {
+        writeFile(argc - 2, argv + 2);
+    } else {
+        badUsage("Bad command %s", cmd.c_str());
+    }
+
+    return 0;
+}

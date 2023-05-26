@@ -90,9 +90,6 @@ void eggsfs_drop_file_spans(struct eggsfs_inode* enode);
 // Drops all cached spans. Returns number of freed pages.
 u64 eggsfs_drop_all_spans(void);
 
-// Drops a reasonable amount of spans. Returns the number of freed pages.
-u64 eggsfs_drop_spans(void);
-
 int __init eggsfs_span_init(void);
 void __cold eggsfs_span_exit(void);
 

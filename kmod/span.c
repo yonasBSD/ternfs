@@ -8,6 +8,7 @@
 #include "err.h"
 #include "counter.h"
 #include "wq.h"
+#include "trace.h"
 
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_spans);
 
@@ -394,7 +395,9 @@ u64 eggsfs_drop_all_spans(void) {
     return dropped_pages;
 }
 
-u64 eggsfs_drop_spans(void) {
+static u64 eggsfs_drop_spans(bool async) {
+    u64 start = get_jiffies_64();
+    trace_eggsfs_drop_spans_enter(async, PAGE_SIZE*si_mem_available(), atomic64_read(&eggsfs_stat_cached_span_pages), eggsfs_counter_get(&eggsfs_stat_cached_spans));
     u64 dropped_pages = 0;
     int lru_ix = 0;
     for (;;) {
@@ -403,7 +406,7 @@ u64 eggsfs_drop_spans(void) {
         // continuously trigger span drops.
         if (
             pages*PAGE_SIZE < eggsfs_span_cache_max_size_sync &&
-            si_mem_available() > eggsfs_span_cache_min_avail_mem_sync
+            si_mem_available()*PAGE_SIZE > eggsfs_span_cache_min_avail_mem_sync
         ) {
             break;
         }
@@ -411,11 +414,13 @@ u64 eggsfs_drop_spans(void) {
         if (lru_ix < 0) { break; }
     }
     eggsfs_debug_print("dropped %llu pages", dropped_pages);
+    u64 elapsed = get_jiffies_64() - start;
+    trace_eggsfs_drop_spans_exit(async, PAGE_SIZE*si_mem_available(), atomic64_read(&eggsfs_stat_cached_span_pages), eggsfs_counter_get(&eggsfs_stat_cached_spans), jiffies_to_nsecs(elapsed));
     return dropped_pages;
 }
 
 static void eggsfs_reclaim_spans_async(struct work_struct* work) {
-    eggsfs_drop_spans();
+    eggsfs_drop_spans(true);
 }
 
 static DECLARE_WORK(eggsfs_reclaim_spans_work, eggsfs_reclaim_spans_async);
@@ -426,7 +431,7 @@ static unsigned long eggsfs_span_shrinker_count(struct shrinker* shrinker, struc
     // We won't do much if this is true
     if (
         pages*PAGE_SIZE < eggsfs_span_cache_max_size_sync &&
-        si_mem_available() > eggsfs_span_cache_min_avail_mem_sync
+        si_mem_available()*PAGE_SIZE > eggsfs_span_cache_min_avail_mem_sync
     ) {
         return 0;
     }
@@ -434,7 +439,7 @@ static unsigned long eggsfs_span_shrinker_count(struct shrinker* shrinker, struc
 }
 
 static unsigned long eggsfs_span_shrinker_scan(struct shrinker* shrinker, struct shrink_control* sc) {
-    return eggsfs_drop_spans();
+    return eggsfs_drop_spans(true);
 }
 
 static struct shrinker eggsfs_span_shrinker = {
@@ -620,11 +625,10 @@ out:
     // Reclaim pages if we went over the limit
     {
         u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
-        long free_mem = si_mem_available();
-        if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_sync || free_mem < eggsfs_span_cache_min_avail_mem_sync) {
-            eggsfs_drop_spans();
-        }
-        if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_async || free_mem < eggsfs_span_cache_min_avail_mem_async) {
+        u64 free_pages = si_mem_available();
+        if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_sync || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_sync) {
+            eggsfs_drop_spans(false);
+        } else if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_async || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_async) {
             // TODO Is it a good idea to do it on system_long_wq rather than eggsfs_wq? The freeing
             // job might face heavy contention, so maybe yes?
             queue_work(system_long_wq, &eggsfs_reclaim_spans_work);

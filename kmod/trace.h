@@ -423,6 +423,46 @@ TRACE_EVENT(eggsfs_span_add,
     TP_printk("file_id=%016llx offset=%llu", __entry->file_id, __entry->offset)
 );
 
+TRACE_EVENT(eggsfs_drop_spans_enter,
+    TP_PROTO(bool async, long mem_available, u64 cached_pages, u64 cached_spans),
+    TP_ARGS(      async,      mem_available,    cached_pages,     cached_spans),
+
+    TP_STRUCT__entry(
+        __field(bool, async)
+        __field(long, mem_available)
+        __field(u64, cached_pages)
+        __field(u64, cached_spans)
+    ),
+    TP_fast_assign(
+        __entry->async = async;
+        __entry->mem_available = mem_available;
+        __entry->cached_pages = cached_pages;
+        __entry->cached_spans = cached_spans;
+    ),
+    TP_printk("async=%d mem_available=%ld cached_pages=%llu cached_spans=%llu", (int)__entry->async, __entry->mem_available, __entry->cached_pages, __entry->cached_spans)
+);
+
+TRACE_EVENT(eggsfs_drop_spans_exit,
+    TP_PROTO(bool async, long mem_available, u64 cached_pages, u64 cached_spans, u64 elapsed),
+    TP_ARGS(      async,      mem_available,    cached_pages,     cached_spans,     elapsed),
+
+    TP_STRUCT__entry(
+        __field(bool, async)
+        __field(long, mem_available)
+        __field(u64, cached_pages)
+        __field(u64, cached_spans)
+        __field(u64, elapsed)
+    ),
+    TP_fast_assign(
+        __entry->async = async;
+        __entry->mem_available = mem_available;
+        __entry->cached_pages = cached_pages;
+        __entry->cached_spans = cached_spans;
+        __entry->elapsed = elapsed;
+    ),
+    TP_printk("async=%d mem_available=%ld cached_pages=%llu cached_spans=%llu elapsed=%llu", (int)__entry->async, __entry->mem_available, __entry->cached_pages, __entry->cached_spans, __entry->elapsed)
+);
+
 #endif /* _TRACE_EGGFS_H */
 
 #undef TRACE_INCLUDE_PATH

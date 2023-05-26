@@ -223,9 +223,11 @@ struct eggsfs_span* eggsfs_get_span(struct eggsfs_inode* enode, u64 offset) {
 
 retry:
     iterations++;
-    if (unlikely(iterations > 10)) {
-        eggsfs_warn_print("we've been stuck on fetching spans for %llu iterations, something is wrong (reclaimer is running too often?)", iterations);
-        return ERR_PTR(-EIO);
+    // Sadly while this should be somewhat uncommon it can happen when we're busy
+    // looping while another task is between fetching the spans and adding them
+    // to the LRU.
+    if (unlikely(iterations == 10)) {
+        eggsfs_warn_print("we've been stuck on fetching spans for %llu iterations, we're probably stuck on a yet-to-be enabled span we just fetched", iterations);
     }
 
     // Try to read the semaphore if it's already there.
@@ -264,11 +266,12 @@ retry:
     // We always get the full set of spans, this simplifies prefetching (we just
     // blindly assume the span is there, and if it's been reclaimed in the meantime
     // we just don't care).
-    struct eggsfs_get_span_ctx ctx = { .err = 0, .enode = enode };
-    INIT_LIST_HEAD(&ctx.spans);
     u64 spans_offset;
     for (spans_offset = 0;;) {
+        // fetch next batch of spans
         u64 next_offset;
+        struct eggsfs_get_span_ctx ctx = { .err = 0, .enode = enode };
+        INIT_LIST_HEAD(&ctx.spans);
         err = eggsfs_error_to_linux(eggsfs_shard_file_spans(
             (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, spans_offset, &next_offset,&ctx
         ));
@@ -283,29 +286,30 @@ retry:
             up_write(&file->spans_lock);
             return ERR_PTR(err);
         }
-        if (next_offset == 0) { break; }
-        spans_offset = next_offset;
-    }
-
-    for (;;) {
-        struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
-        if (span == NULL) { break; }
-        list_del(&span->lru);
-        if (!eggsfs_insert_span(&file->spans, span)) {
-            // Span is already cached
-            eggsfs_free_span(span);
-        } else {
-            if (span->storage_class != EGGSFS_INLINE_STORAGE) {
-                // Not already cached, must add it to the LRU
-                eggsfs_counter_inc(eggsfs_stat_cached_spans);
-                struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-                struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
-                spin_lock_bh(&lru->lock);
-                block_span->readers = 0;
-                list_add(&span->lru, &lru->lru);
-                spin_unlock_bh(&lru->lock);
+        // add them to enode spans and LRU
+        for (;;) {
+            struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
+            if (span == NULL) { break; }
+            list_del(&span->lru);
+            if (!eggsfs_insert_span(&file->spans, span)) {
+                // Span is already cached
+                eggsfs_free_span(span);
+            } else {
+                if (span->storage_class != EGGSFS_INLINE_STORAGE) {
+                    // Not already cached, must add it to the LRU
+                    eggsfs_counter_inc(eggsfs_stat_cached_spans);
+                    struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+                    struct eggsfs_span_lru* lru = eggsfs_get_span_lru(span);
+                    spin_lock_bh(&lru->lock);
+                    block_span->readers = 0;
+                    list_add(&span->lru, &lru->lru);
+                    spin_unlock_bh(&lru->lock);
+                }
             }
         }
+        // stop if we're done
+        if (next_offset == 0) { break; }
+        spans_offset = next_offset;
     }
 
     up_write(&file->spans_lock);

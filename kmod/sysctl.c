@@ -71,6 +71,8 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_ULONG(span_cache_min_avail_mem_async),
     EGGSFS_CTL_ULONG(span_cache_max_size_sync),
     EGGSFS_CTL_ULONG(span_cache_min_avail_mem_sync),
+    EGGSFS_CTL_ULONG(span_cache_max_size_drop),
+    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_drop),
 
     {}
 };

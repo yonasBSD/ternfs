@@ -80,3 +80,4 @@ tmux attach-session -t uovo:1
 
 # ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
 # ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
+# ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=100 -cfg fsTest.numFiles=10 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)

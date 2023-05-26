@@ -8,10 +8,13 @@
 
 EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_spans);
 extern atomic64_t eggsfs_stat_cached_span_pages;
+
 extern unsigned long eggsfs_span_cache_max_size_async;
 extern unsigned long eggsfs_span_cache_min_avail_mem_async;
 extern unsigned long eggsfs_span_cache_max_size_sync;
 extern unsigned long eggsfs_span_cache_min_avail_mem_sync;
+extern unsigned long eggsfs_span_cache_max_size_drop;
+extern unsigned long eggsfs_span_cache_min_avail_mem_drop;
 
 struct eggsfs_span {
     struct eggsfs_inode* enode;

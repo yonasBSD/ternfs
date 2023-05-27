@@ -598,9 +598,7 @@ static void eggsfs_write_block_work(struct work_struct* work) {
     // slightly lower latency by writing ahead, but probably not a big difference.
 
     spin_lock_bh(&socket->requests_lock);
-    struct eggsfs_write_block_request* req = list_empty(&socket->requests) ?
-        NULL :
-        list_first_entry(&socket->requests, struct eggsfs_write_block_request, socket_requests);
+    struct eggsfs_write_block_request* req = list_first_entry_or_null(&socket->requests, struct eggsfs_write_block_request, socket_requests);
     spin_unlock_bh(&socket->requests_lock);
     if (req == NULL) {
         eggsfs_debug_print("no request to work on");

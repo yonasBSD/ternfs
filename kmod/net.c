@@ -244,7 +244,15 @@ struct sk_buff* eggsfs_metadata_request(
         if (!err) {
             eggsfs_debug_print("got response");
             BUG_ON(!req.skb);
-            trace_eggsfs_metadata_request_exit(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, 0);
+            // extract the the error for the benefit of the tracing
+            int trace_err = 0;
+            if (req.skb->len >= (4 + 8 + 1)) {
+                uint8_t kind = *(u8*)(req.skb->data + 4 + 8);
+                if (kind == 0 && req.skb->len >= (4 + 8 + 1 + 2)) {
+                    trace_err = get_unaligned_le16(req.skb->data + 4 + 8 + 1);
+                }
+            }
+            trace_eggsfs_metadata_request_exit(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, trace_err);
             return req.skb;
         }
 

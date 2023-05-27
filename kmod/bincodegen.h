@@ -72,17 +72,25 @@
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
 #define EGGSFS_SHARD_SNAPSHOT_LOOKUP 0xE
 
+const char* eggsfs_shard_kind_str(u8 kind);
+
 #define EGGSFS_CDC_MAKE_DIRECTORY 0x1
 #define EGGSFS_CDC_RENAME_FILE 0x2
 #define EGGSFS_CDC_SOFT_UNLINK_DIRECTORY 0x3
 #define EGGSFS_CDC_RENAME_DIRECTORY 0x4
 
+const char* eggsfs_cdc_kind_str(u8 kind);
+
 #define EGGSFS_SHUCKLE_SHARDS 0x3
 #define EGGSFS_SHUCKLE_CDC 0x7
+
+const char* eggsfs_shuckle_kind_str(u8 kind);
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
 #define EGGSFS_BLOCKS_WRITE_BLOCK 0x3
 #define EGGSFS_BLOCKS_BLOCK_WRITTEN 0x4
+
+const char* eggsfs_blocks_kind_str(u8 kind);
 
 
 #define EGGSFS_DIRECTORY_INFO_ENTRY_MAX_SIZE 257

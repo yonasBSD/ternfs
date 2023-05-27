@@ -159,7 +159,7 @@ out_ctx:
     return err;
 }
 
-static void update_dcache(struct dentry* parent, u64 dir_seqno, const char* name, int name_len, u64 ino) {
+static void update_dcache(struct dentry* parent, u64 dir_seqno, const char* name, int name_len, u64 edge_creation_time, u64 ino) {
     struct qstr filename = QSTR_INIT(name, name_len);
     struct dentry* dentry;
     struct dentry* alias;
@@ -193,6 +193,10 @@ again:
     } else {
         // new entry
         struct inode* inode = eggsfs_get_inode(parent->d_sb, EGGSFS_I(parent_inode), ino);
+        if (!IS_ERR(inode)) {
+            struct eggsfs_inode* enode = EGGSFS_I(inode);
+            enode->edge_creation_time = edge_creation_time;
+        }
         // d_splice_alias propagates error in inode
         WRITE_ONCE(dentry->d_time, dir_seqno);
         alias = d_splice_alias(inode, dentry); 
@@ -252,10 +256,10 @@ static int eggsfs_dir_add_entry(struct eggsfs_dir_fill_ctx* ctx, const char* nam
     return 0;
 }
 
-int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 ino) {
+int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 edge_creation_time, u64 ino) {
     struct eggsfs_dir_fill_ctx* ctx = ptr;
     eggsfs_debug_print("hash=%llx ino=%llx, name_len=%d, name=%*pE", hash, ino, name_len, name_len, name);
-    update_dcache(ctx->parent, ctx->dir_mtime, name, name_len, ino);
+    update_dcache(ctx->parent, ctx->dir_mtime, name, name_len, edge_creation_time, ino);
     return eggsfs_dir_add_entry(ctx, name, name_len, ino);
 }
 

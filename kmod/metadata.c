@@ -13,24 +13,7 @@
 #include "rs.h"
 #include "file.h"
 #include "span.h"
-
-// callbacks
-static inline int eggsfs_shard_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 ino) {
-    extern int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 ino);
-    return eggsfs_dir_readdir_entry_cb(ptr, name, name_len, hash, ino);
-}
-static inline int eggsfs_shard_file_spans_begin_span_cb(void* ptr, u64 byte_offset, u8 parity, u8 storage_class, u32 crc32, u64 size) {
-    extern int eggsfs_spancache_begin_span_cb(void* ptr, u64 byte_offset, u8 parity, u8 storage_class, u32 crc32, u64 size);
-    return eggsfs_spancache_begin_span_cb(ptr, byte_offset, parity, storage_class, crc32, size);
-}
-static inline int eggsfs_shard_file_spans_span_block_cb(void* ptr, __be32 ipv4, __be16 port, u64 block_id, u32 crc32, u64 size, u8 flags) {
-    extern int eggsfs_spancache_span_block_cb(void* ptr, __be32 ipv4, __be16 port, u64 block_id, u32 crc32, u64 size, u8 flags);
-    return eggsfs_spancache_span_block_cb(ptr, ipv4, port, block_id, crc32, size, flags);
-}
-static inline int eggsfs_shard_file_spans_end_span_cb(void* ptr) {
-    extern int eggsfs_spancache_end_span_cb(void* ptr);
-    return eggsfs_spancache_end_span_cb(ptr);
-}
+#include "dir.h"
 
 static DEFINE_PER_CPU(u64, next_request_id);
 
@@ -213,7 +196,7 @@ int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, vo
             eggsfs_current_edge_get_end(&ctx, creation_time, end);
             eggsfs_bincode_get_finish_list_el(end);
             if (likely(ctx.err == 0)) {
-                int err = eggsfs_shard_readdir_entry_cb(data, name.str.buf, name.str.len, name_hash.x, target_id.x);
+                int err = eggsfs_dir_readdir_entry_cb(data, name.str.buf, name.str.len, name_hash.x, creation_time.x, target_id.x);
                 if (err) {
                     consume_skb(skb);
                     return err;

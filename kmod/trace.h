@@ -251,7 +251,14 @@ TRACE_EVENT(eggsfs_metadata_request_enter,
         __entry->shard_id = shard_id;
         __entry->kind = kind;
     ),
-    TP_printk("dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u", __entry->addr, __entry->req_id, __entry->shard_id, __entry->kind >= 0 ? eggsfs_shard_kind_str(__entry->kind) : eggsfs_cdc_kind_str(__entry->kind), __entry->len)
+    TP_printk(
+        "dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u",
+        __entry->addr, __entry->req_id, __entry->shard_id,
+        __entry->shard_id >= 0 ?
+            __print_eggsfs_shard_kind(__entry->kind) :
+            __print_eggsfs_cdc_kind(__entry->kind),
+        __entry->len
+    )
 );
 
 TRACE_EVENT(eggsfs_metadata_request_exit,
@@ -278,7 +285,15 @@ TRACE_EVENT(eggsfs_metadata_request_exit,
         __entry->resp_len = resp_len;
         __entry->error = error;
     ),
-    TP_printk("dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u n_attempts=%u resp_len=%u error=%d", __entry->addr, __entry->req_id, __entry->shard_id, __entry->kind >= 0 ? eggsfs_shard_kind_str(__entry->kind) : eggsfs_cdc_kind_str(__entry->kind), __entry->len, __entry->n_attempts, __entry->resp_len, __entry->error)
+    TP_printk(
+        "dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u n_attempts=%u resp_len=%u error=%d",
+        __entry->addr, __entry->req_id, __entry->shard_id,
+        __entry->shard_id >= 0 ?
+            __print_eggsfs_shard_kind(__entry->kind) :
+            __print_eggsfs_shard_kind(__entry->kind),
+        __entry->len, __entry->n_attempts, __entry->resp_len,
+        __entry->error
+    )
 );
 
 TRACE_EVENT(eggsfs_get_inode_enter,

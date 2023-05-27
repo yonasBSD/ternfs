@@ -13,11 +13,6 @@
 
 struct eggsfs_file_span;
 
-// When we create a file, it is writeable. When we start writing to it, it's transient.
-// In any case, with any of these two flags, we have the `transient` case of the union.
-#define EGGSFS_INODE_WRITEABLE 1
-#define EGGSFS_INODE_TRANSIENT 2
-
 // These two influence the size of eggsfs_inode, currently
 #define EGGSFS_MAX_BLOCK_POLICIES 2 // one for flash, one for hdd
 #define EGGSFS_MAX_SPAN_POLICIES 3 // we happen to have three for now

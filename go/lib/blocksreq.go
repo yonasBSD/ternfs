@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -138,29 +139,33 @@ func ReadBlocksResponse(
 
 func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) error {
 	log.Trace("writing response %T %+v", resp, resp)
-	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte{uint8(resp.BlocksResponseKind())}); err != nil {
+	if _, err := buf.Write([]byte{uint8(resp.BlocksResponseKind())}); err != nil {
 		return err
 	}
-	if err := resp.Pack(w); err != nil {
+	if err := resp.Pack(buf); err != nil {
 		return err
 	}
+	w.Write(buf.Bytes())
 	return nil
 }
 
 func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error {
 	log.Debug("writing blocks error %v", err)
-	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte{msgs.ERROR}); err != nil {
+	if _, err := buf.Write([]byte{msgs.ERROR}); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, uint16(err)); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
 		return err
 	}
+	w.Write(buf.Bytes())
 	return nil
 
 }

@@ -117,6 +117,8 @@ static void readFile(int argc, const char** argv) {
         fileSize = st.st_size;
     }
 
+    if (bufSize < 0) { bufSize = fileSize; }
+
     printf("reading %ld bytes with bufsize %ld to %s\n", fileSize, bufSize, filename);
 
     int fd = open(filename, O_RDONLY);

@@ -345,38 +345,49 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
 );
 
-TRACE_EVENT(eggsfs_block_write_enter,
-    TP_PROTO(u64 block_service_id, u64 block_id, u32 size),
-    TP_ARGS(block_service_id, block_id, size),
+#define EGGSFS_BLOCK_WRITE_QUEUED 0
+#define EGGSFS_BLOCK_WRITE_RECV_ENTER 1
+#define EGGSFS_BLOCK_WRITE_RECV_EXIT 2
+#define EGGSFS_BLOCK_WRITE_WRITE_ENTER 3
+#define EGGSFS_BLOCK_WRITE_WRITE_EXIT 4
+#define EGGSFS_BLOCK_WRITE_WRITE_QUEUED 5
+#define EGGSFS_BLOCK_WRITE_DONE 6
+
+TRACE_EVENT(eggsfs_block_write,
+    TP_PROTO(u64 block_service_id, u64 block_id, u32 read, u32 written, u8 event, int err),
+    TP_ARGS(block_service_id, block_id, read, written, event, err),
 
     TP_STRUCT__entry(
         __field(u64, block_service_id)
         __field(u64, block_id)
-        __field(u32, size)
-    ),
-    TP_fast_assign(
-        __entry->block_service_id = block_service_id;
-        __entry->block_id = block_id;
-        __entry->size = size;
-    ),
-    TP_printk("block_service=%016llx block_id=%016llx size=%u", __entry->block_service_id, __entry->block_id, __entry->size)
-);
-
-TRACE_EVENT(eggsfs_block_write_exit,
-    TP_PROTO(u64 block_service_id, u64 block_id, int err),
-    TP_ARGS(block_service_id, block_id, err),
-
-    TP_STRUCT__entry(
-        __field(u64, block_service_id)
-        __field(u64, block_id)
+        __field(u32, read)
+        __field(u32, written)
         __field(int, err)
+        __field(u8, event)
     ),
     TP_fast_assign(
         __entry->block_service_id = block_service_id;
         __entry->block_id = block_id;
+        __entry->read = read;
+        __entry->written = written;
         __entry->err = err;
+        __entry->event = event;
     ),
-    TP_printk("block_service=%016llx block_id=%016llx err=%u", __entry->block_service_id, __entry->block_id, __entry->err)
+    TP_printk(
+        "block_service=%016llx block_id=%016llx event=%s read=%u written=%u err=%d",
+        __entry->block_service_id, __entry->block_id,
+        __print_symbolic(
+            __entry->event,
+            { 0, "queued" },
+            { 1, "recv_enter" },
+            { 2, "recv_exit" },
+            { 3, "write_enter" },
+            { 4, "write_exit" },
+            { 5, "write_queued" },
+            { 6, "done" }
+        ),
+        __entry->read, __entry->written, __entry->err
+    )
 );
 
 TRACE_EVENT(eggsfs_span_flush_enter,

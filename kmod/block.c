@@ -30,6 +30,7 @@ struct eggsfs_block_socket {
     struct list_head requests;
     spinlock_t requests_lock;
     struct sockaddr_in addr;
+    u64 block_service_id;
     // saved callbacks
     void (*saved_state_change)(struct sock *sk);
     void (*saved_data_ready)(struct sock *sk);
@@ -262,7 +263,9 @@ struct eggsfs_block_socket* eggsfs_get_fetch_block_socket(struct eggsfs_block_se
 
     int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &socket->sock);
     if (err != 0) { goto out_err; }
-    
+
+    socket->block_service_id = block_service->id;
+
     atomic_set(&socket->sock_err, 0);
     
     socket->saved_data_ready = socket->sock->sk->sk_data_ready;
@@ -415,6 +418,10 @@ static inline int atomic_set_return(atomic_t *v, int i) {
     return i;
 }
 
+static inline void eggsfs_write_block_trace(struct eggsfs_write_block_request* req, u8 event, int err) {
+    trace_eggsfs_block_write(req->block_service_id, req->block_id, req->write_resp_read+req->written_resp_read, req->write_req_written + (req->size - req->bytes_left), event, err);
+}
+
 static int eggsfs_write_block_receive_single_req(
     struct eggsfs_block_socket* socket,
     struct eggsfs_write_block_request* req,
@@ -422,6 +429,13 @@ static int eggsfs_write_block_receive_single_req(
     unsigned int offset, size_t len0
 ) {
     size_t len = len0;
+
+    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_ENTER, 0);
+
+#define BLOCK_WRITE_EXIT(i) do { \
+        eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_EXIT, i >= 0 ? 0 : i); \
+        return i; \
+    } while (0)
 
     // Write resp (after write request)
 
@@ -438,13 +452,13 @@ static int eggsfs_write_block_receive_single_req(
         int header_left = EGGSFS_BLOCKS_RESP_HEADER_SIZE - (int)req->write_resp_read;
         int read = HEADER_COPY(req->write_resp.buf + req->write_resp_read, header_left);
         header_left -= read;
-        if (header_left > 0) { return len0-len; }
+        if (header_left > 0) { BLOCK_WRITE_EXIT(len0-len); }
     }
 
     // Protocol check
     if (unlikely(le32_to_cpu(req->write_resp.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
         eggsfs_info_print("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->write_resp.data.protocol);
-        return eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE);
+        BLOCK_WRITE_EXIT(eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE));
     }
 
     // Error check
@@ -452,10 +466,10 @@ static int eggsfs_write_block_receive_single_req(
         int error_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)req->write_resp_read;
         int read = HEADER_COPY(req->write_resp.buf + req->write_resp_read, error_left);
         error_left -= read;
-        if (error_left > 0) { return len0-len; }
+        if (error_left > 0) { BLOCK_WRITE_EXIT(len0-len); }
         eggsfs_info_print("failed=%u", req->write_resp.data.error);
         // We immediately start writing, so any error here means that the socket is kaput
-        return atomic_set_return(&req->status, eggsfs_error_to_linux(le16_to_cpu(req->write_resp.data.error)));
+        BLOCK_WRITE_EXIT(atomic_set_return(&req->status, eggsfs_error_to_linux(le16_to_cpu(req->write_resp.data.error))));
     }
 
 #undef HEADER_COPY
@@ -476,14 +490,14 @@ static int eggsfs_write_block_receive_single_req(
         int read = HEADER_COPY(req->written_resp.buf + req->written_resp_read, header_left);
         header_left -= read;
         if (header_left > 0) {
-            return len0-len;
+            BLOCK_WRITE_EXIT(len0-len);
         }
     }
 
     // Protocol check
     if (unlikely(le32_to_cpu(req->written_resp.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
         eggsfs_info_print("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->written_resp.data.protocol);
-        return eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE);
+        BLOCK_WRITE_EXIT(eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE));
     }
 
     // Error check
@@ -492,12 +506,12 @@ static int eggsfs_write_block_receive_single_req(
         int read = HEADER_COPY(req->written_resp.buf + req->written_resp_read, error_left);
         error_left -= read;
         if (error_left > 0) {
-            return len0-len;
+            BLOCK_WRITE_EXIT(len0-len);
         }
         eggsfs_info_print("failed=%u", req->written_resp.data.error);
         // We immediately start writing, so any error here means that the socket is kaput
         // TODO here it might actually be fine, but better not risk it
-        return atomic_set_return(&req->status, eggsfs_error_to_linux(le16_to_cpu(req->written_resp.data.error)));
+        BLOCK_WRITE_EXIT(atomic_set_return(&req->status, eggsfs_error_to_linux(le16_to_cpu(req->written_resp.data.error))));
     }
 
     // We can finally get the proof
@@ -506,7 +520,7 @@ static int eggsfs_write_block_receive_single_req(
         int read = HEADER_COPY(req->written_resp.buf + req->written_resp_read, proof_left);
         proof_left -= read;
         if (proof_left > 0) {
-            return len0-len;
+            BLOCK_WRITE_EXIT(len0-len);
         }
     }
 
@@ -515,13 +529,15 @@ static int eggsfs_write_block_receive_single_req(
     // we can't get here unless we've fully written the block, the channel is broken
     if (smp_load_acquire(&req->bytes_left)) {
         eggsfs_warn_print("unexpected written resp before writing out block");
-        return atomic_set_return(&req->status, -EIO);
+        BLOCK_WRITE_EXIT(atomic_set_return(&req->status, -EIO));
     }
 
     // We're good!
     atomic_set_return(&req->status, 1);
 
-    return len0-len;
+    BLOCK_WRITE_EXIT(len0-len);
+
+#undef BLOCK_WRITE_EXIT
 }
 
 static int eggsfs_write_block_receive_inner(struct eggsfs_block_socket* socket, struct sk_buff* skb, unsigned int offset, size_t len) {
@@ -551,7 +567,7 @@ static int eggsfs_write_block_receive_inner(struct eggsfs_block_socket* socket, 
             spin_lock_bh(&socket->requests_lock);
             list_del(&req->socket_requests);
             spin_unlock_bh(&socket->requests_lock);
-            trace_eggsfs_block_write_exit(req->block_service_id, req->block_id, status > 0 ? 0 : status);
+            eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_DONE, status > 0 ? 0 : status);
             queue_work(eggsfs_wq, req->callback);
             // start writing the next request
             queue_work(eggsfs_wq, &socket->write_work);
@@ -585,6 +601,7 @@ static void eggsfs_write_block_write_space(struct sock* sk) {
     struct eggsfs_block_socket* socket = (struct eggsfs_block_socket*)sk->sk_user_data;
     if (sk_stream_is_writeable(sk)) {
         clear_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
+        trace_eggsfs_block_write(socket->block_service_id, 0, 0, 0, EGGSFS_BLOCK_WRITE_WRITE_QUEUED, 0);
         queue_work(eggsfs_wq, &socket->write_work);
     }
     read_unlock_bh(&sk->sk_callback_lock);
@@ -605,7 +622,15 @@ static void eggsfs_write_block_work(struct work_struct* work) {
         return;
     }
 
-    int err;
+    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_ENTER, 0);
+
+    int err = 0;
+
+#define BLOCK_WRITE_EXIT do { \
+        eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_EXIT, err); \
+        return; \
+    } while (0)
+
 
     // Still writing request
     while (req->write_req_written < EGGSFS_BLOCKS_REQ_HEADER_SIZE+EGGSFS_WRITE_BLOCK_REQ_SIZE) {
@@ -639,7 +664,7 @@ static void eggsfs_write_block_work(struct work_struct* work) {
             .iov_len = sizeof(req_msg_buf) - req->write_req_written,
         };
         int sent = kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
-        if (sent == -EAGAIN) { return; } // done for now, will be rescheduled by `sk_write_space`
+        if (sent == -EAGAIN) { BLOCK_WRITE_EXIT; } // done for now, will be rescheduled by `sk_write_space`
         if (sent < 0) { err = sent; goto out_err; }
         req->write_req_written += sent;
     }
@@ -668,7 +693,7 @@ static void eggsfs_write_block_work(struct work_struct* work) {
         }
     }
     smp_store_release(&req->bytes_left, bytes_left);
-    return;
+    BLOCK_WRITE_EXIT;
 
 out_err:
     eggsfs_debug_print("block write failed err=%d", err);
@@ -678,6 +703,10 @@ out_err:
     // socket error.
     eggsfs_write_block_receive_inner(socket, NULL, 0, 0);
     read_unlock(&socket->sock->sk->sk_callback_lock);
+
+    BLOCK_WRITE_EXIT;
+
+#undef BLOCK_WRITE_EXIT
 }
 
 struct eggsfs_block_socket* eggsfs_get_write_block_socket(struct eggsfs_block_service* block_service) {
@@ -745,7 +774,7 @@ struct eggsfs_write_block_request* eggsfs_write_block(
     // the request is filled in by the normal writer, since we need to ensure ordering
     queue_work(eggsfs_wq, &socket->write_work);
 
-    trace_eggsfs_block_write_enter(block_service_id, block_id, size);
+    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_QUEUED, 0);
 
     return req;
 

@@ -114,7 +114,7 @@ struct eggsfs_write_block_request {
     // * -n: errored
     atomic_t status;
 
-    u32 bytes_left; // how many bytes left to write
+    u32 bytes_left; // how many bytes left to write (just the block, excluding the request)
     u16 page_offset; // offset into page we're reading from
 
     // How much we've written of the write request

@@ -31,6 +31,22 @@
                 <td><code>{{.Mtime}}</code></td>
             </tr>
             <tr>
+                <th>Transient</th>
+                <td>
+                    {{if .TransientNote}}
+                        Yes
+                    {{else}}
+                        No
+                    {{end}}
+                </td>
+            </tr>
+            {{if .TransientNote}}
+                <tr>
+                    <th>Note</th>
+                    <td>{{.TransientNote}}</td>
+                </tr>
+            {{end}}
+            <tr>
                 <td><a href="{{.DownloadLink}}">Download</a></td>
             </tr>
         </tbody>

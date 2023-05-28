@@ -502,14 +502,15 @@ type pathSegment struct {
 }
 
 type fileData struct {
-	Id           string
-	Path         string // might be empty
-	Size         string
-	Mtime        string
-	DownloadLink string
-	AllInline    bool
-	Spans        []fileSpan
-	PathSegments []pathSegment
+	Id            string
+	Path          string // might be empty
+	Size          string
+	Mtime         string
+	TransientNote string // only if transient
+	DownloadLink  string
+	AllInline     bool
+	Spans         []fileSpan
+	PathSegments  []pathSegment
 }
 
 //go:embed directory.html
@@ -763,20 +764,37 @@ func handleInode(
 			} else {
 				data := fileData{
 					Id:        fmt.Sprintf("%v", id),
-					Path:      "/" + path,
 					AllInline: true,
 				}
-				data.PathSegments = pathSegments(path)
+				if len(data.PathSegments) > 0 {
+					data.PathSegments = pathSegments(path)
+				}
 				title := fmt.Sprintf("File %v", data.Id)
 				{
 					resp := msgs.StatFileResp{}
-					if err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+					err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
+					if err == msgs.FILE_NOT_FOUND {
+						transResp := msgs.StatTransientFileResp{}
+						transErr := client.ShardRequest(log, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &transResp)
+						if transErr == nil {
+							data.Mtime = transResp.Mtime.String()
+							data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
+							data.TransientNote = transResp.Note
+						} else {
+							panic(err)
+						}
+					} else if err == nil {
+						data.Mtime = resp.Mtime.String()
+						data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
+					} else {
 						panic(err)
 					}
-					data.Mtime = resp.Mtime.String()
-					data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
 				}
-				data.DownloadLink = fmt.Sprintf("/files/%v?name=%v", id, data.PathSegments[len(data.PathSegments)-1].Segment)
+				if len(data.PathSegments) > 0 {
+					data.DownloadLink = fmt.Sprintf("/files/%v?name=%v", id, data.PathSegments[len(data.PathSegments)-1].Segment)
+				} else {
+					data.DownloadLink = fmt.Sprintf("/files/%v", id)
+				}
 				{
 					req := msgs.FileSpansReq{FileId: id}
 					resp := msgs.FileSpansResp{}

@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/version.h>
+#include <linux/tracepoint.h>
 
 #include "wq.h"
 #include "inode.h"
@@ -77,6 +78,11 @@ static void __exit eggsfs_exit(void) {
     eggsfs_sysctl_exit();
     eggsfs_sysfs_exit();
     destroy_workqueue(eggsfs_wq);
+    // tracepoint_synchronize_unregister() must be called before the end of
+    // the module exit function to make sure there is no caller left using
+    // the probe. This, and the fact that preemption is disabled around the
+    // probe call, make sure that probe removal and module unload are safe.
+    tracepoint_synchronize_unregister();
 }
 
 module_init(eggsfs_init);

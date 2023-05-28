@@ -983,7 +983,7 @@ func ActiveDeleteAfterTime(duration time.Duration) DeleteAfterTime {
 	return DeleteAfterTime((uint64(1) << 63) | uint64(duration.Nanoseconds()))
 }
 
-// MSB: whether this policy is active or not. After: nanoseconds.
+// MSB: whether this policy is active or not. After: number of versions.
 type DeleteAfterVersions uint16
 
 func (dav DeleteAfterVersions) Active() bool {

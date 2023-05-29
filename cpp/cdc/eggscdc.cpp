@@ -98,6 +98,8 @@ int main(int argc, char** argv) {
             options.ownIp = parseIpv4(argv[0], getNextArg());
         } else if (arg == "-port") {
             options.port = parsePort(getNextArg());
+        } else if (arg == "-syslog") {
+            options.syslog = true;
         } else {
             args.emplace_back(std::move(arg));
         }

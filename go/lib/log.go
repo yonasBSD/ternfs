@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
+	"runtime"
+	"sync"
+	"time"
 )
 
 type LogLevel uint8
@@ -14,27 +16,47 @@ const DEBUG LogLevel = 1
 const INFO LogLevel = 2
 const ERROR LogLevel = 3
 
+func (ll LogLevel) Syslog() int {
+	switch ll {
+	case TRACE, DEBUG:
+		return 7
+	case INFO:
+		return 6
+	case ERROR:
+		return 3
+	default:
+		return 3
+	}
+}
+
+func (ll LogLevel) String() string {
+	switch ll {
+	case TRACE:
+		return "TRACE"
+	case DEBUG:
+		return "DEBUG"
+	case INFO:
+		return "INFO"
+	case ERROR:
+		return "ERROR"
+	default:
+		return fmt.Sprintf("UNKNOWN(%v)", uint8(ll))
+	}
+
+}
+
 type Logger struct {
-	logger *log.Logger
+	out    io.Writer
+	mu     sync.Mutex
 	level  LogLevel
+	syslog bool
 }
 
-func NewLoggerLogger(out io.Writer) *log.Logger {
-	return log.New(out, "", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
-}
-
-func NewLogger(level LogLevel, out io.Writer) *Logger {
-	return NewLoggerFromLogger(level, NewLoggerLogger(out))
-}
-
-func NewLoggerLevel(level LogLevel, out io.Writer) *Logger {
-	return NewLoggerFromLogger(level, NewLoggerLogger(out))
-}
-
-func NewLoggerFromLogger(level LogLevel, logger *log.Logger) *Logger {
+func NewLogger(level LogLevel, out io.Writer, syslog bool) *Logger {
 	l := Logger{
-		logger: logger,
+		out:    out,
 		level:  level,
+		syslog: syslog,
 	}
 	return &l
 }
@@ -44,14 +66,36 @@ func (l *Logger) shouldLog(level LogLevel) bool {
 }
 
 func (l *Logger) Log(level LogLevel, format string, v ...any) {
-	if l.shouldLog(level) {
-		l.logger.Output(2, fmt.Sprintf(format, v...))
-	}
+	l.LogStack(1, level, format, v...)
 }
 
 func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any) {
 	if l.shouldLog(level) {
-		l.logger.Output(2+calldepth, fmt.Sprintf(format, v...))
+		// get file
+		_, file, line, ok := runtime.Caller(1 + calldepth)
+		if !ok {
+			file = "???"
+			line = 0
+		}
+		short := file
+		for i := len(file) - 1; i > 0; i-- {
+			if file[i] == '/' {
+				short = file[i+1:]
+				break
+			}
+		}
+		file = short
+
+		// write out
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.syslog {
+			fmt.Fprintf(l.out, "<%d>%s:%d ", level.Syslog(), file, line)
+		} else {
+			fmt.Fprintf(l.out, "%s [%v] %s:%d ", time.Now().Format("2006-01-02T15:04:05.999999999"), level, file, line)
+		}
+		fmt.Fprintf(l.out, format, v...)
+		l.out.Write([]byte("\n"))
 	}
 }
 
@@ -76,11 +120,11 @@ func (l *Logger) Error(format string, v ...any) {
 }
 
 func (l *Logger) RaiseAlert(err any) {
-	l.logger.Output(2, fmt.Sprintf("ALERT %v\n", err))
+	l.LogStack(1, ERROR, "ALERT %v", err)
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, err any) {
-	l.logger.Output(2+calldepth, fmt.Sprintf("ALERT %v\n", err))
+	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
 }
 
 type loggerSink struct {
@@ -99,7 +143,7 @@ func (sink *loggerSink) Write(p []byte) (int, error) {
 	bytes := sink.buf.Bytes()
 	for lineEnd < len(bytes) {
 		if bytes[lineEnd] == '\n' {
-			sink.logger.logger.Output(2, string(bytes[lineBegin:lineEnd+1]))
+			sink.logger.LogStack(2, sink.level, string(bytes[lineBegin:lineEnd+1]))
 			lineBegin = lineEnd + 1
 		}
 		lineEnd++

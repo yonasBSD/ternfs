@@ -14,6 +14,7 @@ struct ShardOptions {
     // resilience of the system.
     double simulateIncomingPacketDrop = 0.0;
     double simulateOutgoingPacketDrop = 0.0;
+    bool syslog = false;
 };
 
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);

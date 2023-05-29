@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"runtime/pprof"
@@ -18,7 +19,7 @@ import (
 )
 
 var client *lib.Client
-var log *lib.Logger
+var logger *lib.Logger
 var dirInfoCache *lib.DirInfoCache
 var readBufPool *lib.ReadSpanBufPool
 var writeBufPool *sync.Pool
@@ -115,7 +116,7 @@ func inodeTypeToMode(typ msgs.InodeType) uint32 {
 }
 
 func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardResponse) syscall.Errno {
-	if err := client.ShardRequest(log, shid, req, resp); err != nil {
+	if err := client.ShardRequest(logger, shid, req, resp); err != nil {
 		return eggsErrToErrno(err)
 	}
 
@@ -123,7 +124,7 @@ func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardRespo
 }
 
 func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
-	if err := client.CDCRequest(log, req, resp); err != nil {
+	if err := client.CDCRequest(logger, req, resp); err != nil {
 		switch eggsErr := err.(type) {
 		case msgs.ErrCode:
 			return eggsErrToErrno(eggsErr)
@@ -154,7 +155,7 @@ type eggsNode struct {
 }
 
 func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
-	log.Debug("getattr inode=%v", id)
+	logger.Debug("getattr inode=%v", id)
 
 	out.Ino = uint64(id)
 	out.Mode = inodeTypeToMode(id.Type())
@@ -180,7 +181,7 @@ func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
 			fileStatCacheMu.Unlock()
 		}
 
-		log.Debug("getattr size=%v", cached.size)
+		logger.Debug("getattr size=%v", cached.size)
 		out.Size = cached.size
 		mtime := msgs.EGGS_EPOCH + uint64(cached.mtime)
 		mtimesec := mtime / 1000000000
@@ -200,7 +201,7 @@ func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 func (n *eggsNode) Lookup(
 	ctx context.Context, name string, out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
-	log.Debug("lookup dir=%v, name=%v", n.id, name)
+	logger.Debug("lookup dir=%v, name=%v", n.id, name)
 	resp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &resp); err != 0 {
 		return nil, err
@@ -253,7 +254,7 @@ func (ds *dirStream) ensureNext() (bool, syscall.Errno) {
 func (ds *dirStream) HasNext() bool {
 	hasNext, err := ds.ensureNext()
 	if err != 0 {
-		log.RaiseAlert(fmt.Errorf("dropping err in HasNext(): %v", err))
+		logger.RaiseAlert(fmt.Errorf("dropping err in HasNext(): %v", err))
 	}
 	return hasNext
 }
@@ -278,7 +279,7 @@ func (ds *dirStream) Next() (fuse.DirEntry, syscall.Errno) {
 func (ds *dirStream) Close() {}
 
 func (n *eggsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	log.Debug("readdir dir=%v", n.id)
+	logger.Debug("readdir dir=%v", n.id)
 	ds := dirStream{dirId: n.id}
 	if err := ds.refresh(); err != 0 {
 		return nil, err
@@ -291,15 +292,15 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 	// TODO would probably be better to check the mode/flags and return
 	// EINVAL if it doesn't match what we want.
 	spanPolicy := &msgs.SpanPolicy{}
-	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, spanPolicy); err != nil {
+	if _, err := client.ResolveDirectoryInfoEntry(logger, dirInfoCache, n.id, spanPolicy); err != nil {
 		return nil, eggsErrToErrno(err)
 	}
 	blockPolicy := &msgs.BlockPolicy{}
-	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, blockPolicy); err != nil {
+	if _, err := client.ResolveDirectoryInfoEntry(logger, dirInfoCache, n.id, blockPolicy); err != nil {
 		return nil, eggsErrToErrno(err)
 	}
 	stripePolicy := &msgs.StripePolicy{}
-	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, n.id, stripePolicy); err != nil {
+	if _, err := client.ResolveDirectoryInfoEntry(logger, dirInfoCache, n.id, stripePolicy); err != nil {
 		return nil, eggsErrToErrno(err)
 	}
 	req := msgs.ConstructFileReq{Note: name}
@@ -315,7 +316,7 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 		return nil, err
 	}
 	data := writeBufPool.Get().(*[]byte)
-	log.Debug("gotten data %p", data)
+	logger.Debug("gotten data %p", data)
 	transient := transientFile{
 		id:           resp.Id,
 		cookie:       resp.Cookie,
@@ -333,7 +334,7 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 func (n *eggsNode) Create(
 	ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut,
 ) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	log.Debug("create dir=%v, name=%v, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
+	logger.Debug("create dir=%v, name=%v, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
 
 	tf, err := n.createInternal(name, mode)
 	if err != 0 {
@@ -348,7 +349,7 @@ func (n *eggsNode) Create(
 func (n *eggsNode) Mkdir(
 	ctx context.Context, name string, mode uint32, out *fuse.EntryOut,
 ) (*fs.Inode, syscall.Errno) {
-	log.Debug("mkdir dir=%v, name=%v, mode=0x%08x", n.id, name, mode)
+	logger.Debug("mkdir dir=%v, name=%v, mode=0x%08x", n.id, name, mode)
 
 	// TODO would probably be better to check the mode and return
 	// EINVAL if it doesn't match what we want.
@@ -379,7 +380,7 @@ func (f *transientFile) writeSpan() syscall.Errno {
 		return 0
 	}
 	var err error
-	*f.data, err = client.CreateSpan(log, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
+	*f.data, err = client.CreateSpan(logger, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
 	if err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)
@@ -399,7 +400,7 @@ func (f *transientFile) writeSpanIfNecessary() syscall.Errno {
 }
 
 func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
-	log.Debug("write file=%v, off=%v, count=%v", f.id, off, len(data))
+	logger.Debug("write file=%v, off=%v, count=%v", f.id, off, len(data))
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -410,14 +411,14 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 
 	// TODO support writing in the middle (and flushing out the span later)
 	if off != int64(f.written)+int64(len(*f.data)) {
-		log.Info("refusing to write in the past")
+		logger.Info("refusing to write in the past")
 		return 0, syscall.EINVAL
 	}
 
 	*f.data = append(*f.data, data...)
 
 	if err := f.writeSpanIfNecessary(); err != 0 {
-		log.Debug("writing span failed with error %v, invalidating %v", err, f.id)
+		logger.Debug("writing span failed with error %v, invalidating %v", err, f.id)
 		f.valid = false
 		return 0, err
 	}
@@ -426,13 +427,13 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 }
 
 func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
-	log.Debug("flush file=%v", f.id)
+	logger.Debug("flush file=%v", f.id)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if !f.valid {
-		log.Debug("tf %v is not valid, returning EBADF", f.id)
+		logger.Debug("tf %v is not valid, returning EBADF", f.id)
 		return syscall.EBADF
 	}
 
@@ -460,7 +461,7 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 }
 
 func (n *eggsNode) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	log.Debug("setattr inode=%v, in=%+v", n.id, in)
+	logger.Debug("setattr inode=%v, in=%+v", n.id, in)
 
 	return 0
 }
@@ -469,7 +470,7 @@ func (n *eggsNode) Rename(ctx context.Context, oldName string, newParent0 fs.Ino
 	oldParent := n.id
 	newParent := newParent0.(*eggsNode).id
 
-	log.Debug("rename dir=%v oldParent=%v, oldName=%v, newParent=%v, newName=%v", n, oldParent, oldName, newParent, newName)
+	logger.Debug("rename dir=%v oldParent=%v, oldName=%v, newParent=%v, newName=%v", n, oldParent, oldName, newParent, newName)
 
 	var targetId msgs.InodeId
 	var oldCreationTime msgs.EggsTime
@@ -537,7 +538,7 @@ type openFile struct {
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	log.Debug("open file=%v", n.id)
+	logger.Debug("open file=%v", n.id)
 
 	statResp := msgs.StatFileResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &statResp); err != 0 {
@@ -555,7 +556,7 @@ func (of *openFile) lookupSpan(offset int64) ([]msgs.BlockService, *msgs.Fetched
 	for i := 0; i < len(of.spans.Spans); i++ {
 		span := &of.spans.Spans[i]
 		if int64(span.Header.ByteOffset) <= offset && offset < int64(span.Header.ByteOffset)+int64(span.Header.Size) {
-			log.Debug("picking span starting at %v, of size %v", span.Header.ByteOffset, span.Header.Size)
+			logger.Debug("picking span starting at %v, of size %v", span.Header.ByteOffset, span.Header.Size)
 			return of.spans.BlockServices, span
 		}
 	}
@@ -596,7 +597,7 @@ func (of *openFile) getSpanReaderAt(offset int64) syscall.Errno {
 	}
 	{
 		var err error
-		of.spanReader, err = client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, blockServices, fetchedSpan)
+		of.spanReader, err = client.ReadSpan(logger, readBufPool, []msgs.BlockServiceId{}, blockServices, fetchedSpan)
 		if err != nil {
 			return eggsErrToErrno(err)
 		}
@@ -626,13 +627,13 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 
 	// Check if we're still within the file: if not, we can just exit
 	if off >= int64(of.size) {
-		log.Debug("%v is beyond %v, nothing to read", off, of.size)
+		logger.Debug("%v is beyond %v, nothing to read", off, of.size)
 		return 0, 0
 	}
 
 	// If the offset has changed, reset
 	if off != of.readOffset {
-		log.Debug("mismatching offset (%v vs %v), will reset span", off, of.readOffset)
+		logger.Debug("mismatching offset (%v vs %v), will reset span", off, of.readOffset)
 		if of.spanReader != nil {
 			of.spanReader.Close()
 			of.spanReader = nil
@@ -644,7 +645,7 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 
 	read, err := of.spanReader.Read(dest)
 	if err == io.EOF { // load next span
-		log.Debug("finished reading current span, loading next")
+		logger.Debug("finished reading current span, loading next")
 		// close normally here so that we can reuse the connections
 		of.spanReader.Close()
 		of.spanReader = nil
@@ -670,7 +671,7 @@ func (of *openFile) Flush(ctx context.Context) syscall.Errno {
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	log.Debug("read file=%v, off=%v, count=%v", of.id, off, len(dest))
+	logger.Debug("read file=%v, off=%v, count=%v", of.id, off, len(dest))
 
 	of.mu.Lock()
 	defer of.mu.Unlock()
@@ -688,12 +689,12 @@ func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 			break
 		}
 	}
-	log.Debug("read %v bytes", internalOff)
+	logger.Debug("read %v bytes", internalOff)
 	return fuse.ReadResultData(dest[:internalOff]), 0
 }
 
 func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
-	log.Debug("unlink dir=%v, name=%v", n.id, name)
+	logger.Debug("unlink dir=%v, name=%v", n.id, name)
 
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
@@ -709,7 +710,7 @@ func (n *eggsNode) Unlink(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
-	log.Debug("rmdir dir=%v, name=%v", n.id, name)
+	logger.Debug("rmdir dir=%v, name=%v", n.id, name)
 	lookupResp := msgs.LookupResp{}
 	if err := shardRequest(n.id.Shard(), &msgs.LookupReq{DirId: n.id, Name: name}, &lookupResp); err != 0 {
 		return err
@@ -724,7 +725,7 @@ func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 }
 
 func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (node *fs.Inode, errno syscall.Errno) {
-	log.Debug("symlink dir=%v, target=%v, name=%v", n.id, target, name)
+	logger.Debug("symlink dir=%v, target=%v, name=%v", n.id, target, name)
 	tf, err := n.createInternal(name, syscall.S_IFLNK)
 	if err != 0 {
 		return nil, err
@@ -739,7 +740,7 @@ func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.E
 }
 
 func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
-	log.Debug("readlink file=%v", n.id)
+	logger.Debug("readlink file=%v", n.id)
 
 	if n.id.Type() != msgs.SYMLINK {
 		return nil, syscall.EINVAL
@@ -752,7 +753,7 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 	if len(resp.Spans) > 1 {
 		panic(fmt.Errorf("more than one span for symlink"))
 	}
-	spanReader, err := client.ReadSpan(log, readBufPool, []msgs.BlockServiceId{}, resp.BlockServices, &resp.Spans[0])
+	spanReader, err := client.ReadSpan(logger, readBufPool, []msgs.BlockServiceId{}, resp.BlockServices, &resp.Spans[0])
 	if err != nil {
 		return nil, eggsErrToErrno(err)
 
@@ -785,17 +786,17 @@ var _ = (fs.FileReader)((*openFile)(nil))
 var _ = (fs.FileFlusher)((*openFile)(nil))
 
 func terminate(server *fuse.Server, terminated *bool) {
-	log.Info("terminating")
+	logger.Info("terminating")
 	if *terminated {
-		log.Info("already terminated")
+		logger.Info("already terminated")
 		return
 	}
-	log.Info("stopping cpu profile")
+	logger.Info("stopping cpu profile")
 	pprof.StopCPUProfile()
-	log.Info("about to terminate")
+	logger.Info("about to terminate")
 	*terminated = true
 	if err := server.Unmount(); err != nil {
-		log.Info("could not unmount: %v\n", err)
+		logger.Info("could not unmount: %v\n", err)
 	}
 }
 
@@ -811,6 +812,7 @@ func main() {
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
+	syslog := flag.Bool("syslog", false, "")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -835,7 +837,6 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	logger := lib.NewLoggerLogger(logOut)
 	level := lib.INFO
 	if *verbose {
 		level = lib.DEBUG
@@ -843,7 +844,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log = lib.NewLoggerFromLogger(level, logger)
+	logger = lib.NewLogger(level, logOut, *syslog)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -857,7 +858,7 @@ func main() {
 	counters := &lib.ClientCounters{}
 
 	var err error
-	client, err = lib.NewClient(log, *shuckleAddress, nil, counters, nil)
+	client, err = lib.NewClient(logger, *shuckleAddress, nil, counters, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -879,7 +880,7 @@ func main() {
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
 	fuseOptions := &fs.Options{
-		Logger: logger,
+		Logger: log.New(os.Stderr, "fuse", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
 	}
 	// fuseOptions.Debug = *trace
 	server, err := fs.Mount(mountPoint, &root, fuseOptions)
@@ -888,10 +889,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("mounted at %v", mountPoint)
+	logger.Info("mounted at %v", mountPoint)
 
 	if *signalParent {
-		log.Info("sending USR1 to parent")
+		logger.Info("sending USR1 to parent")
 		if err := syscall.Kill(os.Getppid(), syscall.SIGUSR1); err != nil {
 			panic(err)
 		}
@@ -904,7 +905,7 @@ func main() {
 		go func() {
 			for {
 				<-statsChan
-				counters.Log(log)
+				counters.Log(logger)
 			}
 		}()
 	}

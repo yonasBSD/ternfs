@@ -1018,6 +1018,7 @@ func main() {
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
+	syslog := flag.Bool("syslog", false, "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -1037,7 +1038,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(level, logOut)
+	ll := lib.NewLogger(level, logOut, *syslog)
 
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)

@@ -491,6 +491,7 @@ func main() {
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
+	syslog := flag.Bool("syslog", false, "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
@@ -564,7 +565,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut)
+	log := lib.NewLogger(level, logOut, *syslog)
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)

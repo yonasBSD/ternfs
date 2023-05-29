@@ -21,6 +21,7 @@ func main() {
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	syslog := flag.Bool("syslog", false, "")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -59,7 +60,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut)
+	log := lib.NewLogger(level, logOut, *syslog)
 
 	{
 		shardsStrs := []string{}

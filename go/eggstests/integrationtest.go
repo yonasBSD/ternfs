@@ -488,7 +488,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut)
+	log := lib.NewLogger(level, logOut, false)
 
 	var cppExes *managedprocess.CppExes
 	var goExes *managedprocess.GoExes

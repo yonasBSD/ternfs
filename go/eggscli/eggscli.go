@@ -463,7 +463,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log = lib.NewLogger(level, os.Stdout)
+	log = lib.NewLogger(level, os.Stdout, false)
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {

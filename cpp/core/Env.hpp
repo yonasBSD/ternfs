@@ -28,8 +28,11 @@ private:
     LogLevel _savedLogLevel;
     std::ostream& _out;
     std::mutex _mutex;
+    bool _syslog;
 public:
-    Logger(LogLevel logLevel, std::ostream& out, bool usr2ToDebug): _logLevel(logLevel), _savedLogLevel(logLevel), _out(out) {
+    Logger(LogLevel logLevel, std::ostream& out, bool syslog, bool usr2ToDebug):
+        _logLevel(logLevel), _savedLogLevel(logLevel), _out(out), _syslog(syslog)
+    {
         if (usr2ToDebug) {
             installLoggerSignalHandler(this);
         }
@@ -41,13 +44,31 @@ public:
 
     template<typename ...Args>
     void _log(LogLevel level, const std::string& prefix, const char* fmt, Args&&... args) {
-        std::scoped_lock lock(_mutex);
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
-        auto t = eggsNow();
-        while (std::getline(ss, line)) {
-            _out << t << " " << prefix << " [" << level << "] " << line << std::endl;
+        std::scoped_lock lock(_mutex);
+        if (likely(_syslog)) {
+            int syslogLevel;
+            switch (level) {
+                case LogLevel::LOG_TRACE:
+                case LogLevel::LOG_DEBUG:
+                    syslogLevel = 7; break;
+                case LogLevel::LOG_INFO:
+                    syslogLevel = 6; break;
+                case LogLevel::LOG_ERROR:
+                    syslogLevel = 3; break;
+                default:
+                    syslogLevel = 3; break; // should be throw?
+            }
+            while (std::getline(ss, line)) {
+                _out << "<" << syslogLevel << ">" << prefix << ": " << line << std::endl;
+            }
+        } else {
+            auto t = eggsNow();
+            while (std::getline(ss, line)) {
+                _out << t << " " << prefix << " [" << level << "] " << line << std::endl;
+            }
         }
     }
 

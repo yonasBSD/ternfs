@@ -410,7 +410,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut, true);
+    Logger logger(options.logLevel, *logOut, options.syslog, true);
 
     {
         Env env(logger, "startup");
@@ -426,6 +426,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
+        LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
     ShardDB db(logger, shid, dbDir);

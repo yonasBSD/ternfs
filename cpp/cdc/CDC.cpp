@@ -614,7 +614,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         }
         logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut, true);
+    Logger logger(options.logLevel, *logOut, options.syslog, true);
 
     {
         Env env(logger, "startup");
@@ -628,6 +628,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
             char ip[INET_ADDRSTRLEN];
             LOG_INFO(env, "  ownIp = %s", inet_ntop(AF_INET, &options.ownIp, ip, INET_ADDRSTRLEN));
         }
+        LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
     CDCDB db(logger, dbDir);

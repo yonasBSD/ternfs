@@ -15,7 +15,7 @@
 const char* exe = NULL;
 
 #define badUsage(...) do { \
-        fprintf(stderr, "Bad usage, expecting %s writefile|readfile <command arguments>\n", exe); \
+        fprintf(stderr, "Bad usage, expecting %s writefile|readfile|readlink <command arguments>\n", exe); \
         __VA_OPT__(fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n");) \
         exit(2); \
     } while(0) \

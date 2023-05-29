@@ -1384,6 +1384,16 @@ type CdcResp struct {
 	LastSeen EggsTime
 }
 
+type InfoReq struct{}
+
+type InfoResp struct {
+	NumBlockServices  uint32
+	NumFailureDomains uint32
+	Capacity          uint64
+	Available         uint64
+	Blocks            uint64
+}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

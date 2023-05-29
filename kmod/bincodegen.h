@@ -84,7 +84,8 @@
 
 #define EGGSFS_SHUCKLE_SHARDS 0x3
 #define EGGSFS_SHUCKLE_CDC 0x7
-#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" })
+#define EGGSFS_SHUCKLE_INFO 0x8
+#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" })
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
 #define EGGSFS_BLOCKS_WRITE_BLOCK 0x3
@@ -4820,6 +4821,173 @@ static inline void _eggsfs_cdc_resp_put_last_seen(struct eggsfs_bincode_put_ctx*
 #define eggsfs_cdc_resp_put_end(ctx, prev, next) \
     { struct eggsfs_cdc_resp_last_seen* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_cdc_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_INFO_REQ_SIZE 0
+struct eggsfs_info_req_start;
+#define eggsfs_info_req_get_start(ctx, start) struct eggsfs_info_req_start* start = NULL
+
+struct eggsfs_info_req_end;
+#define eggsfs_info_req_get_end(ctx, prev, next) \
+    { struct eggsfs_info_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_info_req_end* next = NULL
+
+static inline void eggsfs_info_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) { 
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+    }
+}
+
+#define eggsfs_info_req_put_start(ctx, start) struct eggsfs_info_req_start* start = NULL
+
+#define eggsfs_info_req_put_end(ctx, prev, next) \
+    { struct eggsfs_info_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_info_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_INFO_RESP_SIZE 32
+struct eggsfs_info_resp_start;
+#define eggsfs_info_resp_get_start(ctx, start) struct eggsfs_info_resp_start* start = NULL
+
+struct eggsfs_info_resp_num_block_services { u32 x; };
+static inline void _eggsfs_info_resp_get_num_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_start** prev, struct eggsfs_info_resp_num_block_services* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 4)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le32(ctx->buf); 
+            ctx->buf += 4; 
+        } 
+    }
+}
+#define eggsfs_info_resp_get_num_block_services(ctx, prev, next) \
+    struct eggsfs_info_resp_num_block_services next; \
+    _eggsfs_info_resp_get_num_block_services(ctx, &(prev), &(next))
+
+struct eggsfs_info_resp_num_failure_domains { u32 x; };
+static inline void _eggsfs_info_resp_get_num_failure_domains(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_num_block_services* prev, struct eggsfs_info_resp_num_failure_domains* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 4)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le32(ctx->buf); 
+            ctx->buf += 4; 
+        } 
+    }
+}
+#define eggsfs_info_resp_get_num_failure_domains(ctx, prev, next) \
+    struct eggsfs_info_resp_num_failure_domains next; \
+    _eggsfs_info_resp_get_num_failure_domains(ctx, &(prev), &(next))
+
+struct eggsfs_info_resp_capacity { u64 x; };
+static inline void _eggsfs_info_resp_get_capacity(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_num_failure_domains* prev, struct eggsfs_info_resp_capacity* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 8)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le64(ctx->buf); 
+            ctx->buf += 8; 
+        } 
+    }
+}
+#define eggsfs_info_resp_get_capacity(ctx, prev, next) \
+    struct eggsfs_info_resp_capacity next; \
+    _eggsfs_info_resp_get_capacity(ctx, &(prev), &(next))
+
+struct eggsfs_info_resp_available { u64 x; };
+static inline void _eggsfs_info_resp_get_available(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_capacity* prev, struct eggsfs_info_resp_available* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 8)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le64(ctx->buf); 
+            ctx->buf += 8; 
+        } 
+    }
+}
+#define eggsfs_info_resp_get_available(ctx, prev, next) \
+    struct eggsfs_info_resp_available next; \
+    _eggsfs_info_resp_get_available(ctx, &(prev), &(next))
+
+struct eggsfs_info_resp_blocks { u64 x; };
+static inline void _eggsfs_info_resp_get_blocks(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_available* prev, struct eggsfs_info_resp_blocks* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 8)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le64(ctx->buf); 
+            ctx->buf += 8; 
+        } 
+    }
+}
+#define eggsfs_info_resp_get_blocks(ctx, prev, next) \
+    struct eggsfs_info_resp_blocks next; \
+    _eggsfs_info_resp_get_blocks(ctx, &(prev), &(next))
+
+struct eggsfs_info_resp_end;
+#define eggsfs_info_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_info_resp_blocks* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_info_resp_end* next = NULL
+
+static inline void eggsfs_info_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_info_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) { 
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+    }
+}
+
+#define eggsfs_info_resp_put_start(ctx, start) struct eggsfs_info_resp_start* start = NULL
+
+static inline void _eggsfs_info_resp_put_num_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_info_resp_start** prev, struct eggsfs_info_resp_num_block_services* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_info_resp_put_num_block_services(ctx, prev, next, x) \
+    struct eggsfs_info_resp_num_block_services next; \
+    _eggsfs_info_resp_put_num_block_services(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_info_resp_put_num_failure_domains(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_info_resp_num_block_services* prev, struct eggsfs_info_resp_num_failure_domains* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_info_resp_put_num_failure_domains(ctx, prev, next, x) \
+    struct eggsfs_info_resp_num_failure_domains next; \
+    _eggsfs_info_resp_put_num_failure_domains(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_info_resp_put_capacity(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_info_resp_num_failure_domains* prev, struct eggsfs_info_resp_capacity* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_info_resp_put_capacity(ctx, prev, next, x) \
+    struct eggsfs_info_resp_capacity next; \
+    _eggsfs_info_resp_put_capacity(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_info_resp_put_available(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_info_resp_capacity* prev, struct eggsfs_info_resp_available* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_info_resp_put_available(ctx, prev, next, x) \
+    struct eggsfs_info_resp_available next; \
+    _eggsfs_info_resp_put_available(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_info_resp_put_blocks(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_info_resp_available* prev, struct eggsfs_info_resp_blocks* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_info_resp_put_blocks(ctx, prev, next, x) \
+    struct eggsfs_info_resp_blocks next; \
+    _eggsfs_info_resp_put_blocks(ctx, &(prev), &(next), x)
+
+#define eggsfs_info_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_info_resp_blocks* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_info_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FETCH_BLOCK_REQ_SIZE 16
 struct eggsfs_fetch_block_req_start;

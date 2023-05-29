@@ -28,29 +28,15 @@ int eggsfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
     return 0;
 }
 
-int eggsfs_create_shuckle_socket(const char* shuckle_addr, struct socket** sock) {
+int eggsfs_create_shuckle_socket(struct sockaddr_in* addr, struct socket** sock) {
     int err;
-    const char* addr_end;
-    u16 port;
-
-    // parse device, which is the shuckle address in 0.0.0.0:0 form (ipv4, port)
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    if (in4_pton(shuckle_addr, -1, (u8*)&addr.sin_addr, ':', &addr_end) != 1) {
-        err = -EINVAL;
-        goto out_err;
-    }
-    err = kstrtou16(addr_end+1, 10, &port);
-    if (err < 0) { goto out_err; }
-    addr.sin_port = htons(port);
-    eggsfs_debug_print("parsed shuckle addr %pI4:%d", &addr.sin_addr, ntohs(addr.sin_port));
 
     // create socket
     err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, sock);
     if (err < 0) { goto out_err; }
 
     // connect
-    err = kernel_connect(*sock, (struct sockaddr*)&addr, sizeof(addr), 0);
+    err = kernel_connect(*sock, (struct sockaddr*)addr, sizeof(*addr), 0);
     if (err < 0) { goto out_connect; }
     eggsfs_debug_print("connected to shuckle");
 
@@ -61,4 +47,22 @@ out_connect:
 out_err:
     eggsfs_debug_print("failed err=%d", err);
     return err;
+}
+
+int eggsfs_parse_shuckle_addr(const char* str, struct sockaddr_in* addr) {
+    int err;
+    const char* addr_end;
+    u16 port;
+
+    // parse device, which is the shuckle address in 0.0.0.0:0 form (ipv4, port)
+    addr->sin_family = AF_INET;
+    if (in4_pton(str, -1, (u8*)&addr->sin_addr, ':', &addr_end) != 1) {
+        return -EINVAL;
+    }
+    err = kstrtou16(addr_end+1, 10, &port);
+    if (err < 0) { return err; }
+    addr->sin_port = htons(port);
+    eggsfs_debug_print("parsed shuckle addr %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
+
+    return 0;
 }

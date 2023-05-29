@@ -542,6 +542,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SHARDS"
 	case 7:
 		return "CDC"
+	case 8:
+		return "INFO"
 	case 2:
 		return "REGISTER_BLOCK_SERVICES"
 	case 4:
@@ -559,6 +561,7 @@ func (k ShuckleMessageKind) String() string {
 const (
 	SHARDS ShuckleMessageKind = 0x3
 	CDC ShuckleMessageKind = 0x7
+	INFO ShuckleMessageKind = 0x8
 	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x2
 	REGISTER_SHARD ShuckleMessageKind = 0x4
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
@@ -571,6 +574,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse) {
 		return &ShardsReq{}, &ShardsResp{}
 	case k == "CDC":
 		return &CdcReq{}, &CdcResp{}
+	case k == "INFO":
+		return &InfoReq{}, &InfoResp{}
 	case k == "REGISTER_BLOCK_SERVICES":
 		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}
 	case k == "REGISTER_SHARD":
@@ -3619,6 +3624,60 @@ func (v *CdcResp) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *InfoReq) ShuckleRequestKind() ShuckleMessageKind {
+	return INFO
+}
+
+func (v *InfoReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *InfoReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *InfoResp) ShuckleResponseKind() ShuckleMessageKind {
+	return INFO
+}
+
+func (v *InfoResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint32(v.NumBlockServices)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.NumFailureDomains)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Capacity)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Available)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *InfoResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.NumBlockServices)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.NumFailureDomains)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Capacity)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Available)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
 		return err
 	}
 	return nil

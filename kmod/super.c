@@ -3,6 +3,7 @@
 #include <linux/inet.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/statfs.h>
 
 #include "log.h"
 #include "inode.h"
@@ -27,11 +28,14 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     struct eggsfs_fs_info* info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
     if (!info) { err = -ENOMEM; goto out; }
 
+    err = eggsfs_parse_shuckle_addr(dev_name, &info->shuckle_addr);
+    if (err) { goto out; }
+
     err = eggsfs_init_shard_socket(&info->sock);
     if (err) { goto out_info; }
 
     struct socket* shuckle_sock;
-    err = eggsfs_create_shuckle_socket(dev_name, &shuckle_sock);
+    err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
     if (err < 0) { goto out_info; }
 
     struct kvec iov;
@@ -193,12 +197,96 @@ static void eggsfs_put_super(struct super_block* sb) {
     sb->s_fs_info = NULL;
 }
 
+#define EGGSFS_SUPER_MAGIC 0x45474753 // EGGS
+
+int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
+    struct eggsfs_fs_info* info = (struct eggsfs_fs_info*)dentry->d_sb->s_fs_info;
+
+    struct socket* shuckle_sock;
+    int err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
+    if (err < 0) { return err; }
+
+    struct kvec iov;
+    struct msghdr msg = {NULL};
+
+    static_assert(EGGSFS_INFO_REQ_SIZE == 0);
+    char shuckle_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
+    eggsfs_write_shuckle_req_header(shuckle_req, 0, EGGSFS_SHUCKLE_INFO);
+    int written_so_far;
+    for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
+        iov.iov_base = shuckle_req + written_so_far;
+        iov.iov_len = sizeof(shuckle_req) - written_so_far;
+        int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+        if (written < 0) { err = written; goto out_sock; }
+        written_so_far += written;
+    }
+
+    char shuckle_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE];
+    int read_so_far;
+    for (read_so_far = 0; read_so_far < sizeof(shuckle_resp_header);) {
+        iov.iov_base = shuckle_resp_header + read_so_far;
+        iov.iov_len = sizeof(shuckle_resp_header) - read_so_far;
+        int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+        if (read < 0) { err = read; goto out_sock; }
+        read_so_far += read;
+    }
+    u32 shuckle_resp_len;
+    u8 shuckle_resp_kind;
+    err = eggsfs_read_shuckle_resp_header(shuckle_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+    if (err < 0) { goto out_sock; }
+    if (shuckle_resp_len != EGGSFS_INFO_RESP_SIZE) {
+        eggsfs_debug_print("expected size of %d, got %d", EGGSFS_INFO_RESP_SIZE, shuckle_resp_len);
+        err = -EINVAL; goto out_sock;
+    }
+    char shuckle_resp[EGGSFS_INFO_RESP_SIZE];
+    for (read_so_far = 0; read_so_far < sizeof(shuckle_resp);) {
+        iov.iov_base = (char*)&shuckle_resp + read_so_far;
+        iov.iov_len = sizeof(shuckle_resp) - read_so_far;
+        int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+        if (read < 0) { err = read; goto out_sock; }
+        read_so_far += read;
+    }
+    struct eggsfs_bincode_get_ctx ctx = {
+        .buf = shuckle_resp,
+        .end = shuckle_resp + sizeof(shuckle_resp),
+        .err = 0,
+    };
+    eggsfs_info_resp_get_start(&ctx, start);
+    eggsfs_info_resp_get_num_block_services(&ctx, start, num_block_services);
+    eggsfs_info_resp_get_num_failure_domains(&ctx, num_block_services, num_failure_domains);
+    eggsfs_info_resp_get_capacity(&ctx, num_failure_domains, capacity);
+    eggsfs_info_resp_get_available(&ctx, capacity, available);
+    eggsfs_info_resp_get_blocks(&ctx, available, blocks);
+    eggsfs_info_resp_get_end(&ctx, blocks, end);
+    eggsfs_info_resp_get_finish(&ctx, end);
+    if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
+
+    stats->f_type = EGGSFS_SUPER_MAGIC;
+    stats->f_bsize = PAGE_SIZE;
+    stats->f_frsize = PAGE_SIZE;
+	stats->f_blocks = capacity.x / PAGE_SIZE;
+    stats->f_bfree = available.x / PAGE_SIZE;
+    stats->f_bavail = available.x / PAGE_SIZE;
+    stats->f_files = -1;
+    stats->f_ffree = -1;
+    stats->f_namelen = EGGSFS_MAX_FILENAME;
+
+    sock_release(shuckle_sock);
+    return 0;
+
+out_sock:
+    sock_release(shuckle_sock);
+    return err;
+}
+
 static const struct super_operations eggsfs_super_ops = {
     .alloc_inode = eggsfs_inode_alloc,
     .evict_inode = eggsfs_inode_evict,
     .free_inode = eggsfs_inode_free,
 
     .put_super = eggsfs_put_super,
+
+    .statfs = eggsfs_statfs,
 };
 
 static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, const char* dev_name, void* data) {    

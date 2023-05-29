@@ -145,6 +145,25 @@ func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.Regi
 	return &msgs.RegisterCdcResp{}
 }
 
+func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) *msgs.InfoResp {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	resp := msgs.InfoResp{}
+	failureDomains := make(map[[16]byte]struct{})
+
+	for _, bs := range s.blockServices {
+		resp.Capacity += bs.CapacityBytes
+		resp.NumBlockServices++
+		resp.Available += bs.AvailableBytes
+		resp.Blocks += bs.Blocks
+		failureDomains[bs.FailureDomain] = struct{}{}
+	}
+	resp.NumFailureDomains = uint32(len(failureDomains))
+
+	return &resp
+}
+
 func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	conn.SetLinger(0) // poor man error handling for now
 	defer conn.Close()
@@ -174,6 +193,8 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			resp = handleCdcReq(log, s, conn, whichReq)
 		case *msgs.RegisterCdcReq:
 			resp = handleRegisterCdcReq(log, s, conn, whichReq)
+		case *msgs.InfoReq:
+			resp = handleInfoReq(log, s, conn, whichReq)
 		default:
 			log.RaiseAlert(fmt.Errorf("bad req type %T", req))
 		}

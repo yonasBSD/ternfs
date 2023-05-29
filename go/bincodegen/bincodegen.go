@@ -1495,6 +1495,11 @@ func main() {
 			reflect.TypeOf(msgs.CdcReq{}),
 			reflect.TypeOf(msgs.CdcResp{}),
 		},
+		{
+			0x08,
+			reflect.TypeOf(msgs.InfoReq{}),
+			reflect.TypeOf(msgs.InfoResp{}),
+		},
 	}
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{

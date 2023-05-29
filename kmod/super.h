@@ -6,6 +6,8 @@
 #include "net.h"
 
 struct eggsfs_fs_info {
+    struct sockaddr_in shuckle_addr;
+
     struct eggsfs_shard_socket sock;
 
     // NB: ->msg_iter is used by `kernel_sendmsg`, so when you want to use the `struct msghhdr`

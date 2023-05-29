@@ -45,6 +45,8 @@ func ReadShuckleRequest(
 		req = &msgs.RegisterCdcReq{}
 	case msgs.CDC:
 		req = &msgs.CdcReq{}
+	case msgs.INFO:
+		req = &msgs.InfoReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}
@@ -109,6 +111,8 @@ func ReadShuckleResponse(
 		resp = &msgs.RegisterCdcResp{}
 	case msgs.CDC:
 		resp = &msgs.CdcResp{}
+	case msgs.INFO:
+		resp = &msgs.InfoResp{}
 	default:
 		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
 	}

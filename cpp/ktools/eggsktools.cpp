@@ -158,6 +158,32 @@ static void readFile(int argc, const char** argv) {
     printf("done (%fGB/s).\n", (double)fileSize/(double)elapsed);
 }
 
+// Same as writeFile, but for reading.
+static void readLink(int argc, const char** argv) {
+    const char* filename = NULL;
+
+    for (int i = 0; i < argc; i++) {
+        if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
+        filename = argv[i];
+    }
+
+    char buf[1024];
+    ssize_t ret = readlink(filename, buf, sizeof(buf));
+    if (ret < 0) {
+        die("could not readlink %s: %d (%s)", filename, errno, strerror(errno));
+    }
+    
+    printf("link: \"");
+    for (int i = 0; i < ret; i++) {
+        if (isprint(buf[i])) {
+            printf("%c", buf[i]);
+        } else {
+            printf("\\%02x", buf[i]);
+        }
+    }
+    printf("\"\n");
+}
+
 int main(int argc, const char** argv) {
     exe = argv[0];
 
@@ -169,6 +195,8 @@ int main(int argc, const char** argv) {
         writeFile(argc - 2, argv + 2);
     } else if (cmd == "readfile") {
         readFile(argc - 2, argv + 2);
+    } else if (cmd == "readlink") {
+        readLink(argc - 2, argv + 2);
     } else {
         badUsage("Bad command %s", cmd.c_str());
     }

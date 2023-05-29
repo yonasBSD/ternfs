@@ -5,9 +5,23 @@ github.com/hanwen/go-fuse/v2/fuse
 github.com/hanwen/go-fuse/v2/internal
 github.com/hanwen/go-fuse/v2/internal/utimens
 github.com/hanwen/go-fuse/v2/splice
+# github.com/pkg/errors v0.9.1
+## explicit
+github.com/pkg/errors
+# github.com/sirupsen/logrus v1.7.0
+## explicit; go 1.13
+github.com/sirupsen/logrus
 # golang.org/x/exp v0.0.0-20221126150942-6ab00d035af9
 ## explicit; go 1.18
 golang.org/x/exp/constraints
-# golang.org/x/sys v0.1.0
+# golang.org/x/sys v0.4.0
 ## explicit; go 1.17
+golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
+golang.org/x/sys/windows
+# xtx/ecninfra v0.0.0-00010101000000-000000000000 => ../../ecn/infra/go
+## explicit; go 1.18
+xtx/ecninfra/log
+xtx/ecninfra/monitor
+xtx/ecninfra/monitor/protocol
+# xtx/ecninfra => ../../ecn/infra/go

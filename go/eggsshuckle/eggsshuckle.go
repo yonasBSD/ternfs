@@ -21,6 +21,8 @@ import (
 	"sync"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+
+	"xtx/ecninfra/monitor"
 )
 
 type namedTemplate struct {
@@ -1018,6 +1020,7 @@ func main() {
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
+	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
 	flag.Parse()
 	noRunawayArgs()
@@ -1045,6 +1048,27 @@ func main() {
 	ll.Info("  httpPort = %v", *httpPort)
 	ll.Info("  logFile = '%v'", *logFile)
 	ll.Info("  logLevel = %v", level)
+
+	// Init xmon
+	if *xmon != "" {
+		if *xmon != "prod" && *xmon != "qa" {
+			log.Fatalf("invalid xmon environment %s.", *xmon)
+		}
+		hn, err := os.Hostname()
+		if err != nil {
+			panic(err)
+		}
+		hostname := strings.Split(hn, ".")[0]
+
+		appType := "restech.critical"
+		prod := *xmon == "prod"
+		appInstance := fmt.Sprintf("eggsshuckle@%s", hostname)
+		xh := monitor.XmonHost(prod)
+
+		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 0)
+		// The call below will log the info message once connected to xmon.
+		troll.Connect()
+	}
 
 	readSpanBufPool = lib.NewReadSpanBufPool()
 

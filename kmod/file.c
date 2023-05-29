@@ -568,24 +568,13 @@ static void eggsfs_compute_spans_parameters(
     span->parity = parity;
 }
 
-static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
+ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from) {
     int err;
-    if (iocb->ki_flags & IOCB_DIRECT) { return -ENOSYS; }
+    if (flags & IOCB_DIRECT) { return -ENOSYS; }
 
-    struct file* file = iocb->ki_filp;
-    struct inode* inode = file->f_inode;
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
-    loff_t* ppos = &iocb->ki_pos;
     loff_t ppos_before = *ppos;
 
-    eggsfs_debug_print("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld", enode, inode->i_ino, iov_iter_count(from), enode->inode.i_size, *ppos);
-
-    if (!inode_trylock(inode)) {
-        if (iocb->ki_flags & IOCB_NOWAIT) {
-            return -EAGAIN;
-        }
-        inode_lock(inode);
-    }
+    eggsfs_debug_print("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld", enode, enode->inode.i_ino, iov_iter_count(from), enode->inode.i_size, *ppos);
 
     if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) { err = -EPERM; goto out_err; }
 
@@ -645,7 +634,7 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
         if (current_span_size >= max_span_size) { // we need to switch to the next span
             BUG_ON(current_span_size > max_span_size);
             if (down_trylock(&enode->file.in_flight_spans) == 1) {
-                if (iocb->ki_flags & IOCB_NOWAIT) {
+                if (flags & IOCB_NOWAIT) {
                     err = -EAGAIN;
                     goto out_err;
                 }
@@ -678,7 +667,6 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
     int written;
 out:
     written = *ppos - ppos_before;
-    inode_unlock(inode);
 
     eggsfs_debug_print("written=%d", written);
 
@@ -690,12 +678,28 @@ out_err_permanent:
     queue_work(eggsfs_wq, &enode->file.flusher);
 
 out_err:
-    inode_unlock(inode);
     eggsfs_debug_print("err=%d", err);
     if (err == -EAGAIN && *ppos > ppos_before) {
         goto out; // we can just return what we've already written
     }
     return err;
+}
+
+static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
+    struct file* file = iocb->ki_filp;
+    struct inode* inode = file->f_inode;
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    if (!inode_trylock(inode)) {
+        if (iocb->ki_flags & IOCB_NOWAIT) {
+            return -EAGAIN;
+        }
+        inode_lock(inode);
+    }
+    ssize_t res = eggsfs_file_write(enode, iocb->ki_flags, &iocb->ki_pos, from);
+    inode_unlock(inode);
+    
+    return res;
 }
 
 // * 0: skip (not the right owner)
@@ -758,10 +762,7 @@ out:
     return res;
 }
 
-static int eggsfs_file_flush(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
-    struct eggsfs_inode* enode = EGGSFS_I(filp->f_inode);
-    struct dentry* dentry = filp->f_path.dentry;
-
+int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     int res = eggsfs_file_flush_init(enode);
     if (res == 0) { return 0; }
     if (res < 0) { return res; }
@@ -812,6 +813,12 @@ static int eggsfs_file_flush(struct file* filp, fl_owner_t id) { // can we get w
         eggsfs_debug_print("flushing failed, err=%d", res);
     }
     return res;
+}
+
+static int eggsfs_file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
+    struct eggsfs_inode* enode = EGGSFS_I(filp->f_inode);
+    struct dentry* dentry = filp->f_path.dentry;
+    return eggsfs_file_flush(enode, dentry);
 }
 
 static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
@@ -903,10 +910,10 @@ out:
     return written;
 }
 
-const struct file_operations eggsfs_filesimple_operations = {
+const struct file_operations eggsfs_file_operations = {
     .open = eggsfs_file_open,
     .read_iter = eggsfs_file_read_iter,
     .write_iter = eggsfs_file_write_iter,
-    .flush = eggsfs_file_flush,
+    .flush = eggsfs_file_flush_internal,
     .llseek = generic_file_llseek,
 };

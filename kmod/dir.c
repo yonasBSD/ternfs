@@ -180,7 +180,7 @@ again:
         dentry = d_alloc_parallel(parent, &filename, &wq);
         if (IS_ERR(dentry)) { return; }
     }
-    if (!d_in_lookup(dentry)) {
+    if (!d_in_lookup(dentry)) { // d_alloc_parallel sets in_lookup
         // pre-existing entry
         struct inode* old_inode = d_inode(dentry);
         if (old_inode && old_inode->i_ino == ino) {
@@ -197,15 +197,20 @@ again:
             struct eggsfs_inode* enode = EGGSFS_I(inode);
             enode->edge_creation_time = edge_creation_time;
         }
+        eggsfs_debug_print("inode=%p is_err=%d", inode, IS_ERR(inode));
         // d_splice_alias propagates error in inode
         WRITE_ONCE(dentry->d_time, dir_seqno);
         alias = d_splice_alias(inode, dentry); 
+        eggsfs_debug_print("alias=%p is_err=%d", alias, IS_ERR(alias));
         d_lookup_done(dentry);
         if (alias) {
             dput(dentry);
             dentry = alias;
         }
-        if (IS_ERR(dentry)) { return; }
+        if (IS_ERR(dentry)) {
+            eggsfs_debug_print("dentry err=%ld", PTR_ERR(dentry));
+            return;
+        }
     }
 
 out:

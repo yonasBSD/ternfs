@@ -159,30 +159,27 @@ out:
     }
 }
 
-static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
+static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int itype, struct dentry* dentry) {
     int err;
 
     BUG_ON(dentry->d_inode);
 
     struct eggsfs_inode* parent_enode = EGGSFS_I(parent);
 
-    if (dentry->d_name.len > EGGSFS_MAX_FILENAME) {
-        err = -ENAMETOOLONG;
-        goto out_err;
-    }
+    if (dentry->d_name.len > EGGSFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
 
     eggsfs_debug_print("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
 
     u64 ino, cookie;
     err = eggsfs_error_to_linux(eggsfs_shard_create_file(
         (struct eggsfs_fs_info*)parent->i_sb->s_fs_info, eggsfs_inode_shard(parent->i_ino),
-        EGGSFS_INODE_FILE, dentry->d_name.name, dentry->d_name.len, &ino, &cookie
+        itype, dentry->d_name.name, dentry->d_name.len, &ino, &cookie
     ));
-    if (err) { return eggsfs_error_to_linux(err); }
+    if (err) { return ERR_PTR(eggsfs_error_to_linux(err)); }
     // make this dentry stick around?
 
     struct inode* inode = eggsfs_get_inode(parent->i_sb, parent_enode, ino); // new_inode
-    if (IS_ERR(inode)) { err = PTR_ERR(inode); goto out_err; }
+    if (IS_ERR(inode)) { return ERR_PTR(PTR_ERR(inode)); }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     enode->file.status = EGGSFS_FILE_STATUS_CREATED;
@@ -190,7 +187,7 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     // Initialize all the transient specific fields
     enode->file.cookie = cookie;
     struct eggsfs_transient_span* span = eggsfs_add_new_span(&enode->file.transient_spans);
-    if (IS_ERR(span)) { err = PTR_ERR(span); goto out_err; }
+    if (IS_ERR(span)) { return ERR_PTR(PTR_ERR(span)); }
     enode->file.size_without_current_span = 0;
     atomic_set(&enode->file.transient_err, 0);
     enode->file.owner = current->group_leader;
@@ -204,16 +201,19 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
     // We definitely want at least 2 (so that one span is uploading while one span is writing).
     // Three offers some additional buffer space for uneven throughput.
     sema_init(&enode->file.in_flight_spans, 2);
-    
-    d_instantiate(dentry, inode);
+
+    return enode;
+}
+
+static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
+    struct eggsfs_inode* enode = eggsfs_create_internal(parent, EGGSFS_INODE_FILE, dentry);
+    if (IS_ERR(enode)) { return PTR_ERR(enode); }
+
+    // This is not valid yet, we need to fill it in first
+    d_instantiate(dentry, &enode->inode);
     d_invalidate(dentry);
 
-    eggsfs_debug_print("size=%lld", inode->i_size);
-
     return 0;
-
-out_err:
-    return err;
 }
 
 // vfs: refcount of path->dentry
@@ -249,6 +249,94 @@ done:
     return 0;
 }
 
+static int eggsfs_symlink(struct inode* dir, struct dentry* dentry, const char* path) {
+    struct eggsfs_inode* enode = eggsfs_create_internal(dir, EGGSFS_INODE_SYMLINK, dentry);
+    if (IS_ERR(enode)) { return PTR_ERR(enode); }
+
+    enode->file.status = EGGSFS_FILE_STATUS_WRITING; // needed for flush to flush below
+
+    size_t len = strlen(path);
+
+    // We now need to write out the symlink contents...
+    loff_t ppos = 0;
+    struct kvec vec;
+    struct iov_iter from;
+    vec.iov_base = (void*)path;
+    vec.iov_len = len;
+    iov_iter_kvec(&from, READ, &vec, 1, vec.iov_len);
+    eggsfs_file_write(enode, 0, &ppos, &from);
+    // ...and flush them
+    int err = eggsfs_file_flush(enode, dentry);
+    if (err < 0) { return err; }
+
+    // Now we link the dentry in
+    d_instantiate(dentry, &enode->inode);
+
+    return 0;
+}
+
+static void eggsfs_get_link_destructor(void* buf) {
+    kfree(buf);
+}
+
+static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
+    eggsfs_debug_print("ino=%016lx", inode->i_ino);
+
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
+
+    // Can't be bothered to think about RCU
+    if (dentry == NULL) { return ERR_PTR(-ECHILD); }
+
+    // size might not be filled in
+    int err = eggsfs_do_getattr(enode);
+    if (err) { return ERR_PTR(err); }
+
+    BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
+    size_t size = enode->inode.i_size;
+
+    eggsfs_debug_print("size=%lu", size);
+
+    struct eggsfs_span* span = eggsfs_get_span(enode, 0);
+    if (span == NULL) {
+        eggsfs_debug_print("got no span, empty file?");
+        return "";
+    }
+    if (IS_ERR(span)) { return ERR_CAST(span); }
+
+    BUG_ON(span->end-span->start != size); // again, for simplicity
+
+    char* buf = kmalloc(size+1, GFP_KERNEL);
+    if (buf == NULL) { err = -ENOMEM; goto out_err; }
+
+    destructor->fn = eggsfs_get_link_destructor;
+    destructor->arg = buf;
+
+    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+        memcpy(buf, EGGSFS_INLINE_SPAN(span)->body, size);
+    } else {
+        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        struct page* page = eggsfs_get_span_page(block_span, 0);
+        BUG_ON(page == NULL);
+        if (IS_ERR(page)) { err = PTR_ERR(page); goto out_err; }
+        char* page_buf = kmap(page);
+        memcpy(buf, page_buf, size);
+        kunmap(page);
+    }
+    buf[size] = '\0';
+    eggsfs_span_put(span, true);
+
+    eggsfs_debug_print("link %*pE", (int)size, buf);
+
+    return buf;
+
+out_err:
+    eggsfs_debug_print("get_link err=%d", err);
+    eggsfs_span_put(span, false);
+    return ERR_PTR(err);
+}
+
 static const struct inode_operations eggsfs_dir_inode_ops = {
     .create = eggsfs_create,
     .lookup = eggsfs_lookup,
@@ -257,10 +345,16 @@ static const struct inode_operations eggsfs_dir_inode_ops = {
     .rmdir = eggsfs_rmdir,
     .rename = eggsfs_rename,
     .getattr = eggsfs_getattr,
+    .symlink = eggsfs_symlink,
 };
 
 static const struct inode_operations eggsfs_file_inode_ops = {
     .getattr = eggsfs_getattr,
+};
+
+static const struct inode_operations eggsfs_symlink_inode_ops = {
+    .getattr = eggsfs_getattr,
+    .get_link = eggsfs_get_link,
 };
 
 extern struct file_operations eggsfs_dir_operations;
@@ -295,9 +389,13 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
 
             rcu_assign_pointer(enode->dir.pages, NULL);
             eggsfs_latch_init(&enode->dir.pages_latch);
-        } else if (S_ISREG(inode->i_mode)) {
-            inode->i_op = &eggsfs_file_inode_ops;
-            inode->i_fop = &eggsfs_filesimple_operations;
+        } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
+            if (unlikely(S_ISLNK(inode->i_mode))) {
+                inode->i_op = &eggsfs_symlink_inode_ops;
+            } else {
+                inode->i_op = &eggsfs_file_inode_ops;
+            }
+            inode->i_fop = &eggsfs_file_operations;
 
             enode->file.status = EGGSFS_FILE_STATUS_NONE;
             // Init normal file stuff -- that's always there.

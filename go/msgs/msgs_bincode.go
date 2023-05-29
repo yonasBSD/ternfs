@@ -171,6 +171,7 @@ const (
 	BLOCK_FETCH_OUT_OF_BOUNDS ErrCode = 63
 	BAD_BLOCK_CRC ErrCode = 64
 	BLOCK_TOO_BIG ErrCode = 65
+	BLOCK_NOT_FOUND ErrCode = 66
 )
 
 func (err ErrCode) String() string {
@@ -287,6 +288,8 @@ func (err ErrCode) String() string {
 		return "BAD_BLOCK_CRC"
 	case 65:
 		return "BLOCK_TOO_BIG"
+	case 66:
+		return "BLOCK_NOT_FOUND"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}

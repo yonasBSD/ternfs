@@ -1261,6 +1261,7 @@ func main() {
 		"BLOCK_FETCH_OUT_OF_BOUNDS",
 		"BAD_BLOCK_CRC",
 		"BLOCK_TOO_BIG",
+		"BLOCK_NOT_FOUND",
 	}
 
 	kernelShardReqResps := []reqRespType{

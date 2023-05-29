@@ -172,6 +172,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::BLOCK_TOO_BIG:
         out << "BLOCK_TOO_BIG";
         break;
+    case EggsError::BLOCK_NOT_FOUND:
+        out << "BLOCK_NOT_FOUND";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

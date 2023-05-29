@@ -169,18 +169,27 @@ func blockIdToPath(basePath string, blockId msgs.BlockId) string {
 	return path.Join(path.Join(basePath, dir), hex)
 }
 
-func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) {
+func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
+		if os.IsNotExist(err) {
+			log.RaiseAlert(fmt.Errorf("could not find block to erase at path %v", blockPath))
+			return msgs.BLOCK_NOT_FOUND
+		}
 		panic(err)
 	}
+	return nil
 }
 
 func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
+	if os.IsNotExist(err) {
+		log.RaiseAlert(fmt.Errorf("could not find block to erase at path %v", blockPath))
+		return msgs.BLOCK_NOT_FOUND
+	}
 	if err != nil {
 		return err
 	}
@@ -319,14 +328,20 @@ const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
 
-func handleInternalError(
+func handleError(
 	log *lib.Logger,
 	conn *net.TCPConn,
 	err error,
 ) {
+	// we always raise an alert since this is almost always bad news in the block service
 	log.RaiseAlert(err)
-	// attempt to say goodbye
-	lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+	eggsErr, isEggsErr := err.(msgs.ErrCode)
+	if isEggsErr {
+		lib.WriteBlocksResponseError(log, conn, eggsErr)
+	} else {
+		// attempt to say goodbye
+		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+	}
 }
 
 func handleRequest(
@@ -371,22 +386,34 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, err)
 				continue NextRequest
 			}
-			if timeCheck && uint64(whichReq.BlockId) <= (uint64(msgs.Now())+FUTURE_CUTOFF) {
-				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted", whichReq.BlockId))
+			cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) + FUTURE_CUTOFF).Time()
+			now := time.Now()
+			if timeCheck && now.Before(cutoffTime) {
+				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime))
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
-			eraseBlock(log, blockService.path, whichReq.BlockId) // can never fail
+			// note: we might consider allow BLOCK_NOT_FOUND here, because it could be that
+			// a process that was in the process of destructing a span managed to erase the
+			// block but not certify the deletion in the shard.
+			if err := eraseBlock(log, blockService.path, whichReq.BlockId); err != nil {
+				handleError(log, conn, err)
+				return
+			}
+
 			resp := msgs.EraseBlockResp{
 				Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 			}
 			if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
-				handleInternalError(log, conn, fmt.Errorf("could not send blocks response to %v: %w", conn.RemoteAddr(), err))
+				handleError(log, conn, fmt.Errorf("could not send blocks response to %v: %w", conn.RemoteAddr(), err))
 				return
 			}
 		case *msgs.FetchBlockReq:
 			if err := sendFetchBlock(log, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
-				handleInternalError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
+				if _, isEggsErr := err.(msgs.ErrCode); !isEggsErr {
+					err = fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err)
+				}
+				handleError(log, conn, err)
 				return
 			}
 		case *msgs.WriteBlockReq:
@@ -400,20 +427,20 @@ NextRequest:
 				continue NextRequest
 			}
 			if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{}); err != nil {
-				handleInternalError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
+				handleError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
 				return
 			}
 			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
-				handleInternalError(log, conn, fmt.Errorf("could not write block: %w", err))
+				handleError(log, conn, fmt.Errorf("could not write block: %w", err))
 				return
 			}
 		case *msgs.TestWriteReq:
 			if err := testWrite(log, bufPool, blockService.path, whichReq.Size, conn); err != nil {
-				handleInternalError(log, conn, fmt.Errorf("could not perform test write: %w", err))
+				handleError(log, conn, fmt.Errorf("could not perform test write: %w", err))
 				return
 			}
 		default:
-			handleInternalError(log, conn, fmt.Errorf("bad request type %T", req))
+			handleError(log, conn, fmt.Errorf("bad request type %T", req))
 			return
 		}
 		log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())

@@ -60,6 +60,7 @@ enum class EggsError : uint16_t {
     BLOCK_FETCH_OUT_OF_BOUNDS = 63,
     BAD_BLOCK_CRC = 64,
     BLOCK_TOO_BIG = 65,
+    BLOCK_NOT_FOUND = 66,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);

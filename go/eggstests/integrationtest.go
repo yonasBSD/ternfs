@@ -535,7 +535,7 @@ func main() {
 
 	// Start shuckle
 	shucklePort := uint16(55555)
-	shuckleAddress := fmt.Sprintf("localhost:%v", shucklePort)
+	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
 	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
 		Exe:         goExes.ShuckleExe,
 		BincodePort: shucklePort,
@@ -557,7 +557,7 @@ func main() {
 			StorageClass:   storageClass,
 			FailureDomain:  fmt.Sprintf("%d", i),
 			LogLevel:       level,
-			ShuckleAddress: fmt.Sprintf("localhost:%d", shucklePort),
+			ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
 			NoTimeCheck:    true,
 			OwnIp1:         "127.0.0.1",
 			OwnIp2:         "127.0.0.1",
@@ -607,7 +607,7 @@ func main() {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	lib.WaitForShuckle(log, fmt.Sprintf("localhost:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
+	lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,

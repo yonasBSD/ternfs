@@ -25,54 +25,22 @@ struct eggsfs_block_socket;
 struct eggsfs_block_socket* eggsfs_get_fetch_block_socket(struct eggsfs_block_service* block_service);
 void eggsfs_put_fetch_block_socket(struct eggsfs_block_socket* socket);
 
-struct eggsfs_fetch_block_request {
-    // Pages where we write the block. When the request is done everything
-    // will be available here. Freeing this is the responsibility of the
-    // caller, who must wait for the request to be completed before doing so.
-    struct list_head pages;
+struct eggfs_fetch_block_request;
 
-    // Completes when the block is fetched and all pages have been filled
-    // in.
-    struct completion comp;
-
-    // Stores the error if something went wrong (to be checked by the caller before
-    // inspecting pages or crc).
+// If the callback wants to gain ownership of the pages, it can remove them from
+// the list.
+struct eggsfs_fetch_complete {
     int err;
-
-    // CRC of the body
     u32 crc;
-
-    // Below fields are private.
-
-    // List node for list of requests enqueued for a given socket.
-    struct list_head socket_requests;
-
-    // The caller and block.c both need to make sure the request is still there
-    // when they need it. We need such a thing since we sometimes send fetch requests
-    // from contexts we want to be killable (i.e. syscalls). So in those cases we
-    // need to drop them on the floor.
-    atomic_t refcount;
-
-    // How many bytes we have left to read.
-    u32 bytes_left;
-    // The cursor inside the current page.
-    u16 page_offset;
-    // How much we've read of the header.
-    u8 header_read;
-    static_assert(EGGSFS_FETCH_BLOCK_RESP_SIZE == 0);
-    union {
-        char buf[EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2];
-        struct {
-            __le32 protocol;
-            u8 kind;
-            __le16 error;
-        } __attribute__((packed)) data;
-    } header;
+    u64 block_id;
+    struct list_head pages;
 };
 
 // Might return errors.
 struct eggsfs_fetch_block_request* eggsfs_fetch_block(
     struct eggsfs_block_socket* socket,
+    void (*callback)(struct eggsfs_fetch_complete* complete, void* data),
+    void* data,
     // This must match with what you passed into `eggsfs_get_fetch_block_socket`
     u64 block_service_id,
     u64 block_id,
@@ -80,15 +48,7 @@ struct eggsfs_fetch_block_request* eggsfs_fetch_block(
     u32 count
 );
 
-// Must be called when you're done with the request. It's OK to call
-// this before the request has finished. If the caller has successfully waited for
-// the request to complete, it's OK to take ownership of the pages by removing them
-// from the list.
-void eggsfs_put_fetch_block_request(struct eggsfs_fetch_block_request* req);
-
 struct eggsfs_block_socket* eggsfs_get_write_block_socket(struct eggsfs_block_service* block_service);
-
-// Must have waited for all outstanding requests before putting.
 void eggsfs_put_write_block_socket(struct eggsfs_block_socket* socket);
 
 struct eggsfs_write_block_request {

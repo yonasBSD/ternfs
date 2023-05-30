@@ -533,6 +533,60 @@ again:
     up_write(&enode->file.spans_lock);
 }
 
+struct eggsfs_fetch_block_sync {
+    atomic_t remaining;    // how many fetch requests we've got left
+    struct semaphore sema; // called when we're done with everything
+    atomic_t err;
+    u64 blocks_ids[EGGSFS_MAX_BLOCKS];
+    struct list_head blocks_pages[EGGSFS_MAX_BLOCKS];
+    u32 blocks_crcs[EGGSFS_MAX_BLOCKS];
+    atomic_t refcount;
+};
+
+static void eggsfs_put_fetch_block_sync(struct eggsfs_fetch_block_sync* st) {
+    if (atomic_dec_return(&st->refcount) == 0) {
+        put_pages_list(st->blocks_pages);
+        kfree(st);
+    }
+}
+
+static void eggsfs_fetch_block_sync_complete(struct eggsfs_fetch_complete* complete, void* data) {
+    eggsfs_debug_print("block complete %016llx", complete->block_id);
+    struct eggsfs_fetch_block_sync* st = (struct eggsfs_fetch_block_sync*)data;
+
+    int i;
+    for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
+        if (st->blocks_ids[i] == complete->block_id) { break; }
+    }
+    eggsfs_debug_print("block ix %d", i);
+    BUG_ON(i == EGGSFS_MAX_BLOCKS);
+
+    // It failed, mark it
+    if (complete->err) {
+        eggsfs_debug_print("block %016llx ix %d failed with %d", complete->block_id, complete->err, i);
+        atomic_cmpxchg(&st->err, 0, complete->err);
+        goto out;
+    }
+
+    // It succeeded, set crc and grab all the pages
+    st->blocks_crcs[i] = complete->crc;
+    struct page* page;
+    struct page* tmp;
+    list_for_each_entry_safe(page, tmp, &complete->pages, lru) {
+        list_del(&page->lru);
+        list_add_tail(&page->lru, &st->blocks_pages[i]);
+    }
+
+    int remaining;
+out:
+    remaining = atomic_dec_return(&st->remaining);
+    eggsfs_debug_print("remaining=%d", remaining);
+    if (remaining == 0) { // we're the last one to finish
+        up(&st->sema);
+    }
+    eggsfs_put_fetch_block_sync(st);
+}
+
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix) {
     trace_eggsfs_get_span_page_enter(span->span.enode->inode.i_ino, span->span.start, page_ix*PAGE_SIZE);
 
@@ -548,7 +602,6 @@ struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix) {
     }
 
     struct page* page;
-    u32 start_page, end_page, curr_page;
     int err = 0;
 
 again:
@@ -565,10 +618,6 @@ again:
         GET_PAGE_EXIT(ERR_PTR(-EIO));
     }
 
-    start_page = (span->cell_size/PAGE_SIZE)*D*stripe;
-    curr_page = start_page;
-    end_page = (span->cell_size/PAGE_SIZE)*D*((int)stripe + 1);
-
     int seqno;
     if (!eggsfs_latch_try_acquire(&span->stripe_latches[stripe], seqno)) {
         int err = eggsfs_latch_wait_killable(&span->stripe_latches[stripe], seqno);
@@ -578,8 +627,17 @@ again:
 
     struct eggsfs_block_socket* socks[EGGSFS_MAX_DATA];
     memset(socks, 0, sizeof(socks));
-    struct eggsfs_fetch_block_request* reqs[EGGSFS_MAX_DATA];
-    memset(reqs, 0, sizeof(reqs));
+
+    struct eggsfs_fetch_block_sync* st = kmalloc(sizeof(struct eggsfs_fetch_block_sync), GFP_KERNEL);
+    if (!st) {
+        err = -ENOMEM;
+        goto out_err;
+    }
+    atomic_set(&st->remaining, D);
+    sema_init(&st->sema, 0);
+    atomic_set(&st->err, 0);
+    memset(&st->blocks_ids[0], 0, sizeof(st->blocks_ids));
+    atomic_set(&st->refcount, 1); // 1 = only us
 
     // get block services sockets
     int i;
@@ -596,60 +654,59 @@ again:
     u32 block_offset = stripe * span->cell_size;
     for (i = 0; i < D; i++) {
         struct eggsfs_block* block = &span->blocks[i];
-        reqs[i] = eggsfs_fetch_block(socks[i], block->bs.id, block->id, block_offset, span->cell_size);
-        if (IS_ERR(reqs[i])) {
-            err = PTR_ERR(reqs[i]);
-            reqs[i] = NULL;
+        st->blocks_ids[i] = block->id;
+        INIT_LIST_HEAD(&st->blocks_pages[i]);
+        atomic_inc(&st->refcount);
+        struct eggsfs_fetch_block_request* req = eggsfs_fetch_block(
+            socks[i],
+            &eggsfs_fetch_block_sync_complete,
+            (void*)st,
+            block->bs.id, block->id, block_offset, span->cell_size
+        );
+        if (IS_ERR(req)) {
+            atomic_dec(&st->refcount);
+            err = PTR_ERR(req);
             goto out_err;
         }
     }
 
     // Wait for all the block requests
+    err = down_killable(&st->sema);
+    if (err) { goto out_err; }
+
+    // Check CRC
+    u32 crc = 0;
     for (i = 0; i < D; i++) {
-        struct eggsfs_fetch_block_request* req = reqs[i];
-        err = wait_for_completion_killable(&req->comp);
-        if (err) { goto out_err; }
-        err = req->err;
-        if (err) {
-            eggsfs_debug_print("request failed: %d", err);
-            goto out_err;
-        }
+        crc = eggsfs_crc32c_append(crc, st->blocks_crcs[i], span->cell_size);
+    }
+    if (crc != span->stripes_crc[stripe]) {
+        err = -EIO;
+        eggsfs_warn_print("crc check failed failed, expected %08x, got %08x", span->stripes_crc[stripe], crc);
+        goto out_err;
     }
 
     // Store all the pages into the xarray
-    u32 crc = 0;
+    u32 start_page = (span->cell_size/PAGE_SIZE)*D*stripe;
+    u32 end_page = (span->cell_size/PAGE_SIZE)*D*((int)stripe + 1);
+    u32 curr_page = start_page;
     for (i = 0; i < D; i++) {
-        struct eggsfs_fetch_block_request* req = reqs[i];
-        crc = eggsfs_crc32c_append(crc, req->crc, span->cell_size);
         struct page* page;
-        list_for_each_entry(page, &req->pages, lru) {
+        struct page* tmp;
+        list_for_each_entry_safe(page, tmp, &st->blocks_pages[i], lru) {
+            list_del(&page->lru);
             struct page* old_page = xa_store(&span->pages, curr_page, page, GFP_KERNEL);
             if (IS_ERR(old_page)) {
                 err = PTR_ERR(old_page);
                 eggsfs_debug_print("xa_store failed: %d", err);
+                put_page(page); // we removed it from the list
                 goto out_err;
             }
-            atomic64_inc(&eggsfs_stat_cached_span_pages);
             BUG_ON(old_page != NULL); // the latch protects against this
+            atomic64_inc(&eggsfs_stat_cached_span_pages);
             curr_page++;
         }
     }
-
-    // Check the crc
-    if (crc != span->stripes_crc[stripe]) {
-        err = -EIO;
-        eggsfs_debug_print("crc check failed failed, expected %08x, got %08x", span->stripes_crc[stripe], crc);
-        goto out_err;
-    }
-
-    // OK, we're good, now take ownership of the pages by emptying the pages in the requests
-    // so that they won't be freed by `eggsfs_put_fetch_block_request`
-    for (i = 0; i < D; i++) {
-        struct list_head* pages = &reqs[i]->pages;
-        while (!list_empty(pages)) {
-            list_del(&lru_to_page(pages)->lru);
-        }
-    }
+    BUG_ON(curr_page != end_page);
 
     page = xa_load(&span->pages, page_ix);
     BUG_ON(page == NULL);
@@ -657,10 +714,7 @@ again:
 out:
     // Unlock and free everything
     eggsfs_latch_release(&span->stripe_latches[stripe], seqno);
-    for (i = 0; i < D; i++) {
-        if (reqs[i] == NULL) { continue; }
-        eggsfs_put_fetch_block_request(reqs[i]);
-    }
+    eggsfs_put_fetch_block_sync(st);
     for (i = 0; i < D; i++) {
         if (socks[i] == NULL) { continue; }
         eggsfs_put_fetch_block_socket(socks[i]);
@@ -671,9 +725,10 @@ out:
     u64 free_pages = si_mem_available();
     if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_sync || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_sync) {
         // sync dropping, apply backpressure
-        mutex_lock(&eggsfs_drop_spans_mu);
-        eggsfs_drop_spans("sync");
-        mutex_unlock(&eggsfs_drop_spans_mu);
+        if (!mutex_lock_killable(&eggsfs_drop_spans_mu)) {
+            eggsfs_drop_spans("sync");
+            mutex_unlock(&eggsfs_drop_spans_mu);
+        }
     } else if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_async || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_async) {
         // don't bother submitting if another span dropper is running already
         if (!mutex_is_locked(&eggsfs_drop_spans_mu)) {
@@ -687,12 +742,6 @@ out:
 
 out_err:
     eggsfs_debug_print("getting span page failed, err=%d", err);
-    // we might have partially written the stripe, forget about them
-    end_page = curr_page;
-    for (curr_page = start_page; curr_page <= end_page; curr_page++) {
-        atomic64_dec(&eggsfs_stat_cached_span_pages);
-        xa_erase(&span->pages, curr_page);
-    }
     goto out;
 
 #undef GET_PAGE_EXIT

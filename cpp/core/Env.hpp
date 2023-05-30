@@ -29,9 +29,10 @@ private:
     std::ostream& _out;
     std::mutex _mutex;
     bool _syslog;
+    bool _usr2ToDebug;
 public:
     Logger(LogLevel logLevel, std::ostream& out, bool syslog, bool usr2ToDebug):
-        _logLevel(logLevel), _savedLogLevel(logLevel), _out(out), _syslog(syslog)
+        _logLevel(logLevel), _savedLogLevel(logLevel), _out(out), _syslog(syslog), _usr2ToDebug(usr2ToDebug)
     {
         if (usr2ToDebug) {
             installLoggerSignalHandler(this);
@@ -39,7 +40,9 @@ public:
     }
 
     ~Logger() {
-        tearDownLoggerSignalHandler(this);
+        if (_usr2ToDebug) {
+            tearDownLoggerSignalHandler(this);
+        }
     }
 
     template<typename ...Args>

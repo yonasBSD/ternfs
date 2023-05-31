@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
-	"sync"
-	"time"
+	"strings"
+
+	"xtx/ecninfra/log"
+
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 type LogLevel uint8
@@ -15,19 +20,6 @@ const TRACE LogLevel = 0
 const DEBUG LogLevel = 1
 const INFO LogLevel = 2
 const ERROR LogLevel = 3
-
-func (ll LogLevel) Syslog() int {
-	switch ll {
-	case TRACE, DEBUG:
-		return 7
-	case INFO:
-		return 6
-	case ERROR:
-		return 3
-	default:
-		return 3
-	}
-}
 
 func (ll LogLevel) String() string {
 	switch ll {
@@ -45,19 +37,111 @@ func (ll LogLevel) String() string {
 
 }
 
-type Logger struct {
-	out    io.Writer
-	mu     sync.Mutex
-	level  LogLevel
-	syslog bool
+type logFormatter struct {
+	syslog    bool
+	hasColors bool
+	logrus.Formatter
 }
 
-func NewLogger(level LogLevel, out io.Writer, syslog bool) *Logger {
-	l := Logger{
-		out:    out,
-		level:  level,
-		syslog: syslog,
+const (
+	red    = 31
+	yellow = 33
+	blue   = 36
+	gray   = 37
+
+	syslogDebug = 7
+	syslogInfo  = 6
+	syslogWarn  = 4
+	syslogError = 3
+)
+
+func (lf *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	f, fe := entry.Data["file"]
+	n, ne := entry.Data["line"]
+	caller := "???:0 "
+	if fe && ne {
+		caller = fmt.Sprintf("%s:%d ", f, n)
 	}
+
+	var b *bytes.Buffer
+	if entry.Buffer != nil {
+		b = entry.Buffer
+	} else {
+		b = &bytes.Buffer{}
+	}
+
+	var levelColor int
+	var syslogPrio int
+	switch entry.Level {
+	case logrus.DebugLevel, logrus.TraceLevel:
+		levelColor = gray
+		syslogPrio = syslogDebug
+	case logrus.WarnLevel:
+		levelColor = yellow
+		syslogPrio = syslogWarn
+	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
+		levelColor = red
+		syslogPrio = syslogError
+	case logrus.InfoLevel:
+		levelColor = blue
+		syslogPrio = syslogInfo
+	default:
+		levelColor = blue
+		syslogPrio = syslogInfo
+	}
+
+	levelText := strings.ToUpper(entry.Level.String())
+
+	if lf.syslog {
+		fmt.Fprintf(b, "<%d>%s", syslogPrio, entry.Message)
+	} else {
+		cs := ""
+		ce := ""
+		if lf.hasColors {
+			cs = fmt.Sprintf("\x1b[%dm", levelColor)
+			ce = fmt.Sprintf("\x1b[0m")
+		}
+
+		fmt.Fprintf(b, "%-26s %s[%s%s%s] %s ", entry.Time.Format("2006-01-02T15:04:05.999999"), caller, cs, levelText, ce, entry.Message)
+	}
+	b.WriteByte('\n')
+	return b.Bytes(), nil
+}
+
+type Logger struct {
+	level LogLevel
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	fd := int(f.Fd())
+	_, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	return err == nil
+}
+
+func NewLogger(level LogLevel, out *os.File, syslog bool) *Logger {
+	l := Logger{
+		level: level,
+	}
+	ll := logrus.InfoLevel
+	switch level {
+	case ERROR:
+		ll = logrus.ErrorLevel
+	case DEBUG:
+		ll = logrus.DebugLevel
+	case TRACE:
+		ll = logrus.TraceLevel
+	}
+	f := logFormatter{
+		Formatter: &logrus.TextFormatter{},
+		hasColors: isTerminal(out),
+		syslog:    syslog,
+	}
+	log.SetFormatter(&f)
+	log.SetLevel(ll)
+	log.SetOutput(out)
 	return &l
 }
 
@@ -87,15 +171,21 @@ func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any
 		file = short
 
 		// write out
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		if l.syslog {
-			fmt.Fprintf(l.out, "<%d>%s:%d ", level.Syslog(), file, line)
-		} else {
-			fmt.Fprintf(l.out, "%s [%v] %s:%d ", time.Now().Format("2006-01-02T15:04:05.999999999"), level, file, line)
+		e := log.WithFields(logrus.Fields{
+			"file": file,
+			"line": line,
+		})
+		switch level {
+		case INFO:
+			e.Infof(format, v...)
+		case ERROR:
+			e.Errorf(format, v...)
+		case DEBUG:
+			e.Debugf(format, v...)
+		case TRACE:
+			e.Tracef(format, v...)
 		}
-		fmt.Fprintf(l.out, format, v...)
-		l.out.Write([]byte("\n"))
+
 	}
 }
 

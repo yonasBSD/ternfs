@@ -904,7 +904,7 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
 out:
     if (span) { eggsfs_span_put(span, true); }
     eggsfs_debug_print("out of the loop, written=%ld", written);
-    if (written < 0) {
+    if (unlikely(written < 0)) {
         eggsfs_debug_print("reading failed, err=%ld", written);
     }
     return written;

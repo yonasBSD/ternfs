@@ -46,11 +46,11 @@ static struct kmem_cache* eggsfs_write_block_request_cachep;
 
 struct eggsfs_fetch_block_request {
     // Is called when work is done.
-    void (*callback)(struct eggsfs_fetch_complete* complete, void* data);
+    void (*callback)(struct eggsfs_fetch_block_complete* complete, void* data);
     void* data;
 
     // Completion data.
-    struct eggsfs_fetch_complete complete;
+    struct eggsfs_fetch_block_complete complete;
 
     // Callback for when the request is done.
     struct work_struct complete_work;
@@ -320,7 +320,7 @@ struct eggsfs_block_socket* eggsfs_get_fetch_block_socket(struct eggsfs_block_se
         // Also this makes it easier to try both IPs immediately.
         err = kernel_connect(socket->sock, (struct sockaddr*)&socket->addr, sizeof(socket->addr), 0);
         if (err < 0) {
-            if (unlikely(err == -ERESTARTSYS)) {
+            if (err == -ERESTARTSYS || err == -ERESTARTNOINTR) {
                 eggsfs_debug_print("could not connect to block service at %pI4:%d: %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
             } else {
                 eggsfs_warn_print("could not connect to block service at %pI4:%d: %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
@@ -352,7 +352,7 @@ out_err:
 
 struct eggsfs_fetch_block_request* eggsfs_fetch_block(
     struct eggsfs_block_socket* socket,
-    void (*callback)(struct eggsfs_fetch_complete* complete, void* data),
+    void (*callback)(struct eggsfs_fetch_block_complete* complete, void* data),
     void* data,
     u64 block_service_id,
     u64 block_id,

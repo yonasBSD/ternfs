@@ -29,7 +29,7 @@ struct eggfs_fetch_block_request;
 
 // If the callback wants to gain ownership of the pages, it can remove them from
 // the list.
-struct eggsfs_fetch_complete {
+struct eggsfs_fetch_block_complete {
     int err;
     u32 crc;
     u64 block_id;
@@ -39,7 +39,7 @@ struct eggsfs_fetch_complete {
 // Might return errors.
 struct eggsfs_fetch_block_request* eggsfs_fetch_block(
     struct eggsfs_block_socket* socket,
-    void (*callback)(struct eggsfs_fetch_complete* complete, void* data),
+    void (*callback)(struct eggsfs_fetch_block_complete* complete, void* data),
     void* data,
     // This must match with what you passed into `eggsfs_get_fetch_block_socket`
     u64 block_service_id,

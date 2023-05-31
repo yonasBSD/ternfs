@@ -93,6 +93,8 @@ static void writeFile(int argc, const char** argv) {
 // Same as writeFile, but for reading.
 static void readFile(int argc, const char** argv) {
     ssize_t bufSize = -1; // if -1, all in one go
+    ssize_t begin = -1; // if -1, start of file
+    ssize_t end = -1; // if -1, end of file
     const char* filename = NULL;
 
     for (int i = 0; i < argc; i++) {
@@ -101,6 +103,18 @@ static void readFile(int argc, const char** argv) {
             bufSize = strtoull(argv[i], NULL, 0);
             if (bufSize == ULLONG_MAX) {
                 badUsage("Bad -buf-size: %d (%s)", errno, strerror(errno));
+            }
+        } else if (std::string(argv[i]) == "-begin") {
+            if (i+1 >= argc) { badUsage("No argument after -begin"); } i++;
+            begin = strtoull(argv[i], NULL, 0);
+            if (begin == ULLONG_MAX) {
+                badUsage("Bad -begin: %d (%s)", errno, strerror(errno));
+            }
+        } else if (std::string(argv[i]) == "-end") {
+            if (i+1 >= argc) { badUsage("No argument after -end"); } i++;
+            end = strtoull(argv[i], NULL, 0);
+            if (end == ULLONG_MAX) {
+                badUsage("Bad -end: %d (%s)", errno, strerror(errno));
             }
         } else {
             if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
@@ -118,8 +132,13 @@ static void readFile(int argc, const char** argv) {
     }
 
     if (bufSize < 0) { bufSize = fileSize; }
+    if (begin < 0) { begin = 0; }
+    if (end < 0) { end = fileSize; }
+    if (end > fileSize) {
+        die("-end (%ld) exceeds file size (%lu)", end, fileSize);
+    }
 
-    printf("reading %ld bytes with bufsize %ld to %s\n", fileSize, bufSize, filename);
+    printf("reading %ld bytes with bufsize %ld to %s\n", end-begin, bufSize, filename);
 
     int fd = open(filename, O_RDONLY);
     if (fd < 0) {
@@ -132,10 +151,14 @@ static void readFile(int argc, const char** argv) {
     }
 
     uint64_t start = nanosNow();
+    
+    if (lseek(fd, begin, SEEK_SET) < 0) {
+        die("could not seek: %d (%s)", errno, strerror(errno));
+    }
 
     size_t readSize = 0;
     for (;;) {
-        ssize_t ret = read(fd, buffer, bufSize);
+        ssize_t ret = read(fd, buffer, std::min<ssize_t>(bufSize, (end-begin)-readSize));
         if (ret < 0) {
             die("could not read file %s: %d (%s)", filename, errno, strerror(errno));
         }
@@ -143,8 +166,8 @@ static void readFile(int argc, const char** argv) {
         readSize += ret;
     }
 
-    if (readSize != fileSize) {
-        die("expected to read %lu (file size), but read %lu instead", fileSize, readSize);
+    if (readSize != end-begin) {
+        die("expected to read %lu, but read %lu instead", end-begin, readSize);
     }
 
     printf("finished reading, will now close\n");
@@ -155,7 +178,7 @@ static void readFile(int argc, const char** argv) {
 
     uint64_t elapsed = nanosNow() - start;
 
-    printf("done (%fGB/s).\n", (double)fileSize/(double)elapsed);
+    printf("done (%fGB/s).\n", (double)(end-begin)/(double)elapsed);
 }
 
 // Same as writeFile, but for reading.

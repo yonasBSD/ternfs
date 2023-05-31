@@ -39,6 +39,12 @@ void eggsfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
+        // Make sure no prefetching is taking place (otherwise the
+        // dropping of spans below would fail).
+        int prefetches = atomic_read(&enode->file.prefetches);
+        if (prefetches) {
+            wait_event(enode->file.prefetches_wq, atomic_read(&enode->file.prefetches) == 0);
+        }
         // While you might think that `enode->file.status` would have to be 
         // EGGSFS_FILE_STATUS_NONE or EGGSFS_FILE_STATUS_READING here, it is not
         // the case, since we might have failed to link the span for whatever reason.
@@ -401,6 +407,9 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
             // Init normal file stuff -- that's always there.
             enode->file.spans = RB_ROOT;
             init_rwsem(&enode->file.spans_lock);
+            atomic64_set(&enode->file.prefetch_section, 0);
+            atomic_set(&enode->file.prefetches, 0);
+            init_waitqueue_head(&enode->file.prefetches_wq);
             // Transient-specific stuff which is also always there.
             INIT_LIST_HEAD(&enode->file.transient_spans);
             spin_lock_init(&enode->file.transient_spans_lock);

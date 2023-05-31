@@ -105,6 +105,13 @@ struct eggsfs_inode_file {
 
     struct rb_root spans;
     struct rw_semaphore spans_lock;
+    atomic_t prefetches; // how many prefetches are ongoing
+    wait_queue_head_t prefetches_wq; // waited on by evictor
+    // low 32 bits: section start. high 32 bits: section end. Rouded up to
+    // PAGE_SIZE, since we know each stripe is at PAGE_SIZE boundary anyway.
+    // This means that prefetch with be somewhat broken for files > 16TiB.
+    // This is what we use in our prefetch heuristic.
+    atomic64_t prefetch_section;
 
     // These two things which are really only concerning the transient files
     // are always kept around since we check that they're empty when

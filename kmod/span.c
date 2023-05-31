@@ -533,43 +533,78 @@ again:
     up_write(&enode->file.spans_lock);
 }
 
-struct eggsfs_fetch_block_sync {
-    atomic_t remaining;    // how many fetch requests we've got left
-    struct semaphore sema; // called when we're done with everything
-    atomic_t err;
-    u64 blocks_ids[EGGSFS_MAX_BLOCKS];
-    struct list_head blocks_pages[EGGSFS_MAX_BLOCKS];
-    u32 blocks_crcs[EGGSFS_MAX_BLOCKS];
-    atomic_t refcount;
+struct eggsfs_fetch_stripe_state {
+    struct semaphore sema; // used to wait on remaining = 0. could be done faster with a wait_queue, but don't want to worry about smb subtleties.
+    s64 stripe_seqno;      // used to release the stripe when we're done with it
+    struct eggsfs_block_socket* socks[EGGSFS_MAX_DATA];
+    struct eggsfs_block_span* span; // what we're working on (must not be put until the end of the fetch)
+    struct list_head blocks_pages[EGGSFS_MAX_DATA]; // these will be filled in by the fetching
+    u32 block_crcs[EGGSFS_MAX_DATA];
+    atomic_t remaining;    // how many block fetch requests are still ongoing
+    atomic_t refcount;    // to garbage collect the state
+    atomic_t err;         // the result of the stripe fetching
+    u8 stripe;            // which stripe we're into
+    u8 prefetching;       // wether we're prefetching (if we are we'll have to dispose of the span ourselves)
 };
 
-static void eggsfs_put_fetch_block_sync(struct eggsfs_fetch_block_sync* st) {
-    if (atomic_dec_return(&st->refcount) == 0) {
-        put_pages_list(st->blocks_pages);
+static void eggsfs_put_fetch_stripe(struct eggsfs_fetch_stripe_state* st) {
+    struct eggsfs_inode* enode = st->span->span.enode;
+
+    int refs = atomic_dec_return(&st->refcount);
+    if (refs == 0) { // we're the last ones here
+        trace_eggsfs_fetch_stripe(enode->inode.i_ino, st->span->span.start, st->stripe, st->prefetching, EGGSFS_FETCH_STRIPE_FREE, atomic_read(&st->err));
+        struct eggsfs_block_span* span = st->span;
+        int D = eggsfs_data_blocks(span->parity);
+        int i;
+        for (i = 0; i < D; i++) {
+            if (st->socks[i]) {
+                eggsfs_put_fetch_block_socket(st->socks[i]);
+            }
+        }
+        for (i = 0; i < D; i++) {
+            put_pages_list(&st->blocks_pages[i]);
+        }
+        if (st->prefetching) {
+            smp_mb__before_atomic();
+            atomic_dec_return(&enode->file.prefetches);
+            wake_up_all(&enode->file.prefetches_wq);
+        }
         kfree(st);
     }
 }
 
-static void eggsfs_fetch_block_sync_complete(struct eggsfs_fetch_complete* complete, void* data) {
+static void eggsfs_fetch_stripe_block_done(struct eggsfs_fetch_block_complete* complete, void* data) {
     eggsfs_debug_print("block complete %016llx", complete->block_id);
-    struct eggsfs_fetch_block_sync* st = (struct eggsfs_fetch_block_sync*)data;
+    struct eggsfs_fetch_stripe_state* st = (struct eggsfs_fetch_stripe_state*)data;
+    struct eggsfs_block_span* span = st->span;
+    struct eggsfs_inode* enode = span->span.enode;
+    int D = eggsfs_data_blocks(span->parity);
 
     int i;
-    for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
-        if (st->blocks_ids[i] == complete->block_id) { break; }
+    for (i = 0; i < D; i++) {
+        if (st->span->blocks[i].id == complete->block_id) { break; }
     }
     eggsfs_debug_print("block ix %d", i);
-    BUG_ON(i == EGGSFS_MAX_BLOCKS);
+    BUG_ON(i == D);
+
+    trace_eggsfs_fetch_stripe(
+        enode->inode.i_ino,
+        st->span->span.start,
+        st->stripe,
+        st->prefetching,
+        EGGSFS_FETCH_STRIPE_BLOCK_DONE,
+        complete->err
+    );
 
     // It failed, mark it
     if (complete->err) {
-        eggsfs_debug_print("block %016llx ix %d failed with %d", complete->block_id, complete->err, i);
+        eggsfs_debug_print("block %016llx ix %d failed with %d", complete->block_id, i, complete->err);
         atomic_cmpxchg(&st->err, 0, complete->err);
         goto out;
     }
 
     // It succeeded, set crc and grab all the pages
-    st->blocks_crcs[i] = complete->crc;
+    st->block_crcs[i] = complete->crc;
     struct page* page;
     struct page* tmp;
     list_for_each_entry_safe(page, tmp, &complete->pages, lru) {
@@ -581,85 +616,100 @@ static void eggsfs_fetch_block_sync_complete(struct eggsfs_fetch_complete* compl
 out:
     remaining = atomic_dec_return(&st->remaining);
     eggsfs_debug_print("remaining=%d", remaining);
-    if (remaining == 0) { // we're the last one to finish
+    if (remaining == 0) {
+        // we're the last one to finish, we need to store the pages in the span
+        u32 start_page = (span->cell_size/PAGE_SIZE)*D*st->stripe;
+        u32 end_page = (span->cell_size/PAGE_SIZE)*D*((int)st->stripe + 1);
+        u32 curr_page = start_page;
+        for (i = 0; i < D; i++) {
+            struct page* page;
+            struct page* tmp;
+            list_for_each_entry_safe(page, tmp, &st->blocks_pages[i], lru) {
+                list_del(&page->lru);
+                // eggsfs_info_print("storing page for span %p at %u", span, curr_page);
+                struct page* old_page = xa_store(&span->pages, curr_page, page, GFP_KERNEL);
+                if (IS_ERR(old_page)) {
+                    atomic_set(&st->err, PTR_ERR(old_page));
+                    eggsfs_debug_print("xa_store failed: %ld", PTR_ERR(old_page));
+                    put_page(page); // we removed it from the list
+                    goto out_page_put_err;
+                }
+                BUG_ON(old_page != NULL); // the latch protects against this
+                atomic64_inc(&eggsfs_stat_cached_span_pages);
+                curr_page++;
+            }
+        }
+        BUG_ON(curr_page != end_page);
+out_page_put_err:
+        // release the stripe latch, we're done writing
+        eggsfs_latch_release(&span->stripe_latches[st->stripe], st->stripe_seqno);
+        // release the span too, if we were prefetching
+        if (st->prefetching) {
+            eggsfs_span_put(&st->span->span, false);
+        }
+        // and wake up waiters, if any
         up(&st->sema);
+        trace_eggsfs_fetch_stripe(
+            enode->inode.i_ino,
+            st->span->span.start,
+            st->stripe,
+            st->prefetching,
+            EGGSFS_FETCH_STRIPE_END,
+            atomic_read(&st->err)
+        );
     }
-    eggsfs_put_fetch_block_sync(st);
+    eggsfs_put_fetch_stripe(st);
 }
 
-struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix) {
-    trace_eggsfs_get_span_page_enter(span->span.enode->inode.i_ino, span->span.start, page_ix*PAGE_SIZE);
+static struct eggsfs_fetch_stripe_state* eggsfs_start_fetch_stripe(
+    struct eggsfs_block_span* span, u8 stripe, s64 stripe_seqno, bool prefetching
+) {
+    int err;
+    struct eggsfs_inode* enode = span->span.enode;
 
-#define GET_PAGE_EXIT(p) do { \
-        trace_eggsfs_get_span_page_exit(span->span.enode->inode.i_ino, span->span.start, page_ix*PAGE_SIZE, IS_ERR(p) ? PTR_ERR(p) : 0); \
-        return p; \
-    } while(0) 
+    struct eggsfs_fetch_stripe_state* st = kmalloc(sizeof(struct eggsfs_fetch_stripe_state), GFP_KERNEL);
+    if (!st) { return ERR_PTR(-ENOMEM); }
 
-    // this should be guaranteed by the caller but we rely on it below, so let's check
-    if (span->cell_size%PAGE_SIZE != 0) {
-        eggsfs_warn_print("cell_size=%u, PAGE_SIZE=%lu, span->cell_size%%PAGE_SIZE=%lu", span->cell_size, PAGE_SIZE, span->cell_size%PAGE_SIZE);
-        GET_PAGE_EXIT(ERR_PTR(-EIO));
-    }
+    trace_eggsfs_fetch_stripe(enode->inode.i_ino, span->span.start, stripe, prefetching, EGGSFS_FETCH_STRIPE_START, 0);
 
-    struct page* page;
-    int err = 0;
-
-again:
-    page = xa_load(&span->pages, page_ix);
-    if (page != NULL) { GET_PAGE_EXIT(page); }
-
-    // We need to load the stripe
     int D = eggsfs_data_blocks(span->parity);
-    u32 span_offset = page_ix * PAGE_SIZE;
-    u32 stripe = span_offset / (span->cell_size*D);
-    // TODO better error?
-    if (stripe > span->stripes) {
-        eggsfs_warn_print("span_offset=%u, stripe=%u, stripes=%u", span_offset, stripe, span->stripes);
-        GET_PAGE_EXIT(ERR_PTR(-EIO));
-    }
 
-    int seqno;
-    if (!eggsfs_latch_try_acquire(&span->stripe_latches[stripe], seqno)) {
-        int err = eggsfs_latch_wait_killable(&span->stripe_latches[stripe], seqno);
-        if (err) { GET_PAGE_EXIT(ERR_PTR(err)); }
-        goto again;
-    }
-
-    struct eggsfs_block_socket* socks[EGGSFS_MAX_DATA];
-    memset(socks, 0, sizeof(socks));
-
-    struct eggsfs_fetch_block_sync* st = kmalloc(sizeof(struct eggsfs_fetch_block_sync), GFP_KERNEL);
-    if (!st) {
-        err = -ENOMEM;
-        goto out_err;
-    }
-    atomic_set(&st->remaining, D);
     sema_init(&st->sema, 0);
-    atomic_set(&st->err, 0);
-    memset(&st->blocks_ids[0], 0, sizeof(st->blocks_ids));
-    atomic_set(&st->refcount, 1); // 1 = only us
-
-    // get block services sockets
+    st->stripe_seqno = stripe_seqno;
+    st->span = span;
     int i;
     for (i = 0; i < D; i++) {
-        socks[i] = eggsfs_get_fetch_block_socket(&span->blocks[i].bs);
-        if (IS_ERR(socks[i])) {
-            err = PTR_ERR(socks[i]);
-            socks[i] = NULL;
+        INIT_LIST_HEAD(&st->blocks_pages[i]);
+    }
+    atomic_set(&st->remaining, D);
+    atomic_set(&st->refcount, 1); // the caller
+    atomic_set(&st->err, 0);
+    st->stripe = stripe;
+    st->prefetching = prefetching;
+    smp_mb__before_atomic();
+    if (st->prefetching) {
+        atomic_inc_return(&enode->file.prefetches);
+    }
+    
+    // get block service sockets
+    memset(&st->socks[0], 0, sizeof(st->socks));
+    for (i = 0; i < D; i++) {
+        st->socks[i] = eggsfs_get_fetch_block_socket(&span->blocks[i].bs);
+        if (IS_ERR(st->socks[i])) {
+            err = PTR_ERR(st->socks[i]);
+            st->socks[i] = NULL; // important, so we won't try to free it
             goto out_err;
         }
     }
 
-    // fetch them all at the right offset
+    // start fetching blocks
     u32 block_offset = stripe * span->cell_size;
     for (i = 0; i < D; i++) {
         struct eggsfs_block* block = &span->blocks[i];
-        st->blocks_ids[i] = block->id;
-        INIT_LIST_HEAD(&st->blocks_pages[i]);
         atomic_inc(&st->refcount);
         struct eggsfs_fetch_block_request* req = eggsfs_fetch_block(
-            socks[i],
-            &eggsfs_fetch_block_sync_complete,
+            st->socks[i],
+            &eggsfs_fetch_stripe_block_done,
             (void*)st,
             block->bs.id, block->id, block_offset, span->cell_size
         );
@@ -670,73 +720,215 @@ again:
         }
     }
 
-    // Wait for all the block requests
-    err = down_killable(&st->sema);
-    if (err) { goto out_err; }
+    return st;
 
-    // Check CRC
-    u32 crc = 0;
-    for (i = 0; i < D; i++) {
-        crc = eggsfs_crc32c_append(crc, st->blocks_crcs[i], span->cell_size);
-    }
-    if (crc != span->stripes_crc[stripe]) {
-        err = -EIO;
-        eggsfs_warn_print("crc check failed failed, expected %08x, got %08x", span->stripes_crc[stripe], crc);
-        goto out_err;
-    }
+out_err:
+    trace_eggsfs_fetch_stripe(enode->inode.i_ino, span->span.start, stripe, prefetching, EGGSFS_FETCH_STRIPE_END, err);
+    eggsfs_put_fetch_stripe(st); // can't free, there might be queued things already using this
+    return ERR_PTR(err);
+}
 
-    // Store all the pages into the xarray
-    u32 start_page = (span->cell_size/PAGE_SIZE)*D*stripe;
-    u32 end_page = (span->cell_size/PAGE_SIZE)*D*((int)stripe + 1);
-    u32 curr_page = start_page;
-    for (i = 0; i < D; i++) {
-        struct page* page;
-        struct page* tmp;
-        list_for_each_entry_safe(page, tmp, &st->blocks_pages[i], lru) {
-            list_del(&page->lru);
-            struct page* old_page = xa_store(&span->pages, curr_page, page, GFP_KERNEL);
-            if (IS_ERR(old_page)) {
-                err = PTR_ERR(old_page);
-                eggsfs_debug_print("xa_store failed: %d", err);
-                put_page(page); // we removed it from the list
-                goto out_err;
+static void eggsfs_prefetch(struct eggsfs_block_span* block_span, u64 off) {
+    struct eggsfs_inode* enode = block_span->span.enode;
+
+    if (off < block_span->span.start || off >= block_span->span.end) {
+        // Another span, we need to load it. We give up if we can't at any occurrence.
+        int err = down_read_killable(&enode->file.spans_lock);
+        if (err) { return; }
+        struct eggsfs_span* span = eggsfs_lookup_span(&enode->file.spans, off);
+        if (likely(span)) {
+            if (unlikely(!eggsfs_span_acquire(span))) {
+                up_read(&enode->file.spans_lock);
+                return;
             }
-            BUG_ON(old_page != NULL); // the latch protects against this
-            atomic64_inc(&eggsfs_stat_cached_span_pages);
-            curr_page++;
+        } else {
+            up_read(&enode->file.spans_lock);
+            return;
         }
-    }
-    BUG_ON(curr_page != end_page);
-
-    page = xa_load(&span->pages, page_ix);
-    BUG_ON(page == NULL);
-
-out:
-    // Unlock and free everything
-    eggsfs_latch_release(&span->stripe_latches[stripe], seqno);
-    eggsfs_put_fetch_block_sync(st);
-    for (i = 0; i < D; i++) {
-        if (socks[i] == NULL) { continue; }
-        eggsfs_put_fetch_block_socket(socks[i]);
+        up_read(&enode->file.spans_lock);
+        if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+            return; // nothing to do, it's an inline span
+        }
+        block_span = EGGSFS_BLOCK_SPAN(span);
+    } else if (unlikely(!eggsfs_span_acquire(&block_span->span))) {
+        return; // it's being reclaimed, don't bother
     }
 
+    // At this point we've acquired the span. We now need to check if there's something to get
+
+    int D = eggsfs_data_blocks(block_span->parity);
+    u32 page_ix = (off - block_span->span.start)/PAGE_SIZE;
+    u32 span_offset = page_ix * PAGE_SIZE;
+    u32 stripe = span_offset / (block_span->cell_size*D);
+    if (stripe > block_span->stripes) {
+        eggsfs_warn_print("span_offset=%u, stripe=%u, stripes=%u", span_offset, stripe, block_span->stripes);
+        return;
+    }
+
+    struct page* page = xa_load(&block_span->pages, page_ix);
+    if (page != NULL) { // already there
+        goto out_span;
+    }
+
+    s64 seqno;
+    if (!eggsfs_latch_try_acquire(&block_span->stripe_latches[stripe], seqno)) { // somebody else is working on it
+        goto out_span;
+    }
+
+    page = xa_load(&block_span->pages, page_ix);
+    if (page != NULL) { // somebody got to it first
+        eggsfs_latch_release(&block_span->stripe_latches[stripe], seqno);
+        goto out_span;
+    }
+
+    // Finally start the work.
+    struct eggsfs_fetch_stripe_state* st = eggsfs_start_fetch_stripe(block_span, stripe, seqno, true);
+    if (IS_ERR(st)) {
+        eggsfs_latch_release(&block_span->stripe_latches[stripe], seqno);
+        eggsfs_debug_print("prefetch failed err=%ld", PTR_ERR(st));
+        return;
+    }
+
+    // We want the state to go once all the block fetches are done.
+    eggsfs_put_fetch_stripe(st);
+    return;
+
+out_span:
+    eggsfs_span_put(&block_span->span, false);
+}
+
+// Returns whether we're low on memory
+static bool eggsfs_reclaim_after_fetch_stripe(void) {
     // Reclaim pages if we went over the limit
     u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
     u64 free_pages = si_mem_available();
+    bool low_on_memory = false;
     if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_sync || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_sync) {
+        low_on_memory = true;
         // sync dropping, apply backpressure
         if (!mutex_lock_killable(&eggsfs_drop_spans_mu)) {
             eggsfs_drop_spans("sync");
             mutex_unlock(&eggsfs_drop_spans_mu);
         }
     } else if (pages*PAGE_SIZE > eggsfs_span_cache_max_size_async || free_pages*PAGE_SIZE < eggsfs_span_cache_min_avail_mem_async) {
+        low_on_memory = true;
         // don't bother submitting if another span dropper is running already
         if (!mutex_is_locked(&eggsfs_drop_spans_mu)) {
             // TODO Is it a good idea to do it on system_long_wq rather than eggsfs_wq? The freeing
             // job might face heavy contention, so maybe yes?
+            // On the other end, this might make it harder to know when it's safe to unload
+            // the module by making sure that there's no work left on the queue.
             queue_work(system_long_wq, &eggsfs_reclaim_spans_work);
         }
     }
+    return low_on_memory;
+}
+
+static void eggsfs_maybe_prefetch(struct eggsfs_block_span* span, bool low_on_memory, u64 stripe_start, u64 stripe_end) {
+    struct eggsfs_inode_file* file = &span->span.enode->file;
+    u64 prefetch_section = atomic64_read(&file->prefetch_section);
+    u32 prefetch_section_begin = prefetch_section & (uint32_t)(-1);
+    u32 prefetch_section_end = (prefetch_section>>32) & (uint32_t)(-1);
+    if (stripe_start > prefetch_section_begin && stripe_end < prefetch_section_end) {
+        // we're comfortably inside, nothing to do
+    } if (stripe_end < prefetch_section_begin || stripe_start > prefetch_section_end) {
+        // we're totally out of bounds, reset
+        prefetch_section_begin = stripe_start;
+        prefetch_section_end = stripe_end;
+    } else {
+        u64 off;
+        // there is some overlap, but we're pushing the boundary, prefetch the next or previous thing
+        if (stripe_end > prefetch_section_end) { // going rightwards
+            prefetch_section_end = stripe_end;
+            off = stripe_end;
+        } else { // going leftwards
+            prefetch_section_begin = stripe_start;
+            off = stripe_start-1;
+        }
+        u64 new_prefetch_section = prefetch_section_begin | ((u64)prefetch_section_end << 32);
+        if (likely(atomic64_cmpxchg(&file->prefetch_section, prefetch_section, new_prefetch_section) == prefetch_section)) {
+            eggsfs_prefetch(span, off);
+        }
+    }
+}
+
+struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix) {
+    trace_eggsfs_get_span_page_enter(span->span.enode->inode.i_ino, span->span.start, page_ix*PAGE_SIZE);
+
+    // We need to load the stripe
+    int D = eggsfs_data_blocks(span->parity);
+    u32 span_offset = page_ix * PAGE_SIZE;
+    u32 stripe = span_offset / (span->cell_size*D);
+    bool low_on_memory = false;
+    int err = 0;
+
+#define GET_PAGE_EXIT(p) do { \
+        int __err = IS_ERR(p) ? PTR_ERR(p) : 0; \
+        if (likely(__err == 0)) { \
+            eggsfs_maybe_prefetch(span, low_on_memory, span->span.start + stripe*(span->cell_size*D), span->span.start + (stripe+1)*(span->cell_size*D)); \
+        } \
+        trace_eggsfs_get_span_page_exit(span->span.enode->inode.i_ino, span->span.start, page_ix*PAGE_SIZE, __err); \
+        return p; \
+    } while(0) 
+
+    // TODO better error?
+    if (stripe > span->stripes) {
+        eggsfs_warn_print("span_offset=%u, stripe=%u, stripes=%u", span_offset, stripe, span->stripes);
+        GET_PAGE_EXIT(ERR_PTR(-EIO));
+    }
+
+    // this should be guaranteed by the caller but we rely on it below, so let's check
+    if (span->cell_size%PAGE_SIZE != 0) {
+        eggsfs_warn_print("cell_size=%u, PAGE_SIZE=%lu, span->cell_size%%PAGE_SIZE=%lu", span->cell_size, PAGE_SIZE, span->cell_size%PAGE_SIZE);
+        GET_PAGE_EXIT(ERR_PTR(-EIO));
+    }
+
+    struct page* page;
+
+again:
+    page = xa_load(&span->pages, page_ix);
+    if (page != NULL) { GET_PAGE_EXIT(page); }
+
+    s64 seqno;
+    if (!eggsfs_latch_try_acquire(&span->stripe_latches[stripe], seqno)) {
+        int err = eggsfs_latch_wait_killable(&span->stripe_latches[stripe], seqno);
+        if (err) { GET_PAGE_EXIT(ERR_PTR(err)); }
+        goto again;
+    }
+
+    page = xa_load(&span->pages, page_ix);
+    if (page != NULL) {
+        // somebody got to it first
+        eggsfs_latch_release(&span->stripe_latches[stripe], seqno);
+        GET_PAGE_EXIT(page);
+    }
+
+    struct eggsfs_fetch_stripe_state* st = NULL;
+    st = eggsfs_start_fetch_stripe(span, stripe, seqno, false);
+    if (IS_ERR(st)) {
+        err = PTR_ERR(st);
+        st = NULL;
+        goto out_err;
+    }
+
+    // Wait for all the block requests
+    err = down_killable(&st->sema);
+    if (err) { goto out_err; }
+
+    err = atomic_read(&st->err);
+    if (err) { goto out_err; }
+
+    // We're finally done
+    page = xa_load(&span->pages, page_ix);
+    // eggsfs_info_print("loaded page %p for span %p at %u", page, span, page_ix);
+    BUG_ON(page == NULL);
+
+out:
+    // Note that the latch was already released by the fetchers.
+    if (st != NULL) { eggsfs_put_fetch_stripe(st); }
+
+    // Reclaim if needed
+    low_on_memory = eggsfs_reclaim_after_fetch_stripe();
 
     GET_PAGE_EXIT(err == 0 ? page : ERR_PTR(err));
 

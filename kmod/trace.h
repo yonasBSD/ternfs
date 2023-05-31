@@ -554,6 +554,45 @@ TRACE_EVENT(eggsfs_get_span_page_exit,
     TP_printk("file_id=%016llx span_offset=%llu page_offset=%u err=%d", __entry->file_id, __entry->span_offset, __entry->page_offset, __entry->err)
 );
 
+#define EGGSFS_FETCH_STRIPE_START 0
+#define EGGSFS_FETCH_STRIPE_BLOCK_DONE 1
+#define EGGSFS_FETCH_STRIPE_END 2
+#define EGGSFS_FETCH_STRIPE_FREE 3
+
+TRACE_EVENT(eggsfs_fetch_stripe,
+    TP_PROTO(u64 file_id, u64 span_offset, u8 stripe, bool prefetching, u8 event, int err),
+    TP_ARGS(     file_id,     span_offset,    stripe,      prefetching,    event,     err),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(u64, span_offset)
+        __field(int, err)
+        __field(u8, stripe)
+        __field(bool, prefetching)
+        __field(u8, event)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->span_offset = span_offset;
+        __entry->stripe = stripe;
+        __entry->prefetching = prefetching;
+        __entry->event = event;
+        __entry->err = err;
+    ),
+    TP_printk(
+        "file_id=%016llx span_offset=%llu stripe=%u prefetching=%d event=%s err=%d",
+        __entry->file_id, __entry->span_offset, __entry->stripe, (int)__entry->prefetching,
+        __print_symbolic(
+            __entry->event,
+            { 0, "start" },
+            { 1, "block_done" },
+            { 2, "end" },
+            { 3, "free" }
+        ),
+        __entry->err
+    )
+);
+
 #endif /* _TRACE_EGGFS_H */
 
 #undef TRACE_INCLUDE_PATH

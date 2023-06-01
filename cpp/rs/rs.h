@@ -82,9 +82,9 @@ void rs_compute_parity(
 void rs_recover(
     struct rs* rs,
     uint64_t size,
-    const uint8_t* have_blocks, // [0, B)[D], sorted and distinct
+    uint32_t have_blocks,       // [0, B)[D], in bitmask (lowest bit = lowest index)
     const uint8_t** have,       // uint8_t[D][size]
-    uint8_t want_block,         // [0, B) and not in `have_blocks`
+    uint32_t want_block,        // bit set = block we want (in the future this might also be a mask, if we want to recover multiple at once)
     uint8_t* want               // uint8_t[size]
 );
 

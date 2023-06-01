@@ -60,13 +60,17 @@ int main() {
                     std::swap(allBlocks[i], allBlocks[i+1+ wyhash64(&rand)%(numData+numParity-1-i)]);
                 }
                 std::sort(allBlocks.begin(), allBlocks.begin()+numData);
+                uint32_t allBlocksBits = 0;
+                for (int i = 0; i < numData; i++) {
+                    allBlocksBits |= 1u << allBlocks[i];
+                }
                 std::vector<const uint8_t*> havePtrs(numData);
                 for (int i = 0; i < numData; i++) {
                     havePtrs[i] = &data[allBlocks[i]*blockSize];
                 }
                 uint8_t wantBlock = allBlocks[numData];
                 std::vector<uint8_t> recoveredBlock(blockSize);
-                rs_recover(rs, blockSize, &allBlocks[0], &havePtrs[0], wantBlock, &recoveredBlock[0]);
+                rs_recover(rs, blockSize, allBlocksBits, &havePtrs[0], 1u << wantBlock, &recoveredBlock[0]);
                 std::vector<uint8_t> expectedBlock(data.begin() + wantBlock*blockSize, data.begin() + (wantBlock+1)*blockSize);
                 ASSERT(expectedBlock == recoveredBlock);
             }

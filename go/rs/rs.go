@@ -163,5 +163,9 @@ func (r *Rs) RecoverInto(
 	for i := range blocks {
 		C.set_ptr(blocksPtrs, C.ulong(i), (*C.uchar)(&blocks[i][0]))
 	}
-	C.rs_recover(r.r, C.ulong(blockSize), (*C.uchar)(&haveBlocks[0]), blocksPtrs, C.uchar(wantBlock), (*C.uchar)(&block[0]))
+	var haveBlocksBit C.uint
+	for _, haveBlock := range haveBlocks {
+		haveBlocksBit |= C.uint(1) << haveBlock
+	}
+	C.rs_recover(r.r, C.ulong(blockSize), haveBlocksBit, blocksPtrs, C.uint(1)<<wantBlock, (*C.uchar)(&block[0]))
 }

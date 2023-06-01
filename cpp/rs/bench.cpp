@@ -52,16 +52,15 @@ int main(int argc, const char** argv) {
     printf("Compute (total memory touched): %0.2fGB/s\n", gbPerSecond);
 
     // just recover the last one
-    std::vector<uint8_t> haveBlocks(D);
+    uint32_t haveBlocks = 1u << D;
     for (int i = 0; i < D-1; i++) {
-        haveBlocks[i] = i;
+        haveBlocks |= 1u << i;
     }
-    haveBlocks[D-1] = D;
     dataBlocks[D-1] = &buf[D*blockSize];
-    rs_recover(r, blockSize, &haveBlocks[0], &dataBlocks[0], D-1, &buf[(D+1)*blockSize]);
+    rs_recover(r, blockSize, haveBlocks, &dataBlocks[0], 1u << (D-1), &buf[(D+1)*blockSize]);
     t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < iterations; i++) {
-        rs_recover(r, blockSize, &haveBlocks[0], &dataBlocks[0], D-1, &buf[(D+1)*blockSize]);
+        rs_recover(r, blockSize, haveBlocks, &dataBlocks[0], 1u << (D-1), &buf[(D+1)*blockSize]);
     }
     deltaSeconds = ((double)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count())/1e6;
     gbPerSecond = ((double)((D+1)*blockSize*iterations)/1e9) / deltaSeconds;

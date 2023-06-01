@@ -391,9 +391,9 @@ static void rs_delete_core(struct rs* r) {
 static void rs_recover_core(
     struct rs* r,
     u64 size,
-    const u8* have_blocks,
+    u32 have_blocks,
     const u8** have,
-    u8 want_block,
+    u32 want_block,
     u8* want,
     void (*recover_func)(int D, u64 size, const u8** have, u8* want, const u8* mat)
 ) {
@@ -405,27 +405,20 @@ static void rs_recover_core(
     u8* mat_2 = scratch + D*D;
     // Preliminary checks
     int i, j, d, b;
-    for (d = 0; d < D; d++) {
-        if (have_blocks[d] >= B) {
-            die("have_blocks[%d]=%d >= %d\n", d, have_blocks[d], B);
-        }
-        if (have_blocks[d] == want_block) {
-            die("have_blocks[%d]=%d == want_block=%d\n", d, have_blocks[d], want_block);
-        }
-        if (d > 0 && have_blocks[d] <= have_blocks[d-1]) {
-            die("have_blocks[%d]=%d <= have_blocks[%d-1]=%d\n", d, have_blocks[d], d, have_blocks[d-1]);
-        }
+    if ((have_blocks >> B) || (want_block >> B)) {
+        die("have_blocks=%08x or want_block=%08x out of bounds wrt B=%d\n", have_blocks, want_block, B);
+    }
+    if (have_blocks & want_block) {
+        die("have_blocks=%08x contains want_block=%08x\n", have_blocks, want_block);
     }
     // below in the dimensionality annotation we paper over transposes
     // [DxD] matrix going from the data blocks to the blocks we currently have
     u8* data_to_have = mat_1;
-    int have_cursor;
-    for (b = 0, have_cursor = 0; b < B; b++) {
-        if (have_cursor >= D || have_blocks[have_cursor] != b) {
-            continue;
-        }
-        memcpy(data_to_have + have_cursor*D, r->matrix + b*D, D);
-        have_cursor++;
+    u32 have_cursor;
+    for (b = 0, d = 0, have_cursor = have_blocks; b < B; b++, have_cursor >>= 1) {
+        if (!(have_cursor & 1u)) { continue; }
+        memcpy(data_to_have + d*D, r->matrix + b*D, D);
+        d++;
     }
     // [DxD] matrix going from what we have to the original data blocks
     u8* have_to_data = mat_2;
@@ -434,7 +427,7 @@ static void rs_recover_core(
     }
     data_to_have = NULL;
     // [Dx1] matrix going from the data blocks to the block we want
-    u8* data_to_want = &r->matrix[want_block*D];
+    u8* data_to_want = &r->matrix[__builtin_ctz(want_block)*D];
     // have_to_want = data_to_want * have_to_data
     // [Dx1] matrix going from `blocks` to the block we're into
     u8* have_to_want = mat_1;

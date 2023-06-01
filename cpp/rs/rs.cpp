@@ -189,9 +189,9 @@ static void (*rs_recover_matmul_funcs[16])(uint64_t size, const uint8_t** have, 
 void rs_recover(
     struct rs* r,
     uint64_t size,
-    const uint8_t* have_blocks,
+    uint32_t have_blocks,
     const uint8_t** have,
-    uint8_t want_block,
+    uint32_t want_block,
     uint8_t* want
 ) {
     rs_recover_core(

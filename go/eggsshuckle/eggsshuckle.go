@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	_ "embed"
 	"flag"
 	"fmt"
@@ -23,6 +24,8 @@ import (
 	"xtx/eggsfs/msgs"
 
 	"xtx/ecninfra/monitor"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type namedTemplate struct {
@@ -57,28 +60,121 @@ type cdcState struct {
 }
 
 type state struct {
-	mutex         sync.RWMutex
-	blockServices map[msgs.BlockServiceId]msgs.BlockServiceInfo
-	shards        [256]msgs.ShardInfo
-	cdc           cdcState
+	// we need the mutex since sqlite doesn't like concurrent writes
+	mutex sync.Mutex
+	db    *sql.DB
 }
 
-func newState() *state {
+func (s *state) cdc() (*cdcState, error) {
+	var cdc cdcState
+	rows, err := s.db.Query("SELECT * FROM cdc")
+	if err != nil {
+		return nil, fmt.Errorf("error selecting cdc: %s", err)
+	}
+	defer rows.Close()
+
+	i := 0
+	for rows.Next() {
+		if i > 0 {
+			return nil, fmt.Errorf("more than 1 cdc row returned from db")
+		}
+		var id int
+		var ip []byte
+		err = rows.Scan(&id, &ip, &cdc.port, &cdc.queuedTxns, &cdc.currentTxnKind, &cdc.currentTxnStep, &cdc.lastSeen)
+		if id != 0 {
+			return nil, fmt.Errorf("unexpected id %v for cdc (expected 0)", id)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error decoding blockService row: %s", err)
+		}
+		if len(cdc.ip) != len(ip) {
+			return nil, fmt.Errorf("incorrect cdc ip read from the db: %+v", ip)
+		}
+		copy(cdc.ip[:], ip[:len(cdc.ip)])
+		i += 1
+	}
+	return &cdc, nil
+}
+
+func (s *state) shards() (*[256]msgs.ShardInfo, error) {
+	var ret [256]msgs.ShardInfo
+
+	rows, err := s.db.Query("SELECT * FROM shards")
+	if err != nil {
+		return nil, fmt.Errorf("error selecting blockServices: %s", err)
+	}
+	defer rows.Close()
+
+	i := 0
+	for rows.Next() {
+		if i > 255 {
+			return nil, fmt.Errorf("the number of shards returned exceeded 256")
+		}
+
+		si := msgs.ShardInfo{}
+		var ip []byte
+		var id int
+		err = rows.Scan(&id, &ip, &si.Port, &si.LastSeen)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding shard row: %s", err)
+		}
+		if len(si.Ip) != len(ip) {
+			return nil, fmt.Errorf("incorrect ip for shard %d read from the db: %+v", id, ip)
+		}
+		copy(si.Ip[:], ip[:len(si.Ip)])
+		ret[id] = si
+		i += 1
+	}
+
+	return &ret, nil
+}
+
+func (s *state) blockServices() (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
+	rows, err := s.db.Query("SELECT * FROM block_services")
+	if err != nil {
+		return nil, fmt.Errorf("error selecting blockServices: %s", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		bs := msgs.BlockServiceInfo{}
+		var ip1, ip2, fd, sk []byte
+		err = rows.Scan(&bs.Id, &ip1, &bs.Port1, &ip2, &bs.Port2, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding blockService row: %s", err)
+		}
+
+		if len(bs.Ip1) != len(ip1) || len(bs.Ip2) != len(ip2) || len(bs.FailureDomain) != len(fd) || len(bs.SecretKey) != len(sk) {
+			return nil, fmt.Errorf("incorrect data from db for shard %d: ip1:%+v, ip2:%+v, fd:%+v, sk:%+v", bs.Id, ip1, ip2, fd, sk)
+		}
+		copy(bs.Ip1[:], ip1)
+		copy(bs.Ip2[:], ip2)
+		copy(bs.FailureDomain[:], fd)
+		copy(bs.SecretKey[:], sk)
+		ret[bs.Id] = bs
+	}
+	return ret, nil
+}
+
+func newState(db *sql.DB) *state {
 	return &state{
-		mutex:         sync.RWMutex{},
-		blockServices: make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		db:    db,
+		mutex: sync.Mutex{},
 	}
 }
 
 func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
 	resp := msgs.AllBlockServicesResp{}
-	resp.BlockServices = make([]msgs.BlockServiceInfo, len(s.blockServices))
+	blockServices, err := s.blockServices()
+	if err != nil {
+		ll.Error("error reading block services: %s", err)
+		return nil
+	}
 
+	resp.BlockServices = make([]msgs.BlockServiceInfo, len(blockServices))
 	i := 0
-	for _, bs := range s.blockServices {
+	for _, bs := range blockServices {
 		resp.BlockServices[i] = bs
 		i++
 	}
@@ -87,25 +183,78 @@ func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.
 }
 
 func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
+	if len(req.BlockServices) == 0 {
+		return &msgs.RegisterBlockServicesResp{}
+	}
+
+	now := msgs.Now()
+	var fmtBuilder strings.Builder
+	fmtBuilder.Write([]byte("REPLACE INTO block_services (id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen) VALUES "))
+	fmtValues := []byte("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	values := make([]any, len(req.BlockServices)*14) // 14: number of columns
+	values = values[:0]
+	for i, bs := range req.BlockServices {
+		values = append(
+			values,
+			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
+			bs.StorageClass, bs.FailureDomain[:],
+			bs.SecretKey[:], bs.Flags,
+			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
+			bs.Path, now,
+		)
+		if i > 0 {
+			fmtBuilder.Write([]byte(", "))
+		}
+		fmtBuilder.Write(fmtValues)
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	now := msgs.Now()
-	for _, bs := range req.BlockServices {
-		bs.LastSeen = now
-		s.blockServices[bs.Id] = bs
+	_, err := s.db.Exec(fmtBuilder.String(), values...)
+
+	if err != nil {
+		ll.Error("error registering block services: %s", err)
+		return nil
 	}
 
 	return &msgs.RegisterBlockServicesResp{}
 }
 
+func handleSetBlockServiceFlags(ll *lib.Logger, s *state, w io.Writer, req *msgs.SetBlockServiceFlagsReq) *msgs.SetBlockServiceFlagsResp {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	n := sql.Named
+	res, err := s.db.Exec(
+		"UPDATE block_services set flags = (flags & ~:mask) | (:flags & :mask) WHERE id = :id",
+		n("flags", req.Flags), n("mask", req.FlagsMask), n("id", req.Id),
+	)
+	if err != nil {
+		ll.Error("error settings flags for blockservice %d: %s", req.Id, err)
+		return nil
+	}
+	nrows, err := res.RowsAffected()
+	if err != nil {
+		ll.Error("error fetching the number of affected rows when setting flags for %d: %s", req.Id, err)
+		return nil
+	}
+	if nrows != 1 {
+		ll.Error("unexpected number of rows affected when setting flags for %d, got:%d, want:1", req.Id, nrows)
+		return nil
+	}
+	return &msgs.SetBlockServiceFlagsResp{}
+}
+
 func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
 	resp := msgs.ShardsResp{}
-	resp.Shards = s.shards[:]
 
+	shards, err := s.shards()
+	if err != nil {
+		ll.Error("error reading shards: %s", err)
+		return nil
+	}
+
+	resp.Shards = shards[:]
 	return &resp
 }
 
@@ -113,20 +262,31 @@ func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.Regist
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.shards[req.Id].Ip = req.Info.Ip
-	s.shards[req.Id].Port = req.Info.Port
-	s.shards[req.Id].LastSeen = msgs.Now()
+	n := sql.Named
+	_, err := s.db.Exec(
+		"REPLACE INTO shards(id, ip, port, last_seen) VALUES (:id, :ip, :port, :last_seen)",
+		n("id", req.Id), n("ip", req.Info.Ip[:]), n("port", req.Info.Port), n("last_seen", msgs.Now()),
+	)
+	if err != nil {
+		ll.Error("error registering shard %d: %s", err)
+		return nil
+	}
 
 	return &msgs.RegisterShardResp{}
 }
 
 func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	resp := msgs.CdcResp{}
-	resp.Ip = s.cdc.ip
-	resp.Port = s.cdc.port
+	cdc, err := s.cdc()
+	if err != nil {
+		log.Error("error reading cdc: %s", err)
+		return nil
+	}
+	resp.Ip = cdc.ip
+	resp.Port = cdc.port
 
 	return &resp
 }
@@ -135,31 +295,37 @@ func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.Regi
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.cdc.ip = req.Ip
-	s.cdc.port = req.Port
-	s.cdc.currentTxnKind = req.CurrentTransactionKind
-	s.cdc.currentTxnStep = req.CurrentTransactionStep
-	s.cdc.queuedTxns = req.QueuedTransactions
-	s.cdc.lastSeen = msgs.Now()
+	n := sql.Named
+	_, err := s.db.Exec(
+		"REPLACE INTO cdc(id, ip, port, queued_txns, current_txn_kind, current_txn_step, last_seen) VALUES (0, :ip, :port, :queued_txns, :current_txn_kind, :current_txn_step, :last_seen)",
+		n("ip", req.Ip[:]), n("port", req.Port),
+		n("queued_txns", req.QueuedTransactions), n("current_txn_kind", req.CurrentTransactionKind), n("current_txn_step", req.CurrentTransactionStep),
+		n("last_seen", msgs.Now()),
+	)
+	if err != nil {
+		log.Error("error registering cdc: %s", err)
+		return nil
+	}
 
 	return &msgs.RegisterCdcResp{}
 }
 
 func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) *msgs.InfoResp {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
 	resp := msgs.InfoResp{}
-	failureDomains := make(map[[16]byte]struct{})
 
-	for _, bs := range s.blockServices {
-		resp.Capacity += bs.CapacityBytes
-		resp.NumBlockServices++
-		resp.Available += bs.AvailableBytes
-		resp.Blocks += bs.Blocks
-		failureDomains[bs.FailureDomain] = struct{}{}
+	// TODO remove decommissioned block services, probably.
+	rows, err := s.db.Query(
+		"SELECT count(*), count(distinct failure_domain), sum(capacity_bytes), sum(available_bytes), sum(blocks) FROM block_services",
+	)
+	if err != nil {
+		log.Error("error getting info: %s", err)
+		return nil
 	}
-	resp.NumFailureDomains = uint32(len(failureDomains))
+	defer rows.Close()
+	if err := rows.Scan(&resp.NumBlockServices, &resp.NumFailureDomains, &resp.Capacity, &resp.Available, &resp.Blocks); err != nil {
+		log.Error("error scanning info: %s", err)
+		return nil
+	}
 
 	return &resp
 }
@@ -183,6 +349,8 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 		switch whichReq := req.(type) {
 		case *msgs.RegisterBlockServicesReq:
 			resp = handleRegisterBlockServices(log, s, conn, whichReq)
+		case *msgs.SetBlockServiceFlagsReq:
+			resp = handleSetBlockServiceFlags(log, s, conn, whichReq)
 		case *msgs.ShardsReq:
 			resp = handleShards(log, s, conn, whichReq)
 		case *msgs.RegisterShardReq:
@@ -198,6 +366,12 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 		default:
 			log.RaiseAlert(fmt.Errorf("bad req type %T", req))
 		}
+
+		if resp == nil {
+			log.RaiseAlert(fmt.Errorf("error processing request %+v", req))
+			return
+		}
+
 		log.Debug("sending back response %T", resp)
 		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
 			log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
@@ -286,7 +460,7 @@ func handleWithRecover(
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(*statusPtr)
 	if written, err := io.CopyN(w, content, *sizePtr); err != nil {
-		log.RaiseAlert(fmt.Errorf("Could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+		log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
 	}
 }
 
@@ -319,6 +493,7 @@ type indexBlockService struct {
 	Addr1          string
 	Addr2          string
 	StorageClass   msgs.StorageClass
+	Flags          string
 	FailureDomain  string
 	CapacityBytes  string
 	AvailableBytes string
@@ -422,32 +597,29 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			state.mutex.RLock()
-			defer state.mutex.RUnlock()
+			blockServices, err := state.blockServices()
+			if err != nil {
+				ll.Error("error reading block services: %s", err)
+				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
+			}
 
 			data := indexData{
-				NumBlockServices: len(state.blockServices),
+				NumBlockServices: len(blockServices),
 			}
 			now := msgs.Now()
 			formatLastSeen := func(t msgs.EggsTime) string {
 				return formatNanos(uint64(now) - uint64(t))
 			}
-			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(state.cdc.ip[:]), state.cdc.port)
-			data.CDCLastSeen = formatLastSeen(state.cdc.lastSeen)
-			data.CDCQueuedTransactions = state.cdc.queuedTxns
-			if state.cdc.currentTxnKind != 0 {
-				data.CDCCurrentTransactionKind = state.cdc.currentTxnKind.String()
-				data.CDCCurrentTransactionStep = fmt.Sprintf("%v", state.cdc.currentTxnStep)
-			}
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
 			failureDomainsBytes := make(map[string]struct{})
-			for _, bs := range state.blockServices {
+			for _, bs := range blockServices {
 				data.BlockServices = append(data.BlockServices, indexBlockService{
 					Id:             bs.Id,
 					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port1),
 					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
 					StorageClass:   bs.StorageClass,
+					Flags:          bs.Flags.String(),
 					FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
 					CapacityBytes:  formatSize(bs.CapacityBytes),
 					AvailableBytes: formatSize(bs.AvailableBytes),
@@ -477,12 +649,32 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 					return a.Id < b.Id
 				},
 			)
-			for _, shard := range state.shards {
+
+			shards, err := state.shards()
+			if err != nil {
+				ll.Error("error reading shards: %s", err)
+				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading shards: %s", err))
+			}
+			for _, shard := range shards {
 				data.ShardsAddrs = append(data.ShardsAddrs, indexShard{
 					Addr:     fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port),
 					LastSeen: formatLastSeen(shard.LastSeen),
 				})
 			}
+
+			cdc, err := state.cdc()
+			if err != nil {
+				ll.Error("error reading cdc: %s", err)
+				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
+			}
+			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(cdc.ip[:]), cdc.port)
+			data.CDCLastSeen = formatLastSeen(cdc.lastSeen)
+			data.CDCQueuedTransactions = cdc.queuedTxns
+			if cdc.currentTxnKind != 0 {
+				data.CDCCurrentTransactionKind = cdc.currentTxnKind.String()
+				data.CDCCurrentTransactionStep = fmt.Sprintf("%v", cdc.currentTxnStep)
+			}
+
 			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
 			data.TotalCapacity = formatSize(totalAvailableBytes)
 			data.NumFailureDomains = len(failureDomainsBytes)
@@ -550,22 +742,6 @@ type directoryEdge struct {
 	Locked       bool
 }
 
-type spanPolicy struct {
-	MaxSize      string
-	StorageClass string
-	Parity       string
-}
-
-type snapshotPolicy struct {
-	DeleteAfterTime     string
-	DeleteAfterVersions string
-}
-
-type sizePolicy struct {
-	MaxSize string
-	Body    string
-}
-
 type directoryInfoEntry struct {
 	Tag           string
 	Body          string
@@ -582,21 +758,28 @@ type directoryData struct {
 	Info         []directoryInfoEntry
 }
 
-func newClient(log *lib.Logger, state *state) *lib.Client {
-	state.mutex.RLock()
-	defer state.mutex.RUnlock()
-
+func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
 	var shardIps [256][4]byte
 	var shardPorts [256]uint16
-	for i, si := range state.shards {
+
+	shards, err := state.shards()
+	if err != nil {
+		return nil, fmt.Errorf("error reading shards: %s", err)
+	}
+	cdc, err := state.cdc()
+	if err != nil {
+		return nil, fmt.Errorf("error reading cdc: %s", err)
+	}
+
+	for i, si := range shards {
 		shardIps[i] = si.Ip
 		shardPorts[i] = si.Port
 	}
-	client, err := lib.NewClientDirect(log, nil, nil, nil, state.cdc.ip, state.cdc.port, &shardIps, &shardPorts)
+	client, err := lib.NewClientDirect(log, nil, nil, nil, cdc.ip, cdc.port, &shardIps, &shardPorts)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error creating client: %s", err)
 	}
-	return client
+	return client, nil
 }
 
 func normalizePath(path string) string {
@@ -689,7 +872,10 @@ func handleInode(
 			if id == msgs.ROOT_DIR_INODE_ID && path != "/" && path != "" {
 				return errorPage(http.StatusBadRequest, "bad root inode id")
 			}
-			client := newClient(log, state)
+			client, err := newClient(log, state)
+			if err != nil {
+				panic(err)
+			}
 			if id == msgs.NULL_INODE_ID {
 				mbId := lookup(log, client, path)
 				if mbId == nil {
@@ -895,18 +1081,24 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 			var blockService msgs.BlockService
 			var conn *net.TCPConn
 			{
-				st.mutex.RLock()
-				blockServiceInfo, found := st.blockServices[blockServiceId]
-				st.mutex.RUnlock()
-				if !found {
+				rows, err := st.db.Query("SELECT ip1, port1, ip2, port2, flags FROM block_services WHERE id = ?", blockServiceId)
+				if err != nil {
+					log.Error("Error reading block service: %s", err)
+					return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Error reading block service: %s", err)))
+				}
+				defer rows.Close()
+
+				if !rows.Next() {
 					return sendPage(errorPage(http.StatusNotFound, fmt.Sprintf("Unknown block service id %v", blockServiceId)))
 				}
-				blockService.Id = blockServiceInfo.Id
-				blockService.Ip1 = blockServiceInfo.Ip1
-				blockService.Port1 = blockServiceInfo.Port1
-				blockService.Ip2 = blockServiceInfo.Ip2
-				blockService.Port2 = blockServiceInfo.Port2
-				var err error
+				var ip1, ip2 []byte
+				if err := rows.Scan(&ip1, &blockService.Port1, &ip2, &blockService.Port2, &blockService.Flags); err != nil {
+					return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Error reading block service: %s", err)))
+				}
+				blockService.Id = blockServiceId
+				copy(blockService.Ip1[:], ip1[:])
+				copy(blockService.Ip2[:], ip2[:])
+
 				conn, err = lib.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
@@ -950,7 +1142,10 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 				mimeType = "application/x-binary"
 			}
 
-			client := newClient(log, st)
+			client, err := newClient(log, st)
+			if err != nil {
+				panic(err)
+			}
 
 			statResp := msgs.StatFileResp{}
 			err = client.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &statResp)
@@ -1043,6 +1238,7 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
+	dbFile := flag.String("db-file", "", "file path of the sqlite database file")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -1091,6 +1287,56 @@ func main() {
 		troll.Connect()
 	}
 
+	if len(*dbFile) == 0 {
+		log.Fatalf("db-file flag is required")
+	}
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", *dbFile))
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
+		id INT NOT NULL PRIMARY KEY,
+		ip BLOB,
+		port INT,
+		queued_txns INT,
+		current_txn_kind INT,
+		current_txn_step INT,
+		last_seen INT
+	)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards(
+		id INT NOT NULL PRIMARY KEY,
+		ip BLOB,
+		port INT,
+		last_seen INT
+	)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
+		id INT NOT NULL PRIMARY KEY,
+		ip1 BLOB NOT NULL,
+		port1 INT NOT NULL,
+		ip2 BLOB NOT NULL,
+		port2 INT NOT NULL,
+		storage_class INT NOT NULL,
+		failure_domain BLOB NOT NULL,
+		secret_key BLOB NOT NULL,
+		flags INT NOT NULL,
+		capacity_bytes INT NOT NULL,
+		available_bytes INT NOT NULL,
+		blocks INT NOT NULL,
+		path TEXT NOT NULL,
+		last_seen INT
+	)`)
+	if err != nil {
+		panic(err)
+	}
+
 	readSpanBufPool = lib.NewReadSpanBufPool()
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
@@ -1107,7 +1353,7 @@ func main() {
 
 	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
-	state := newState()
+	state := newState(db)
 
 	setupRouting(ll, state)
 

@@ -13,6 +13,7 @@ require (
 require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.7.0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.16 // indirect
 )
 
 replace xtx/ecninfra => ../../ecn/infra/go

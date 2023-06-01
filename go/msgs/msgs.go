@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/rs"
@@ -26,6 +27,7 @@ type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
 type BlockServiceId uint64
+type BlockServiceFlags uint8
 type Crc uint32
 
 // These four below are the magic number to identify UDP packets. After a three-letter
@@ -67,6 +69,48 @@ const BLOCKS_RESP_PROTOCOL_VERSION uint32 = 0x14f4c42
 
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
+
+const (
+	EGGSFS_BLOCK_SERVICE_EMPTY          BlockServiceFlags = 0x0
+	EGGSFS_BLOCK_SERVICE_STALE          BlockServiceFlags = 0x1
+	EGGSFS_BLOCK_SERVICE_NO_READ        BlockServiceFlags = 0x2
+	EGGSFS_BLOCK_SERVICE_NO_WRITE       BlockServiceFlags = 0x4
+	EGGSFS_BLOCK_SERVICE_DECOMMISSIONED BlockServiceFlags = 0x8
+)
+
+func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
+	switch n {
+	case "EMPTY":
+		return EGGSFS_BLOCK_SERVICE_EMPTY, nil
+	case "STALE":
+		return EGGSFS_BLOCK_SERVICE_STALE, nil
+	case "NO_READ":
+		return EGGSFS_BLOCK_SERVICE_NO_READ, nil
+	case "NO_WRITE":
+		return EGGSFS_BLOCK_SERVICE_NO_WRITE, nil
+	case "DECOMMISSIONED":
+		return EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, nil
+	default:
+		panic(fmt.Errorf("unknown blockservice flag %s", n))
+	}
+}
+
+func (flags BlockServiceFlags) String() string {
+	var ret []string
+	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
+		ret = append(ret, "STALE")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_NO_READ != 0 {
+		ret = append(ret, "NO_READ")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_NO_WRITE != 0 {
+		ret = append(ret, "NO_WRITE")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
+		ret = append(ret, "DECOMMISSIONED")
+	}
+	return strings.Join(ret, ",")
+}
 
 const (
 	DIRECTORY InodeType = 1
@@ -1243,6 +1287,7 @@ type BlockServiceInfo struct {
 	StorageClass   StorageClass
 	FailureDomain  [16]byte
 	SecretKey      [16]byte
+	Flags          BlockServiceFlags
 	CapacityBytes  uint64
 	AvailableBytes uint64
 	Blocks         uint64 // how many blocks we have
@@ -1327,6 +1372,14 @@ type ShuckleResponse interface {
 type BlockServicesForShardResp struct {
 	BlockServices []BlockServiceInfo
 }
+
+type SetBlockServiceFlagsReq struct {
+	Id        BlockServiceId
+	Flags     BlockServiceFlags
+	FlagsMask uint8
+}
+
+type SetBlockServiceFlagsResp struct{}
 
 type AllBlockServicesReq struct{}
 

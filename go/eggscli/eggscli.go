@@ -448,6 +448,40 @@ func main() {
 		run:   testBlockWriteRun,
 	}
 
+	setBlockserviceFlagsCmd := flag.NewFlagSet("set-blockservice-flags", flag.ExitOnError)
+	setBlockserviceFlagsId := setBlockserviceFlagsCmd.Int64("id", 0, "Block service id")
+	setBlockserviceFlagsFlag := setBlockserviceFlagsCmd.String("flag", "", "Block service flag name")
+	setBlockserviceFlagsMode := setBlockserviceFlagsCmd.String("mode", "", "mode")
+	setBlockserviceFlagsRun := func() {
+		flag, err := msgs.BlockServiceFlagFromName(*setBlockserviceFlagsFlag)
+		if err != nil {
+			panic(err)
+		}
+		mask := uint8(flag)
+		switch *setBlockserviceFlagsMode {
+		case "set":
+			break
+		case "unset":
+			flag = uint8(0)
+		default:
+			fmt.Fprintf(os.Stderr, "Invalid mode %s\n", *setBlockserviceFlagsMode)
+			os.Exit(2)
+		}
+
+		_, err = lib.ShuckleRequest(log, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
+			Id:        msgs.BlockServiceId(*setBlockserviceFlagsId),
+			Flags:     flag,
+			FlagsMask: mask,
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+	commands["set-blockservice-flags"] = commandSpec{
+		flags: setBlockserviceFlagsCmd,
+		run:   setBlockserviceFlagsRun,
+	}
+
 	flag.Parse()
 
 	if flag.NArg() < 1 {

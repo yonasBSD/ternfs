@@ -41,6 +41,8 @@ func ReadShuckleRequest(
 		req = &msgs.RegisterShardReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.SET_BLOCK_SERVICE_FLAGS:
+		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
 	case msgs.CDC:
@@ -107,6 +109,8 @@ func ReadShuckleResponse(
 		resp = &msgs.RegisterShardResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
+	case msgs.SET_BLOCK_SERVICE_FLAGS:
+		resp = &msgs.SetBlockServiceFlagsResp{}
 	case msgs.REGISTER_CDC:
 		resp = &msgs.RegisterCdcResp{}
 	case msgs.CDC:

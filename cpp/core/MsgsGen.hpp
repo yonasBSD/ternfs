@@ -127,6 +127,7 @@ enum class ShuckleMessageKind : uint8_t {
     REGISTER_SHARD = 4,
     ALL_BLOCK_SERVICES = 5,
     REGISTER_CDC = 6,
+    SET_BLOCK_SERVICE_FLAGS = 9,
 };
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
@@ -700,13 +701,14 @@ struct BlockServiceInfo {
     uint8_t storageClass;
     BincodeFixedBytes<16> failureDomain;
     BincodeFixedBytes<16> secretKey;
+    uint8_t flags;
     uint64_t capacityBytes;
     uint64_t availableBytes;
     uint64_t blocks;
     BincodeBytes path;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + capacityBytes + availableBytes + blocks + path + lastSeen
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen
 
     BlockServiceInfo() { clear(); }
     uint16_t packedSize() const {
@@ -719,6 +721,7 @@ struct BlockServiceInfo {
         _size += 1; // storageClass
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
+        _size += 1; // flags
         _size += 8; // capacityBytes
         _size += 8; // availableBytes
         _size += 8; // blocks
@@ -2818,6 +2821,46 @@ struct RegisterCdcResp {
 
 std::ostream& operator<<(std::ostream& out, const RegisterCdcResp& x);
 
+struct SetBlockServiceFlagsReq {
+    BlockServiceId id;
+    uint8_t flags;
+    uint8_t flagsMask;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 1 + 1; // id + flags + flagsMask
+
+    SetBlockServiceFlagsReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += 1; // flags
+        _size += 1; // flagsMask
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetBlockServiceFlagsReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetBlockServiceFlagsReq& x);
+
+struct SetBlockServiceFlagsResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    SetBlockServiceFlagsResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetBlockServiceFlagsResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetBlockServiceFlagsResp& x);
+
 struct FetchBlockReq {
     uint64_t blockId;
     uint32_t offset;
@@ -3243,7 +3286,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq> _data;
+    std::tuple<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsReq& getShards() const;
@@ -3260,6 +3303,8 @@ public:
     AllBlockServicesReq& setAllBlockServices();
     const RegisterCdcReq& getRegisterCdc() const;
     RegisterCdcReq& setRegisterCdc();
+    const SetBlockServiceFlagsReq& getSetBlockServiceFlags() const;
+    SetBlockServiceFlagsReq& setSetBlockServiceFlags();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
@@ -3273,7 +3318,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp> _data;
+    std::tuple<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsResp& getShards() const;
@@ -3290,6 +3335,8 @@ public:
     AllBlockServicesResp& setAllBlockServices();
     const RegisterCdcResp& getRegisterCdc() const;
     RegisterCdcResp& setRegisterCdc();
+    const SetBlockServiceFlagsResp& getSetBlockServiceFlags() const;
+    SetBlockServiceFlagsResp& setSetBlockServiceFlags();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 

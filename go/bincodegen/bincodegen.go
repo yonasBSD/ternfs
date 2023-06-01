@@ -1523,6 +1523,11 @@ func main() {
 			reflect.TypeOf(msgs.RegisterCdcReq{}),
 			reflect.TypeOf(msgs.RegisterCdcResp{}),
 		},
+		{
+			0x09,
+			reflect.TypeOf(msgs.SetBlockServiceFlagsReq{}),
+			reflect.TypeOf(msgs.SetBlockServiceFlagsResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

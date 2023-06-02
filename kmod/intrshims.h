@@ -58,4 +58,11 @@ typedef long long __v4di __attribute__((vector_size(32)));
     })
 #define _mm256_gf2p8mul_epi8(a, b) ((__m256i)__builtin_ia32_vgf2p8mulb_v32qi((__v32qi)(a), (__v32qi)(b)))
 
+// gcc doesn't emit popcnt somehow <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105253>
+#define __builtin_popcount(v) ({ \
+        int c; \
+        __asm__("popcnt %1, %0" : "=r"(c) : "r"(v)); \
+        c; \
+    })
+
 #endif

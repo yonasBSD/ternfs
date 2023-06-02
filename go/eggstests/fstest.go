@@ -137,7 +137,7 @@ func checkFileData(id any, from int, to int, actualData []byte, expectedData []b
 		if err := os.WriteFile(actualPath, actualData, 0644); err != nil {
 			panic(fmt.Errorf("mismatching data (%v,%v), could not create data file", from, to))
 		}
-		panic(fmt.Errorf("mismatching data (%v,%v), expected data is in %v, found data is in %v", from, to, expectedPath, actualPath))
+		panic(fmt.Errorf("mismatching data (%v,%v) for file %v, expected data is in %v, found data is in %v", from, to, id, expectedPath, actualPath))
 	}
 
 }

@@ -18,6 +18,7 @@ struct eggsfs_block_service {
     u32 ip2;
     u16 port1;
     u16 port2;
+    u8 flags;
 };
 
 struct eggsfs_block_socket;

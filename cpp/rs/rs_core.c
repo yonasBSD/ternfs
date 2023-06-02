@@ -193,7 +193,8 @@ static bool rs_has_cpu_level_core(enum rs_cpu_level level) {
     case RS_CPU_GFNI:
         return _7_0[2] & (1<<8) && !rs_detect_valgrind();
     default:
-        die("bad CPU level %d\n", level);
+        rs_warn("bad CPU level %d", level);
+        return false;
     }
 }
 
@@ -364,12 +365,12 @@ static bool rs_has_cpu_level_core(enum rs_cpu_level level) {
         } \
     } while (0)
 
-static struct rs* rs_new_core(u8 parity) {
+#define RS_SIZE(D, P) (sizeof(struct rs) + (D+P)*D + D*P*32)
+
+static void rs_new_core(u8 parity, struct rs* r) {
     int B = rs_blocks_core(parity);
     int D = rs_data_blocks_core(parity);
     int P = rs_parity_blocks_core(parity);
-    struct rs* r = (struct rs*)rs_malloc(sizeof(struct rs) + B*D + D*P*32);
-    if (r == NULL) { return NULL; }
     r->parity = parity;
     r->matrix = (u8*)(r + 1);
     r->expanded_matrix = r->matrix + B*D;
@@ -381,35 +382,31 @@ static struct rs* rs_new_core(u8 parity) {
             gf_mul_expand_factor(r->matrix[D*D + D*p + d], &r->expanded_matrix[D*32*p + 32*d]);
         }
     }
-    return r;
 }
 
-static void rs_delete_core(struct rs* r) {
-    rs_free(r);
-}
+// This is actually enough space to hold two matrices,
+// we need the space for the second temporarily.
+#define RS_RECOVER_MAT_SIZE(D) (D*D + D*D)
 
-static void rs_recover_core(
+static bool rs_recover_mat(
     struct rs* r,
-    u64 size,
     u32 have_blocks,
-    const u8** have,
     u32 want_block,
-    u8* want,
-    void (*recover_func)(int D, u64 size, const u8** have, u8* want, const u8* mat)
+    u8* scratch // out mat
 ) {
     int D = rs_data_blocks_core(r->parity);
     int B = rs_blocks_core(r->parity);
-    // Create some space
-    u8* scratch = (u8*)rs_malloc(D*D + D*D);
     u8* mat_1 = scratch;
     u8* mat_2 = scratch + D*D;
     // Preliminary checks
     int i, j, d, b;
     if ((have_blocks >> B) || (want_block >> B)) {
-        die("have_blocks=%08x or want_block=%08x out of bounds wrt B=%d\n", have_blocks, want_block, B);
+        rs_warn("have_blocks=%08x or want_block=%08x out of bounds wrt B=%d", have_blocks, want_block, B);
+        return false;
     }
     if (have_blocks & want_block) {
-        die("have_blocks=%08x contains want_block=%08x\n", have_blocks, want_block);
+        rs_warn("have_blocks=%08x contains want_block=%08x", have_blocks, want_block);
+        return false;
     }
     // below in the dimensionality annotation we paper over transposes
     // [DxD] matrix going from the data blocks to the blocks we currently have
@@ -423,7 +420,8 @@ static void rs_recover_core(
     // [DxD] matrix going from what we have to the original data blocks
     u8* have_to_data = mat_2;
     if (!rs_gf_invert_matrix(data_to_have, have_to_data, D)) {
-        die("unexpected singular matrix\n");
+        rs_warn("unexpected singular matrix");
+        return false;
     }
     data_to_have = NULL;
     // [Dx1] matrix going from the data blocks to the block we want
@@ -438,7 +436,6 @@ static void rs_recover_core(
         }
     }
     // want = have_to_want * have
-    recover_func(D, size, have, want, have_to_want);
     // We're done.
-    rs_free(scratch);
+    return true;
 }

@@ -7,9 +7,8 @@
 
 #include "rs.h"
 
-#define die(...) do { fprintf(stderr, __VA_ARGS__); raise(SIGABRT); } while(false)
-#define rs_malloc malloc
-#define rs_free free
+#define rs_warn(fmt, ...) fprintf(stderr, "rs: " fmt "\n" __VA_OPT__(,) __VA_ARGS__); raise(SIGABRT);
+#define die(...) do { rs_warn(__VA_ARGS__); raise(SIGABRT); } while (0)
 
 // See `valgrind.h`
 static uint64_t rs_valgrind_client_request(uint64_t defaultResult, uint64_t reqID, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -102,14 +101,15 @@ struct rs* rs_get(uint8_t parity) {
     }
     struct rs* r = __atomic_load_n(&rs_cached[parity], __ATOMIC_RELAXED);
     if (__builtin_expect(r == nullptr, 0)) {
-        r = rs_new_core(parity);
+        r = (struct rs*)malloc(RS_SIZE(rs_data_blocks(parity), rs_parity_blocks(parity)));
+        rs_new_core(parity, r);
         if (r == nullptr) {
             die("could not allocate RS data");
         }
         struct rs* expected = nullptr;
         if (!__atomic_compare_exchange_n(&rs_cached[parity], &expected, r, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
             // somebody else got to it first
-            rs_delete_core(r);
+            free(r);
             r = __atomic_load_n(&rs_cached[parity], __ATOMIC_RELAXED);
         }
     }
@@ -194,12 +194,18 @@ void rs_recover(
     uint32_t want_block,
     uint8_t* want
 ) {
-    rs_recover_core(
-        r, size, have_blocks, have, want_block, want,
-        [](int D, uint64_t size, const uint8_t** have, uint8_t* want, const uint8_t* mat) {
-            rs_recover_matmul_funcs[D](size, have, want, mat);
-        }
-    );
+    int D = rs_data_blocks(r->parity);
+    u8* mat = (u8*)malloc(RS_RECOVER_MAT_SIZE(D));
+    if (mat == NULL) {
+        free(mat);
+        die("could not allocate mat");
+    }
+    if (!rs_recover_mat(r, have_blocks, want_block, mat)) {
+        free(mat);
+        die("could not get recover matrix");
+    }
+    rs_recover_matmul_funcs[D](size, have, want, mat);
+    free(mat);
 }
 
 __attribute__((constructor))

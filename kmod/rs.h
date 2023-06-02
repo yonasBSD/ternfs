@@ -1,9 +1,11 @@
 #ifndef _EGGSFS_RS_H
 #define _EGGSFS_RS_H
 
-#ifdef __KERNEL__
 #include <linux/kernel.h>
-#endif
+
+#define EGGSFS_MAX_DATA 10
+#define EGGSFS_MAX_PARITY 4
+#define EGGSFS_MAX_BLOCKS (EGGSFS_MAX_DATA+EGGSFS_MAX_PARITY)
 
 extern int eggsfs_rs_cpu_level;
 
@@ -28,6 +30,18 @@ static inline u8 eggsfs_mk_parity(u8 data, u8 parity) {
 //
 // You _must_ wrap this with kernel_fpu_begin()/kernel_fpu_end()!
 int eggsfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out);
+
+// This function does kernel_fpu_begin()/kernel_fpu_end() itself, since it already
+// works with pages.
+int eggsfs_recover(
+    u8 parity,
+    u32 have_blocks,
+    u32 want_block,
+    u32 num_pages,
+    // B long array of pages. We'll get the pages from the blocks we have and
+    // put them in the block we want. The lists should all be of the same length.
+    struct list_head* pages
+);
 
 int __init eggsfs_rs_init(void);
 void __cold eggsfs_rs_exit(void);

@@ -827,7 +827,7 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
                                 eggsfs_block_service_get_end(&bs_ctx, bs_flags, end);
                                 eggsfs_bincode_get_finish_list_el(end);
                                 if (likely(bs_ctx.err == 0)) {
-                                    eggsfs_file_spans_cb_block(data, j, bs_id.x, ip1.x, port1.x, ip2.x, port2.x, block_id.x, crc.x);
+                                    eggsfs_file_spans_cb_block(data, j, bs_id.x, ip1.x, port1.x, ip2.x, port2.x, bs_flags.x, block_id.x, crc.x);
                                 }
                                 blocks_ctx.err = bs_ctx.err;
                             }

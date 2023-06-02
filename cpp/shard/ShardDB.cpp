@@ -209,8 +209,8 @@ struct BlockServiceCache {
     AES128Key secretKey;
     std::array<uint8_t, 16> failureDomain;
     std::array<uint8_t, 4> ip1;
-    uint16_t port1;
     std::array<uint8_t, 4> ip2;
+    uint16_t port1;
     uint16_t port2;
     uint8_t storageClass;
 };

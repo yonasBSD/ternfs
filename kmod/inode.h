@@ -8,6 +8,7 @@
 #include "block.h"
 #include "latch.h"
 #include "bincode.h"
+#include "rs.h"
 
 #define EGGSFS_ROOT_INODE 0x2000000000000000ull
 
@@ -60,10 +61,6 @@ static inline void eggsfs_span_policies_last(struct eggsfs_span_policies* polici
 #define EGGSFS_SPAN_STATUS_LAST 2          // like idle, but signals that there won't be other spans after this one
 #define EGGSFS_SPAN_STATUS_FLUSHING 3      // we're flushing this to the block services
 #define EGGSFS_SPAN_STATUS_FLUSHING_LAST 4 // we're flushing this to the block services, and it's the last span
-
-#define EGGSFS_MAX_DATA 10
-#define EGGSFS_MAX_PARITY 4
-#define EGGSFS_MAX_BLOCKS (EGGSFS_MAX_DATA+EGGSFS_MAX_PARITY)
 
 struct eggsfs_transient_span {
     struct list_head list;

@@ -81,3 +81,8 @@ tmux attach-session -t uovo:1
 # ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
 # ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
 # ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=100 -cfg fsTest.numFiles=10 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)
+
+# sudo sysctl fs.eggsfs.debug=1
+# sudo sh -c 'echo  eggsfs_fetch_stripe >> /sys/kernel/debug/tracing/set_event'
+# sudo cat /sys/kernel/debug/tracing/trace_pipe
+# ./eggs/eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=1 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)/eggs

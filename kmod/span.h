@@ -77,11 +77,15 @@ void eggsfs_span_put(struct eggsfs_span* span, bool was_read);
 // The page_ix is the page number inside the span.
 struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix);
 
-void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, const uint32_t* stripes_crcs);
+void eggsfs_file_spans_cb_span(
+    void* data, u64 offset, u32 size, u32 crc,
+    u8 storage_class, u8 parity, u8 stripes, u32 cell_size,
+    const uint32_t* stripes_crcs
+);
 void eggsfs_file_spans_cb_block(
     void* data, int block_ix,
     // block service stuff
-    u64 bs_id, u32 ip1, u16 port1, u32 ip2, u16 port2,
+    u64 bs_id, u32 ip1, u16 port1, u32 ip2, u16 port2, u8 flags,
     // block stuff
     u64 block_id, u32 crc
 );

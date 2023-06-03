@@ -65,13 +65,6 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .proc_handler = eggsfs_drop_spans_sysctl,
     },
 
-#if 0
-    {
-        .procname = "refresh_info",
-        .data = &refresh_info,
-    }
-#endif
-
     EGGSFS_CTL_INT_TIME(dir_refresh_time),
 
     EGGSFS_CTL_ULONG(span_cache_max_size_async),

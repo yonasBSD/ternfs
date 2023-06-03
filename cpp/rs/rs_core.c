@@ -365,7 +365,7 @@ static bool rs_has_cpu_level_core(enum rs_cpu_level level) {
         } \
     } while (0)
 
-#define RS_SIZE(D, P) (sizeof(struct rs) + (D+P)*D + D*P*32)
+#define RS_SIZE(D, P) (sizeof(struct rs) + ((D)+(P))*(D) + (D)*(P)*32)
 
 static void rs_new_core(u8 parity, struct rs* r) {
     int B = rs_blocks_core(parity);

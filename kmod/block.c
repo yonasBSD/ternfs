@@ -158,10 +158,8 @@ static int eggsfs_fetch_block_receive_single_req(
         u32 avail = skb_seq_read(block_bytes_read, &data, &seq);
         if (avail == 0) { break; }
 
-        kernel_fpu_begin(); // crc
         while (avail) {
             u32 this_len = min3(avail, (u32)PAGE_SIZE - req->page_offset, req->bytes_left - block_bytes_read);
-            req->complete.crc = eggsfs_crc32c(req->complete.crc, data, this_len);
             memcpy(page_ptr + req->page_offset, data, this_len);
             data += this_len;
             req->page_offset += this_len;
@@ -178,7 +176,6 @@ static int eggsfs_fetch_block_receive_single_req(
                 req->page_offset = 0;
             }
         }
-        kernel_fpu_end();
     }
 
     // We might have not terminated with avail == 0, but because we're done with this request
@@ -377,7 +374,6 @@ struct eggsfs_fetch_block_request* eggsfs_fetch_block(
     req->bytes_left = count;
     req->page_offset = 0;
     req->header_read = 0;
-    req->complete.crc = 0;
     req->complete.err = 0;
     req->complete.block_id = block_id;
     INIT_WORK(&req->complete_work, eggsfs_fetch_complete);

@@ -543,8 +543,8 @@ struct eggsfs_fetch_stripe_state {
     // filled by fetching the blocks, the others might be filled in by the RS
     // recovery)
     struct list_head blocks_pages[EGGSFS_MAX_BLOCKS];
-    u32 block_crcs[EGGSFS_MAX_BLOCKS];
-    atomic_t remaining;    // how many block fetch requests are still ongoing
+    // u32 block_crcs[EGGSFS_MAX_BLOCKS];
+    atomic_t remaining;   // how many block fetch requests are still ongoing
     atomic_t refcount;    // to garbage collect the state
     atomic_t err;         // the result of the stripe fetching
     static_assert(EGGSFS_MAX_BLOCKS <= 16);
@@ -621,6 +621,8 @@ static void eggsfs_fetch_stripe_store_pages(struct eggsfs_fetch_stripe_state* st
     u32 start_page = (span->cell_size/PAGE_SIZE)*D*st->stripe;
     u32 end_page = (span->cell_size/PAGE_SIZE)*D*((int)st->stripe + 1);
     u32 curr_page = start_page;
+    u32 crc = 0;
+    kernel_fpu_begin(); // crc
     // move the pages to the span
     for (i = 0; i < D; i++) {
         struct page* page;
@@ -628,11 +630,14 @@ static void eggsfs_fetch_stripe_store_pages(struct eggsfs_fetch_stripe_state* st
         list_for_each_entry_safe(page, tmp, &st->blocks_pages[i], lru) {
             list_del(&page->lru);
             // eggsfs_info_print("storing page for span %p at %u", span, curr_page);
+            crc = eggsfs_crc32c(crc, kmap(page), PAGE_SIZE);
+            kunmap(page);
             struct page* old_page = xa_store(&span->pages, curr_page, page, GFP_KERNEL);
             if (IS_ERR(old_page)) {
                 atomic_set(&st->err, PTR_ERR(old_page));
                 eggsfs_debug_print("xa_store failed: %ld", PTR_ERR(old_page));
                 put_page(page); // we removed it from the list
+                kernel_fpu_end();
                 return;
             }
             BUG_ON(old_page != NULL); // the latch protects against this
@@ -641,8 +646,13 @@ static void eggsfs_fetch_stripe_store_pages(struct eggsfs_fetch_stripe_state* st
         }
         // eggsfs_info_print("i=%d curr_page=%u", i, curr_page);
     }
+    kernel_fpu_end();
     // eggsfs_info_print("curr_page=%u end_page=%u", curr_page, end_page);
     BUG_ON(curr_page != end_page);
+    if (crc != span->stripes_crc[st->stripe]) {
+        eggsfs_warn_print("bad crc for file %016lx, stripe %u, expected %08x, got %08x", span->span.enode->inode.i_ino, st->stripe, span->stripes_crc[st->stripe], crc);
+        atomic_set(&st->err, -EIO);
+    }
 }
 
 
@@ -677,7 +687,6 @@ static void eggsfs_fetch_stripe_block_done(struct eggsfs_fetch_block_complete* c
     }
 
     // It succeeded, set crc and grab all the pages
-    st->block_crcs[i] = complete->crc;
     struct page* page;
     struct page* tmp;
     list_for_each_entry_safe(page, tmp, &complete->pages, lru) {

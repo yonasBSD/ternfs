@@ -32,7 +32,6 @@ struct eggfs_fetch_block_request;
 // the list.
 struct eggsfs_fetch_block_complete {
     int err;
-    u32 crc;
     u64 block_id;
     struct list_head pages;
 };

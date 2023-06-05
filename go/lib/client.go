@@ -301,6 +301,7 @@ func (c *Client) GetUDPSocket() (net.PacketConn, error) {
 			return sock, nil
 		}
 	}
+	c.socksLock.Unlock()
 	// no socket found, we need to create one
 	sock, err := net.ListenPacket("udp", ":0")
 	if err != nil {
@@ -318,6 +319,7 @@ func (c *Client) ReleaseUDPSocket(sock net.PacketConn) {
 			return
 		}
 	}
+	c.socksLock.Unlock()
 	// no slot found, close
 	sock.Close()
 }

@@ -1112,23 +1112,27 @@ std::ostream& operator<<(std::ostream& out, const StatFileReq& x) {
 
 void StatFileResp::pack(BincodeBuf& buf) const {
     mtime.pack(buf);
+    atime.pack(buf);
     buf.packScalar<uint64_t>(size);
 }
 void StatFileResp::unpack(BincodeBuf& buf) {
     mtime.unpack(buf);
+    atime.unpack(buf);
     size = buf.unpackScalar<uint64_t>();
 }
 void StatFileResp::clear() {
     mtime = EggsTime();
+    atime = EggsTime();
     size = uint64_t(0);
 }
 bool StatFileResp::operator==(const StatFileResp& rhs) const {
     if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
+    if ((EggsTime)this->atime != (EggsTime)rhs.atime) { return false; };
     if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const StatFileResp& x) {
-    out << "StatFileResp(" << "Mtime=" << x.mtime << ", " << "Size=" << x.size << ")";
+    out << "StatFileResp(" << "Mtime=" << x.mtime << ", " << "Atime=" << x.atime << ", " << "Size=" << x.size << ")";
     return out;
 }
 

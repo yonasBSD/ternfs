@@ -139,6 +139,7 @@ struct FileBody {
         LE, uint8_t,  version, setVersion,
         LE, uint64_t, fileSize, setFileSize,
         LE, EggsTime, mtime, setMtime,
+        LE, EggsTime, atime, setAtime,
         END_STATIC
     )
 };

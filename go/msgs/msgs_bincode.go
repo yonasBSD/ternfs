@@ -711,6 +711,9 @@ func (v *StatFileResp) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Mtime)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint64(v.Atime)); err != nil {
+		return err
+	}
 	if err := bincode.PackScalar(w, uint64(v.Size)); err != nil {
 		return err
 	}
@@ -719,6 +722,9 @@ func (v *StatFileResp) Pack(w io.Writer) error {
 
 func (v *StatFileResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Mtime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Atime)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Size)); err != nil {

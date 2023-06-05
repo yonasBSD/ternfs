@@ -1810,7 +1810,7 @@ static inline void _eggsfs_stat_file_req_put_id(struct eggsfs_bincode_put_ctx* c
     { struct eggsfs_stat_file_req_id* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_stat_file_req_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_STAT_FILE_RESP_SIZE 16
+#define EGGSFS_STAT_FILE_RESP_SIZE 24
 struct eggsfs_stat_file_resp_start;
 #define eggsfs_stat_file_resp_get_start(ctx, start) struct eggsfs_stat_file_resp_start* start = NULL
 
@@ -1829,8 +1829,23 @@ static inline void _eggsfs_stat_file_resp_get_mtime(struct eggsfs_bincode_get_ct
     struct eggsfs_stat_file_resp_mtime next; \
     _eggsfs_stat_file_resp_get_mtime(ctx, &(prev), &(next))
 
+struct eggsfs_stat_file_resp_atime { u64 x; };
+static inline void _eggsfs_stat_file_resp_get_atime(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_stat_file_resp_mtime* prev, struct eggsfs_stat_file_resp_atime* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 8)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le64(ctx->buf); 
+            ctx->buf += 8; 
+        } 
+    }
+}
+#define eggsfs_stat_file_resp_get_atime(ctx, prev, next) \
+    struct eggsfs_stat_file_resp_atime next; \
+    _eggsfs_stat_file_resp_get_atime(ctx, &(prev), &(next))
+
 struct eggsfs_stat_file_resp_size { u64 x; };
-static inline void _eggsfs_stat_file_resp_get_size(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_stat_file_resp_mtime* prev, struct eggsfs_stat_file_resp_size* next) { 
+static inline void _eggsfs_stat_file_resp_get_size(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_stat_file_resp_atime* prev, struct eggsfs_stat_file_resp_size* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 8)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -1867,7 +1882,17 @@ static inline void _eggsfs_stat_file_resp_put_mtime(struct eggsfs_bincode_put_ct
     struct eggsfs_stat_file_resp_mtime next; \
     _eggsfs_stat_file_resp_put_mtime(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_stat_file_resp_put_size(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_stat_file_resp_mtime* prev, struct eggsfs_stat_file_resp_size* next, u64 x) {
+static inline void _eggsfs_stat_file_resp_put_atime(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_stat_file_resp_mtime* prev, struct eggsfs_stat_file_resp_atime* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_stat_file_resp_put_atime(ctx, prev, next, x) \
+    struct eggsfs_stat_file_resp_atime next; \
+    _eggsfs_stat_file_resp_put_atime(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_stat_file_resp_put_size(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_stat_file_resp_atime* prev, struct eggsfs_stat_file_resp_size* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);

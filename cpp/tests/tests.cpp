@@ -148,6 +148,7 @@ TEST_CASE("ShardDB data") {
         StaticValue<FileBody> fileBody;
         fileBody().setVersion(0);
         fileBody().setMtime(123);
+        fileBody().setAtime(123);
         fileBody().setFileSize(456);
 
         ROCKS_DB_CHECKED(db.db->Put({}, fileId.toSlice(), fileBody.toSlice()));

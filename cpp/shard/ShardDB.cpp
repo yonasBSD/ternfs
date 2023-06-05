@@ -441,6 +441,7 @@ struct ShardDBImpl {
             return err;
         }
         resp.mtime = file().mtime();
+        resp.atime = file().atime();
         resp.size = file().fileSize();
         return NO_ERROR;
     }
@@ -1716,6 +1717,7 @@ struct ShardDBImpl {
         StaticValue<FileBody> file;
         file().setVersion(0);
         file().setMtime(time);
+        file().setAtime(time);
         file().setFileSize(transientFile().fileSize());
         ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
 

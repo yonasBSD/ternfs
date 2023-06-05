@@ -888,14 +888,16 @@ std::ostream& operator<<(std::ostream& out, const StatFileReq& x);
 
 struct StatFileResp {
     EggsTime mtime;
+    EggsTime atime;
     uint64_t size;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8; // mtime + size
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // mtime + atime + size
 
     StatFileResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // mtime
+        _size += 8; // atime
         _size += 8; // size
         return _size;
     }

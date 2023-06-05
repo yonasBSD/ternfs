@@ -347,6 +347,7 @@ type StatFileReq struct {
 
 type StatFileResp struct {
 	Mtime EggsTime
+	Atime EggsTime
 	Size  uint64
 }
 

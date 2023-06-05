@@ -503,7 +503,8 @@ int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime,
         PREPARE_SHARD_RESP_CTX();
         eggsfs_stat_file_resp_get_start(&ctx, start);
         eggsfs_stat_file_resp_get_mtime(&ctx, start, resp_mtime);
-        eggsfs_stat_file_resp_get_size(&ctx, resp_mtime, resp_size);
+        eggsfs_stat_file_resp_get_atime(&ctx, resp_mtime, resp_atime);
+        eggsfs_stat_file_resp_get_size(&ctx, resp_atime, resp_size);
         eggsfs_stat_file_resp_get_end(&ctx, resp_size, end);
         eggsfs_stat_file_resp_get_finish(&ctx, end);
         FINISH_RESP();

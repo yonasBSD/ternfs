@@ -553,28 +553,36 @@ std::ostream& operator<<(std::ostream& out, const BlockService& x) {
 }
 
 void ShardInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
     lastSeen.pack(buf);
 }
 void ShardInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
     lastSeen.unpack(buf);
 }
 void ShardInfo::clear() {
-    ip.clear();
-    port = uint16_t(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
     lastSeen = EggsTime();
 }
 bool ShardInfo::operator==(const ShardInfo& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
-    out << "ShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "ShardInfo(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -953,24 +961,32 @@ std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
 }
 
 void RegisterShardInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
 }
 void RegisterShardInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
 }
 void RegisterShardInfo::clear() {
-    ip.clear();
-    port = uint16_t(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
 }
 bool RegisterShardInfo::operator==(const RegisterShardInfo& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterShardInfo& x) {
-    out << "RegisterShardInfo(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ")";
+    out << "RegisterShardInfo(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ")";
     return out;
 }
 
@@ -2899,28 +2915,36 @@ std::ostream& operator<<(std::ostream& out, const CdcReq& x) {
 }
 
 void CdcResp::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
     lastSeen.pack(buf);
 }
 void CdcResp::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
     lastSeen.unpack(buf);
 }
 void CdcResp::clear() {
-    ip.clear();
-    port = uint16_t(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
     lastSeen = EggsTime();
 }
 bool CdcResp::operator==(const CdcResp& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
-    out << "CdcResp(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "CdcResp(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -3073,36 +3097,44 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
 }
 
 void RegisterCdcReq::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip);
-    buf.packScalar<uint16_t>(port);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
     buf.packScalar<CDCMessageKind>(currentTransactionKind);
     buf.packScalar<uint8_t>(currentTransactionStep);
     buf.packScalar<uint64_t>(queuedTransactions);
 }
 void RegisterCdcReq::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip);
-    port = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
     currentTransactionKind = buf.unpackScalar<CDCMessageKind>();
     currentTransactionStep = buf.unpackScalar<uint8_t>();
     queuedTransactions = buf.unpackScalar<uint64_t>();
 }
 void RegisterCdcReq::clear() {
-    ip.clear();
-    port = uint16_t(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
     currentTransactionKind = CDCMessageKind(0);
     currentTransactionStep = uint8_t(0);
     queuedTransactions = uint64_t(0);
 }
 bool RegisterCdcReq::operator==(const RegisterCdcReq& rhs) const {
-    if (ip != rhs.ip) { return false; };
-    if ((uint16_t)this->port != (uint16_t)rhs.port) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
     if ((CDCMessageKind)this->currentTransactionKind != (CDCMessageKind)rhs.currentTransactionKind) { return false; };
     if ((uint8_t)this->currentTransactionStep != (uint8_t)rhs.currentTransactionStep) { return false; };
     if ((uint64_t)this->queuedTransactions != (uint64_t)rhs.queuedTransactions) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x) {
-    out << "RegisterCdcReq(" << "Ip=" << x.ip << ", " << "Port=" << x.port << ", " << "CurrentTransactionKind=" << x.currentTransactionKind << ", " << "CurrentTransactionStep=" << (int)x.currentTransactionStep << ", " << "QueuedTransactions=" << x.queuedTransactions << ")";
+    out << "RegisterCdcReq(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "CurrentTransactionKind=" << x.currentTransactionKind << ", " << "CurrentTransactionStep=" << (int)x.currentTransactionStep << ", " << "QueuedTransactions=" << x.queuedTransactions << ")";
     return out;
 }
 

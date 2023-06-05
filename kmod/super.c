@@ -92,9 +92,11 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
             .err = 0,
         };
         eggsfs_shard_info_get_start(&ctx, start);
-        eggsfs_shard_info_get_ip(&ctx, start, shard_ip);
-        eggsfs_shard_info_get_port(&ctx, shard_ip, shard_port);
-        eggsfs_shard_info_get_last_seen(&ctx, shard_port, last_seen);
+        eggsfs_shard_info_get_ip1(&ctx, start, shard_ip);
+        eggsfs_shard_info_get_port1(&ctx, shard_ip, shard_port);
+        eggsfs_shard_info_get_ip2(&ctx, shard_port, shard_ip2);
+        eggsfs_shard_info_get_port2(&ctx, shard_ip2, shard_port2);
+        eggsfs_shard_info_get_last_seen(&ctx, shard_port2, last_seen);
         eggsfs_shard_info_get_end(&ctx, last_seen, end);
         eggsfs_shard_info_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
@@ -154,9 +156,11 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
             .err = 0,
         };
         eggsfs_cdc_resp_get_start(&ctx, start);
-        eggsfs_cdc_resp_get_ip(&ctx, start, cdc_ip);
-        eggsfs_cdc_resp_get_port(&ctx, cdc_ip, cdc_port);
-        eggsfs_cdc_resp_get_last_seen(&ctx, cdc_port, last_seen);
+        eggsfs_cdc_resp_get_ip1(&ctx, start, cdc_ip);
+        eggsfs_cdc_resp_get_port1(&ctx, cdc_ip, cdc_port);
+        eggsfs_cdc_resp_get_ip2(&ctx, cdc_port, cdc_ip2);
+        eggsfs_cdc_resp_get_port2(&ctx, cdc_ip2, cdc_port2);
+        eggsfs_cdc_resp_get_last_seen(&ctx, cdc_port2, last_seen);
         eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
         eggsfs_cdc_resp_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }

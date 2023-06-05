@@ -158,11 +158,11 @@ func main() {
 			LogLevel:       level,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,
-			OwnIp:          *ownIp,
+			OwnIp1:         *ownIp,
 			Perf:           *profile,
 		}
 		if *startingPort != 0 {
-			opts.Port = uint16(*startingPort)
+			opts.Port1 = uint16(*startingPort)
 		}
 		procs.StartCDC(log, *repoDir, &opts)
 	}
@@ -177,11 +177,11 @@ func main() {
 			Shid:           shid,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,
-			OwnIp:          *ownIp,
+			OwnIp1:         *ownIp,
 			Perf:           *profile,
 		}
 		if *startingPort != 0 {
-			opts.Port = uint16(*startingPort) + 1 + uint16(i)
+			opts.Port1 = uint16(*startingPort) + 1 + uint16(i)
 		}
 		procs.StartShard(log, *repoDir, &opts)
 	}

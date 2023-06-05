@@ -1396,8 +1396,10 @@ type RegisterBlockServicesResp struct{}
 type ShardsReq struct{}
 
 type ShardInfo struct {
-	Ip       [4]byte
-	Port     uint16
+	Ip1      [4]byte
+	Port1    uint16
+	Ip2      [4]byte
+	Port2    uint16
 	LastSeen EggsTime
 }
 
@@ -1408,8 +1410,10 @@ type ShardsResp struct {
 }
 
 type RegisterShardInfo struct {
-	Ip   [4]byte
-	Port uint16
+	Ip1   [4]byte
+	Port1 uint16
+	Ip2   [4]byte
+	Port2 uint16
 }
 
 type RegisterShardReq struct {
@@ -1420,8 +1424,10 @@ type RegisterShardReq struct {
 type RegisterShardResp struct{}
 
 type RegisterCdcReq struct {
-	Ip                     [4]byte
-	Port                   uint16
+	Ip1                    [4]byte
+	Port1                  uint16
+	Ip2                    [4]byte
+	Port2                  uint16
 	CurrentTransactionKind CDCMessageKind // if 0, nothing is executing
 	CurrentTransactionStep uint8
 	QueuedTransactions     uint64
@@ -1432,8 +1438,10 @@ type RegisterCdcResp struct{}
 type CdcReq struct{}
 
 type CdcResp struct {
-	Ip       [4]byte
-	Port     uint16
+	Ip1      [4]byte
+	Port1    uint16
+	Ip2      [4]byte
+	Port2    uint16
 	LastSeen EggsTime
 }
 

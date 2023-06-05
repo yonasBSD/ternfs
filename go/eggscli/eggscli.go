@@ -67,8 +67,7 @@ func main() {
 			if dirId.Type() != msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
-			shid := dirId.Shard()
-			client, err := lib.NewClient(log, *shuckleAddress, &shid, nil, nil)
+			client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard client: %v", err))
 			}
@@ -99,8 +98,7 @@ func main() {
 			if fileId.Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
-			shid := fileId.Shard()
-			client, err := lib.NewClient(log, *shuckleAddress, &shid, nil, nil)
+			client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -131,7 +129,7 @@ func main() {
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		stats := lib.MigrateStats{}
 		if *migrateFileIdU64 == 0 {
-			client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+			client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 			if err != nil {
 				panic(err)
 			}
@@ -140,8 +138,7 @@ func main() {
 			}
 		} else {
 			fileId := msgs.InodeId(*migrateFileIdU64)
-			shid := fileId.Shard()
-			client, err := lib.NewClient(log, *shuckleAddress, &shid, nil, nil)
+			client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 			if err != nil {
 				panic(fmt.Errorf("could not create shard socket: %v", err))
 			}
@@ -168,7 +165,7 @@ func main() {
 			panic(fmt.Errorf("could not decode shard req: %w", err))
 		}
 		shard := msgs.ShardId(*shardReqShard)
-		client, err := lib.NewClient(log, *shuckleAddress, &shard, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -196,7 +193,7 @@ func main() {
 		if err := json.Unmarshal([]byte(*cdcReqReq), &req); err != nil {
 			panic(fmt.Errorf("could not decode cdc req: %w", err))
 		}
-		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -240,8 +237,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		shid := id.Shard()
-		client, err := lib.NewClient(log, *shuckleAddress, &shid, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -259,8 +255,7 @@ func main() {
 	removeDirInfoTag := removeDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
 	removeDirInfoRun := func() {
 		id := msgs.InodeId(*removeDirInfoU64)
-		shid := id.Shard()
-		client, err := lib.NewClient(log, *shuckleAddress, &shid, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -278,7 +273,7 @@ func main() {
 	cpIntoOut := cpIntoCmd.String("o", "", "Where to write the file to in Eggs")
 	cpIntoRun := func() {
 		path := filepath.Clean("/" + *cpIntoOut)
-		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -326,7 +321,7 @@ func main() {
 				panic(err)
 			}
 		}
-		client, err := lib.NewClient(log, *shuckleAddress, nil, nil, nil)
+		client, err := lib.NewClient(log, *shuckleAddress, 1, nil, nil)
 		if err != nil {
 			panic(err)
 		}
@@ -462,7 +457,7 @@ func main() {
 		case "set":
 			break
 		case "unset":
-			flag = uint8(0)
+			flag = msgs.BlockServiceFlags(0)
 		default:
 			fmt.Fprintf(os.Stderr, "Invalid mode %s\n", *setBlockserviceFlagsMode)
 			os.Exit(2)

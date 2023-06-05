@@ -22,8 +22,10 @@ std::string registerShard(
     uint16_t shucklePort,
     Duration timeout,
     ShardId shid,
-    const std::array<uint8_t, 4>& shardAddr,
-    uint16_t shardPort
+    uint32_t ip1,
+    uint16_t port1,
+    uint32_t ip2,
+    uint16_t port2
 );
 
 struct CDCStatus {
@@ -37,8 +39,10 @@ std::string registerCDC(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
-    const std::array<uint8_t, 4>& cdcAddr,
-    uint16_t cdcPort,
+    uint32_t ip1,
+    uint16_t port1,
+    uint32_t ip2,
+    uint16_t port2,
     const CDCStatus& status
 );
 

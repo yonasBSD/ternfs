@@ -184,7 +184,8 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
 }
 
 std::string registerShard(
-    const std::string& addr, uint16_t port, Duration timeout, ShardId shid, const std::array<uint8_t, 4>& shardAddr, uint16_t shardPort
+    const std::string& addr, uint16_t port, Duration timeout, ShardId shid,
+    uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2
 ) {
     std::string errString;
     auto sock = shuckleSock(addr, port, timeout, errString);
@@ -195,8 +196,16 @@ std::string registerShard(
     ShuckleReqContainer reqContainer;
     auto& req = reqContainer.setRegisterShard();
     req.id = shid;
-    req.info.ip.data = shardAddr;
-    req.info.port = shardPort;
+    {
+        uint32_t ip = htonl(ip1);
+        memcpy(req.info.ip1.data.data(), &ip, 4);
+    }
+    req.info.port1 = port1;
+    {
+        uint32_t ip = htonl(ip2);
+        memcpy(req.info.ip2.data.data(), &ip, 4);
+    }
+    req.info.port2 = port2;
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
@@ -212,7 +221,7 @@ std::string registerShard(
     return {};
 }
 
-std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, const std::array<uint8_t, 4>& cdcAddr, uint16_t cdcPort, const CDCStatus& status) {
+std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2, const CDCStatus& status) {
     std::string errString;
     auto sock = shuckleSock(host, port, timeout, errString);
     if (sock.fd < 0) {
@@ -221,8 +230,16 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
 
     ShuckleReqContainer reqContainer;
     auto& req = reqContainer.setRegisterCdc();
-    req.ip.data = cdcAddr;
-    req.port = cdcPort;
+    {
+        uint32_t ip = htonl(ip1);
+        memcpy(req.ip1.data.data(), &ip, 4);
+    }
+    req.port1 = port1;
+    {
+        uint32_t ip = htonl(ip2);
+        memcpy(req.ip2.data.data(), &ip, 4);
+    }
+    req.port2 = port2;
     req.currentTransactionKind = status.executingTxnKind;
     req.currentTransactionStep = status.executingTxnStep;
     req.queuedTransactions = status.queuedTxns;

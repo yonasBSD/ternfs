@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,11 +14,6 @@ import (
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
-
-type shardSocketFactory interface {
-	getShardSocket(shid msgs.ShardId, addr [4]byte, port uint16) (*net.UDPConn, error)
-	releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn)
-}
 
 type ReqCounters struct {
 	Timings  Timings
@@ -194,38 +189,31 @@ func (factory *blocksConnFactory) put(blockServiceId msgs.BlockServiceId, now ti
 }
 
 type Client struct {
-	shardIps           [256][4]byte
-	shardPorts         [256]uint16
-	shardSocketFactory shardSocketFactory
-	cdcIp              [4]byte
-	cdcPort            uint16
-	cdcSocket          *net.UDPConn
-	cdcLock            sync.Mutex
-	counters           *ClientCounters
-	cdcKey             cipher.Block
-	blocksConns        blocksConnFactory
+	shardAddrs  [256][2]net.UDPAddr
+	cdcAddrs    [2]net.UDPAddr
+	udpSocks    []net.PacketConn
+	socksLock   sync.Mutex
+	counters    *ClientCounters
+	cdcKey      cipher.Block
+	blocksConns blocksConnFactory
 }
 
-// If `shid` is present, the client will only create a socket for that shard,
-// otherwise sockets for all 256 shards will be created.
-//
-// The other two parameters are optional too.
-//
-// The client is thread safe, and more sockets might be temporarily created
-// if multiple things are trying to talk to the same shard. So the assumption
-// is that there won't be much contention otherwise you might as well create
-// a socket each time. TODO not sure this is the best way forward
 func NewClient(
 	log *Logger,
 	shuckleAddress string,
-	shid *msgs.ShardId,
+	// How many sockets to use for cdc/shard communications, if there's not going
+	// to be contention just pick 1. If no sockets are available when `GetSocket`
+	// is called, a new one will be created.
+	udpSockets int,
+	// Can be nil (won't perform perf counting)
 	counters *ClientCounters,
+	// Can be nil (won't be able to restricted requests)
 	cdcKey cipher.Block,
 ) (*Client, error) {
-	var shardIps [256][4]byte
-	var shardPorts [256]uint16
-	var cdcIp [4]byte
-	var cdcPort uint16
+	var shardIps [256][2][4]byte
+	var shardPorts [256][2]uint16
+	var cdcIps [2][4]byte
+	var cdcPorts [2]uint16
 	{
 		log.Info("Getting shard/CDC info from shuckle at '%v'", shuckleAddress)
 		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})
@@ -234,192 +222,112 @@ func NewClient(
 		}
 		shards := resp.(*msgs.ShardsResp)
 		for i, shard := range shards.Shards {
-			if shard.Port == 0 {
+			if shard.Port1 == 0 {
 				return nil, fmt.Errorf("shard %v not present in shuckle", i)
 			}
-			shardIps[i] = shard.Ip
-			shardPorts[i] = shard.Port
+			shardIps[i][0] = shard.Ip1
+			shardPorts[i][0] = shard.Port1
+			shardIps[i][1] = shard.Ip2
+			shardPorts[i][1] = shard.Port2
 		}
 		resp, err = ShuckleRequest(log, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
 			return nil, fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
 		cdc := resp.(*msgs.CdcResp)
-		if cdc.Port == 0 {
+		if cdc.Port1 == 0 {
 			return nil, fmt.Errorf("CDC not present in shuckle")
 		}
-		cdcIp = cdc.Ip
-		cdcPort = cdc.Port
+		cdcIps[0] = cdc.Ip1
+		cdcPorts[0] = cdc.Port1
+		cdcIps[1] = cdc.Ip2
+		cdcPorts[1] = cdc.Port2
 	}
-	return NewClientDirect(log, shid, counters, cdcKey, cdcIp, cdcPort, &shardIps, &shardPorts)
+	return NewClientDirect(log, udpSockets, counters, cdcKey, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
 }
 
 func NewClientDirect(
 	log *Logger,
-	shid *msgs.ShardId,
+	udpSockets int,
 	counters *ClientCounters,
 	cdcKey cipher.Block,
-	cdcIp [4]byte,
-	cdcPort uint16,
-	shardIps *[256][4]byte,
-	shardPorts *[256]uint16,
+	cdcIps *[2][4]byte,
+	cdcPorts *[2]uint16,
+	shardIps *[256][2][4]byte,
+	shardPorts *[256][2]uint16,
 ) (c *Client, err error) {
 	c = &Client{
-		shardIps:   *shardIps,
-		shardPorts: *shardPorts,
-		cdcIp:      cdcIp,
-		cdcPort:    cdcPort,
 		blocksConns: blocksConnFactory{
 			cached: make(map[msgs.BlockServiceId]*cachedBlocksConns),
 		},
 	}
-	c.cdcSocket, err = CreateCDCSocket(c.cdcIp, c.cdcPort)
-	if err != nil {
-		return nil, err
+	for i := 0; i < 2; i++ {
+		for j := 0; j < 256; j++ {
+			c.shardAddrs[j][i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(shardIps[j][i]), shardPorts[j][i]))
+		}
+		c.cdcAddrs[i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(cdcIps[i]), cdcPorts[i]))
 	}
-	if shid != nil {
-		c.shardSocketFactory = &shardSpecificFactory{shid: *shid}
-	} else {
-		c.shardSocketFactory = &allShardsFactory{}
+	c.udpSocks = make([]net.PacketConn, udpSockets)
+	for i := 0; i < udpSockets; i++ {
+		sock, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			for j := 0; j < i; j++ {
+				c.udpSocks[j].Close()
+			}
+			return nil, err
+		}
+		c.udpSocks[i] = sock
 	}
 	c.counters = counters
 	c.cdcKey = cdcKey
 	return c, nil
 }
 
-func (c *Client) GetShardSocket(shid msgs.ShardId) (*net.UDPConn, error) {
-	return c.shardSocketFactory.getShardSocket(shid, c.shardIps[int(shid)], c.shardPorts[int(shid)])
+func (c *Client) CDCAddrs() *[2]net.UDPAddr {
+	return &c.cdcAddrs
 }
 
-func (c *Client) ReleaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
-	c.shardSocketFactory.releaseShardSocket(shid, sock)
+func (c *Client) ShardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
+	return &c.shardAddrs[int(shid)]
 }
 
-func (c *Client) GetCDCSocket() (*net.UDPConn, error) {
-	if c.cdcLock.TryLock() {
-		return c.cdcSocket, nil
-	} else {
-		conn, err := CreateCDCSocket(c.cdcIp, c.cdcPort)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
-	}
-}
-
-func (c *Client) ReleaseCDCSocket(sock *net.UDPConn) {
-	if sock == c.cdcSocket {
-		c.cdcLock.Unlock()
-	} else {
-		if err := sock.Close(); err != nil {
-			panic(err)
+func (c *Client) GetUDPSocket() (net.PacketConn, error) {
+	c.socksLock.Lock()
+	for i := range c.udpSocks {
+		if c.udpSocks[i] != nil {
+			sock := c.udpSocks[i]
+			c.udpSocks[i] = nil
+			c.socksLock.Unlock()
+			return sock, nil
 		}
 	}
+	// no socket found, we need to create one
+	sock, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return nil, err
+	}
+	return sock, nil
+}
+
+func (c *Client) ReleaseUDPSocket(sock net.PacketConn) {
+	c.socksLock.Lock()
+	for i := range c.udpSocks {
+		if c.udpSocks[i] == nil {
+			c.udpSocks[i] = sock
+			c.socksLock.Unlock()
+			return
+		}
+	}
+	// no slot found, close
+	sock.Close()
 }
 
 func (c *Client) Close() {
-	switch factory := c.shardSocketFactory.(type) {
-	case *allShardsFactory:
-		factory.close()
-	case *shardSpecificFactory:
-		factory.close()
-	default:
-		panic(fmt.Errorf("bad factory %T", c.shardSocketFactory))
-	}
-	if err := c.cdcSocket.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not close CDC conn: %v", err)
-	}
-}
-
-// Holds sockets to all 256 shards
-type allShardsFactory struct {
-	shardSocks [256]*net.UDPConn
-	shardLocks [256]sync.Mutex
-}
-
-func (c *allShardsFactory) close() {
-	for _, sock := range c.shardSocks {
-		if sock == nil {
-			continue
+	for i := range c.udpSocks {
+		if c.udpSocks[i] == nil {
+			panic(fmt.Errorf("not all UDP sockets were returned! found one at %v", i))
 		}
-		if err := sock.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "could not close shard socket: %v", err)
-		}
-	}
-}
-
-func (c *allShardsFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
-	ix := int(shid)
-	if c.shardLocks[ix].TryLock() {
-		if c.shardSocks[ix] == nil {
-			var err error
-			c.shardSocks[ix], err = CreateShardSocket(shid, ip, port)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return c.shardSocks[int(shid)], nil
-	} else {
-		conn, err := CreateShardSocket(shid, ip, port)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
-	}
-}
-
-func (c *allShardsFactory) releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
-	if c.shardSocks[int(shid)] == sock {
-		c.shardLocks[int(shid)].Unlock()
-	} else {
-		if err := sock.Close(); err != nil {
-			panic(err)
-		}
-	}
-}
-
-// For when you almost always do requests to a single shard (e.g. in GC).
-type shardSpecificFactory struct {
-	shid      msgs.ShardId
-	shardSock *net.UDPConn
-	shardLock sync.Mutex
-}
-
-func (c *shardSpecificFactory) close() {
-	if c.shardSock == nil {
-		return
-	}
-	if err := c.shardSock.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "could not close shard sock: %v\n", err)
-	}
-}
-
-func (c *shardSpecificFactory) getShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
-	if shid == c.shid && c.shardLock.TryLock() {
-		if c.shardSock == nil {
-			var err error
-			c.shardSock, err = CreateShardSocket(shid, ip, port)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return c.shardSock, nil
-	} else {
-		shardSock, err := CreateShardSocket(shid, ip, port)
-		if err != nil {
-			return nil, err
-		}
-		return shardSock, nil
-	}
-}
-
-func (c *shardSpecificFactory) releaseShardSocket(shid msgs.ShardId, sock *net.UDPConn) {
-	if sock == c.shardSock {
-		c.shardLock.Unlock()
-	} else {
-		if err := sock.Close(); err != nil {
-			panic(err)
-		}
+		c.udpSocks[i].Close()
 	}
 }
 
@@ -585,12 +493,6 @@ func (c *trackedBlocksConn) Put() {
 
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
-//
-// The connections might be cached, assuming no errors are present when
-// doing read/write/etc. This means that, before closing, you need to
-// consume the current stream fully for future users. If you explicitly
-// do not want to do that, call `Taint()` to prevent the caching after
-// `Close()`.
 func (c *Client) GetBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
 	conn, err := c.blocksConns.get(blockServiceId, time.Now(), func() (any, error) {
 		return BlockServiceConnection(log, ip1, port1, ip2, port2)

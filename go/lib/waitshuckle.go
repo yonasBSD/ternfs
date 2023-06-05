@@ -8,8 +8,10 @@ import (
 
 type ShuckleInfo struct {
 	Shards        []msgs.ShardInfo
-	CDCIp         [4]byte
-	CDCPort       uint16
+	CDCIp1        [4]byte
+	CDCPort1      uint16
+	CDCIp2        [4]byte
+	CDCPort2      uint16
 	BlockServices []msgs.BlockServiceInfo
 }
 
@@ -31,7 +33,7 @@ func WaitForShuckle(ll *Logger, shuckleAddress string, expectedBlockServices int
 			}
 			info.Shards = resp.(*msgs.ShardsResp).Shards
 			for i, shard := range info.Shards {
-				if shard.Port == 0 {
+				if shard.Port1 == 0 {
 					err = fmt.Errorf("shard %v isn't up yet, will keep waiting", i)
 					ll.Debug("%v", err)
 					goto KeepChecking
@@ -46,13 +48,15 @@ func WaitForShuckle(ll *Logger, shuckleAddress string, expectedBlockServices int
 				goto KeepChecking
 			}
 			cdc := resp.(*msgs.CdcResp)
-			if cdc.Port == 0 {
+			if cdc.Port1 == 0 {
 				err = fmt.Errorf("CDC isn't up yet, will keep waiting")
 				ll.Debug("%v", err)
 				goto KeepChecking
 			}
-			info.CDCIp = cdc.Ip
-			info.CDCPort = cdc.Port
+			info.CDCIp1 = cdc.Ip1
+			info.CDCPort1 = cdc.Port1
+			info.CDCIp2 = cdc.Ip2
+			info.CDCPort2 = cdc.Port2
 		}
 		// Then check block services
 		{

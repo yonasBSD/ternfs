@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Env.hpp"
+#include "Shard.hpp"
 
 struct CDCOptions {
     LogLevel logLevel = LogLevel::LOG_INFO;
@@ -8,7 +9,8 @@ struct CDCOptions {
     uint16_t port = 0; // chosen randomly and recorded in shuckle
     std::string shuckleHost = "";
     uint16_t shucklePort = 0;
-    std::array<uint8_t, 4> ownIp = {0, 0, 0, 0};
+    // The second will be used if the ip is non-null
+    std::array<IpPort, 2> ipPorts = {IpPort(0, 0), IpPort(0, 0)};
     bool syslog = false;
 };
 

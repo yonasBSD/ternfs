@@ -47,7 +47,7 @@ func cleanupAfterTest(
 	shuckleAddress string,
 	counters *lib.ClientCounters,
 ) {
-	client, err := lib.NewClient(log, shuckleAddress, nil, counters, nil)
+	client, err := lib.NewClient(log, shuckleAddress, 1, counters, nil)
 	if err != nil {
 		panic(err)
 	}

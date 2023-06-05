@@ -3018,10 +3018,16 @@ func (v *BlockService) Unpack(r io.Reader) error {
 }
 
 func (v *ShardInfo) Pack(w io.Writer) error {
-	if err := bincode.PackFixedBytes(w, 4, v.Ip[:]); err != nil {
+	if err := bincode.PackFixedBytes(w, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint16(v.Port)); err != nil {
+	if err := bincode.PackScalar(w, uint16(v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
@@ -3031,10 +3037,16 @@ func (v *ShardInfo) Pack(w io.Writer) error {
 }
 
 func (v *ShardInfo) Unpack(r io.Reader) error {
-	if err := bincode.UnpackFixedBytes(r, 4, v.Ip[:]); err != nil {
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
@@ -3462,20 +3474,32 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 }
 
 func (v *RegisterShardInfo) Pack(w io.Writer) error {
-	if err := bincode.PackFixedBytes(w, 4, v.Ip[:]); err != nil {
+	if err := bincode.PackFixedBytes(w, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint16(v.Port)); err != nil {
+	if err := bincode.PackScalar(w, uint16(v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (v *RegisterShardInfo) Unpack(r io.Reader) error {
-	if err := bincode.UnpackFixedBytes(r, 4, v.Ip[:]); err != nil {
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
 		return err
 	}
 	return nil
@@ -3615,10 +3639,16 @@ func (v *CdcResp) ShuckleResponseKind() ShuckleMessageKind {
 }
 
 func (v *CdcResp) Pack(w io.Writer) error {
-	if err := bincode.PackFixedBytes(w, 4, v.Ip[:]); err != nil {
+	if err := bincode.PackFixedBytes(w, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint16(v.Port)); err != nil {
+	if err := bincode.PackScalar(w, uint16(v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
@@ -3628,10 +3658,16 @@ func (v *CdcResp) Pack(w io.Writer) error {
 }
 
 func (v *CdcResp) Unpack(r io.Reader) error {
-	if err := bincode.UnpackFixedBytes(r, 4, v.Ip[:]); err != nil {
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
@@ -3821,10 +3857,16 @@ func (v *RegisterCdcReq) ShuckleRequestKind() ShuckleMessageKind {
 }
 
 func (v *RegisterCdcReq) Pack(w io.Writer) error {
-	if err := bincode.PackFixedBytes(w, 4, v.Ip[:]); err != nil {
+	if err := bincode.PackFixedBytes(w, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint16(v.Port)); err != nil {
+	if err := bincode.PackScalar(w, uint16(v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint8(v.CurrentTransactionKind)); err != nil {
@@ -3840,10 +3882,16 @@ func (v *RegisterCdcReq) Pack(w io.Writer) error {
 }
 
 func (v *RegisterCdcReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackFixedBytes(r, 4, v.Ip[:]); err != nil {
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip1[:]); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint8)(&v.CurrentTransactionKind)); err != nil {

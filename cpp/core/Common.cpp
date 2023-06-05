@@ -34,6 +34,13 @@ std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, struct in_addr& addr) {
+    char buf[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &addr, buf, sizeof(buf));
+    out << buf;
+    return out;
+}
+
 std::ostream& goLangBytesFmt(std::ostream& out, const char* str, size_t len) {
     out << "[";
     const uint8_t* data = (const uint8_t*)str;

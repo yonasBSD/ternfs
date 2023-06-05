@@ -51,8 +51,10 @@ func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
 }
 
 type cdcState struct {
-	ip             [4]byte
-	port           uint16
+	ip1            [4]byte
+	port1          uint16
+	ip2            [4]byte
+	port2          uint16
 	lastSeen       msgs.EggsTime
 	queuedTxns     uint64
 	currentTxnKind msgs.CDCMessageKind
@@ -79,18 +81,16 @@ func (s *state) cdc() (*cdcState, error) {
 			return nil, fmt.Errorf("more than 1 cdc row returned from db")
 		}
 		var id int
-		var ip []byte
-		err = rows.Scan(&id, &ip, &cdc.port, &cdc.queuedTxns, &cdc.currentTxnKind, &cdc.currentTxnStep, &cdc.lastSeen)
+		var ip1, ip2 []byte
+		err = rows.Scan(&id, &ip1, &cdc.port1, &ip2, &cdc.port2, &cdc.queuedTxns, &cdc.currentTxnKind, &cdc.currentTxnStep, &cdc.lastSeen)
 		if id != 0 {
 			return nil, fmt.Errorf("unexpected id %v for cdc (expected 0)", id)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
-		if len(cdc.ip) != len(ip) {
-			return nil, fmt.Errorf("incorrect cdc ip read from the db: %+v", ip)
-		}
-		copy(cdc.ip[:], ip[:len(cdc.ip)])
+		copy(cdc.ip1[:], ip1)
+		copy(cdc.ip2[:], ip2)
 		i += 1
 	}
 	return &cdc, nil
@@ -112,16 +112,14 @@ func (s *state) shards() (*[256]msgs.ShardInfo, error) {
 		}
 
 		si := msgs.ShardInfo{}
-		var ip []byte
+		var ip1, ip2 []byte
 		var id int
-		err = rows.Scan(&id, &ip, &si.Port, &si.LastSeen)
+		err = rows.Scan(&id, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
-		if len(si.Ip) != len(ip) {
-			return nil, fmt.Errorf("incorrect ip for shard %d read from the db: %+v", id, ip)
-		}
-		copy(si.Ip[:], ip[:len(si.Ip)])
+		copy(si.Ip1[:], ip1)
+		copy(si.Ip2[:], ip2)
 		ret[id] = si
 		i += 1
 	}
@@ -145,9 +143,6 @@ func (s *state) blockServices() (map[msgs.BlockServiceId]msgs.BlockServiceInfo, 
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
 
-		if len(bs.Ip1) != len(ip1) || len(bs.Ip2) != len(ip2) || len(bs.FailureDomain) != len(fd) || len(bs.SecretKey) != len(sk) {
-			return nil, fmt.Errorf("incorrect data from db for shard %d: ip1:%+v, ip2:%+v, fd:%+v, sk:%+v", bs.Id, ip1, ip2, fd, sk)
-		}
 		copy(bs.Ip1[:], ip1)
 		copy(bs.Ip2[:], ip2)
 		copy(bs.FailureDomain[:], fd)
@@ -264,11 +259,11 @@ func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.Regist
 
 	n := sql.Named
 	_, err := s.db.Exec(
-		"REPLACE INTO shards(id, ip, port, last_seen) VALUES (:id, :ip, :port, :last_seen)",
-		n("id", req.Id), n("ip", req.Info.Ip[:]), n("port", req.Info.Port), n("last_seen", msgs.Now()),
+		"REPLACE INTO shards(id, ip1, port1, ip2, port2, last_seen) VALUES (:id, :ip1, :port1, :ip2, :port2, :last_seen)",
+		n("id", req.Id), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
-		ll.Error("error registering shard %d: %s", err)
+		ll.Error("error registering shard %d: %s", req.Id, err)
 		return nil
 	}
 
@@ -285,8 +280,10 @@ func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msg
 		log.Error("error reading cdc: %s", err)
 		return nil
 	}
-	resp.Ip = cdc.ip
-	resp.Port = cdc.port
+	resp.Ip1 = cdc.ip1
+	resp.Port1 = cdc.port1
+	resp.Ip2 = cdc.ip2
+	resp.Port2 = cdc.port2
 
 	return &resp
 }
@@ -297,8 +294,9 @@ func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.Regi
 
 	n := sql.Named
 	_, err := s.db.Exec(
-		"REPLACE INTO cdc(id, ip, port, queued_txns, current_txn_kind, current_txn_step, last_seen) VALUES (0, :ip, :port, :queued_txns, :current_txn_kind, :current_txn_step, :last_seen)",
-		n("ip", req.Ip[:]), n("port", req.Port),
+		"REPLACE INTO cdc(id, ip1, port1, ip2, port2, queued_txns, current_txn_kind, current_txn_step, last_seen) VALUES (0, :ip1, :port1, :ip2, :port2, :queued_txns, :current_txn_kind, :current_txn_step, :last_seen)",
+		n("ip1", req.Ip1[:]), n("port1", req.Port1),
+		n("ip2", req.Ip2[:]), n("port2", req.Port2),
 		n("queued_txns", req.QueuedTransactions), n("current_txn_kind", req.CurrentTransactionKind), n("current_txn_step", req.CurrentTransactionStep),
 		n("last_seen", msgs.Now()),
 	)
@@ -503,7 +501,8 @@ type indexBlockService struct {
 }
 
 type indexShard struct {
-	Addr     string
+	Addr1    string
+	Addr2    string
 	LastSeen string
 }
 
@@ -513,7 +512,8 @@ type indexData struct {
 	TotalCapacity             string
 	TotalUsed                 string
 	TotalUsedPercentage       string
-	CDCAddr                   string
+	CDCAddr1                  string
+	CDCAddr2                  string
 	CDCLastSeen               string
 	CDCCurrentTransactionKind string
 	CDCCurrentTransactionStep string
@@ -657,7 +657,8 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 			}
 			for _, shard := range shards {
 				data.ShardsAddrs = append(data.ShardsAddrs, indexShard{
-					Addr:     fmt.Sprintf("%v:%v", net.IP(shard.Ip[:]), shard.Port),
+					Addr1:    fmt.Sprintf("%v:%v", net.IP(shard.Ip1[:]), shard.Port1),
+					Addr2:    fmt.Sprintf("%v:%v", net.IP(shard.Ip2[:]), shard.Port2),
 					LastSeen: formatLastSeen(shard.LastSeen),
 				})
 			}
@@ -667,7 +668,8 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				ll.Error("error reading cdc: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
 			}
-			data.CDCAddr = fmt.Sprintf("%v:%v", net.IP(cdc.ip[:]), cdc.port)
+			data.CDCAddr1 = fmt.Sprintf("%v:%v", net.IP(cdc.ip1[:]), cdc.port1)
+			data.CDCAddr2 = fmt.Sprintf("%v:%v", net.IP(cdc.ip2[:]), cdc.port2)
 			data.CDCLastSeen = formatLastSeen(cdc.lastSeen)
 			data.CDCQueuedTransactions = cdc.queuedTxns
 			if cdc.currentTxnKind != 0 {
@@ -759,9 +761,6 @@ type directoryData struct {
 }
 
 func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
-	var shardIps [256][4]byte
-	var shardPorts [256]uint16
-
 	shards, err := state.shards()
 	if err != nil {
 		return nil, fmt.Errorf("error reading shards: %s", err)
@@ -771,11 +770,21 @@ func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
 		return nil, fmt.Errorf("error reading cdc: %s", err)
 	}
 
+	var shardIps [256][2][4]byte
+	var shardPorts [256][2]uint16
 	for i, si := range shards {
-		shardIps[i] = si.Ip
-		shardPorts[i] = si.Port
+		shardIps[i][0] = si.Ip1
+		shardPorts[i][0] = si.Port1
+		shardIps[i][1] = si.Ip2
+		shardPorts[i][1] = si.Port2
 	}
-	client, err := lib.NewClientDirect(log, nil, nil, nil, cdc.ip, cdc.port, &shardIps, &shardPorts)
+	var cdcIps [2][4]byte
+	var cdcPorts [2]uint16
+	cdcIps[0] = cdc.ip1
+	cdcPorts[0] = cdc.port1
+	cdcIps[1] = cdc.ip2
+	cdcPorts[1] = cdc.port2
+	client, err := lib.NewClientDirect(log, 1, nil, nil, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
 	if err != nil {
 		return nil, fmt.Errorf("error creating client: %s", err)
 	}
@@ -1298,8 +1307,10 @@ func main() {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
 		id INT NOT NULL PRIMARY KEY,
-		ip BLOB,
-		port INT,
+		ip1 BLOB,
+		port1 INT,
+		ip2 BLOB,
+		port2 INT,
 		queued_txns INT,
 		current_txn_kind INT,
 		current_txn_step INT,
@@ -1310,8 +1321,10 @@ func main() {
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards(
 		id INT NOT NULL PRIMARY KEY,
-		ip BLOB,
-		port INT,
+		ip1 BLOB,
+		port1 INT,
+		ip2 BLOB,
+		port2 INT,
 		last_seen INT
 	)`)
 	if err != nil {

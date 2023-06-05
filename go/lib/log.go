@@ -99,7 +99,7 @@ func (lf *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		ce := ""
 		if lf.hasColors {
 			cs = fmt.Sprintf("\x1b[%dm", levelColor)
-			ce = fmt.Sprintf("\x1b[0m")
+			ce = "\x1b[0m"
 		}
 
 		fmt.Fprintf(b, "%-26s %s[%s%s%s] %s ", entry.Time.Format("2006-01-02T15:04:05.999999"), caller, cs, levelText, ce, entry.Message)

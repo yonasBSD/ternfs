@@ -290,17 +290,21 @@ struct BlockService {
 std::ostream& operator<<(std::ostream& out, const BlockService& x);
 
 struct ShardInfo {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip1 + port1 + ip2 + port2 + lastSeen
 
     ShardInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         _size += 8; // lastSeen
         return _size;
     }
@@ -738,16 +742,20 @@ struct BlockServiceInfo {
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x);
 
 struct RegisterShardInfo {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip + port
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
 
     RegisterShardInfo() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2601,17 +2609,21 @@ struct CdcReq {
 std::ostream& operator<<(std::ostream& out, const CdcReq& x);
 
 struct CdcResp {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip + port + lastSeen
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip1 + port1 + ip2 + port2 + lastSeen
 
     CdcResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         _size += 8; // lastSeen
         return _size;
     }
@@ -2778,19 +2790,23 @@ struct AllBlockServicesResp {
 std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x);
 
 struct RegisterCdcReq {
-    BincodeFixedBytes<4> ip;
-    uint16_t port;
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
     CDCMessageKind currentTransactionKind;
     uint8_t currentTransactionStep;
     uint64_t queuedTransactions;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + 1 + 8; // ip + port + currentTransactionKind + currentTransactionStep + queuedTransactions
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + 1 + 8; // ip1 + port1 + ip2 + port2 + currentTransactionKind + currentTransactionStep + queuedTransactions
 
     RegisterCdcReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip
-        _size += 2; // port
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
         _size += 1; // currentTransactionKind
         _size += 1; // currentTransactionStep
         _size += 8; // queuedTransactions

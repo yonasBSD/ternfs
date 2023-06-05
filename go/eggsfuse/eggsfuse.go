@@ -858,7 +858,7 @@ func main() {
 	counters := &lib.ClientCounters{}
 
 	var err error
-	client, err = lib.NewClient(logger, *shuckleAddress, nil, counters, nil)
+	client, err = lib.NewClient(logger, *shuckleAddress, 10, counters, nil)
 	if err != nil {
 		panic(err)
 	}

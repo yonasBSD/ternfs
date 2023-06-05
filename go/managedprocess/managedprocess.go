@@ -399,8 +399,10 @@ type ShardOpts struct {
 	IncomingPacketDrop float64
 	OutgoingPacketDrop float64
 	ShuckleAddress     string
-	OwnIp              string
-	Port               uint16
+	OwnIp1             string
+	Port1              uint16
+	OwnIp2             string
+	Port2              uint16
 }
 
 func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
@@ -413,8 +415,12 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		"-incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-shuckle", opts.ShuckleAddress,
-		"-own-ip", opts.OwnIp,
-		"-port", fmt.Sprintf("%v", opts.Port),
+		"-own-ip-1", opts.OwnIp1,
+		"-port-1", fmt.Sprintf("%v", opts.Port1),
+		"-port-2", fmt.Sprintf("%v", opts.Port2),
+	}
+	if opts.OwnIp2 != "" {
+		args = append(args, "-own-ip-2", opts.OwnIp2)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:
@@ -477,8 +483,10 @@ type CDCOpts struct {
 	Valgrind       bool
 	Perf           bool
 	ShuckleAddress string
-	OwnIp          string
-	Port           uint16
+	OwnIp1         string
+	Port1          uint16
+	OwnIp2         string
+	Port2          uint16
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
@@ -489,8 +497,12 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-shuckle", opts.ShuckleAddress,
-		"-own-ip", opts.OwnIp,
-		"-port", fmt.Sprintf("%v", opts.Port),
+		"-own-ip-1", opts.OwnIp1,
+		"-port-1", fmt.Sprintf("%v", opts.Port1),
+		"-port-2", fmt.Sprintf("%v", opts.Port2),
+	}
+	if opts.OwnIp2 != "" {
+		args = append(args, "-own-ip-2", opts.OwnIp2)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:
@@ -551,7 +563,7 @@ func WaitForShard(log *lib.Logger, shuckleAddress string, shid msgs.ShardId, tim
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
 		}
-		client, err = lib.NewClient(log, shuckleAddress, &shid, nil, nil)
+		client, err = lib.NewClient(log, shuckleAddress, 1, nil, nil)
 		if err != nil {
 			time.Sleep(10 * time.Millisecond)
 			continue

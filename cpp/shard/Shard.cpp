@@ -31,18 +31,40 @@ private:
 public:
     ShardDB& db;
     std::atomic<bool> stop;
-    std::atomic<uint16_t> ownPort;
+    std::atomic<uint32_t> ip1;
+    std::atomic<uint16_t> port1;
+    std::atomic<uint32_t> ip2;
+    std::atomic<uint16_t> port2;
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_), stop(false), ownPort(0) {
+    ShardShared(ShardDB& db_): db(db_), stop(false), ip1(0), port1(0), ip2(0), port2(0) {
         _currentLogIndex = db.lastAppliedLogEntry();
     }
 
+private:
+    EggsError _applyLogEntryLocked(const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+        EggsError err = db.applyLogEntry(true, _currentLogIndex+1, logEntry, resp);
+        _currentLogIndex++;
+        return err;
+    }
+
+public:    
     EggsError applyLogEntry(const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         std::lock_guard<std::mutex> lock(_applyLock);
-        auto res = db.applyLogEntry(true, _currentLogIndex+1, logEntry, resp);
-        _currentLogIndex++;
-        return res;
+        return _applyLogEntryLocked(logEntry, resp);
+    }
+
+    EggsError prepareAndApplyLogEntry(ShardReqContainer& req, ShardLogEntry& logEntry, ShardRespContainer& resp) {
+        // we wrap everything in a lock (even if only the apply is strictly required)
+        // because we fill in expected directory times when preparing the log entry,
+        // which might change if we do two prepareLogEntry in one order and then
+        // two applyLogEntry in another order.
+        std::lock_guard<std::mutex> lock(_applyLock);
+        EggsError err = db.prepareLogEntry(req, logEntry);
+        if (err == NO_ERROR) {
+            err = _applyLogEntryLocked(logEntry, resp);
+        }
+        return err;
     }
 };
 
@@ -52,18 +74,20 @@ private:
     Env _env;
     ShardShared& _shared;
     ShardId _shid;
-    std::array<uint8_t, 4> _ownIp;
+    int _ipPortIx;
+    uint32_t _ownIp;
     uint16_t _desiredPort;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 public:
-    ShardServer(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        _env(logger, "server"),
+    ShardServer(Logger& logger, ShardId shid, const ShardOptions& options, int ipPortIx, ShardShared& shared):
+        _env(logger, "server_" + std::to_string(ipPortIx+1)),
         _shared(shared),
         _shid(shid),
-        _ownIp(options.ownIp),
-        _desiredPort(options.port),
+        _ipPortIx(ipPortIx),
+        _ownIp(options.ipPorts[ipPortIx].ip),
+        _desiredPort(options.ipPorts[ipPortIx].port),
         _packetDropRand((int)shid.u8 + 1), // CDC is 0
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
@@ -100,7 +124,8 @@ public:
         }
         struct sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
-        memcpy(&serverAddr.sin_addr.s_addr, _ownIp.data(), sizeof(_ownIp));
+        uint32_t ipn = htonl(_ownIp);
+        memcpy(&serverAddr.sin_addr.s_addr, &ipn, sizeof(ipn));
         serverAddr.sin_port = htons(_desiredPort);
         if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
             char ip[INET_ADDRSTRLEN];
@@ -122,8 +147,14 @@ public:
             }
         }
 
-        _shared.ownPort.store(ntohs(serverAddr.sin_port));
-        LOG_INFO(_env, "Bound shard %s to port %s", _shid, _shared.ownPort.load());
+        if (_ipPortIx == 0) {
+            _shared.ip1.store(ntohl(serverAddr.sin_addr.s_addr));
+            _shared.port1.store(ntohs(serverAddr.sin_port));
+        } else {
+            _shared.ip2.store(ntohl(serverAddr.sin_addr.s_addr));
+            _shared.port2.store(ntohs(serverAddr.sin_port));
+        }
+        LOG_INFO(_env, "Bound shard %s to %s", _shid, serverAddr);
 
         struct sockaddr_in clientAddr;
         std::vector<char> recvBuf(UDP_MTU);
@@ -205,10 +236,7 @@ public:
                 if (readOnlyShardReq(reqContainer->kind())) {
                     err = _shared.db.read(*reqContainer, *respContainer);
                 } else {
-                    err = _shared.db.prepareLogEntry(*reqContainer, *logEntry);
-                    if (err == NO_ERROR) {
-                        err = _shared.applyLogEntry(*logEntry, *respContainer);
-                    }
+                    err = _shared.prepareAndApplyLogEntry(*reqContainer, *logEntry, *respContainer);
                 }
             }
             Duration elapsed = eggsNow() - t0;
@@ -237,7 +265,9 @@ public:
         }
 
         // If we're terminating gracefully we're the last ones, close the db nicely
-        _shared.db.close();
+        if (_ipPortIx == 0) {
+            _shared.db.close();
+        }
     }
 };
 
@@ -251,17 +281,17 @@ private:
     Env _env;
     ShardShared& _shared;
     ShardId _shid;
-    std::array<uint8_t, 4> _ownIp;
     std::string _shuckleHost;
     uint16_t _shucklePort;
+    bool _hasSecondIp;
 public:
     ShardRegisterer(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
         _env(logger, "registerer"),
         _shared(shared),
         _shid(shid),
-        _ownIp(options.ownIp),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shucklePort(options.shucklePort),
+        _hasSecondIp(options.ipPorts[1].port != 0)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -286,13 +316,18 @@ public:
             if (eggsNow() - successfulIterationAt < 1_mins) {
                 continue;                
             }
-            uint16_t port = _shared.ownPort.load();
-            if (port == 0) {
+            uint16_t port1 = _shared.port1.load();
+            uint16_t port2 = _shared.port2.load();
+            // Avoid registering with only one port, so that clients can just wait on 
+            // the first port being ready and they always have both.
+            if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
                 // shard server isn't up yet
                 continue;
             }
-            LOG_INFO(_env, "Registering ourselves (shard %s, port %s) with shuckle", _shid, port);
-            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, _ownIp, port);
+            uint32_t ip1 = _shared.ip1.load();
+            uint32_t ip2 = _shared.ip2.load();
+            LOG_INFO(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
+            std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
             if (!err.empty()) {
                 RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 EggsTime successfulIterationAt = 0;
@@ -417,12 +452,15 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "Running shard %s with options:", shid);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
-        LOG_INFO(env, "  port = %s", options.port);
         LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
         LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
-        {
-            char ip[INET_ADDRSTRLEN];
-            LOG_INFO(env, "  ownIp = %s", inet_ntop(AF_INET, &options.ownIp, ip, INET_ADDRSTRLEN));
+        for (int i = 0; i < 2; i++) {
+            LOG_INFO(env, "  port%s = %s", i+1, options.ipPorts[0].port);
+            {
+                char ip[INET_ADDRSTRLEN];
+                uint32_t ipN = options.ipPorts[i].ip;
+                LOG_INFO(env, "  ownIp%s = %s", i+1, inet_ntop(AF_INET, &ipN, ip, INET_ADDRSTRLEN));
+            }
         }
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
@@ -434,12 +472,21 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     ShardShared shared(db);
 
     {
-        auto server = std::make_unique<ShardServer>(logger, shid, options, shared);
+        auto server = std::make_unique<ShardServer>(logger, shid, options, 0, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
-        undertaker->checkin(std::move(server), tid, "shard");
+        undertaker->checkin(std::move(server), tid, "shard_1");
+    }
+
+    if (options.ipPorts[1].ip != 0) {
+        auto server = std::make_unique<ShardServer>(logger, shid, options, 1, shared);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(server), tid, "shard_2");
     }
 
     {

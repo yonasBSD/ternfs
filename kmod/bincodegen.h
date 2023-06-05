@@ -787,12 +787,12 @@ static inline void _eggsfs_block_service_put_flags(struct eggsfs_bincode_put_ctx
     { struct eggsfs_block_service_flags* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_block_service_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_SHARD_INFO_SIZE 14
+#define EGGSFS_SHARD_INFO_SIZE 20
 struct eggsfs_shard_info_start;
 #define eggsfs_shard_info_get_start(ctx, start) struct eggsfs_shard_info_start* start = NULL
 
-struct eggsfs_shard_info_ip { u32 x; };
-static inline void _eggsfs_shard_info_get_ip(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_start** prev, struct eggsfs_shard_info_ip* next) { 
+struct eggsfs_shard_info_ip1 { u32 x; };
+static inline void _eggsfs_shard_info_get_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_start** prev, struct eggsfs_shard_info_ip1* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 4)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -802,12 +802,12 @@ static inline void _eggsfs_shard_info_get_ip(struct eggsfs_bincode_get_ctx* ctx,
         } 
     }
 }
-#define eggsfs_shard_info_get_ip(ctx, prev, next) \
-    struct eggsfs_shard_info_ip next; \
-    _eggsfs_shard_info_get_ip(ctx, &(prev), &(next))
+#define eggsfs_shard_info_get_ip1(ctx, prev, next) \
+    struct eggsfs_shard_info_ip1 next; \
+    _eggsfs_shard_info_get_ip1(ctx, &(prev), &(next))
 
-struct eggsfs_shard_info_port { u16 x; };
-static inline void _eggsfs_shard_info_get_port(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_ip* prev, struct eggsfs_shard_info_port* next) { 
+struct eggsfs_shard_info_port1 { u16 x; };
+static inline void _eggsfs_shard_info_get_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_ip1* prev, struct eggsfs_shard_info_port1* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 2)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -817,12 +817,42 @@ static inline void _eggsfs_shard_info_get_port(struct eggsfs_bincode_get_ctx* ct
         } 
     }
 }
-#define eggsfs_shard_info_get_port(ctx, prev, next) \
-    struct eggsfs_shard_info_port next; \
-    _eggsfs_shard_info_get_port(ctx, &(prev), &(next))
+#define eggsfs_shard_info_get_port1(ctx, prev, next) \
+    struct eggsfs_shard_info_port1 next; \
+    _eggsfs_shard_info_get_port1(ctx, &(prev), &(next))
+
+struct eggsfs_shard_info_ip2 { u32 x; };
+static inline void _eggsfs_shard_info_get_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_port1* prev, struct eggsfs_shard_info_ip2* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 4)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_be32(ctx->buf); 
+            ctx->buf += 4; 
+        } 
+    }
+}
+#define eggsfs_shard_info_get_ip2(ctx, prev, next) \
+    struct eggsfs_shard_info_ip2 next; \
+    _eggsfs_shard_info_get_ip2(ctx, &(prev), &(next))
+
+struct eggsfs_shard_info_port2 { u16 x; };
+static inline void _eggsfs_shard_info_get_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_ip2* prev, struct eggsfs_shard_info_port2* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 2)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le16(ctx->buf); 
+            ctx->buf += 2; 
+        } 
+    }
+}
+#define eggsfs_shard_info_get_port2(ctx, prev, next) \
+    struct eggsfs_shard_info_port2 next; \
+    _eggsfs_shard_info_get_port2(ctx, &(prev), &(next))
 
 struct eggsfs_shard_info_last_seen { u64 x; };
-static inline void _eggsfs_shard_info_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_port* prev, struct eggsfs_shard_info_last_seen* next) { 
+static inline void _eggsfs_shard_info_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shard_info_port2* prev, struct eggsfs_shard_info_last_seen* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 8)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -849,27 +879,47 @@ static inline void eggsfs_shard_info_get_finish(struct eggsfs_bincode_get_ctx* c
 
 #define eggsfs_shard_info_put_start(ctx, start) struct eggsfs_shard_info_start* start = NULL
 
-static inline void _eggsfs_shard_info_put_ip(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_start** prev, struct eggsfs_shard_info_ip* next, u32 x) {
+static inline void _eggsfs_shard_info_put_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_start** prev, struct eggsfs_shard_info_ip1* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_be32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define eggsfs_shard_info_put_ip(ctx, prev, next, x) \
-    struct eggsfs_shard_info_ip next; \
-    _eggsfs_shard_info_put_ip(ctx, &(prev), &(next), x)
+#define eggsfs_shard_info_put_ip1(ctx, prev, next, x) \
+    struct eggsfs_shard_info_ip1 next; \
+    _eggsfs_shard_info_put_ip1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_shard_info_put_port(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_ip* prev, struct eggsfs_shard_info_port* next, u16 x) {
+static inline void _eggsfs_shard_info_put_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_ip1* prev, struct eggsfs_shard_info_port1* next, u16 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(x, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_shard_info_put_port(ctx, prev, next, x) \
-    struct eggsfs_shard_info_port next; \
-    _eggsfs_shard_info_put_port(ctx, &(prev), &(next), x)
+#define eggsfs_shard_info_put_port1(ctx, prev, next, x) \
+    struct eggsfs_shard_info_port1 next; \
+    _eggsfs_shard_info_put_port1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_shard_info_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_port* prev, struct eggsfs_shard_info_last_seen* next, u64 x) {
+static inline void _eggsfs_shard_info_put_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_port1* prev, struct eggsfs_shard_info_ip2* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_shard_info_put_ip2(ctx, prev, next, x) \
+    struct eggsfs_shard_info_ip2 next; \
+    _eggsfs_shard_info_put_ip2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_shard_info_put_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_ip2* prev, struct eggsfs_shard_info_port2* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_shard_info_put_port2(ctx, prev, next, x) \
+    struct eggsfs_shard_info_port2 next; \
+    _eggsfs_shard_info_put_port2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_shard_info_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shard_info_port2* prev, struct eggsfs_shard_info_last_seen* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
@@ -4726,12 +4776,12 @@ static inline void eggsfs_cdc_req_get_finish(struct eggsfs_bincode_get_ctx* ctx,
     { struct eggsfs_cdc_req_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_cdc_req_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_CDC_RESP_SIZE 14
+#define EGGSFS_CDC_RESP_SIZE 20
 struct eggsfs_cdc_resp_start;
 #define eggsfs_cdc_resp_get_start(ctx, start) struct eggsfs_cdc_resp_start* start = NULL
 
-struct eggsfs_cdc_resp_ip { u32 x; };
-static inline void _eggsfs_cdc_resp_get_ip(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_start** prev, struct eggsfs_cdc_resp_ip* next) { 
+struct eggsfs_cdc_resp_ip1 { u32 x; };
+static inline void _eggsfs_cdc_resp_get_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_start** prev, struct eggsfs_cdc_resp_ip1* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 4)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -4741,12 +4791,12 @@ static inline void _eggsfs_cdc_resp_get_ip(struct eggsfs_bincode_get_ctx* ctx, s
         } 
     }
 }
-#define eggsfs_cdc_resp_get_ip(ctx, prev, next) \
-    struct eggsfs_cdc_resp_ip next; \
-    _eggsfs_cdc_resp_get_ip(ctx, &(prev), &(next))
+#define eggsfs_cdc_resp_get_ip1(ctx, prev, next) \
+    struct eggsfs_cdc_resp_ip1 next; \
+    _eggsfs_cdc_resp_get_ip1(ctx, &(prev), &(next))
 
-struct eggsfs_cdc_resp_port { u16 x; };
-static inline void _eggsfs_cdc_resp_get_port(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_ip* prev, struct eggsfs_cdc_resp_port* next) { 
+struct eggsfs_cdc_resp_port1 { u16 x; };
+static inline void _eggsfs_cdc_resp_get_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_ip1* prev, struct eggsfs_cdc_resp_port1* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 2)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -4756,12 +4806,42 @@ static inline void _eggsfs_cdc_resp_get_port(struct eggsfs_bincode_get_ctx* ctx,
         } 
     }
 }
-#define eggsfs_cdc_resp_get_port(ctx, prev, next) \
-    struct eggsfs_cdc_resp_port next; \
-    _eggsfs_cdc_resp_get_port(ctx, &(prev), &(next))
+#define eggsfs_cdc_resp_get_port1(ctx, prev, next) \
+    struct eggsfs_cdc_resp_port1 next; \
+    _eggsfs_cdc_resp_get_port1(ctx, &(prev), &(next))
+
+struct eggsfs_cdc_resp_ip2 { u32 x; };
+static inline void _eggsfs_cdc_resp_get_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_port1* prev, struct eggsfs_cdc_resp_ip2* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 4)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_be32(ctx->buf); 
+            ctx->buf += 4; 
+        } 
+    }
+}
+#define eggsfs_cdc_resp_get_ip2(ctx, prev, next) \
+    struct eggsfs_cdc_resp_ip2 next; \
+    _eggsfs_cdc_resp_get_ip2(ctx, &(prev), &(next))
+
+struct eggsfs_cdc_resp_port2 { u16 x; };
+static inline void _eggsfs_cdc_resp_get_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_ip2* prev, struct eggsfs_cdc_resp_port2* next) { 
+    if (likely(ctx->err == 0)) { 
+        if (unlikely(ctx->end - ctx->buf < 2)) { 
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
+        } else { 
+            next->x = get_unaligned_le16(ctx->buf); 
+            ctx->buf += 2; 
+        } 
+    }
+}
+#define eggsfs_cdc_resp_get_port2(ctx, prev, next) \
+    struct eggsfs_cdc_resp_port2 next; \
+    _eggsfs_cdc_resp_get_port2(ctx, &(prev), &(next))
 
 struct eggsfs_cdc_resp_last_seen { u64 x; };
-static inline void _eggsfs_cdc_resp_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_port* prev, struct eggsfs_cdc_resp_last_seen* next) { 
+static inline void _eggsfs_cdc_resp_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_port2* prev, struct eggsfs_cdc_resp_last_seen* next) { 
     if (likely(ctx->err == 0)) { 
         if (unlikely(ctx->end - ctx->buf < 8)) { 
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE; 
@@ -4788,27 +4868,47 @@ static inline void eggsfs_cdc_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx
 
 #define eggsfs_cdc_resp_put_start(ctx, start) struct eggsfs_cdc_resp_start* start = NULL
 
-static inline void _eggsfs_cdc_resp_put_ip(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_start** prev, struct eggsfs_cdc_resp_ip* next, u32 x) {
+static inline void _eggsfs_cdc_resp_put_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_start** prev, struct eggsfs_cdc_resp_ip1* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_be32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define eggsfs_cdc_resp_put_ip(ctx, prev, next, x) \
-    struct eggsfs_cdc_resp_ip next; \
-    _eggsfs_cdc_resp_put_ip(ctx, &(prev), &(next), x)
+#define eggsfs_cdc_resp_put_ip1(ctx, prev, next, x) \
+    struct eggsfs_cdc_resp_ip1 next; \
+    _eggsfs_cdc_resp_put_ip1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_cdc_resp_put_port(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_ip* prev, struct eggsfs_cdc_resp_port* next, u16 x) {
+static inline void _eggsfs_cdc_resp_put_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_ip1* prev, struct eggsfs_cdc_resp_port1* next, u16 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(x, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_cdc_resp_put_port(ctx, prev, next, x) \
-    struct eggsfs_cdc_resp_port next; \
-    _eggsfs_cdc_resp_put_port(ctx, &(prev), &(next), x)
+#define eggsfs_cdc_resp_put_port1(ctx, prev, next, x) \
+    struct eggsfs_cdc_resp_port1 next; \
+    _eggsfs_cdc_resp_put_port1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_cdc_resp_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_port* prev, struct eggsfs_cdc_resp_last_seen* next, u64 x) {
+static inline void _eggsfs_cdc_resp_put_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_port1* prev, struct eggsfs_cdc_resp_ip2* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_cdc_resp_put_ip2(ctx, prev, next, x) \
+    struct eggsfs_cdc_resp_ip2 next; \
+    _eggsfs_cdc_resp_put_ip2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_cdc_resp_put_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_ip2* prev, struct eggsfs_cdc_resp_port2* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_cdc_resp_put_port2(ctx, prev, next, x) \
+    struct eggsfs_cdc_resp_port2 next; \
+    _eggsfs_cdc_resp_put_port2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_cdc_resp_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_port2* prev, struct eggsfs_cdc_resp_last_seen* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);

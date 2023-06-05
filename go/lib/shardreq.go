@@ -190,11 +190,16 @@ func (c *Client) ShardRequest(
 	if msgKind != respBody.ShardResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	sock, err := c.GetShardSocket(shid)
+	sock, err := c.GetUDPSocket()
 	if err != nil {
 		return err
 	}
-	defer c.ReleaseShardSocket(shid, sock)
+	defer c.ReleaseUDPSocket(sock)
+	addrs := c.ShardAddrs(shid)
+	hasSecondIp := 0
+	if addrs[1].Port != 0 {
+		hasSecondIp = 1
+	}
 	respBuf := make([]byte, msgs.UDP_MTU)
 	requestIds := make([]uint64, shardMaxElapsed/minShardSingleTimeout)
 	attempts := 0
@@ -216,9 +221,10 @@ func (c *Client) ShardRequest(
 			body:      reqBody,
 		}
 		reqBytes := packShardRequest(&req, c.cdcKey)
-		logger.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, sock.RemoteAddr(), sock.LocalAddr(), attempts)
+		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp]
+		logger.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, sock.LocalAddr(), attempts)
 		logger.Trace("reqBody %+v", reqBody)
-		written, err := sock.Write(reqBytes)
+		written, err := sock.WriteTo(reqBytes, addr)
 		if err != nil {
 			return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
 		}
@@ -232,7 +238,9 @@ func (c *Client) ShardRequest(
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)
 		for {
-			read, err := sock.Read(respBuf)
+			// We could discard immediatly if the addr doesn't match, but the req id protects
+			// ourselves well enough from this anyway.
+			read, _, err := sock.ReadFrom(respBuf)
 			respBytes := respBuf[:read]
 			if err != nil {
 				// We retry very liberally rather than only with timeouts (at least for now),
@@ -327,7 +335,7 @@ func (c *Client) ShardRequest(
 			// Check if it's an error or not. We only use debug here because some errors are legitimate
 			// responses (e.g. FILE_EMPTY)
 			if eggsError != nil {
-				logger.Debug("got error %v from shard %v (took %v)", *eggsError, shid, elapsed)
+				logger.Debug("got error %v for req %T id %v from shard %v (took %v)", *eggsError, req.body, req.requestId, shid, elapsed)
 				return *eggsError
 			}
 			logger.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)

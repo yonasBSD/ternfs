@@ -129,11 +129,16 @@ func (c *Client) CDCRequest(
 	if msgKind != respBody.CDCResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	sock, err := c.GetCDCSocket()
+	sock, err := c.GetUDPSocket()
 	if err != nil {
 		return err
 	}
-	defer c.ReleaseCDCSocket(sock)
+	defer c.ReleaseUDPSocket(sock)
+	addrs := c.CDCAddrs()
+	hasSecondIp := 0
+	if addrs[1].Port != 0 {
+		hasSecondIp = 1
+	}
 	respBuf := make([]byte, msgs.UDP_MTU)
 	requestIds := make([]uint64, cdcMaxElapsed/minCDCSingleTimeout)
 	attempts := 0
@@ -155,9 +160,10 @@ func (c *Client) CDCRequest(
 			body:      reqBody,
 		}
 		reqBytes := bincode.Pack(&req)
-		logger.DebugStack(1, "about to send request id %v (type %T) to CDC, after %v attempts", requestId, reqBody, attempts)
+		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp] // cycle through the two addrs
+		logger.DebugStack(1, "about to send request id %v (type %T) to CDC using conn %v->%v, after %v attempts", requestId, reqBody, addr, sock.LocalAddr(), attempts)
 		logger.Trace("reqBody %+v", reqBody)
-		written, err := sock.Write(reqBytes)
+		written, err := sock.WriteTo(reqBytes, addr)
 		if err != nil {
 			return fmt.Errorf("couldn't send request: %w", err)
 		}
@@ -172,7 +178,9 @@ func (c *Client) CDCRequest(
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)
 		for {
-			read, err := sock.Read(respBuf)
+			// We could discard immediatly if the addr doesn't match, but the req id protects
+			// ourselves well enough from this anyway.
+			read, _, err := sock.ReadFrom(respBuf)
 			respBytes := respBuf[:read]
 			if err != nil {
 				isTimeout := false

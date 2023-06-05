@@ -142,7 +142,7 @@ func getKmodDirRefreshTime() uint64 {
 func setKmodDirRefreshTime(ms uint64) {
 	out, err := exec.Command("sudo", "sh", "-c", fmt.Sprintf("echo %v > /proc/sys/fs/eggsfs/dir_refresh_time_ms", ms)).CombinedOutput()
 	if err != nil {
-		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
+		panic(fmt.Errorf("could not set dir_refresh_time (%w): %s", err, out))
 	}
 }
 
@@ -179,7 +179,10 @@ func (i *cfgOverrides) int(k string, def int) int {
 
 func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleAddress string, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
 	defer func() { handleRecover(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, shuckleAddress, nil, nil, nil)
+	client, err := lib.NewClient(log, shuckleAddress, 1, nil, nil)
+	if err != nil {
+		panic(err)
+	}
 	defer client.Close()
 
 	defaultSpanPolicy := &msgs.SpanPolicy{}
@@ -240,10 +243,10 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		checkpointEvery: 100,       // get times every 100 actions
 		targetFiles:     1000,      // how many files we want
 		lowFiles:        500,
-		threads:         5,
+		threads:         overrides.int("fileHistory.threads", 5),
 	}
 	if short {
-		fileHistoryOpts.threads = 2
+		fileHistoryOpts.threads = overrides.int("fileHistory.threads", 2)
 	}
 	runTest(
 		log,
@@ -580,7 +583,8 @@ func main() {
 		Valgrind:       *buildType == "valgrind",
 		Perf:           *profile,
 		ShuckleAddress: shuckleAddress,
-		OwnIp:          "127.0.0.1",
+		OwnIp1:         "127.0.0.1",
+		OwnIp2:         "127.0.0.1",
 	})
 
 	// Start shards
@@ -597,7 +601,8 @@ func main() {
 			IncomingPacketDrop: *incomingPacketDrop,
 			OutgoingPacketDrop: *outgoingPacketDrop,
 			ShuckleAddress:     shuckleAddress,
-			OwnIp:              "127.0.0.1",
+			OwnIp1:             "127.0.0.1",
+			OwnIp2:             "127.0.0.1",
 		}
 		procs.StartShard(log, *repoDir, &shopts)
 	}

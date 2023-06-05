@@ -10,14 +10,16 @@
     <table class="table">
         <thead>
             <tr>
-                <th>Address</th>
+                <th>Address 1</th>
+                <th>Address 2</th>
                 <th>LastSeen</th>
                 <th>QueuedTransactions</th>
                 <th>CurrentTransaction</th>
             </tr>
         <tbody>
             <tr>
-                <td><code>{{.CDCAddr}}</code></td>
+                <td><code>{{.CDCAddr1}}</code></td>
+                <td><code>{{.CDCAddr2}}</code></td>
                 <td>{{.CDCLastSeen}}</td>
                 <td>{{.CDCQueuedTransactions}}</td>
                 <td>{{.CDCCurrentTransactionKind}} {{.CDCCurrentTransactionStep}}</td>
@@ -29,14 +31,16 @@
         <thead>
             <tr>
                 <th>Id</th>
-                <th>Address</th>
+                <th>Address 1</th>
+                <th>Address 2</th>
                 <th>LastSeen</th>
             </tr>
         <tbody>
             {{ range $id, $shard := .ShardsAddrs }}
                 <tr>
                     <td><code>{{printf "%03v" $id}}</code></td>
-                    <td><code>{{$shard.Addr}}</code></td>
+                    <td><code>{{$shard.Addr1}}</code></td>
+                    <td><code>{{$shard.Addr2}}</code></td>
                     <td>{{$shard.LastSeen}}</td>
                 </tr>
             {{end}}

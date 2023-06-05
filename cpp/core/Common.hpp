@@ -42,6 +42,7 @@ void dieWithError(const char *err);
 #define SHORT_FILE (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr);
+std::ostream& operator<<(std::ostream& out, struct in_addr& addr);
 
 std::ostream& goLangBytesFmt(std::ostream& out, const char* str, size_t len);
 

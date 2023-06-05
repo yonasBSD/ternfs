@@ -20,16 +20,20 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
     fprintf(stderr, " -shuckle host:port\n");
     fprintf(stderr, "    	How to reach shuckle, default '%s'\n", defaultShuckleAddress.c_str());
-    fprintf(stderr, " -own-ip ipv4 address\n");
+    fprintf(stderr, " -own-ip-1 ipv4 address\n");
     fprintf(stderr, "    	How to advertise ourselves to shuckle.\n");
+    fprintf(stderr, " -port-1 port\n");
+    fprintf(stderr, "    	Port on which to listen on.\n");
+    fprintf(stderr, " -own-ip-2 ipv4 address\n");
+    fprintf(stderr, "    	How to advertise ourselves to shuckle (second address, optional).\n");
+    fprintf(stderr, " -port-2 port\n");
+    fprintf(stderr, "    	Port on which to listen on (second port).\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -incoming-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets on arrival.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
-    fprintf(stderr, " -port port\n");
-    fprintf(stderr, "    	Port on which to listen on.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -49,7 +53,7 @@ static double parseProbability(const std::string& arg) {
     return x;
 }
 
-static std::array<uint8_t, 4> parseIpv4(const char* binary, const std::string& arg) {
+static uint32_t parseIpv4(const char* binary, const std::string& arg) {
     struct sockaddr_in addr;
     int res = inet_pton(AF_INET, arg.c_str(), &addr.sin_addr);
     if (res == 0) {
@@ -57,10 +61,10 @@ static std::array<uint8_t, 4> parseIpv4(const char* binary, const std::string& a
         usage(binary);
         exit(2);
     }
-    std::array<uint8_t, 4> out;
+    uint32_t out;
     static_assert(sizeof(addr.sin_addr) == sizeof(out));
-    memcpy(out.data(), &addr.sin_addr, sizeof(addr.sin_addr));
-    return out;
+    memcpy(&out, &addr.sin_addr, sizeof(addr.sin_addr));
+    return ntohl(out);
 }
 
 static uint16_t parsePort(const std::string& arg) {
@@ -122,10 +126,14 @@ int main(int argc, char** argv) {
             options.simulateOutgoingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "-shuckle") {
             shuckleAddress = getNextArg();
-        } else if (arg == "-own-ip") {
-            options.ownIp = parseIpv4(argv[0], getNextArg());
-        } else if (arg == "-port") {
-            options.port = parsePort(getNextArg());
+        } else if (arg == "-own-ip-1") {
+            options.ipPorts[0].ip = parseIpv4(argv[0], getNextArg());
+        } else if (arg == "-port-1") {
+            options.ipPorts[0].port = parsePort(getNextArg());
+        } else if (arg == "-own-ip-2") {
+            options.ipPorts[1].ip = parseIpv4(argv[0], getNextArg());
+        } else if (arg == "-port-2") {
+            options.ipPorts[1].port = parsePort(getNextArg());
         } else if (arg == "-syslog") {
             options.syslog = true;
         } else {
@@ -149,8 +157,8 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
-    if (options.ownIp == std::array<uint8_t, 4>{0,0,0,0}) {
-        fprintf(stderr, "Please provide -own-ip.\n\n");
+    if (options.ipPorts[0].ip == 0) {
+        fprintf(stderr, "Please provide -own-ip-1.\n\n");
         usage(argv[0]);
         exit(2);
     }

@@ -58,14 +58,14 @@ static void sock_readable(struct sock* sk) {
                 skb = NULL;
                 complete(&req->comp);
 
-                #if 0
+#if 0
                 if (!(req->flags & EGGSFS_SHARD_ASYNC)) {
                 } else {
                     struct eggsfs_shard_async_request* areq = container_of(req, struct eggsfs_shard_async_request, request);
                     cancel_delayed_work(&areq->work);
                     queue_work(eggsfs_wq, &areq->callback);
                 }
-                #endif
+#endif
             }
         } spin_unlock_bh(&s->lock);
         if (!req) {

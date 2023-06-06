@@ -160,6 +160,9 @@ public:
         }
         struct epoll_event events[_socks.size()];
         for (int i = 0; i < _socks.size(); i++) {
+            if (i > 1 && _ipPorts[1].ip == 0) { // we don't have a second IP
+                break;
+            }
             auto& event = events[i];
             event.data.u64 = i;
             event.events = EPOLLIN | EPOLLET;
@@ -578,7 +581,7 @@ public:
     void run() {
         EggsTime successfulIterationAt = 0;
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (_shared.stop.load()) {
                 return;
             }
@@ -592,16 +595,20 @@ public:
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-            LOG_INFO(_env, "Registering ourselves (CDC, ports %s %s) with shuckle", port1, port2);
+            LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
             CDCStatus status;
             _shared.db.status(status);
             std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2, status);
             if (!err.empty()) {
-                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                if (successfulIterationAt > 0) {
+                    RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                } else {
+                    LOG_DEBUG(_env, "Couldn't register ourselves with shuckle: %s", err);
+                }
                 EggsTime successfulIterationAt = 0;
                 continue;
             }
-            LOG_INFO(_env, "Successfully registered with shuckle, will register again in one minute");
+            LOG_INFO(_env, "Successfully registered with shuckle (CDC, %s:%s, %s:%s), will register again in one minute", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
             successfulIterationAt = eggsNow();
         }
     }

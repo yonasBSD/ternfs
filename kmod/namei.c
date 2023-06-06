@@ -14,7 +14,7 @@ static int eggsfs_d_revalidate(struct dentry* dentry, unsigned int flags) {
     struct inode* dir;
     int ret;
 
-    eggsfs_debug_print("dentry=%pd flags=%x[rcu=%d]", dentry, flags, !!(flags & LOOKUP_RCU));
+    eggsfs_debug("dentry=%pd flags=%x[rcu=%d]", dentry, flags, !!(flags & LOOKUP_RCU));
 
     if (IS_ROOT(dentry)) { return 1; }
 
@@ -52,7 +52,7 @@ struct dentry_operations eggsfs_dentry_ops = {
 
 
 static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry, int err) {
-    eggsfs_debug_print("err=%d", err);
+    eggsfs_debug("err=%d", err);
     switch (err) {
     case EGGSFS_ERR_CANNOT_OVERRIDE_NAME:
         WARN_ON(dentry->d_inode);
@@ -98,7 +98,7 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
 
 // vfs: shared dir.i_rwsem
 struct dentry* eggsfs_lookup(struct inode* dir, struct dentry* dentry, unsigned int flags) {
-    eggsfs_debug_print("dir=0x%016lx, name=%*pE", dir->i_ino, dentry->d_name.len, dentry->d_name.name);
+    eggsfs_debug("dir=0x%016lx, name=%*pE", dir->i_ino, dentry->d_name.len, dentry->d_name.name);
     int err;
 
     trace_eggsfs_vfs_lookup_enter(dir, dentry);
@@ -266,7 +266,7 @@ int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode
     trace_eggsfs_vfs_rename_enter(old_dir, old_dentry, new_dir, new_dentry);
 
     if (!old_dentry->d_inode) { // TODO can this ever happen?
-        eggsfs_warn_print("got no inodes for old dentry!");
+        eggsfs_warn("got no inodes for old dentry!");
         return -EIO;
     }
     struct eggsfs_inode* enode = EGGSFS_I(old_dentry->d_inode);
@@ -319,6 +319,6 @@ int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode
 
 out:
     trace_eggsfs_vfs_rename_exit(old_dir, old_dentry, new_dir, new_dentry, err);
-    eggsfs_debug_print("err=%d", err);
+    eggsfs_debug("err=%d", err);
     return err;
 }

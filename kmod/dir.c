@@ -155,7 +155,7 @@ again: // progress: whoever wins the lock either get pages or fails
 out_ctx:
     kfree(ctx);
     trace_eggsfs_vfs_opendir_exit(inode, err);
-    eggsfs_debug_print("err=%d", err);
+    eggsfs_debug("err=%d", err);
     return err;
 }
 
@@ -166,11 +166,11 @@ static void update_dcache(struct dentry* parent, u64 dir_seqno, const char* name
     DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
     struct inode* parent_inode = parent->d_inode;
     if (unlikely(parent_inode == NULL)) { // TODO can this ever happen?
-        eggsfs_warn_print("got NULL in dentry parent (ino %016llx)", ino);
+        eggsfs_warn("got NULL in dentry parent (ino %016llx)", ino);
         return;
     }
 
-    eggsfs_debug_print("parent=%pd name=%*pE ino=%llx", parent, name_len, name, ino);
+    eggsfs_debug("parent=%pd name=%*pE ino=%llx", parent, name_len, name, ino);
 
     filename.hash = full_name_hash(parent, filename.name, filename.len);
 
@@ -197,18 +197,18 @@ again:
             struct eggsfs_inode* enode = EGGSFS_I(inode);
             enode->edge_creation_time = edge_creation_time;
         }
-        eggsfs_debug_print("inode=%p is_err=%d", inode, IS_ERR(inode));
+        eggsfs_debug("inode=%p is_err=%d", inode, IS_ERR(inode));
         // d_splice_alias propagates error in inode
         WRITE_ONCE(dentry->d_time, dir_seqno);
         alias = d_splice_alias(inode, dentry); 
-        eggsfs_debug_print("alias=%p is_err=%d", alias, IS_ERR(alias));
+        eggsfs_debug("alias=%p is_err=%d", alias, IS_ERR(alias));
         d_lookup_done(dentry);
         if (alias) {
             dput(dentry);
             dentry = alias;
         }
         if (IS_ERR(dentry)) {
-            eggsfs_debug_print("dentry err=%ld", PTR_ERR(dentry));
+            eggsfs_debug("dentry err=%ld", PTR_ERR(dentry));
             return;
         }
     }
@@ -263,7 +263,7 @@ static int eggsfs_dir_add_entry(struct eggsfs_dir_fill_ctx* ctx, const char* nam
 
 int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 edge_creation_time, u64 ino) {
     struct eggsfs_dir_fill_ctx* ctx = ptr;
-    eggsfs_debug_print("hash=%llx ino=%llx, name_len=%d, name=%*pE", hash, ino, name_len, name_len, name);
+    eggsfs_debug("hash=%llx ino=%llx, name_len=%d, name=%*pE", hash, ino, name_len, name_len, name);
     update_dcache(ctx->parent, ctx->dir_mtime, name, name_len, edge_creation_time, ino);
     return eggsfs_dir_add_entry(ctx, name, name_len, ino);
 }
@@ -290,7 +290,7 @@ static struct page* eggsfs_dir_read_all(struct dentry* dentry, u64 dir_mtime) {
     first_page->index = dir_mtime;
 
     while (!eof) {
-        eggsfs_debug_print("cont_key=%llx", continuation_key);
+        eggsfs_debug("cont_key=%llx", continuation_key);
         err = eggsfs_shard_readdir((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, continuation_key, &ctx, &continuation_key);
         if (err) { err = eggsfs_error_to_linux(err); goto out_err; }
         eof = continuation_key == 0;
@@ -309,7 +309,7 @@ out_err:
         put_page(first_page);
         first_page = next;
     }
-    eggsfs_info_print("err=%d", err);
+    eggsfs_info("err=%d", err);
     return ERR_PTR(err);
 };
 
@@ -322,7 +322,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     WARN_ON(!ctx);
     if (!ctx) { return -EINVAL; }
 
-    eggsfs_debug_print("ctx=%p ctx.current_page=%p ctx.pages=%p ctx.page_offset=%u ctx.page_n=%u", ctx,
+    eggsfs_debug("ctx=%p ctx.current_page=%p ctx.pages=%p ctx.page_offset=%u ctx.page_n=%u", ctx,
             ctx->current_page, ctx->pages, ctx->page_offset, ctx->page_n);
 
     if (!dir_emit_dots(filp, dctx)) { return 0; }
@@ -333,13 +333,13 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     while (ctx->current_page) {
         int dtype;
         const char* entry = page_addr + ctx->page_offset;
-        eggsfs_debug_print("next page_addr=%p ctx.page_offset=%u entry=%p", page_addr, ctx->page_offset, entry);
+        eggsfs_debug("next page_addr=%p ctx.page_offset=%u entry=%p", page_addr, ctx->page_offset, entry);
 
         u64 ino;
         u8 name_len;
         const char* name;
         eggsfs_dir_entry_parse(entry, &ino, &name_len, &name);
-        eggsfs_debug_print("name=%*pE ino=0x%016llx", name_len, name, ino);
+        eggsfs_debug("name=%*pE ino=0x%016llx", name_len, name, ino);
 
         switch (eggsfs_inode_type(ino)) {
         case EGGSFS_INODE_DIRECTORY: dtype = DT_DIR; break;
@@ -349,7 +349,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
         }
 
         if (!dir_emit(dctx, name, name_len, ino, dtype)) {
-            eggsfs_debug_print("break");
+            eggsfs_debug("break");
             break;
         }
 
@@ -357,7 +357,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
         ++ctx->page_n;
         ++dctx->pos;
 
-        eggsfs_debug_print(
+        eggsfs_debug(
             "next ctx=%p ctx.current_page=%p ctx.pages=%p ctx.page_offset=%u ctx.page_n=%u page_n=%u", ctx,
             ctx->current_page, ctx->pages, ctx->page_offset, ctx->page_n, eggsfs_dir_get_page_n(ctx->current_page)
         );
@@ -365,7 +365,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
         if (ctx->page_n >= eggsfs_dir_get_page_n(ctx->current_page)) {
             kunmap(ctx->current_page);
             ctx->current_page = (struct page*)ctx->current_page->mapping;
-            eggsfs_debug_print("next page current_page = %p", ctx->current_page);
+            eggsfs_debug("next page current_page = %p", ctx->current_page);
             ctx->page_offset = 0;
             ctx->page_n = 0;
             page_addr = kmap(ctx->current_page);
@@ -373,11 +373,11 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     }
 
     if (ctx->current_page) {
-        eggsfs_debug_print("unmap current_page = %p", ctx->current_page);
+        eggsfs_debug("unmap current_page = %p", ctx->current_page);
         kunmap(ctx->current_page);
     }
 
-    eggsfs_debug_print("done");
+    eggsfs_debug("done");
     return 0;
 }
 

@@ -15,11 +15,13 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
@@ -63,8 +65,9 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex sync.Mutex
-	db    *sql.DB
+	mutex    sync.Mutex
+	db       *sql.DB
+	counters [9]lib.Timings
 }
 
 func (s *state) cdc() (*cdcState, error) {
@@ -159,12 +162,12 @@ func newState(db *sql.DB) *state {
 	}
 }
 
-func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) *msgs.AllBlockServicesResp {
+func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
 	blockServices, err := s.blockServices()
 	if err != nil {
 		ll.Error("error reading block services: %s", err)
-		return nil
+		return nil, err
 	}
 
 	resp.BlockServices = make([]msgs.BlockServiceInfo, len(blockServices))
@@ -174,21 +177,27 @@ func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.
 		i++
 	}
 
-	return &resp
+	return &resp, nil
 }
 
-func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) *msgs.RegisterBlockServicesResp {
+func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
 	if len(req.BlockServices) == 0 {
-		return &msgs.RegisterBlockServicesResp{}
+		return &msgs.RegisterBlockServicesResp{}, nil
 	}
 
 	now := msgs.Now()
 	var fmtBuilder strings.Builder
-	fmtBuilder.Write([]byte("REPLACE INTO block_services (id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen) VALUES "))
+	fmtBuilder.Write([]byte(`
+		REPLACE INTO block_services
+			(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen)
+		VALUES
+	`))
 	fmtValues := []byte("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	values := make([]any, len(req.BlockServices)*14) // 14: number of columns
 	values = values[:0]
-	for i, bs := range req.BlockServices {
+	for i := range req.BlockServices {
+		bs := req.BlockServices[i]
+		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
 		values = append(
 			values,
 			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
@@ -206,54 +215,56 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msg
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	// ll.Info("values: %+q", values)
 	_, err := s.db.Exec(fmtBuilder.String(), values...)
 
 	if err != nil {
 		ll.Error("error registering block services: %s", err)
-		return nil
+		return nil, err
 	}
 
-	return &msgs.RegisterBlockServicesResp{}
+	return &msgs.RegisterBlockServicesResp{}, nil
 }
 
-func handleSetBlockServiceFlags(ll *lib.Logger, s *state, w io.Writer, req *msgs.SetBlockServiceFlagsReq) *msgs.SetBlockServiceFlagsResp {
+func handleSetBlockServiceFlags(ll *lib.Logger, s *state, w io.Writer, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
 	n := sql.Named
 	res, err := s.db.Exec(
-		"UPDATE block_services set flags = (flags & ~:mask) | (:flags & :mask) WHERE id = :id",
+		"UPDATE block_services SET flags = ((flags & ~:mask) | (:flags & :mask)) WHERE id = :id",
 		n("flags", req.Flags), n("mask", req.FlagsMask), n("id", req.Id),
 	)
 	if err != nil {
 		ll.Error("error settings flags for blockservice %d: %s", req.Id, err)
-		return nil
+		return nil, err
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
 		ll.Error("error fetching the number of affected rows when setting flags for %d: %s", req.Id, err)
-		return nil
+		return nil, err
 	}
 	if nrows != 1 {
 		ll.Error("unexpected number of rows affected when setting flags for %d, got:%d, want:1", req.Id, nrows)
-		return nil
+		return nil, err
 	}
-	return &msgs.SetBlockServiceFlagsResp{}
+	return &msgs.SetBlockServiceFlagsResp{}, nil
 }
 
-func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) *msgs.ShardsResp {
+func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) (*msgs.ShardsResp, error) {
 	resp := msgs.ShardsResp{}
 
 	shards, err := s.shards()
 	if err != nil {
 		ll.Error("error reading shards: %s", err)
-		return nil
+		return nil, err
 	}
 
 	resp.Shards = shards[:]
-	return &resp
+	return &resp, nil
 }
 
-func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) *msgs.RegisterShardResp {
+func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -264,13 +275,13 @@ func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.Regist
 	)
 	if err != nil {
 		ll.Error("error registering shard %d: %s", req.Id, err)
-		return nil
+		return nil, err
 	}
 
-	return &msgs.RegisterShardResp{}
+	return &msgs.RegisterShardResp{}, err
 }
 
-func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msgs.CdcResp {
+func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) (*msgs.CdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -278,17 +289,17 @@ func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) *msg
 	cdc, err := s.cdc()
 	if err != nil {
 		log.Error("error reading cdc: %s", err)
-		return nil
+		return nil, err
 	}
 	resp.Ip1 = cdc.ip1
 	resp.Port1 = cdc.port1
 	resp.Ip2 = cdc.ip2
 	resp.Port2 = cdc.port2
 
-	return &resp
+	return &resp, nil
 }
 
-func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) *msgs.RegisterCdcResp {
+func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -302,13 +313,13 @@ func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.Regi
 	)
 	if err != nil {
 		log.Error("error registering cdc: %s", err)
-		return nil
+		return nil, err
 	}
 
-	return &msgs.RegisterCdcResp{}
+	return &msgs.RegisterCdcResp{}, nil
 }
 
-func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) *msgs.InfoResp {
+func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) (*msgs.InfoResp, error) {
 	resp := msgs.InfoResp{}
 
 	// TODO remove decommissioned block services, probably.
@@ -317,19 +328,64 @@ func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) *m
 	)
 	if err != nil {
 		log.Error("error getting info: %s", err)
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	if err := rows.Scan(&resp.NumBlockServices, &resp.NumFailureDomains, &resp.Capacity, &resp.Available, &resp.Blocks); err != nil {
 		log.Error("error scanning info: %s", err)
-		return nil
+		return nil, err
 	}
 
-	return &resp
+	return &resp, nil
+}
+
+func handleRequestParsed(log *lib.Logger, s *state, conn *net.TCPConn, req msgs.ShuckleRequest) {
+	t0 := time.Now()
+	defer func() {
+		s.counters[int(req.ShuckleRequestKind())].Add(time.Since(t0))
+	}()
+	var err error
+	log.Debug("handling request %T %+v", req, req)
+	var resp msgs.ShuckleResponse
+	switch whichReq := req.(type) {
+	case *msgs.RegisterBlockServicesReq:
+		resp, err = handleRegisterBlockServices(log, s, conn, whichReq)
+	case *msgs.SetBlockServiceFlagsReq:
+		resp, err = handleSetBlockServiceFlags(log, s, conn, whichReq)
+	case *msgs.ShardsReq:
+		resp, err = handleShards(log, s, conn, whichReq)
+	case *msgs.RegisterShardReq:
+		resp, err = handleRegisterShard(log, s, conn, whichReq)
+	case *msgs.AllBlockServicesReq:
+		resp, err = handleAllBlockServicesReq(log, s, conn, whichReq)
+	case *msgs.CdcReq:
+		resp, err = handleCdcReq(log, s, conn, whichReq)
+	case *msgs.RegisterCdcReq:
+		resp, err = handleRegisterCdcReq(log, s, conn, whichReq)
+	case *msgs.InfoReq:
+		resp, err = handleInfoReq(log, s, conn, whichReq)
+	default:
+		log.RaiseAlert(fmt.Errorf("bad req type %T", req))
+	}
+
+	if err != nil {
+		log.RaiseAlert(fmt.Errorf("error processing request %+v", req))
+		eggsErr, ok := err.(msgs.ErrCode)
+		if !ok {
+			eggsErr = msgs.INTERNAL_ERROR
+		}
+		if err := lib.WriteShuckleResponseError(log, conn, eggsErr); err != nil {
+			log.RaiseAlert(fmt.Errorf("could not send error: %w", err))
+		}
+	} else {
+		log.Debug("sending back response %T", resp)
+		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
+			log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
+		}
+	}
 }
 
 func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
-	conn.SetLinger(0) // poor man error handling for now
 	defer conn.Close()
 
 	for {
@@ -341,39 +397,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
 			return
 		}
-		log.Debug("handling request %T %+v", req, req)
-		var resp msgs.ShuckleResponse
-
-		switch whichReq := req.(type) {
-		case *msgs.RegisterBlockServicesReq:
-			resp = handleRegisterBlockServices(log, s, conn, whichReq)
-		case *msgs.SetBlockServiceFlagsReq:
-			resp = handleSetBlockServiceFlags(log, s, conn, whichReq)
-		case *msgs.ShardsReq:
-			resp = handleShards(log, s, conn, whichReq)
-		case *msgs.RegisterShardReq:
-			resp = handleRegisterShard(log, s, conn, whichReq)
-		case *msgs.AllBlockServicesReq:
-			resp = handleAllBlockServicesReq(log, s, conn, whichReq)
-		case *msgs.CdcReq:
-			resp = handleCdcReq(log, s, conn, whichReq)
-		case *msgs.RegisterCdcReq:
-			resp = handleRegisterCdcReq(log, s, conn, whichReq)
-		case *msgs.InfoReq:
-			resp = handleInfoReq(log, s, conn, whichReq)
-		default:
-			log.RaiseAlert(fmt.Errorf("bad req type %T", req))
-		}
-
-		if resp == nil {
-			log.RaiseAlert(fmt.Errorf("error processing request %+v", req))
-			return
-		}
-
-		log.Debug("sending back response %T", resp)
-		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
-			log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
-		}
+		handleRequestParsed(log, s, conn, req)
 	}
 }
 
@@ -885,6 +909,7 @@ func handleInode(
 			if err != nil {
 				panic(err)
 			}
+			defer client.Close()
 			if id == msgs.NULL_INODE_ID {
 				mbId := lookup(log, client, path)
 				if mbId == nil {
@@ -1124,6 +1149,21 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 	)
 }
 
+type clientSpanReader struct {
+	client     *lib.Client
+	spanReader io.ReadCloser
+}
+
+func (r *clientSpanReader) Read(p []byte) (n int, err error) {
+	return r.spanReader.Read(p)
+}
+
+func (r *clientSpanReader) Close() (err error) {
+	err = r.spanReader.Close()
+	r.client.Close()
+	return err
+}
+
 var readSpanBufPool *lib.ReadSpanBufPool
 
 func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
@@ -1173,7 +1213,78 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 			w.Header().Set("Content-Type", mimeType)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fname))
 
-			return r, int64(statResp.Size), http.StatusOK
+			return &clientSpanReader{client: client, spanReader: r}, int64(statResp.Size), http.StatusOK
+		},
+	)
+}
+
+//go:embed stats.html
+var statsTemplateStr string
+
+var statsTemplate *template.Template
+
+type statsData struct {
+	Headers []string
+	Rows    [][]string
+}
+
+func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+	handlePage(
+		log, w, r,
+		func(query url.Values) (*template.Template, *pageData, int) {
+			path := r.URL.Path[len("/stats"):]
+			path = normalizePath(path)
+			if len(path) > 0 {
+				return errorPage(http.StatusNotFound, "path should be just /stats")
+			}
+			// compute non-empty buckets
+			buckets := []int{}
+			for i := 0; i < len(st.counters[:]); i++ {
+				for j := 0; j < st.counters[i].Buckets(); j++ {
+					_, count, _ := st.counters[i].Bucket(j)
+					if count > 0 {
+						// ordered list insert
+						idx := sort.Search(len(buckets), func(i int) bool { return buckets[i] >= j })
+						if idx == len(buckets) || buckets[idx] != j { // insert if not present already
+							buckets = append(buckets, 0)
+							copy(buckets[idx+1:], buckets[idx:])
+							buckets[idx] = j
+						}
+					}
+				}
+			}
+			// print out headers
+			statsData := &statsData{
+				Headers: []string{"", "count", "mean"},
+				Rows:    [][]string{},
+			}
+			for _, j := range buckets {
+				_, _, upperBound := st.counters[0].Bucket(j)
+				statsData.Headers = append(statsData.Headers, fmt.Sprintf("< %v", upperBound))
+			}
+			// print out table
+			for i := 0; i < len(st.counters[:]); i++ {
+				totalCount := st.counters[i].TotalCount()
+				if totalCount == 0 {
+					continue
+				}
+				mean := time.Duration(uint64(st.counters[i].TotalTime().Nanoseconds()) / totalCount)
+				row := []string{
+					fmt.Sprintf("%v", msgs.ShuckleMessageKind(i)),
+					fmt.Sprintf("%v", totalCount),
+					fmt.Sprintf("%v", mean),
+				}
+				for _, j := range buckets {
+					_, count, _ := st.counters[i].Bucket(j)
+					row = append(row, fmt.Sprintf("%v (%.2f%%)", count, 100.0*float64(count)/float64(totalCount)))
+				}
+				statsData.Rows = append(statsData.Rows, row)
+			}
+			data := pageData{
+				Title: "stats",
+				Body:  statsData,
+			}
+			return statsTemplate, &data, http.StatusOK
 		},
 	)
 }
@@ -1237,6 +1348,12 @@ func setupRouting(log *lib.Logger, st *state) {
 		namedTemplate{name: "directory", body: directoryTemplateStr},
 	)
 	setupPage("/browse/", handleInode)
+
+	statsTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "file", body: statsTemplateStr},
+	)
+	setupPage("/stats", handleStats)
 }
 
 func main() {
@@ -1298,6 +1415,9 @@ func main() {
 
 	if len(*dbFile) == 0 {
 		log.Fatalf("db-file flag is required")
+	}
+	if err := os.Mkdir(filepath.Dir(*dbFile), 0777); err != nil && !os.IsExist(err) {
+		panic(err)
 	}
 	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", *dbFile))
 	if err != nil {

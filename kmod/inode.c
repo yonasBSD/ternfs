@@ -17,7 +17,7 @@ static struct kmem_cache* eggsfs_inode_cachep;
 struct inode* eggsfs_inode_alloc(struct super_block* sb) {
     struct eggsfs_inode* enode;
 
-    eggsfs_debug_print("sb=%p", sb);
+    eggsfs_debug("sb=%p", sb);
 
     enode = (struct eggsfs_inode*)kmem_cache_alloc(eggsfs_inode_cachep, GFP_NOFS);
     if (!enode) {
@@ -29,13 +29,13 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
     enode->edge_creation_time = 0;
     eggsfs_latch_init(&enode->getattr_update_latch);
 
-    eggsfs_debug_print("done enode=%p", enode);
+    eggsfs_debug("done enode=%p", enode);
     return &enode->inode;
 }
 
 void eggsfs_inode_evict(struct inode* inode) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
-    eggsfs_debug_print("enode=%p", enode);
+    eggsfs_debug("enode=%p", enode);
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
@@ -45,18 +45,8 @@ void eggsfs_inode_evict(struct inode* inode) {
         if (prefetches) {
             wait_event(enode->file.prefetches_wq, atomic_read(&enode->file.prefetches) == 0);
         }
-        // While you might think that `enode->file.status` would have to be 
-        // EGGSFS_FILE_STATUS_NONE or EGGSFS_FILE_STATUS_READING here, it is not
-        // the case, since we might have failed to link the span for whatever reason.
-        //
-        // Regardless, we're reasonably certain that every temporary buffer for writing
-        // is already clear here.
-        //
-        // Locking isn't really needed at this stage, more of a sanity check
-        // than anything.
-        spin_lock_bh(&enode->file.transient_spans_lock);
-        BUG_ON(!list_empty(&enode->file.transient_spans));
-        spin_unlock_bh(&enode->file.transient_spans_lock);
+        // TODO verify that there are no flushing spans -- it should always be
+        // the case given that we get references to the inode
         // Free span cache
         eggsfs_drop_file_spans(enode);
     }
@@ -67,7 +57,7 @@ void eggsfs_inode_evict(struct inode* inode) {
 void eggsfs_inode_free(struct inode* inode) {
     // We need to clear the spans
     struct eggsfs_inode* enode = EGGSFS_I(inode);
-    eggsfs_debug_print("enode=%p", enode);
+    eggsfs_debug("enode=%p", enode);
     kmem_cache_free(eggsfs_inode_cachep, enode);
 }
 
@@ -98,7 +88,7 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode) {
     s64 seqno;
 
 again: // progress: whoever wins the lock won't try again
-    eggsfs_debug_print("enode=%p id=0x%016lx mtime=%lld mtime_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->mtime_expiry);
+    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld mtime_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->mtime_expiry);
 
     if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
         u64 ts = get_jiffies_64();
@@ -155,7 +145,7 @@ again: // progress: whoever wins the lock won't try again
 out:
         WRITE_ONCE(enode->getattr_err, err);
         eggsfs_latch_release(&enode->getattr_update_latch, seqno);
-        eggsfs_debug_print("out mtime=%llu mtime_expiry=%llu", enode->mtime, enode->mtime_expiry);
+        eggsfs_debug("out mtime=%llu mtime_expiry=%llu", enode->mtime, enode->mtime_expiry);
         return err;
     } else {
         err = eggsfs_latch_wait_killable(&enode->getattr_update_latch, seqno);
@@ -174,7 +164,7 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
 
     if (dentry->d_name.len > EGGSFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
 
-    eggsfs_debug_print("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
+    eggsfs_debug("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
 
     u64 ino, cookie;
     err = eggsfs_error_to_linux(eggsfs_shard_create_file(
@@ -192,21 +182,13 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
 
     // Initialize all the transient specific fields
     enode->file.cookie = cookie;
-    struct eggsfs_transient_span* span = eggsfs_add_new_span(&enode->file.transient_spans);
-    if (IS_ERR(span)) { return ERR_PTR(PTR_ERR(span)); }
-    enode->file.size_without_current_span = 0;
     atomic_set(&enode->file.transient_err, 0);
+    enode->file.writing_span = NULL;
+    sema_init(&enode->file.flushing_span_sema, 1); // 1 = free to flush
     enode->file.owner = current->group_leader;
     enode->file.mm = current->group_leader->mm;
     // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
     mmgrab(enode->file.mm);
-    INIT_WORK(&enode->file.flusher, eggsfs_flush_transient_spans);
-    sema_init(&enode->file.done_flushing, 0);
-    atomic64_set(&enode->file.flushed_so_far, 0);
-    // Fairly arbitrary, this will cause at most three spans in flight, ~300MiB of memory max.
-    // We definitely want at least 2 (so that one span is uploading while one span is writing).
-    // Three offers some additional buffer space for uneven throughput.
-    sema_init(&enode->file.in_flight_spans, 2);
 
     return enode;
 }
@@ -270,9 +252,12 @@ static int eggsfs_symlink(struct inode* dir, struct dentry* dentry, const char* 
     vec.iov_base = (void*)path;
     vec.iov_len = len;
     iov_iter_kvec(&from, READ, &vec, 1, vec.iov_len);
-    eggsfs_file_write(enode, 0, &ppos, &from);
+    inode_lock(&enode->inode);
+    int err = eggsfs_file_write(enode, 0, &ppos, &from);
+    inode_unlock(&enode->inode);
+    if (err < 0) { return err; }
     // ...and flush them
-    int err = eggsfs_file_flush(enode, dentry);
+    err = eggsfs_file_flush(enode, dentry);
     if (err < 0) { return err; }
 
     // Now we link the dentry in
@@ -286,7 +271,7 @@ static void eggsfs_get_link_destructor(void* buf) {
 }
 
 static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
-    eggsfs_debug_print("ino=%016lx", inode->i_ino);
+    eggsfs_debug("ino=%016lx", inode->i_ino);
 
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
@@ -302,11 +287,11 @@ static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, s
     BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
     size_t size = enode->inode.i_size;
 
-    eggsfs_debug_print("size=%lu", size);
+    eggsfs_debug("size=%lu", size);
 
     struct eggsfs_span* span = eggsfs_get_span(enode, 0);
     if (span == NULL) {
-        eggsfs_debug_print("got no span, empty file?");
+        eggsfs_debug("got no span, empty file?");
         return "";
     }
     if (IS_ERR(span)) { return ERR_CAST(span); }
@@ -333,12 +318,12 @@ static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, s
     buf[size] = '\0';
     eggsfs_span_put(span, true);
 
-    eggsfs_debug_print("link %*pE", (int)size, buf);
+    eggsfs_debug("link %*pE", (int)size, buf);
 
     return buf;
 
 out_err:
-    eggsfs_debug_print("get_link err=%d", err);
+    eggsfs_debug("get_link err=%d", err);
     eggsfs_span_put(span, false);
     return ERR_PTR(err);
 }
@@ -410,9 +395,6 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
             atomic64_set(&enode->file.prefetch_section, 0);
             atomic_set(&enode->file.prefetches, 0);
             init_waitqueue_head(&enode->file.prefetches_wq);
-            // Transient-specific stuff which is also always there.
-            INIT_LIST_HEAD(&enode->file.transient_spans);
-            spin_lock_init(&enode->file.transient_spans_lock);
         }
 
         // FIXME

@@ -17,7 +17,7 @@
 #include "rs.h"
 
 static void eggsfs_free_fs_info(struct eggsfs_fs_info* info) {
-    eggsfs_debug_print("info=%p", info);
+    eggsfs_debug("info=%p", info);
     eggsfs_net_shard_free_socket(&info->sock);
     kfree(info);
 }
@@ -68,11 +68,11 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     if (err < 0) { goto out_sock; }
     u16 shard_info_len = get_unaligned_le16(shards_resp_header + sizeof(shards_resp_header) - 2);
     if (shard_info_len != 256) {
-        eggsfs_info_print("expected 256 shard infos, got %d", shard_info_len);
+        eggsfs_info("expected 256 shard infos, got %d", shard_info_len);
         err = -EIO; goto out_sock;
     }
     if (shuckle_resp_len != 2 + EGGSFS_SHARD_INFO_SIZE*256) {
-        eggsfs_info_print("expected size of %d, got %d", 2 + EGGSFS_SHARD_INFO_SIZE*256, shuckle_resp_len);
+        eggsfs_info("expected size of %d, got %d", 2 + EGGSFS_SHARD_INFO_SIZE*256, shuckle_resp_len);
         err = -EIO; goto out_sock;
     }
 
@@ -108,7 +108,7 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
         addr->sin_family = AF_INET;
         addr->sin_port = htons(shard_port.x);
 
-        eggsfs_debug_print("shard %d has addr %pI4:%d", shid, &addr->sin_addr, ntohs(addr->sin_port));
+        eggsfs_debug("shard %d has addr %pI4:%d", shid, &addr->sin_addr, ntohs(addr->sin_port));
 
         hdr->msg_name = addr;
         hdr->msg_namelen = sizeof(struct sockaddr_in);
@@ -138,7 +138,7 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     err = eggsfs_read_shuckle_resp_header(cdc_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
     if (err < 0) { goto out_sock; }
     if (shuckle_resp_len != EGGSFS_CDC_RESP_SIZE) {
-        eggsfs_debug_print("expected size of %d, got %d", EGGSFS_CDC_RESP_SIZE, shuckle_resp_len);
+        eggsfs_debug("expected size of %d, got %d", EGGSFS_CDC_RESP_SIZE, shuckle_resp_len);
         err = -EINVAL; goto out_sock;
     }
     {
@@ -172,7 +172,7 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
         addr->sin_family = AF_INET;
         addr->sin_port = htons(cdc_port.x);
 
-        eggsfs_debug_print("CDC has addr %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
+        eggsfs_debug("CDC has addr %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
 
         hdr->msg_name = addr;
         hdr->msg_namelen = sizeof(struct sockaddr_in);
@@ -183,7 +183,7 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
 
     sock_release(shuckle_sock);
 
-    eggsfs_info_print("mount successful");
+    eggsfs_info("mount successful");
 
     return info;
 
@@ -196,14 +196,14 @@ out:
 }
 
 static void eggsfs_put_super(struct super_block* sb) {
-    eggsfs_debug_print("sb=%p", sb);
+    eggsfs_debug("sb=%p", sb);
     eggsfs_free_fs_info(sb->s_fs_info);
     sb->s_fs_info = NULL;
 }
 
 #define EGGSFS_SUPER_MAGIC 0x45474753 // EGGS
 
-int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
+static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
     struct eggsfs_fs_info* info = (struct eggsfs_fs_info*)dentry->d_sb->s_fs_info;
 
     struct socket* shuckle_sock;
@@ -239,7 +239,7 @@ int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
     err = eggsfs_read_shuckle_resp_header(shuckle_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
     if (err < 0) { goto out_sock; }
     if (shuckle_resp_len != EGGSFS_INFO_RESP_SIZE) {
-        eggsfs_debug_print("expected size of %d, got %d", EGGSFS_INFO_RESP_SIZE, shuckle_resp_len);
+        eggsfs_debug("expected size of %d, got %d", EGGSFS_INFO_RESP_SIZE, shuckle_resp_len);
         err = -EINVAL; goto out_sock;
     }
     char shuckle_resp[EGGSFS_INFO_RESP_SIZE];
@@ -296,8 +296,8 @@ static const struct super_operations eggsfs_super_ops = {
 static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, const char* dev_name, void* data) {    
     int err;
 
-    eggsfs_info_print("mounting at %s", dev_name);
-    eggsfs_debug_print("fs_type=%p flags=%d dev_name=%s data=%p", fs_type, flags, dev_name, data);
+    eggsfs_info("mounting at %s", dev_name);
+    eggsfs_debug("fs_type=%p flags=%d dev_name=%s data=%p", fs_type, flags, dev_name, data);
 
     struct eggsfs_fs_info* info = eggsfs_init_fs_info(dev_name);
     if (IS_ERR(info)) { err = PTR_ERR(info); goto out_err; }
@@ -322,7 +322,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     if (err) { goto out_sb; }
 
     if (!root_enode->block_policies.len || !root_enode->span_policies.len || !root_enode->target_stripe_size) {
-        eggsfs_warn_print("no policies for root directory!");
+        eggsfs_warn("no policies for root directory!");
         err = -EIO;
         goto out_sb;
     }
@@ -339,12 +339,12 @@ out_sb:
 out_info:
     eggsfs_free_fs_info(info);
 out_err:
-    eggsfs_debug_print("failed err=%d", err);
+    eggsfs_debug("failed err=%d", err);
     return ERR_PTR(err);
 }
 
 static void eggsfs_kill_sb(struct super_block* sb) {
-    eggsfs_debug_print("sb=%p", sb);
+    eggsfs_debug("sb=%p", sb);
     kill_anon_super(sb);
 }
 

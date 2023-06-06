@@ -73,8 +73,6 @@ func ReadBlocksRequest(
 		req = &msgs.FetchBlockReq{}
 	case msgs.WRITE_BLOCK:
 		req = &msgs.WriteBlockReq{}
-	case msgs.BLOCK_WRITTEN:
-		req = &msgs.BlockWrittenReq{}
 	case msgs.TEST_WRITE:
 		req = &msgs.TestWriteReq{}
 	default:
@@ -167,7 +165,6 @@ func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error 
 	}
 	w.Write(buf.Bytes())
 	return nil
-
 }
 
 func WriteBlock(
@@ -193,9 +190,6 @@ func WriteBlock(
 	if err != nil {
 		return proof, err
 	}
-	if err := ReadBlocksResponse(logger, conn, &msgs.WriteBlockResp{}); err != nil {
-		return proof, err
-	}
 	logger.Debug("got blocks response, starting to write data")
 	lr := io.LimitedReader{
 		R: r,
@@ -205,12 +199,12 @@ func WriteBlock(
 		return proof, fmt.Errorf("could not write block data to: %w", err)
 	}
 	logger.Debug("data written, getting proof")
-	writtenResp := msgs.BlockWrittenResp{}
-	if err := ReadBlocksResponse(logger, conn, &writtenResp); err != nil {
+	resp := msgs.WriteBlockResp{}
+	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
 		return proof, err
 	}
 	logger.Debug("proof received")
-	proof = writtenResp.Proof
+	proof = resp.Proof
 	return proof, nil
 }
 

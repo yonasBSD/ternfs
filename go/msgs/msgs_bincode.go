@@ -600,8 +600,6 @@ func (k BlocksMessageKind) String() string {
 		return "FETCH_BLOCK"
 	case 3:
 		return "WRITE_BLOCK"
-	case 4:
-		return "BLOCK_WRITTEN"
 	case 1:
 		return "ERASE_BLOCK"
 	case 5:
@@ -615,7 +613,6 @@ func (k BlocksMessageKind) String() string {
 const (
 	FETCH_BLOCK BlocksMessageKind = 0x2
 	WRITE_BLOCK BlocksMessageKind = 0x3
-	BLOCK_WRITTEN BlocksMessageKind = 0x4
 	ERASE_BLOCK BlocksMessageKind = 0x1
 	TEST_WRITE BlocksMessageKind = 0x5
 )
@@ -626,8 +623,6 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse) {
 		return &FetchBlockReq{}, &FetchBlockResp{}
 	case k == "WRITE_BLOCK":
 		return &WriteBlockReq{}, &WriteBlockResp{}
-	case k == "BLOCK_WRITTEN":
-		return &BlockWrittenReq{}, &BlockWrittenResp{}
 	case k == "ERASE_BLOCK":
 		return &EraseBlockReq{}, &EraseBlockResp{}
 	case k == "TEST_WRITE":
@@ -4049,37 +4044,13 @@ func (v *WriteBlockResp) BlocksResponseKind() BlocksMessageKind {
 }
 
 func (v *WriteBlockResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *WriteBlockResp) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *BlockWrittenReq) BlocksRequestKind() BlocksMessageKind {
-	return BLOCK_WRITTEN
-}
-
-func (v *BlockWrittenReq) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *BlockWrittenReq) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *BlockWrittenResp) BlocksResponseKind() BlocksMessageKind {
-	return BLOCK_WRITTEN
-}
-
-func (v *BlockWrittenResp) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 8, v.Proof[:]); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *BlockWrittenResp) Unpack(r io.Reader) error {
+func (v *WriteBlockResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 8, v.Proof[:]); err != nil {
 		return err
 	}

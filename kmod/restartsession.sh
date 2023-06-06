@@ -74,15 +74,7 @@ fi
 # Attach
 tmux attach-session -t uovo:1
 
-# ./eggstests -kmod -filter 'mounted|large|rsync' -short -binaries-dir $(pwd)
-# sudo sysctl fs.eggsfs.debug=1
-# ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
-
-# ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
-# ./eggstests -drop-cached-spans-every 100ms -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=10 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=10 -short -binaries-dir $(pwd)
-# ./eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=100 -cfg fsTest.numFiles=10 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)
-
-# sudo sysctl fs.eggsfs.debug=1
-# sudo sh -c 'echo  eggsfs_fetch_stripe >> /sys/kernel/debug/tracing/set_event'
+# sudo sh -c 'echo eggsfs_metadata_request >> /sys/kernel/debug/tracing/set_event' && sudo sh -c 'echo eggsfs_block_write >> /sys/kernel/debug/tracing/set_event'
+# sudo sysctl fs.eggsfs.prefetch=0
+# ./eggs/eggstests -kmod -filter 'mounted fs$' -drop-cached-spans-every 100 -cfg fsTest.checkThreads=1 -cfg fsTest.numFiles=1000 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)/eggs
 # sudo cat /sys/kernel/debug/tracing/trace_pipe
-# ./eggs/eggstests -kmod -filter 'mounted fs$' -cfg fsTest.checkThreads=1 -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)/eggs

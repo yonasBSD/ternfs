@@ -39,17 +39,17 @@ static void eggsfs_read_shard_header(struct eggsfs_bincode_get_ctx* ctx, u64 req
             read_req_id != req_id ||
             (read_kind != 0 && read_kind != kind)
         )) {
-            eggsfs_debug_print("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
+            eggsfs_debug("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
         } else if (unlikely(read_kind == 0)) {
             ctx->err = eggsfs_bincode_get_u16(ctx);
-            eggsfs_debug_print("err=%d", ctx->err);
+            eggsfs_debug("err=%d", ctx->err);
         }
     }
 }
 
 #define PREPARE_SHARD_REQ_CTX_INNER(sz) \
-    eggsfs_debug_print("req_id=%llu, kind=%d", req_id, (int)kind); \
+    eggsfs_debug("req_id=%llu, kind=%d", req_id, (int)kind); \
     struct eggsfs_bincode_put_ctx ctx = { \
         .start = req, \
         .cursor = req, \
@@ -93,7 +93,7 @@ static void eggsfs_read_cdc_header(struct eggsfs_bincode_get_ctx* ctx, u64 req_i
             read_req_id != req_id ||
             (read_kind != 0 && read_kind != kind)
         )) {
-            eggsfs_debug_print("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
+            eggsfs_debug("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
         } else if (unlikely(read_kind == 0)) {
             ctx->err = eggsfs_bincode_get_u16(ctx);
@@ -102,7 +102,7 @@ static void eggsfs_read_cdc_header(struct eggsfs_bincode_get_ctx* ctx, u64 req_i
 }
 
 #define PREPARE_CDC_REQ_CTX(sz) \
-    eggsfs_debug_print("req_id=%llu, kind=%d", req_id, (int)kind); \
+    eggsfs_debug("req_id=%llu, kind=%d", req_id, (int)kind); \
     char req[EGGSFS_CDC_HEADER_SIZE + sz]; \
     struct eggsfs_bincode_put_ctx ctx = { \
         .start = req, \
@@ -128,12 +128,12 @@ static struct sk_buff* eggsfs_send_cdc_req(struct eggsfs_fs_info* info, u64 req_
 #define FINISH_RESP() \
     consume_skb(skb); \
     if (unlikely(ctx.err != 0)) { \
-        eggsfs_debug_print("resp of kind %02x failed with err %d", kind, ctx.err); \
+        eggsfs_debug("resp of kind %02x failed with err %d", kind, ctx.err); \
         return ctx.err; \
     }
 
 int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time) {
-    eggsfs_debug_print("dir=0x%016llx, name=%*pE", dir, name_len, name);
+    eggsfs_debug("dir=0x%016llx, name=%*pE", dir, name_len, name);
 
     struct sk_buff* skb;
     u32 attempts;
@@ -161,7 +161,7 @@ int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, 
         *creation_time = resp_creation_time.x;
     }
 
-    eggsfs_debug_print("ino=0x%016llx, creation_time=%llu", *ino, *creation_time);
+    eggsfs_debug("ino=0x%016llx, creation_time=%llu", *ino, *creation_time);
 
     return 0;
 }
@@ -306,7 +306,7 @@ static bool check_new_edge_after_rename(
 }
 
 int eggsfs_shard_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time) {
-    eggsfs_debug_print("unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
+    eggsfs_debug("unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
     struct sk_buff* skb;
     u32 attempts;
     u64 req_id = alloc_request_id();
@@ -640,7 +640,7 @@ int eggsfs_shard_add_span_initiate(
         eggsfs_add_span_initiate_resp_get_blocks(&ctx, start, blocks);
         if (unlikely(ctx.err == 0 && blocks.len != B)) {
             consume_skb(skb);
-            eggsfs_warn_print("expected %d blocks, got %d", B, blocks.len);
+            eggsfs_warn("expected %d blocks, got %d", B, blocks.len);
             return EGGSFS_ERR_MALFORMED_RESPONSE;
         }
         int i;
@@ -668,7 +668,7 @@ int eggsfs_shard_add_span_initiate(
         eggsfs_add_span_initiate_resp_get_finish(&ctx, end);
         consume_skb(skb);
         if (unlikely(ctx.err != 0)) {
-            eggsfs_debug_print("resp of kind %02x failed with err %d", kind, ctx.err);
+            eggsfs_debug("resp of kind %02x failed with err %d", kind, ctx.err);
             return ctx.err;
         }
     } 

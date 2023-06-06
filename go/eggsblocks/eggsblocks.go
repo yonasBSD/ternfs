@@ -109,7 +109,8 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
-	for id, blockService := range blockServices {
+	for id := range blockServices {
+		blockService := blockServices[id]
 		bs := msgs.BlockServiceInfo{
 			Id:            id,
 			Ip1:           ip1,
@@ -293,7 +294,7 @@ func writeBlock(
 	}
 	if msgs.Crc(crc) != expectedCrc {
 		os.Remove(tmpName)
-		log.RaiseAlert(fmt.Errorf("bad crc for block %v, expected %v, got %v", blockId, expectedCrc, msgs.Crc(crc)))
+		log.RaiseAlert(fmt.Errorf("bad crc for block %v, got %v in req, computed %v", blockId, msgs.Crc(crc), expectedCrc))
 		lib.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 		return nil
 	}
@@ -302,10 +303,16 @@ func writeBlock(
 		return err
 	}
 	defer os.Remove(tmpName)
-	if err := lib.WriteBlocksResponse(log, conn, &msgs.BlockWrittenResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
+	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
 	return nil
+}
+
+func consumeBlock(size uint32, conn *net.TCPConn) error {
+	lr := io.LimitReader(conn, int64(size))
+	_, err := io.Copy(io.Discard, lr)
+	return err
 }
 
 func testWrite(
@@ -418,17 +425,19 @@ NextRequest:
 			}
 		case *msgs.WriteBlockReq:
 			if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != 0 {
+				if err := consumeBlock(whichReq.Size, conn); err != nil {
+					handleError(log, conn, fmt.Errorf("could not consume block from %v: %w", conn.RemoteAddr(), err))
+				}
 				lib.WriteBlocksResponseError(log, conn, err)
 				continue NextRequest
 			}
 			if whichReq.Size > MAX_OBJECT_SIZE {
 				log.RaiseAlert(fmt.Errorf("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE))
+				if err := consumeBlock(whichReq.Size, conn); err != nil {
+					handleError(log, conn, fmt.Errorf("could not consume block from %v: %w", conn.RemoteAddr(), err))
+				}
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_BIG)
 				continue NextRequest
-			}
-			if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{}); err != nil {
-				handleError(log, conn, fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err))
-				return
 			}
 			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 				handleError(log, conn, fmt.Errorf("could not write block: %w", err))

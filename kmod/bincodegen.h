@@ -89,8 +89,7 @@
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
 #define EGGSFS_BLOCKS_WRITE_BLOCK 0x3
-#define EGGSFS_BLOCKS_BLOCK_WRITTEN 0x4
-#define __print_eggsfs_blocks_kind(k) __print_symbolic(k, { 2, "FETCH_BLOCK" }, { 3, "WRITE_BLOCK" }, { 4, "BLOCK_WRITTEN" })
+#define __print_eggsfs_blocks_kind(k) __print_symbolic(k, { 2, "FETCH_BLOCK" }, { 3, "WRITE_BLOCK" })
 
 
 #define EGGSFS_DIRECTORY_INFO_ENTRY_MAX_SIZE 257
@@ -5352,13 +5351,28 @@ static inline void _eggsfs_write_block_req_put_certificate(struct eggsfs_bincode
     { struct eggsfs_write_block_req_certificate* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_write_block_req_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_WRITE_BLOCK_RESP_SIZE 0
+#define EGGSFS_WRITE_BLOCK_RESP_SIZE 8
 struct eggsfs_write_block_resp_start;
 #define eggsfs_write_block_resp_get_start(ctx, start) struct eggsfs_write_block_resp_start* start = NULL
 
+struct eggsfs_write_block_resp_proof { u64 x; };
+static inline void _eggsfs_write_block_resp_get_proof(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_write_block_resp_start** prev, struct eggsfs_write_block_resp_proof* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_write_block_resp_get_proof(ctx, prev, next) \
+    struct eggsfs_write_block_resp_proof next; \
+    _eggsfs_write_block_resp_get_proof(ctx, &(prev), &(next))
+
 struct eggsfs_write_block_resp_end;
 #define eggsfs_write_block_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_write_block_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_write_block_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_write_block_resp_end* next = NULL
 
 static inline void eggsfs_write_block_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_write_block_resp_end* end) {
@@ -5369,74 +5383,17 @@ static inline void eggsfs_write_block_resp_get_finish(struct eggsfs_bincode_get_
 
 #define eggsfs_write_block_resp_put_start(ctx, start) struct eggsfs_write_block_resp_start* start = NULL
 
-#define eggsfs_write_block_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_write_block_resp_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_write_block_resp_end* next __attribute__((unused)) = NULL
-
-#define EGGSFS_BLOCK_WRITTEN_REQ_SIZE 0
-struct eggsfs_block_written_req_start;
-#define eggsfs_block_written_req_get_start(ctx, start) struct eggsfs_block_written_req_start* start = NULL
-
-struct eggsfs_block_written_req_end;
-#define eggsfs_block_written_req_get_end(ctx, prev, next) \
-    { struct eggsfs_block_written_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_written_req_end* next = NULL
-
-static inline void eggsfs_block_written_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_written_req_end* end) {
-    if (unlikely(ctx->buf != ctx->end)) {
-        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-    }
-}
-
-#define eggsfs_block_written_req_put_start(ctx, start) struct eggsfs_block_written_req_start* start = NULL
-
-#define eggsfs_block_written_req_put_end(ctx, prev, next) \
-    { struct eggsfs_block_written_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_written_req_end* next __attribute__((unused)) = NULL
-
-#define EGGSFS_BLOCK_WRITTEN_RESP_SIZE 8
-struct eggsfs_block_written_resp_start;
-#define eggsfs_block_written_resp_get_start(ctx, start) struct eggsfs_block_written_resp_start* start = NULL
-
-struct eggsfs_block_written_resp_proof { u64 x; };
-static inline void _eggsfs_block_written_resp_get_proof(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_written_resp_start** prev, struct eggsfs_block_written_resp_proof* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_be64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_block_written_resp_get_proof(ctx, prev, next) \
-    struct eggsfs_block_written_resp_proof next; \
-    _eggsfs_block_written_resp_get_proof(ctx, &(prev), &(next))
-
-struct eggsfs_block_written_resp_end;
-#define eggsfs_block_written_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_block_written_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_written_resp_end* next = NULL
-
-static inline void eggsfs_block_written_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_written_resp_end* end) {
-    if (unlikely(ctx->buf != ctx->end)) {
-        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-    }
-}
-
-#define eggsfs_block_written_resp_put_start(ctx, start) struct eggsfs_block_written_resp_start* start = NULL
-
-static inline void _eggsfs_block_written_resp_put_proof(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_written_resp_start** prev, struct eggsfs_block_written_resp_proof* next, u64 x) {
+static inline void _eggsfs_write_block_resp_put_proof(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_write_block_resp_start** prev, struct eggsfs_write_block_resp_proof* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_be64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_written_resp_put_proof(ctx, prev, next, x) \
-    struct eggsfs_block_written_resp_proof next; \
-    _eggsfs_block_written_resp_put_proof(ctx, &(prev), &(next), x)
+#define eggsfs_write_block_resp_put_proof(ctx, prev, next, x) \
+    struct eggsfs_write_block_resp_proof next; \
+    _eggsfs_write_block_resp_put_proof(ctx, &(prev), &(next), x)
 
-#define eggsfs_block_written_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_block_written_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_written_resp_end* next __attribute__((unused)) = NULL
+#define eggsfs_write_block_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_write_block_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_write_block_resp_end* next __attribute__((unused)) = NULL
 

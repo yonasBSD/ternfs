@@ -232,48 +232,23 @@ TRACE_EVENT(eggsfs_vfs_rename_exit,
     TP_printk("ino=%lld old_dir=%lld old_name=%s/%s -> new_dir=%lld new_name=%s/%s err=%d", __entry->ino, __entry->old_dir_ino, __get_str(old_parent), __get_str(old_name), __entry->new_dir_ino, __get_str(new_parent), __get_str(new_name), __entry->err)
 );
 
+#define EGGSFS_METADATA_REQUEST_ATTEMPT 0
+#define EGGSFS_METADATA_REQUEST_DONE 1
 
-TRACE_EVENT(eggsfs_metadata_request_enter,
-    TP_PROTO(struct msghdr* msg, u64 req_id, u32 len, s16 shard_id, u8 kind),
-    TP_ARGS(msg, req_id, len, shard_id, kind),
-
-    TP_STRUCT__entry(
-        __array(u8, addr, sizeof(struct sockaddr_in))
-        __field(u64, req_id)
-        __field(u32, len)
-        __field(s16, shard_id) // -1 is used for CDC
-        __field(u8, kind)
-    ),
-    TP_fast_assign(
-        memcpy(__entry->addr, msg->msg_name, sizeof(struct sockaddr_in));
-        __entry->req_id = req_id;
-        __entry->len = len;
-        __entry->shard_id = shard_id;
-        __entry->kind = kind;
-    ),
-    TP_printk(
-        "dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u",
-        __entry->addr, __entry->req_id, __entry->shard_id,
-        __entry->shard_id >= 0 ?
-            __print_eggsfs_shard_kind(__entry->kind) :
-            __print_eggsfs_cdc_kind(__entry->kind),
-        __entry->len
-    )
-);
-
-TRACE_EVENT(eggsfs_metadata_request_exit,
-    TP_PROTO(struct msghdr* msg, u64 req_id, u32 len, s16 shard_id, u8 kind, u32 n_attempts, u32 resp_len, int error),
-    TP_ARGS(msg, req_id, len, shard_id, kind, n_attempts, resp_len, error),
+TRACE_EVENT(eggsfs_metadata_request,
+    TP_PROTO(struct msghdr* msg, u64 req_id, u32 len, s16 shard_id, u8 kind, u32 n_attempts, u32 resp_len, u8 event, int error),
+    TP_ARGS(msg, req_id, len, shard_id, kind, n_attempts, resp_len, event, error),
 
     TP_STRUCT__entry(
         __array(u8, addr, sizeof(struct sockaddr_in))
         __field(u64, req_id)
         __field(u32, len)
-        __field(s16, shard_id) // -1 is used for CDC
-        __field(u8, kind)
         __field(u32, n_attempts)
         __field(u32, resp_len)
         __field(int, error)
+        __field(s16, shard_id) // -1 is used for CDC
+        __field(u8, event)
+        __field(u8, kind)
     ),
     TP_fast_assign(
         memcpy(__entry->addr, msg->msg_name, sizeof(struct sockaddr_in));
@@ -284,10 +259,17 @@ TRACE_EVENT(eggsfs_metadata_request_exit,
         __entry->n_attempts = n_attempts;
         __entry->resp_len = resp_len;
         __entry->error = error;
+        __entry->event = event;
     ),
     TP_printk(
-        "dst=%pISp req_id=%llu shard_id=%d kind=%s len=%u n_attempts=%u resp_len=%u error=%d",
-        __entry->addr, __entry->req_id, __entry->shard_id,
+        "dst=%pISp req_id=%llu event=%s shard_id=%d kind=%s len=%u n_attempts=%u resp_len=%u error=%d",
+        __entry->addr, __entry->req_id,
+        __print_symbolic(
+            __entry->event,
+            { 0, "attempt" },
+            { 1, "done" }
+        ),
+        __entry->shard_id,
         __entry->shard_id >= 0 ?
             __print_eggsfs_shard_kind(__entry->kind) :
             __print_eggsfs_shard_kind(__entry->kind),
@@ -345,6 +327,7 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
 );
 
+#define EGGSFS_BLOCK_WRITE_START 7
 #define EGGSFS_BLOCK_WRITE_QUEUED 0
 #define EGGSFS_BLOCK_WRITE_RECV_ENTER 1
 #define EGGSFS_BLOCK_WRITE_RECV_EXIT 2
@@ -352,41 +335,48 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
 #define EGGSFS_BLOCK_WRITE_WRITE_EXIT 4
 #define EGGSFS_BLOCK_WRITE_WRITE_QUEUED 5
 #define EGGSFS_BLOCK_WRITE_DONE 6
+#define EGGSFS_BLOCK_WRITE_COMPLETE_QUEUED 8
 
 TRACE_EVENT(eggsfs_block_write,
-    TP_PROTO(u64 block_service_id, u64 block_id, u32 read, u32 written, u8 event, int err),
-    TP_ARGS(block_service_id, block_id, read, written, event, err),
+    TP_PROTO(u64 block_service_id, u64 block_id, u8 event, u32 block_size, u8 req_written, u32 block_written, u8 resp_read, int err),
+    TP_ARGS(block_service_id, block_id, event, block_size, req_written, block_written, resp_read, err),
 
     TP_STRUCT__entry(
         __field(u64, block_service_id)
         __field(u64, block_id)
-        __field(u32, read)
-        __field(u32, written)
+        __field(u32, block_size)
+        __field(u32, block_written)
         __field(int, err)
+        __field(u8, req_written)
+        __field(u8, resp_read)
         __field(u8, event)
     ),
     TP_fast_assign(
         __entry->block_service_id = block_service_id;
         __entry->block_id = block_id;
-        __entry->read = read;
-        __entry->written = written;
+        __entry->block_size = block_size;
+        __entry->block_written = block_written;
         __entry->err = err;
+        __entry->req_written = req_written;
+        __entry->resp_read = resp_read;
         __entry->event = event;
     ),
     TP_printk(
-        "block_service=%016llx block_id=%016llx event=%s read=%u written=%u err=%d",
+        "block_service=%016llx block_id=%016llx event=%s block_size=%u req_written=%u block_written=%u resp_read=%u err=%d",
         __entry->block_service_id, __entry->block_id,
         __print_symbolic(
             __entry->event,
+            { 7, "start" },
             { 0, "queued" },
             { 1, "recv_enter" },
             { 2, "recv_exit" },
             { 3, "write_enter" },
             { 4, "write_exit" },
             { 5, "write_queued" },
-            { 6, "done" }
+            { 6, "done" },
+            { 8, "complete_queued" }
         ),
-        __entry->read, __entry->written, __entry->err
+        __entry->block_size, __entry->req_written, __entry->block_written, __entry->resp_read, __entry->err
     )
 );
 

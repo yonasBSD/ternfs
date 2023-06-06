@@ -3,10 +3,10 @@
 
 extern int eggsfs_debug_output;
 
-#define eggsfs_error_print(fmt, args...) printk(KERN_ERR "eggsfs: %s: " fmt "\n", __func__, ##args)
-#define eggsfs_warn_print(fmt, args...) printk(KERN_WARNING "eggsfs: %s: " fmt "\n", __func__, ##args)
-#define eggsfs_info_print(fmt, args...) printk(KERN_INFO "eggsfs: %s: " fmt "\n", __func__, ##args)
-#define eggsfs_debug_print(fmt, args...) \
+#define eggsfs_error(fmt, args...) printk(KERN_ERR "eggsfs: %s: " fmt "\n", __func__, ##args)
+#define eggsfs_warn(fmt, args...) printk(KERN_WARNING "eggsfs: %s: " fmt "\n", __func__, ##args)
+#define eggsfs_info(fmt, args...) printk(KERN_INFO "eggsfs: %s: " fmt "\n", __func__, ##args)
+#define eggsfs_debug(fmt, args...) \
     if (unlikely(eggsfs_debug_output)) { \
         printk(KERN_DEBUG "eggsfs: %s: " fmt "\n", __func__, ##args); \
     }

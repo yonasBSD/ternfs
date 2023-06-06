@@ -23,7 +23,7 @@ struct workqueue_struct* eggsfs_wq;
 static int __init eggsfs_init(void) {
     int err;
 
-    eggsfs_debug_print("initializing module");
+    eggsfs_debug("initializing module");
 
     eggsfs_shard_init();
 

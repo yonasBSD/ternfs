@@ -6,6 +6,7 @@
 #include "sysctl.h"
 
 int eggsfs_debug_output = 0;
+int eggsfs_prefetch = 1;
 extern int eggsfs_rs_cpu_level;
 
 static int drop_cached_spans;
@@ -63,6 +64,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .maxlen = sizeof(int),
         .mode = 0200,
         .proc_handler = eggsfs_drop_spans_sysctl,
+    },
+
+    {
+        .procname = "prefetch",
+        .data = &eggsfs_prefetch,
+        .maxlen = sizeof(eggsfs_prefetch),
+        .mode = 0644,
+        .proc_handler = proc_dointvec,
     },
 
     EGGSFS_CTL_INT_TIME(dir_refresh_time),

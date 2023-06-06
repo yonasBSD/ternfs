@@ -5,7 +5,6 @@
 #include <linux/spinlock.h>
 #include <linux/xarray.h>
 
-#include "block.h"
 #include "latch.h"
 #include "bincode.h"
 #include "rs.h"
@@ -56,39 +55,7 @@ static inline void eggsfs_span_policies_last(struct eggsfs_span_policies* polici
     eggsfs_span_policies_get(policies, eggsfs_span_policies_len(policies)-1, max_size, parity);
 }
 
-#define EGGSFS_SPAN_STATUS_WRITING 0       // we're writing to this span
-#define EGGSFS_SPAN_STATUS_IDLE 1          // we're waiting to flush this out
-#define EGGSFS_SPAN_STATUS_LAST 2          // like idle, but signals that there won't be other spans after this one
-#define EGGSFS_SPAN_STATUS_FLUSHING 3      // we're flushing this to the block services
-#define EGGSFS_SPAN_STATUS_FLUSHING_LAST 4 // we're flushing this to the block services, and it's the last span
-
-struct eggsfs_transient_span {
-    struct list_head list;
-    // Linear list of pages with the body of the span, used when we're still gathering
-    // content for it. We use `index` in the page to track where we're writing to.
-    // We also add the parity block pages here, just to have all the pages available in
-    // one place.
-    struct list_head pages;
-    // Used by the workers which write out to the block services. They first arrange
-    // the pages here and compute the parity blocks. Then they can just write them out.
-    //
-    // We use `->private` to link these together, so that `pages` list can still contain
-    // all of them, which is handy in a couple of places.
-    //
-    // In this stage we use `index` to track where we're reading from the head page,
-    // and keep popping the head page as we write them out.
-    struct page* blocks[EGGSFS_MAX_BLOCKS];
-    struct eggsfs_block_socket* block_sockets[EGGSFS_MAX_BLOCKS];
-    struct eggsfs_write_block_request* block_reqs[EGGSFS_MAX_BLOCKS];
-    // These are decided by whoever moves the span from WRITING to IDLE/LAST.
-    u32 size; // the logical size of the span, might be smaller than actual if we added leading zeros because of RS
-    u32 block_size;
-    u8 stripes;
-    u8 storage_class;
-    u8 parity;
-    // See EGGSFS_SPAN_STATUS above.
-    u8 status;
-};
+struct eggsfs_transient_span;
 
 #define EGGSFS_FILE_STATUS_NONE 0 // when we create the inode
 #define EGGSFS_FILE_STATUS_READING 1
@@ -110,40 +77,24 @@ struct eggsfs_inode_file {
     // This is what we use in our prefetch heuristic.
     atomic64_t prefetch_section;
 
-    // These two things which are really only concerning the transient files
-    // are always kept around since we check that they're empty when
-    // tearing down the inode.
-
-    // List of spans, FIFO. There's always a "WRITING/LAST" span at the end,
-    // and there's never a WRITING span which could be IDLE.
-    struct list_head transient_spans;
-    // Used to synchronize between things adding and removing to the list of spans.
-    spinlock_t transient_spans_lock;
-
     // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
     // Could be factored out to separate data structure since it's completely useless
     // when writing.
 
     u64 cookie;
-    // Worker which flushes the spans
-    struct work_struct flusher;
-    // To know when we're done flushing
-    struct semaphore done_flushing;
-    // If we've encountered an error such that we want to stop.
+    // If we've encountered an error such that we want to stop writing to this file
+    // forever.
     atomic_t transient_err;
-    // How many bytes we've flushed so far
-    atomic64_t flushed_so_far;
-    // Used to bound the number of in-flight spans (otherwise we
-    // would eat quite a bit of memory for big files)
-    struct semaphore in_flight_spans;
+    // Span we're currently writing to. If NULL we're yet to write anything.
+    struct eggsfs_transient_span* writing_span;
+    // Whether we're currently flushing a span (block write + add span certify)
+    struct semaphore flushing_span_sema;
     // We use this to track where we should close the file from.
     struct task_struct* owner;
     // We store these one separatedly from `owner` above because when a process exits
     // it frees the mm before it frees the files. And we need the mm to account the
     // MM_FILEPAGES in the file flushing logic.
     struct mm_struct* mm;
-    // Size _apart from current span_.
-    u64 size_without_current_span;
 };
 
 

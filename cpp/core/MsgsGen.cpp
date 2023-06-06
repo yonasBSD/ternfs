@@ -364,9 +364,6 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::WRITE_BLOCK:
         out << "WRITE_BLOCK";
         break;
-    case BlocksMessageKind::BLOCK_WRITTEN:
-        out << "BLOCK_WRITTEN";
-        break;
     case BlocksMessageKind::ERASE_BLOCK:
         out << "ERASE_BLOCK";
         break;
@@ -3267,48 +3264,20 @@ std::ostream& operator<<(std::ostream& out, const WriteBlockReq& x) {
 }
 
 void WriteBlockResp::pack(BincodeBuf& buf) const {
-}
-void WriteBlockResp::unpack(BincodeBuf& buf) {
-}
-void WriteBlockResp::clear() {
-}
-bool WriteBlockResp::operator==(const WriteBlockResp& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x) {
-    out << "WriteBlockResp(" << ")";
-    return out;
-}
-
-void BlockWrittenReq::pack(BincodeBuf& buf) const {
-}
-void BlockWrittenReq::unpack(BincodeBuf& buf) {
-}
-void BlockWrittenReq::clear() {
-}
-bool BlockWrittenReq::operator==(const BlockWrittenReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockWrittenReq& x) {
-    out << "BlockWrittenReq(" << ")";
-    return out;
-}
-
-void BlockWrittenResp::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<8>(proof);
 }
-void BlockWrittenResp::unpack(BincodeBuf& buf) {
+void WriteBlockResp::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<8>(proof);
 }
-void BlockWrittenResp::clear() {
+void WriteBlockResp::clear() {
     proof.clear();
 }
-bool BlockWrittenResp::operator==(const BlockWrittenResp& rhs) const {
+bool WriteBlockResp::operator==(const WriteBlockResp& rhs) const {
     if (proof != rhs.proof) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockWrittenResp& x) {
-    out << "BlockWrittenResp(" << "Proof=" << x.proof << ")";
+std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x) {
+    out << "WriteBlockResp(" << "Proof=" << x.proof << ")";
     return out;
 }
 

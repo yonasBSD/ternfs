@@ -26,8 +26,9 @@ func main() {
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
-	hddBlockServices := flag.Uint("hdd-block-services", 32, "Number of HDD block services.")
-	flashBlockServices := flag.Uint("flash-block-services", 32, "Number of HDD block services.")
+	failureDomains := flag.Uint("failure-domains", 16, "Number of failure domains.")
+	hddBlockServices := flag.Uint("hdd-block-services", 10, "Number of HDD block services.")
+	flashBlockServices := flag.Uint("flash-block-services", 10, "Number of HDD block services.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	ownIp := flag.String("own-ip", "127.0.0.1", "What IP to advertise to shuckle for these services.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
@@ -129,27 +130,32 @@ func main() {
 	})
 
 	// Start block services
-	for i := uint(0); i < *hddBlockServices+*flashBlockServices; i++ {
-		storageClass := msgs.HDD_STORAGE
-		if i >= *hddBlockServices {
-			storageClass = msgs.FLASH_STORAGE
+	bsCount := 0
+	for i := uint(0); i < *failureDomains; i++ {
+		for j := uint(0); j < *hddBlockServices+*flashBlockServices; j++ {
+			storageClass := msgs.HDD_STORAGE
+			if j >= *hddBlockServices {
+				storageClass = msgs.FLASH_STORAGE
+			}
+			opts := managedprocess.BlockServiceOpts{
+				Exe:            goExes.BlocksExe,
+				Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", bsCount)),
+				StorageClass:   storageClass,
+				FailureDomain:  fmt.Sprintf("%d", i),
+				LogLevel:       level,
+				ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
+				NoTimeCheck:    true,
+				OwnIp1:         "127.0.0.1",
+				OwnIp2:         "127.0.0.1",
+				Profile:        *profile,
+			}
+			if *startingPort != 0 {
+				opts.Port1 = uint16(*startingPort) + 257 + uint16(bsCount)
+			}
+			procs.StartBlockService(log, &opts)
+			bsCount++
 		}
-		opts := managedprocess.BlockServiceOpts{
-			Exe:            goExes.BlocksExe,
-			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			StorageClass:   storageClass,
-			FailureDomain:  fmt.Sprintf("%d", i),
-			LogLevel:       level,
-			ShuckleAddress: shuckleAddress,
-			OwnIp1:         *ownIp,
-			Profile:        *profile,
-		}
-		if *startingPort != 0 {
-			opts.Port1 = uint16(*startingPort) + 257 + uint16(i)
-		}
-		procs.StartBlockService(log, &opts)
 	}
-
 	// Start CDC
 	{
 		opts := managedprocess.CDCOpts{
@@ -191,7 +197,7 @@ func main() {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	lib.WaitForShuckle(log, shuckleAddress, int(*hddBlockServices+*flashBlockServices), waitShuckleFor)
+	lib.WaitForShuckle(log, shuckleAddress, bsCount, waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,

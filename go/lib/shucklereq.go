@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -98,6 +99,13 @@ func ReadShuckleResponse(
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
 	}
+	if data[0] == msgs.ERROR {
+		var err uint16
+		if err := binary.Read(r, binary.LittleEndian, &err); err != nil {
+			return nil, fmt.Errorf("could not read error: %w", err)
+		}
+		return nil, msgs.ErrCode(err)
+	}
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse
 	switch kind {
@@ -143,6 +151,25 @@ func WriteShuckleResponse(log *Logger, w io.Writer, resp msgs.ShuckleResponse) e
 	if _, err := w.Write(bytes); err != nil {
 		return err
 	}
+	return nil
+}
+
+func WriteShuckleResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error {
+	log.Debug("writing shuckle error %v", err)
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(1+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write([]byte{msgs.ERROR}); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
+		return err
+	}
+	w.Write(buf.Bytes())
 	return nil
 }
 

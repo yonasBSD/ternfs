@@ -5,6 +5,7 @@
 
 #include "inode.h"
 #include "counter.h"
+#include "block.h"
 
 EGGSFS_DECLARE_COUNTER(eggsfs_stat_cached_spans);
 extern atomic64_t eggsfs_stat_cached_span_pages;
@@ -50,7 +51,7 @@ struct eggsfs_block_span {
     u32 cell_size;
     u32 stripes_crc[15];
     // * 0: there are no readers, the span is in the LRU.
-    // * n > 0: there are readers, the span is _not_ in the LRU.
+    // * n > 0: there are n readers, the span is _not_ in the LRU.
     // * n < 0: the span is being reclaimed, it is _not_ in the LRU.
     s64 readers;
     // If anybody's actually read some of this span 

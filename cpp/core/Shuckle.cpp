@@ -21,9 +21,8 @@
 #include "Exception.hpp"
 
 static std::string explicitGenerateErrString(const std::string& what, int err, const char* str) {
-    const char *errmsg = safe_strerror(err);
     std::stringstream ss;
-    ss << "could not " << what << ": " << err << "/" << str << "=" << errmsg;
+    ss << "could not " << what << ": " << err << "/" << str;
     return ss.str();
 }
 
@@ -109,6 +108,9 @@ static std::string writeShuckleRequest(int fd, const ShuckleReqContainer& req) {
     do { \
         ssize_t written = write(fd, buf, len); \
         if (written < 0) { \
+            if (errno == EAGAIN) { \
+                continue; \
+            } \
             return generateErrString("write request", errno); \
         } \
         if (written != len) { \
@@ -133,6 +135,9 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
         while (readSoFar < count) { \
             ssize_t r = read(fd, buf+readSoFar, count-readSoFar); \
             if (r < 0) { \
+                if (errno == EAGAIN) { \
+                    continue; \
+                } \
                 return generateErrString("read response", errno); \
             } \
             if (r == 0) { \
@@ -154,6 +159,12 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
     READ_IN(buf.data(), buf.size());
 #undef READ_IN
     BincodeBuf bbuf(buf.data(), buf.size());
+    if (kind == ShuckleMessageKind::ERROR) {
+        EggsError error = (EggsError)bbuf.unpackScalar<uint16_t>();
+        std::stringstream ss;
+        ss << "got error " << error;
+        return ss.str();
+    }
     resp.unpack(bbuf, kind);
     return {};
 }

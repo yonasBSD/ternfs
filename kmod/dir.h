@@ -29,7 +29,7 @@ static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry
     else if (t >= dir->mtime_expiry) { ret = -ECHILD; }
     else { ret = 1; }
 
-    eggsfs_debug_print(
+    eggsfs_debug(
         "t=%llu dir=%p dir_id=0x%016lx dir_mtime=%llu dir_mtime_expiry=%llu dentry=%pd dentry_dir_mtime=%llu -> ret=%d",
         t, dir, dir->inode.i_ino, dir->mtime, dir->mtime_expiry, dentry, dentry_dir_mtime, ret
     );

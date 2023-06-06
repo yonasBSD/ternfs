@@ -7,7 +7,7 @@
 
 #include "log.h"
 
-#define rs_warn(...) eggsfs_error_print(__VA_ARGS__)
+#define rs_warn(...) eggsfs_error(__VA_ARGS__)
 
 #include "intrshims.h"
 
@@ -158,13 +158,11 @@ int eggsfs_recover(
         struct list_head* have = &pages[__builtin_ctz(have_blocks)];
         struct list_head* want = &pages[__builtin_ctz(want_block)];
         for (i = 0; i < num_pages; i++, list_rotate_left(have), list_rotate_left(want)) {
-            memcpy(
-                kmap(list_first_entry(want, struct page, lru)),
-                kmap(list_first_entry(have, struct page, lru)),
-                PAGE_SIZE
-            );
-            kunmap(list_first_entry(have, struct page, lru));
-            kunmap(list_first_entry(want, struct page, lru));
+            char* want_buf = kmap_atomic(list_first_entry(want, struct page, lru));
+            char* have_buf = kmap_atomic(list_first_entry(have, struct page, lru));
+            memcpy(want_buf,have_buf,PAGE_SIZE);
+            kunmap_atomic(want_buf);
+            kunmap_atomic(have_buf);
         }
         return 0;
     }
@@ -179,7 +177,7 @@ int eggsfs_recover(
         rs = rs_10_4;
         recover_matmul = rs_recover_matmul(10);
     } else {
-        eggsfs_error_print("cannot compute with RS(%d,%d)", D, P);
+        eggsfs_error("cannot compute with RS(%d,%d)", D, P);
         return -EIO;
     }
     if (recover_matmul == NULL) {
@@ -196,25 +194,28 @@ int eggsfs_recover(
     }
 
     // compute data
-    const char* have_bufs[EGGSFS_MAX_DATA];
+    char* have_bufs[EGGSFS_MAX_DATA];
     char* want_buf;
     int i, j, b;
     for (i = 0; i < num_pages; i++) {
         for (b = 0, j = 0; b < B; b++) { // map pages
             if ((1u<<b) & have_blocks) {
-                have_bufs[j] = kmap(list_first_entry(&pages[b], struct page, lru));
+                have_bufs[j] = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
                 j++;
             }
             if ((1u<<b) & want_block) {
-                want_buf = kmap(list_first_entry(&pages[b], struct page, lru));
+                want_buf = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
             }
         }
 
         recover_matmul(PAGE_SIZE, (const u8**)have_bufs, want_buf, mat);
-
         for (b = 0; b < B; b++) { // unmap pages, rotate list
-            if ((1u<<b) & (have_blocks|want_block)) {
-                kunmap(list_first_entry(&pages[b], struct page, lru));
+            if ((1u<<b) & have_blocks) {
+                kunmap_atomic(have_bufs[b]);
+                list_rotate_left(&pages[b]);
+            }
+            if ((1u<<b) & want_block) {
+                kunmap_atomic(want_buf);
                 list_rotate_left(&pages[b]);
             }
         }
@@ -226,13 +227,13 @@ int eggsfs_recover(
 
 int __init eggsfs_rs_init(void) {
     if (rs_has_cpu_level_core(RS_CPU_GFNI)) {
-        eggsfs_info_print("picking GFNI");
+        eggsfs_info("picking GFNI");
         eggsfs_rs_cpu_level = RS_CPU_GFNI;
     } else if (rs_has_cpu_level_core(RS_CPU_AVX2)) {
-        eggsfs_info_print("picking AVX2");
+        eggsfs_info("picking AVX2");
         eggsfs_rs_cpu_level = RS_CPU_AVX2;
     } else {
-        eggsfs_warn_print("picking scalar execution -- this will be slow.");
+        eggsfs_warn("picking scalar execution -- this will be slow.");
         eggsfs_rs_cpu_level = RS_CPU_SCALAR;
     }
 

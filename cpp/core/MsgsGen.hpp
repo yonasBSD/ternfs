@@ -136,7 +136,6 @@ enum class BlocksMessageKind : uint8_t {
     ERROR = 0,
     FETCH_BLOCK = 2,
     WRITE_BLOCK = 3,
-    BLOCK_WRITTEN = 4,
     ERASE_BLOCK = 1,
     TEST_WRITE = 5,
 };
@@ -2945,12 +2944,14 @@ struct WriteBlockReq {
 std::ostream& operator<<(std::ostream& out, const WriteBlockReq& x);
 
 struct WriteBlockResp {
+    BincodeFixedBytes<8> proof;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
 
     WriteBlockResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -2960,42 +2961,6 @@ struct WriteBlockResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x);
-
-struct BlockWrittenReq {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    BlockWrittenReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockWrittenReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockWrittenReq& x);
-
-struct BlockWrittenResp {
-    BincodeFixedBytes<8> proof;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
-
-    BlockWrittenResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const BlockWrittenResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const BlockWrittenResp& x);
 
 struct EraseBlockReq {
     uint64_t blockId;

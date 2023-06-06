@@ -146,6 +146,13 @@ func setKmodDirRefreshTime(ms uint64) {
 	}
 }
 
+func mountKmod(shucklePort uint16, mountPoint string) {
+	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", fmt.Sprintf("127.0.0.1:%v", shucklePort), mountPoint).CombinedOutput()
+	if err != nil {
+		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
+	}
+}
+
 type cfgOverrides map[string]string
 
 func (i *cfgOverrides) Set(value string) error {
@@ -177,7 +184,8 @@ func (i *cfgOverrides) int(k string, def int) int {
 	return n
 }
 
-func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleAddress string, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
+func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleIp string, shucklePort uint16, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
+	shuckleAddress := fmt.Sprintf("%s:%d", shuckleIp, shucklePort)
 	defer func() { handleRecover(log, terminateChan, recover()) }()
 	client, err := lib.NewClient(log, shuckleAddress, 1, nil, nil)
 	if err != nil {
@@ -347,6 +355,15 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	}
 	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultStripePolicy); err != nil {
 		panic(err)
+	}
+
+	// remount kmod to ensure that policies are refreshed
+	if kmod {
+		out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
+		if err != nil {
+			panic(fmt.Errorf("could not umount fs (%w): %s", err, out))
+		}
+		mountKmod(shucklePort, mountPoint)
 	}
 
 	largeFileOpts := largeFileTestOpts{
@@ -546,26 +563,28 @@ func main() {
 		Dir:         path.Join(*dataDir, "shuckle"),
 	})
 
-	// Start block services. 32 to cover RS(16,16).
-	hddBlockServices := 32
-	flashBlockServices := 32
-	for i := 0; i < hddBlockServices+flashBlockServices; i++ {
-		storageClass := msgs.HDD_STORAGE
-		if i >= hddBlockServices {
-			storageClass = msgs.FLASH_STORAGE
+	failureDomains := 16
+	hddBlockServices := 10
+	flashBlockServices := 10
+	for i := 0; i < failureDomains; i++ {
+		for j := 0; j < hddBlockServices+flashBlockServices; j++ {
+			storageClass := msgs.HDD_STORAGE
+			if j >= hddBlockServices {
+				storageClass = msgs.FLASH_STORAGE
+			}
+			procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
+				Exe:            goExes.BlocksExe,
+				Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", (i*(hddBlockServices+flashBlockServices))+j)),
+				StorageClass:   storageClass,
+				FailureDomain:  fmt.Sprintf("%d", i),
+				LogLevel:       level,
+				ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
+				NoTimeCheck:    true,
+				OwnIp1:         "127.0.0.1",
+				OwnIp2:         "127.0.0.1",
+				Profile:        *profile,
+			})
 		}
-		procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
-			Exe:            goExes.BlocksExe,
-			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			StorageClass:   storageClass,
-			FailureDomain:  fmt.Sprintf("%d", i),
-			LogLevel:       level,
-			ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
-			NoTimeCheck:    true,
-			OwnIp1:         "127.0.0.1",
-			OwnIp2:         "127.0.0.1",
-			Profile:        *profile,
-		})
 	}
 
 	if *outgoingPacketDrop > 0 {
@@ -612,7 +631,7 @@ func main() {
 		waitShuckleFor = 30 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), hddBlockServices+flashBlockServices, waitShuckleFor)
+	lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,
@@ -630,10 +649,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		out, err := exec.Command("sudo", "mount", "-t", "eggsfs", fmt.Sprintf("127.0.0.1:%v", shucklePort), mountPoint).CombinedOutput()
-		if err != nil {
-			panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
-		}
+		mountKmod(shucklePort, mountPoint)
 		defer func() {
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
 			if err != nil {
@@ -648,7 +664,7 @@ func main() {
 
 	// start tests
 	go func() {
-		runTests(terminateChan, log, &overrides, shuckleAddress, mountPoint, fuseMountPoint, *kmod, *short, filterRe)
+		runTests(terminateChan, log, &overrides, "127.0.0.1", shucklePort, mountPoint, fuseMountPoint, *kmod, *short, filterRe)
 	}()
 
 	// wait for things to finish

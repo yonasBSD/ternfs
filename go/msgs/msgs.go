@@ -1496,16 +1496,12 @@ type WriteBlockReq struct {
 	Certificate [8]byte
 }
 
-// This does _not_ include the proof: that comes after the write.
-// However, we want to get a go-ahead before starting to write.
-type WriteBlockResp struct{}
-
-type BlockWrittenReq struct{}
-
-type BlockWrittenResp struct {
+// Note that, given the way the write req/resp works, even if
+// there's an error immediately the block service will still
+// consume the required amount and _then_ send the error back.
+type WriteBlockResp struct {
 	Proof [8]byte
 }
-
 type TestWriteReq struct {
 	Size uint64
 }

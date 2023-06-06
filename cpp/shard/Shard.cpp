@@ -308,7 +308,7 @@ public:
     void run() {
         EggsTime successfulIterationAt = 0;
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             if (_shared.stop.load()) {
                 LOG_DEBUG(_env, "got told to stop, stopping");
                 break;
@@ -326,14 +326,18 @@ public:
             }
             uint32_t ip1 = _shared.ip1.load();
             uint32_t ip2 = _shared.ip2.load();
-            LOG_INFO(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
+            LOG_DEBUG(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
             std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
             if (!err.empty()) {
-                RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                if (successfulIterationAt != 0) { // only one alert
+                    RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
+                } else {
+                    LOG_DEBUG(_env, "Couldn't register ourselves with shuckle: %s", err);
+                }
                 EggsTime successfulIterationAt = 0;
                 continue;
             }
-            LOG_INFO(_env, "Successfully registered with shuckle, will register again in one minute");
+            LOG_INFO(_env, "Successfully registered with shuckle (shard %s, %s:%s, %s:%s), will register again in one minute", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
             successfulIterationAt = eggsNow();
         }
     }
@@ -399,7 +403,7 @@ public:
             }
 
             logEntry->time = eggsNow();
-            LOG_INFO(_env, "about to perform shuckle requests to %s:%s", _shuckleHost, _shucklePort);
+            LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
             std::string err;
 
             err = fetchBlockServices(_shuckleHost, _shucklePort, 100_ms, _shid, logEntry->body.setUpdateBlockServices());

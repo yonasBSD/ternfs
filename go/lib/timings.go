@@ -32,11 +32,13 @@ func (t *Timings) Buckets() int {
 
 func (t *Timings) Bucket(i int) (lowerBound time.Duration, count uint64, upperBound time.Duration) {
 	count = atomic.LoadUint64(&t.counts[i])
-	upperBound = time.Duration(uint64(1) << (i + 5))
+	lowerBound = time.Duration(uint64(1) << (i + 4))
 	if i == 0 {
 		lowerBound = time.Duration(0)
-	} else {
-		lowerBound = time.Duration(uint64(1) << (i + 4))
+	}
+	upperBound = time.Duration(uint64(1) << (i + 5))
+	if i == BUCKETS-1 {
+		upperBound = time.Duration(int64(^uint64(0) >> 1))
 	}
 	return lowerBound, count, upperBound
 }

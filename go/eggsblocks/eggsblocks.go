@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
+	crand "crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -144,8 +145,10 @@ func registerPeriodically(
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		log.Info("registered with %v, waiting a minute", shuckleAddress)
-		time.Sleep(time.Minute)
+		waitForRange := time.Minute * 2
+		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
+		log.Info("registered with %v, waiting %v", waitFor)
+		time.Sleep(waitFor)
 	}
 }
 
@@ -495,7 +498,7 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 	}
 	if err == io.EOF {
 		log.Info("creating new secret key")
-		if _, err := rand.Read(key[:]); err != nil {
+		if _, err := crand.Read(key[:]); err != nil {
 			panic(err)
 		}
 		if _, err := keyFile.Write(key[:]); err != nil {

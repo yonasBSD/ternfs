@@ -1,4 +1,4 @@
-include_directories(${eggsfs_SOURCE_DIR}/core ${eggsfs_SOURCE_DIR}/shard)
+include_directories(${eggsfs_SOURCE_DIR}/core ${eggsfs_SOURCE_DIR}/shard ${eggsfs_SOURCE_DIR}/wyhash)
 
 add_library(cdc CDC.cpp CDC.hpp CDCDB.cpp CDCDB.hpp CDCDBData.hpp)
 target_link_libraries(cdc PRIVATE core)

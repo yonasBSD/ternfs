@@ -10,6 +10,7 @@
 #include "wq.h"
 #include "trace.h"
 #include "intrshims.h"
+#include "sysctl.h"
 
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_spans);
 
@@ -902,8 +903,6 @@ static bool eggsfs_reclaim_after_fetch_stripe(void) {
     }
     return low_on_memory;
 }
-
-extern int eggsfs_prefetch;
 
 static void eggsfs_maybe_prefetch(struct eggsfs_block_span* span, bool low_on_memory, u64 stripe_start, u64 stripe_end) {
     if (!eggsfs_prefetch) { return; }

@@ -74,7 +74,4 @@ fi
 # Attach
 tmux attach-session -t uovo:1
 
-# sudo sh -c 'echo eggsfs_metadata_request >> /sys/kernel/debug/tracing/set_event' && sudo sh -c 'echo eggsfs_block_write >> /sys/kernel/debug/tracing/set_event'
-# sudo sysctl fs.eggsfs.prefetch=0
-# ./eggs/eggstests -kmod -filter 'mounted fs$' -drop-cached-spans-every 100 -cfg fsTest.checkThreads=1 -cfg fsTest.numFiles=1000 -cfg fsTest.numDirs=1 -short -binaries-dir $(pwd)/eggs
-# sudo cat /sys/kernel/debug/tracing/trace_pipe
+# ./eggs/eggstests -kmod -filter 'mounted|rsync|large' -drop-cached-spans-every 100ms -short -binaries-dir $(pwd)/eggs

@@ -310,15 +310,25 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	return out.Bytes()
 }
 
-func generateKmodMsgKind(w io.Writer, what string, reqResps []reqRespType) {
+func generateKmodMsgKind(hOut io.Writer, cOut io.Writer, what string, reqResps []reqRespType) {
 	for _, reqResp := range reqResps {
-		fmt.Fprintf(w, "#define EGGSFS_%s_%s 0x%X\n", what, reqRespEnum(reqResp), reqResp.kind)
+		fmt.Fprintf(hOut, "#define EGGSFS_%s_%s 0x%X\n", what, reqRespEnum(reqResp), reqResp.kind)
 	}
-	fmt.Fprintf(w, "#define __print_eggsfs_%s_kind(k) __print_symbolic(k", strings.ToLower(what))
+	fmt.Fprintf(hOut, "#define __print_eggsfs_%s_kind(k) __print_symbolic(k", strings.ToLower(what))
 	for _, reqResp := range reqResps {
-		fmt.Fprintf(w, ", { %d, \"%s\" }", reqResp.kind, reqRespEnum(reqResp))
+		fmt.Fprintf(hOut, ", { %d, %q }", reqResp.kind, reqRespEnum(reqResp))
 	}
-	fmt.Fprintf(w, ")\n\n")
+	fmt.Fprintf(hOut, ")\n")
+	fmt.Fprintf(hOut, "const char* eggsfs_%s_kind_str(int kind);\n\n", strings.ToLower(what))
+
+	fmt.Fprintf(cOut, "const char* eggsfs_%s_kind_str(int kind) {\n", strings.ToLower(what))
+	fmt.Fprintf(cOut, "    switch (kind) {\n")
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(cOut, "    case %d: return %q;\n", reqResp.kind, reqRespEnum(reqResp))
+	}
+	fmt.Fprintf(cOut, "    default: return \"UNKNOWN\";\n")
+	fmt.Fprintf(cOut, "    }\n")
+	fmt.Fprintf(cOut, "}\n\n")
 }
 
 func kmodFieldName(s string) string {
@@ -645,8 +655,9 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 	fmt.Fprintf(h, "    struct %s_end* next __attribute__((unused)) = NULL\n\n", kmodStructName(typ))
 }
 
-func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hOut := new(bytes.Buffer)
+	cOut := new(bytes.Buffer)
 
 	fmt.Fprintln(hOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(hOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
@@ -658,14 +669,24 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	fmt.Fprintf(hOut, "\n")
 	fmt.Fprintf(hOut, "#define __print_eggsfs_err(i) __print_symbolic(i")
 	for i, err := range errors {
-		fmt.Fprintf(hOut, ", { %d, \"%s\" }", errCodeOffset+i, err)
+		fmt.Fprintf(hOut, ", { %d, %q }", errCodeOffset+i, err)
 	}
-	fmt.Fprintf(hOut, ")\n\n")
+	fmt.Fprintf(hOut, ")\n")
+	fmt.Fprintf(hOut, "const char* eggsfs_err_str(int err);\n\n")
 
-	generateKmodMsgKind(hOut, "SHARD", shardReqResps)
-	generateKmodMsgKind(hOut, "CDC", cdcReqResps)
-	generateKmodMsgKind(hOut, "SHUCKLE", shuckleReqResps)
-	generateKmodMsgKind(hOut, "BLOCKS", blocksReqResps)
+	fmt.Fprintf(cOut, "const char* eggsfs_err_str(int err) {\n")
+	fmt.Fprintf(cOut, "    switch (err) {\n")
+	for i, err := range errors {
+		fmt.Fprintf(cOut, "    case %d: return %q;\n", errCodeOffset+i, err)
+	}
+	fmt.Fprintf(cOut, "    default: return \"UNKNOWN\";\n")
+	fmt.Fprintf(cOut, "    }\n")
+	fmt.Fprintf(cOut, "}\n\n")
+
+	generateKmodMsgKind(hOut, cOut, "SHARD", shardReqResps)
+	generateKmodMsgKind(hOut, cOut, "CDC", cdcReqResps)
+	generateKmodMsgKind(hOut, cOut, "SHUCKLE", shuckleReqResps)
+	generateKmodMsgKind(hOut, cOut, "BLOCKS", blocksReqResps)
 
 	fmt.Fprintln(hOut)
 
@@ -693,7 +714,7 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	generateReqResps(shuckleReqResps)
 	generateReqResps(blocksReqResps)
 
-	return hOut.Bytes()
+	return hOut.Bytes(), cOut.Bytes()
 }
 
 func cppType(t reflect.Type) string {
@@ -1601,8 +1622,15 @@ func main() {
 		panic(err)
 	}
 	defer kmodHOutFile.Close()
-	kmodHBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelShuckleReqResps, kernelBlocksReqResps, kernelExtras)
+	kmodCOutFilename := fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd)
+	kmodCOutFile, err := os.Create(kmodCOutFilename)
+	if err != nil {
+		panic(err)
+	}
+	defer kmodHOutFile.Close()
+	kmodHBytes, kmodCBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelShuckleReqResps, kernelBlocksReqResps, kernelExtras)
 	kmodHOutFile.Write(kmodHBytes)
+	kmodCOutFile.Write(kmodCBytes)
 
 	hppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd)
 	hppOutFile, err := os.Create(hppOutFilename)

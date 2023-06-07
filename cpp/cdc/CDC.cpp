@@ -26,6 +26,7 @@
 #include "Crypto.hpp"
 #include "CDCKey.hpp"
 #include "Shuckle.hpp"
+#include "wyhash.h"
 
 struct CDCShared {
     CDCDB& db;
@@ -376,7 +377,11 @@ private:
     }
 
     void _handleShardError(ShardId shid, EggsError err) {
-        RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);
+        if (err == EggsError::NAME_NOT_FOUND) { // this is expected in a few cases
+            LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
+        } else {
+            RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);
+        }
         _shared.db.processShardResp(true, eggsNow(), _advanceLogIndex(), err, nullptr, _step);
         _processStep(_step);
     }
@@ -579,13 +584,14 @@ public:
     }
 
     void run() {
-        EggsTime successfulIterationAt = 0;
+        uint64_t rand = eggsNow().ns;
+        EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
             if (_shared.stop.load()) {
                 return;
             }
-            if (eggsNow() - successfulIterationAt < 1_mins) {
+            if (eggsNow() < nextRegister) {
                 continue;                
             }
             uint16_t port1 = _shared.ownPorts[0].load();
@@ -600,16 +606,17 @@ public:
             _shared.db.status(status);
             std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2, status);
             if (!err.empty()) {
-                if (successfulIterationAt > 0) {
+                if (nextRegister == 0) { // only one alert
                     RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 } else {
                     LOG_DEBUG(_env, "Couldn't register ourselves with shuckle: %s", err);
                 }
-                EggsTime successfulIterationAt = 0;
+                nextRegister = 0;
                 continue;
             }
-            LOG_INFO(_env, "Successfully registered with shuckle (CDC, %s:%s, %s:%s), will register again in one minute", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
-            successfulIterationAt = eggsNow();
+            Duration nextRegisterD(wyhash64(&rand) % (2_mins).ns); // fuzz the successful loop
+            nextRegister = eggsNow() + nextRegisterD;
+            LOG_INFO(_env, "Successfully registered with shuckle (CDC, %s:%s, %s:%s), will register again in %s", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2, nextRegisterD);
         }
     }
 };

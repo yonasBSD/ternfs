@@ -71,6 +71,10 @@ struct EggsTime {
         return ns <= rhs.ns;
     }
 
+    bool operator<(EggsTime rhs) const {
+        return ns < rhs.ns;
+    }
+
     void pack(BincodeBuf& buf) const {
         buf.packScalar<uint64_t>(ns);
     }

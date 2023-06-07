@@ -1,7 +1,7 @@
 #ifndef _EGGSFS_LOG_H
 #define _EGGSFS_LOG_H
 
-extern int eggsfs_debug_output;
+#include "sysctl.h"
 
 #define eggsfs_error(fmt, args...) printk(KERN_ERR "eggsfs: %s: " fmt "\n", __func__, ##args)
 #define eggsfs_warn(fmt, args...) printk(KERN_WARNING "eggsfs: %s: " fmt "\n", __func__, ##args)

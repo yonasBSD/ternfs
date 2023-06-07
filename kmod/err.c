@@ -1,7 +1,7 @@
 #include "err.h"
 #include "log.h"
 
-static bool eggsfs_unexpected_error(int err) {
+bool eggsfs_unexpected_error(int err) {
     switch (err) {
     case 0: return false;
     case EGGSFS_ERR_INTERNAL_ERROR: return true;
@@ -61,6 +61,7 @@ static bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_BAD_BLOCK_CRC: return true;
     case EGGSFS_ERR_BLOCK_TOO_BIG: return true;
     case EGGSFS_ERR_BLOCK_NOT_FOUND: return true;
+    case -ERESTARTSYS: return false;
     default: return true;
     }
 }

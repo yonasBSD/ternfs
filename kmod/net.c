@@ -4,6 +4,7 @@
 
 #include "log.h"
 #include "trace.h"
+#include "err.h"
 
 static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket* s, u64 request_id) __must_hold(s->lock) {
     struct rb_node* node = s->requests.rb_node;
@@ -69,7 +70,7 @@ static void sock_readable(struct sock* sk) {
             }
         } spin_unlock_bh(&s->lock);
         if (!req) {
-            eggsfs_warn("could not find request id %llu", request_id);
+            eggsfs_info("could not find request id %llu (probably late after multiple attempts)", request_id);
         }
 
         if (skb) {
@@ -211,6 +212,7 @@ struct sk_buff* eggsfs_metadata_request(
     int err = -EIO;
 
     u8 kind = *((u8*)p + 12);
+    const char* kind_str = (shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
 
     req.skb = NULL;
     req.request_id = req_id;
@@ -221,6 +223,12 @@ struct sk_buff* eggsfs_metadata_request(
 
     int max_attempts = shard_id < 0 ? CDC_ATTEMPTS : SHARD_ATTEMPTS;
     const u64* timeouts_10ms = shard_id < 0 ? cdc_timeouts_10ms : shard_timeouts_10ms;
+    u64 start_t = get_jiffies_64();
+    u64 elapsed_ms = 0;
+
+#define LOG_STR "unexpected error: req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
+#define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, elapsed_ms
+#define WARN_LATE if (elapsed_ms > 1000) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
 
     do {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
@@ -231,34 +239,40 @@ struct sk_buff* eggsfs_metadata_request(
         insert_shard_request(sock, &req);
         spin_unlock_bh(&sock->lock);
 
-        eggsfs_debug("sending request of kind 0x%02x, len %d to %pI4:%d, after %d attempts", (int)kind, len, &addr->sin_addr, ntohs(addr->sin_port), *attempts);
+        eggsfs_debug("sending: " LOG_STR, LOG_ARGS)
         eggsfs_debug("sending to sock=%p iov=%p len=%u", sock->sock, p, len);
+    
         err = kernel_sendmsg(sock->sock, msg, &vec, 1, len);
         if (err < 0) {
-            eggsfs_info("could not send req %llu of kind 0x%02x to %pI4:%d: %d", req_id, (int)kind, &addr->sin_addr, ntohs(addr->sin_port), err);
+            eggsfs_info("could not send: " LOG_STR " err=%d", LOG_ARGS, err);
             goto out_unregister;
         }
 
         err = wait_for_request(sock, &req, timeouts_10ms[*attempts]);
+        elapsed_ms = jiffies64_to_msecs(get_jiffies_64() - start_t);
         (*attempts)++;
         if (!err) {
             eggsfs_debug("got response");
             BUG_ON(!req.skb);
-            // extract the the error for the benefit of the tracing
-            int trace_err = 0;
+            // extract the the error for the benefit of logging
+            int bincode_err = 0;
             if (req.skb->len >= (4 + 8 + 1)) {
                 uint8_t kind = *(u8*)(req.skb->data + 4 + 8);
                 if (kind == 0 && req.skb->len >= (4 + 8 + 1 + 2)) {
-                    trace_err = get_unaligned_le16(req.skb->data + 4 + 8 + 1);
+                    bincode_err = get_unaligned_le16(req.skb->data + 4 + 8 + 1);
                 }
             }
-            trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, trace_err);
+            if (bincode_err && eggsfs_unexpected_error(bincode_err)) {
+                eggsfs_warn("unexpected error: " LOG_STR " err_str=%s err=%d", LOG_ARGS, eggsfs_err_str(bincode_err), bincode_err);
+            }
+            WARN_LATE
+            trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
             return req.skb;
         }
 
         eggsfs_debug("err=%d", err);
         if (err != -ETIMEDOUT || *attempts >= max_attempts) {
-            eggsfs_info("giving up request of kind %02x to shard id %d, %pI4:%d after %d attempts due to err %d", (int)kind, shard_id, &addr->sin_addr, ntohs(addr->sin_port), *attempts, err);
+            eggsfs_info("giving up (might be too many attempts): " LOG_STR " max_attempts=%d err=%d", LOG_ARGS, max_attempts, err);
             goto out_err;
         }
     } while (1);
@@ -270,11 +284,17 @@ out_unregister:
     BUG_ON(req.skb);
     rb_erase(&req.node, &sock->requests);
     spin_unlock_bh(&sock->lock);
+    elapsed_ms = jiffies64_to_msecs(get_jiffies_64() - start_t);
 
 out_err:
+    WARN_LATE
     trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
     eggsfs_info("err=%d", err);
     return ERR_PTR(err);
+
+#undef LOG_STR
+#undef LOG_ARGS
+#undef WARN_LATE
 }
 
 #if 0

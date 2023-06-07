@@ -306,14 +306,15 @@ public:
     }
 
     void run() {
-        EggsTime successfulIterationAt = 0;
+        uint64_t rand = eggsNow().ns;
+        EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
         for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
             if (_shared.stop.load()) {
                 LOG_DEBUG(_env, "got told to stop, stopping");
                 break;
             }
-            if (eggsNow() - successfulIterationAt < 1_mins) {
+            if (eggsNow() < nextRegister) {
                 continue;                
             }
             uint16_t port1 = _shared.port1.load();
@@ -329,16 +330,17 @@ public:
             LOG_DEBUG(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
             std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
             if (!err.empty()) {
-                if (successfulIterationAt != 0) { // only one alert
+                if (nextRegister == 0) { // only one alert
                     RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
                 } else {
                     LOG_DEBUG(_env, "Couldn't register ourselves with shuckle: %s", err);
                 }
-                EggsTime successfulIterationAt = 0;
+                nextRegister = 0;
                 continue;
             }
-            LOG_INFO(_env, "Successfully registered with shuckle (shard %s, %s:%s, %s:%s), will register again in one minute", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
-            successfulIterationAt = eggsNow();
+            Duration nextRegisterD(wyhash64(&rand) % (2_mins).ns); // fuzz the successful loop
+            nextRegister = eggsNow() + nextRegisterD;
+            LOG_INFO(_env, "Successfully registered with shuckle (shard %s, %s:%s, %s:%s), will register again in %s", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2, nextRegisterD);
         }
     }
 };

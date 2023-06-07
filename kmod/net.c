@@ -258,7 +258,7 @@ struct sk_buff* eggsfs_metadata_request(
 
         eggsfs_debug("err=%d", err);
         if (err != -ETIMEDOUT || *attempts >= max_attempts) {
-            eggsfs_info("giving up after %d attempts due to err %d", *attempts, err);
+            eggsfs_info("giving up request of kind %02x to shard id %d, %pI4:%d after %d attempts due to err %d", (int)kind, shard_id, &addr->sin_addr, ntohs(addr->sin_port), *attempts, err);
             goto out_err;
         }
     } while (1);

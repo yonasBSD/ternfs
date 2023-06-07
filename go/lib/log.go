@@ -7,8 +7,10 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
 	"xtx/ecninfra/log"
+	"xtx/ecninfra/monitor"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -108,8 +110,16 @@ func (lf *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+type LoggerOptions struct {
+	Level       LogLevel
+	Syslog      bool
+	AppInstance string
+	Xmon        string // "dev", "qa", empty string for no xmon
+}
+
 type Logger struct {
 	level LogLevel
+	troll *monitor.ChildTroll
 }
 
 func isTerminal(f *os.File) bool {
@@ -121,12 +131,22 @@ func isTerminal(f *os.File) bool {
 	return err == nil
 }
 
-func NewLogger(level LogLevel, out *os.File, syslog bool) *Logger {
-	l := Logger{
-		level: level,
+var hasLogger int32
+
+// Note: this will really use the global logger in `xtx/ecninfra/log`, so
+// this function can only be called once.
+func NewLogger(
+	out *os.File,
+	options *LoggerOptions,
+) *Logger {
+	logger := Logger{level: options.Level}
+
+	if !atomic.CompareAndSwapInt32(&hasLogger, 0, 1) {
+		panic(fmt.Errorf("NewLogger called twice"))
 	}
+
 	ll := logrus.InfoLevel
-	switch level {
+	switch options.Level {
 	case ERROR:
 		ll = logrus.ErrorLevel
 	case DEBUG:
@@ -137,12 +157,33 @@ func NewLogger(level LogLevel, out *os.File, syslog bool) *Logger {
 	f := logFormatter{
 		Formatter: &logrus.TextFormatter{},
 		hasColors: isTerminal(out),
-		syslog:    syslog,
+		syslog:    options.Syslog,
 	}
 	log.SetFormatter(&f)
 	log.SetLevel(ll)
 	log.SetOutput(out)
-	return &l
+
+	if options.Xmon != "" {
+		if options.Xmon != "prod" && options.Xmon != "qa" {
+			panic(fmt.Errorf("invalid xmon environment %q", options.Xmon))
+		}
+		hn, err := os.Hostname()
+		if err != nil {
+			panic(err)
+		}
+		hostname := strings.Split(hn, ".")[0]
+
+		appType := "restech.critical"
+		prod := options.Xmon == "prod"
+		appInstance := fmt.Sprintf("%s@%s", options.AppInstance, hostname)
+		xh := monitor.XmonHost(prod)
+		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 1000)
+		// The call below will log the info message once connected to xmon.
+		troll.Connect()
+		logger.troll = troll.NewChildTroll(appType, appInstance)
+	}
+
+	return &logger
 }
 
 func (l *Logger) shouldLog(level LogLevel) bool {
@@ -206,14 +247,26 @@ func (l *Logger) Info(format string, v ...any) {
 }
 
 func (l *Logger) Error(format string, v ...any) {
+	if l.troll != nil {
+		a := l.troll.NewAlertStatus()
+		a.Alert(fmt.Sprintf(format, v...))
+	}
 	l.LogStack(1, ERROR, format, v...)
 }
 
 func (l *Logger) RaiseAlert(err any) {
+	if l.troll != nil {
+		a := l.troll.NewAlertStatus()
+		a.Alert(fmt.Sprintf("%v", err))
+	}
 	l.LogStack(1, ERROR, "ALERT %v", err)
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, err any) {
+	if l.troll != nil {
+		a := l.troll.NewAlertStatus()
+		a.Alert(fmt.Sprintf("%v", err))
+	}
 	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
 }
 

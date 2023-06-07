@@ -25,8 +25,6 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
-	"xtx/ecninfra/monitor"
-
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -348,7 +346,7 @@ func handleRequestParsed(log *lib.Logger, s *state, conn *net.TCPConn, req msgs.
 		s.counters[int(req.ShuckleRequestKind())].Add(time.Since(t0))
 	}()
 	var err error
-	log.Debug("handling request %T %+v", req, req)
+	log.Debug("handling request %T %+v from %s", req, req, conn.RemoteAddr())
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
 	case *msgs.RegisterBlockServicesReq:
@@ -368,11 +366,11 @@ func handleRequestParsed(log *lib.Logger, s *state, conn *net.TCPConn, req msgs.
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, conn, whichReq)
 	default:
-		log.RaiseAlert(fmt.Errorf("bad req type %T", req))
+		log.RaiseAlert(fmt.Errorf("bad req type %T from %s", req, conn.RemoteAddr()))
 	}
 
 	if err != nil {
-		log.RaiseAlert(fmt.Errorf("error processing request %+v", req))
+		log.RaiseAlert(fmt.Errorf("error processing request %+v from %s", req, conn.RemoteAddr()))
 		eggsErr, ok := err.(msgs.ErrCode)
 		if !ok {
 			eggsErr = msgs.INTERNAL_ERROR
@@ -381,9 +379,9 @@ func handleRequestParsed(log *lib.Logger, s *state, conn *net.TCPConn, req msgs.
 			log.RaiseAlert(fmt.Errorf("could not send error: %w", err))
 		}
 	} else {
-		log.Debug("sending back response %T", resp)
+		log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
 		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
-			log.RaiseAlert(fmt.Errorf("could not send response: %w", err))
+			log.RaiseAlert(fmt.Errorf("could not send response %T to %s: %w", resp, conn.RemoteAddr(), err))
 		}
 	}
 }
@@ -397,7 +395,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			return
 		}
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("could not decode request: %w", err))
+			log.RaiseAlert(fmt.Errorf("could not decode request from %s: %w", conn.RemoteAddr(), err))
 			return
 		}
 		handleRequestParsed(log, s, conn, req)
@@ -1359,6 +1357,87 @@ func setupRouting(log *lib.Logger, st *state) {
 	setupPage("/stats", handleStats)
 }
 
+func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+
+		alerts := []string{}
+		now := msgs.Now()
+		thresh := uint64(now) - uint64(staleDelta.Nanoseconds())
+
+		formatLastSeen := func(t msgs.EggsTime) string {
+			return formatNanos(uint64(now) - uint64(t))
+		}
+
+		var id uint64
+		var ts msgs.EggsTime
+
+		// Wrap the following select statements in func() to make defer work properly.
+		func() {
+			rows, err := st.db.Query("SELECT id, failure_domain, last_seen FROM block_services where last_seen < :thresh", sql.Named("thresh", thresh))
+			if err != nil {
+				ll.Error("error selecting blockServices: %s", err)
+				return
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var fd []byte
+				err = rows.Scan(&id, &fd, &ts)
+				if err != nil {
+					ll.Error("error decoding blockService row: %s", err)
+					return
+				}
+				alerts = append(alerts, fmt.Sprintf("stale blockservice %d, fd %s (seen %s ago)", id, fd, formatLastSeen(ts)))
+			}
+		}()
+
+		func() {
+			rows, err := st.db.Query("SELECT id, last_seen FROM shards where last_seen < :thresh", sql.Named("thresh", thresh))
+			if err != nil {
+				ll.Error("error selecting blockServices: %s", err)
+				return
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				err = rows.Scan(&id, &ts)
+				if err != nil {
+					ll.Error("error decoding shard row: %s", err)
+					return
+				}
+				alerts = append(alerts, fmt.Sprintf("stale shard %d (last seen %s ago)", id, formatLastSeen(ts)))
+			}
+		}()
+
+		func() {
+			rows, err := st.db.Query("SELECT last_seen FROM cdc where last_seen < :thresh", sql.Named("thresh", thresh))
+			if err != nil {
+				ll.Error("error selecting blockServices: %s", err)
+				return
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				err = rows.Scan(&ts)
+				if err != nil {
+					ll.Error("error decoding cdc row: %s", err)
+					return
+				}
+				alerts = append(alerts, fmt.Sprintf("stale cdc (last seen %s ago)", formatLastSeen(ts)))
+			}
+		}()
+
+		ll.Error("serviceMonitor failed")
+		for _, alert := range alerts {
+			ll.Error(alert)
+		}
+	}
+}
+
 func main() {
 	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
 	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
@@ -1387,34 +1466,13 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(level, logOut, *syslog)
+	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon})
 
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)
 	ll.Info("  httpPort = %v", *httpPort)
 	ll.Info("  logFile = '%v'", *logFile)
 	ll.Info("  logLevel = %v", level)
-
-	// Init xmon
-	if *xmon != "" {
-		if *xmon != "prod" && *xmon != "qa" {
-			log.Fatalf("invalid xmon environment %s.", *xmon)
-		}
-		hn, err := os.Hostname()
-		if err != nil {
-			panic(err)
-		}
-		hostname := strings.Split(hn, ".")[0]
-
-		appType := "restech.critical"
-		prod := *xmon == "prod"
-		appInstance := fmt.Sprintf("eggsshuckle@%s", hostname)
-		xh := monitor.XmonHost(prod)
-
-		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 0)
-		// The call below will log the info message once connected to xmon.
-		troll.Connect()
-	}
 
 	if len(*dbFile) == 0 {
 		log.Fatalf("db-file flag is required")
@@ -1453,6 +1511,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_s on shards (last_seen)")
+	if err != nil {
+		panic(err)
+	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
 		id INT NOT NULL PRIMARY KEY,
 		ip1 BLOB NOT NULL,
@@ -1469,6 +1531,10 @@ func main() {
 		path TEXT NOT NULL,
 		last_seen INT
 	)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
 	if err != nil {
 		panic(err)
 	}
@@ -1493,21 +1559,32 @@ func main() {
 
 	setupRouting(ll, state)
 
-	terminateChan := make(chan error)
+	terminateChan := make(chan any)
 
 	go func() {
+		defer func() { lib.HandleRecoverChan(ll, terminateChan, recover()) }()
 		for {
 			conn, err := bincodeListener.Accept()
 			if err != nil {
 				terminateChan <- err
 				return
 			}
-			go func() { handleRequest(ll, state, conn.(*net.TCPConn)) }()
+			go func() {
+				defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+				handleRequest(ll, state, conn.(*net.TCPConn))
+			}()
 		}
 	}()
 
 	go func() {
+		defer func() { lib.HandleRecoverChan(ll, terminateChan, recover()) }()
 		terminateChan <- http.Serve(httpListener, nil)
+	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+		err := serviceMonitor(ll, state, 120*time.Second)
+		ll.Error("serviceMonitor ended with error %s", err)
 	}()
 
 	panic(<-terminateChan)

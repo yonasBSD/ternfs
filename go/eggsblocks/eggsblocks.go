@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"path"
-	"runtime/debug"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -45,21 +44,6 @@ func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	binary.Write(buf, binary.LittleEndian, uint64(blockId))
 
 	return lib.CBCMAC(key, buf.Bytes())
-}
-
-var stacktraceLock sync.Mutex
-
-func handleRecover(log *lib.Logger, terminateChan chan any, err any) {
-	if err != nil {
-		log.RaiseAlert(err.(error))
-		stacktraceLock.Lock()
-		fmt.Fprintf(os.Stderr, "PANIC %v. Stacktrace:\n", err)
-		for _, line := range strings.Split(string(debug.Stack()), "\n") {
-			fmt.Fprintf(os.Stderr, "%s\n", line)
-		}
-		stacktraceLock.Unlock()
-		terminateChan <- err
-	}
 }
 
 func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
@@ -147,7 +131,7 @@ func registerPeriodically(
 		}
 		waitForRange := time.Minute * 2
 		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
-		log.Info("registered with %v, waiting %v", waitFor)
+		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
 		time.Sleep(waitFor)
 	}
 }
@@ -604,7 +588,10 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut, *syslog)
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{
+		Level:  level,
+		Syslog: *syslog,
+	})
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -701,11 +688,11 @@ func main() {
 	}
 
 	go func() {
-		defer func() { handleRecover(log, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		registerPeriodically(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices, *shuckleAddress)
 	}()
 	go func() {
-		defer func() { handleRecover(log, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		for {
 			conn, err := listener1.Accept()
 			log.Trace("new conn %+v", conn)
@@ -714,14 +701,14 @@ func main() {
 				return
 			}
 			go func() {
-				defer func() { handleRecover(log, terminateChan, recover()) }()
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
 			}()
 		}
 	}()
 	if listener2 != nil {
 		go func() {
-			defer func() { handleRecover(log, terminateChan, recover()) }()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
 				conn, err := listener2.Accept()
 				log.Trace("new conn %+v", conn)
@@ -730,7 +717,7 @@ func main() {
 					return
 				}
 				go func() {
-					defer func() { handleRecover(log, terminateChan, recover()) }()
+					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 					handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
 				}()
 			}

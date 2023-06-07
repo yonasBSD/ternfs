@@ -326,7 +326,7 @@ func fileHistoryTest(
 	dirInfoCache := lib.NewDirInfoCache()
 
 	go func() {
-		defer func() { handleRecover(log, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		numTests := opts.threads
 		if numTests > 15 {
 			panic(fmt.Errorf("numTests %d too big for one-digit prefix", numTests))
@@ -337,7 +337,7 @@ func fileHistoryTest(
 			prefix := fmt.Sprintf("%x", i)
 			seed := uint64(i)
 			go func() {
-				defer func() { handleRecover(log, terminateChan, recover()) }()
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				client, err := lib.NewClient(log, shuckleAddress, 1, counters, nil)
 				if err != nil {
 					panic(err)

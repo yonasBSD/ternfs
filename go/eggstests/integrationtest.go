@@ -9,11 +9,9 @@ import (
 	"path"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"runtime/pprof"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
@@ -46,21 +44,6 @@ func formatNanos(nanos uint64) string {
 		unit = "h "
 	}
 	return fmt.Sprintf("%7.2f%s", amount, unit)
-}
-
-var stacktraceLock sync.Mutex
-
-func handleRecover(log *lib.Logger, terminateChan chan any, err any) {
-	if err != nil {
-		log.RaiseAlert(err)
-		stacktraceLock.Lock()
-		fmt.Fprintf(os.Stderr, "PANIC %v. Stacktrace:\n", err)
-		for _, line := range strings.Split(string(debug.Stack()), "\n") {
-			fmt.Fprintln(os.Stderr, line)
-		}
-		stacktraceLock.Unlock()
-		terminateChan <- err
-	}
 }
 
 func formatCounters[K constraints.Integer](what string, counters []lib.ReqCounters) {
@@ -186,7 +169,7 @@ func (i *cfgOverrides) int(k string, def int) int {
 
 func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleIp string, shucklePort uint16, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
 	shuckleAddress := fmt.Sprintf("%s:%d", shuckleIp, shucklePort)
-	defer func() { handleRecover(log, terminateChan, recover()) }()
+	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 	client, err := lib.NewClient(log, shuckleAddress, 1, nil, nil)
 	if err != nil {
 		panic(err)
@@ -508,7 +491,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut, false)
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false})
 
 	var cppExes *managedprocess.CppExes
 	var goExes *managedprocess.GoExes

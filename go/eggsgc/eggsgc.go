@@ -60,7 +60,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(level, logOut, *syslog)
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog})
 
 	{
 		shardsStrs := []string{}

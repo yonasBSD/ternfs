@@ -208,7 +208,10 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
 
     struct socket* shuckle_sock;
     int err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
-    if (err < 0) { return err; }
+    if (err < 0) {
+        eggsfs_info("could not create socket err=%d", err);
+        return err;
+    }
 
     struct kvec iov;
     struct msghdr msg = {NULL};
@@ -221,7 +224,11 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
         iov.iov_base = shuckle_req + written_so_far;
         iov.iov_len = sizeof(shuckle_req) - written_so_far;
         int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
-        if (written < 0) { err = written; goto out_sock; }
+        if (written < 0) {
+            err = written;
+            eggsfs_info("could not send msg err=%d", err);
+            goto out_sock;
+        }
         written_so_far += written;
     }
 
@@ -231,23 +238,34 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
         iov.iov_base = shuckle_resp_header + read_so_far;
         iov.iov_len = sizeof(shuckle_resp_header) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read < 0) { err = read; goto out_sock; }
+        if (read < 0) {
+            err = read;
+            eggsfs_info("could not recv msg err=%d", err);
+            goto out_sock;
+        }
         read_so_far += read;
     }
     u32 shuckle_resp_len;
     u8 shuckle_resp_kind;
     err = eggsfs_read_shuckle_resp_header(shuckle_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
-    if (err < 0) { goto out_sock; }
+    if (err < 0) {
+        eggsfs_info("could not read header err=%d", err);
+        goto out_sock;
+    }
     if (shuckle_resp_len != EGGSFS_INFO_RESP_SIZE) {
-        eggsfs_debug("expected size of %d, got %d", EGGSFS_INFO_RESP_SIZE, shuckle_resp_len);
-        err = -EINVAL; goto out_sock;
+        eggsfs_info("expected size of %d, got %d", EGGSFS_INFO_RESP_SIZE, shuckle_resp_len);
+        err = -EIO; goto out_sock;
     }
     char shuckle_resp[EGGSFS_INFO_RESP_SIZE];
     for (read_so_far = 0; read_so_far < sizeof(shuckle_resp);) {
         iov.iov_base = (char*)&shuckle_resp + read_so_far;
         iov.iov_len = sizeof(shuckle_resp) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read < 0) { err = read; goto out_sock; }
+        if (read < 0) {
+            err = read;
+            eggsfs_info("could not recv msg err=%d", err);
+            goto out_sock;
+        }
         read_so_far += read;
     }
     struct eggsfs_bincode_get_ctx ctx = {
@@ -263,7 +281,11 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
     eggsfs_info_resp_get_blocks(&ctx, available, blocks);
     eggsfs_info_resp_get_end(&ctx, blocks, end);
     eggsfs_info_resp_get_finish(&ctx, end);
-    if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
+    if (ctx.err != 0) {
+        eggsfs_info("response error %s (%d)", eggsfs_err_str(ctx.err), ctx.err);
+        err = eggsfs_error_to_linux(ctx.err);
+        goto out_sock;
+    }
 
     stats->f_type = EGGSFS_SUPER_MAGIC;
     stats->f_bsize = PAGE_SIZE;
@@ -280,6 +302,9 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
 
 out_sock:
     sock_release(shuckle_sock);
+    if (err) {
+        eggsfs_info("failed err=%d", err);
+    }
     return err;
 }
 

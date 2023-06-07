@@ -14,12 +14,12 @@ void eggsfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
 int eggsfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
     u32 protocol = get_unaligned_le32(buf); buf += 4;
     if (protocol != EGGSFS_SHUCKLE_RESP_PROTOCOL_VERSION) {
-        eggsfs_debug("bad shuckle protocol, expected 0x%08x, got 0x%08x", EGGSFS_SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
+        eggsfs_warn("bad shuckle protocol, expected 0x%08x, got 0x%08x", EGGSFS_SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
         return -EINVAL;
     }
     *resp_len = get_unaligned_le32(buf); buf += 4;
     if (*resp_len == 0) {
-        eggsfs_debug("unexpected zero-length shuckle response (the kind should at least be there)");
+        eggsfs_warn("unexpected zero-length shuckle response (the kind should at least be there)");
         return -EINVAL;
     }
     *resp_kind = *(u8*)buf; buf++;

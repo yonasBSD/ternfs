@@ -331,6 +331,9 @@ func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) (*
 		return nil, err
 	}
 	defer rows.Close()
+	if !rows.Next() {
+		return nil, fmt.Errorf("no row found in info query")
+	}
 	if err := rows.Scan(&resp.NumBlockServices, &resp.NumFailureDomains, &resp.Capacity, &resp.Available, &resp.Blocks); err != nil {
 		log.Error("error scanning info: %s", err)
 		return nil, err

@@ -1431,7 +1431,6 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			}
 		}()
 
-		ll.Error("serviceMonitor failed")
 		for _, alert := range alerts {
 			ll.Error(alert)
 		}

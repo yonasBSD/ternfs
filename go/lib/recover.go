@@ -19,9 +19,7 @@ func HandleRecoverChan(log *Logger, terminateChan chan any, err any) {
 			fmt.Fprintln(os.Stderr, line)
 		}
 		stacktraceLock.Unlock()
-		if terminateChan != nil {
-			terminateChan <- err
-		}
+		terminateChan <- err
 	}
 }
 

@@ -69,23 +69,31 @@ struct eggsfs_inode_file {
 
     struct rb_root spans;
     struct rw_semaphore spans_lock;
-    atomic_t prefetches; // how many prefetches are ongoing
-    wait_queue_head_t prefetches_wq; // waited on by evictor
     // low 32 bits: section start. high 32 bits: section end. Rouded up to
     // PAGE_SIZE, since we know each stripe is at PAGE_SIZE boundary anyway.
     // This means that prefetch with be somewhat broken for files > 16TiB.
     // This is what we use in our prefetch heuristic.
     atomic64_t prefetch_section;
+    atomic_t prefetches_in_flight;
+    wait_queue_head_t prefetches_in_flight_wq;
 
-    // Transient file stuff. Only initialized on file creation, otherwise it's garbage.
+    // On top of sometimes holding references to inodes, we also have this
+    // mechanism to try to make sure that every in-flight operation is done
+    // before the file is closed. This should ensure that we don't leak inodes
+    // after unmounting.
+    atomic_t in_flight;
+    wait_queue_head_t in_flight_wq;
+
+    // Transient file stuff. Only initialized on file creation (rather than opening),
+    // otherwise it's garbage.
     // Could be factored out to separate data structure since it's completely useless
-    // when writing.
+    // when reading.
 
     u64 cookie;
     // If we've encountered an error such that we want to stop writing to this file
     // forever.
     atomic_t transient_err;
-    // Span we're currently writing to. If NULL we're yet to write anything.
+    // Span we're currently writing to. Might be NULL.
     struct eggsfs_transient_span* writing_span;
     // Whether we're currently flushing a span (block write + add span certify)
     struct semaphore flushing_span_sema;
@@ -137,7 +145,6 @@ struct eggsfs_inode {
 };
 
 #define EGGSFS_I(ptr) container_of(ptr, struct eggsfs_inode, inode)
-#define EGGSFS_INODE_NEED_GETATTR 1
 
 #define EGGSFS_INODE_DIRECTORY 1
 #define EGGSFS_INODE_FILE 2
@@ -153,16 +160,30 @@ static inline u32 eggsfs_inode_shard(u64 ino) {
 
 struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* parent, u64 ino);
 
-
 // super ops
 struct inode* eggsfs_inode_alloc(struct super_block* sb);
 void eggsfs_inode_evict(struct inode* inode);
 void eggsfs_inode_free(struct inode* inode);
 
-int __init eggsfs_inode_init(void);
-void __cold eggsfs_inode_exit(void);
-
 // inode ops
 int eggsfs_do_getattr(struct eggsfs_inode* enode);
+
+static inline void eggsfs_in_flight_begin(struct eggsfs_inode* enode) {
+    ihold(&enode->inode);
+    atomic_inc(&enode->file.in_flight);
+    smp_mb__after_atomic();
+}
+
+static inline void eggsfs_in_flight_end(struct eggsfs_inode* enode) {
+    smp_mb__before_atomic();
+    int remaining = atomic_dec_return(&enode->file.in_flight);
+    if (remaining == 0) { wake_up_all(&enode->file.in_flight_wq); }
+    iput(&enode->inode);
+}
+
+void eggsfs_wait_in_flight(struct eggsfs_inode* enode);
+
+int __init eggsfs_inode_init(void);
+void __cold eggsfs_inode_exit(void);
 
 #endif

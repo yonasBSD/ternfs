@@ -15,6 +15,8 @@
 #include "rs.h"
 #include "log.h"
 #include "span.h"
+#include "dir.h"
+#include "file.h"
 
 MODULE_LICENSE("GPL");
 
@@ -51,9 +53,18 @@ static int __init eggsfs_init(void) {
     err = eggsfs_rs_init();
     if (err) { goto out_rs; }
 
+    err = eggsfs_dir_init();
+    if (err) { goto out_dir; }
+
+    err = eggsfs_file_init();
+    if (err) { goto out_file; }
 
     return 0;
 
+out_file:
+    eggsfs_dir_exit();
+out_dir:
+    eggsfs_rs_exit();
 out_rs:
     eggsfs_fs_exit();
 out_fs:
@@ -72,17 +83,20 @@ out_sysfs:
 }
 
 static void __exit eggsfs_exit(void) {
+    eggsfs_file_exit();
+    eggsfs_dir_exit();
     eggsfs_fs_exit();
     eggsfs_inode_exit();
     eggsfs_block_exit();
     eggsfs_sysctl_exit();
     eggsfs_sysfs_exit();
-    destroy_workqueue(eggsfs_wq);
     // tracepoint_synchronize_unregister() must be called before the end of
     // the module exit function to make sure there is no caller left using
     // the probe. This, and the fact that preemption is disabled around the
     // probe call, make sure that probe removal and module unload are safe.
     tracepoint_synchronize_unregister();
+
+    destroy_workqueue(eggsfs_wq);
 }
 
 module_init(eggsfs_init);

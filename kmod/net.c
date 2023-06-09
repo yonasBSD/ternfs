@@ -226,7 +226,7 @@ struct sk_buff* eggsfs_metadata_request(
     u64 start_t = get_jiffies_64();
     u64 elapsed_ms = 0;
 
-#define LOG_STR "unexpected error: req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
+#define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
 #define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, elapsed_ms
 #define WARN_LATE if (elapsed_ms > 1000) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
 

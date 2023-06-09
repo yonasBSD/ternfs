@@ -3,7 +3,7 @@
 #include <linux/kobject.h>
 #include <linux/fs.h>
 
-#include "namei.h"
+#include "dentry.h"
 #include "span.h"
 
 static struct kset* eggsfs_kset;

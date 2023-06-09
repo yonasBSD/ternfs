@@ -1,15 +1,13 @@
-#ifndef _EGGSFS_FILESIMPLE_H
-#define _EGGSFS_FILESIMPLE_H
-
-#include <linux/list.h>
-#include <linux/workqueue.h>
+#ifndef _EGGSFS_FILE_H
+#define _EGGSFS_FILE_H
 
 #include "inode.h"
 
-// Must be called with `spans_lock` taken.
-struct eggsfs_transient_span* eggsfs_add_new_span(struct list_head* spans);
+ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
+int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry);
 
-void eggsfs_flush_transient_spans(struct work_struct* work);
+void eggsfs_link_destructor(void*);
+char* eggsfs_write_link(struct eggsfs_inode* enode);
 
 int eggsfs_shard_add_span_initiate_block_cb(
     void* data, int block, u32 ip1, u16 port1, u32 ip2, u16 port2, u64 block_service_id, u64 block_id, u64 certificate
@@ -17,7 +15,7 @@ int eggsfs_shard_add_span_initiate_block_cb(
 
 extern const struct file_operations eggsfs_file_operations;
 
-ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
-int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry);
+int __init eggsfs_file_init(void);
+void __cold eggsfs_file_exit(void);
 
 #endif

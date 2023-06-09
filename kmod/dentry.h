@@ -1,11 +1,13 @@
-#ifndef _EGGSFS_NAMEI_H
-#define _EGGSFS_NAMEI_H
+#ifndef _EGGSFS_DENTRY_H
+#define _EGGSFS_DENTRY_H
 
 #include <linux/fs.h>
 
 #include "counter.h"
 
 EGGSFS_DECLARE_COUNTER(eggsfs_stat_dir_revalidations);
+
+extern struct dentry_operations eggsfs_dentry_ops;
 
 struct dentry* eggsfs_lookup(struct inode* dir, struct dentry* dentry, unsigned int flags);
 int eggsfs_mkdir(struct inode* dir, struct dentry* dentry, umode_t mode);
@@ -16,7 +18,5 @@ int eggsfs_rename(
     struct inode* new_dir, struct dentry* new_dentry,
     unsigned int flags
 );
-
-extern struct dentry_operations eggsfs_dentry_ops;
 
 #endif

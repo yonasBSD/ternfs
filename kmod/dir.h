@@ -37,5 +37,8 @@ static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry
     return ret;
 }
 
+int __init eggsfs_dir_init(void);
+void __cold eggsfs_dir_exit(void);
+
 #endif
 

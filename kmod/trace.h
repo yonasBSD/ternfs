@@ -167,7 +167,7 @@ EGGSFS_TRACE_EVENT_inode_ret(vfs_opendir_exit);
 EGGSFS_TRACE_EVENT_inode(vfs_closedir_enter);
 EGGSFS_TRACE_EVENT_inode_ret(vfs_closedir_exit);
 
-// namei.c
+// dentry.c
 EGGSFS_TRACE_EVENT_dir_dentry(vfs_lookup_enter);
 EGGSFS_TRACE_EVENT_dir_dentry_inode_ret(vfs_lookup_exit);
 

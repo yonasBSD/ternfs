@@ -15,6 +15,9 @@
 #include "trace.h"
 #include "span.h"
 #include "wq.h"
+#include "bincode.h"
+
+static struct kmem_cache* eggsfs_transient_span_cachep;
 
 struct eggsfs_transient_span {
     // The transient span holds a reference to this. As long as the
@@ -65,20 +68,26 @@ static int eggsfs_file_open(struct inode* inode, struct file* filp) {
     return 0;
 }
 
-// starts out with refcount = 1
-static struct eggsfs_transient_span* eggsfs_new_transient_span(struct eggsfs_inode* enode, u64 offset) {
-    struct eggsfs_transient_span* span = kzalloc(sizeof(struct eggsfs_transient_span), GFP_KERNEL);
-    if (span == NULL) { return span; }
-    span->enode = enode;
+static void eggsfs_init_transient_span(void* p) {
+    struct eggsfs_transient_span* span = (struct eggsfs_transient_span*)p;
     INIT_LIST_HEAD(&span->pages);
     int i;
     for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
-    ihold(&enode->inode);
     spin_lock_init(&span->blocks_proofs_lock);
+}
+
+// starts out with refcount = 1
+static struct eggsfs_transient_span* eggsfs_new_transient_span(struct eggsfs_inode* enode, u64 offset) {
+    struct eggsfs_transient_span* span = kmem_cache_alloc(eggsfs_transient_span_cachep, GFP_KERNEL);
+    if (span == NULL) { return span; }
+    span->enode = enode;
+    eggsfs_in_flight_begin(enode);
     atomic_set(&span->refcount, 1);
     span->offset = offset;
+    span->written = 0;
+    memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
     return span;
 }
 
@@ -88,6 +97,7 @@ static void eggsfs_hold_transient_span(struct eggsfs_transient_span* span) {
 
 static void eggsfs_put_transient_span(struct eggsfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
+        BUG_ON(spin_is_locked(&span->blocks_proofs_lock));
         // free pages, adjust OOM score
         int num_pages = 0;
 #define FREE_PAGES(__pages) \
@@ -104,9 +114,9 @@ static void eggsfs_put_transient_span(struct eggsfs_transient_span* span) {
         }
 #undef FREE_PAGES
         add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
-        iput(&span->enode->inode);
+        eggsfs_in_flight_end(span->enode);
         // Free the span itself
-        kfree(span);
+        kmem_cache_free(eggsfs_transient_span_cachep, span);
     }
 }
 
@@ -348,8 +358,6 @@ static int eggsfs_start_flushing(struct eggsfs_inode* enode, bool non_blocking) 
     // Here we might block even if we're non blocking, since we don't have
     // async metadata requests yet, which is a bit unfortunate.
 
-    u32* cell_crcs = NULL;
-
     if (span->storage_class == EGGSFS_EMPTY_STORAGE) {
         up(&enode->file.flushing_span_sema); // nothing to do
     } else if (span->storage_class == EGGSFS_INLINE_STORAGE) {
@@ -370,8 +378,8 @@ static int eggsfs_start_flushing(struct eggsfs_inode* enode, bool non_blocking) 
         int D = eggsfs_data_blocks(span->parity);
         int B = eggsfs_blocks(span->parity);
         int S = span->stripes;
-        cell_crcs = kzalloc(sizeof(uint32_t)*B*span->stripes, GFP_KERNEL);
-        if (cell_crcs == NULL) { err = -ENOMEM; goto out_err_keep_writing; }
+        uint32_t cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
+        memset(cell_crcs, 0, sizeof(cell_crcs));
 
         eggsfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
         int i, j;
@@ -486,7 +494,6 @@ out:
     // we don't need this anymore (the requests might though)
     eggsfs_put_transient_span(span);
     enode->file.writing_span = NULL;
-    if (cell_crcs) { kfree(cell_crcs); }
     return err;
 
 out_err_fpu:
@@ -496,7 +503,6 @@ out_err_fpu:
     // When we got an error before even starting to flush
 out_err_keep_writing:
     up(&enode->file.flushing_span_sema); // nothing is flushing
-    if (cell_crcs) { kfree(cell_crcs); }
     return err;
 }
 
@@ -607,21 +613,19 @@ static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from)
 int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     inode_lock(&enode->inode);
 
+    int err = 0;
+
     // Not writing, there's nothing to do, there's nothing to do, files are immutable
     if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
         eggsfs_debug("status=%d, won't flush", enode->file.status);
-        inode_unlock(&enode->inode);
-        return 0;
+        goto out_early;
     }
 
     // We are in another process, skip
     if (enode->file.owner != current->group_leader) {
         eggsfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
-        inode_unlock(&enode->inode);
-        return 0;
+        goto out_early;
     }
-
-    int err = 0;
 
     // If the owner doesn't have an mm anymore, it means that the file
     // is being torn down after the process has been terminated. In that case
@@ -668,7 +672,9 @@ out:
         }
         enode->file.writing_span = NULL;
     }
+out_early:
     inode_unlock(&enode->inode);
+    eggsfs_wait_in_flight(enode);
     return err;
 }
 
@@ -690,7 +696,7 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     eggsfs_debug("start of read loop, *ppos=%llu", *ppos);
     struct eggsfs_span* span = NULL;
     while (*ppos < inode->i_size && iov_iter_count(to)) {
-        if (span) { eggsfs_span_put(span, true); }
+        if (span) { eggsfs_put_span(span, true); }
         span = eggsfs_get_span(enode, *ppos);
         if (IS_ERR(span)) {
             written = PTR_ERR(span);
@@ -759,12 +765,66 @@ static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
         eggsfs_debug("before loop end, remaining %lu", iov_iter_count(to));
     }
 out:
-    if (span) { eggsfs_span_put(span, true); }
+    if (span) { eggsfs_put_span(span, true); }
     eggsfs_debug("out of the loop, written=%ld", written);
     if (unlikely(written < 0)) {
         eggsfs_debug("reading failed, err=%ld", written);
     }
     return written;
+}
+
+void eggsfs_link_destructor(void* buf) {
+    kfree(buf);
+}
+
+char* eggsfs_write_link(struct eggsfs_inode* enode) {
+    eggsfs_debug("ino=%016lx", enode->inode.i_ino);
+
+    BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
+
+    // size might not be filled in
+    int err = eggsfs_do_getattr(enode);
+    if (err) { return ERR_PTR(err); }
+
+    BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
+    size_t size = enode->inode.i_size;
+
+    eggsfs_debug("size=%lu", size);
+
+    struct eggsfs_span* span = eggsfs_get_span(enode, 0);
+    if (span == NULL) {
+        eggsfs_debug("got no span, empty file?");
+        return "";
+    }
+    if (IS_ERR(span)) { return ERR_CAST(span); }
+
+    BUG_ON(span->end-span->start != size); // again, for simplicity
+
+    char* buf = kmalloc(size+1, GFP_KERNEL);
+    if (buf == NULL) { err = -ENOMEM; goto out_err; }
+
+    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+        memcpy(buf, EGGSFS_INLINE_SPAN(span)->body, size);
+    } else {
+        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        struct page* page = eggsfs_get_span_page(block_span, 0);
+        BUG_ON(page == NULL);
+        if (IS_ERR(page)) { err = PTR_ERR(page); goto out_err; }
+        char* page_buf = kmap(page);
+        memcpy(buf, page_buf, size);
+        kunmap(page);
+    }
+    buf[size] = '\0';
+    eggsfs_put_span(span, true);
+
+    eggsfs_debug("link %*pE", (int)size, buf);
+
+    return buf;
+
+out_err:
+    eggsfs_debug("get_link err=%d", err);
+    eggsfs_put_span(span, false);
+    return ERR_PTR(err);
 }
 
 const struct file_operations eggsfs_file_operations = {
@@ -774,3 +834,20 @@ const struct file_operations eggsfs_file_operations = {
     .flush = eggsfs_file_flush_internal,
     .llseek = generic_file_llseek,
 };
+
+int __init eggsfs_file_init(void) {
+    eggsfs_transient_span_cachep = kmem_cache_create(
+        "eggsfs_transient_span_cache",
+        sizeof(struct eggsfs_transient_span),
+        0,
+        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        &eggsfs_init_transient_span
+    );
+    if (!eggsfs_transient_span_cachep) { return -ENOMEM; }
+    return 0;
+}
+
+void __cold eggsfs_file_exit(void) {
+    // TODO: handle case where there still are requests in flight.
+    kmem_cache_destroy(eggsfs_transient_span_cachep);
+}

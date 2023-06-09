@@ -15,6 +15,8 @@ int eggsfs_dir_refresh_time; // in jiffies
 #define eggsfs_dir_get_page_n(_page) ({ *((((u32*)&(_page)->private))+1); })
 #define eggsfs_dir_set_page_n(_page, _n) ({ *((((u32*)&(_page)->private))+1) = _n; })
 
+static struct kmem_cache* eggsfs_readdir_ctx_cachep;
+
 static inline int eggsfs_dir_entry_size(int name_len) {
     return 8 + 1 + name_len; // inode + len + name
 }
@@ -94,7 +96,7 @@ static int eggsfs_dir_open(struct inode* inode, struct file* filp) {
         if (err) { return err; }
     }
 
-    ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
+    ctx = kmem_cache_alloc(eggsfs_readdir_ctx_cachep, GFP_KERNEL);
     if (!ctx) { return -ENOMEM; }
 
 again: // progress: whoever wins the lock either get pages or fails
@@ -153,7 +155,7 @@ again: // progress: whoever wins the lock either get pages or fails
     return 0;
 
 out_ctx:
-    kfree(ctx);
+    kmem_cache_free(eggsfs_readdir_ctx_cachep, ctx);
     trace_eggsfs_vfs_opendir_exit(inode, err);
     eggsfs_debug("err=%d", err);
     return err;
@@ -430,7 +432,7 @@ static int eggsfs_dir_close(struct inode* inode, struct file* filp) {
 
     trace_eggsfs_vfs_closedir_enter(inode);
     eggsfs_dir_put_cache(ctx->pages);
-    kfree(ctx);
+    kmem_cache_free(eggsfs_readdir_ctx_cachep, ctx);
     trace_eggsfs_vfs_closedir_exit(inode, 0);
 	return 0;
 }
@@ -441,3 +443,19 @@ struct file_operations eggsfs_dir_operations = {
     .iterate_shared = eggsfs_dir_read,
     .release = eggsfs_dir_close,
 };
+
+int __init eggsfs_dir_init(void) {
+    eggsfs_readdir_ctx_cachep = kmem_cache_create(
+        "eggsfs_readdir_ctx_cache",
+        sizeof(struct eggsfs_readdir_ctx),
+        0,
+        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        NULL
+    );
+    if (!eggsfs_readdir_ctx_cachep) { return -ENOMEM; }
+    return 0;
+}
+
+void __cold eggsfs_dir_exit(void) {
+    kmem_cache_destroy(eggsfs_readdir_ctx_cachep);
+}

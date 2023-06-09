@@ -1,5 +1,6 @@
 #include "err.h"
 #include "log.h"
+#include "bincode.h"
 
 bool eggsfs_unexpected_error(int err) {
     switch (err) {
@@ -14,7 +15,7 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_FILE_NOT_FOUND: return false;
     case EGGSFS_ERR_DIRECTORY_NOT_FOUND: return false;
     case EGGSFS_ERR_NAME_NOT_FOUND: return false;
-    case EGGSFS_ERR_EDGE_NOT_FOUND: return true;
+    case EGGSFS_ERR_EDGE_NOT_FOUND: return false;
     case EGGSFS_ERR_EDGE_IS_LOCKED: return true;
     case EGGSFS_ERR_TYPE_IS_DIRECTORY: return true;
     case EGGSFS_ERR_TYPE_IS_NOT_DIRECTORY: return true;
@@ -33,7 +34,7 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_MTIME_IS_TOO_RECENT: return true;
     case EGGSFS_ERR_MISMATCHING_TARGET: return true;
     case EGGSFS_ERR_MISMATCHING_OWNER: return true;
-    case EGGSFS_ERR_MISMATCHING_CREATION_TIME: return true;
+    case EGGSFS_ERR_MISMATCHING_CREATION_TIME: return false;
     case EGGSFS_ERR_DIRECTORY_NOT_EMPTY: return true;
     case EGGSFS_ERR_FILE_IS_TRANSIENT: return true;
     case EGGSFS_ERR_OLD_DIRECTORY_NOT_FOUND: return true;
@@ -62,6 +63,7 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_BLOCK_TOO_BIG: return true;
     case EGGSFS_ERR_BLOCK_NOT_FOUND: return true;
     case -ERESTARTSYS: return false;
+    case -ETIMEDOUT: return false;
     default: return true;
     }
 }
@@ -70,7 +72,7 @@ bool eggsfs_unexpected_error(int err) {
 int eggsfs_error_to_linux(int err) {
     bool unexpected = eggsfs_unexpected_error(err);
     if (unexpected) {
-        eggsfs_warn("unexpected eggsfs error %d", err);
+        eggsfs_warn("unexpected eggsfs error %s (%d)", eggsfs_err_str(err), err);
     }
     WARN_ON(unexpected);
     if (err == 0) { return 0; }

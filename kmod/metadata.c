@@ -592,22 +592,31 @@ int eggsfs_shard_add_span_initiate(
     // Not worth writing a bincodegen stuff for this variable sized request, of which we have
     // only two instance.
     int B = eggsfs_blocks(parity);
-    size_t msg_size =
-        8 + // FileId
-        8 + // Cookie
-        8 + // ByteOffset
-        4 + // Size
-        4 + // CRC
-        1 + // StorageClass
-        2 + // Blacklist (just length)
-        1 + // Parity
-        1 + // Stripes
-        4 + // CellSize
-        2 + (4*stripes*B); // Crcs
-    char* req = kmalloc(EGGSFS_SHARD_HEADER_SIZE + msg_size, GFP_KERNEL);
+    if (B > EGGSFS_MAX_BLOCKS) {
+        return -EINVAL;
+    }
+
+#define MSG_SIZE(__B, __stripes) ( \
+        8 + /* FileId */ \
+        8 + /* Cookie */ \
+        8 + /* ByteOffset */ \
+        4 + /* Size */ \
+        4 + /* CRC */ \
+        1 + /* StorageClass */ \
+        2 + /* Blacklist (just length) */ \
+        1 + /* Parity */ \
+        1 + /* Stripes */ \
+        4 + /* CellSize */ \
+        2 + (4*__stripes*__B) /* CRCs */ \
+    )
+
+    size_t msg_size = MSG_SIZE(stripes, B);
+    char req[EGGSFS_SHARD_HEADER_SIZE + MSG_SIZE(EGGSFS_MAX_STRIPES, EGGSFS_MAX_BLOCKS)];
     if (req == NULL) {
         return -ENOMEM;
     }
+
+#undef MSG_SIZE
 
     {
         PREPARE_SHARD_REQ_CTX_INNER(msg_size);
@@ -629,7 +638,6 @@ int eggsfs_shard_add_span_initiate(
         }
         eggsfs_add_span_initiate_req_put_end(&ctx, req_crcs, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
-        kfree(req);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
@@ -685,18 +693,23 @@ int eggsfs_shard_add_span_certify(
     u64 req_id = alloc_request_id();
     u8 kind = EGGSFS_SHARD_ADD_SPAN_CERTIFY;
 
-    // Not worth writing a bincodegen stuff for this variable sized request, of which we have
-    // only two instance.
     int B = eggsfs_blocks(parity);
-    size_t msg_size =
-        8 + // FileId
-        8 + // Cookie
-        8 + // ByteOffset
-        2 + (8*2*B); // Proofs
-    char* req = kmalloc(EGGSFS_SHARD_HEADER_SIZE + msg_size, GFP_KERNEL);
-    if (req == NULL) {
-        return -ENOMEM;
+    if (unlikely(B > EGGSFS_MAX_BLOCKS)) {
+        return -EINVAL;
     }
+
+    // Not worth writing a bincodegen stuff for this variable sized request, of which we have
+    // only two instances.
+
+#define MSG_SIZE(__B) ( \
+        8 + /* FileId */ \
+        8 + /* Cookie */ \
+        8 + /* ByteOffset */ \
+        2 + (8*2*__B) /* Proofs */ \
+    )
+    char req[EGGSFS_SHARD_HEADER_SIZE + MSG_SIZE(EGGSFS_MAX_BLOCKS)];
+    size_t msg_size = MSG_SIZE(B);
+#undef MSG_SIZE
 
     {
         PREPARE_SHARD_REQ_CTX_INNER(msg_size);
@@ -714,7 +727,6 @@ int eggsfs_shard_add_span_certify(
         }
         eggsfs_add_span_certify_req_put_end(&ctx, req_proofs, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
-        kfree(req);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 

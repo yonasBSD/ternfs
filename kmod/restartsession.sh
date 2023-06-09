@@ -74,4 +74,7 @@ fi
 # Attach
 tmux attach-session -t uovo:1
 
-# ./eggs/eggstests -kmod -filter 'mounted|rsync|large' -drop-cached-spans-every 100ms -short -binaries-dir $(pwd)/eggs
+# ./eggs/eggstests -verbose -kmod -filter 'mounted|rsync|large' -drop-cached-spans-every 100ms -short -binaries-dir $(pwd)/eggs
+
+# sudo sysctl fs.eggsfs.debug=1
+# ./eggs/eggstests -verbose -kmod -filter 'mounted' -cfg fsTest.numDirs=1 -cfg fsTest.numFiles=10 -short -binaries-dir $(pwd)/eggs

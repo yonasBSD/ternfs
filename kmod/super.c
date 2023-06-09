@@ -8,7 +8,7 @@
 #include "log.h"
 #include "inode.h"
 #include "metadata.h"
-#include "namei.h"
+#include "dentry.h"
 #include "net.h"
 #include "shuckle.h"
 #include "bincode.h"

@@ -1,4 +1,4 @@
-#include "namei.h"
+#include "dentry.h"
 
 #include "log.h"
 #include "dir.h"

@@ -5,7 +5,7 @@
 #include "log.h"
 #include "dir.h"
 #include "metadata.h"
-#include "namei.h"
+#include "dentry.h"
 #include "trace.h"
 #include "err.h"
 #include "file.h"
@@ -39,15 +39,6 @@ void eggsfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        // Make sure no prefetching is taking place (otherwise the
-        // dropping of spans below would fail).
-        int prefetches = atomic_read(&enode->file.prefetches);
-        if (prefetches) {
-            wait_event(enode->file.prefetches_wq, atomic_read(&enode->file.prefetches) == 0);
-        }
-        // TODO verify that there are no flushing spans -- it should always be
-        // the case given that we get references to the inode
-        // Free span cache
         eggsfs_drop_file_spans(enode);
     }
     truncate_inode_pages(&inode->i_data, 0);
@@ -266,66 +257,19 @@ static int eggsfs_symlink(struct inode* dir, struct dentry* dentry, const char* 
     return 0;
 }
 
-static void eggsfs_get_link_destructor(void* buf) {
-    kfree(buf);
-}
-
 static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
-    eggsfs_debug("ino=%016lx", inode->i_ino);
-
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
-
-    BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
-
     // Can't be bothered to think about RCU
     if (dentry == NULL) { return ERR_PTR(-ECHILD); }
 
-    // size might not be filled in
-    int err = eggsfs_do_getattr(enode);
-    if (err) { return ERR_PTR(err); }
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    char* buf = eggsfs_write_link(enode);
 
-    BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
-    size_t size = enode->inode.i_size;
+    if (IS_ERR(buf)) { return buf; }
 
-    eggsfs_debug("size=%lu", size);
-
-    struct eggsfs_span* span = eggsfs_get_span(enode, 0);
-    if (span == NULL) {
-        eggsfs_debug("got no span, empty file?");
-        return "";
-    }
-    if (IS_ERR(span)) { return ERR_CAST(span); }
-
-    BUG_ON(span->end-span->start != size); // again, for simplicity
-
-    char* buf = kmalloc(size+1, GFP_KERNEL);
-    if (buf == NULL) { err = -ENOMEM; goto out_err; }
-
-    destructor->fn = eggsfs_get_link_destructor;
+    destructor->fn = eggsfs_link_destructor;
     destructor->arg = buf;
 
-    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-        memcpy(buf, EGGSFS_INLINE_SPAN(span)->body, size);
-    } else {
-        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-        struct page* page = eggsfs_get_span_page(block_span, 0);
-        BUG_ON(page == NULL);
-        if (IS_ERR(page)) { err = PTR_ERR(page); goto out_err; }
-        char* page_buf = kmap(page);
-        memcpy(buf, page_buf, size);
-        kunmap(page);
-    }
-    buf[size] = '\0';
-    eggsfs_span_put(span, true);
-
-    eggsfs_debug("link %*pE", (int)size, buf);
-
     return buf;
-
-out_err:
-    eggsfs_debug("get_link err=%d", err);
-    eggsfs_span_put(span, false);
-    return ERR_PTR(err);
 }
 
 static const struct inode_operations eggsfs_dir_inode_ops = {
@@ -389,12 +333,14 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
             inode->i_fop = &eggsfs_file_operations;
 
             enode->file.status = EGGSFS_FILE_STATUS_NONE;
-            // Init normal file stuff -- that's always there.
+
+            // Init normal file stuff -- that's always there. The transient
+            // file stuff is only filled in if needed.
             enode->file.spans = RB_ROOT;
             init_rwsem(&enode->file.spans_lock);
             atomic64_set(&enode->file.prefetch_section, 0);
-            atomic_set(&enode->file.prefetches, 0);
-            init_waitqueue_head(&enode->file.prefetches_wq);
+            atomic_set(&enode->file.in_flight, 0);
+            init_waitqueue_head(&enode->file.in_flight_wq);
         }
 
         // FIXME
@@ -418,3 +364,12 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
     return inode;
 }
 
+void eggsfs_wait_in_flight(struct eggsfs_inode* enode) {
+    if (atomic_read(&enode->file.in_flight) == 0) { return; }
+
+    // Wait for 10 secs, then give up
+    long res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, 10 * HZ);
+    if (res > 0) { return; }
+
+    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug.", enode->inode.i_ino);
+}

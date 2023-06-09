@@ -63,9 +63,10 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex    sync.Mutex
-	db       *sql.DB
-	counters [9]lib.Timings
+	mutex sync.Mutex
+	db    *sql.DB
+	// TODO: this should somehow be tied to values from shuckleReqResps in bincodegen.go (or be a map)
+	counters [10]lib.Timings
 }
 
 func (s *state) cdc() (*cdcState, error) {
@@ -186,7 +187,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msg
 	now := msgs.Now()
 	var fmtBuilder strings.Builder
 	fmtBuilder.Write([]byte(`
-		REPLACE INTO block_services
+		INSERT INTO block_services
 			(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen)
 		VALUES
 	`))
@@ -209,6 +210,23 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msg
 		}
 		fmtBuilder.Write(fmtValues)
 	}
+	fmtBuilder.Write([]byte(`
+		ON CONFLICT DO UPDATE SET
+			ip1 = excluded.ip1,
+			port1 = excluded.port1,
+			ip2 = excluded.ip2,
+			port2 = excluded.port2,
+			storage_class = excluded.storage_class,
+			failure_domain = excluded.failure_domain,
+			secret_key = excluded.secret_key,
+			flags = (flags & ~?),
+			capacity_bytes = excluded.capacity_bytes,
+			available_bytes = excluded.available_bytes,
+			blocks = excluded.blocks,
+			path = excluded.path,
+			last_seen = excluded.last_seen
+	`))
+	values = append(values, msgs.EGGSFS_BLOCK_SERVICE_STALE)
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -1372,12 +1390,19 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			return formatNanos(uint64(now) - uint64(t))
 		}
 
+		n := sql.Named
 		var id uint64
 		var ts msgs.EggsTime
 
+		_, err := st.db.Exec("UPDATE block_services SET flags = ((flags & ~:flag) | :flag) WHERE last_seen < :thresh",
+			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE), n("thresh", thresh))
+		if err != nil {
+			ll.Error("error setting block services stale: %s", err)
+		}
+
 		// Wrap the following select statements in func() to make defer work properly.
 		func() {
-			rows, err := st.db.Query("SELECT id, failure_domain, last_seen FROM block_services where last_seen < :thresh", sql.Named("thresh", thresh))
+			rows, err := st.db.Query("SELECT id, failure_domain, last_seen FROM block_services where last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
 				ll.Error("error selecting blockServices: %s", err)
 				return
@@ -1396,7 +1421,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		func() {
-			rows, err := st.db.Query("SELECT id, last_seen FROM shards where last_seen < :thresh", sql.Named("thresh", thresh))
+			rows, err := st.db.Query("SELECT id, last_seen FROM shards where last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
 				ll.Error("error selecting blockServices: %s", err)
 				return
@@ -1414,7 +1439,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		func() {
-			rows, err := st.db.Query("SELECT last_seen FROM cdc where last_seen < :thresh", sql.Named("thresh", thresh))
+			rows, err := st.db.Query("SELECT last_seen FROM cdc where last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
 				ll.Error("error selecting blockServices: %s", err)
 				return

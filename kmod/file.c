@@ -43,7 +43,7 @@ struct eggsfs_transient_span {
 
 // open_mutex held here
 // really want atomic open for this
-static int eggsfs_file_open(struct inode* inode, struct file* filp) {
+static int file_open(struct inode* inode, struct file* filp) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     eggsfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
@@ -68,7 +68,7 @@ static int eggsfs_file_open(struct inode* inode, struct file* filp) {
     return 0;
 }
 
-static void eggsfs_init_transient_span(void* p) {
+static void init_transient_span(void* p) {
     struct eggsfs_transient_span* span = (struct eggsfs_transient_span*)p;
     INIT_LIST_HEAD(&span->pages);
     int i;
@@ -79,7 +79,7 @@ static void eggsfs_init_transient_span(void* p) {
 }
 
 // starts out with refcount = 1
-static struct eggsfs_transient_span* eggsfs_new_transient_span(struct eggsfs_inode* enode, u64 offset) {
+static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* enode, u64 offset) {
     struct eggsfs_transient_span* span = kmem_cache_alloc(eggsfs_transient_span_cachep, GFP_KERNEL);
     if (span == NULL) { return span; }
     span->enode = enode;
@@ -91,11 +91,11 @@ static struct eggsfs_transient_span* eggsfs_new_transient_span(struct eggsfs_ino
     return span;
 }
 
-static void eggsfs_hold_transient_span(struct eggsfs_transient_span* span) {
+static void hold_transient_span(struct eggsfs_transient_span* span) {
     atomic_inc(&span->refcount);
 }
 
-static void eggsfs_put_transient_span(struct eggsfs_transient_span* span) {
+static void put_transient_span(struct eggsfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
         BUG_ON(spin_is_locked(&span->blocks_proofs_lock));
         // free pages, adjust OOM score
@@ -120,7 +120,7 @@ static void eggsfs_put_transient_span(struct eggsfs_transient_span* span) {
     }
 }
 
-static void eggsfs_write_block_done(void* data, u64 block_id, u64 proof, int err) {
+static void write_block_done(void* data, u64 block_id, u64 proof, int err) {
     // We need to be careful with locking here: the writer waits on the
     // flushing semaphore while holding the inode lock.
 
@@ -183,7 +183,7 @@ out:
     if (err || just_finished) {
         up(&span->enode->file.flushing_span_sema); // wake up waiters
     }
-    eggsfs_put_transient_span(span);
+    put_transient_span(span);
 }
 
 struct initiate_ctx {
@@ -212,7 +212,7 @@ int eggsfs_shard_add_span_initiate_block_cb(
     ctx->span->block_ids[block] = block_id;
     eggsfs_debug("about to write block from callback, crc %08x", block_crc);
     int err = eggsfs_write_block(
-        &eggsfs_write_block_done,
+        &write_block_done,
         ctx->span,
         &bs,
         block_id,
@@ -225,11 +225,11 @@ int eggsfs_shard_add_span_initiate_block_cb(
         return err;
     }
     // for the callback
-    eggsfs_hold_transient_span(ctx->span);
+    hold_transient_span(ctx->span);
     return 0;
 }
 
-static struct page* eggsfs_alloc_write_page(struct eggsfs_inode_file* file) {
+static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
     // the zeroing is to just write out to blocks assuming we have trailing
     // zeros, we could do it on demand but I can't be bothered.
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
@@ -239,7 +239,7 @@ static struct page* eggsfs_alloc_write_page(struct eggsfs_inode_file* file) {
     return p;
 }
 
-static void eggsfs_compute_spans_parameters(
+static void compute_span_parameters(
     struct eggsfs_block_policies* block_policies,
     struct eggsfs_span_policies* span_policies,
     u32 target_stripe_size,
@@ -321,7 +321,7 @@ static void eggsfs_compute_spans_parameters(
 }
 
 // To be called with the inode lock. Acquires the flushing sema.
-static int eggsfs_wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
+static int wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     // make sure we're free to go
@@ -336,12 +336,135 @@ static int eggsfs_wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
     return 0;
 }
 
+static int write_blocks(struct eggsfs_transient_span* span) {
+    int i, j;
+    int err = 0;
+
+    struct eggsfs_inode* enode = span->enode;
+
+    int D = eggsfs_data_blocks(span->parity);
+    int B = eggsfs_blocks(span->parity);
+    int S = span->stripes;
+    uint32_t cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
+    memset(cell_crcs, 0, sizeof(cell_crcs));
+
+    eggsfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
+    loff_t offset = enode->inode.i_size - span->written;
+    trace_eggsfs_span_flush_enter(
+        enode->inode.i_ino, offset, span->written, span->parity, span->stripes, span->storage_class
+    );
+    // Below, remember that cell size is always a multiple of PAGE_SIZE.
+    u32 pages_per_block = span->block_size/PAGE_SIZE;
+    u32 data_pages = pages_per_block*D;
+    u32 current_data_pages = (span->written + PAGE_SIZE - 1) / PAGE_SIZE;
+    eggsfs_debug("allocating padding pages_per_block=%u total_pages=%u current_pages=%u", pages_per_block, data_pages, current_data_pages);
+    // This can happen if we have trailing zeros because of how we arrange the
+    // stripes.
+    for (i = current_data_pages; i < data_pages; i++) {
+        struct page* zpage = alloc_write_page(&enode->file);
+        if (zpage == NULL) {
+            err = -ENOMEM;
+            // we'd have to back out the pages we allocated so far and i can't be bothered
+            goto out;
+        }
+        list_add_tail(&zpage->lru, &span->pages);
+    }
+    int cell_size = span->block_size / S;
+    eggsfs_debug("arranging pages");
+    // First, we arrange the data blocks appropriatedly.
+    {
+        int cell_offset = 0;
+        int block = 0;
+        struct page* page;
+        struct page* tmp;
+        list_for_each_entry_safe(page, tmp, &span->pages, lru) {
+            list_del(&page->lru);
+            list_add_tail(&page->lru, &span->blocks[block]);
+            cell_offset += PAGE_SIZE;
+            if (cell_offset >= cell_size) {
+                block++;
+                block = block % D;
+                cell_offset = 0;
+            }
+        }
+    }
+    // Then we allocate the parity blocks
+    for (i = D; i < B; i++) {
+        for (j = 0; j < pages_per_block; j++) {
+            struct page* ppage = alloc_write_page(&enode->file);
+            if (ppage == NULL) { err = -ENOMEM; goto out; }
+            list_add_tail(&ppage->lru, &span->blocks[i]);
+        }
+    }
+    eggsfs_debug("computing parity");
+    // Then, we compute the parity blocks and the CRCs for each block.
+    u32 span_crc = 0;
+    {
+        char* pages_bufs[EGGSFS_MAX_BLOCKS];
+        kernel_fpu_begin();
+        // traverse each block, page by page, rotating as we go along
+        for (j = 0; j < pages_per_block; j++) {
+            // get buffer pointers
+            int s = (j*PAGE_SIZE)/cell_size;
+            for (i = 0; i < B; i++) {
+                pages_bufs[i] = kmap_atomic(list_first_entry(&span->blocks[i], struct page, lru));
+            }
+            // compute parity
+            err = eggsfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
+            // compute CRCs
+            for (i = 0; i < B; i++) {
+                cell_crcs[s*B + i] = eggsfs_crc32c(cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
+            }
+            for (i = 0; i < B; i++) {
+                kunmap_atomic(pages_bufs[i]);
+                list_rotate_left(&span->blocks[i]);
+            }
+            // unmap pages before exiting
+            if (err) { goto out_err_fpu; }
+        }
+        // Compute overall span crc
+        int s;
+        for (s = 0; s < S; s++) {
+            for (i = 0; i < D; i++) {
+                span_crc = eggsfs_crc32c_append(span_crc, cell_crcs[s*B + i], cell_size);
+            }
+        }
+        span_crc = eggsfs_crc32c_zero_extend(span_crc, (int)span->written - (int)(span->block_size*D));
+        kernel_fpu_end();
+    }
+    // Now we need to init the span (the callback will actually send the requests)
+    // TODO would be better to have this async, and free up the queue for other stuff,
+    // and also not block in this call which might be in a non-blocking write.
+    eggsfs_debug("add span initiate");
+    {
+        struct initiate_ctx ctx = {
+            .span = span,
+            .cell_crcs = cell_crcs,
+        };
+        err = eggsfs_error_to_linux(eggsfs_shard_add_span_initiate(
+            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+            &ctx, enode->inode.i_ino, enode->file.cookie, offset, span->written,
+            span_crc, span->storage_class, span->parity, span->stripes, cell_size, cell_crcs
+        ));
+        if (err) { goto out; }
+        // Now we wait.
+        eggsfs_debug("sent all block writing requests");
+    }
+
+out:
+    return err;
+
+out_err_fpu:
+    kernel_fpu_end();
+    goto out;
+}
+
 // To be called with the inode lock.
-static int eggsfs_start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
+static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     // Wait for the existing thing to be flushed
-    int err = eggsfs_wait_flushed(enode, non_blocking);
+    int err = wait_flushed(enode, non_blocking);
     if (err < 0) { return err; }
 
     // Now turn the writing span into a flushing span
@@ -351,12 +474,13 @@ static int eggsfs_start_flushing(struct eggsfs_inode* enode, bool non_blocking) 
         return 0;
     }
 
-    eggsfs_compute_spans_parameters(
+    compute_span_parameters(
         &enode->block_policies, &enode->span_policies, enode->target_stripe_size, span
     );
 
-    // Here we might block even if we're non blocking, since we don't have
-    // async metadata requests yet, which is a bit unfortunate.
+    // Here (and in `write_blocks`) we might block even if we're non
+    // blocking, since we don't have async metadata requests yet, which is
+    // a bit unfortunate.
 
     if (span->storage_class == EGGSFS_EMPTY_STORAGE) {
         up(&enode->file.flushing_span_sema); // nothing to do
@@ -374,116 +498,8 @@ static int eggsfs_start_flushing(struct eggsfs_inode* enode, bool non_blocking) 
         if (err) { goto out_err_keep_writing; }
     } else {
         // the real deal, we need to write blocks
-
-        int D = eggsfs_data_blocks(span->parity);
-        int B = eggsfs_blocks(span->parity);
-        int S = span->stripes;
-        uint32_t cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
-        memset(cell_crcs, 0, sizeof(cell_crcs));
-
-        eggsfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
-        int i, j;
-        loff_t offset = enode->inode.i_size - span->written;
-        trace_eggsfs_span_flush_enter(
-            enode->inode.i_ino, offset, span->written, span->parity, span->stripes, span->storage_class
-        );
-        // Below, remember that cell size is always a multiple of PAGE_SIZE.
-        u32 pages_per_block = span->block_size/PAGE_SIZE;
-        u32 data_pages = pages_per_block*D;
-        u32 current_data_pages = (span->written + PAGE_SIZE - 1) / PAGE_SIZE;
-        eggsfs_debug("allocating padding pages_per_block=%u total_pages=%u current_pages=%u", pages_per_block, data_pages, current_data_pages);
-        // This can happen if we have trailing zeros because of how we arrange the
-        // stripes.
-        for (i = current_data_pages; i < data_pages; i++) {
-            struct page* zpage = eggsfs_alloc_write_page(&enode->file);
-            if (zpage == NULL) {
-                err = -ENOMEM;
-                // we'd have to back out the pages we allocated so far and i can't be bothered
-                goto out;
-            }
-            list_add_tail(&zpage->lru, &span->pages);
-        }
-        int cell_size = span->block_size / S;
-        eggsfs_debug("arranging pages");
-        // First, we arrange the data blocks appropriatedly.
-        {
-            int cell_offset = 0;
-            int block = 0;
-            struct page* page;
-            struct page* tmp;
-            list_for_each_entry_safe(page, tmp, &span->pages, lru) {
-                list_del(&page->lru);
-                list_add_tail(&page->lru, &span->blocks[block]);
-                cell_offset += PAGE_SIZE;
-                if (cell_offset >= cell_size) {
-                    block++;
-                    block = block % D;
-                    cell_offset = 0;
-                }
-            }
-        }
-        // Then we allocate the parity blocks
-        for (i = D; i < B; i++) {
-            for (j = 0; j < pages_per_block; j++) {
-                struct page* ppage = eggsfs_alloc_write_page(&enode->file);
-                if (ppage == NULL) { err = -ENOMEM; goto out; }
-                list_add_tail(&ppage->lru, &span->blocks[i]);
-            }
-        }
-        eggsfs_debug("computing parity");
-        // Then, we compute the parity blocks and the CRCs for each block.
-        u32 span_crc = 0;
-        {
-            char* pages_bufs[EGGSFS_MAX_BLOCKS];
-            kernel_fpu_begin();
-            // traverse each block, page by page, rotating as we go along
-            for (j = 0; j < pages_per_block; j++) {
-                // get buffer pointers
-                int s = (j*PAGE_SIZE)/cell_size;
-                for (i = 0; i < B; i++) {
-                    pages_bufs[i] = kmap_atomic(list_first_entry(&span->blocks[i], struct page, lru));
-                }
-                // compute parity
-                err = eggsfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
-                // compute CRCs
-                for (i = 0; i < B; i++) {
-                    cell_crcs[s*B + i] = eggsfs_crc32c(cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
-                }
-                for (i = 0; i < B; i++) {
-                    kunmap_atomic(pages_bufs[i]);
-                    list_rotate_left(&span->blocks[i]);
-                }
-                // unmap pages before exiting
-                if (err) { goto out_err_fpu; }
-            }
-            // Compute overall span crc
-            int s;
-            for (s = 0; s < S; s++) {
-                for (i = 0; i < D; i++) {
-                    span_crc = eggsfs_crc32c_append(span_crc, cell_crcs[s*B + i], cell_size);
-                }
-            }
-            span_crc = eggsfs_crc32c_zero_extend(span_crc, (int)span->written - (int)(span->block_size*D));
-            kernel_fpu_end();
-        }
-        // Now we need to init the span (the callback will actually send the requests)
-        // TODO would be better to have this async, and free up the queue for other stuff,
-        // and also not block in this call which might be in a non-blocking write.
-        eggsfs_debug("add span initiate");
-        {
-            struct initiate_ctx ctx = {
-                .span = span,
-                .cell_crcs = cell_crcs,
-            };
-            err = eggsfs_error_to_linux(eggsfs_shard_add_span_initiate(
-                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
-                &ctx, enode->inode.i_ino, enode->file.cookie, offset, span->written,
-                span_crc, span->storage_class, span->parity, span->stripes, cell_size, cell_crcs
-            ));
-            if (err) { goto out; }
-            // Now we wait.
-            eggsfs_debug("sent all block writing requests");
-        }
+        err = write_blocks(span);
+        if (err) { goto out; }
     }
 
 out:
@@ -492,13 +508,9 @@ out:
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
     // we don't need this anymore (the requests might though)
-    eggsfs_put_transient_span(span);
+    put_transient_span(span);
     enode->file.writing_span = NULL;
     return err;
-
-out_err_fpu:
-    kernel_fpu_end();
-    goto out;
 
     // When we got an error before even starting to flush
 out_err_keep_writing:
@@ -539,7 +551,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
 
     // Get the span we're currently writing at
     if (enode->file.writing_span == NULL) {
-        enode->file.writing_span = eggsfs_new_transient_span(enode, enode->inode.i_size);
+        enode->file.writing_span = new_transient_span(enode, enode->inode.i_size);
         if (enode->file.writing_span == NULL) {
             err = -ENOMEM;
             goto out_err;
@@ -553,7 +565,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
         struct page* page = list_empty(&span->pages) ? NULL : list_last_entry(&span->pages, struct page, lru);
         if (page == NULL || page->index == 0) { // we're the first ones to get here, or we need to switch to the next one
             BUG_ON(page != NULL && page->index > PAGE_SIZE);
-            page = eggsfs_alloc_write_page(&enode->file);
+            page = alloc_write_page(&enode->file);
             if (!page) {
                 err = -ENOMEM;
                 goto out_err; // we haven't corrupted anything, so no need to make it permanent
@@ -574,7 +586,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
     
     if (span->written >= max_span_size) { // we need to start flushing the span
         // this might block even if it says nonblock, which is unfortunate.
-        err = eggsfs_start_flushing(enode, !!(flags&IOCB_NOWAIT));
+        err = start_flushing(enode, !!(flags&IOCB_NOWAIT));
     }
 
     int written;
@@ -593,7 +605,7 @@ out_err:
     return err;
 }
 
-static ssize_t eggsfs_file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
+static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
@@ -639,7 +651,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     // OK, in this case we are indeed linking it, we need to do two things: first wait
     // for the span which is being flushed to be flushed, and then flush the current span,
     // if we have one.
-    err = eggsfs_start_flushing(enode, false);
+    err = start_flushing(enode, false);
     if (err < 0) { goto out; }
 
     err = down_killable(&enode->file.flushing_span_sema);
@@ -668,7 +680,7 @@ out:
     // Put spans, if any
     if (err != -EAGAIN) {
         if (enode->file.writing_span != NULL) {
-            eggsfs_put_transient_span(enode->file.writing_span);
+            put_transient_span(enode->file.writing_span);
         }
         enode->file.writing_span = NULL;
     }
@@ -678,13 +690,13 @@ out_early:
     return err;
 }
 
-static int eggsfs_file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
+static int file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
     struct eggsfs_inode* enode = EGGSFS_I(filp->f_inode);
     struct dentry* dentry = filp->f_path.dentry;
     return eggsfs_file_flush(enode, dentry);
 }
 
-static ssize_t eggsfs_file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
+static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
@@ -828,10 +840,10 @@ out_err:
 }
 
 const struct file_operations eggsfs_file_operations = {
-    .open = eggsfs_file_open,
-    .read_iter = eggsfs_file_read_iter,
-    .write_iter = eggsfs_file_write_iter,
-    .flush = eggsfs_file_flush_internal,
+    .open = file_open,
+    .read_iter = file_read_iter,
+    .write_iter = file_write_iter,
+    .flush = file_flush_internal,
     .llseek = generic_file_llseek,
 };
 
@@ -841,7 +853,7 @@ int __init eggsfs_file_init(void) {
         sizeof(struct eggsfs_transient_span),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
-        &eggsfs_init_transient_span
+        &init_transient_span
     );
     if (!eggsfs_transient_span_cachep) { return -ENOMEM; }
     return 0;

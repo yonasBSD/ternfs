@@ -741,6 +741,8 @@ static void store_pages(struct fetch_stripe_state* st) {
 }
 
 static void block_done(void* data, u64 block_id, struct list_head* pages, int err) {
+    int i;
+
     eggsfs_debug("block complete %016llx", block_id);
     struct fetch_stripe_state* st = (struct fetch_stripe_state*)data;
     struct eggsfs_block_span* span = st->span;
@@ -755,7 +757,6 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
         err
     );
 
-    int i;
     for (i = 0; i < B; i++) {
         if (st->span->blocks[i].id == block_id) { break; }
     }

@@ -219,7 +219,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msg
 			storage_class = excluded.storage_class,
 			failure_domain = excluded.failure_domain,
 			secret_key = excluded.secret_key,
-			flags = (flags & ~?),
+			flags = (flags & ~?) | excluded.flags,
 			capacity_bytes = excluded.capacity_bytes,
 			available_bytes = excluded.available_bytes,
 			blocks = excluded.blocks,

@@ -1607,7 +1607,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-		err := serviceMonitor(ll, state, 120*time.Second)
+		err := serviceMonitor(ll, state, 3*time.Minute)
 		ll.Error("serviceMonitor ended with error %s", err)
 	}()
 

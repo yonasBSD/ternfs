@@ -282,13 +282,6 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	)
 
 	if kmod {
-		originalDirRefreshTime := getKmodDirRefreshTime()
-		defer setKmodDirRefreshTime(originalDirRefreshTime)
-
-		setKmodDirRefreshTime(0)
-	}
-
-	if kmod {
 		preadddirOpts := preadddirOpts{
 			numDirs:     1000,
 			filesPerDir: 100,
@@ -317,20 +310,6 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 			fsTest(log, shuckleAddress, &fsTestOpts, counters, mountPoint)
 		},
 	)
-
-	if kmod {
-		setKmodDirRefreshTime(1000) // 1 sec
-		runTest(
-			log,
-			shuckleAddress,
-			filter,
-			"mounted fs (1s dir refresh)",
-			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
-			func(counters *lib.ClientCounters) {
-				fsTest(log, shuckleAddress, &fsTestOpts, counters, mountPoint)
-			},
-		)
-	}
 
 	// Restore default values for policies, otherwise things will be unduly slow below
 	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultSpanPolicy); err != nil {
@@ -431,6 +410,7 @@ func main() {
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
 	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
+	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -455,6 +435,12 @@ func main() {
 			fmt.Printf("preserved temp data dir %v\n", *dataDir)
 		}
 	}()
+	if *dirRefreshTime != 0 {
+		fmt.Printf("setting dir refresh time to %v\n", *dirRefreshTime)
+		before := getKmodDirRefreshTime()
+		setKmodDirRefreshTime(uint64(dirRefreshTime.Milliseconds()))
+		defer setKmodDirRefreshTime(before)
+	}
 
 	if *profileTest {
 		f, err := os.Create(path.Join(*dataDir, "test-profile"))

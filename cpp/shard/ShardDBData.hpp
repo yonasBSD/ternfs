@@ -60,8 +60,33 @@ struct BlockServiceBody {
         LE, uint8_t,  storageClass,     setStorageClass,
         FBYTES, 16,   failureDomain,    setFailureDomain,
         FBYTES, 16,   secretKey,        setSecretKey,
-        END_STATIC
+        EMIT_OFFSET, V0_OFFSET,
+        LE, uint8_t, flagsV1, setFlagsV1,
+        EMIT_OFFSET, V1_OFFSET,
+        END
     )
+
+    static constexpr size_t MAX_SIZE = V1_OFFSET;
+
+    size_t size() const {
+        switch (version()) {
+        case 0: return V0_OFFSET;
+        case 1: return V1_OFFSET;
+        default: throw EGGS_EXCEPTION("bad version %s", version());
+        }
+    }
+
+    void checkSize(size_t s) { ALWAYS_ASSERT(s == size()); }
+
+    uint8_t flags() const {
+        if (unlikely(version() == 0)) { return 0; }
+        return flagsV1();
+    }
+
+    void setFlags(uint8_t f) {
+        ALWAYS_ASSERT(version() > 0);
+        setFlagsV1(f);
+    }
 };
 
 struct CurrentBlockServicesBody {

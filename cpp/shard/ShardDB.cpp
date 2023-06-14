@@ -213,6 +213,7 @@ struct BlockServiceCache {
     uint16_t port1;
     uint16_t port2;
     uint8_t storageClass;
+    uint8_t flags;
 };
 
 struct ShardDBImpl {
@@ -425,6 +426,7 @@ struct ShardDBImpl {
                     cache.port2 = v().port2();
                     expandKey(v().secretKey(), cache.secretKey);
                     cache.storageClass = v().storageClass();
+                    cache.flags = v().flags();
                 }
             }
         }
@@ -2491,8 +2493,11 @@ struct ShardDBImpl {
         //
         // It does require having at least 14 failure domains (to do RS(10,4)), and gives
         // very little slack with the current situation of 17 failure domains.
+
+        // storage class -> failure domain -> block service ids
         std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<uint64_t>>> blockServicesByFailureDomain;
         for (const auto& [blockServiceId, blockService]: _blockServicesCache) {
+            if (blockService.flags & BLOCK_SERVICE_DONT_WRITE) { continue; }
             __int128 failureDomain;
             static_assert(sizeof(failureDomain) == sizeof(blockService.failureDomain));
             memcpy(&failureDomain, &blockService.failureDomain[0], sizeof(failureDomain));
@@ -2522,7 +2527,7 @@ struct ShardDBImpl {
         for (int i = 0; i < entry.blockServices.els.size(); i++) {
             const auto& entryBlock = entry.blockServices.els[i];
             blockKey().setBlockServiceId(entryBlock.id.u64);
-            blockBody().setVersion(0);
+            blockBody().setVersion(1);
             blockBody().setId(entryBlock.id.u64);
             blockBody().setIp1(entryBlock.ip1.data);
             blockBody().setPort1(entryBlock.port1);
@@ -2531,6 +2536,7 @@ struct ShardDBImpl {
             blockBody().setStorageClass(entryBlock.storageClass);
             blockBody().setFailureDomain(entryBlock.failureDomain.data);
             blockBody().setSecretKey(entryBlock.secretKey.data);
+            blockBody().setFlags(entryBlock.flags);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
             auto& cache = _blockServicesCache[entryBlock.id.u64];
             expandKey(entryBlock.secretKey.data, cache.secretKey);
@@ -2540,6 +2546,7 @@ struct ShardDBImpl {
             cache.port2 = entryBlock.port2;
             cache.storageClass = entryBlock.storageClass;
             cache.failureDomain = entryBlock.failureDomain.data;
+            cache.flags = entryBlock.flags;
         }
         _updateCurrentBlockServices(time, batch);
     }

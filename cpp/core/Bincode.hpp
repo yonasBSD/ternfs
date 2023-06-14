@@ -374,3 +374,11 @@ struct BincodeBuf {
 };
 
 constexpr size_t UDP_MTU = 1472;
+
+constexpr uint8_t BLOCK_SERVICE_STALE          = 1u;
+constexpr uint8_t BLOCK_SERVICE_NO_READ        = 1u<<1;
+constexpr uint8_t BLOCK_SERVICE_NO_WRITE       = 1u<<2;
+constexpr uint8_t BLOCK_SERVICE_DECOMMISSIONED = 1u<<3;
+
+constexpr uint8_t BLOCK_SERVICE_DONT_READ  = BLOCK_SERVICE_STALE | BLOCK_SERVICE_NO_READ  | BLOCK_SERVICE_DECOMMISSIONED;
+constexpr uint8_t BLOCK_SERVICE_DONT_WRITE = BLOCK_SERVICE_STALE | BLOCK_SERVICE_NO_WRITE | BLOCK_SERVICE_DECOMMISSIONED;

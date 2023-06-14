@@ -270,6 +270,43 @@ func (l *Logger) RaiseAlertStack(calldepth int, err any) {
 	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
 }
 
+// NCAlert is a non binnable alert
+type NCAlert struct {
+	alert     *monitor.AlertStatus
+	l         *Logger
+	lastAlert string
+}
+
+func (l *Logger) NewNCAlert() NCAlert {
+	var a *monitor.AlertStatus
+	if l.troll != nil {
+		a = l.troll.NewUnbinnableAlertStatus()
+	}
+	return NCAlert{alert: a, l: l}
+}
+
+func (nc *NCAlert) Alert(f string, v ...any) {
+	nc.l.LogStack(1, ERROR, f, v...)
+	nc.lastAlert = fmt.Sprintf(f, v...)
+	if nc.alert == nil {
+		return
+	}
+	nc.alert.Alertf(f, v...)
+}
+
+func (nc *NCAlert) Clear() {
+	if len(nc.lastAlert) > 0 {
+		nc.l.LogStack(1, INFO, "cleared alert: %s", nc.lastAlert)
+		nc.lastAlert = ""
+	}
+	if nc.alert == nil {
+		return
+	}
+	if nc.alert.IsRaised() {
+		nc.alert.Clear()
+	}
+}
+
 type loggerSink struct {
 	logger *Logger
 	level  LogLevel

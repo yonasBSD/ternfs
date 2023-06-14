@@ -1378,6 +1378,7 @@ func setupRouting(log *lib.Logger, st *state) {
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	staleAlert := ll.NewNCAlert()
 
 	for {
 		<-ticker.C
@@ -1456,9 +1457,12 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			}
 		}()
 
-		for _, alert := range alerts {
-			ll.Error(alert)
+		if len(alerts) == 0 {
+			staleAlert.Clear()
+			continue
 		}
+		msg := strings.Join(alerts, "\n")
+		staleAlert.Alert(msg)
 	}
 }
 
@@ -1490,7 +1494,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon})
+	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "shuckle"})
 
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)

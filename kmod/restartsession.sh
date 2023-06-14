@@ -46,16 +46,20 @@ sleep 1 # sometimes qemu lingers?
 # 0. dmesg
 # 1. free shell
 # 2. shell with eggsfs running
-# 3. qemu running
+# 3. trace_pipe
+# 4. qemu running
 
 tmux new-session -d -s uovo
-tmux new-window -t uovo:3 './startvm.sh'
+tmux new-window -t uovo:4 './startvm.sh'
 
 # Wait for VM to go up, and build
 while ! scp eggsfs.ko uovo: ; do sleep 1; done
 
 # Start dmesg as soon as it's booted (before we insert module)
 tmux send-keys -t uovo:0 "ssh -t uovo dmesg -wHT" Enter
+
+# and trace_pipe
+tmux new-window -t uovo:3 'ssh -t uovo sudo cat /sys/kernel/debug/tracing/trace_pipe'
 
 # Insert module
 ssh uovo 'sudo insmod eggsfs.ko'
@@ -76,5 +80,6 @@ tmux attach-session -t uovo:1
 
 # ./eggs/eggstests -verbose -kmod -filter 'mounted|rsync|large' -drop-cached-spans-every 100ms -short -binaries-dir $(pwd)/eggs
 
+# sudo sh -c 'echo  eggsfs_fetch_stripe >> /sys/kernel/debug/tracing/set_event'
 # sudo sysctl fs.eggsfs.debug=1
-# ./eggs/eggstests -verbose -kmod -filter 'mounted' -cfg fsTest.numDirs=1 -cfg fsTest.numFiles=10 -short -binaries-dir $(pwd)/eggs
+# ./eggs/eggstests -verbose -kmod -filter 'mounted' -cfg fsTest.checkThreads=1 -cfg fsTest.numDirs=1 -cfg fsTest.numFiles=10 -short -binaries-dir $(pwd)/eggs

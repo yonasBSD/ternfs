@@ -545,21 +545,24 @@ TRACE_EVENT(eggsfs_get_span_page_exit,
 );
 
 #define EGGSFS_FETCH_STRIPE_START 0
-#define EGGSFS_FETCH_STRIPE_BLOCK_DONE 1
-#define EGGSFS_FETCH_STRIPE_END 2
-#define EGGSFS_FETCH_STRIPE_FREE 3
+#define EGGSFS_FETCH_STRIPE_BLOCK_START 1
+#define EGGSFS_FETCH_STRIPE_BLOCK_DONE 2
+#define EGGSFS_FETCH_STRIPE_END 3
+#define EGGSFS_FETCH_STRIPE_FREE 4
 
 TRACE_EVENT(eggsfs_fetch_stripe,
-    TP_PROTO(u64 file_id, u64 span_offset, u8 stripe, bool prefetching, u8 event, int err),
-    TP_ARGS(     file_id,     span_offset,    stripe,      prefetching,    event,     err),
+    TP_PROTO(u64 file_id, u64 span_offset, u8 stripe, u8 parity, bool prefetching, u8 event, s8 block, int err),
+    TP_ARGS(     file_id,     span_offset,    stripe,    parity,      prefetching,    event,    block,     err),
 
     TP_STRUCT__entry(
         __field(u64, file_id)
         __field(u64, span_offset)
         __field(int, err)
+        __field(s8, block) // negative = non-block event
         __field(u8, stripe)
         __field(bool, prefetching)
         __field(u8, event)
+        __field(u8, parity)
     ),
     TP_fast_assign(
         __entry->file_id = file_id;
@@ -568,18 +571,21 @@ TRACE_EVENT(eggsfs_fetch_stripe,
         __entry->prefetching = prefetching;
         __entry->event = event;
         __entry->err = err;
+        __entry->block = block;
+        __entry->parity = parity;
     ),
     TP_printk(
-        "file_id=%016llx span_offset=%llu stripe=%u prefetching=%d event=%s err=%d",
-        __entry->file_id, __entry->span_offset, __entry->stripe, (int)__entry->prefetching,
+        "file_id=%016llx span_offset=%llu stripe=%u D=%u P=%u prefetching=%d event=%s block=%d err=%d",
+        __entry->file_id, __entry->span_offset, __entry->stripe, __entry->parity&0xF, __entry->parity>>4, (int)__entry->prefetching,
         __print_symbolic(
             __entry->event,
-            { 0, "start" },
-            { 1, "block_done" },
-            { 2, "end" },
-            { 3, "free" }
+            { EGGSFS_FETCH_STRIPE_START, "start" },
+            { EGGSFS_FETCH_STRIPE_BLOCK_START, "block_start" },
+            { EGGSFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
+            { EGGSFS_FETCH_STRIPE_END, "end" },
+            { EGGSFS_FETCH_STRIPE_FREE, "free" }
         ),
-        __entry->err
+        __entry->block, __entry->err
     )
 );
 

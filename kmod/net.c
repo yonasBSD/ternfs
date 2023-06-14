@@ -70,7 +70,7 @@ static void sock_readable(struct sock* sk) {
             }
         } spin_unlock_bh(&s->lock);
         if (!req) {
-            eggsfs_info("could not find request id %llu (probably late after multiple attempts)", request_id);
+            eggsfs_info("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
         }
 
         if (skb) {
@@ -272,7 +272,9 @@ struct sk_buff* eggsfs_metadata_request(
 
         eggsfs_debug("err=%d", err);
         if (err != -ETIMEDOUT || *attempts >= max_attempts) {
-            eggsfs_info("giving up (might be too many attempts): " LOG_STR " max_attempts=%d err=%d", LOG_ARGS, max_attempts, err);
+            if (err != -ERESTARTSYS) {
+                eggsfs_info("giving up (might be too many attempts): " LOG_STR " max_attempts=%d err=%d", LOG_ARGS, max_attempts, err);
+            }
             goto out_err;
         }
     } while (1);
@@ -289,7 +291,9 @@ out_unregister:
 out_err:
     WARN_LATE
     trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
-    eggsfs_info("err=%d", err);
+    if (err != -ERESTARTSYS) {
+        eggsfs_info("err=%d", err);
+    }
     return ERR_PTR(err);
 
 #undef LOG_STR

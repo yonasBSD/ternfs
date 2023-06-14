@@ -577,22 +577,41 @@ again:
 struct fetch_stripe_state {
     // ihold'd
     struct eggsfs_inode *enode;
-    struct semaphore sema; // used to wait on remaining = 0. could be done faster with a wait_queue, but don't want to worry about smb subtleties.
+    struct semaphore sema; // used to wait on every block being finished. could be done faster with a wait_queue, but don't want to worry about smb subtleties.
     s64 stripe_seqno;      // used to release the stripe when we're done with it
-    // We hold this (via span acquire) until we're done.
-    struct eggsfs_block_span* span;
+    struct eggsfs_block_span* span; // we hold this (via span acquire) until we're done.
     // these will be filled in by the fetching (only D of them well be
     // filled by fetching the blocks, the others might be filled in by the RS
     // recovery)
     struct list_head blocks_pages[EGGSFS_MAX_BLOCKS];
-    atomic_t remaining;   // how many block fetch requests are still ongoing
-    atomic_t refcount;    // to garbage collect the state
-    atomic_t err;         // the result of the stripe fetching
+    atomic_t refcount;      // to garbage collect
+    atomic_t err;           // the result of the stripe fetching
     static_assert(EGGSFS_MAX_BLOCKS <= 16);
-    u16 blocks;           // which blocks we're fetching, bitmap
-    u8 stripe;            // which stripe we're into
-    u8 prefetching;       // used for logging
+    // 00-16: blocks which are downloading.
+    // 16-32: blocks which have succeeded.
+    // 32-48: blocks which have failed.
+    atomic64_t blocks;
+    u8 stripe;              // which stripe we're into
+    u8 prefetching;         // used for logging
 };
+
+#define DOWNLOADING_SHIFT 0
+#define DOWNLOADING_MASK (0xFFFFull<<DOWNLOADING_SHIFT)
+#define DOWNLOADING_GET(__b) ((__b>>DOWNLOADING_SHIFT) & 0xFFFFull)
+#define DOWNLOADING_SET(__b, __i) (__b | 1ull<<(__i+DOWNLOADING_SHIFT))
+#define DOWNLOADING_UNSET(__b, __i) (__b & ~(1ull<<(__i+DOWNLOADING_SHIFT)))
+
+#define SUCCEEDED_SHIFT 16
+#define SUCCEEDED_MASK (0xFFFFull<<SUCCEEDED_SHIFT)
+#define SUCCEEDED_GET(__b) ((__b>>SUCCEEDED_SHIFT) & 0xFFFFull)
+#define SUCCEEDED_SET(__b, __i) (__b | 1ull<<(__i+SUCCEEDED_SHIFT))
+#define SUCCEEDED_UNSET(__b, __i) (__b & ~(1ull<<(__i+SUCCEEDED_SHIFT)))
+
+#define FAILED_SHIFT 32
+#define FAILED_MASK (0xFFFFull<<FAILED_SHIFT)
+#define FAILED_GET(__b) ((__b>>FAILED_SHIFT) & 0xFFFFull)
+#define FAILED_SET(__b, __i) (__b | 1ull<<(__i+FAILED_SHIFT))
+#define FAILED_UNSET(__b, __i) (__b & ~(1ull<<(__i+FAILED_SHIFT)))
 
 static void init_fetch_stripe(void* p) {
     struct fetch_stripe_state* st = (struct fetch_stripe_state*)p;
@@ -611,7 +630,6 @@ static struct fetch_stripe_state* new_fetch_stripe(
     struct eggsfs_block_span* span,
     u8 stripe,
     u64 stripe_seqno,
-    u16 blocks,
     bool prefetching
 ) {
     struct fetch_stripe_state* st = (struct fetch_stripe_state*)kmem_cache_alloc(eggsfs_fetch_stripe_cachep, GFP_KERNEL);
@@ -619,28 +637,38 @@ static struct fetch_stripe_state* new_fetch_stripe(
 
     BUG_ON(!span_acquire(&span->span));
 
-    int D = eggsfs_data_blocks(span->parity);
-
     st->enode = enode;
     st->stripe_seqno = stripe_seqno;
     st->span = span;
-    atomic_set(&st->remaining, D);
     atomic_set(&st->refcount, 1); // the caller
     atomic_set(&st->err, 0);
     st->stripe = stripe;
     st->prefetching = prefetching;
-    st->blocks = blocks;
+    atomic64_set(&st->blocks, 0);
 
     eggsfs_in_flight_begin(enode);
 
     return st;
 }
 
+static void fetch_stripe_trace(struct fetch_stripe_state* st, u8 event, s8 block, int err) {
+    trace_eggsfs_fetch_stripe(
+        st->enode->inode.i_ino,
+        st->span->span.start,
+        st->stripe,
+        st->span->parity,
+        st->prefetching,
+        event,
+        block,
+        err
+    );
+}
+
 static void put_fetch_stripe(struct fetch_stripe_state* st) {
     if (atomic_dec_return(&st->refcount) > 0) { return; }
 
     // we're the last ones here
-    trace_eggsfs_fetch_stripe(st->enode->inode.i_ino, st->span->span.start, st->stripe, st->prefetching, EGGSFS_FETCH_STRIPE_FREE, atomic_read(&st->err));
+    fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_FREE, -1, atomic_read(&st->err));
 
     // Note that we release this here, rather than when `remaining == 0`, since
     // there's no guarantee that we reach `remaining == 0` (we might fail to start
@@ -656,10 +684,10 @@ static void put_fetch_stripe(struct fetch_stripe_state* st) {
         put_pages_list(&st->blocks_pages[i]);
     }
 
+    eggsfs_in_flight_end(st->enode);
+
     // We don't need the span anymore
     eggsfs_put_span(&st->span->span, false);
-
-    eggsfs_in_flight_end(st->enode);
 
     kmem_cache_free(eggsfs_fetch_stripe_cachep, st);
 }
@@ -671,17 +699,20 @@ static void store_pages(struct fetch_stripe_state* st) {
     int i, j;
 
     // we need to recover data using RS
-    if (unlikely(st->blocks != (1u<<D)-1)) {
+    u16 blocks = SUCCEEDED_GET(atomic64_read(&st->blocks));
+    eggsfs_debug("blocks=%d", blocks);
+    BUG_ON(__builtin_popcountll(blocks) != D);
+    if (unlikely(blocks != (1ull<<D)-1)) {
         u32 pages = 0;
         { // get the number of pages
             struct list_head* tmp;
             // eggsfs_info("picking %d", __builtin_ctz(st->blocks));
-            list_for_each(tmp, &st->blocks_pages[__builtin_ctz(st->blocks)]) { // just pick the first one to count pages
+            list_for_each(tmp, &st->blocks_pages[__builtin_ctz(blocks)]) { // just pick the first one to count pages
                 pages++;
             }
         }
         for (i = 0; i < D; i++) { // fill in missing data blocks
-            if ((1u<<i) & st->blocks) { continue; } // we have this one already
+            if ((1ull<<i) & blocks) { continue; } // we have this one already
             // eggsfs_info("recovering %d, pages=%u", i, pages);
             // allocate the pages
             struct list_head* i_pages = &st->blocks_pages[i];
@@ -694,7 +725,7 @@ static void store_pages(struct fetch_stripe_state* st) {
                 list_add_tail(&page->lru, i_pages);
             }
             // compute
-            int err = eggsfs_recover(span->parity, st->blocks, 1u<<i, pages, st->blocks_pages);
+            int err = eggsfs_recover(span->parity, blocks, 1ull<<i, pages, st->blocks_pages);
             if (err) {
                 atomic_set(&st->err, err);
                 return;
@@ -740,6 +771,76 @@ static void store_pages(struct fetch_stripe_state* st) {
     }
 }
 
+static void block_done(void* data, u64 block_id, struct list_head* pages, int err);
+
+// Starts loading up D blocks as necessary.
+static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) {
+    int i;
+    int err = 0;
+
+    struct eggsfs_block_span* span = st->span;
+    int D = eggsfs_data_blocks(span->parity);
+    int P = eggsfs_parity_blocks(span->parity);
+
+#define LOG_STR "span=%llu file=%016llx D=%d P=%d downloading=%04x(%llu) succeeded=%04x(%llu) failed=%04x(%llu) err=%d"
+#define LOG_ARGS span->span.start, span->span.ino, D, P, downloading, __builtin_popcountll(downloading), succeeded, __builtin_popcountll(succeeded), failed, __builtin_popcountll(failed), err
+
+    for (;;) {
+        s64 blocks = atomic64_read(&st->blocks);
+        u16 downloading = DOWNLOADING_GET(blocks);
+        u16 succeeded = SUCCEEDED_GET(blocks);
+        u16 failed = FAILED_GET(blocks);
+        if (__builtin_popcountll(downloading)+__builtin_popcountll(succeeded) >= D) { // we managed to get out of the woods
+            eggsfs_debug("we have enough blocks, terminating " LOG_STR, LOG_ARGS);
+            return 0;
+        }
+        if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
+            eggsfs_debug("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
+            err = err ?: -EIO;
+            return err;
+        }
+
+        // find the next block to download
+        for (i = 0; i < D; i++) {
+            if (!((1ull<<i) & (downloading|failed|succeeded))) { break; }
+        }
+        BUG_ON(i == D); // something _must_ be there given the checks above
+
+        eggsfs_debug("next block to be fetched is %d " LOG_STR, i, LOG_ARGS);
+
+        // try to set ourselves as selected
+        if (atomic64_cmpxchg(&st->blocks, blocks, DOWNLOADING_SET(blocks, i)) != blocks) {
+            eggsfs_debug("skipping %d " LOG_STR, i, LOG_ARGS);
+            // somebody else got here first (can happen if some blocks complete before this loop finishes) first, keep going
+            continue;
+        }
+
+        // ok, we're responsible for this now, start
+        struct eggsfs_block* block = &st->span->blocks[i];
+        u32 block_offset = st->stripe * span->cell_size;
+        fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_START, i, 0);
+        atomic_inc(&st->refcount);
+        int err = eggsfs_fetch_block(
+            &block_done,
+            (void*)st,
+            &block->bs, block->id, block_offset, span->cell_size
+        );
+        if (err) {
+            atomic_dec(&st->refcount);
+            eggsfs_debug("loading block failed %d " LOG_STR, i, LOG_ARGS);
+            fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, err);
+            // mark it as failed and not downloading
+            blocks = atomic64_read(&st->blocks);
+            while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+        } else {
+            eggsfs_debug("loading block %d " LOG_STR, i, LOG_ARGS);
+        }
+    }
+
+#undef LOG_STR
+#undef LOG_ARGS
+}
+
 static void block_done(void* data, u64 block_id, struct list_head* pages, int err) {
     int i;
 
@@ -747,15 +848,7 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
     struct fetch_stripe_state* st = (struct fetch_stripe_state*)data;
     struct eggsfs_block_span* span = st->span;
     int B = eggsfs_blocks(span->parity);
-
-    trace_eggsfs_fetch_stripe(
-        st->enode->inode.i_ino,
-        st->span->span.start,
-        st->stripe,
-        st->prefetching,
-        EGGSFS_FETCH_STRIPE_BLOCK_DONE,
-        err
-    );
+    int D = eggsfs_data_blocks(span->parity);
 
     for (i = 0; i < B; i++) {
         if (st->span->blocks[i].id == block_id) { break; }
@@ -763,38 +856,39 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
     // eggsfs_info("block ix %d, B=%d", i, B);
     BUG_ON(i == B);
 
-    // It failed, mark it
+    fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, err);
+
+    bool finished = false;
     if (err) {
+        // it failed, try to restore order
         eggsfs_debug("block %016llx ix %d failed with %d", block_id, i, err);
-        atomic_cmpxchg(&st->err, 0, err);
-        goto out;
+        // mark it as failed and not downloading
+        s64 blocks = atomic64_read(&st->blocks);
+        while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+        err = fetch_blocks(st, true);
+        // if we failed to restore order, mark the whole thing as failed
+        if (err) { atomic_cmpxchg(&st->err, 0, err); }
+    } else {
+        // mark as fetched, see if we're the last ones
+        s64 blocks = atomic64_read(&st->blocks);
+        while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+        finished = __builtin_popcountll(SUCCEEDED_GET(SUCCEEDED_SET(blocks, i))) == D;
+        // it succeeded, grab all the pages
+        struct page* page;
+        struct page* tmp;
+        list_for_each_entry_safe(page, tmp, pages, lru) {
+            list_del(&page->lru);
+            list_add_tail(&page->lru, &st->blocks_pages[i]);
+        }
     }
 
-    // It succeeded, set crc and grab all the pages
-    struct page* page;
-    struct page* tmp;
-    list_for_each_entry_safe(page, tmp, pages, lru) {
-        list_del(&page->lru);
-        list_add_tail(&page->lru, &st->blocks_pages[i]);
-    }
-
-    int remaining;
-out:
-    remaining = atomic_dec_return(&st->remaining);
-    eggsfs_debug("remaining=%d", remaining);
-    if (remaining == 0) {
+    if (finished) {
+        eggsfs_debug("finished");
         // we're the last one to finish, we need to store the pages in the span
         store_pages(st);
         // and wake up waiters, if any
         up(&st->sema);
-        trace_eggsfs_fetch_stripe(
-            st->enode->inode.i_ino,
-            st->span->span.start,
-            st->stripe,
-            st->prefetching,
-            EGGSFS_FETCH_STRIPE_END,
-            atomic_read(&st->err)
-        );
+        fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_END, -1, atomic_read(&st->err));
     }
     put_fetch_stripe(st); // one refcount per request
     eggsfs_debug("done");
@@ -803,14 +897,23 @@ out:
 static struct fetch_stripe_state* start_fetch_stripe(
     struct eggsfs_block_span* span, u8 stripe, s64 stripe_seqno, bool prefetching
 ) {
+    int err;
+
     BUG_ON(!span->enode); // must still be alive here
     struct eggsfs_inode* enode = span->enode;
 
-    int err;
-    struct fetch_stripe_state* st = NULL;
-    int i;
+    trace_eggsfs_fetch_stripe(
+        enode->inode.i_ino,
+        span->span.start,
+        stripe,
+        span->parity,
+        prefetching,
+        EGGSFS_FETCH_STRIPE_START,
+        -1,
+        0
+    );
 
-    trace_eggsfs_fetch_stripe(enode->inode.i_ino, span->span.start, stripe, prefetching, EGGSFS_FETCH_STRIPE_START, 0);
+    struct fetch_stripe_state* st = NULL;
 
     int D = eggsfs_data_blocks(span->parity);
     int B = eggsfs_blocks(span->parity);
@@ -820,58 +923,18 @@ static struct fetch_stripe_state* start_fetch_stripe(
         goto out_err;
     }
 
-    // If the span does not have enough available blocks, we're in trouble
-    u32 blocks = 0;
-#if 1
-    {
-        int found_blocks = 0;
-        for (i = 0; i < B && found_blocks < D; i++) {
-            if (likely(!(span->blocks[i].bs.flags & EGGSFS_BLOCK_SERVICE_DONT_READ))) {
-                blocks |= 1u<<i;
-                found_blocks++;
-            }
-        }
-        if (found_blocks < D) {
-            eggsfs_warn("could only find %d blocks for span %llu in file %016lx", found_blocks, span->span.start, enode->inode.i_ino);
-            err = -EIO;
-            goto out_err;
-        }
-    }
-#else
-    // Randomly drop some blocks, useful for testing
-    while (__builtin_popcount(blocks) < D) {
-        uint8_t r;
-        get_random_bytes(&r, sizeof(r));
-        blocks |= 1u << (r%B);
-    }
-#endif
-
-    st = new_fetch_stripe(enode, span, stripe, stripe_seqno, blocks, prefetching);
+    st = new_fetch_stripe(enode, span, stripe, stripe_seqno, prefetching);
     
     // start fetching blocks
     eggsfs_debug("fetching blocks");
-    u32 block;
-    u32 block_offset = stripe * span->cell_size;
-    for (i = 0, block = blocks; block; block >>= 1, i++) {
-        if ((block&1u) == 0) { continue; }
-        struct eggsfs_block* block = &span->blocks[i];
-        atomic_inc(&st->refcount);
-        err = eggsfs_fetch_block(
-            &block_done,
-            (void*)st,
-            &block->bs, block->id, block_offset, span->cell_size
-        );
-        if (err) {
-            atomic_dec(&st->refcount);
-            goto out_err;
-        }
-    }
+    err = fetch_blocks(st, false);
+    if (err) { goto out_err; }
 
-    eggsfs_debug("waiting");
+    eggsfs_debug("fetch stripe started");
     return st;
 
 out_err:
-    trace_eggsfs_fetch_stripe(enode->inode.i_ino, span->span.start, stripe, prefetching, EGGSFS_FETCH_STRIPE_END, err);
+    fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_END, -1, err);
     if (st) { put_fetch_stripe(st); }
     return ERR_PTR(err);
 }

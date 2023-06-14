@@ -286,7 +286,7 @@ func (l *Logger) NewNCAlert() NCAlert {
 }
 
 func (nc *NCAlert) Alert(f string, v ...any) {
-	nc.l.LogStack(1, ERROR, f, v...)
+	nc.l.LogStack(1, ERROR, "nc alert: "+f, v...)
 	nc.lastAlert = fmt.Sprintf(f, v...)
 	if nc.alert == nil {
 		return
@@ -296,7 +296,7 @@ func (nc *NCAlert) Alert(f string, v ...any) {
 
 func (nc *NCAlert) Clear() {
 	if len(nc.lastAlert) > 0 {
-		nc.l.LogStack(1, INFO, "cleared alert: %s", nc.lastAlert)
+		nc.l.LogStack(1, INFO, "cleared nc alert: %s", nc.lastAlert)
 		nc.lastAlert = ""
 	}
 	if nc.alert == nil {

@@ -151,7 +151,7 @@ int eggsfs_recover(
 
     BUG_ON(D < 1);
     BUG_ON(P == 0);
-    BUG_ON(__builtin_popcount(have_blocks) != D || __builtin_popcount(want_block) != 1);
+    BUG_ON(__builtin_popcountll(have_blocks) != D || __builtin_popcountll(want_block) != 1);
 
     if (D == 1) { // mirroring, just copy over
         u32 i;

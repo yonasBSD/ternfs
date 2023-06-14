@@ -303,7 +303,13 @@ int eggsfs_fetch_block(
     u32 offset,
     u32 count
 ) {
-    int err;
+    int err, i;
+
+    // can't read
+    if (unlikely(bs->flags & EGGSFS_BLOCK_SERVICE_DONT_READ)) {
+        eggsfs_debug("could not fetch block given block flags %02x", bs->flags);
+        return -EIO;
+    }
 
     struct eggsfs_fetch_block_request* req = kmem_cache_alloc(eggsfs_fetch_block_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
@@ -319,7 +325,6 @@ int eggsfs_fetch_block(
     atomic_set(&req->err, 0);
     req->block_id = block_id;
     INIT_LIST_HEAD(&req->pages);
-    int i;
     for (i = 0; i < (count + PAGE_SIZE - 1)/PAGE_SIZE; i++) {
         struct page* page = alloc_page(GFP_KERNEL);
         if (!page) { err = -ENOMEM; goto out_err_pages; }

@@ -14,7 +14,7 @@
 
 #define EGGSFS_BLOCKS_REQ_HEADER_SIZE (4 + 8 + 1) // protocol + block service id + kind
 
-struct eggsfs_block_socket {
+struct block_socket {
     struct socket* sock;
     struct sockaddr_in addr;
     // saved callbacks
@@ -25,7 +25,7 @@ struct eggsfs_block_socket {
     struct work_struct write_work;
 };
 
-static void eggsfs_put_socket(struct eggsfs_block_socket *socket) {
+static void put_socket(struct block_socket *socket) {
     read_lock(&socket->sock->sk->sk_callback_lock);
     socket->sock->sk->sk_data_ready = socket->saved_data_ready;
     socket->sock->sk->sk_state_change = socket->saved_state_change;
@@ -37,10 +37,10 @@ static void eggsfs_put_socket(struct eggsfs_block_socket *socket) {
 
 static u64 WHICH_BLOCK_IP = 0;
 
-static struct kmem_cache* eggsfs_fetch_block_request_cachep;
-static struct kmem_cache* eggsfs_write_block_request_cachep;
+static struct kmem_cache* fetch_block_request_cachep;
+static struct kmem_cache* write_block_request_cachep;
 
-struct eggsfs_fetch_block_request {
+struct fetch_block_request {
     void (*callback)(void* data, u64 block_id, struct list_head* pages, int err);
     void* data;
     atomic_t called; // whether we've already called the callback or not
@@ -55,7 +55,7 @@ struct eggsfs_fetch_block_request {
     struct work_struct complete_work;
 
     // In the future, this will be a list
-    struct eggsfs_block_socket socket;
+    struct block_socket socket;
 
     // How many bytes we have left to read.
     u32 bytes_left;
@@ -74,31 +74,31 @@ struct eggsfs_fetch_block_request {
     } header;
 };
 
-static void eggsfs_fetch_complete(struct work_struct* work) {
+static void fetch_complete(struct work_struct* work) {
     // Given that we have `complete_queued`, we know this is only called once
 
-    struct eggsfs_fetch_block_request* req = container_of(work, struct eggsfs_fetch_block_request, complete_work);
+    struct fetch_block_request* req = container_of(work, struct fetch_block_request, complete_work);
     eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->err));
     req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->err));
 
     // TODO what if the socket is being read right now? There's probably a race with
     // that and the free here.
-    eggsfs_put_socket(&req->socket);
+    put_socket(&req->socket);
 
     eggsfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->err));
 
     put_pages_list(&req->pages);
-    kmem_cache_free(eggsfs_fetch_block_request_cachep, req);
+    kmem_cache_free(fetch_block_request_cachep, req);
 }
 
-static void eggsfs_fetch_block_state_check(struct sock* sk) {
+static void fetch_block_state_check(struct sock* sk) {
     // TODO check if connection has been closed before its time and error out
     // eggsfs_debug("socket state check triggered: %d", sk->sk_state);
 }
 
-static void eggsfs_fetch_block_state_change(struct sock* sk) {
+static void fetch_block_state_change(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
-    eggsfs_fetch_block_state_check(sk);
+    fetch_block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
@@ -107,8 +107,8 @@ static void eggsfs_fetch_block_state_change(struct sock* sk) {
 // `req->err` will be filled in and receiving can continue. If an unrecoverable
 // error occurs `req->complete.err` will be filled in also, but it's expected that the
 // caller stops operating on this socket.
-static int eggsfs_fetch_block_receive_single_req(
-    struct eggsfs_fetch_block_request* req,
+static int fetch_block_receive_single_req(
+    struct fetch_block_request* req,
     struct sk_buff* skb,
     unsigned int offset, size_t len0
 ) {
@@ -203,16 +203,16 @@ static int eggsfs_fetch_block_receive_single_req(
     return (len0-len) + block_bytes_read;
 }
 
-static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
-    struct eggsfs_block_socket* socket = rd_desc->arg.data;
-    struct eggsfs_fetch_block_request* req = container_of(socket, struct eggsfs_fetch_block_request, socket);
+static int fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
+    struct block_socket* socket = rd_desc->arg.data;
+    struct fetch_block_request* req = container_of(socket, struct fetch_block_request, socket);
 
     int err = atomic_read(&req->err);
     int consumed = 0;
 
     eggsfs_debug("block fetch receive enter, block_id=%016llx err=%d", req->block_id, err);
     if (!err) {
-        consumed = eggsfs_fetch_block_receive_single_req(req, skb, offset, len);
+        consumed = fetch_block_receive_single_req(req, skb, offset, len);
         if (atomic_read(&req->err) || req->bytes_left == 0) { // we're done or errored
             if (atomic_cmpxchg(&req->complete_queued, 0, 1) == 0) {
                 BUG_ON(!queue_work(eggsfs_wq, &req->complete_work));
@@ -230,19 +230,19 @@ static int eggsfs_fetch_block_receive(read_descriptor_t* rd_desc, struct sk_buff
     return len;
 }
 
-static void eggsfs_fetch_block_data_ready(struct sock* sk) {
+static void fetch_block_data_ready(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     read_descriptor_t rd_desc;
     // Taken from iscsi -- we set count to 1 because we want the network layer to
     // hand us all the skbs that are available.
     rd_desc.arg.data = sk->sk_user_data;
     rd_desc.count = 1;
-    tcp_read_sock(sk, &rd_desc, eggsfs_fetch_block_receive);
-    eggsfs_fetch_block_state_check(sk);
+    tcp_read_sock(sk, &rd_desc, fetch_block_receive);
+    fetch_block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
-static int eggsfs_get_fetch_block_socket(struct eggsfs_block_service* block_service, struct eggsfs_block_socket* socket) {
+static int get_fetch_block_socket(struct eggsfs_block_service* block_service, struct block_socket* socket) {
     int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &socket->sock);
     if (err != 0) { goto out_err; }
 
@@ -283,8 +283,8 @@ static int eggsfs_get_fetch_block_socket(struct eggsfs_block_service* block_serv
     // Important for the callbacks to happen after the connect, see TODO above.
     read_lock(&socket->sock->sk->sk_callback_lock);
     socket->sock->sk->sk_user_data = socket;
-    socket->sock->sk->sk_data_ready = eggsfs_fetch_block_data_ready;
-    socket->sock->sk->sk_state_change = eggsfs_fetch_block_state_change;
+    socket->sock->sk->sk_data_ready = fetch_block_data_ready;
+    socket->sock->sk->sk_state_change = fetch_block_state_change;
     read_unlock(&socket->sock->sk->sk_callback_lock);
 
     return 0;
@@ -311,13 +311,13 @@ int eggsfs_fetch_block(
         return -EIO;
     }
 
-    struct eggsfs_fetch_block_request* req = kmem_cache_alloc(eggsfs_fetch_block_request_cachep, GFP_KERNEL);
+    struct fetch_block_request* req = kmem_cache_alloc(fetch_block_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
 
-    err = eggsfs_get_fetch_block_socket(bs, &req->socket);
+    err = get_fetch_block_socket(bs, &req->socket);
     if (err) { goto out_err; }
 
-    struct eggsfs_block_socket* socket = &req->socket;
+    struct block_socket* socket = &req->socket;
 
     req->callback = callback;
     req->data = data;
@@ -331,7 +331,7 @@ int eggsfs_fetch_block(
         list_add_tail(&page->lru, &req->pages);
     }
 
-    INIT_WORK(&req->complete_work, eggsfs_fetch_complete);
+    INIT_WORK(&req->complete_work, fetch_complete);
     atomic_set(&req->complete_queued, 0);
 
     req->bytes_left = count;
@@ -372,24 +372,24 @@ int eggsfs_fetch_block(
 
 out_err_pages:
     put_pages_list(&req->pages);
-    kmem_cache_free(eggsfs_fetch_block_request_cachep, req);
+    kmem_cache_free(fetch_block_request_cachep, req);
 out_err:
     eggsfs_info("couldn't start fetch block request, err=%d", err);
     return err;
 }
 
-static void eggsfs_write_block_state_check(struct sock* sk) {
+static void write_block_state_check(struct sock* sk) {
     // TODO check if connection has been closed before its time and error out
     // eggsfs_debug("socket state check triggered: %d", sk->sk_state);
 }
 
-static void eggsfs_write_block_state_change(struct sock* sk) {
+static void write_block_state_change(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
-    eggsfs_write_block_state_check(sk);
+    write_block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
-struct eggsfs_write_block_request {
+struct write_block_request {
     // Called when request is done
     void (*callback)(void* data, u64 block_id, u64 proof, int err);
     void* data;
@@ -401,7 +401,7 @@ struct eggsfs_write_block_request {
     struct work_struct complete_work;
 
     // This will be a list soon.
-    struct eggsfs_block_socket socket;
+    struct block_socket socket;
 
     // Req info
     u64 block_service_id;
@@ -435,24 +435,24 @@ struct eggsfs_write_block_request {
     } write_resp;
 };
 
-static inline void eggsfs_write_block_trace(struct eggsfs_write_block_request* req, u8 event) {
+static inline void write_block_trace(struct write_block_request* req, u8 event) {
     trace_eggsfs_block_write(req->block_service_id, req->block_id, event, req->size, req->write_req_written, req->size - req->bytes_left, req->write_resp_read, atomic_read(&req->err));
 }
 
-static void eggsfs_write_complete(struct work_struct* work) {
-    struct eggsfs_write_block_request* req = container_of(work, struct eggsfs_write_block_request, complete_work);
+static void write_complete(struct work_struct* work) {
+    struct write_block_request* req = container_of(work, struct write_block_request, complete_work);
 
-    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_DONE);
+    write_block_trace(req, EGGSFS_BLOCK_WRITE_DONE);
 
     req->callback(req->data, req->block_id, be64_to_cpu(req->write_resp.data.proof), atomic_read(&req->err));
 
-    eggsfs_put_socket(&req->socket);
+    put_socket(&req->socket);
 
     // TODO what if the socket is being read right now? There's probably a race with
     // that and the free here.
 
     BUG_ON(!list_empty(&req->pages));
-    kmem_cache_free(eggsfs_write_block_request_cachep, req);
+    kmem_cache_free(write_block_request_cachep, req);
 }
 
 static inline int atomic_set_return(atomic_t *v, int i) {
@@ -460,20 +460,20 @@ static inline int atomic_set_return(atomic_t *v, int i) {
     return i;
 }
 
-static int eggsfs_write_block_receive_single_req(
-    struct eggsfs_write_block_request* req,
+static int write_block_receive_single_req(
+    struct write_block_request* req,
     struct sk_buff* skb,
     unsigned int offset, size_t len0
 ) {
     size_t len = len0;
 
-    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_ENTER);
+    write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_ENTER);
 
 #define BLOCK_WRITE_EXIT(i) do { \
         if (i < 0) { \
             atomic_cmpxchg(&req->err, 0, i); \
         } \
-        eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_EXIT); \
+        write_block_trace(req, EGGSFS_BLOCK_WRITE_RECV_EXIT); \
         return i; \
     } while (0)
 
@@ -539,17 +539,17 @@ static int eggsfs_write_block_receive_single_req(
 #undef BLOCK_WRITE_EXIT
 }
 
-static int eggsfs_write_block_receive_inner(struct eggsfs_block_socket* socket, struct sk_buff* skb, unsigned int offset, size_t len) {
-    struct eggsfs_write_block_request* req = container_of(socket, struct eggsfs_write_block_request, socket);
+static int write_block_receive_inner(struct block_socket* socket, struct sk_buff* skb, unsigned int offset, size_t len) {
+    struct write_block_request* req = container_of(socket, struct write_block_request, socket);
 
     int err = atomic_read(&req->err);
     int consumed = 0;
 
     if (!err) {
-        consumed = eggsfs_write_block_receive_single_req(req, skb, offset, len);
+        consumed = write_block_receive_single_req(req, skb, offset, len);
         if (atomic_read(&req->err) || req->done) { // we're done or errored
             if (atomic_cmpxchg(&req->complete_queued, 0, 1) == 0) {
-                eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_COMPLETE_QUEUED);
+                write_block_trace(req, EGGSFS_BLOCK_WRITE_COMPLETE_QUEUED);
                 BUG_ON(!queue_work(eggsfs_wq, &req->complete_work));
             }
         }
@@ -563,43 +563,43 @@ static int eggsfs_write_block_receive_inner(struct eggsfs_block_socket* socket, 
     return len;
 }
 
-static int eggsfs_write_block_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
-    struct eggsfs_block_socket* socket = rd_desc->arg.data;
-    return eggsfs_write_block_receive_inner(socket, skb, offset, len);
+static int write_block_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
+    struct block_socket* socket = rd_desc->arg.data;
+    return write_block_receive_inner(socket, skb, offset, len);
 }
 
-static void eggsfs_write_block_data_ready(struct sock* sk) {
+static void write_block_data_ready(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     read_descriptor_t rd_desc;
     rd_desc.arg.data = sk->sk_user_data;
     rd_desc.count = 1;
-    tcp_read_sock(sk, &rd_desc, eggsfs_write_block_receive);
-    eggsfs_fetch_block_state_check(sk);
+    tcp_read_sock(sk, &rd_desc, write_block_receive);
+    fetch_block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
-static void eggsfs_write_block_write_space(struct sock* sk) {
+static void write_block_write_space(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
-    struct eggsfs_block_socket* socket = (struct eggsfs_block_socket*)sk->sk_user_data;
-    struct eggsfs_write_block_request* req = container_of(socket, struct eggsfs_write_block_request, socket);
+    struct block_socket* socket = (struct block_socket*)sk->sk_user_data;
+    struct write_block_request* req = container_of(socket, struct write_block_request, socket);
     if (sk_stream_is_writeable(sk)) {
         clear_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-        eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_QUEUED);
+        write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_QUEUED);
         queue_work(eggsfs_wq, &socket->write_work);
     }
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
-static void eggsfs_write_block_work(struct work_struct* work) {
-    struct eggsfs_block_socket* socket = container_of(work, struct eggsfs_block_socket, write_work);
-    struct eggsfs_write_block_request* req = container_of(socket, struct eggsfs_write_block_request, socket);
+static void write_block_work(struct work_struct* work) {
+    struct block_socket* socket = container_of(work, struct block_socket, write_work);
+    struct write_block_request* req = container_of(socket, struct write_block_request, socket);
 
-    eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_ENTER);
+    write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_ENTER);
 
     int err = 0;
 
 #define BLOCK_WRITE_EXIT do { \
-        eggsfs_write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_EXIT); \
+        write_block_trace(req, EGGSFS_BLOCK_WRITE_WRITE_EXIT); \
         return; \
     } while (0)
 
@@ -679,15 +679,15 @@ out_err:
 #undef BLOCK_WRITE_EXIT
 }
 
-static int eggsfs_get_write_block_socket(struct eggsfs_block_service* block_service, struct eggsfs_block_socket* socket) {
-    int err = eggsfs_get_fetch_block_socket(block_service, socket);
+static int get_write_block_socket(struct eggsfs_block_service* block_service, struct block_socket* socket) {
+    int err = get_fetch_block_socket(block_service, socket);
     if (err) { return err; }
 
-    socket->sock->sk->sk_data_ready = eggsfs_write_block_data_ready;
-    socket->sock->sk->sk_state_change = eggsfs_write_block_state_change;
-    socket->sock->sk->sk_write_space = eggsfs_write_block_write_space;
+    socket->sock->sk->sk_data_ready = write_block_data_ready;
+    socket->sock->sk->sk_state_change = write_block_state_change;
+    socket->sock->sk->sk_write_space = write_block_write_space;
 
-    INIT_WORK(&socket->write_work, eggsfs_write_block_work);
+    INIT_WORK(&socket->write_work, write_block_work);
 
     return 0;
 }
@@ -709,12 +709,12 @@ int eggsfs_write_block(
     BUG_ON(list_empty(pages));
     list_first_entry(pages, struct page, lru)->index = 0;
 
-    struct eggsfs_write_block_request* req = kmem_cache_alloc(eggsfs_write_block_request_cachep, GFP_KERNEL);
+    struct write_block_request* req = kmem_cache_alloc(write_block_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
 
-    err = eggsfs_get_write_block_socket(bs, &req->socket);
+    err = get_write_block_socket(bs, &req->socket);
     if (err) {
-        kmem_cache_free(eggsfs_write_block_request_cachep, req);
+        kmem_cache_free(write_block_request_cachep, req);
         goto out_err;
     }
 
@@ -722,7 +722,7 @@ int eggsfs_write_block(
 
     req->callback = callback;
     req->data = data;
-    INIT_WORK(&req->complete_work, eggsfs_write_complete);
+    INIT_WORK(&req->complete_work, write_complete);
     atomic_set(&req->complete_queued, 0);
 
     req->block_service_id = bs->id;
@@ -750,34 +750,34 @@ out_err:
 
 int __init eggsfs_block_init(void) {
     int err;
-    eggsfs_fetch_block_request_cachep = kmem_cache_create(
+    fetch_block_request_cachep = kmem_cache_create(
         "eggsfs_fetch_block_request_cache",
-        sizeof(struct eggsfs_fetch_block_request),
+        sizeof(struct fetch_block_request),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
         NULL
     );
-    if (!eggsfs_fetch_block_request_cachep) { err = -ENOMEM; goto out_err; }
+    if (!fetch_block_request_cachep) { err = -ENOMEM; goto out_err; }
 
-    eggsfs_write_block_request_cachep = kmem_cache_create(
+    write_block_request_cachep = kmem_cache_create(
         "eggsfs_write_block_request_cache",
-        sizeof(struct eggsfs_write_block_request),
+        sizeof(struct write_block_request),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
         NULL
     );
-    if (!eggsfs_write_block_request_cachep) { err = -ENOMEM; goto out_fetch_request; }
+    if (!write_block_request_cachep) { err = -ENOMEM; goto out_fetch_request; }
 
     return 0;
 
 out_fetch_request:
-    kmem_cache_destroy(eggsfs_fetch_block_request_cachep);
+    kmem_cache_destroy(fetch_block_request_cachep);
 out_err:
     return err;   
 }
 
 void __cold eggsfs_block_exit(void) {
     // TODO: handle case where there still are requests in flight.
-    kmem_cache_destroy(eggsfs_fetch_block_request_cachep);
-    kmem_cache_destroy(eggsfs_write_block_request_cachep);
+    kmem_cache_destroy(fetch_block_request_cachep);
+    kmem_cache_destroy(write_block_request_cachep);
 }

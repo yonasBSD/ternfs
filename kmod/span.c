@@ -1031,6 +1031,8 @@ static void maybe_prefetch(
     BUG_ON(!span->enode); // must still be alive here
     struct eggsfs_inode* enode = span->enode;
 
+    eggsfs_debug("file=%016llx eggsfs_prefetch=%d low_on_memory=%d stripe_start=%llu stripe_end=%llu", span->span.ino, (int)eggsfs_prefetch, (int)low_on_memory, stripe_start, stripe_end);
+
     if (!eggsfs_prefetch || low_on_memory) { return; }
 
     struct eggsfs_inode_file* file = &enode->file;
@@ -1038,8 +1040,10 @@ static void maybe_prefetch(
     u32 prefetch_section_begin = prefetch_section & (uint32_t)(-1);
     u32 prefetch_section_end = (prefetch_section>>32) & (uint32_t)(-1);
     if (stripe_start > prefetch_section_begin && stripe_end < prefetch_section_end) {
+        eggsfs_debug("within bounds, not prefetching");
         // we're comfortably inside, nothing to do
     } if (stripe_end < prefetch_section_begin || stripe_start > prefetch_section_end) {
+        eggsfs_debug("out of bounds, resetting prefetch");
         // we're totally out of bounds, reset
         prefetch_section_begin = stripe_start;
         prefetch_section_end = stripe_end;
@@ -1047,9 +1051,11 @@ static void maybe_prefetch(
         u64 off;
         // there is some overlap, but we're pushing the boundary, prefetch the next or previous thing
         if (stripe_end > prefetch_section_end) { // going rightwards
+            eggsfs_debug("prefetching forwards");
             prefetch_section_end = stripe_end;
             off = stripe_end;
         } else { // going leftwards
+            eggsfs_debug("prefetching backwards");
             prefetch_section_begin = stripe_start;
             off = stripe_start-1;
         }

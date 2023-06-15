@@ -17,10 +17,13 @@ if len(paths) == 0:
 
 if 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
     subprocess.run(
-        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', 'REDACTED', '/eggsfs/go/build.py'] + paths,
+        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', 'REDACTED', '/eggsfs/go/build.py'] + paths,
         check=True,
     )
 else:
+    # Otherwise go will try to create the cache in /.cache, which won't work
+    # since we're not running as root.
+    os.environ['GOCACHE'] = '/eggsfs/.cache'
     for path_str in paths:
         print(f'Building {path_str}')
         path = go_dir / Path(path_str)

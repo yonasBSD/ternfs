@@ -421,7 +421,7 @@ func main() {
 	cleanupDbDir := false
 	tmpDataDir := *dataDir == ""
 	if tmpDataDir {
-		dir, err := os.MkdirTemp("", "eggs-integrationtest.")
+		dir, err := os.MkdirTemp(".", "eggs-integrationtest.")
 		if err != nil {
 			panic(fmt.Errorf("could not create tmp data dir: %w", err))
 		}

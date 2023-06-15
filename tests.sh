@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -eu -o pipefail
 
+export PATH="/opt/go1.18.4/bin:$PATH"
+
 echo "$(tput bold)building requisites$(tput sgr0)"
 ./cpp/build.py alpine rs crc32c # build libs for go
 (cd go/msgs && go generate ./...)

@@ -10,7 +10,7 @@ eggsfs-objs += \
 	inode.o \
 	kmod.o \
 	metadata.o \
-	namei.o \
+	dentry.o \
 	net.o \
 	skb.o \
 	super.o \

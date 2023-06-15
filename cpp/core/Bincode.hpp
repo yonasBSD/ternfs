@@ -373,7 +373,8 @@ struct BincodeBuf {
     }
 };
 
-constexpr size_t UDP_MTU = 1472;
+constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header
+constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IP header - ICMP header
 
 constexpr uint8_t BLOCK_SERVICE_STALE          = 1u;
 constexpr uint8_t BLOCK_SERVICE_NO_READ        = 1u<<1;

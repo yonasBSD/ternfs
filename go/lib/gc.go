@@ -116,10 +116,11 @@ func destructFiles(
 	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockServiceKeys map[msgs.BlockServiceId]cipher.Block,
 ) error {
 	log.Info("starting to destruct files in shard %v", shid)
-	client, err := NewClient(log, shuckleAddress, 1, counters, nil)
+	client, err := NewClient(log, shuckleAddress, 1)
 	if err != nil {
 		return err
 	}
+	client.SetCounters(counters)
 	defer client.Close()
 	stats := DestructionStats{}
 	if err := destructFilesInternal(log, client, shid, &stats); err != nil {
@@ -146,10 +147,11 @@ func DestructFilesInAllShards(
 	shuckleAddress string,
 	counters *ClientCounters,
 ) error {
-	client, err := NewClient(log, shuckleAddress, 256, counters, nil)
+	client, err := NewClient(log, shuckleAddress, 256)
 	if err != nil {
 		return err
 	}
+	client.SetCounters(counters)
 	defer client.Close()
 	stats := DestructionStats{}
 	for i := 0; i < 256; i++ {
@@ -334,10 +336,11 @@ func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats
 
 func CollectDirectories(log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
 	log.Info("starting to collect directories in shard %v", shid)
-	client, err := NewClient(log, shuckleAddress, 1, counters, nil)
+	client, err := NewClient(log, shuckleAddress, 1)
 	if err != nil {
 		return err
 	}
+	client.SetCounters(counters)
 	defer client.Close()
 	stats := CollectStats{}
 	if err := collectDirectoriesInternal(log, client, &stats, shid); err != nil {
@@ -348,10 +351,11 @@ func CollectDirectories(log *Logger, shuckleAddress string, counters *ClientCoun
 }
 
 func CollectDirectoriesInAllShards(log *Logger, shuckleAddress string, counters *ClientCounters) error {
-	client, err := NewClient(log, shuckleAddress, 256, counters, nil)
+	client, err := NewClient(log, shuckleAddress, 256)
 	if err != nil {
 		return err
 	}
+	client.SetCounters(counters)
 	defer client.Close()
 	stats := CollectStats{}
 	for i := 0; i < 256; i++ {

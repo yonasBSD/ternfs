@@ -86,8 +86,8 @@ public:
         _env(logger, "req_server"),
         _shared(shared),
         _ipPorts(options.ipPorts),
-        _recvBuf(UDP_MTU),
-        _sendBuf(UDP_MTU),
+        _recvBuf(DEFAULT_UDP_MTU),
+        _sendBuf(DEFAULT_UDP_MTU),
         _shardRequestIdCounter(0)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();

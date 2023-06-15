@@ -953,14 +953,16 @@ std::ostream& operator<<(std::ostream& out, const StatDirectoryResp& x);
 struct ReadDirReq {
     InodeId dirId;
     uint64_t startHash;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + startHash
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 2; // dirId + startHash + mtu
 
     ReadDirReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
         _size += 8; // startHash
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1224,8 +1226,9 @@ struct FileSpansReq {
     InodeId fileId;
     uint64_t byteOffset;
     uint32_t limit;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4; // fileId + byteOffset + limit
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 2; // fileId + byteOffset + limit + mtu
 
     FileSpansReq() { clear(); }
     uint16_t packedSize() const {
@@ -1233,6 +1236,7 @@ struct FileSpansReq {
         _size += 8; // fileId
         _size += 8; // byteOffset
         _size += 4; // limit
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1522,13 +1526,15 @@ std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x);
 
 struct VisitDirectoriesReq {
     InodeId beginId;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // beginId
+    static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitDirectoriesReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1562,13 +1568,15 @@ std::ostream& operator<<(std::ostream& out, const VisitDirectoriesResp& x);
 
 struct VisitFilesReq {
     InodeId beginId;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // beginId
+    static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitFilesReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1602,13 +1610,15 @@ std::ostream& operator<<(std::ostream& out, const VisitFilesResp& x);
 
 struct VisitTransientFilesReq {
     InodeId beginId;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // beginId
+    static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitTransientFilesReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // beginId
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -1643,14 +1653,16 @@ std::ostream& operator<<(std::ostream& out, const VisitTransientFilesResp& x);
 struct FullReadDirReq {
     InodeId dirId;
     FullReadDirCursor cursor;
+    uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + FullReadDirCursor::STATIC_SIZE; // dirId + cursor
+    static constexpr uint16_t STATIC_SIZE = 8 + FullReadDirCursor::STATIC_SIZE + 2; // dirId + cursor + mtu
 
     FullReadDirReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
         _size += cursor.packedSize(); // cursor
+        _size += 2; // mtu
         return _size;
     }
     void pack(BincodeBuf& buf) const;

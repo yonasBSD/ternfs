@@ -17,7 +17,8 @@ import (
 // --------------------------------------------------------------------
 // Common types and utilities
 
-const UDP_MTU = 1472
+const DEFAULT_UDP_MTU = 1472
+const MAX_UDP_MTU = 8972
 
 type InodeType uint8
 type InodeId uint64
@@ -395,6 +396,8 @@ type StatDirectoryResp struct {
 type ReadDirReq struct {
 	DirId     InodeId
 	StartHash uint64
+	// if 0, a conservative MTU will be used.
+	Mtu uint16
 }
 
 type CurrentEdge struct {
@@ -557,6 +560,8 @@ type FileSpansReq struct {
 	ByteOffset uint64
 	// if 0, no limit.
 	Limit uint32
+	// if  0, a conservative MTU will be used
+	Mtu uint16
 }
 
 type FetchedBlock struct {
@@ -650,6 +655,7 @@ type SameDirectoryRenameResp struct {
 
 type VisitDirectoriesReq struct {
 	BeginId InodeId
+	Mtu     uint16
 }
 
 type VisitDirectoriesResp struct {
@@ -659,6 +665,7 @@ type VisitDirectoriesResp struct {
 
 type VisitFilesReq struct {
 	BeginId InodeId
+	Mtu     uint16
 }
 
 type VisitFilesResp struct {
@@ -673,6 +680,7 @@ type VisitFilesResp struct {
 // file, since they are in increasing id order, and therefore the new one come last)
 type VisitTransientFilesReq struct {
 	BeginId InodeId
+	Mtu     uint16
 }
 
 type TransientFile struct {
@@ -701,6 +709,8 @@ type FullReadDirCursor struct {
 type FullReadDirReq struct {
 	DirId  InodeId
 	Cursor FullReadDirCursor
+	// If 0, a conservative MTU will be used.
+	Mtu uint16
 }
 
 type Edge struct {

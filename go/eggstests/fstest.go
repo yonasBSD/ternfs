@@ -707,10 +707,11 @@ func fsTestInternalCheck[Id comparable](
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
 	{
-		client, err := lib.NewClient(log, shuckleAddress, 1, counters, nil)
+		client, err := lib.NewClient(log, shuckleAddress, 1)
 		if err != nil {
 			panic(err)
 		}
+		client.SetCounters(counters)
 		defer client.Close()
 		blockServiceToPurge := findBlockServiceToPurge(log, client)
 		log.Info("will migrate block service %v", blockServiceToPurge)
@@ -776,11 +777,12 @@ func fsTest(
 	counters *lib.ClientCounters,
 	realFs string, // if non-empty, will run the tests using this mountpoint
 ) {
-	client, err := lib.NewClient(log, shuckleAddress, opts.checkThreads, counters, nil)
+	client, err := lib.NewClient(log, shuckleAddress, opts.checkThreads)
+	if err != nil {
+		panic(err)
+	}
+	client.SetCounters(counters)
 	if realFs == "" {
-		if err != nil {
-			panic(err)
-		}
 		defer client.Close()
 		harness := &apiFsTestHarness{
 			client:       client,

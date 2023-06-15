@@ -787,6 +787,9 @@ func (v *ReadDirReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.StartHash)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -795,6 +798,9 @@ func (v *ReadDirReq) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartHash)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil
@@ -1197,6 +1203,9 @@ func (v *FileSpansReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint32(v.Limit)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1208,6 +1217,9 @@ func (v *FileSpansReq) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint32)(&v.Limit)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil
@@ -1584,11 +1596,17 @@ func (v *VisitDirectoriesReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.BeginId)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *VisitDirectoriesReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BeginId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil
@@ -1639,11 +1657,17 @@ func (v *VisitFilesReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.BeginId)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *VisitFilesReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BeginId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil
@@ -1694,11 +1718,17 @@ func (v *VisitTransientFilesReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.BeginId)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *VisitTransientFilesReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BeginId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil
@@ -1752,6 +1782,9 @@ func (v *FullReadDirReq) Pack(w io.Writer) error {
 	if err := v.Cursor.Pack(w); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1760,6 +1793,9 @@ func (v *FullReadDirReq) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := v.Cursor.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
 		return err
 	}
 	return nil

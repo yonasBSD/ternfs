@@ -178,6 +178,7 @@ func (c *Client) checkRepeatedShardRequestError(
 	return &respErr
 }
 
+// This function will set the mtu field for requests that have it with whatever is in `SetMTU`
 func (c *Client) ShardRequest(
 	logger *Logger,
 	shid msgs.ShardId,
@@ -200,7 +201,22 @@ func (c *Client) ShardRequest(
 	if addrs[1].Port != 0 {
 		hasSecondIp = 1
 	}
-	respBuf := make([]byte, msgs.UDP_MTU)
+	mtu := clientMtu
+	switch r := reqBody.(type) {
+	case *msgs.ReadDirReq:
+		r.Mtu = mtu
+	case *msgs.FileSpansReq:
+		r.Mtu = mtu
+	case *msgs.VisitDirectoriesReq:
+		r.Mtu = mtu
+	case *msgs.VisitFilesReq:
+		r.Mtu = mtu
+	case *msgs.VisitTransientFilesReq:
+		r.Mtu = mtu
+	case *msgs.FullReadDirReq:
+		r.Mtu = mtu
+	}
+	respBuf := make([]byte, mtu)
 	requestIds := make([]uint64, shardMaxElapsed/minShardSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()

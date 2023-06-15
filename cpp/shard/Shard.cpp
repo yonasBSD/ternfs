@@ -157,8 +157,8 @@ public:
         LOG_INFO(_env, "Bound shard %s to %s", _shid, serverAddr);
 
         struct sockaddr_in clientAddr;
-        std::vector<char> recvBuf(UDP_MTU);
-        std::vector<char> sendBuf(UDP_MTU);
+        std::vector<char> recvBuf(DEFAULT_UDP_MTU);
+        std::vector<char> sendBuf(MAX_UDP_MTU);
         auto reqContainer = std::make_unique<ShardReqContainer>();
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();

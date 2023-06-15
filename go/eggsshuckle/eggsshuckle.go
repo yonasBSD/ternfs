@@ -827,7 +827,7 @@ func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
 	cdcPorts[0] = cdc.port1
 	cdcIps[1] = cdc.ip2
 	cdcPorts[1] = cdc.port2
-	client, err := lib.NewClientDirect(log, 1, nil, nil, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	client, err := lib.NewClientDirect(log, 1, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
 	if err != nil {
 		return nil, fmt.Errorf("error creating client: %s", err)
 	}
@@ -1475,6 +1475,7 @@ func main() {
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
 	dbFile := flag.String("db-file", "", "file path of the sqlite database file")
+	mtu := flag.Uint64("mtu", 0, "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -1501,6 +1502,11 @@ func main() {
 	ll.Info("  httpPort = %v", *httpPort)
 	ll.Info("  logFile = '%v'", *logFile)
 	ll.Info("  logLevel = %v", level)
+	ll.Info("  mtu = %v", *mtu)
+
+	if *mtu != 0 {
+		lib.SetMTU(*mtu)
+	}
 
 	if len(*dbFile) == 0 {
 		log.Fatalf("db-file flag is required")

@@ -139,7 +139,7 @@ func (c *Client) CDCRequest(
 	if addrs[1].Port != 0 {
 		hasSecondIp = 1
 	}
-	respBuf := make([]byte, msgs.UDP_MTU)
+	respBuf := make([]byte, msgs.DEFAULT_UDP_MTU)
 	requestIds := make([]uint64, cdcMaxElapsed/minCDCSingleTimeout)
 	attempts := 0
 	startedAt := time.Now()

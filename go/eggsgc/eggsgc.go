@@ -22,6 +22,7 @@ func main() {
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	syslog := flag.Bool("syslog", false, "")
+	mtu := flag.Uint64("mtu", 0, "")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -61,6 +62,10 @@ func main() {
 		level = lib.TRACE
 	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog})
+
+	if *mtu != 0 {
+		lib.SetMTU(*mtu)
+	}
 
 	{
 		shardsStrs := []string{}

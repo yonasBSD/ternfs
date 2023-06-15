@@ -1180,22 +1180,26 @@ std::ostream& operator<<(std::ostream& out, const StatDirectoryResp& x) {
 void ReadDirReq::pack(BincodeBuf& buf) const {
     dirId.pack(buf);
     buf.packScalar<uint64_t>(startHash);
+    buf.packScalar<uint16_t>(mtu);
 }
 void ReadDirReq::unpack(BincodeBuf& buf) {
     dirId.unpack(buf);
     startHash = buf.unpackScalar<uint64_t>();
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void ReadDirReq::clear() {
     dirId = InodeId();
     startHash = uint64_t(0);
+    mtu = uint16_t(0);
 }
 bool ReadDirReq::operator==(const ReadDirReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((uint64_t)this->startHash != (uint64_t)rhs.startHash) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ReadDirReq& x) {
-    out << "ReadDirReq(" << "DirId=" << x.dirId << ", " << "StartHash=" << x.startHash << ")";
+    out << "ReadDirReq(" << "DirId=" << x.dirId << ", " << "StartHash=" << x.startHash << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
@@ -1481,25 +1485,29 @@ void FileSpansReq::pack(BincodeBuf& buf) const {
     fileId.pack(buf);
     buf.packScalar<uint64_t>(byteOffset);
     buf.packScalar<uint32_t>(limit);
+    buf.packScalar<uint16_t>(mtu);
 }
 void FileSpansReq::unpack(BincodeBuf& buf) {
     fileId.unpack(buf);
     byteOffset = buf.unpackScalar<uint64_t>();
     limit = buf.unpackScalar<uint32_t>();
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void FileSpansReq::clear() {
     fileId = InodeId();
     byteOffset = uint64_t(0);
     limit = uint32_t(0);
+    mtu = uint16_t(0);
 }
 bool FileSpansReq::operator==(const FileSpansReq& rhs) const {
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
     if ((uint32_t)this->limit != (uint32_t)rhs.limit) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FileSpansReq& x) {
-    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ")";
+    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
@@ -1799,19 +1807,23 @@ std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x) {
 
 void VisitDirectoriesReq::pack(BincodeBuf& buf) const {
     beginId.pack(buf);
+    buf.packScalar<uint16_t>(mtu);
 }
 void VisitDirectoriesReq::unpack(BincodeBuf& buf) {
     beginId.unpack(buf);
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void VisitDirectoriesReq::clear() {
     beginId = InodeId();
+    mtu = uint16_t(0);
 }
 bool VisitDirectoriesReq::operator==(const VisitDirectoriesReq& rhs) const {
     if ((InodeId)this->beginId != (InodeId)rhs.beginId) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const VisitDirectoriesReq& x) {
-    out << "VisitDirectoriesReq(" << "BeginId=" << x.beginId << ")";
+    out << "VisitDirectoriesReq(" << "BeginId=" << x.beginId << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
@@ -1839,19 +1851,23 @@ std::ostream& operator<<(std::ostream& out, const VisitDirectoriesResp& x) {
 
 void VisitFilesReq::pack(BincodeBuf& buf) const {
     beginId.pack(buf);
+    buf.packScalar<uint16_t>(mtu);
 }
 void VisitFilesReq::unpack(BincodeBuf& buf) {
     beginId.unpack(buf);
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void VisitFilesReq::clear() {
     beginId = InodeId();
+    mtu = uint16_t(0);
 }
 bool VisitFilesReq::operator==(const VisitFilesReq& rhs) const {
     if ((InodeId)this->beginId != (InodeId)rhs.beginId) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const VisitFilesReq& x) {
-    out << "VisitFilesReq(" << "BeginId=" << x.beginId << ")";
+    out << "VisitFilesReq(" << "BeginId=" << x.beginId << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
@@ -1879,19 +1895,23 @@ std::ostream& operator<<(std::ostream& out, const VisitFilesResp& x) {
 
 void VisitTransientFilesReq::pack(BincodeBuf& buf) const {
     beginId.pack(buf);
+    buf.packScalar<uint16_t>(mtu);
 }
 void VisitTransientFilesReq::unpack(BincodeBuf& buf) {
     beginId.unpack(buf);
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void VisitTransientFilesReq::clear() {
     beginId = InodeId();
+    mtu = uint16_t(0);
 }
 bool VisitTransientFilesReq::operator==(const VisitTransientFilesReq& rhs) const {
     if ((InodeId)this->beginId != (InodeId)rhs.beginId) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const VisitTransientFilesReq& x) {
-    out << "VisitTransientFilesReq(" << "BeginId=" << x.beginId << ")";
+    out << "VisitTransientFilesReq(" << "BeginId=" << x.beginId << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
@@ -1920,22 +1940,26 @@ std::ostream& operator<<(std::ostream& out, const VisitTransientFilesResp& x) {
 void FullReadDirReq::pack(BincodeBuf& buf) const {
     dirId.pack(buf);
     cursor.pack(buf);
+    buf.packScalar<uint16_t>(mtu);
 }
 void FullReadDirReq::unpack(BincodeBuf& buf) {
     dirId.unpack(buf);
     cursor.unpack(buf);
+    mtu = buf.unpackScalar<uint16_t>();
 }
 void FullReadDirReq::clear() {
     dirId = InodeId();
     cursor.clear();
+    mtu = uint16_t(0);
 }
 bool FullReadDirReq::operator==(const FullReadDirReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (cursor != rhs.cursor) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FullReadDirReq& x) {
-    out << "FullReadDirReq(" << "DirId=" << x.dirId << ", " << "Cursor=" << x.cursor << ")";
+    out << "FullReadDirReq(" << "DirId=" << x.dirId << ", " << "Cursor=" << x.cursor << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 

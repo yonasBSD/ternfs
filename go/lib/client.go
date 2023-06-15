@@ -188,6 +188,19 @@ func (factory *blocksConnFactory) put(blockServiceId msgs.BlockServiceId, now ti
 	conns.push(conn, now)
 }
 
+var clientMtu uint16 = msgs.DEFAULT_UDP_MTU
+
+// MTU used for large responses (file spans etc)
+func SetMTU(mtu uint64) {
+	if mtu < msgs.DEFAULT_UDP_MTU {
+		panic(fmt.Errorf("mtu (%v) < DEFAULT_UDP_MTU (%v)", mtu, msgs.DEFAULT_UDP_MTU))
+	}
+	if mtu > msgs.MAX_UDP_MTU {
+		panic(fmt.Errorf("mtu (%v) > MAX_UDP_MTU (%v)", mtu, msgs.MAX_UDP_MTU))
+	}
+	clientMtu = uint16(mtu)
+}
+
 type Client struct {
 	shardAddrs  [256][2]net.UDPAddr
 	cdcAddrs    [2]net.UDPAddr
@@ -205,10 +218,6 @@ func NewClient(
 	// to be contention just pick 1. If no sockets are available when `GetSocket`
 	// is called, a new one will be created.
 	udpSockets int,
-	// Can be nil (won't perform perf counting)
-	counters *ClientCounters,
-	// Can be nil (won't be able to restricted requests)
-	cdcKey cipher.Block,
 ) (*Client, error) {
 	var shardIps [256][2][4]byte
 	var shardPorts [256][2]uint16
@@ -243,14 +252,20 @@ func NewClient(
 		cdcIps[1] = cdc.Ip2
 		cdcPorts[1] = cdc.Port2
 	}
-	return NewClientDirect(log, udpSockets, counters, cdcKey, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	return NewClientDirect(log, udpSockets, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+}
+
+func (c *Client) SetCounters(counters *ClientCounters) {
+	c.counters = counters
+}
+
+func (c *Client) SetCDCKey(cdcKey cipher.Block) {
+	c.cdcKey = cdcKey
 }
 
 func NewClientDirect(
 	log *Logger,
 	udpSockets int,
-	counters *ClientCounters,
-	cdcKey cipher.Block,
 	cdcIps *[2][4]byte,
 	cdcPorts *[2]uint16,
 	shardIps *[256][2][4]byte,
@@ -278,8 +293,6 @@ func NewClientDirect(
 		}
 		c.udpSocks[i] = sock
 	}
-	c.counters = counters
-	c.cdcKey = cdcKey
 	return c, nil
 }
 

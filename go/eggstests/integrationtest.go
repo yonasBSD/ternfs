@@ -170,7 +170,7 @@ func (i *cfgOverrides) int(k string, def int) int {
 func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleIp string, shucklePort uint16, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
 	shuckleAddress := fmt.Sprintf("%s:%d", shuckleIp, shucklePort)
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, shuckleAddress, 1, nil, nil)
+	client, err := lib.NewClient(log, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -411,6 +411,7 @@ func main() {
 	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
 	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
 	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
+	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -478,6 +479,11 @@ func main() {
 		level = lib.TRACE
 	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false})
+
+	if *mtu > 0 {
+		log.Info("Setting MTU to %v", *mtu)
+		lib.SetMTU(*mtu)
+	}
 
 	var cppExes *managedprocess.CppExes
 	var goExes *managedprocess.GoExes

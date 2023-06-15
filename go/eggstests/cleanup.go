@@ -47,10 +47,11 @@ func cleanupAfterTest(
 	shuckleAddress string,
 	counters *lib.ClientCounters,
 ) {
-	client, err := lib.NewClient(log, shuckleAddress, 1, counters, nil)
+	client, err := lib.NewClient(log, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
 	}
+	client.SetCounters(counters)
 	defer client.Close()
 	// Delete all current things
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)

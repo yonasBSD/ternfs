@@ -338,10 +338,11 @@ func fileHistoryTest(
 			seed := uint64(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				client, err := lib.NewClient(log, shuckleAddress, 1, counters, nil)
+				client, err := lib.NewClient(log, shuckleAddress, 1)
 				if err != nil {
 					panic(err)
 				}
+				client.SetCounters(counters)
 				defer client.Close()
 				fileHistoryStepSingle(log, client, dirInfoCache, opts, seed, prefix)
 				wait.Done()

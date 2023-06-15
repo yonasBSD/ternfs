@@ -176,7 +176,8 @@ int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, vo
         eggsfs_read_dir_req_put_start(&ctx, start);
         eggsfs_read_dir_req_put_dir_id(&ctx, start, dir_id, dir);
         eggsfs_read_dir_req_put_start_hash(&ctx, dir_id, start_hash, start_pos);
-        eggsfs_read_dir_req_put_end(ctx, start_hash, end);
+        eggsfs_read_dir_req_put_mtu(&ctx, start_hash, mtu, 0);
+        eggsfs_read_dir_req_put_end(ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(dir), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
@@ -753,7 +754,8 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
         eggsfs_file_spans_req_put_file_id(&ctx, start, file_id, file);
         eggsfs_file_spans_req_put_byte_offset(&ctx, file_id, byte_offset, offset);
         eggsfs_file_spans_req_put_limit(&ctx, byte_offset, limit, 0);
-        eggsfs_file_spans_req_put_end(&ctx, limit, end);
+        eggsfs_file_spans_req_put_mtu(&ctx, limit, mtu, 0);
+        eggsfs_file_spans_req_put_end(&ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }

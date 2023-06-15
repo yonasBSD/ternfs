@@ -2030,7 +2030,7 @@ static inline void _eggsfs_stat_directory_resp_put_owner(struct eggsfs_bincode_p
     { struct eggsfs_stat_directory_resp_owner* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_stat_directory_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_READ_DIR_REQ_SIZE 16
+#define EGGSFS_READ_DIR_REQ_SIZE 18
 struct eggsfs_read_dir_req_start;
 #define eggsfs_read_dir_req_get_start(ctx, start) struct eggsfs_read_dir_req_start* start = NULL
 
@@ -2064,9 +2064,24 @@ static inline void _eggsfs_read_dir_req_get_start_hash(struct eggsfs_bincode_get
     struct eggsfs_read_dir_req_start_hash next; \
     _eggsfs_read_dir_req_get_start_hash(ctx, &(prev), &(next))
 
+struct eggsfs_read_dir_req_mtu { u16 x; };
+static inline void _eggsfs_read_dir_req_get_mtu(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_read_dir_req_start_hash* prev, struct eggsfs_read_dir_req_mtu* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_read_dir_req_get_mtu(ctx, prev, next) \
+    struct eggsfs_read_dir_req_mtu next; \
+    _eggsfs_read_dir_req_get_mtu(ctx, &(prev), &(next))
+
 struct eggsfs_read_dir_req_end;
 #define eggsfs_read_dir_req_get_end(ctx, prev, next) \
-    { struct eggsfs_read_dir_req_start_hash* __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_read_dir_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_read_dir_req_end* next = NULL
 
 static inline void eggsfs_read_dir_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_read_dir_req_end* end) {
@@ -2097,8 +2112,18 @@ static inline void _eggsfs_read_dir_req_put_start_hash(struct eggsfs_bincode_put
     struct eggsfs_read_dir_req_start_hash next; \
     _eggsfs_read_dir_req_put_start_hash(ctx, &(prev), &(next), x)
 
+static inline void _eggsfs_read_dir_req_put_mtu(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_read_dir_req_start_hash* prev, struct eggsfs_read_dir_req_mtu* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_read_dir_req_put_mtu(ctx, prev, next, x) \
+    struct eggsfs_read_dir_req_mtu next; \
+    _eggsfs_read_dir_req_put_mtu(ctx, &(prev), &(next), x)
+
 #define eggsfs_read_dir_req_put_end(ctx, prev, next) \
-    { struct eggsfs_read_dir_req_start_hash* __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_read_dir_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_read_dir_req_end* next __attribute__((unused)) = NULL
 
 struct eggsfs_read_dir_resp_start;
@@ -3142,7 +3167,7 @@ static inline void eggsfs_soft_unlink_file_resp_get_finish(struct eggsfs_bincode
     { struct eggsfs_soft_unlink_file_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_soft_unlink_file_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_FILE_SPANS_REQ_SIZE 20
+#define EGGSFS_FILE_SPANS_REQ_SIZE 22
 struct eggsfs_file_spans_req_start;
 #define eggsfs_file_spans_req_get_start(ctx, start) struct eggsfs_file_spans_req_start* start = NULL
 
@@ -3191,9 +3216,24 @@ static inline void _eggsfs_file_spans_req_get_limit(struct eggsfs_bincode_get_ct
     struct eggsfs_file_spans_req_limit next; \
     _eggsfs_file_spans_req_get_limit(ctx, &(prev), &(next))
 
+struct eggsfs_file_spans_req_mtu { u16 x; };
+static inline void _eggsfs_file_spans_req_get_mtu(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_limit* prev, struct eggsfs_file_spans_req_mtu* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_file_spans_req_get_mtu(ctx, prev, next) \
+    struct eggsfs_file_spans_req_mtu next; \
+    _eggsfs_file_spans_req_get_mtu(ctx, &(prev), &(next))
+
 struct eggsfs_file_spans_req_end;
 #define eggsfs_file_spans_req_get_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_req_limit* __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_file_spans_req_end* next = NULL
 
 static inline void eggsfs_file_spans_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_end* end) {
@@ -3234,8 +3274,18 @@ static inline void _eggsfs_file_spans_req_put_limit(struct eggsfs_bincode_put_ct
     struct eggsfs_file_spans_req_limit next; \
     _eggsfs_file_spans_req_put_limit(ctx, &(prev), &(next), x)
 
+static inline void _eggsfs_file_spans_req_put_mtu(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_req_limit* prev, struct eggsfs_file_spans_req_mtu* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_file_spans_req_put_mtu(ctx, prev, next, x) \
+    struct eggsfs_file_spans_req_mtu next; \
+    _eggsfs_file_spans_req_put_mtu(ctx, &(prev), &(next), x)
+
 #define eggsfs_file_spans_req_put_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_req_limit* __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_file_spans_req_end* next __attribute__((unused)) = NULL
 
 struct eggsfs_file_spans_resp_start;

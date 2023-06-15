@@ -734,7 +734,7 @@ struct ShardDBImpl {
             blockService.port1 = cache.port1;
             blockService.ip2 = cache.ip2;
             blockService.port2 = cache.port2;
-            // TODO propagade block service flags here
+            blockService.flags = cache.flags;
             return resp.blockServices.els.size()-1;
         };
 

@@ -781,6 +781,7 @@ static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) 
     struct eggsfs_block_span* span = st->span;
     int D = eggsfs_data_blocks(span->parity);
     int P = eggsfs_parity_blocks(span->parity);
+    int B = eggsfs_blocks(span->parity);
 
 #define LOG_STR "span=%llu file=%016llx D=%d P=%d downloading=%04x(%llu) succeeded=%04x(%llu) failed=%04x(%llu) err=%d"
 #define LOG_ARGS span->span.start, span->span.ino, D, P, downloading, __builtin_popcountll(downloading), succeeded, __builtin_popcountll(succeeded), failed, __builtin_popcountll(failed), err
@@ -801,10 +802,10 @@ static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) 
         }
 
         // find the next block to download
-        for (i = 0; i < D; i++) {
+        for (i = 0; i < B; i++) {
             if (!((1ull<<i) & (downloading|failed|succeeded))) { break; }
         }
-        BUG_ON(i == D); // something _must_ be there given the checks above
+        BUG_ON(i == B); // something _must_ be there given the checks above
 
         eggsfs_debug("next block to be fetched is %d " LOG_STR, i, LOG_ARGS);
 

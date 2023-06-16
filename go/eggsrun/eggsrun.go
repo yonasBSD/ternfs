@@ -62,7 +62,7 @@ func main() {
 	}
 
 	if *dataDir == "" {
-		dir, err := os.MkdirTemp(".", "eggsrun.")
+		dir, err := os.MkdirTemp("", "eggsrun.")
 		if err != nil {
 			panic(fmt.Errorf("could not create tmp data dir: %w", err))
 		}

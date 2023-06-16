@@ -1731,13 +1731,11 @@ struct ShardDBImpl {
 
         // create edge in owner.
         {
-            EggsError err = ShardDBImpl::_createCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, false);
+            EggsError err = ShardDBImpl::_createCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, false, resp.creationTime);
             if (err != NO_ERROR) {
                 return err;
             }
         }
-
-        resp.creationTime = time;
 
         return NO_ERROR;
     }
@@ -1783,10 +1781,13 @@ struct ShardDBImpl {
     // Note that we cannot expose an API which allows us to create non-locked current edges,
     // see comment for CreateLockedCurrentEdgeReq.
     //
-    // `logEntryTime` and `creationTime` are separate since we need a different `creationTime`
-    // for CreateDirectoryInodeReq.
-    EggsError _createCurrentEdge(EggsTime logEntryTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool locked) {
-        EggsTime creationTime = logEntryTime;
+    // The creation time might be different than the current time because we might find it
+    // in an existing edge.
+    EggsError _createCurrentEdge(
+        EggsTime logEntryTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool locked,
+        EggsTime& creationTime
+    ) {
+        creationTime = logEntryTime;
 
         uint64_t nameHash;
         {
@@ -1839,6 +1840,8 @@ struct ShardDBImpl {
                 ) {
                     return EggsError::NAME_IS_LOCKED;
                 }
+                // The creation time doesn't budge!
+                creationTime = existingEdge().creationTime();
             } else {
                 // We're kicking out a non-locked current edge. The only circumstance where we allow
                 // this automatically is if a file is overriding another file, which is also how it
@@ -1889,12 +1892,11 @@ struct ShardDBImpl {
         }
         // Now, create the new one
         {
-            EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false);
+            EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, resp.newCreationTime);
             if (err != NO_ERROR) {
                 return err;
             }
         }
-        resp.newCreationTime = time;
         return NO_ERROR;
     }
 
@@ -1998,11 +2000,10 @@ struct ShardDBImpl {
     }
 
     EggsError _applyCreateLockedCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const CreateLockedCurrentEdgeEntry& entry, CreateLockedCurrentEdgeResp& resp) {
-        auto err = _createCurrentEdge(time, batch, entry.dirId, entry.name, entry.targetId, true); // locked=true
+        auto err = _createCurrentEdge(time, batch, entry.dirId, entry.name, entry.targetId, true, resp.creationTime); // locked=true
         if (err != NO_ERROR) {
             return err;
         }
-        resp.creationTime = time;
         return NO_ERROR;
     }
 

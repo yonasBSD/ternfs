@@ -52,6 +52,7 @@ def wait_cmd(p, quiet=False, timeout=None):
     if p.returncode != 0 or not quiet:
         if len(output) > 0:
             process_status(p, 'output:')
+            sys.stdout.flush()
             sys.stdout.buffer.write(output)
             sys.stdout.flush()
         else:

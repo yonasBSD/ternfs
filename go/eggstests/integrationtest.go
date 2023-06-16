@@ -412,6 +412,8 @@ func main() {
 	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
 	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
+	tmpDir := flag.String("tmp-dir", "", "")
+	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -421,7 +423,7 @@ func main() {
 	cleanupDbDir := false
 	tmpDataDir := *dataDir == ""
 	if tmpDataDir {
-		dir, err := os.MkdirTemp(".", "eggs-integrationtest.")
+		dir, err := os.MkdirTemp(*tmpDir, "eggs-integrationtest.")
 		if err != nil {
 			panic(fmt.Errorf("could not create tmp data dir: %w", err))
 		}
@@ -529,7 +531,7 @@ func main() {
 	}
 
 	// Start shuckle
-	shucklePort := uint16(55555)
+	shucklePort := uint16(*shucklePortArg)
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
 	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
 		Exe:         goExes.ShuckleExe,

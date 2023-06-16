@@ -603,9 +603,9 @@ func main() {
 		procs.StartShard(log, *repoDir, &shopts)
 	}
 
-	waitShuckleFor := 5 * time.Second
+	waitShuckleFor := 10 * time.Second
 	if *buildType == "valgrind" || *profile {
-		waitShuckleFor = 30 * time.Second
+		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
 	lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)

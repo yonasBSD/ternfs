@@ -94,12 +94,9 @@ for _ in range(3):
         ports.append(s.getsockname()[1])
 wait_cmds(
     [
-        # normal
-        run_cmd(['./go/eggstests/eggstests', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[0])]),
-        # sanitized, packet drop
-        run_cmd(['./go/eggstests/eggstests', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[1]), '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short']),
-        # valgrind
-        run_cmd(['./go/eggstests/eggstests', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[2]), '-build-type', 'valgrind', '-short']),
+        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[0])]),
+        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[1]), '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short']),
+        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[2]), '-build-type', 'valgrind']),
     ],
     quiet=tests_quiet,
 )

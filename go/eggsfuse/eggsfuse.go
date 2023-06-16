@@ -93,7 +93,8 @@ func eggsErrToErrno(err error) syscall.Errno {
 	case msgs.LOOP_IN_DIRECTORY_RENAME:
 		return syscall.ELOOP
 	default:
-		panic(fmt.Errorf("unknown error %v", err))
+		fmt.Fprintf(os.Stderr, "unknown error %v", err)
+		return syscall.EIO
 	}
 }
 

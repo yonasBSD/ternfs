@@ -282,7 +282,7 @@ private:
             // Now, try to parse the body
             try {
                 _cdcReqContainer.unpack(reqBbuf, reqHeader.kind);
-                LOG_TRACE(_env, "parsed request: %s", _cdcReqContainer);
+                LOG_DEBUG(_env, "parsed request: %s", _cdcReqContainer);
             } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse CDC request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
@@ -366,7 +366,7 @@ private:
 
             // Otherwise, parse the body
             _shardRespContainer.unpack(reqBbuf, respHeader.kind);
-            LOG_TRACE(_env, "parsed shard response: %s", _shardRespContainer);
+            LOG_DEBUG(_env, "parsed shard response: %s", _shardRespContainer);
             ALWAYS_ASSERT(reqBbuf.remaining() == 0);
 
             // If all went well, advance with the newly received request

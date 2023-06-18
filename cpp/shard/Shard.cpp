@@ -13,6 +13,7 @@
 #include "Crypto.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Shard.hpp"
 #include "Env.hpp"
 #include "ShardDB.hpp"
@@ -68,6 +69,24 @@ public:
     }
 };
 
+static bool bigRequest(ShardMessageKind kind) {
+    return unlikely(
+        kind == ShardMessageKind::ADD_SPAN_INITIATE ||
+        kind == ShardMessageKind::ADD_SPAN_CERTIFY
+    );
+}
+
+static bool bigResponse(ShardMessageKind kind) {
+    return unlikely(
+        kind == ShardMessageKind::READ_DIR ||
+        kind == ShardMessageKind::ADD_SPAN_INITIATE ||
+        kind == ShardMessageKind::FILE_SPANS ||
+        kind == ShardMessageKind::VISIT_DIRECTORIES ||
+        kind == ShardMessageKind::VISIT_FILES ||
+        kind == ShardMessageKind::VISIT_TRANSIENT_FILES ||
+        kind == ShardMessageKind::BLOCK_SERVICE_FILES
+    );
+}
 
 struct ShardServer : Undertaker::Reapable {
 private:
@@ -207,7 +226,15 @@ public:
             // Now, try to parse the body
             try {
                 reqContainer->unpack(reqBbuf, reqHeader.kind);
-                LOG_TRACE(_env, "parsed request: %s", *reqContainer);
+                if (bigRequest(reqHeader.kind)) {
+                    if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
+                        LOG_TRACE(_env, "parsed request: %s", *reqContainer);
+                    } else {
+                        LOG_DEBUG(_env, "parsed request: <omitted>");
+                    }
+                } else {
+                    LOG_DEBUG(_env, "parsed request: %s", *reqContainer);
+                }
             } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "Could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
@@ -244,7 +271,15 @@ public:
             BincodeBuf respBbuf(sendBuf.data(), sendBuf.size());
             if (err == NO_ERROR) {
                 LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s", reqHeader.requestId, respContainer->kind(), elapsed);
-                LOG_TRACE(_env, "resp body: %s", *respContainer);
+                if (bigResponse(reqHeader.kind)) {
+                    if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
+                        LOG_TRACE(_env, "resp body: %s", *respContainer);
+                    } else {
+                        LOG_DEBUG(_env, "resp body: <omitted>");
+                    }
+                } else {
+                    LOG_DEBUG(_env, "resp body: %s", *respContainer);
+                }
                 ShardResponseHeader(reqHeader.requestId, respContainer->kind()).pack(respBbuf);
                 respContainer->pack(respBbuf);
             } else {

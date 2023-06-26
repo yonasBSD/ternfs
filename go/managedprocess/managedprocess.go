@@ -266,7 +266,7 @@ type BlockServiceOpts struct {
 	Port1          uint16
 	OwnIp2         string
 	Port2          uint16
-	StorageClass   msgs.StorageClass
+	StorageClasses []msgs.StorageClass
 	FailureDomain  string
 	NoTimeCheck    bool
 	LogLevel       lib.LogLevel
@@ -307,7 +307,9 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
 	}
-	args = append(args, opts.Path, opts.StorageClass.String())
+	for i, storageClass := range opts.StorageClasses {
+		args = append(args, path.Join(opts.Path, fmt.Sprintf("%d", i)), storageClass.String())
+	}
 	return procs.Start(ll, &ManagedProcessArgs{
 		Name:            fmt.Sprintf("block service (%v:%d & %v:%d)", opts.OwnIp1, opts.Port1, opts.OwnIp2, opts.Port2),
 		Exe:             opts.Exe,

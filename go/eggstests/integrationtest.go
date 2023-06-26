@@ -396,9 +396,9 @@ func noRunawayArgs() {
 }
 
 type blockServiceVictim struct {
-	failureDomain string
-	path          string
-	storageClass  msgs.StorageClass
+	failureDomain  string
+	path           string
+	storageClasses []msgs.StorageClass
 }
 
 func (bsv *blockServiceVictim) start(
@@ -411,7 +411,7 @@ func (bsv *blockServiceVictim) start(
 	return procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
 		Exe:            blocksExe,
 		Path:           bsv.path,
-		StorageClass:   bsv.storageClass,
+		StorageClasses: bsv.storageClasses,
 		FailureDomain:  bsv.failureDomain,
 		LogLevel:       log.Level(),
 		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
@@ -631,18 +631,20 @@ func main() {
 	failureDomains := 16
 	hddBlockServices := 10
 	flashBlockServices := 10
-	// from proc id to failure domain
 	blockServicesProcs := make(map[managedprocess.ManagedProcessId]blockServiceVictim)
-	for i := 0; i < failureDomains; i++ {
-		for j := 0; j < hddBlockServices+flashBlockServices; j++ {
-			storageClass := msgs.HDD_STORAGE
-			if j >= hddBlockServices {
-				storageClass = msgs.FLASH_STORAGE
+	{
+		storageClasses := make([]msgs.StorageClass, hddBlockServices+flashBlockServices)
+		for i := 0; i < hddBlockServices+flashBlockServices; i++ {
+			storageClasses[i] = msgs.HDD_STORAGE
+			if i >= hddBlockServices {
+				storageClasses[i] = msgs.FLASH_STORAGE
 			}
+		}
+		for i := 0; i < failureDomains; i++ {
 			bsv := blockServiceVictim{
-				failureDomain: fmt.Sprintf("%d", i),
-				path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", (i*(hddBlockServices+flashBlockServices))+j)),
-				storageClass:  storageClass,
+				failureDomain:  fmt.Sprintf("%d", i),
+				path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
+				storageClasses: storageClasses,
 			}
 			procId := bsv.start(
 				log,

@@ -29,25 +29,26 @@ func cppDir(repoDir string) string {
 	return path.Join(repoDir, "cpp")
 }
 
-type ManagedProcess struct {
+type managedProcess struct {
 	cmd             *exec.Cmd
 	name            string
 	terminateOnExit bool
 	exitedChan      chan struct{}
+	closeInitiated  uint32
 }
 
 // Returns no error because `terminateChan` is used to propagate errors
 // upwards anyway.
-func (proc *ManagedProcess) Wait() {
+func (proc *managedProcess) Wait() {
 	<-proc.exitedChan
 	proc.exitedChan <- struct{}{} // continue other waiters
 }
 
 type ManagedProcesses struct {
-	terminateChan  chan any
-	processes      []ManagedProcess
-	closeInitiated uint32
-	printLock      sync.Mutex
+	terminateChan chan any
+	mu            sync.Mutex
+	processes     map[uint64]*managedProcess
+	procId        uint64
 }
 
 // This function will take over signals in a possibly surprising way!
@@ -55,6 +56,7 @@ type ManagedProcesses struct {
 func New(terminateChan chan any) *ManagedProcesses {
 	procs := ManagedProcesses{
 		terminateChan: terminateChan,
+		processes:     make(map[uint64]*managedProcess),
 	}
 	procs.installSignalHandlers()
 	return &procs
@@ -115,15 +117,21 @@ func closeOut(out io.Writer) {
 	}
 }
 
-func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) *ManagedProcess {
+type ManagedProcessId uint64
+
+func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) ManagedProcessId {
 	exitedChan := make(chan struct{}, 1)
 
-	procs.processes = append(procs.processes, ManagedProcess{
+	procs.mu.Lock()
+	id := procs.procId
+	procs.procId++
+	proc := &managedProcess{
 		cmd:        exec.Command(args.Exe, args.Args...),
 		name:       args.Name,
 		exitedChan: exitedChan,
-	})
-	proc := &procs.processes[len(procs.processes)-1]
+	}
+	procs.processes[id] = proc
+	procs.mu.Unlock()
 
 	proc.cmd.Dir = args.Dir
 	proc.cmd.Stdout = initOut(args.StdoutFile)
@@ -141,14 +149,16 @@ func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) *
 
 	ll.Debug("starting %v", proc.cmd)
 	if err := proc.cmd.Start(); err != nil {
-		procs.processes = procs.processes[:len(procs.processes)-1]
+		procs.mu.Lock()
+		delete(procs.processes, id)
+		procs.mu.Unlock()
 		panic(fmt.Errorf("could not start process %s: %w", proc.name, err))
 	}
 
 	go func() {
 		err := proc.cmd.Wait()
 
-		if atomic.LoadUint32(&procs.closeInitiated) == 0 {
+		if atomic.LoadUint32(&proc.closeInitiated) == 0 {
 			if err == nil {
 				if proc.terminateOnExit {
 					select {
@@ -157,7 +167,7 @@ func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) *
 					}
 				}
 			} else {
-				procs.printLock.Lock()
+				procs.mu.Lock()
 				fmt.Printf("%s crashed: %v\n", args.Name, err)
 				fmt.Printf("cmdline: %s %s\n", args.Exe, strings.Join(args.Args, " "))
 				if len(args.Env) > 0 {
@@ -166,7 +176,7 @@ func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) *
 				printOut("stdout", os.Stdout, proc.cmd.Stdout)
 				printOut("stderr", os.Stderr, proc.cmd.Stderr)
 				fmt.Println()
-				procs.printLock.Unlock()
+				procs.mu.Unlock()
 				select {
 				case procs.terminateChan <- fmt.Errorf("%s crashed: %w", proc.name, err):
 				default:
@@ -180,33 +190,55 @@ func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) *
 		exitedChan <- struct{}{}
 	}()
 
-	return proc
+	return ManagedProcessId(id)
+}
+
+// Waits for the process to exit before terminating.
+func (procs *ManagedProcesses) Kill(id ManagedProcessId, sig syscall.Signal) {
+	procs.mu.Lock()
+	proc, present := procs.processes[uint64(id)]
+	if !present {
+		procs.mu.Unlock()
+		panic(fmt.Errorf("process %v not present", id))
+	}
+	delete(procs.processes, uint64(id))
+	procs.mu.Unlock()
+
+	atomic.StoreUint32(&proc.closeInitiated, 1)
+	if proc.cmd == nil || proc.cmd.Process == nil {
+		return
+	}
+	proc.cmd.Process.Signal(sig)
+	terminated := uint64(0)
+	// wait at most 20 seconds for process to come down
+	if sig != syscall.SIGKILL {
+		go func() {
+			time.Sleep(20 * time.Second)
+			if atomic.LoadUint64(&terminated) == 0 {
+				fmt.Printf("process %s not terminating, killing it\n", proc.name)
+				proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
+			}
+		}()
+	}
+	<-proc.exitedChan
+	atomic.StoreUint64(&terminated, 1)
+	proc.exitedChan <- struct{}{}
 }
 
 func (procs *ManagedProcesses) Close() {
-	atomic.StoreUint32(&procs.closeInitiated, 1)
+	// we don't try to be thread safe here...
 	fmt.Printf("terminating %v managed processes\n", len(procs.processes))
 	var wait sync.WaitGroup
 	wait.Add(len(procs.processes))
-	for i := range procs.processes {
-		proc := &procs.processes[i]
+	ids := make([]ManagedProcessId, len(procs.processes))
+	ids = ids[:0]
+	for id := range procs.processes {
+		ids = append(ids, ManagedProcessId(id))
+	}
+	for i := range ids {
+		id := ids[i]
 		go func() {
-			if proc.cmd == nil || proc.cmd.Process == nil {
-				return
-			}
-			proc.cmd.Process.Signal(syscall.SIGTERM)
-			terminated := uint64(0)
-			// wait at most 20 seconds for process to come down
-			go func() {
-				time.Sleep(20 * time.Second)
-				if atomic.LoadUint64(&terminated) == 0 {
-					fmt.Printf("process %s not terminating, killing it\n", proc.name)
-					proc.cmd.Process.Kill() // ignoring error on purpose, there isn't much to do by now
-				}
-			}()
-			<-proc.exitedChan
-			atomic.StoreUint64(&terminated, 1)
-			proc.exitedChan <- struct{}{}
+			procs.Kill(id, syscall.SIGTERM)
 			wait.Done()
 		}()
 	}
@@ -250,7 +282,7 @@ func createDataDir(dir string) {
 	}
 }
 
-func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServiceOpts) {
+func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServiceOpts) ManagedProcessId {
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
@@ -276,7 +308,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
 	}
 	args = append(args, opts.Path, opts.StorageClass.String())
-	procs.Start(ll, &ManagedProcessArgs{
+	return procs.Start(ll, &ManagedProcessArgs{
 		Name:            fmt.Sprintf("block service (%v:%d & %v:%d)", opts.OwnIp1, opts.Port1, opts.OwnIp2, opts.Port2),
 		Exe:             opts.Exe,
 		Args:            args,

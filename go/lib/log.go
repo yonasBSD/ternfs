@@ -186,6 +186,10 @@ func NewLogger(
 	return &logger
 }
 
+func (l *Logger) Level() LogLevel {
+	return l.level
+}
+
 func (l *Logger) shouldLog(level LogLevel) bool {
 	return level >= l.level
 }

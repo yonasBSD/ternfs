@@ -12,11 +12,14 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/rs"
+	"xtx/eggsfs/wyhash"
 
 	"golang.org/x/exp/constraints"
 )
@@ -392,6 +395,90 @@ func noRunawayArgs() {
 	}
 }
 
+type blockServiceVictim struct {
+	failureDomain string
+	path          string
+	storageClass  msgs.StorageClass
+}
+
+func (bsv *blockServiceVictim) start(
+	log *lib.Logger,
+	blocksExe string,
+	shucklePort uint16,
+	profile bool,
+	procs *managedprocess.ManagedProcesses,
+) managedprocess.ManagedProcessId {
+	return procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
+		Exe:            blocksExe,
+		Path:           bsv.path,
+		StorageClass:   bsv.storageClass,
+		FailureDomain:  bsv.failureDomain,
+		LogLevel:       log.Level(),
+		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
+		NoTimeCheck:    true,
+		OwnIp1:         "127.0.0.1",
+		OwnIp2:         "127.0.0.1",
+		Profile:        profile,
+	})
+}
+
+func killBlockServicesEvery(
+	log *lib.Logger,
+	terminateChan chan any,
+	blocksExe string,
+	shucklePort uint16,
+	profile bool,
+	procs *managedprocess.ManagedProcesses,
+	bsProcs map[managedprocess.ManagedProcessId]blockServiceVictim,
+	every time.Duration,
+) {
+	log.Info("will kill block services every %v", every)
+	var mu sync.Mutex
+	killAtOnce := 4
+	rand := wyhash.New(uint64(time.Now().Nanosecond()))
+	for i := 0; i < killAtOnce; i++ {
+		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				// pick a victim
+				var bsv blockServiceVictim
+				mu.Lock()
+				ix := int(rand.Uint64()) % len(bsProcs)
+				i := 0
+				var procId managedprocess.ManagedProcessId
+				for procId = range bsProcs {
+					if i >= ix {
+						bsv = bsProcs[procId]
+						delete(bsProcs, procId)
+						break
+					}
+					i++
+				}
+				mu.Unlock()
+				// kill the victim
+				log.Info("killing %v", bsv.path)
+				procs.Kill(procId, syscall.SIGKILL)
+				// wait
+				time.Sleep(every)
+				// revive the victim
+				log.Info("reviving %v", bsv.path)
+				procId = bsv.start(
+					log,
+					blocksExe,
+					shucklePort,
+					profile,
+					procs,
+				)
+				mu.Lock()
+				bsProcs[procId] = bsv
+				mu.Unlock()
+				// wait for the victim (not great, but oh well)
+				time.Sleep(time.Second)
+			}
+		}()
+	}
+}
+
 func main() {
 	overrides := make(cfgOverrides)
 
@@ -414,6 +501,7 @@ func main() {
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
 	tmpDir := flag.String("tmp-dir", "", "")
 	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
+	blockServicesKiller := flag.Duration("block-services-killer", 0, "")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -543,25 +631,31 @@ func main() {
 	failureDomains := 16
 	hddBlockServices := 10
 	flashBlockServices := 10
+	// from proc id to failure domain
+	blockServicesProcs := make(map[managedprocess.ManagedProcessId]blockServiceVictim)
 	for i := 0; i < failureDomains; i++ {
 		for j := 0; j < hddBlockServices+flashBlockServices; j++ {
 			storageClass := msgs.HDD_STORAGE
 			if j >= hddBlockServices {
 				storageClass = msgs.FLASH_STORAGE
 			}
-			procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
-				Exe:            goExes.BlocksExe,
-				Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", (i*(hddBlockServices+flashBlockServices))+j)),
-				StorageClass:   storageClass,
-				FailureDomain:  fmt.Sprintf("%d", i),
-				LogLevel:       level,
-				ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
-				NoTimeCheck:    true,
-				OwnIp1:         "127.0.0.1",
-				OwnIp2:         "127.0.0.1",
-				Profile:        *profile,
-			})
+			bsv := blockServiceVictim{
+				failureDomain: fmt.Sprintf("%d", i),
+				path:          path.Join(*dataDir, fmt.Sprintf("bs_%d", (i*(hddBlockServices+flashBlockServices))+j)),
+				storageClass:  storageClass,
+			}
+			procId := bsv.start(
+				log,
+				goExes.BlocksExe,
+				shucklePort,
+				*profile,
+				procs,
+			)
+			blockServicesProcs[procId] = bsv
 		}
+	}
+	if *blockServicesKiller != 0 {
+		killBlockServicesEvery(log, terminateChan, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, *blockServicesKiller)
 	}
 
 	if *outgoingPacketDrop > 0 {

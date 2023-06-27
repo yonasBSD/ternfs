@@ -23,6 +23,17 @@ std::ostream& operator<<(std::ostream& out, Duration d) {
     return out;
 }
 
+__attribute__((constructor))
+static void checkClockRes() {
+    struct timespec ts;
+    if (clock_getres(CLOCK_REALTIME, &ts) != 0) {
+        throw SYSCALL_EXCEPTION("clock_getres");
+    }
+    if (ts.tv_sec != 0 || ts.tv_nsec != 1) {
+        throw EGGS_EXCEPTION("expected nanosecond precisions, got %s,%s", ts.tv_sec, ts.tv_nsec);
+    }
+}
+
 EggsTime eggsNow() {
     struct timespec now;
 
@@ -30,12 +41,12 @@ EggsTime eggsNow() {
         throw SYSCALL_EXCEPTION("clock_gettime");
     }
 
-    return EggsTime(((uint64_t)now.tv_nsec + ((uint64_t)now.tv_sec * 1'000'000'000ull)) - EGGS_EPOCH);
+    return EggsTime(((uint64_t)now.tv_nsec + ((uint64_t)now.tv_sec * 1'000'000'000ull)));
 }
 
 std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
-    time_t secs =  (EGGS_EPOCH + eggst.ns) / 1'000'000'000ull;
-    uint64_t nsecs = eggst.ns % 1'000'000'00ull;
+    time_t secs =  eggst.ns / 1'000'000'000ull;
+    uint64_t nsecs = eggst.ns % 1'000'000'000ull;
     struct tm tm;
     if (gmtime_r(&secs, &tm) == nullptr) {
         throw SYSCALL_EXCEPTION("gmtime_r");

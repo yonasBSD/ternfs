@@ -224,10 +224,8 @@ const (
 	ROOT_DIR_INODE_ID = InodeId(DIRECTORY) << 61
 )
 
-const EGGS_EPOCH uint64 = 1_577_836_800_000_000_000
-
 func MakeEggsTime(t time.Time) EggsTime {
-	return EggsTime(uint64(t.UnixNano()) - EGGS_EPOCH)
+	return EggsTime(uint64(t.UnixNano()))
 }
 
 func Now() EggsTime {
@@ -235,7 +233,7 @@ func Now() EggsTime {
 }
 
 func (t EggsTime) Time() time.Time {
-	return time.Unix(0, int64(uint64(t)+EGGS_EPOCH))
+	return time.Unix(0, int64(uint64(t)))
 }
 
 func (t EggsTime) String() string {

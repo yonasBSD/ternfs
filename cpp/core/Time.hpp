@@ -47,8 +47,6 @@ constexpr Duration operator "" _hours(unsigned long long t) { return Duration(t*
 
 std::ostream& operator<<(std::ostream& out, Duration d);
 
-constexpr uint64_t EGGS_EPOCH = 1'577'836'800'000'000'000;
-
 struct EggsTime {
     uint64_t ns;
 

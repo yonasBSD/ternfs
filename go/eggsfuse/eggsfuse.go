@@ -184,7 +184,7 @@ func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
 
 		logger.Debug("getattr size=%v", cached.size)
 		out.Size = cached.size
-		mtime := msgs.EGGS_EPOCH + uint64(cached.mtime)
+		mtime := uint64(cached.mtime)
 		mtimesec := mtime / 1000000000
 		mtimens := uint32(mtime % 1000000000)
 		out.Ctime = mtimesec

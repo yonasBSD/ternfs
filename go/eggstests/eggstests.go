@@ -668,7 +668,7 @@ func main() {
 	}
 
 	// Start CDC
-	procs.StartCDC(log, *repoDir, &managedprocess.CDCOpts{
+	cdcOpts := &managedprocess.CDCOpts{
 		Exe:            cppExes.CDCExe,
 		Dir:            path.Join(*dataDir, "cdc"),
 		LogLevel:       level,
@@ -677,7 +677,12 @@ func main() {
 		ShuckleAddress: shuckleAddress,
 		OwnIp1:         "127.0.0.1",
 		OwnIp2:         "127.0.0.1",
-	})
+	}
+	if *buildType == "valgrind" {
+		// apparently 100ms is too little when running with valgrind
+		cdcOpts.ShardTimeout = time.Millisecond * 500
+	}
+	procs.StartCDC(log, *repoDir, cdcOpts)
 
 	// Start shards
 	numShards := 256

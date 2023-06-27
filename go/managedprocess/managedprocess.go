@@ -521,6 +521,7 @@ type CDCOpts struct {
 	Port1          uint16
 	OwnIp2         string
 	Port2          uint16
+	ShardTimeout   time.Duration
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
@@ -537,6 +538,9 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	}
 	if opts.OwnIp2 != "" {
 		args = append(args, "-own-ip-2", opts.OwnIp2)
+	}
+	if opts.ShardTimeout != 0 {
+		args = append(args, "-shard-timeout-ms", fmt.Sprintf("%v", opts.ShardTimeout.Milliseconds()))
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:

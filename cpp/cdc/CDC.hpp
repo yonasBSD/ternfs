@@ -2,6 +2,7 @@
 
 #include "Env.hpp"
 #include "Shard.hpp"
+#include "Time.hpp"
 
 struct CDCOptions {
     LogLevel logLevel = LogLevel::LOG_INFO;
@@ -12,6 +13,7 @@ struct CDCOptions {
     // The second will be used if the ip is non-null
     std::array<IpPort, 2> ipPorts = {IpPort(0, 0), IpPort(0, 0)};
     bool syslog = false;
+    Duration shardTimeout = 100_ms;
 };
 
 void runCDC(const std::string& dbDir, const CDCOptions& options);

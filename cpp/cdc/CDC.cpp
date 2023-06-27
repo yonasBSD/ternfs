@@ -75,6 +75,7 @@ private:
     uint64_t _shardRequestIdCounter;
     std::array<int, 4> _socks;
     AES128Key _expandedCDCKey;
+    Duration _shardTimeout;
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
     std::unordered_map<uint64_t, InFlightCDCRequest> _inFlightTxns;
@@ -88,7 +89,8 @@ public:
         _ipPorts(options.ipPorts),
         _recvBuf(DEFAULT_UDP_MTU),
         _sendBuf(DEFAULT_UDP_MTU),
-        _shardRequestIdCounter(0)
+        _shardRequestIdCounter(0),
+        _shardTimeout(options.shardTimeout)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
         memset(&_socks[0], 0, sizeof(_socks));
@@ -185,14 +187,17 @@ public:
                 break;
             }
 
-            // timeout after 100ms
-            if (_inFlightShardReq && (eggsNow() - _inFlightShardReq->sentAt) > 100_ms) {
-                _inFlightShardReq.reset();
-                _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
+            {
+                auto now = eggsNow();
+                if (_inFlightShardReq && (now - _inFlightShardReq->sentAt) > _shardTimeout) {
+                    _inFlightShardReq.reset();
+                    LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, timing out (%s > %s)", _inFlightShardReq->shardRequestId, _inFlightShardReq->sentAt, now, (now - _inFlightShardReq->sentAt), _shardTimeout);
+                    _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
+                }
             }
 
-            // 1ms timeout for prompt termination and for shard resps timeouts
-            int nfds = epoll_wait(epoll, events, _socks.size(), 1 /*milliseconds*/);
+            // 10ms timeout for prompt termination and for shard resps timeouts
+            int nfds = epoll_wait(epoll, events, _socks.size(), 10 /*milliseconds*/);
             if (nfds < 0) {
                 throw SYSCALL_EXCEPTION("epoll_wait");
             }

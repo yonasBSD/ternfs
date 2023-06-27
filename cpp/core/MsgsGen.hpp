@@ -79,13 +79,13 @@ enum class ShardMessageKind : uint8_t {
     FILE_SPANS = 11,
     SAME_DIRECTORY_RENAME = 12,
     ADD_INLINE_SPAN = 16,
+    FULL_READ_DIR = 115,
     STAT_TRANSIENT_FILE = 3,
     SET_DIRECTORY_INFO = 13,
     EXPIRE_TRANSIENT_FILE = 15,
     VISIT_DIRECTORIES = 112,
     VISIT_FILES = 113,
     VISIT_TRANSIENT_FILES = 114,
-    FULL_READ_DIR = 115,
     REMOVE_NON_OWNED_EDGE = 116,
     SAME_SHARD_HARD_FILE_UNLINK = 117,
     REMOVE_SPAN_INITIATE = 118,
@@ -619,29 +619,6 @@ struct BlacklistEntry {
 
 std::ostream& operator<<(std::ostream& out, const BlacklistEntry& x);
 
-struct TransientFile {
-    InodeId id;
-    BincodeFixedBytes<8> cookie;
-    EggsTime deadlineTime;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
-
-    TransientFile() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // id
-        _size += BincodeFixedBytes<8>::STATIC_SIZE; // cookie
-        _size += 8; // deadlineTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const TransientFile&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const TransientFile& x);
-
 struct Edge {
     bool current;
     InodeIdExtra targetId;
@@ -691,6 +668,29 @@ struct FullReadDirCursor {
 };
 
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x);
+
+struct TransientFile {
+    InodeId id;
+    BincodeFixedBytes<8> cookie;
+    EggsTime deadlineTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
+
+    TransientFile() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // cookie
+        _size += 8; // deadlineTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const TransientFile&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const TransientFile& x);
 
 struct EntryNewBlockInfo {
     BlockServiceId blockServiceId;
@@ -1382,6 +1382,56 @@ struct AddInlineSpanResp {
 
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanResp& x);
 
+struct FullReadDirReq {
+    InodeId dirId;
+    uint8_t flags;
+    BincodeBytes startName;
+    EggsTime startTime;
+    uint16_t limit;
+    uint16_t mtu;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 1 + BincodeBytes::STATIC_SIZE + 8 + 2 + 2; // dirId + flags + startName + startTime + limit + mtu
+
+    FullReadDirReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // dirId
+        _size += 1; // flags
+        _size += startName.packedSize(); // startName
+        _size += 8; // startTime
+        _size += 2; // limit
+        _size += 2; // mtu
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FullReadDirReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FullReadDirReq& x);
+
+struct FullReadDirResp {
+    FullReadDirCursor next;
+    BincodeList<Edge> results;
+
+    static constexpr uint16_t STATIC_SIZE = FullReadDirCursor::STATIC_SIZE + BincodeList<Edge>::STATIC_SIZE; // next + results
+
+    FullReadDirResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += next.packedSize(); // next
+        _size += results.packedSize(); // results
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FullReadDirResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FullReadDirResp& x);
+
 struct StatTransientFileReq {
     InodeId id;
 
@@ -1623,56 +1673,6 @@ struct VisitTransientFilesResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const VisitTransientFilesResp& x);
-
-struct FullReadDirReq {
-    InodeId dirId;
-    uint8_t flags;
-    BincodeBytes startName;
-    EggsTime startTime;
-    uint16_t limit;
-    uint16_t mtu;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 1 + BincodeBytes::STATIC_SIZE + 8 + 2 + 2; // dirId + flags + startName + startTime + limit + mtu
-
-    FullReadDirReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // dirId
-        _size += 1; // flags
-        _size += startName.packedSize(); // startName
-        _size += 8; // startTime
-        _size += 2; // limit
-        _size += 2; // mtu
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const FullReadDirReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const FullReadDirReq& x);
-
-struct FullReadDirResp {
-    FullReadDirCursor next;
-    BincodeList<Edge> results;
-
-    static constexpr uint16_t STATIC_SIZE = FullReadDirCursor::STATIC_SIZE + BincodeList<Edge>::STATIC_SIZE; // next + results
-
-    FullReadDirResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += next.packedSize(); // next
-        _size += results.packedSize(); // results
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const FullReadDirResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const FullReadDirResp& x);
 
 struct RemoveNonOwnedEdgeReq {
     InodeId dirId;
@@ -3035,7 +3035,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, FullReadDirReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
@@ -3062,6 +3062,8 @@ public:
     SameDirectoryRenameReq& setSameDirectoryRename();
     const AddInlineSpanReq& getAddInlineSpan() const;
     AddInlineSpanReq& setAddInlineSpan();
+    const FullReadDirReq& getFullReadDir() const;
+    FullReadDirReq& setFullReadDir();
     const StatTransientFileReq& getStatTransientFile() const;
     StatTransientFileReq& setStatTransientFile();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
@@ -3074,8 +3076,6 @@ public:
     VisitFilesReq& setVisitFiles();
     const VisitTransientFilesReq& getVisitTransientFiles() const;
     VisitTransientFilesReq& setVisitTransientFiles();
-    const FullReadDirReq& getFullReadDir() const;
-    FullReadDirReq& setFullReadDir();
     const RemoveNonOwnedEdgeReq& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeReq& setRemoveNonOwnedEdge();
     const SameShardHardFileUnlinkReq& getSameShardHardFileUnlink() const;
@@ -3119,7 +3119,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, FullReadDirResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
@@ -3146,6 +3146,8 @@ public:
     SameDirectoryRenameResp& setSameDirectoryRename();
     const AddInlineSpanResp& getAddInlineSpan() const;
     AddInlineSpanResp& setAddInlineSpan();
+    const FullReadDirResp& getFullReadDir() const;
+    FullReadDirResp& setFullReadDir();
     const StatTransientFileResp& getStatTransientFile() const;
     StatTransientFileResp& setStatTransientFile();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
@@ -3158,8 +3160,6 @@ public:
     VisitFilesResp& setVisitFiles();
     const VisitTransientFilesResp& getVisitTransientFiles() const;
     VisitTransientFilesResp& setVisitTransientFiles();
-    const FullReadDirResp& getFullReadDir() const;
-    FullReadDirResp& setFullReadDir();
     const RemoveNonOwnedEdgeResp& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeResp& setRemoveNonOwnedEdge();
     const SameShardHardFileUnlinkResp& getSameShardHardFileUnlink() const;

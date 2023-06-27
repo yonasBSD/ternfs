@@ -1346,6 +1346,13 @@ func main() {
 			reflect.TypeOf(msgs.AddInlineSpanReq{}),
 			reflect.TypeOf(msgs.AddInlineSpanResp{}),
 		},
+		// this was marked as a "private" operation, but we now use it in
+		// the client (to check deleted edges)
+		{
+			0x73,
+			reflect.TypeOf(msgs.FullReadDirReq{}),
+			reflect.TypeOf(msgs.FullReadDirResp{}),
+		},
 	}
 
 	shardReqResps := append(kernelShardReqResps, []reqRespType{
@@ -1380,11 +1387,6 @@ func main() {
 			0x72,
 			reflect.TypeOf(msgs.VisitTransientFilesReq{}),
 			reflect.TypeOf(msgs.VisitTransientFilesResp{}),
-		},
-		{
-			0x73,
-			reflect.TypeOf(msgs.FullReadDirReq{}),
-			reflect.TypeOf(msgs.FullReadDirResp{}),
 		},
 		{
 			0x74,
@@ -1588,12 +1590,12 @@ func main() {
 		reflect.TypeOf(msgs.FetchedInlineSpan{}),
 		reflect.TypeOf(msgs.FetchedBlocksSpan{}),
 		reflect.TypeOf(msgs.BlacklistEntry{}),
+		reflect.TypeOf(msgs.Edge{}),
+		reflect.TypeOf(msgs.FullReadDirCursor{}),
 	}
 
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
-		reflect.TypeOf(msgs.Edge{}),
-		reflect.TypeOf(msgs.FullReadDirCursor{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
 		reflect.TypeOf(msgs.RegisterShardInfo{}),

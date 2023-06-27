@@ -110,7 +110,7 @@ func (c *Client) checkDeletedEdge(
 		return false
 	}
 	oldEdge := resp.Results[1]
-	if oldEdge.TargetId.Extra() != owned || oldEdge.TargetId.Id() != targetId || oldEdge.CreationTime != creationTime {
+	if oldEdge.Current || oldEdge.TargetId.Extra() != owned || oldEdge.TargetId.Id() != targetId || oldEdge.CreationTime != creationTime {
 		logger.Info("got mismatched snapshot edge (%+v), giving up and returning original error", oldEdge)
 		return false
 	}

@@ -216,17 +216,21 @@ int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, vo
 static bool check_deleted_edge(
     struct eggsfs_fs_info* info, u64 dir, u64 target, const char* name, int name_len, u64 creation_time, bool owned
 ) {
+    int i;
     struct sk_buff* skb;
     u32 attempts;
     u64 req_id = alloc_request_id();
-    u8 kind = EGGSFS_SHARD_SNAPSHOT_LOOKUP;
+    u8 kind = EGGSFS_SHARD_FULL_READ_DIR;
     {
-        PREPARE_SHARD_REQ_CTX(EGGSFS_SNAPSHOT_LOOKUP_REQ_MAX_SIZE);
-        eggsfs_snapshot_lookup_req_put_start(&ctx, start);
-        eggsfs_snapshot_lookup_req_put_dir_id(&ctx, start, dir_req, dir);
-        eggsfs_snapshot_lookup_req_put_name(&ctx, dir_req, name_req, name, name_len);
-        eggsfs_snapshot_lookup_req_put_start_from(&ctx, name_req, start_from, creation_time);
-        eggsfs_snapshot_lookup_req_put_end(&ctx, start_from, end);
+        PREPARE_SHARD_REQ_CTX(EGGSFS_FULL_READ_DIR_REQ_MAX_SIZE);
+        eggsfs_full_read_dir_req_put_start(&ctx, start);
+        eggsfs_full_read_dir_req_put_dir_id(&ctx, start, dir_req, dir);
+        eggsfs_full_read_dir_req_put_flags(&ctx, dir_req, flags, EGGSFS_FULL_READ_DIR_BACKWARDS|EGGSFS_FULL_READ_DIR_CURRENT|EGGSFS_FULL_READ_DIR_SAME_NAME);
+        eggsfs_full_read_dir_req_put_start_name(&ctx, flags, name_req, name, name_len);
+        eggsfs_full_read_dir_req_put_start_time(&ctx, name_req, start_time, 0);
+        eggsfs_full_read_dir_req_put_limit(&ctx, start_time, limit, 2);
+        eggsfs_full_read_dir_req_put_mtu(&ctx, limit, mtu, 0);
+        eggsfs_full_read_dir_req_put_end(&ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(dir), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return false; }
     }
@@ -234,21 +238,28 @@ static bool check_deleted_edge(
     bool good = true;
     {
         PREPARE_SHARD_RESP_CTX();
-        eggsfs_snapshot_lookup_resp_get_start(&ctx, start);
-        eggsfs_snapshot_lookup_resp_get_next_time(&ctx, start, next_time);
-        eggsfs_snapshot_lookup_resp_get_edges(&ctx, next_time, edges);
-        if (edges.len != 2) { good = false; }
-        int i;
-        for (i = 0; i < edges.len; i++) {
-            eggsfs_snapshot_lookup_edge_get_start(&ctx, start);
-            eggsfs_snapshot_lookup_edge_get_target_id(&ctx, start, edge_target);
-            eggsfs_snapshot_lookup_edge_get_creation_time(&ctx, edge_target, edge_creation_time);
-            eggsfs_snapshot_lookup_edge_get_end(&ctx, edge_creation_time, end);
+        eggsfs_full_read_dir_resp_get_start(&ctx, start);
+        eggsfs_full_read_dir_resp_get_next(&ctx, start, cursor);
+        eggsfs_full_read_dir_cursor_get_current(&ctx, cursor, cur_current);
+        eggsfs_full_read_dir_cursor_get_start_name(&ctx, cur_current, cur_start_name);
+        eggsfs_full_read_dir_cursor_get_start_time(&ctx, cur_start_name, cur_start_time);
+        eggsfs_full_read_dir_cursor_get_end(&ctx, cur_start_time, cur_end);
+        eggsfs_full_read_dir_resp_get_results(&ctx, cur_end, results_len);
+        if (results_len.len != 2) { good = false; }
+        for (i = 0; i < results_len.len; i++) {
+            eggsfs_edge_get_start(&ctx, start);
+            eggsfs_edge_get_current(&ctx, start, edge_current);
+            eggsfs_edge_get_target_id(&ctx, edge_current, edge_target);
+            eggsfs_edge_get_name_hash(&ctx, edge_target, edge_name_hash);
+            eggsfs_edge_get_name(&ctx, edge_name_hash, edge_name);
+            eggsfs_edge_get_creation_time(&ctx, edge_name, edge_creation_time);
+            eggsfs_edge_get_end(&ctx, edge_creation_time, end);
             eggsfs_bincode_get_finish_list_el(end);
             if (
                 likely(ctx.err == 0) &&
-                i == 0 && // this is the old edge
+                i == 1 && // this is the old edge
                 (
+                    edge_current.x ||
                     EGGSFS_GET_EXTRA(edge_target.x) != owned ||
                     EGGSFS_GET_EXTRA_ID(edge_target.x) != target ||
                     edge_creation_time.x != creation_time
@@ -258,14 +269,14 @@ static bool check_deleted_edge(
             }
             if (
                 likely(ctx.err == 0) &&
-                i == 1 && // this is the deleted edge
+                i == 0 && // this is the deleted edge
                 EGGSFS_GET_EXTRA_ID(edge_target.x) != 0
             ) {
                 good = false;
             }
         }
-        eggsfs_snapshot_lookup_resp_get_end(&ctx, edges, end);
-        eggsfs_snapshot_lookup_resp_get_finish(&ctx, end);
+        eggsfs_full_read_dir_resp_get_end(&ctx, results_len, end);
+        eggsfs_full_read_dir_resp_get_finish(&ctx, end);
         consume_skb(skb);
         if (ctx.err != 0) { return false; }
     }

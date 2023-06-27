@@ -286,14 +286,6 @@ struct BincodeBuf {
         cursor += sizeof(A);
     }
 
-    void packVarU61(uint64_t x) {
-        uint64_t neededBytes = varU61Size(x);
-        ensureSizeOrPanic(neededBytes);
-        x = (x << 3) | (neededBytes-1);
-        memcpy(cursor, &x, neededBytes);
-        cursor += neededBytes;
-    }
-
     template<size_t SZ>
     void packFixedBytes(const BincodeFixedBytes<SZ>& x) {
         ensureSizeOrPanic(SZ);
@@ -328,18 +320,6 @@ struct BincodeBuf {
         memcpy(&x, cursor, sizeof(A));
         cursor += sizeof(A);
         return x;
-    }
-
-    uint64_t unpackVarU61() {
-        uint64_t head = unpackScalar<uint8_t>();
-        uint64_t bytes = head & (8 - 1);
-        if (unlikely(remaining() < bytes)) {
-            throw BINCODE_EXCEPTION("not enough bytes to unpack var u61 (need %s, got %s)", bytes, remaining());
-        }
-        uint64_t tail = 0;
-        memcpy(&tail, cursor, bytes);
-        cursor += bytes;
-        return (head >> 3) | (tail << 5);
     }
 
     template<size_t SZ>

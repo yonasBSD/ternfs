@@ -50,19 +50,6 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
-TEST_CASE("bincode u61 varint") {
-    char buf[8];
-    BincodeBuf bbuf(buf, sizeof(buf));
-    bbuf.packVarU61(0);
-    CHECK(bbuf.remaining() == 7);
-    for (int i = 0; i < 61; i++) {
-        uint64_t x = 1ull << i;
-        BincodeBuf(buf, 8).packVarU61(x);
-        uint64_t y = BincodeBuf(buf, 8).unpackVarU61();
-        CHECK(x == y);
-    }
-}
-
 TEST_CASE("BincodeBytes") {
     BincodeBytes bytes;
     CHECK(bytes.size() == 0);

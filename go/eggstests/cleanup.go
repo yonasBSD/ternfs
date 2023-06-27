@@ -56,7 +56,7 @@ func cleanupAfterTest(
 	// Delete all current things
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything -- this relies on the snapshot policy being immediate, which we do
-	// in integrationtest.go
+	// in eggstests.go
 	if err := lib.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
 		panic(err)
 	}

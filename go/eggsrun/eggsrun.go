@@ -140,7 +140,7 @@ func main() {
 			opts := managedprocess.BlockServiceOpts{
 				Exe:            goExes.BlocksExe,
 				Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", bsCount)),
-				StorageClass:   storageClass,
+				StorageClasses: []msgs.StorageClass{storageClass},
 				FailureDomain:  fmt.Sprintf("%d", i),
 				LogLevel:       level,
 				ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),

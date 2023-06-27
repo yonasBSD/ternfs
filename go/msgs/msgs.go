@@ -110,7 +110,7 @@ func (flags BlockServiceFlags) String() string {
 	if flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
 		ret = append(ret, "DECOMMISSIONED")
 	}
-	return strings.Join(ret, ",")
+	return strings.Join(ret, "|")
 }
 
 const (
@@ -315,28 +315,6 @@ type LookupResp struct {
 	CreationTime EggsTime
 }
 
-// This request is only needed to recover from error resulting from repeated
-// calls to things moving edges (e.g. SameDirectoryRenameReq & friends).
-//
-// TODO this and the response are very ad-hoc, it'd possibly be nicer to fold
-// it in FullReadDir
-type SnapshotLookupReq struct {
-	DirId     InodeId
-	Name      string
-	StartFrom EggsTime
-}
-
-type SnapshotLookupEdge struct {
-	// If the extra bit is set, it's owned.
-	TargetId     InodeIdExtra
-	CreationTime EggsTime
-}
-
-type SnapshotLookupResp struct {
-	NextTime EggsTime // 0 for done
-	Edges    []SnapshotLookupEdge
-}
-
 // Does not consider transient files. Might return snapshot files:
 // we don't really have a way of knowing if a file is snapshot just by
 // looking at it, unlike directories.
@@ -437,6 +415,17 @@ type AddInlineSpanReq struct {
 
 type AddInlineSpanResp struct{}
 
+// in a separate type for the kernel to be able to define the decoding for this explicitly
+type FailureDomain struct {
+	Name [16]byte
+}
+
+// If any of these match, candidate block services will be excluded.
+type BlacklistEntry struct {
+	FailureDomain FailureDomain
+	BlockService  BlockServiceId
+}
+
 // Add span. The file must be transient.
 //
 // Generally speaking, the num_data_blocks*BlockSize == Size. However, there are two
@@ -460,7 +449,7 @@ type AddSpanInitiateReq struct {
 	// This is useful when the kernel knows it cannot communicate with a certain block
 	// service (because it noticed that it is broken before shuckle/shard did, or
 	// because of some transient network problem, or...).
-	Blacklist []BlockServiceId
+	Blacklist []BlacklistEntry
 	Parity    rs.Parity
 	Stripes   uint8 // [1, 15]
 	CellSize  uint32
@@ -469,12 +458,13 @@ type AddSpanInitiateReq struct {
 }
 
 type BlockInfo struct {
-	BlockServiceIp1   [4]byte
-	BlockServicePort1 uint16
-	BlockServiceIp2   [4]byte
-	BlockServicePort2 uint16
-	BlockServiceId    BlockServiceId
-	BlockId           BlockId
+	BlockServiceIp1           [4]byte
+	BlockServicePort1         uint16
+	BlockServiceIp2           [4]byte
+	BlockServicePort2         uint16
+	BlockServiceId            BlockServiceId
+	BlockServiceFailureDomain FailureDomain
+	BlockId                   BlockId
 	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
 	Certificate [8]byte
 }
@@ -693,22 +683,32 @@ type VisitTransientFilesResp struct {
 	Files  []TransientFile
 }
 
-type FullReadDirCursor struct {
-	Current   bool
-	StartHash uint64
-	StartName string
-	StartTime EggsTime // must be 0 if Current=true
-}
+type FullReadDirFlags uint8
 
-// This streams all the edges, first the snapshot ones, then the current ones,
-// and does so regardless whether the directory has been removed or not.
+const (
+	// Whether the cursor is in current edges. Note that if you're traveling backwards
+	// and want to see all edges, you need to set this in the first request.
+	FULL_READ_DIR_CURRENT FullReadDirFlags = 1 << 0
+	// Travel backwards
+	FULL_READ_DIR_BACKWARDS FullReadDirFlags = 1 << 1
+	// Only consider the name given in the req. This is needed because we'll need to
+	// skip over the other current edges if we need to look only at one edge.
+	FULL_READ_DIR_SAME_NAME FullReadDirFlags = 1 << 2
+)
+
+// This streams all the edges (snapshot and not), backwards or forwards depending
+// on what was requested, and does so regardless whether the directory has been
+// removed or not.
 //
-// Starts from the first edge >= than the cursor. The snapshot edges come first.
+// Starts from the first edge >= (forwards) or <= (backwards) than the cursor. The
+// hash is automatically generated from the name.
 type FullReadDirReq struct {
-	DirId  InodeId
-	Cursor FullReadDirCursor
-	// If 0, a conservative MTU will be used.
-	Mtu uint16
+	DirId     InodeId
+	Flags     FullReadDirFlags
+	StartName string
+	StartTime EggsTime
+	Limit     uint16
+	Mtu       uint16
 }
 
 type Edge struct {
@@ -723,6 +723,14 @@ type Edge struct {
 	NameHash     uint64
 	Name         string
 	CreationTime EggsTime
+}
+
+type FullReadDirCursor struct {
+	// Current and non-current edges are separated, so we must
+	// remember in which section we are.
+	Current   bool
+	StartName string
+	StartTime EggsTime
 }
 
 type FullReadDirResp struct {
@@ -768,20 +776,43 @@ type RemoveEdgesReq struct {
 	Edges []Edge
 }
 
-// These is generally needed when we need to move/create things cross-shard, but
-// is unsafe for various reasons:
-// * W must remember to unlock the edge, otherwise it'll be locked forever.
-// * We must make sure to not end up with multiple owners for the target.
-// TODO add comment about how creating an unlocked current edge is no good
-// if we want to retry things safely. We might create the edge without realizing
-// that we did (e.g. timeouts), and somebody might move it away in the meantime (with
-// some shard-local operation).
-// TODO also add comment regarding that locking edges is safe only because
-// we coordinate things from the CDC
+// These is generally needed when we need to move/create things cross-shard,
+// but is unsafe in generally since we need to make sure to not leave multiple
+// edges pointing to the same target. Moreover we need to create it locked and
+// matching the OldCreationTime.
+//
+// Consider the following scenarios:
+//
+// * We might create an edge and not realize because of timeouts, and
+//     then create a second, unwanted edge. Both the lock and the
+//     OldCreationTime match protect against this.
+// * We might create an edge, lose track of the request because of
+//     packet drop in the response, and then somebody else might overwrite
+//     the edge. OldCreationTime will make the retry request fail,
+//     however at that point we don't know if we have ever succeeded
+//     or not. Locking fixes this, because no non-CDC operation will
+//     be able to mess with the locked edge.
+// * We might send many create requests because of retries, have one succeed,
+//     then unlock the edge, and then have one of the requests we sent
+//     lock again because of packet reordering. So at that point we'd
+//     leak a lock. This does not happen with OldCreationTime: only
+//     one request will succeed.
+//
+// This means that we need both locking and OldCreationTime. This is quite
+// unfortunate: it means that generally we need to first lookup the old
+// creation time, then create the locked edge, then unlock it. Three requests
+// instead of one.
+//
+// Also note that this "locking" is clearly only safe given that the CDC
+// coordinates the locking. It's based on the assumption that nobody but
+// the CDC locks, but internally the CDC needs to coordinate its own locking.
+// We currently solve this by just having one transaction at a time in the
+// CDC.
 type CreateLockedCurrentEdgeReq struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
+	DirId           InodeId
+	Name            string
+	TargetId        InodeId
+	OldCreationTime EggsTime
 }
 
 type CreateLockedCurrentEdgeResp struct {
@@ -1217,9 +1248,10 @@ type CreateDirectoryInodeEntry struct {
 }
 
 type CreateLockedCurrentEdgeEntry struct {
-	DirId    InodeId
-	Name     string
-	TargetId InodeId
+	DirId           InodeId
+	Name            string
+	TargetId        InodeId
+	OldCreationTime EggsTime
 }
 
 type UnlockCurrentEdgeEntry struct {

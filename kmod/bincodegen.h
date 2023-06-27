@@ -74,8 +74,7 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_FILE_SPANS 0xB
 #define EGGSFS_SHARD_SAME_DIRECTORY_RENAME 0xC
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
-#define EGGSFS_SHARD_SNAPSHOT_LOOKUP 0xE
-#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 14, "SNAPSHOT_LOOKUP" })
+#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" })
 const char* eggsfs_shard_kind_str(int kind);
 
 #define EGGSFS_CDC_MAKE_DIRECTORY 0x1
@@ -353,7 +352,6 @@ static inline void _eggsfs_current_edge_put_creation_time(struct eggsfs_bincode_
     { struct eggsfs_current_edge_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_current_edge_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_BLOCK_INFO_SIZE 36
 struct eggsfs_block_info_start;
 #define eggsfs_block_info_get_start(ctx, start) struct eggsfs_block_info_start* start = NULL
 
@@ -432,8 +430,12 @@ static inline void _eggsfs_block_info_get_block_service_id(struct eggsfs_bincode
     struct eggsfs_block_info_block_service_id next; \
     _eggsfs_block_info_get_block_service_id(ctx, &(prev), &(next))
 
+#define eggsfs_block_info_get_block_service_failure_domain(ctx, prev, next) \
+    { struct eggsfs_block_info_block_service_id* __dummy __attribute__((unused)) = &(prev); }; \
+    struct eggsfs_failure_domain_start* next = NULL
+
 struct eggsfs_block_info_block_id { u64 x; };
-static inline void _eggsfs_block_info_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_service_id* prev, struct eggsfs_block_info_block_id* next) {
+static inline void _eggsfs_block_info_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_end** prev, struct eggsfs_block_info_block_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -1125,77 +1127,6 @@ static inline void _eggsfs_stripe_policy_put_target_stripe_size(struct eggsfs_bi
     { struct eggsfs_stripe_policy_target_stripe_size* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_stripe_policy_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_SNAPSHOT_LOOKUP_EDGE_SIZE 16
-struct eggsfs_snapshot_lookup_edge_start;
-#define eggsfs_snapshot_lookup_edge_get_start(ctx, start) struct eggsfs_snapshot_lookup_edge_start* start = NULL
-
-struct eggsfs_snapshot_lookup_edge_target_id { u64 x; };
-static inline void _eggsfs_snapshot_lookup_edge_get_target_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_edge_start** prev, struct eggsfs_snapshot_lookup_edge_target_id* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_le64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_edge_get_target_id(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_edge_target_id next; \
-    _eggsfs_snapshot_lookup_edge_get_target_id(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_edge_creation_time { u64 x; };
-static inline void _eggsfs_snapshot_lookup_edge_get_creation_time(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_edge_target_id* prev, struct eggsfs_snapshot_lookup_edge_creation_time* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_le64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_edge_get_creation_time(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_edge_creation_time next; \
-    _eggsfs_snapshot_lookup_edge_get_creation_time(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_edge_end;
-#define eggsfs_snapshot_lookup_edge_get_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_edge_creation_time* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_edge_end* next = NULL
-
-static inline void eggsfs_snapshot_lookup_edge_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_edge_end* end) {
-    if (unlikely(ctx->buf != ctx->end)) {
-        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-    }
-}
-
-#define eggsfs_snapshot_lookup_edge_put_start(ctx, start) struct eggsfs_snapshot_lookup_edge_start* start = NULL
-
-static inline void _eggsfs_snapshot_lookup_edge_put_target_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_edge_start** prev, struct eggsfs_snapshot_lookup_edge_target_id* next, u64 x) {
-    next = NULL;
-    BUG_ON(ctx->end - ctx->cursor < 8);
-    put_unaligned_le64(x, ctx->cursor);
-    ctx->cursor += 8;
-}
-#define eggsfs_snapshot_lookup_edge_put_target_id(ctx, prev, next, x) \
-    struct eggsfs_snapshot_lookup_edge_target_id next; \
-    _eggsfs_snapshot_lookup_edge_put_target_id(ctx, &(prev), &(next), x)
-
-static inline void _eggsfs_snapshot_lookup_edge_put_creation_time(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_edge_target_id* prev, struct eggsfs_snapshot_lookup_edge_creation_time* next, u64 x) {
-    next = NULL;
-    BUG_ON(ctx->end - ctx->cursor < 8);
-    put_unaligned_le64(x, ctx->cursor);
-    ctx->cursor += 8;
-}
-#define eggsfs_snapshot_lookup_edge_put_creation_time(ctx, prev, next, x) \
-    struct eggsfs_snapshot_lookup_edge_creation_time next; \
-    _eggsfs_snapshot_lookup_edge_put_creation_time(ctx, &(prev), &(next), x)
-
-#define eggsfs_snapshot_lookup_edge_put_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_edge_creation_time* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_edge_end* next __attribute__((unused)) = NULL
-
 #define EGGSFS_FETCHED_BLOCK_SIZE 13
 struct eggsfs_fetched_block_start;
 #define eggsfs_fetched_block_get_start(ctx, start) struct eggsfs_fetched_block_start* start = NULL
@@ -1617,6 +1548,55 @@ static inline void _eggsfs_fetched_blocks_span_put_stripes_crc(struct eggsfs_bin
 #define eggsfs_fetched_blocks_span_put_end(ctx, prev, next) \
     { struct eggsfs_fetched_blocks_span_stripes_crc* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_fetched_blocks_span_end* next __attribute__((unused)) = NULL
+
+struct eggsfs_blacklist_entry_start;
+#define eggsfs_blacklist_entry_get_start(ctx, start) struct eggsfs_blacklist_entry_start* start = NULL
+
+#define eggsfs_blacklist_entry_get_failure_domain(ctx, prev, next) \
+    { struct eggsfs_blacklist_entry_start** __dummy __attribute__((unused)) = &(prev); }; \
+    struct eggsfs_failure_domain_start* next = NULL
+
+struct eggsfs_blacklist_entry_block_service { u64 x; };
+static inline void _eggsfs_blacklist_entry_get_block_service(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_end** prev, struct eggsfs_blacklist_entry_block_service* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_blacklist_entry_get_block_service(ctx, prev, next) \
+    struct eggsfs_blacklist_entry_block_service next; \
+    _eggsfs_blacklist_entry_get_block_service(ctx, &(prev), &(next))
+
+struct eggsfs_blacklist_entry_end;
+#define eggsfs_blacklist_entry_get_end(ctx, prev, next) \
+    { struct eggsfs_blacklist_entry_block_service* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_blacklist_entry_end* next = NULL
+
+static inline void eggsfs_blacklist_entry_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_blacklist_entry_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_blacklist_entry_put_start(ctx, start) struct eggsfs_blacklist_entry_start* start = NULL
+
+static inline void _eggsfs_blacklist_entry_put_block_service(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_blacklist_entry_start** prev, struct eggsfs_blacklist_entry_block_service* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_blacklist_entry_put_block_service(ctx, prev, next, x) \
+    struct eggsfs_blacklist_entry_block_service next; \
+    _eggsfs_blacklist_entry_put_block_service(ctx, &(prev), &(next), x)
+
+#define eggsfs_blacklist_entry_put_end(ctx, prev, next) \
+    { struct eggsfs_blacklist_entry_block_service* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_blacklist_entry_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_LOOKUP_REQ_MAX_SIZE 264
 struct eggsfs_lookup_req_start;
@@ -3821,183 +3801,6 @@ static inline void eggsfs_add_inline_span_resp_get_finish(struct eggsfs_bincode_
 #define eggsfs_add_inline_span_resp_put_end(ctx, prev, next) \
     { struct eggsfs_add_inline_span_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_add_inline_span_resp_end* next __attribute__((unused)) = NULL
-
-#define EGGSFS_SNAPSHOT_LOOKUP_REQ_MAX_SIZE 272
-struct eggsfs_snapshot_lookup_req_start;
-#define eggsfs_snapshot_lookup_req_get_start(ctx, start) struct eggsfs_snapshot_lookup_req_start* start = NULL
-
-struct eggsfs_snapshot_lookup_req_dir_id { u64 x; };
-static inline void _eggsfs_snapshot_lookup_req_get_dir_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_req_start** prev, struct eggsfs_snapshot_lookup_req_dir_id* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_le64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_req_get_dir_id(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_req_dir_id next; \
-    _eggsfs_snapshot_lookup_req_get_dir_id(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_req_name { struct eggsfs_bincode_bytes str; };
-static inline void _eggsfs_snapshot_lookup_req_get_name(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_req_dir_id* prev, struct eggsfs_snapshot_lookup_req_name* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 1)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->str.len = *(u8*)(ctx->buf);
-            ctx->buf++;
-            if (unlikely(ctx->end - ctx->buf < next->str.len)) {
-                ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-            } else {
-                next->str.buf = ctx->buf;
-                ctx->buf += next->str.len;
-            }
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_req_get_name(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_req_name next; \
-    _eggsfs_snapshot_lookup_req_get_name(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_req_start_from { u64 x; };
-static inline void _eggsfs_snapshot_lookup_req_get_start_from(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_req_name* prev, struct eggsfs_snapshot_lookup_req_start_from* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_le64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_req_get_start_from(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_req_start_from next; \
-    _eggsfs_snapshot_lookup_req_get_start_from(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_req_end;
-#define eggsfs_snapshot_lookup_req_get_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_req_start_from* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_req_end* next = NULL
-
-static inline void eggsfs_snapshot_lookup_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_req_end* end) {
-    if (unlikely(ctx->buf != ctx->end)) {
-        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-    }
-}
-
-#define eggsfs_snapshot_lookup_req_put_start(ctx, start) struct eggsfs_snapshot_lookup_req_start* start = NULL
-
-static inline void _eggsfs_snapshot_lookup_req_put_dir_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_req_start** prev, struct eggsfs_snapshot_lookup_req_dir_id* next, u64 x) {
-    next = NULL;
-    BUG_ON(ctx->end - ctx->cursor < 8);
-    put_unaligned_le64(x, ctx->cursor);
-    ctx->cursor += 8;
-}
-#define eggsfs_snapshot_lookup_req_put_dir_id(ctx, prev, next, x) \
-    struct eggsfs_snapshot_lookup_req_dir_id next; \
-    _eggsfs_snapshot_lookup_req_put_dir_id(ctx, &(prev), &(next), x)
-
-static inline void _eggsfs_snapshot_lookup_req_put_name(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_req_dir_id* prev, struct eggsfs_snapshot_lookup_req_name* next, const char* str, int str_len) {
-    next = NULL;
-    BUG_ON(str_len < 0 || str_len > 255);
-    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));
-    *(u8*)(ctx->cursor) = str_len;
-    memcpy(ctx->cursor + 1, str, str_len);
-    ctx->cursor += 1 + str_len;
-}
-#define eggsfs_snapshot_lookup_req_put_name(ctx, prev, next, str, str_len) \
-    struct eggsfs_snapshot_lookup_req_name next; \
-    _eggsfs_snapshot_lookup_req_put_name(ctx, &(prev), &(next), str, str_len)
-
-static inline void _eggsfs_snapshot_lookup_req_put_start_from(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_req_name* prev, struct eggsfs_snapshot_lookup_req_start_from* next, u64 x) {
-    next = NULL;
-    BUG_ON(ctx->end - ctx->cursor < 8);
-    put_unaligned_le64(x, ctx->cursor);
-    ctx->cursor += 8;
-}
-#define eggsfs_snapshot_lookup_req_put_start_from(ctx, prev, next, x) \
-    struct eggsfs_snapshot_lookup_req_start_from next; \
-    _eggsfs_snapshot_lookup_req_put_start_from(ctx, &(prev), &(next), x)
-
-#define eggsfs_snapshot_lookup_req_put_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_req_start_from* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_req_end* next __attribute__((unused)) = NULL
-
-struct eggsfs_snapshot_lookup_resp_start;
-#define eggsfs_snapshot_lookup_resp_get_start(ctx, start) struct eggsfs_snapshot_lookup_resp_start* start = NULL
-
-struct eggsfs_snapshot_lookup_resp_next_time { u64 x; };
-static inline void _eggsfs_snapshot_lookup_resp_get_next_time(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_resp_start** prev, struct eggsfs_snapshot_lookup_resp_next_time* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 8)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->x = get_unaligned_le64(ctx->buf);
-            ctx->buf += 8;
-        }
-    }
-}
-#define eggsfs_snapshot_lookup_resp_get_next_time(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_resp_next_time next; \
-    _eggsfs_snapshot_lookup_resp_get_next_time(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_resp_edges { u16 len; };
-static inline void _eggsfs_snapshot_lookup_resp_get_edges(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_resp_next_time* prev, struct eggsfs_snapshot_lookup_resp_edges* next) {
-    if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf < 2)) {
-            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-        } else {
-            next->len = get_unaligned_le16(ctx->buf);
-            ctx->buf += 2;
-        }
-    } else {
-        next->len = 0;
-    }
-}
-#define eggsfs_snapshot_lookup_resp_get_edges(ctx, prev, next) \
-    struct eggsfs_snapshot_lookup_resp_edges next; \
-    _eggsfs_snapshot_lookup_resp_get_edges(ctx, &(prev), &(next))
-
-struct eggsfs_snapshot_lookup_resp_end;
-#define eggsfs_snapshot_lookup_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_resp_edges* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_resp_end* next = NULL
-
-static inline void eggsfs_snapshot_lookup_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_snapshot_lookup_resp_end* end) {
-    if (unlikely(ctx->buf != ctx->end)) {
-        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
-    }
-}
-
-#define eggsfs_snapshot_lookup_resp_put_start(ctx, start) struct eggsfs_snapshot_lookup_resp_start* start = NULL
-
-static inline void _eggsfs_snapshot_lookup_resp_put_next_time(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_resp_start** prev, struct eggsfs_snapshot_lookup_resp_next_time* next, u64 x) {
-    next = NULL;
-    BUG_ON(ctx->end - ctx->cursor < 8);
-    put_unaligned_le64(x, ctx->cursor);
-    ctx->cursor += 8;
-}
-#define eggsfs_snapshot_lookup_resp_put_next_time(ctx, prev, next, x) \
-    struct eggsfs_snapshot_lookup_resp_next_time next; \
-    _eggsfs_snapshot_lookup_resp_put_next_time(ctx, &(prev), &(next), x)
-
-static inline void _eggsfs_snapshot_lookup_resp_put_edges(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_snapshot_lookup_resp_next_time* prev, struct eggsfs_snapshot_lookup_resp_edges* next, int len) {
-    next = NULL;
-    BUG_ON(len < 0 || len >= 1<<16);
-    BUG_ON(ctx->end - ctx->cursor < 2);
-    put_unaligned_le16(len, ctx->cursor);
-    ctx->cursor += 2;
-}
-#define eggsfs_snapshot_lookup_resp_put_edges(ctx, prev, next, len) \
-    struct eggsfs_snapshot_lookup_resp_edges next; \
-    _eggsfs_snapshot_lookup_resp_put_edges(ctx, &(prev), &(next), len)
-
-#define eggsfs_snapshot_lookup_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_snapshot_lookup_resp_edges* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_snapshot_lookup_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_MAKE_DIRECTORY_REQ_MAX_SIZE 264
 struct eggsfs_make_directory_req_start;

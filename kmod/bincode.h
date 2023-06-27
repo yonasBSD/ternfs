@@ -16,7 +16,29 @@ struct eggsfs_bincode_bytes { char* buf; u8 len; };
 
 #define eggsfs_bincode_get_finish_list_el(end) ((void)(end))
 
+struct eggsfs_failure_domain_start;
+struct eggsfs_failure_domain_end;
+
+static inline void _eggsfs_failure_domain_get(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_start* start, uint8_t* name) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf) < 16) {
+            ctx->err = 14; // 14 == EGGSFS_ERR_MALFORMED_RESPONSE, see static assert below
+        } else {
+            memcpy(name, ctx->buf, 16);
+            ctx->buf += 16;
+        }
+    }
+}
+#define eggsfs_failure_domain_get(ctx, prev, next, name) \
+    struct eggsfs_failure_domain_end* next; \
+    uint8_t name[16]; \
+    _eggsfs_failure_domain_get(ctx, prev, name)
+
 #include "bincodegen.h"
+
+#ifdef __KERNEL__
+static_assert(14 == EGGSFS_ERR_MALFORMED_RESPONSE);
+#endif
 
 inline static void eggsfs_bincode_put_u64(struct eggsfs_bincode_put_ctx* ctx, u64 x) {
     BUG_ON(ctx->end - ctx->cursor < sizeof(x));

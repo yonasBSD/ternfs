@@ -97,7 +97,7 @@ func createFile(
 			spanBuf := bufPool.Get(int(thisSpanSize))
 			rand.Read(*spanBuf)
 			var err error
-			*spanBuf, err = client.CreateSpan(log, []msgs.BlockServiceId{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), *spanBuf)
+			*spanBuf, err = client.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), *spanBuf)
 			bufPool.Put(spanBuf)
 			if err != nil {
 				panic(err)
@@ -208,10 +208,15 @@ func fullReadDir(log *lib.Logger, client *lib.Client, dirId msgs.InodeId) []full
 				current:      result.Current,
 			})
 		}
-		req.Cursor = resp.Next
-		if req.Cursor.StartHash == 0 {
+		if resp.Next.StartName == "" {
 			break
 		}
+		req.Flags = 0
+		if resp.Next.Current {
+			req.Flags = msgs.FULL_READ_DIR_CURRENT
+		}
+		req.StartName = resp.Next.StartName
+		req.StartTime = resp.Next.StartTime
 	}
 	return edges
 }

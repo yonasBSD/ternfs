@@ -77,7 +77,7 @@ func ensureLen(buf []byte, l int) []byte {
 const EGGSFS_PAGE_SIZE int = 4096
 
 func prepareSpanInitiateReq(
-	blacklist []msgs.BlockServiceId,
+	blacklist []msgs.BlacklistEntry,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
 	stripePolicy *msgs.StripePolicy,
@@ -212,7 +212,7 @@ func mkBlockReader(
 // buffer is returned, regardless of whether the error is nil or not.
 func (c *Client) CreateSpan(
 	log *Logger,
-	blacklist []msgs.BlockServiceId,
+	blacklist []msgs.BlacklistEntry,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
 	stripePolicy *msgs.StripePolicy,
@@ -325,7 +325,7 @@ func (c *Client) CreateFile(
 			break
 		}
 		spanBuf, err = c.CreateSpan(
-			log, []msgs.BlockServiceId{}, &spanPolicies, &blockPolicies, &stripePolicy,
+			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy,
 			fileId, cookie, offset, uint32(read), spanBuf[:read],
 		)
 		if err != nil {

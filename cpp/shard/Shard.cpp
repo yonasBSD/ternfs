@@ -84,7 +84,8 @@ static bool bigResponse(ShardMessageKind kind) {
         kind == ShardMessageKind::VISIT_DIRECTORIES ||
         kind == ShardMessageKind::VISIT_FILES ||
         kind == ShardMessageKind::VISIT_TRANSIENT_FILES ||
-        kind == ShardMessageKind::BLOCK_SERVICE_FILES
+        kind == ShardMessageKind::BLOCK_SERVICE_FILES ||
+        kind == ShardMessageKind::FULL_READ_DIR
     );
 }
 

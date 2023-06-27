@@ -1346,11 +1346,6 @@ func main() {
 			reflect.TypeOf(msgs.AddInlineSpanReq{}),
 			reflect.TypeOf(msgs.AddInlineSpanResp{}),
 		},
-		{
-			0x0E,
-			reflect.TypeOf(msgs.SnapshotLookupReq{}),
-			reflect.TypeOf(msgs.SnapshotLookupResp{}),
-		},
 	}
 
 	shardReqResps := append(kernelShardReqResps, []reqRespType{
@@ -1588,14 +1583,14 @@ func main() {
 		reflect.TypeOf(msgs.BlockPolicyEntry{}),
 		reflect.TypeOf(msgs.SpanPolicyEntry{}),
 		reflect.TypeOf(msgs.StripePolicy{}),
-		reflect.TypeOf(msgs.SnapshotLookupEdge{}),
 		reflect.TypeOf(msgs.FetchedBlock{}),
 		reflect.TypeOf(msgs.FetchedSpanHeader{}),
 		reflect.TypeOf(msgs.FetchedInlineSpan{}),
 		reflect.TypeOf(msgs.FetchedBlocksSpan{}),
+		reflect.TypeOf(msgs.BlacklistEntry{}),
 	}
 
-	extras := append(kernelExtras, []reflect.Type{
+	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.Edge{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
@@ -1605,7 +1600,7 @@ func main() {
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
-	}...)
+	}...)...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)

@@ -33,9 +33,11 @@ struct eggsfs_transient_span {
     u64 block_ids[EGGSFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
     spinlock_t blocks_proofs_lock;
     u64 blocks_proofs[EGGSFS_MAX_BLOCKS];
+    struct list_head bad_failure_domains; // failed failure domains in the last attempt
     u32 written; // how much we've written to this span
     u32 block_size;
     atomic_t refcount;
+    u8 attempts;
     u8 stripes;
     u8 storage_class;
     u8 parity;
@@ -75,6 +77,7 @@ static void init_transient_span(void* p) {
     for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
+    INIT_LIST_HEAD(&span->bad_failure_domains);
     spin_lock_init(&span->blocks_proofs_lock);
 }
 
@@ -88,6 +91,7 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     span->offset = offset;
     span->written = 0;
     memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
+    span->attempts = 0;
     return span;
 }
 
@@ -115,6 +119,10 @@ static void put_transient_span(struct eggsfs_transient_span* span) {
 #undef FREE_PAGES
         add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
         eggsfs_in_flight_end(span->enode);
+        // free bad failure domains
+        while (!list_empty(&span->bad_failure_domains)) {
+
+        }
         // Free the span itself
         kmem_cache_free(eggsfs_transient_span_cachep, span);
     }
@@ -192,7 +200,7 @@ struct initiate_ctx {
 };
 
 int eggsfs_shard_add_span_initiate_block_cb(
-    void* data, int block, u32 ip1, u16 port1, u32 ip2, u16 port2, u64 block_service_id, u64 block_id, u64 certificate
+    void* data, int block, u32 ip1, u16 port1, u32 ip2, u16 port2, u64 block_service_id, const u8* failure_domain, u64 block_id, u64 certificate
 ) {
     struct initiate_ctx* ctx = data;
     struct eggsfs_block_service bs = {
@@ -202,6 +210,7 @@ int eggsfs_shard_add_span_initiate_block_cb(
         .ip2 = ip2,
         .port2 = port2,
     };
+    memcpy(bs.failure_domain, failure_domain, 16);
     int B = eggsfs_blocks(ctx->span->parity);
     int cell_size = ctx->span->block_size / ctx->span->stripes;
     u32 block_crc = 0;
@@ -435,6 +444,8 @@ static int write_blocks(struct eggsfs_transient_span* span) {
     // Now we need to init the span (the callback will actually send the requests)
     // TODO would be better to have this async, and free up the queue for other stuff,
     // and also not block in this call which might be in a non-blocking write.
+    // TODO Isn't this called on file write, and therefore not taking up time in
+    // the queue? I think the comment above is partially outdated.
     eggsfs_debug("add span initiate");
     {
         struct initiate_ctx ctx = {

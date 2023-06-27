@@ -20,6 +20,7 @@ struct eggsfs_block_service {
     u16 port1;
     u16 port2;
     u8 flags;
+    u8 failure_domain[16];
 };
 
 // Calls `eggsfs_fetch_block_complete_cb` when done.

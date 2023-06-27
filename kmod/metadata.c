@@ -660,11 +660,13 @@ int eggsfs_shard_add_span_initiate(
             eggsfs_block_info_get_block_service_ip2(&ctx, bs_port1, bs_ip2);
             eggsfs_block_info_get_block_service_port2(&ctx, bs_ip2, bs_port2);
             eggsfs_block_info_get_block_service_id(&ctx, bs_port2, bs_id);
-            eggsfs_block_info_get_block_id(&ctx, bs_id, block_id);
+            eggsfs_block_info_get_block_service_failure_domain(&ctx, bs_id, failure_domain_start);
+            eggsfs_failure_domain_get(&ctx, failure_domain_start, failure_domain_end, failure_domain);
+            eggsfs_block_info_get_block_id(&ctx, failure_domain_end, block_id);
             eggsfs_block_info_get_certificate(&ctx, block_id, certificate);
             if (likely(ctx.err == 0)) {
                 int err = eggsfs_shard_add_span_initiate_block_cb(
-                    data, i, bs_ip1.x, bs_port1.x, bs_ip2.x, bs_port2.x, bs_id.x,
+                    data, i, bs_ip1.x, bs_port1.x, bs_ip2.x, bs_port2.x, bs_id.x, failure_domain,
                     block_id.x, certificate.x
                 );
                 if (err) {

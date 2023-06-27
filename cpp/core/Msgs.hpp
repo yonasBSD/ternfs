@@ -48,6 +48,12 @@ struct InodeId {
         return x;
     }
 
+    static constexpr InodeId FromU64Unchecked(uint64_t data) {
+        InodeId x;
+        x.u64 = data;
+        return x;
+    }
+
     constexpr InodeId(InodeType type, ShardId shard, uint64_t id): u64(((uint64_t)type << 61) | (id << 8) | (uint64_t)shard.u8) {
         ALWAYS_ASSERT(valid());
     }

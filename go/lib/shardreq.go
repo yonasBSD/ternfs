@@ -93,22 +93,28 @@ func (c *Client) checkDeletedEdge(
 	owned bool,
 ) bool {
 	// First we check the edge we expect to have moved away
-	snapshotResp := msgs.SnapshotLookupResp{}
-	err := c.ShardRequest(logger, dirId.Shard(), &msgs.SnapshotLookupReq{DirId: dirId, Name: name, StartFrom: creationTime}, &snapshotResp)
+	req := msgs.FullReadDirReq{
+		DirId:     dirId,
+		Flags:     msgs.FULL_READ_DIR_BACKWARDS | msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_SAME_NAME,
+		StartName: name,
+		Limit:     2,
+	}
+	resp := msgs.FullReadDirResp{}
+	err := c.ShardRequest(logger, dirId.Shard(), &req, &resp)
 	if err != nil {
 		logger.Info("failed to get snapshot edge (err %v), giving up and returning original error", err)
 		return false
 	}
-	if len(snapshotResp.Edges) != 2 {
-		logger.Info("expected 1 snapshot edges but got %v, giving up and returning original error", len(snapshotResp.Edges))
+	if len(resp.Results) != 2 {
+		logger.Info("expected 2 snapshot edges but got %v, giving up and returning original error", len(resp.Results))
 		return false
 	}
-	oldEdge := snapshotResp.Edges[0]
+	oldEdge := resp.Results[1]
 	if oldEdge.TargetId.Extra() != owned || oldEdge.TargetId.Id() != targetId || oldEdge.CreationTime != creationTime {
 		logger.Info("got mismatched snapshot edge (%+v), giving up and returning original error", oldEdge)
 		return false
 	}
-	deleteEdge := snapshotResp.Edges[1]
+	deleteEdge := resp.Results[0]
 	if deleteEdge.TargetId.Id() != msgs.NULL_INODE_ID {
 		logger.Info("expected deletion edge but got %+v, giving up and returning original error", deleteEdge)
 		return false

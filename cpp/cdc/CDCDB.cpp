@@ -117,11 +117,6 @@ inline bool createCurrentLockedEdgeRetry(EggsError err) {
         err == EggsError::MORE_RECENT_SNAPSHOT_EDGE || err == EggsError::MORE_RECENT_CURRENT_EDGE;
 }
 
-inline bool createCurrentLockedEdgeFatal(EggsError err) {
-    return
-        err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::CANNOT_OVERRIDE_NAME;
-}
-
 struct StateMachineEnv {
     Env& env;
     rocksdb::OptimisticTransactionDB* db;
@@ -176,9 +171,10 @@ constexpr uint8_t TXN_START = 0;
 enum MakeDirectoryStep : uint8_t {
     MAKE_DIRECTORY_LOOKUP = 1,
     MAKE_DIRECTORY_CREATE_DIR = 2,
-    MAKE_DIRECTORY_CREATE_LOCKED_EDGE = 3,
-    MAKE_DIRECTORY_UNLOCK_EDGE = 4,
-    MAKE_DIRECTORY_ROLLBACK = 5,
+    MAKE_DIRECTORY_LOOKUP_OLD_CREATION_TIME = 3,
+    MAKE_DIRECTORY_CREATE_LOCKED_EDGE = 4,
+    MAKE_DIRECTORY_UNLOCK_EDGE = 5,
+    MAKE_DIRECTORY_ROLLBACK = 6,
 };
 
 // Steps:
@@ -186,10 +182,11 @@ enum MakeDirectoryStep : uint8_t {
 // 1. Lookup if an existing directory exists. If it does, immediately succeed.
 // 2. Allocate inode id here in the CDC
 // 3. Create directory in shard we get from the inode   
-// 4. Create locked edge from owner to newly created directory
-// 5. Unlock the edge created in 3
+// 4. Lookup old creation time for the edge we're about to create
+// 5. Create locked edge from owner to newly created directory. If this fail because of bad creation time, go back to 4
+// 6. Unlock the edge created in 3
 //
-// If 4 fails, 3 must be rolled back. 5 does not fail.
+// If 4 or 5 fails, 3 must be rolled back. 6 does not fail.
 //
 // 1 is necessary rather than failing on attempted override because otherwise failures
 // due to repeated calls are indistinguishable from genuine failures.
@@ -211,6 +208,7 @@ struct MakeDirectoryStateMachine {
             switch (env.txnStep) {
                 case MAKE_DIRECTORY_LOOKUP: lookup(); break;
                 case MAKE_DIRECTORY_CREATE_DIR: createDirectoryInode(); break;
+                case MAKE_DIRECTORY_LOOKUP_OLD_CREATION_TIME: lookupOldCreationTime(); break;
                 case MAKE_DIRECTORY_CREATE_LOCKED_EDGE: createLockedEdge(); break;
                 case MAKE_DIRECTORY_UNLOCK_EDGE: unlockEdge(); break;
                 case MAKE_DIRECTORY_ROLLBACK: rollback(); break;
@@ -220,6 +218,7 @@ struct MakeDirectoryStateMachine {
             switch (env.txnStep) {
                 case MAKE_DIRECTORY_LOOKUP: afterLookup(err, resp); break;
                 case MAKE_DIRECTORY_CREATE_DIR: afterCreateDirectoryInode(err, resp); break;
+                case MAKE_DIRECTORY_LOOKUP_OLD_CREATION_TIME: afterLookupOldCreationTime(err, resp); break;
                 case MAKE_DIRECTORY_CREATE_LOCKED_EDGE: afterCreateLockedEdge(err, resp); break;
                 case MAKE_DIRECTORY_UNLOCK_EDGE: afterUnlockEdge(err, resp); break;
                 case MAKE_DIRECTORY_ROLLBACK: afterRollback(err, resp); break;
@@ -273,6 +272,37 @@ struct MakeDirectoryStateMachine {
             createDirectoryInode();
         } else {
             ALWAYS_ASSERT(shardRespError == NO_ERROR);
+            lookupOldCreationTime();
+        }
+    }
+
+    void lookupOldCreationTime() {
+        auto& shardReq = env.needsShard(MAKE_DIRECTORY_LOOKUP_OLD_CREATION_TIME, req.ownerId.shard()).setFullReadDir();
+        shardReq.dirId = req.ownerId;
+        shardReq.flags = FULL_READ_DIR_BACKWARDS | FULL_READ_DIR_SAME_NAME | FULL_READ_DIR_CURRENT;
+        shardReq.limit = 1;
+        shardReq.startName = req.name;
+        shardReq.startTime = 0; // we have current set
+    }
+
+    void afterLookupOldCreationTime(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lookupOldCreationTime(); // retry
+        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            // we've failed hard and we need to remove the inode.
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            // there might be no existing edge
+            const auto& fullReadDir = resp->getFullReadDir();
+            ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
+            if (fullReadDir.results.els.size() == 0) {
+                state.setOldCreationTime(0); // there was nothing present for this name
+            } else {
+                state.setOldCreationTime(fullReadDir.results.els[0].creationTime);
+            }
+            // keep going
             createLockedEdge();
         }
     }
@@ -282,16 +312,22 @@ struct MakeDirectoryStateMachine {
         shardReq.dirId = req.ownerId;
         shardReq.targetId = state.dirId();
         shardReq.name = req.name;
+        shardReq.oldCreationTime = state.oldCreationTime();
     }
 
     void afterCreateLockedEdge(EggsError err, const ShardRespContainer* resp) {
         if (createCurrentLockedEdgeRetry(err)) {
             createLockedEdge(); // try again
-        } else if (createCurrentLockedEdgeFatal(err)) {
+        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
             // can't go forward
             state.setExitError(err);
             rollback();
+        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+            // lookup the old creation time again
+            lookupOldCreationTime();
         } else {
+            // we know we cannot get directory not found because we managed to lookup
+            // old creation time.
             ALWAYS_ASSERT(err == NO_ERROR);
             state.setCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
             unlockEdge();
@@ -399,20 +435,22 @@ struct HardUnlinkDirectoryStateMachine {
 
 enum RenameFileStep : uint8_t {
     RENAME_FILE_LOCK_OLD_EDGE = 1,
-    RENAME_FILE_CREATE_NEW_LOCKED_EDGE = 2,
-    RENAME_FILE_UNLOCK_NEW_EDGE = 3,
-    RENAME_FILE_UNLOCK_OLD_EDGE = 4,
-    RENAME_FILE_ROLLBACK = 5,
+    RENAME_FILE_LOOKUP_OLD_CREATION_TIME = 2,
+    RENAME_FILE_CREATE_NEW_LOCKED_EDGE = 3,
+    RENAME_FILE_UNLOCK_NEW_EDGE = 4,
+    RENAME_FILE_UNLOCK_OLD_EDGE = 5,
+    RENAME_FILE_ROLLBACK = 6,
 };
 
 // Steps:
 //
 // 1. lock source current edge
-// 2. create destination locked current target edge
-// 3. unlock edge in step 2
-// 4. unlock source target current edge, and soft unlink it
+// 2. lookup prev creation time for current target edge
+// 3. create destination locked current target edge. if it fails because of bad creation time, go back to 2
+// 4. unlock edge in step 3
+// 5. unlock source target current edge, and soft unlink it
 //
-// If we fail at step 2, we need to roll back step 1. Steps 3 and 4 should never fail.    
+// If we fail at step 2 or 3, we need to roll back step 1. Steps 3 and 4 should never fail.    
 struct RenameFileStateMachine {
     StateMachineEnv& env;
     const RenameFileReq& req;
@@ -430,6 +468,7 @@ struct RenameFileStateMachine {
         if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case RENAME_FILE_LOCK_OLD_EDGE: lockOldEdge(); break;
+                case RENAME_FILE_LOOKUP_OLD_CREATION_TIME: lookupOldCreationTime(); break;
                 case RENAME_FILE_CREATE_NEW_LOCKED_EDGE: createNewLockedEdge(); break;
                 case RENAME_FILE_UNLOCK_NEW_EDGE: unlockNewEdge(); break;
                 case RENAME_FILE_UNLOCK_OLD_EDGE: unlockOldEdge(); break;
@@ -439,6 +478,7 @@ struct RenameFileStateMachine {
         } else {
             switch (env.txnStep) {
                 case RENAME_FILE_LOCK_OLD_EDGE: afterLockOldEdge(err, resp); break;
+                case RENAME_FILE_LOOKUP_OLD_CREATION_TIME: afterLookupOldCreationTime(err, resp); break;
                 case RENAME_FILE_CREATE_NEW_LOCKED_EDGE: afterCreateNewLockedEdge(err, resp); break;
                 case RENAME_FILE_UNLOCK_NEW_EDGE: afterUnlockNewEdge(err, resp); break;
                 case RENAME_FILE_UNLOCK_OLD_EDGE: afterUnlockOldEdge(err, resp); break;
@@ -481,6 +521,38 @@ struct RenameFileStateMachine {
             env.finishWithError(err);
         } else {
             ALWAYS_ASSERT(err == NO_ERROR);
+            lookupOldCreationTime();
+        }
+    }
+
+    void lookupOldCreationTime() {
+        auto& shardReq = env.needsShard(RENAME_FILE_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard()).setFullReadDir();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.flags = FULL_READ_DIR_BACKWARDS | FULL_READ_DIR_SAME_NAME | FULL_READ_DIR_CURRENT;
+        shardReq.limit = 1;
+        shardReq.startName = req.newName;
+        shardReq.startTime = 0; // we have current set
+    }
+
+    void afterLookupOldCreationTime(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lookupOldCreationTime(); // retry
+        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            // we've failed hard and we need to unlock the old edge.
+            err = EggsError::NEW_DIRECTORY_NOT_FOUND;
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            // there might be no existing edge
+            const auto& fullReadDir = resp->getFullReadDir();
+            ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
+            if (fullReadDir.results.els.size() == 0) {
+                state.setNewOldCreationTime(0); // there was nothing present for this name
+            } else {
+                state.setNewOldCreationTime(fullReadDir.results.els[0].creationTime);
+            }
+            // keep going
             createNewLockedEdge();
         }
     }
@@ -490,15 +562,16 @@ struct RenameFileStateMachine {
         shardReq.dirId = req.newOwnerId;
         shardReq.name = req.newName;
         shardReq.targetId = req.targetId;
+        shardReq.oldCreationTime = state.newOldCreationTime();
     }
 
     void afterCreateNewLockedEdge(EggsError err, const ShardRespContainer* resp) {
         if (createCurrentLockedEdgeRetry(err)) {
             createNewLockedEdge(); // retry
-        } else if (createCurrentLockedEdgeFatal(err)) {
-            if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                err = EggsError::NEW_DIRECTORY_NOT_FOUND;
-            }
+        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+            // we need to lookup the creation time again.
+            lookupOldCreationTime();
+        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
             // we failed hard and we need to rollback
             state.setExitError(err);
             rollback();
@@ -755,23 +828,25 @@ struct SoftUnlinkDirectoryStateMachine {
 
 enum RenameDirectoryStep : uint8_t {
     RENAME_DIRECTORY_LOCK_OLD_EDGE = 1,
-    RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE = 2,
-    RENAME_DIRECTORY_UNLOCK_NEW_EDGE = 3,
-    RENAME_DIRECTORY_UNLOCK_OLD_EDGE = 4,
-    RENAME_DIRECTORY_SET_OWNER = 5,
-    RENAME_DIRECTORY_ROLLBACK = 6,
+    RENAME_DIRECTORY_LOOKUP_OLD_CREATION_TIME = 2,
+    RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE = 3,
+    RENAME_DIRECTORY_UNLOCK_NEW_EDGE = 4,
+    RENAME_DIRECTORY_UNLOCK_OLD_EDGE = 5,
+    RENAME_DIRECTORY_SET_OWNER = 6,
+    RENAME_DIRECTORY_ROLLBACK = 7,
 };
 
 // Steps:
 //
 // 1. Make sure there's no loop by traversing the parents
 // 2. Lock old edge
-// 3. Create and lock the new edge
-// 4. Unlock the new edge
-// 5. Unlock and unlink the old edge
-// 6. Update the owner of the moved directory to the new directory
+// 3. Lookup old creation time for the edge
+// 4. Create and lock the new edge
+// 5. Unlock the new edge
+// 6. Unlock and unlink the old edge
+// 7. Update the owner of the moved directory to the new directory
 //
-// If we fail at step 3, we need to unlock the edge we locked at step 2. Step 4 and 5
+// If we fail at step 3 or 4, we need to unlock the edge we locked at step 2. Step 5 and 6
 // should never fail.
 struct RenameDirectoryStateMachine {
     StateMachineEnv& env;
@@ -790,6 +865,7 @@ struct RenameDirectoryStateMachine {
         if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case RENAME_DIRECTORY_LOCK_OLD_EDGE: lockOldEdge(); break;
+                case RENAME_DIRECTORY_LOOKUP_OLD_CREATION_TIME: lookupOldCreationTime(); break;
                 case RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE: createLockedNewEdge(); break;
                 case RENAME_DIRECTORY_UNLOCK_NEW_EDGE: unlockNewEdge(); break;
                 case RENAME_DIRECTORY_UNLOCK_OLD_EDGE: unlockOldEdge(); break;
@@ -800,6 +876,7 @@ struct RenameDirectoryStateMachine {
         } else {
             switch (env.txnStep) {
                 case RENAME_DIRECTORY_LOCK_OLD_EDGE: afterLockOldEdge(err, resp); break;
+                case RENAME_DIRECTORY_LOOKUP_OLD_CREATION_TIME: afterLookupOldCreationTime(err, resp); break;
                 case RENAME_DIRECTORY_CREATE_LOCKED_NEW_EDGE: afterCreateLockedEdge(err, resp); break;
                 case RENAME_DIRECTORY_UNLOCK_NEW_EDGE: afterUnlockNewEdge(err, resp); break;
                 case RENAME_DIRECTORY_UNLOCK_OLD_EDGE: afterUnlockOldEdge(err, resp); break;
@@ -871,6 +948,37 @@ struct RenameDirectoryStateMachine {
             env.finishWithError(err);
         } else {
             ALWAYS_ASSERT(err == NO_ERROR);
+            lookupOldCreationTime();
+        }
+    }
+
+    void lookupOldCreationTime() {
+        auto& shardReq = env.needsShard(RENAME_FILE_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard()).setFullReadDir();
+        shardReq.dirId = req.newOwnerId;
+        shardReq.flags = FULL_READ_DIR_BACKWARDS | FULL_READ_DIR_SAME_NAME | FULL_READ_DIR_CURRENT;
+        shardReq.limit = 1;
+        shardReq.startName = req.newName;
+        shardReq.startTime = 0; // we have current set
+    }
+
+    void afterLookupOldCreationTime(EggsError err, const ShardRespContainer* resp) {
+        if (err == EggsError::TIMEOUT) {
+            lookupOldCreationTime(); // retry
+        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            // we've failed hard and we need to unlock the old edge.
+            state.setExitError(err);
+            rollback();
+        } else {
+            ALWAYS_ASSERT(err == NO_ERROR);
+            // there might be no existing edge
+            const auto& fullReadDir = resp->getFullReadDir();
+            ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
+            if (fullReadDir.results.els.size() == 0) {
+                state.setNewOldCreationTime(0); // there was nothing present for this name
+            } else {
+                state.setNewOldCreationTime(fullReadDir.results.els[0].creationTime);
+            }
+            // keep going
             createLockedNewEdge();
         }
     }
@@ -880,12 +988,16 @@ struct RenameDirectoryStateMachine {
         shardReq.dirId = req.newOwnerId;
         shardReq.name = req.newName;
         shardReq.targetId = req.targetId;
+        shardReq.oldCreationTime = state.newOldCreationTime();
     }
 
     void afterCreateLockedEdge(EggsError err, const ShardRespContainer* resp) {
         if (createCurrentLockedEdgeRetry(err)) {
             createLockedNewEdge();
-        } else if (createCurrentLockedEdgeFatal(err)) {
+        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+            // we need to lookup the creation time again.
+            lookupOldCreationTime();
+        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
             state.setExitError(err);
             rollback();
         } else {
@@ -1295,7 +1407,7 @@ struct CDCDBImpl {
         // Otherwise, (err == NO_ERROR) == (req != nullptr).
         EggsError shardRespError,
         const ShardRespContainer* shardResp,
-        V<TxnState> state,
+        V<TxnState>& state,
         CDCStep& step
     ) {
         LOG_DEBUG(_env, "advancing txn %s of kind %s", txnId, req.kind());

@@ -321,8 +321,6 @@ func (k ShardMessageKind) String() string {
 		return "SAME_DIRECTORY_RENAME"
 	case 16:
 		return "ADD_INLINE_SPAN"
-	case 14:
-		return "SNAPSHOT_LOOKUP"
 	case 3:
 		return "STAT_TRANSIENT_FILE"
 	case 13:
@@ -386,7 +384,6 @@ const (
 	FILE_SPANS ShardMessageKind = 0xB
 	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
 	ADD_INLINE_SPAN ShardMessageKind = 0x10
-	SNAPSHOT_LOOKUP ShardMessageKind = 0xE
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	EXPIRE_TRANSIENT_FILE ShardMessageKind = 0xF
@@ -437,8 +434,6 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse) {
 		return &SameDirectoryRenameReq{}, &SameDirectoryRenameResp{}
 	case k == "ADD_INLINE_SPAN":
 		return &AddInlineSpanReq{}, &AddInlineSpanResp{}
-	case k == "SNAPSHOT_LOOKUP":
-		return &SnapshotLookupReq{}, &SnapshotLookupResp{}
 	case k == "STAT_TRANSIENT_FILE":
 		return &StatTransientFileReq{}, &StatTransientFileResp{}
 	case k == "SET_DIRECTORY_INFO":
@@ -919,7 +914,7 @@ func (v *AddSpanInitiateReq) Pack(w io.Writer) error {
 		return err
 	}
 	for i := 0; i < len1; i++ {
-		if err := bincode.PackScalar(w, uint64(v.Blacklist[i])); err != nil {
+		if err := v.Blacklist[i].Pack(w); err != nil {
 			return err
 		}
 	}
@@ -969,7 +964,7 @@ func (v *AddSpanInitiateReq) Unpack(r io.Reader) error {
 	}
 	bincode.EnsureLength(&v.Blacklist, len1)
 	for i := 0; i < len1; i++ {
-		if err := bincode.UnpackScalar(r, (*uint64)(&v.Blacklist[i])); err != nil {
+		if err := v.Blacklist[i].Unpack(r); err != nil {
 			return err
 		}
 	}
@@ -1407,73 +1402,6 @@ func (v *AddInlineSpanResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *SnapshotLookupReq) ShardRequestKind() ShardMessageKind {
-	return SNAPSHOT_LOOKUP
-}
-
-func (v *SnapshotLookupReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.StartFrom)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *SnapshotLookupReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.Name); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartFrom)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *SnapshotLookupResp) ShardResponseKind() ShardMessageKind {
-	return SNAPSHOT_LOOKUP
-}
-
-func (v *SnapshotLookupResp) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.NextTime)); err != nil {
-		return err
-	}
-	len1 := len(v.Edges)
-	if err := bincode.PackLength(w, len1); err != nil {
-		return err
-	}
-	for i := 0; i < len1; i++ {
-		if err := v.Edges[i].Pack(w); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *SnapshotLookupResp) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextTime)); err != nil {
-		return err
-	}
-	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
-		return err
-	}
-	bincode.EnsureLength(&v.Edges, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Edges[i].Unpack(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (v *StatTransientFileReq) ShardRequestKind() ShardMessageKind {
 	return STAT_TRANSIENT_FILE
 }
@@ -1779,7 +1707,16 @@ func (v *FullReadDirReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
 		return err
 	}
-	if err := v.Cursor.Pack(w); err != nil {
+	if err := bincode.PackScalar(w, uint8(v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.StartName)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.StartTime)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Limit)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
@@ -1792,7 +1729,16 @@ func (v *FullReadDirReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
 		return err
 	}
-	if err := v.Cursor.Unpack(r); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.StartName); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartTime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Limit)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
@@ -2335,6 +2281,9 @@ func (v *CreateLockedCurrentEdgeReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint64(v.OldCreationTime)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2346,6 +2295,9 @@ func (v *CreateLockedCurrentEdgeReq) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldCreationTime)); err != nil {
 		return err
 	}
 	return nil
@@ -2861,6 +2813,20 @@ func (v *CrossShardHardUnlinkFileResp) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *FailureDomain) Pack(w io.Writer) error {
+	if err := bincode.PackFixedBytes(w, 16, v.Name[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FailureDomain) Unpack(r io.Reader) error {
+	if err := bincode.UnpackFixedBytes(r, 16, v.Name[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *DirectoryInfoEntry) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.Tag)); err != nil {
 		return err
@@ -2956,6 +2922,9 @@ func (v *BlockInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.BlockServiceId)); err != nil {
 		return err
 	}
+	if err := v.BlockServiceFailureDomain.Pack(w); err != nil {
+		return err
+	}
 	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
 		return err
 	}
@@ -2979,6 +2948,9 @@ func (v *BlockInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := v.BlockServiceFailureDomain.Unpack(r); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
@@ -3146,26 +3118,6 @@ func (v *StripePolicy) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *SnapshotLookupEdge) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *SnapshotLookupEdge) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (v *FetchedBlock) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.BlockServiceIx)); err != nil {
 		return err
@@ -3302,6 +3254,26 @@ func (v *FetchedBlocksSpan) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *BlacklistEntry) Pack(w io.Writer) error {
+	if err := v.FailureDomain.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.BlockService)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlacklistEntry) Unpack(r io.Reader) error {
+	if err := v.FailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockService)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *TransientFile) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
@@ -3370,9 +3342,6 @@ func (v *FullReadDirCursor) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, bool(v.Current)); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint64(v.StartHash)); err != nil {
-		return err
-	}
 	if err := bincode.PackBytes(w, []byte(v.StartName)); err != nil {
 		return err
 	}
@@ -3384,9 +3353,6 @@ func (v *FullReadDirCursor) Pack(w io.Writer) error {
 
 func (v *FullReadDirCursor) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*bool)(&v.Current)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartHash)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackString(r, &v.StartName); err != nil {

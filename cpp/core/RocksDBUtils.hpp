@@ -52,6 +52,17 @@ private:
     static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     std::array<char, T::MAX_SIZE> _data;
 public:
+    StaticValue(const StaticValue& other) {
+        memcpy(_data.data(), other._data.data(), T::MAX_SIZE);
+    }
+
+    StaticValue& operator=(const StaticValue& other) {
+        if (this == &other) { return *this; }
+        memcpy(_data.data(), other._data.data(), T::MAX_SIZE);
+    }
+
+    StaticValue() = default;
+
     rocksdb::Slice toSlice() const {
         return rocksdb::Slice(&_data[0], operator()().size());
     }
@@ -76,6 +87,8 @@ private:
     static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     T _val;
 public:
+    ExternalValue(const ExternalValue&) = delete;
+
     ExternalValue() {
         _val._data = nullptr;
     }

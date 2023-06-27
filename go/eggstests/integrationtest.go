@@ -233,9 +233,9 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	}
 
 	fileHistoryOpts := fileHistoryTestOpts{
-		steps:           10 * 1000, // perform 10k actions
-		checkpointEvery: 100,       // get times every 100 actions
-		targetFiles:     1000,      // how many files we want
+		steps:           overrides.int("fileHistory.steps", 10*1000), // perform 10k actions
+		checkpointEvery: 100,                                         // get times every 100 actions
+		targetFiles:     1000,                                        // how many files we want
 		lowFiles:        500,
 		threads:         overrides.int("fileHistory.threads", 5),
 	}
@@ -628,7 +628,7 @@ func main() {
 		Dir:         path.Join(*dataDir, "shuckle"),
 	})
 
-	failureDomains := 16
+	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.
 	hddBlockServices := 10
 	flashBlockServices := 10
 	blockServicesProcs := make(map[managedprocess.ManagedProcessId]blockServiceVictim)

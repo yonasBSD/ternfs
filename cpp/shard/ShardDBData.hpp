@@ -365,6 +365,8 @@ struct EdgeKey {
         BE, uint64_t,  nameHash, setNameHash,
         EMIT_OFFSET, STATIC_SIZE,
         BYTES,        name, setName,
+        // only present for snapshot edges -- current edges have
+        // the creation time in the body.
         BE, EggsTime, creationTimeUnchecked, setCreationTimeUnchecked,
         END
     )

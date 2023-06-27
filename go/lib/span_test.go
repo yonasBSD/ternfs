@@ -75,7 +75,7 @@ func testSpan(
 	buf := append([]byte{}, data[:spanSize]...)
 	var req *msgs.AddSpanInitiateReq
 	buf, req = prepareSpanInitiateReq(
-		[]msgs.BlockServiceId{},
+		[]msgs.BlacklistEntry{},
 		&spanPolicies,
 		&blockPolicies,
 		&stripePolicy,

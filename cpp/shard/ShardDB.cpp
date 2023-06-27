@@ -8,6 +8,7 @@
 #include <rocksdb/table.h>
 #include <system_error>
 #include <xxhash.h>
+#include <type_traits>
 
 #include "Bincode.hpp"
 #include "Common.hpp"
@@ -221,6 +222,13 @@ struct BlockServiceCache {
     uint8_t storageClass;
     uint8_t flags;
 };
+
+static char maxNameChars[255];
+__attribute__((constructor))
+static void fillMaxNameChars() {
+    memset(maxNameChars, CHAR_MAX, 255);
+}
+static BincodeBytes maxName(maxNameChars, 255);
 
 struct ShardDBImpl {
     Env _env;
@@ -503,6 +511,15 @@ struct ShardDBImpl {
             }
         }
 
+        // stop early when we go out of the directory (will avoid tombstones
+        // of freshly cleared dirs)
+        StaticValue<EdgeKey> upperBound;
+        upperBound().setDirIdWithCurrent(InodeId::FromU64(req.dirId.u64 + 1), false);
+        upperBound().setNameHash(0);
+        upperBound().setName({});
+        auto upperBoundSlice = upperBound.toSlice();
+        options.iterate_upper_bound = &upperBoundSlice;
+
         {
             auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
             StaticValue<EdgeKey> beginKey;
@@ -512,10 +529,7 @@ struct ShardDBImpl {
             int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - ReadDirResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (key().dirId() != req.dirId || !key().current()) {
-                    resp.nextHash = 0; // we've ran out of edges
-                    break;
-                }
+                ALWAYS_ASSERT(key().dirId() == req.dirId && key().current());
                 auto edge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
                 CurrentEdge& respEdge = resp.results.els.emplace_back();
                 respEdge.targetId = edge().targetIdWithLocked().id();
@@ -538,7 +552,193 @@ struct ShardDBImpl {
         return NO_ERROR;   
     }
 
+    // returns whether we're done
+    template<template<typename> typename V>
+    bool _fullReadDirAdd(
+        const FullReadDirReq& req,
+        FullReadDirResp& resp,
+        int& budget,
+        const V<EdgeKey>& key,
+        const rocksdb::Slice& edgeValue
+    ) {
+        auto& respEdge = resp.results.els.emplace_back();
+        EggsTime time;
+        if (key().current()) {
+            auto edge = ExternalValue<CurrentEdgeBody>::FromSlice(edgeValue);
+            respEdge.current = key().current();
+            respEdge.targetId = edge().targetIdWithLocked();
+            respEdge.nameHash = key().nameHash();
+            respEdge.name = key().name();
+            respEdge.creationTime = edge().creationTime();
+        } else {
+            auto edge = ExternalValue<SnapshotEdgeBody>::FromSlice(edgeValue);
+            respEdge.current = key().current();
+            respEdge.targetId = edge().targetIdWithOwned();
+            respEdge.nameHash = key().nameHash();
+            respEdge.name = key().name();
+            respEdge.creationTime = key().creationTime();
+        }
+        // static limit, terminate immediately to avoid additional seeks
+        if (req.limit > 0 && resp.results.els.size() >= req.limit) {
+            resp.next.clear(); // we're done looking up
+            return true;
+        }
+        // mtu limit
+        budget -= respEdge.packedSize();
+        if (budget < 0) {
+            int prevCursorSize = FullReadDirCursor::STATIC_SIZE;
+            while (budget < 0) {
+                auto& last = resp.results.els.back();
+                LOG_TRACE(_env, "fullReadDir: removing last %s", last);
+                budget += last.packedSize();
+                resp.next.current = last.current;
+                resp.next.startName = last.name;
+                resp.next.startTime = last.current ? 0 : last.creationTime;
+                resp.results.els.pop_back();
+                budget += prevCursorSize;
+                budget -= resp.next.packedSize();
+                prevCursorSize = resp.next.packedSize();
+            }
+            LOG_TRACE(_env, "fullReadDir: out of budget/limit");
+            return true;
+        }
+        return false;
+    }
+
+    template<bool forwards>
+    EggsError _fullReadDirSameName(const FullReadDirReq& req, rocksdb::ReadOptions& options, HashMode hashMode, FullReadDirResp& resp) {
+        bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
+        
+        uint64_t nameHash = computeHash(hashMode, req.startName.ref());
+    
+        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
+
+        // returns whether we're done
+        const auto lookupCurrent = [&]() -> bool {
+            StaticValue<EdgeKey> key;
+            key().setDirIdWithCurrent(req.dirId, true);
+            key().setNameHash(nameHash);
+            key().setName(req.startName.ref());
+            std::string value;
+            auto status = _db->Get(options, _edgesCf, key.toSlice(), &value);
+            if (status.IsNotFound()) { return false; }
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<CurrentEdgeBody> edge(value);
+            return _fullReadDirAdd(req, resp, budget, key, rocksdb::Slice(value));
+        };
+    
+        // begin current
+        if (current) { if (lookupCurrent()) { return NO_ERROR; } }
+
+        // we looked at the current and we're going forward, nowhere to go from here.
+        if (current && forwards) { return NO_ERROR; }
+
+        // we're looking at snapshot edges now -- first pick the bounds (important to
+        // minimize tripping over tombstones)
+        StaticValue<EdgeKey> snapshotStart;
+        snapshotStart().setDirIdWithCurrent(req.dirId, false);
+        snapshotStart().setNameHash(nameHash);
+        snapshotStart().setName(req.startName.ref());
+        snapshotStart().setCreationTime(req.startTime.ns ? req.startTime : (forwards ? 0 : EggsTime(~(uint64_t)0)));
+        StaticValue<EdgeKey> snapshotEnd;
+        rocksdb::Slice snapshotEndSlice;
+        snapshotEnd().setDirIdWithCurrent(req.dirId, false);
+        // when going backwards, just have the beginning of this name list as the lower bound
+        snapshotEnd().setNameHash(nameHash + forwards);
+        snapshotEnd().setName({});
+        snapshotEnd().setCreationTime(0);
+        snapshotEndSlice = snapshotEnd.toSlice();
+        (forwards ? options.iterate_upper_bound : options.iterate_lower_bound) = &snapshotEndSlice;
+
+        // then start iterating
+        auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
+        for (
+            forwards ? it->Seek(snapshotStart.toSlice()) : it->SeekForPrev(snapshotStart.toSlice());
+            it->Valid();
+            forwards ? it->Next() : it->Prev() 
+        ) {
+            auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
+            ALWAYS_ASSERT(key().dirId() == req.dirId);
+            if (key().name() != req.startName) {
+                // note: we still need to check this since we only utilize the hash
+                // for the bounds since we're a bit lazy, so there might be collisions
+                break;
+            }
+            if (_fullReadDirAdd(req, resp, budget, key, it->value())) {
+                break;
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+
+        options.iterate_lower_bound = {};
+        options.iterate_upper_bound = {};
+
+        // we were looking at the snapshots and we're going backwards, nowhere to go from here.
+        if (!forwards) { return NO_ERROR; }
+
+        // end current
+        if (lookupCurrent()) { return NO_ERROR; }
+
+        return NO_ERROR;
+    }
+
+    template<bool forwards>
+    EggsError _fullReadDirNormal(const FullReadDirReq& req, rocksdb::ReadOptions& options, HashMode hashMode, FullReadDirResp& resp) {
+        // this case is simpler, we just traverse all of it forwards or backwards.
+        bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
+
+        // setup bounds
+        StaticValue<EdgeKey> endKey;
+        endKey().setDirIdWithCurrent(InodeId::FromU64(req.dirId.u64 + (forwards ? 1 : -1)), !forwards);
+        endKey().setNameHash(forwards ? 0 : ~(uint64_t)0);
+        endKey().setName(forwards ? BincodeBytes().ref() : maxName.ref());
+        endKey().setCreationTime(forwards ? 0 : EggsTime(~(uint64_t)0));
+        rocksdb::Slice endKeySlice = endKey.toSlice();        
+        if (forwards) {
+            options.iterate_upper_bound = &endKeySlice;
+        } else {
+            options.iterate_lower_bound = &endKeySlice;
+        }
+
+        // iterate
+        StaticValue<EdgeKey> startKey;
+        startKey().setDirIdWithCurrent(req.dirId, current);
+        startKey().setNameHash(
+            req.startName.size() == 0 ?
+                (forwards ? 0 : ~(uint64_t)0) :
+                computeHash(hashMode, req.startName.ref())
+        );
+        startKey().setName(req.startName.ref());
+        if (!current) {
+            startKey().setCreationTime(req.startTime);
+        }
+        auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
+        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
+        for (
+            forwards ? it->Seek(startKey.toSlice()) : it->SeekForPrev(startKey.toSlice());
+            it->Valid();
+            forwards ? it->Next() : it->Prev() 
+        ) {
+            auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
+            ALWAYS_ASSERT(key().dirId() == req.dirId);
+            if (_fullReadDirAdd(req, resp, budget, key, it->value())) {
+                break;
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+
+        return NO_ERROR;
+    }
+
     EggsError _fullReadDir(const FullReadDirReq& req, FullReadDirResp& resp) {
+        bool sameName = !!(req.flags&FULL_READ_DIR_SAME_NAME);
+        bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
+        bool forwards = !(req.flags&FULL_READ_DIR_BACKWARDS);
+
+        // TODO proper errors at validation
+        ALWAYS_ASSERT(!(sameName && req.startName.packedSize() == 0));
+        ALWAYS_ASSERT(!(current && req.startTime != 0));
+
         // snapshot probably not strictly needed -- it's for the possible lookup if we
         // got no results. even if returned a false positive/negative there it probably
         // wouldn't matter. but it's more pleasant.
@@ -546,71 +746,31 @@ struct ShardDBImpl {
         rocksdb::ReadOptions options;
         options.snapshot = snapshot.get();
 
+        HashMode hashMode;
         {
-            auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
-            StaticValue<EdgeKey> beginKey;
-            beginKey().setDirIdWithCurrent(req.dirId, req.cursor.current);
-            beginKey().setNameHash(req.cursor.startHash);
-            beginKey().setName(req.cursor.startName.ref());
-            if (!req.cursor.current) {
-                beginKey().setCreationTime(req.cursor.startTime);
-            } else {
-                ALWAYS_ASSERT(req.cursor.startTime == 0); // TODO proper error at validation time
-            }
-            int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
-            for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
-                auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (key().dirId() != req.dirId) {
-                    break;
-                }
-                auto& respEdge = resp.results.els.emplace_back();
-                if (key().current()) {
-                    auto edge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
-                    respEdge.current = key().current();
-                    respEdge.targetId = edge().targetIdWithLocked();
-                    respEdge.nameHash = key().nameHash();
-                    respEdge.name = key().name();
-                    respEdge.creationTime = edge().creationTime();
-                } else {
-                    auto edge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
-                    respEdge.current = key().current();
-                    respEdge.targetId = edge().targetIdWithOwned();
-                    respEdge.nameHash = key().nameHash();
-                    respEdge.name = key().name();
-                    respEdge.creationTime = key().creationTime();
-                }
-                budget -= respEdge.packedSize();
-                if (budget < 0) {
-                    int prevCursorSize = FullReadDirCursor::STATIC_SIZE;
-                    while (budget < 0) {
-                        auto& last = resp.results.els.back();
-                        budget += last.packedSize();
-                        resp.next.current = last.current;
-                        resp.next.startHash = last.nameHash;
-                        resp.next.startName = last.name;
-                        resp.next.startTime = last.current ? 0 : last.creationTime;
-                        resp.results.els.pop_back();
-                        budget += prevCursorSize;
-                        budget -= resp.next.packedSize();
-                        prevCursorSize = resp.next.packedSize();
-                    }
-                    break;
-                }
-            }
-            ROCKS_DB_CHECKED(it->status());
-        }
-
-        if (resp.results.els.empty()) {
             std::string dirValue;
             ExternalValue<DirectoryBody> dir;
-            // here we want snapshots, which is also why we can do this check later
+            // allowSnaphsot=true, we're in fullReadDir
             EggsError err = _getDirectory(options, req.dirId, true, dirValue, dir);
             if (err != NO_ERROR) {
                 return err;
             }
+            hashMode = dir().hashMode();
         }
 
-        return NO_ERROR;
+        if (sameName) {
+            if (forwards) {
+                return _fullReadDirSameName<true>(req, options, hashMode, resp);
+            } else {
+                return _fullReadDirSameName<false>(req, options, hashMode, resp);
+            }
+        } else {
+            if (forwards) {
+                return _fullReadDirNormal<true>(req, options, hashMode, resp);
+            } else {
+                return _fullReadDirNormal<false>(req, options, hashMode, resp);
+            }
+        }
     }
 
     EggsError _lookup(const LookupReq& req, LookupResp& resp) {
@@ -712,6 +872,18 @@ struct ShardDBImpl {
         auto snapshot = wrappedSnapshot(_db);
         rocksdb::ReadOptions options;
         options.snapshot = snapshot.get();
+
+        StaticValue<SpanKey> lowerKey;
+        lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
+        lowerKey().setOffset(~(uint64_t)0);
+        auto lowerKeySlice = lowerKey.toSlice();
+        options.iterate_lower_bound = &lowerKeySlice;
+
+        StaticValue<SpanKey> upperKey;
+        upperKey().setFileId(InodeId::FromU64(req.fileId.u64 + 1));
+        upperKey().setOffset(0);
+        auto upperKeySlice = upperKey.toSlice();
+        options.iterate_upper_bound = &upperKeySlice;
 
         int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
@@ -846,55 +1018,6 @@ struct ShardDBImpl {
         return _visitInodes(_filesCf, req, resp);
     }
 
-    EggsError _snapshotLookup(const SnapshotLookupReq& req, SnapshotLookupResp& resp) {
-        if (req.dirId.type() != InodeType::DIRECTORY) {
-            return EggsError::TYPE_IS_NOT_DIRECTORY;
-        }
-
-        uint64_t nameHash;
-        {
-            // allowSnapshot=true since we want this to also work for snaphsot dirs
-            EggsError err = _getDirectoryAndHash({}, req.dirId, true, req.name.ref(), nameHash);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-
-        int maxEdges = 1 + (DEFAULT_UDP_MTU - ShardResponseHeader::STATIC_SIZE - SnapshotLookupResp::STATIC_SIZE) / SnapshotLookupEdge::STATIC_SIZE;
-        std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
-        StaticValue<EdgeKey> firstK;
-        firstK().setDirIdWithCurrent(req.dirId, false);
-        firstK().setNameHash(nameHash);
-        firstK().setName(req.name.ref());
-        firstK().setCreationTime(req.startFrom);
-        int i;
-        for (
-            i = 0,          it->Seek(firstK.toSlice());
-            i < maxEdges && it->Valid();
-            i++,            it->Next()
-        ) {
-            auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
-            if (
-                k().nameHash() != nameHash ||
-                k().current() || // only snapshot edges
-                k().dirId() != req.dirId ||
-                k().name() != req.name.ref()
-            ) {
-                break;
-            }
-            auto v = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
-            auto& edge = resp.edges.els.emplace_back();
-            edge.targetId = v().targetIdWithOwned();
-            edge.creationTime = k().creationTime();
-        }
-        ROCKS_DB_CHECKED(it->status());
-        if (resp.edges.els.size() == maxEdges) {
-            resp.nextTime = resp.edges.els.back().creationTime;
-            resp.edges.els.pop_back();
-        }
-        return NO_ERROR;
-    }
-
     EggsError read(const ShardReqContainer& req, ShardRespContainer& resp) {
         LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
 
@@ -934,9 +1057,6 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::VISIT_FILES:
             err = _visitFiles(req.getVisitFiles(), resp.setVisitFiles());
-            break;
-        case ShardMessageKind::SNAPSHOT_LOOKUP:
-            err = _snapshotLookup(req.getSnapshotLookup(), resp.setSnapshotLookup());
             break;
         default:
             throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
@@ -1058,6 +1178,7 @@ struct ShardDBImpl {
         entry.dirId = req.dirId;
         entry.targetId = req.targetId;
         entry.name = req.name;
+        entry.oldCreationTime = req.oldCreationTime;
         return NO_ERROR;
     }
 
@@ -1242,9 +1363,14 @@ struct ShardDBImpl {
         return true;
     }
 
-    bool _blockServiceMatchesBlacklist(const std::vector<BlockServiceId>& blacklists, BlockServiceId blockServiceId, const BlockServiceCache& cache) {
+    bool _blockServiceMatchesBlacklist(
+        const std::vector<BlacklistEntry>& blacklists,
+        const std::array<uint8_t, 16>& failureDomain,
+        BlockServiceId blockServiceId,
+        const BlockServiceCache& cache
+    ) {
         for (const auto& blacklist: blacklists) {
-            if (blacklist == blockServiceId) {
+            if (blacklist.failureDomain.name.data == failureDomain ||  blacklist.blockService == blockServiceId) {
                 return true;
             }
         }
@@ -1362,7 +1488,7 @@ struct ShardDBImpl {
                         LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
                         continue;
                     }
-                    if (_blockServiceMatchesBlacklist(req.blacklist.els, id, cache)) {
+                    if (_blockServiceMatchesBlacklist(req.blacklist.els, cache.failureDomain, id, cache)) {
                         LOG_DEBUG(_env, "Skipping %s because it matches blacklist", id);
                         continue;
                     }
@@ -1731,7 +1857,7 @@ struct ShardDBImpl {
 
         // create edge in owner.
         {
-            EggsError err = ShardDBImpl::_createCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, false, resp.creationTime);
+            EggsError err = ShardDBImpl::_createCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, false, 0, resp.creationTime);
             if (err != NO_ERROR) {
                 return err;
             }
@@ -1784,9 +1910,13 @@ struct ShardDBImpl {
     // The creation time might be different than the current time because we might find it
     // in an existing edge.
     EggsError _createCurrentEdge(
-        EggsTime logEntryTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId, bool locked,
+        EggsTime logEntryTime, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, InodeId targetId,
+        // if locked=true, oldCreationTime will be used to check that we're locking the right edge.
+        bool locked, EggsTime oldCreationTime,
         EggsTime& creationTime
     ) {
+        ALWAYS_ASSERT(locked || oldCreationTime == 0);
+
         creationTime = logEntryTime;
 
         uint64_t nameHash;
@@ -1818,6 +1948,7 @@ struct ShardDBImpl {
             snapshotEdgeKey().setName(name.ref());
             snapshotEdgeKey().setCreationTime({std::numeric_limits<uint64_t>::max()});
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
+            // TODO add iteration bounds
             it->SeekForPrev(snapshotEdgeKey.toSlice());
             if (it->Valid() && !it->status().IsNotFound()) {
                 auto k = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -1834,13 +1965,14 @@ struct ShardDBImpl {
             if (existingEdge().targetIdWithLocked().extra()) { // locked
                 // we have an existing locked edge, we need to make sure that it's the one we expect for
                 // idempotency.
-                if (
-                    !locked || // the one we're trying to create isn't locked
-                    (targetId != existingEdge().targetIdWithLocked().id()) // we're trying to create a different locked edge
-                ) {
+                if (!locked) { // the edge we're trying to create is not locked
                     return EggsError::NAME_IS_LOCKED;
                 }
-                // The creation time doesn't budge!
+                if (existingEdge().creationTime() != oldCreationTime) { // we're not locking the right thing
+                    LOG_DEBUG(_env, "expecting time %s, got %s instead", existingEdge().creationTime(), oldCreationTime);
+                    return EggsError::MISMATCHING_CREATION_TIME;
+                }
+                // The new creation time doesn't budge!
                 creationTime = existingEdge().creationTime();
             } else {
                 // We're kicking out a non-locked current edge. The only circumstance where we allow
@@ -1892,7 +2024,7 @@ struct ShardDBImpl {
         }
         // Now, create the new one
         {
-            EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, resp.newCreationTime);
+            EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, 0, resp.newCreationTime);
             if (err != NO_ERROR) {
                 return err;
             }
@@ -2000,7 +2132,7 @@ struct ShardDBImpl {
     }
 
     EggsError _applyCreateLockedCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const CreateLockedCurrentEdgeEntry& entry, CreateLockedCurrentEdgeResp& resp) {
-        auto err = _createCurrentEdge(time, batch, entry.dirId, entry.name, entry.targetId, true, resp.creationTime); // locked=true
+        auto err = _createCurrentEdge(time, batch, entry.dirId, entry.name, entry.targetId, true, entry.oldCreationTime, resp.creationTime); // locked=true
         if (err != NO_ERROR) {
             return err;
         }
@@ -2122,6 +2254,7 @@ struct ShardDBImpl {
             edgeKey().setNameHash(0);
             edgeKey().setName({});
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
+            // TODO apply iteration bound
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -2174,6 +2307,7 @@ struct ShardDBImpl {
             edgeKey().setName({});
             edgeKey().setCreationTime(0);
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _edgesCf));
+            // TODO apply iteration bound
             it->Seek(edgeKey.toSlice());
             if (it->Valid()) {
                 auto otherEdge = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -2234,6 +2368,7 @@ struct ShardDBImpl {
                 spanKey().setFileId(entry.id);
                 spanKey().setOffset(0);
                 std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _spansCf));
+                // TODO apply iteration bound
                 it->Seek(spanKey.toSlice());
                 if (it->Valid()) {
                     auto otherSpan = ExternalValue<SpanKey>::FromSlice(it->key());
@@ -2443,6 +2578,7 @@ struct ShardDBImpl {
             StaticValue<SpanKey> endKey;
             endKey().setFileId(entry.fileId);
             endKey().setOffset(file().fileSize());
+            // TODO apply iteration bound
             spanIt->SeekForPrev(endKey.toSlice());
             ROCKS_DB_CHECKED(spanIt->status());
             ALWAYS_ASSERT(spanIt->Valid()); // we know the file isn't empty, we must have a span
@@ -2589,6 +2725,7 @@ struct ShardDBImpl {
             respBlock.blockServicePort1 = cache.port1;
             respBlock.blockServiceIp2 = cache.ip2;
             respBlock.blockServicePort2 = cache.port2;
+            respBlock.blockServiceFailureDomain.name.data = cache.failureDomain;
             respBlock.certificate.data = _blockWriteCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
         }
     }
@@ -3458,7 +3595,6 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::VISIT_FILES:
     case ShardMessageKind::VISIT_TRANSIENT_FILES:
     case ShardMessageKind::BLOCK_SERVICE_FILES:
-    case ShardMessageKind::SNAPSHOT_LOOKUP:
         return true;
     case ShardMessageKind::CONSTRUCT_FILE:
     case ShardMessageKind::ADD_SPAN_INITIATE:

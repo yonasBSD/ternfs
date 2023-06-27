@@ -381,7 +381,7 @@ func (f *transientFile) writeSpan() syscall.Errno {
 		return 0
 	}
 	var err error
-	*f.data, err = client.CreateSpan(logger, []msgs.BlockServiceId{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
+	*f.data, err = client.CreateSpan(logger, []msgs.BlacklistEntry{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
 	if err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)

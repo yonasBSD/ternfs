@@ -964,10 +964,15 @@ func handleInode(
 								panic(err)
 							}
 							edges = append(edges, resp.Results...)
-							req.Cursor = resp.Next
-							if req.Cursor == (msgs.FullReadDirCursor{}) {
+							if resp.Next.StartName == "" {
 								break
 							}
+							req.Flags = 0
+							if resp.Next.Current {
+								req.Flags = msgs.FULL_READ_DIR_CURRENT
+							}
+							req.StartName = resp.Next.StartName
+							req.StartTime = resp.Next.StartTime
 						}
 						sort.Slice(
 							edges,

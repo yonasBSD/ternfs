@@ -259,7 +259,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 			return err
 		}
 		log.Debug("%v: got %d edges in response", dirId, len(resp.Results))
-		stop := resp.Next.StartHash == 0
+		stop := resp.Next.StartName == ""
 		for _, result := range resp.Results {
 			// we've encountered a current edge, it's time to stop
 			if result.Current {
@@ -286,7 +286,12 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 			}
 			break
 		}
-		req.Cursor = resp.Next
+		req.Flags = 0
+		if resp.Next.Current {
+			req.Flags = msgs.FULL_READ_DIR_CURRENT
+		}
+		req.StartName = resp.Next.StartName
+		req.StartTime = resp.Next.StartTime
 	}
 	if !hasEdges && dirId != msgs.ROOT_DIR_INODE_ID {
 		// Note that there is a race condition -- we do the stat quite a bit before

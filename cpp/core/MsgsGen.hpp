@@ -79,7 +79,6 @@ enum class ShardMessageKind : uint8_t {
     FILE_SPANS = 11,
     SAME_DIRECTORY_RENAME = 12,
     ADD_INLINE_SPAN = 16,
-    SNAPSHOT_LOOKUP = 14,
     STAT_TRANSIENT_FILE = 3,
     SET_DIRECTORY_INFO = 13,
     EXPIRE_TRANSIENT_FILE = 15,
@@ -141,6 +140,25 @@ enum class BlocksMessageKind : uint8_t {
 };
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
+
+struct FailureDomain {
+    BincodeFixedBytes<16> name;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<16>::STATIC_SIZE; // name
+
+    FailureDomain() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += BincodeFixedBytes<16>::STATIC_SIZE; // name
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FailureDomain&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FailureDomain& x);
 
 struct DirectoryInfoEntry {
     uint8_t tag;
@@ -213,10 +231,11 @@ struct BlockInfo {
     BincodeFixedBytes<4> blockServiceIp2;
     uint16_t blockServicePort2;
     BlockServiceId blockServiceId;
+    FailureDomain blockServiceFailureDomain;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockId + certificate
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + FailureDomain::STATIC_SIZE + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockServiceFailureDomain + blockId + certificate
 
     BlockInfo() { clear(); }
     uint16_t packedSize() const {
@@ -226,6 +245,7 @@ struct BlockInfo {
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp2
         _size += 2; // blockServicePort2
         _size += 8; // blockServiceId
+        _size += blockServiceFailureDomain.packedSize(); // blockServiceFailureDomain
         _size += 8; // blockId
         _size += BincodeFixedBytes<8>::STATIC_SIZE; // certificate
         return _size;
@@ -375,27 +395,6 @@ struct StripePolicy {
 };
 
 std::ostream& operator<<(std::ostream& out, const StripePolicy& x);
-
-struct SnapshotLookupEdge {
-    InodeIdExtra targetId;
-    EggsTime creationTime;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
-
-    SnapshotLookupEdge() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // targetId
-        _size += 8; // creationTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupEdge&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupEdge& x);
 
 struct FetchedBlock {
     uint8_t blockServiceIx;
@@ -599,6 +598,27 @@ static std::ostream& operator<<(std::ostream& out, const FetchedSpan& span) {
     out << ")";
     return out;
 }
+struct BlacklistEntry {
+    FailureDomain failureDomain;
+    BlockServiceId blockService;
+
+    static constexpr uint16_t STATIC_SIZE = FailureDomain::STATIC_SIZE + 8; // failureDomain + blockService
+
+    BlacklistEntry() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += failureDomain.packedSize(); // failureDomain
+        _size += 8; // blockService
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlacklistEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlacklistEntry& x);
+
 struct TransientFile {
     InodeId id;
     BincodeFixedBytes<8> cookie;
@@ -651,17 +671,15 @@ std::ostream& operator<<(std::ostream& out, const Edge& x);
 
 struct FullReadDirCursor {
     bool current;
-    uint64_t startHash;
     BincodeBytes startName;
     EggsTime startTime;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + startHash + startName + startTime
+    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE + 8; // current + startName + startTime
 
     FullReadDirCursor() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 1; // current
-        _size += 8; // startHash
         _size += startName.packedSize(); // startName
         _size += 8; // startTime
         return _size;
@@ -1043,13 +1061,13 @@ struct AddSpanInitiateReq {
     uint32_t size;
     Crc crc;
     uint8_t storageClass;
-    BincodeList<BlockServiceId> blacklist;
+    BincodeList<BlacklistEntry> blacklist;
     Parity parity;
     uint8_t stripes;
     uint32_t cellSize;
     BincodeList<Crc> crcs;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 4 + 4 + 1 + BincodeList<BlockServiceId>::STATIC_SIZE + 1 + 1 + 4 + BincodeList<Crc>::STATIC_SIZE; // fileId + cookie + byteOffset + size + crc + storageClass + blacklist + parity + stripes + cellSize + crcs
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 4 + 4 + 1 + BincodeList<BlacklistEntry>::STATIC_SIZE + 1 + 1 + 4 + BincodeList<Crc>::STATIC_SIZE; // fileId + cookie + byteOffset + size + crc + storageClass + blacklist + parity + stripes + cellSize + crcs
 
     AddSpanInitiateReq() { clear(); }
     uint16_t packedSize() const {
@@ -1364,50 +1382,6 @@ struct AddInlineSpanResp {
 
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanResp& x);
 
-struct SnapshotLookupReq {
-    InodeId dirId;
-    BincodeBytes name;
-    EggsTime startFrom;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + startFrom
-
-    SnapshotLookupReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // dirId
-        _size += name.packedSize(); // name
-        _size += 8; // startFrom
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupReq& x);
-
-struct SnapshotLookupResp {
-    EggsTime nextTime;
-    BincodeList<SnapshotLookupEdge> edges;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<SnapshotLookupEdge>::STATIC_SIZE; // nextTime + edges
-
-    SnapshotLookupResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // nextTime
-        _size += edges.packedSize(); // edges
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SnapshotLookupResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SnapshotLookupResp& x);
-
 struct StatTransientFileReq {
     InodeId id;
 
@@ -1652,16 +1626,22 @@ std::ostream& operator<<(std::ostream& out, const VisitTransientFilesResp& x);
 
 struct FullReadDirReq {
     InodeId dirId;
-    FullReadDirCursor cursor;
+    uint8_t flags;
+    BincodeBytes startName;
+    EggsTime startTime;
+    uint16_t limit;
     uint16_t mtu;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + FullReadDirCursor::STATIC_SIZE + 2; // dirId + cursor + mtu
+    static constexpr uint16_t STATIC_SIZE = 8 + 1 + BincodeBytes::STATIC_SIZE + 8 + 2 + 2; // dirId + flags + startName + startTime + limit + mtu
 
     FullReadDirReq() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
         _size += 8; // dirId
-        _size += cursor.packedSize(); // cursor
+        _size += 1; // flags
+        _size += startName.packedSize(); // startName
+        _size += 8; // startTime
+        _size += 2; // limit
         _size += 2; // mtu
         return _size;
     }
@@ -2106,8 +2086,9 @@ struct CreateLockedCurrentEdgeReq {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
+    EggsTime oldCreationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
     CreateLockedCurrentEdgeReq() { clear(); }
     uint16_t packedSize() const {
@@ -2115,6 +2096,7 @@ struct CreateLockedCurrentEdgeReq {
         _size += 8; // dirId
         _size += name.packedSize(); // name
         _size += 8; // targetId
+        _size += 8; // oldCreationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3053,7 +3035,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SnapshotLookupReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, FullReadDirReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
@@ -3080,8 +3062,6 @@ public:
     SameDirectoryRenameReq& setSameDirectoryRename();
     const AddInlineSpanReq& getAddInlineSpan() const;
     AddInlineSpanReq& setAddInlineSpan();
-    const SnapshotLookupReq& getSnapshotLookup() const;
-    SnapshotLookupReq& setSnapshotLookup();
     const StatTransientFileReq& getStatTransientFile() const;
     StatTransientFileReq& setStatTransientFile();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
@@ -3139,7 +3119,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SnapshotLookupResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, FullReadDirResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
@@ -3166,8 +3146,6 @@ public:
     SameDirectoryRenameResp& setSameDirectoryRename();
     const AddInlineSpanResp& getAddInlineSpan() const;
     AddInlineSpanResp& setAddInlineSpan();
-    const SnapshotLookupResp& getSnapshotLookup() const;
-    SnapshotLookupResp& setSnapshotLookup();
     const StatTransientFileResp& getStatTransientFile() const;
     StatTransientFileResp& setStatTransientFile();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
@@ -3496,8 +3474,9 @@ struct CreateLockedCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
+    EggsTime oldCreationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + name + targetId
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
     CreateLockedCurrentEdgeEntry() { clear(); }
     uint16_t packedSize() const {
@@ -3505,6 +3484,7 @@ struct CreateLockedCurrentEdgeEntry {
         _size += 8; // dirId
         _size += name.packedSize(); // name
         _size += 8; // targetId
+        _size += 8; // oldCreationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;

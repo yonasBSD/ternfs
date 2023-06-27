@@ -92,6 +92,10 @@ func writeBlock(
 	block *msgs.FetchedBlock,
 	newContents io.Reader,
 ) (msgs.BlockId, error) {
+	blacklistEntries := make([]msgs.BlacklistEntry, len(blacklist))
+	for i := 0; i < len(blacklistEntries); i++ {
+		blacklistEntries[i].BlockService = blacklist[i]
+	}
 	initiateSpanReq := msgs.AddSpanInitiateReq{
 		FileId:       file.id,
 		Cookie:       file.cookie,
@@ -99,7 +103,7 @@ func writeBlock(
 		Size:         blockSize,
 		Crc:          block.Crc,
 		StorageClass: storageClass,
-		Blacklist:    blacklist,
+		Blacklist:    blacklistEntries,
 		Parity:       rs.MkParity(1, 0),
 		Stripes:      1,
 		CellSize:     blockSize,

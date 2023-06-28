@@ -12,7 +12,6 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
@@ -70,6 +69,7 @@ func totalRequests(c []lib.ReqCounters) uint64 {
 
 func runTest(
 	log *lib.Logger,
+	acceptGcFailures bool,
 	shuckleAddress string,
 	filter *regexp.Regexp,
 	name string,
@@ -84,6 +84,7 @@ func runTest(
 	counters := &lib.ClientCounters{}
 
 	fmt.Printf("running %s test, %s\n", name, extra)
+	log.Info("running %s test, %s\n", name, extra) // also in log to track progress in CI more easily
 	t0 := time.Now()
 	run(counters)
 	elapsed := time.Since(t0)
@@ -100,7 +101,7 @@ func runTest(
 
 	counters = &lib.ClientCounters{}
 	t0 = time.Now()
-	cleanupAfterTest(log, shuckleAddress, counters)
+	cleanupAfterTest(log, shuckleAddress, counters, acceptGcFailures)
 	elapsed = time.Since(t0)
 	totalShardRequests = totalRequests(counters.Shard[:])
 	totalCDCRequests = totalRequests(counters.CDC[:])
@@ -170,8 +171,24 @@ func (i *cfgOverrides) int(k string, def int) int {
 	return n
 }
 
-func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, shuckleIp string, shucklePort uint16, mountPoint string, fuseMountPoint string, kmod bool, short bool, filter *regexp.Regexp) {
-	shuckleAddress := fmt.Sprintf("%s:%d", shuckleIp, shucklePort)
+type RunTests struct {
+	acceptGcFailures         bool
+	overrides                *cfgOverrides
+	shuckleIp                string
+	shucklePort              uint16
+	mountPoint               string
+	fuseMountPoint           string
+	kmod                     bool
+	short                    bool
+	filter                   *regexp.Regexp
+	writeDirectInMountedTest bool
+}
+
+func (r *RunTests) run(
+	terminateChan chan any,
+	log *lib.Logger,
+) {
+	shuckleAddress := fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 	client, err := lib.NewClient(log, shuckleAddress, 1)
 	if err != nil {
@@ -203,15 +220,15 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		spanPolicy := &msgs.SpanPolicy{
 			Entries: []msgs.SpanPolicyEntry{
 				{
-					MaxSize: 1 << 16,
+					MaxSize: 64 << 10, // 64KiB
 					Parity:  rs.MkParity(1, 4),
 				},
 				{
-					MaxSize: 500 << 10,
+					MaxSize: 500 << 10, // 500KiB
 					Parity:  rs.MkParity(4, 4),
 				},
 				{
-					MaxSize: 1 << 20,
+					MaxSize: 1 << 20, // 1MiB
 					Parity:  rs.MkParity(10, 4),
 				},
 			},
@@ -233,19 +250,20 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	}
 
 	fileHistoryOpts := fileHistoryTestOpts{
-		steps:           overrides.int("fileHistory.steps", 10*1000), // perform 10k actions
-		checkpointEvery: 100,                                         // get times every 100 actions
-		targetFiles:     1000,                                        // how many files we want
+		steps:           r.overrides.int("fileHistory.steps", 10*1000), // perform 10k actions
+		checkpointEvery: 100,                                           // get times every 100 actions
+		targetFiles:     1000,                                          // how many files we want
 		lowFiles:        500,
-		threads:         overrides.int("fileHistory.threads", 5),
+		threads:         r.overrides.int("fileHistory.threads", 5),
 	}
-	if short {
-		fileHistoryOpts.threads = overrides.int("fileHistory.threads", 2)
+	if r.short {
+		fileHistoryOpts.threads = r.overrides.int("fileHistory.threads", 2)
 	}
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(counters *lib.ClientCounters) {
@@ -255,36 +273,37 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 
 	fsTestOpts := fsTestOpts{
 		depth:        4,
-		maxFileSize:  overrides.int("fsTest.maxFileSize", 10<<20), // 10MiB
-		spanSize:     1 << 20,                                     // 1MiB
-		checkThreads: overrides.int("fsTest.checkThreads", 5),
+		maxFileSize:  r.overrides.int("fsTest.maxFileSize", 10<<20), // 10MiB
+		spanSize:     1 << 20,                                       // 1MiB
+		checkThreads: r.overrides.int("fsTest.checkThreads", 5),
 	}
 
 	// 0.03 * 20*1000 * 5MiB = ~3GiB of file data
-	if short {
-		fsTestOpts.numDirs = overrides.int("fsTest.numDirs", 200)
-		fsTestOpts.numFiles = overrides.int("fsTest.numFiles", 10*200)
+	if r.short {
+		fsTestOpts.numDirs = r.overrides.int("fsTest.numDirs", 200)
+		fsTestOpts.numFiles = r.overrides.int("fsTest.numFiles", 10*200)
 		fsTestOpts.emptyFileProb = 0.1
 		fsTestOpts.inlineFileProb = 0.3
 	} else {
-		fsTestOpts.numDirs = overrides.int("fsTest.numDirs", 1*1000)    // we need at least 256 directories, to have at least one dir per shard
-		fsTestOpts.numFiles = overrides.int("fsTest.numFiles", 20*1000) // around 20 files per dir
+		fsTestOpts.numDirs = r.overrides.int("fsTest.numDirs", 1*1000)    // we need at least 256 directories, to have at least one dir per shard
+		fsTestOpts.numFiles = r.overrides.int("fsTest.numFiles", 20*1000) // around 20 files per dir
 		fsTestOpts.emptyFileProb = 0.8
 		fsTestOpts.inlineFileProb = 0.17
 	}
 
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, "", r.writeDirectInMountedTest)
 		},
 	)
 
-	if kmod {
+	if r.kmod {
 		preadddirOpts := preadddirOpts{
 			numDirs:     1000,
 			filesPerDir: 100,
@@ -293,24 +312,26 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		}
 		runTest(
 			log,
+			r.acceptGcFailures,
 			shuckleAddress,
-			filter,
+			r.filter,
 			"parallel readdir",
 			fmt.Sprintf("%v dirs, %v files per dir, %v loops, %v threads", preadddirOpts.numDirs, preadddirOpts.filesPerDir, preadddirOpts.loops, preadddirOpts.threads),
 			func(counters *lib.ClientCounters) {
-				preaddirTest(log, mountPoint, &preadddirOpts)
+				preaddirTest(log, r.mountPoint, &preadddirOpts)
 			},
 		)
 	}
 
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, mountPoint)
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, r.mountPoint, r.writeDirectInMountedTest)
 		},
 	)
 
@@ -323,12 +344,12 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	}
 
 	// remount kmod to ensure that policies are refreshed
-	if kmod {
-		out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
+	if r.kmod {
+		out, err := exec.Command("sudo", "umount", r.mountPoint).CombinedOutput()
 		if err != nil {
 			panic(fmt.Errorf("could not umount fs (%w): %s", err, out))
 		}
-		mountKmod(shucklePort, mountPoint)
+		mountKmod(r.shucklePort, r.mountPoint)
 	}
 
 	largeFileOpts := largeFileTestOpts{
@@ -336,12 +357,13 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 	}
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"large file",
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
 		func(counters *lib.ClientCounters) {
-			largeFileTest(log, &largeFileOpts, mountPoint)
+			largeFileTest(log, &largeFileOpts, r.mountPoint)
 		},
 	)
 
@@ -350,18 +372,19 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		numFiles:    100,       // 20GiB
 		numDirs:     10,
 	}
-	if short {
+	if r.short {
 		rsyncOpts.numFiles = 10
 		rsyncOpts.numDirs = 1
 	}
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"rsync large files",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
-			rsyncTest(log, &rsyncOpts, mountPoint)
+			rsyncTest(log, &rsyncOpts, r.mountPoint)
 		},
 	)
 
@@ -370,18 +393,19 @@ func runTests(terminateChan chan any, log *lib.Logger, overrides *cfgOverrides, 
 		numFiles:    10000,   // 10GiB
 		numDirs:     1000,
 	}
-	if short {
+	if r.short {
 		rsyncOpts.numFiles /= 10
 		rsyncOpts.numDirs /= 10
 	}
 	runTest(
 		log,
+		r.acceptGcFailures,
 		shuckleAddress,
-		filter,
+		r.filter,
 		"rsync small files",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
-			rsyncTest(log, &rsyncOpts, mountPoint)
+			rsyncTest(log, &rsyncOpts, r.mountPoint)
 		},
 	)
 
@@ -405,6 +429,8 @@ func (bsv *blockServiceVictim) start(
 	log *lib.Logger,
 	blocksExe string,
 	shucklePort uint16,
+	port1 uint16,
+	port2 uint16,
 	profile bool,
 	procs *managedprocess.ManagedProcesses,
 ) managedprocess.ManagedProcessId {
@@ -419,30 +445,40 @@ func (bsv *blockServiceVictim) start(
 		OwnIp1:         "127.0.0.1",
 		OwnIp2:         "127.0.0.1",
 		Profile:        profile,
+		Port1:          port1,
+		Port2:          port2,
 	})
 }
 
-func killBlockServicesEvery(
+func killBlockServices(
 	log *lib.Logger,
 	terminateChan chan any,
+	stopChan chan struct{},
 	blocksExe string,
 	shucklePort uint16,
 	profile bool,
 	procs *managedprocess.ManagedProcesses,
 	bsProcs map[managedprocess.ManagedProcessId]blockServiceVictim,
-	every time.Duration,
+	bsPorts map[[16]byte]struct {
+		_1 uint16
+		_2 uint16
+	},
 ) {
-	log.Info("will kill block services every %v", every)
-	var mu sync.Mutex
-	killAtOnce := 4
+	// a few things to take into account here, e.g. how much it takes for bs to start,
+	// and the shuckle metadata to update. we are able to do this because we never
+	// mark block services as stale when the killer is active, so that basically we
+	// give all responsibility to the clients, which is what we want to test.
+	killAtOnce := 2
+	killDuration := time.Second * 10
+	gracePeriod := time.Second * 0
+	log.Info("will kill %v block services for %v, with %v in between", killAtOnce, killDuration, gracePeriod)
 	rand := wyhash.New(uint64(time.Now().Nanosecond()))
-	for i := 0; i < killAtOnce; i++ {
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		for {
+			for i := 0; i < killAtOnce; i++ {
 				// pick a victim
 				var bsv blockServiceVictim
-				mu.Lock()
 				ix := int(rand.Uint64()) % len(bsProcs)
 				i := 0
 				var procId managedprocess.ManagedProcessId
@@ -454,29 +490,43 @@ func killBlockServicesEvery(
 					}
 					i++
 				}
-				mu.Unlock()
 				// kill the victim
 				log.Info("killing %v", bsv.path)
 				procs.Kill(procId, syscall.SIGKILL)
 				// wait
-				time.Sleep(every)
-				// revive the victim
+				time.Sleep(killDuration)
+				// revive the victim -- important to preserve ports
+				// so that shard blockservice cache data won't be
+				// invalidated (we don't want to have to wait for it
+				// to be refreshed for the tests to work)
 				log.Info("reviving %v", bsv.path)
+				var failureDomain [16]byte
+				copy(failureDomain[:], bsv.failureDomain)
+				ports := bsPorts[failureDomain]
 				procId = bsv.start(
 					log,
 					blocksExe,
 					shucklePort,
+					ports._1,
+					ports._2,
 					profile,
 					procs,
 				)
-				mu.Lock()
 				bsProcs[procId] = bsv
-				mu.Unlock()
-				// wait for the victim (not great, but oh well)
-				time.Sleep(time.Second)
 			}
-		}()
-	}
+			sleepChan := make(chan struct{}, 1)
+			go func() {
+				time.Sleep(gracePeriod)
+				sleepChan <- struct{}{}
+			}()
+			select {
+			case <-sleepChan:
+			case <-stopChan:
+				stopChan <- struct{}{} // reply
+				return
+			}
+		}
+	}()
 }
 
 func main() {
@@ -501,7 +551,8 @@ func main() {
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
 	tmpDir := flag.String("tmp-dir", "", "")
 	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
-	blockServicesKiller := flag.Duration("block-services-killer", 0, "")
+	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
+	race := flag.Bool("race", false, "Go race detector")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -590,7 +641,7 @@ func main() {
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 		cppExes = managedprocess.BuildCppExes(log, *repoDir, *buildType)
-		goExes = managedprocess.BuildGoExes(log, *repoDir)
+		goExes = managedprocess.BuildGoExes(log, *repoDir, *race)
 	}
 
 	terminateChan := make(chan any, 1)
@@ -621,12 +672,16 @@ func main() {
 	// Start shuckle
 	shucklePort := uint16(*shucklePortArg)
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
-	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
+	shuckleOpts := &managedprocess.ShuckleOpts{
 		Exe:         goExes.ShuckleExe,
 		BincodePort: shucklePort,
 		LogLevel:    level,
 		Dir:         path.Join(*dataDir, "shuckle"),
-	})
+	}
+	if *blockServiceKiller {
+		shuckleOpts.Stale = time.Hour * 1000 // never
+	}
+	procs.StartShuckle(log, shuckleOpts)
 
 	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.
 	hddBlockServices := 10
@@ -650,14 +705,12 @@ func main() {
 				log,
 				goExes.BlocksExe,
 				shucklePort,
+				0, 0,
 				*profile,
 				procs,
 			)
 			blockServicesProcs[procId] = bsv
 		}
-	}
-	if *blockServicesKiller != 0 {
-		killBlockServicesEvery(log, terminateChan, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, *blockServicesKiller)
 	}
 
 	if *outgoingPacketDrop > 0 {
@@ -709,7 +762,29 @@ func main() {
 		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	shuckleInfo := lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	blockServicesPorts := make(map[[16]byte]struct {
+		_1 uint16
+		_2 uint16
+	})
+	for _, bs := range shuckleInfo.BlockServices {
+		blockServicesPorts[bs.FailureDomain] = struct {
+			_1 uint16
+			_2 uint16
+		}{bs.Port1, bs.Port2}
+	}
+
+	var stopBlockServiceKiller chan struct{}
+	if *blockServiceKiller {
+		fmt.Printf("will kill block services\n")
+		stopBlockServiceKiller = make(chan struct{}, 1)
+		killBlockServices(log, terminateChan, stopBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
+		// stop before trying to clean up data dir etc.
+		defer func() {
+			stopBlockServiceKiller <- struct{}{}
+			<-stopBlockServiceKiller
+		}()
+	}
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,
@@ -742,7 +817,22 @@ func main() {
 
 	// start tests
 	go func() {
-		runTests(terminateChan, log, &overrides, "127.0.0.1", shucklePort, mountPoint, fuseMountPoint, *kmod, *short, filterRe)
+		// if the block service killer is on, we just can't reliably GC,
+		// because some of the block services might be down.
+		r := RunTests{
+			acceptGcFailures: *blockServiceKiller,
+			overrides:        &overrides,
+			shuckleIp:        "127.0.0.1",
+			shucklePort:      shucklePort,
+			mountPoint:       mountPoint,
+			fuseMountPoint:   fuseMountPoint,
+			kmod:             *kmod,
+			short:            *short,
+			filter:           filterRe,
+			// TODO write explanation for this
+			writeDirectInMountedTest: *blockServiceKiller,
+		}
+		r.run(terminateChan, log)
 	}()
 
 	// wait for things to finish

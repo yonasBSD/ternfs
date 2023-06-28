@@ -109,7 +109,7 @@ func main() {
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
 		cppExes = managedprocess.BuildCppExes(log, *repoDir, *buildType)
-		goExes = managedprocess.BuildGoExes(log, *repoDir)
+		goExes = managedprocess.BuildGoExes(log, *repoDir, false)
 	}
 
 	terminateChan := make(chan any, 1)

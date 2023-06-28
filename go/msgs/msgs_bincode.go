@@ -323,6 +323,8 @@ func (k ShardMessageKind) String() string {
 		return "ADD_INLINE_SPAN"
 	case 115:
 		return "FULL_READ_DIR"
+	case 123:
+		return "MOVE_SPAN"
 	case 3:
 		return "STAT_TRANSIENT_FILE"
 	case 13:
@@ -385,6 +387,7 @@ const (
 	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
 	ADD_INLINE_SPAN ShardMessageKind = 0x10
 	FULL_READ_DIR ShardMessageKind = 0x73
+	MOVE_SPAN ShardMessageKind = 0x7B
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	EXPIRE_TRANSIENT_FILE ShardMessageKind = 0xF
@@ -436,6 +439,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse) {
 		return &AddInlineSpanReq{}, &AddInlineSpanResp{}
 	case k == "FULL_READ_DIR":
 		return &FullReadDirReq{}, &FullReadDirResp{}
+	case k == "MOVE_SPAN":
+		return &MoveSpanReq{}, &MoveSpanResp{}
 	case k == "STAT_TRANSIENT_FILE":
 		return &StatTransientFileReq{}, &StatTransientFileResp{}
 	case k == "SET_DIRECTORY_INFO":
@@ -1484,6 +1489,72 @@ func (v *FullReadDirResp) Unpack(r io.Reader) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func (v *MoveSpanReq) ShardRequestKind() ShardMessageKind {
+	return MOVE_SPAN
+}
+
+func (v *MoveSpanReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint32(v.SpanSize)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.Cookie1[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset2)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.Cookie2[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveSpanReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.SpanSize)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.Cookie1[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset2)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.Cookie2[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveSpanResp) ShardResponseKind() ShardMessageKind {
+	return MOVE_SPAN
+}
+
+func (v *MoveSpanResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *MoveSpanResp) Unpack(r io.Reader) error {
 	return nil
 }
 

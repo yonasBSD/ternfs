@@ -17,7 +17,6 @@ import (
 	"path"
 	"runtime/pprof"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/crc32c"
@@ -117,12 +116,12 @@ func registerPeriodically(
 			if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
 				panic(err)
 			}
-			log.Debug("statfs for %v: %+v", blockService.path, statfs)
+			log.Trace("statfs for %v: %+v", blockService.path, statfs)
 			bsInfo.Blocks = countBlocks(blockService.path)
 			bsInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
 			bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
 		}
-		log.Debug("registering with %+v", req)
+		log.Trace("registering with %+v", req)
 		_, err := lib.ShuckleRequest(log, shuckleAddress, &req)
 		if err != nil {
 			log.RaiseAlert(fmt.Errorf("could not register block services with %+v: %w", shuckleAddress, err))
@@ -223,7 +222,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 }
 
 func writeToTemp(
-	log *lib.Logger, bufPool *sync.Pool, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, bufPool *lib.BufPool, basePath string, size uint64, conn *net.TCPConn,
 ) (tmpName string, crc uint32, err error) {
 	var f *os.File
 	f, err = os.CreateTemp(basePath, "tmp.")
@@ -237,10 +236,11 @@ func writeToTemp(
 			os.Remove(tmpName)
 		}
 	}()
-	bufPtr := bufPool.Get().(*[]byte)
+	bufPtr := bufPool.Get(1 << 20)
 	defer bufPool.Put(bufPtr)
 	readSoFar := uint64(0)
 	for {
+		log.Debug("size=%v readSoFar=%v", size, readSoFar)
 		buf := *bufPtr
 		if uint64(len(buf)) > size-readSoFar {
 			buf = buf[:int(size-readSoFar)]
@@ -266,7 +266,7 @@ func writeToTemp(
 }
 
 func writeBlock(
-	log *lib.Logger, bufPool *sync.Pool,
+	log *lib.Logger, bufPool *lib.BufPool,
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
@@ -290,6 +290,7 @@ func writeBlock(
 		return err
 	}
 	defer os.Remove(tmpName)
+	log.Debug("writing proof")
 	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
@@ -303,7 +304,7 @@ func consumeBlock(size uint32, conn *net.TCPConn) error {
 }
 
 func testWrite(
-	log *lib.Logger, bufPool *sync.Pool, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, bufPool *lib.BufPool, basePath string, size uint64, conn *net.TCPConn,
 ) error {
 	tmpName, _, err := writeToTemp(log, bufPool, basePath, size, conn)
 	if err != nil {
@@ -340,7 +341,7 @@ func handleError(
 
 func handleRequest(
 	log *lib.Logger,
-	bufPool *sync.Pool,
+	bufPool *lib.BufPool,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]blockService,
 	conn *net.TCPConn,
@@ -683,12 +684,7 @@ func main() {
 
 	terminateChan := make(chan any)
 
-	bufPool := &sync.Pool{
-		New: func() any {
-			buf := make([]byte, 1<<20)
-			return &buf
-		},
-	}
+	bufPool := lib.NewBufPool()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

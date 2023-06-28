@@ -21,7 +21,7 @@ struct eggsfs_failure_domain_end;
 
 static inline void _eggsfs_failure_domain_get(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_start* start, uint8_t* name) {
     if (likely(ctx->err == 0)) {
-        if (unlikely(ctx->end - ctx->buf) < 16) {
+        if (unlikely(ctx->end - ctx->buf < 16)) {
             ctx->err = 14; // 14 == EGGSFS_ERR_MALFORMED_RESPONSE, see static assert below
         } else {
             memcpy(name, ctx->buf, 16);

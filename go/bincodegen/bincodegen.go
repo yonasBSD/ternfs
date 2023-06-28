@@ -1213,6 +1213,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
 			reflect.TypeOf(msgs.ExpireTransientFileEntry{}),
+			reflect.TypeOf(msgs.MoveSpanEntry{}),
 		},
 	)
 
@@ -1352,6 +1353,13 @@ func main() {
 			0x73,
 			reflect.TypeOf(msgs.FullReadDirReq{}),
 			reflect.TypeOf(msgs.FullReadDirResp{}),
+		},
+		// this is also "private" but we use it to statsh away broken dirty
+		// spans
+		{
+			0x7B,
+			reflect.TypeOf(msgs.MoveSpanReq{}),
+			reflect.TypeOf(msgs.MoveSpanResp{}),
 		},
 	}
 

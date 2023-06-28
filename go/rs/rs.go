@@ -94,7 +94,7 @@ func (r *Rs) checkBlockSize(data [][]byte, parity [][]byte) int {
 	blockSize := len(data[0])
 	for i := range data {
 		if len(data[i]) != blockSize {
-			panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(data[i])))
+			panic(fmt.Errorf("differing data block size, expected %v, got %v in block %v", blockSize, len(data[i]), i))
 		}
 	}
 	if parity != nil {
@@ -103,7 +103,7 @@ func (r *Rs) checkBlockSize(data [][]byte, parity [][]byte) int {
 		}
 		for i := range parity {
 			if len(parity[i]) != blockSize {
-				panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(parity[i])))
+				panic(fmt.Errorf("differing parity block size, expected %v, got %v in block %v", blockSize, len(parity[i]), i))
 			}
 		}
 	}

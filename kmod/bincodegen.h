@@ -75,7 +75,8 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_SAME_DIRECTORY_RENAME 0xC
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
 #define EGGSFS_SHARD_FULL_READ_DIR 0x73
-#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 115, "FULL_READ_DIR" })
+#define EGGSFS_SHARD_MOVE_SPAN 0x7B
+#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" })
 const char* eggsfs_shard_kind_str(int kind);
 
 #define EGGSFS_CDC_MAKE_DIRECTORY 0x1
@@ -4291,6 +4292,223 @@ static inline void _eggsfs_full_read_dir_resp_put_results(struct eggsfs_bincode_
 #define eggsfs_full_read_dir_resp_put_end(ctx, prev, next) \
     { struct eggsfs_full_read_dir_resp_results* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_full_read_dir_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_MOVE_SPAN_REQ_SIZE 52
+struct eggsfs_move_span_req_start;
+#define eggsfs_move_span_req_get_start(ctx, start) struct eggsfs_move_span_req_start* start = NULL
+
+struct eggsfs_move_span_req_span_size { u32 x; };
+static inline void _eggsfs_move_span_req_get_span_size(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_start** prev, struct eggsfs_move_span_req_span_size* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_span_size(ctx, prev, next) \
+    struct eggsfs_move_span_req_span_size next; \
+    _eggsfs_move_span_req_get_span_size(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_file_id1 { u64 x; };
+static inline void _eggsfs_move_span_req_get_file_id1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_span_size* prev, struct eggsfs_move_span_req_file_id1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_file_id1(ctx, prev, next) \
+    struct eggsfs_move_span_req_file_id1 next; \
+    _eggsfs_move_span_req_get_file_id1(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_byte_offset1 { u64 x; };
+static inline void _eggsfs_move_span_req_get_byte_offset1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_file_id1* prev, struct eggsfs_move_span_req_byte_offset1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_byte_offset1(ctx, prev, next) \
+    struct eggsfs_move_span_req_byte_offset1 next; \
+    _eggsfs_move_span_req_get_byte_offset1(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_cookie1 { u64 x; };
+static inline void _eggsfs_move_span_req_get_cookie1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_byte_offset1* prev, struct eggsfs_move_span_req_cookie1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_cookie1(ctx, prev, next) \
+    struct eggsfs_move_span_req_cookie1 next; \
+    _eggsfs_move_span_req_get_cookie1(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_file_id2 { u64 x; };
+static inline void _eggsfs_move_span_req_get_file_id2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_cookie1* prev, struct eggsfs_move_span_req_file_id2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_file_id2(ctx, prev, next) \
+    struct eggsfs_move_span_req_file_id2 next; \
+    _eggsfs_move_span_req_get_file_id2(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_byte_offset2 { u64 x; };
+static inline void _eggsfs_move_span_req_get_byte_offset2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_file_id2* prev, struct eggsfs_move_span_req_byte_offset2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_byte_offset2(ctx, prev, next) \
+    struct eggsfs_move_span_req_byte_offset2 next; \
+    _eggsfs_move_span_req_get_byte_offset2(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_cookie2 { u64 x; };
+static inline void _eggsfs_move_span_req_get_cookie2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_byte_offset2* prev, struct eggsfs_move_span_req_cookie2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_move_span_req_get_cookie2(ctx, prev, next) \
+    struct eggsfs_move_span_req_cookie2 next; \
+    _eggsfs_move_span_req_get_cookie2(ctx, &(prev), &(next))
+
+struct eggsfs_move_span_req_end;
+#define eggsfs_move_span_req_get_end(ctx, prev, next) \
+    { struct eggsfs_move_span_req_cookie2* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_move_span_req_end* next = NULL
+
+static inline void eggsfs_move_span_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_move_span_req_put_start(ctx, start) struct eggsfs_move_span_req_start* start = NULL
+
+static inline void _eggsfs_move_span_req_put_span_size(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_start** prev, struct eggsfs_move_span_req_span_size* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_move_span_req_put_span_size(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_span_size next; \
+    _eggsfs_move_span_req_put_span_size(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_file_id1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_span_size* prev, struct eggsfs_move_span_req_file_id1* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_file_id1(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_file_id1 next; \
+    _eggsfs_move_span_req_put_file_id1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_byte_offset1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_file_id1* prev, struct eggsfs_move_span_req_byte_offset1* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_byte_offset1(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_byte_offset1 next; \
+    _eggsfs_move_span_req_put_byte_offset1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_cookie1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_byte_offset1* prev, struct eggsfs_move_span_req_cookie1* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_be64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_cookie1(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_cookie1 next; \
+    _eggsfs_move_span_req_put_cookie1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_file_id2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_cookie1* prev, struct eggsfs_move_span_req_file_id2* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_file_id2(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_file_id2 next; \
+    _eggsfs_move_span_req_put_file_id2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_byte_offset2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_file_id2* prev, struct eggsfs_move_span_req_byte_offset2* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_byte_offset2(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_byte_offset2 next; \
+    _eggsfs_move_span_req_put_byte_offset2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_move_span_req_put_cookie2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_move_span_req_byte_offset2* prev, struct eggsfs_move_span_req_cookie2* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_be64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_move_span_req_put_cookie2(ctx, prev, next, x) \
+    struct eggsfs_move_span_req_cookie2 next; \
+    _eggsfs_move_span_req_put_cookie2(ctx, &(prev), &(next), x)
+
+#define eggsfs_move_span_req_put_end(ctx, prev, next) \
+    { struct eggsfs_move_span_req_cookie2* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_move_span_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_MOVE_SPAN_RESP_SIZE 0
+struct eggsfs_move_span_resp_start;
+#define eggsfs_move_span_resp_get_start(ctx, start) struct eggsfs_move_span_resp_start* start = NULL
+
+struct eggsfs_move_span_resp_end;
+#define eggsfs_move_span_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_move_span_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_move_span_resp_end* next = NULL
+
+static inline void eggsfs_move_span_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_move_span_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_move_span_resp_put_start(ctx, start) struct eggsfs_move_span_resp_start* start = NULL
+
+#define eggsfs_move_span_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_move_span_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_move_span_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_MAKE_DIRECTORY_REQ_MAX_SIZE 264
 struct eggsfs_make_directory_req_start;

@@ -70,7 +70,9 @@ def wait_cmds(ps, quiet=False):
             done[i] = wait_cmd(p, timeout=0.1)
 
 bold_print('building requisites')
-wait_cmd(run_cmd(['./cpp/build.py', 'alpine', 'rs', 'crc32c']), quiet=True)
+wait_cmd(run_cmd(['./cpp/build.py', 'alpine']), quiet=True)
+wait_cmd(run_cmd(['./cpp/build.py', 'sanitized']), quiet=True)
+wait_cmd(run_cmd(['./cpp/build.py', 'valgrind']), quiet=True)
 wait_cmd(run_cmd(['go', 'generate', './...'], cwd='go/msgs'), quiet=True)
 wait_cmd(run_cmd(['go', 'build', '.'], cwd='go/eggstests'), quiet=True)
 wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'), quiet=True)
@@ -84,20 +86,23 @@ wait_cmds(
 )
 
 bold_print('integration tests')
+tests = [
+    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short'],
+    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'valgrind'],
+    # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
+    # of the child processes confuse the FUSE driver)
+    ['./go/eggstests/eggstests', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-short'],
+]
 # we need three free ports, we get them here upfront rather than in shuckle to reduce
 # the chance of races -- if we got it from the integration tests it'll be while
 # tons of things are started in another integration test
 ports = []
-for _ in range(3):
+for _ in range(len(tests)):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Ensure the port is immediately reusable
         ports.append(s.getsockname()[1])
 wait_cmds(
-    [
-        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[0])]),
-        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[1]), '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short']),
-        run_cmd(['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-shuckle-port', str(ports[2]), '-build-type', 'valgrind']),
-    ],
+    [run_cmd(test + ['-shuckle-port', str(port)]) for test, port in zip(tests, ports)],
     quiet=tests_quiet,
 )

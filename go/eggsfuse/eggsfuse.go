@@ -11,6 +11,7 @@ import (
 	"runtime/pprof"
 	"sync"
 	"syscall"
+	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
@@ -21,8 +22,7 @@ import (
 var client *lib.Client
 var logger *lib.Logger
 var dirInfoCache *lib.DirInfoCache
-var readBufPool *lib.ReadSpanBufPool
-var writeBufPool *sync.Pool
+var bufPool *lib.BufPool
 
 type statCache struct {
 	size  uint64
@@ -140,6 +140,7 @@ type transientFile struct {
 	mu           sync.Mutex
 	dir          msgs.InodeId
 	valid        bool
+	flushed      bool
 	id           msgs.InodeId
 	cookie       [8]byte
 	name         string
@@ -289,7 +290,15 @@ func (n *eggsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 }
 
-func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, errno syscall.Errno) {
+func (n *eggsNode) createInternal(name string, flags uint32, mode uint32) (tf *transientFile, errno syscall.Errno) {
+	// TODO actually white list all flags
+	// // I have no idea who puts 0x8000 in there (the fuse module?)
+	// goodFlags := uint32(unix.O_RDWR | unix.O_CLOEXEC | unix.O_TRUNC | unix.O_CREAT | 0x8000)
+	// if flags & ^goodFlags != 0 {
+	// 	logger.Info("bad flags %08x", flags & ^goodFlags)
+	// 	return nil, syscall.ENOTSUP
+	// }
+
 	// TODO would probably be better to check the mode/flags and return
 	// EINVAL if it doesn't match what we want.
 	spanPolicy := &msgs.SpanPolicy{}
@@ -316,7 +325,7 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 	if err := shardRequest(n.id.Shard(), &req, &resp); err != 0 {
 		return nil, err
 	}
-	data := writeBufPool.Get().(*[]byte)
+	data := bufPool.Get(0)
 	logger.Debug("gotten data %p", data)
 	transient := transientFile{
 		id:           resp.Id,
@@ -335,15 +344,18 @@ func (n *eggsNode) createInternal(name string, mode uint32) (tf *transientFile, 
 func (n *eggsNode) Create(
 	ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut,
 ) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	logger.Debug("create dir=%v, name=%v, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
+	logger.Debug("create id=%v, name=%v, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
 
-	tf, err := n.createInternal(name, mode)
+	tf, err := n.createInternal(name, flags, mode)
 	if err != 0 {
 		return nil, nil, 0, err
 	}
 	fileNode := eggsNode{
 		id: tf.id,
 	}
+
+	logger.Debug("created id=%v", tf.id)
+
 	return n.NewInode(ctx, &fileNode, fs.StableAttr{Ino: uint64(tf.id), Mode: mode}), tf, 0, 0
 }
 
@@ -403,16 +415,21 @@ func (f *transientFile) writeSpanIfNecessary() syscall.Errno {
 func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
 	logger.Debug("write file=%v, off=%v, count=%v", f.id, off, len(data))
 
+	if len(data) == 0 {
+		logger.Debug("zero-write, returning early")
+		return 0, 0
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if !f.valid {
+	if !f.valid || f.flushed {
+		logger.Info("can't write anymore valid=%v flushed=%v", f.valid, f.flushed)
 		return 0, syscall.EBADF
 	}
 
-	// TODO support writing in the middle (and flushing out the span later)
 	if off != int64(f.written)+int64(len(*f.data)) {
-		logger.Info("refusing to write in the past")
+		logger.Info("refusing to write in the past off=%v written=%v len=%v", off, f.written, len(*f.data))
 		return 0, syscall.EINVAL
 	}
 
@@ -433,15 +450,20 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.flushed {
+		logger.Debug("tf %v has already been flushed", f.id)
+		return 0
+	}
+
 	if !f.valid {
 		logger.Debug("tf %v is not valid, returning EBADF", f.id)
 		return syscall.EBADF
 	}
 
 	defer func() {
-		writeBufPool.Put(f.data)
+		bufPool.Put(f.data)
 		f.data = nil
-		f.valid = false
+		f.flushed = true
 	}()
 
 	if err := f.writeSpan(); err != 0 {
@@ -527,97 +549,26 @@ func (n *eggsNode) Rename(ctx context.Context, oldName string, newParent0 fs.Ino
 
 // We keep information for the last requested span,
 type openFile struct {
-	mu   sync.Mutex
-	id   msgs.InodeId
-	size uint64 // total size of file
-
-	spanReader lib.PuttableReadCloser // the span we're currently reading from
-	readOffset int64                  // the offset we're currently reading at, in the span reader above
-
-	// We store the last successful span resp, to avoid re-issuing it if we can
-	spans *msgs.FileSpansResp
+	mu            sync.Mutex
+	id            msgs.InodeId
+	blockServices []msgs.BlockService
+	spans         []msgs.FetchedSpan
+	lastStripe    *lib.FetchedStripe
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	logger.Debug("open file=%v", n.id)
+	logger.Debug("open file=%v flags=%08x", n.id, flags)
 
-	statResp := msgs.StatFileResp{}
-	if err := shardRequest(n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &statResp); err != 0 {
-		return nil, 0, err
+	blockServices, spans, err := client.FetchSpans(logger, n.id)
+	if err != nil {
+		return nil, 0, eggsErrToErrno(err)
 	}
 	of := openFile{
-		id:         n.id,
-		size:       statResp.Size,
-		readOffset: -1,
+		id:            n.id,
+		blockServices: blockServices,
+		spans:         spans,
 	}
 	return &of, 0, 0
-}
-
-func (of *openFile) lookupSpan(offset int64) ([]msgs.BlockService, *msgs.FetchedSpan) {
-	for i := 0; i < len(of.spans.Spans); i++ {
-		span := &of.spans.Spans[i]
-		if int64(span.Header.ByteOffset) <= offset && offset < int64(span.Header.ByteOffset)+int64(span.Header.Size) {
-			logger.Debug("picking span starting at %v, of size %v", span.Header.ByteOffset, span.Header.Size)
-			return of.spans.BlockServices, span
-		}
-	}
-	return nil, nil
-}
-
-func (of *openFile) getSpan(offset int64) ([]msgs.BlockService, *msgs.FetchedSpan, syscall.Errno) {
-	// check if we're within current span index
-	if of.spans != nil {
-		blockServices, span := of.lookupSpan(offset)
-		if blockServices != nil {
-			return blockServices, span, 0
-		}
-	}
-	// we need to fetch the spans again
-	of.spans = &msgs.FileSpansResp{}
-	if err := shardRequest(of.id.Shard(), &msgs.FileSpansReq{FileId: of.id, ByteOffset: uint64(offset)}, of.spans); err != 0 {
-		return nil, nil, eggsErrToErrno(err)
-	}
-	blockServices, span := of.lookupSpan(offset)
-	if blockServices == nil {
-		panic(fmt.Errorf("couldn't get span at offset %v", offset))
-	}
-	return blockServices, span, 0
-}
-
-// ensures that the span reader is at the current offset.
-func (of *openFile) getSpanReaderAt(offset int64) syscall.Errno {
-	if offset < 0 || offset >= int64(of.size) {
-		panic(fmt.Errorf("offset=%v < 0 || offset=%v >= of.size=%v", offset, offset, of.size))
-	}
-	if of.spanReader != nil {
-		panic(fmt.Errorf("we already have a span reader, close it explicitly first (it's non obvious how to from here)"))
-	}
-	blockServices, fetchedSpan, err := of.getSpan(offset)
-	if err != 0 {
-		return err
-	}
-	{
-		var err error
-		of.spanReader, err = client.ReadSpan(logger, readBufPool, []msgs.BlockServiceId{}, blockServices, fetchedSpan)
-		if err != nil {
-			return eggsErrToErrno(err)
-		}
-	}
-	of.readOffset = int64(fetchedSpan.Header.ByteOffset)
-	// fast forward to what we're interested
-	var buf [256]byte
-	for of.readOffset < offset {
-		end := 256
-		if offset-of.readOffset < 256 {
-			end = int(offset - of.readOffset)
-		}
-		read, err := of.spanReader.Read(buf[:end])
-		if err != nil {
-			return eggsErrToErrno(err)
-		}
-		of.readOffset += int64(read)
-	}
-	return 0
 }
 
 // One step of reading, will go through at most one span.
@@ -626,47 +577,26 @@ func (of *openFile) readInternal(dest []byte, off int64) (int64, syscall.Errno) 
 		return 0, 0
 	}
 
-	// Check if we're still within the file: if not, we can just exit
-	if off >= int64(of.size) {
-		logger.Debug("%v is beyond %v, nothing to read", off, of.size)
-		return 0, 0
-	}
-
-	// If the offset has changed, reset
-	if off != of.readOffset {
-		logger.Debug("mismatching offset (%v vs %v), will reset span", off, of.readOffset)
-		if of.spanReader != nil {
-			of.spanReader.Close()
-			of.spanReader = nil
+	// If we don't have as stripe, or the offset is outside the current stripe,
+	// reset.
+	if of.lastStripe == nil || off < int64(of.lastStripe.Start) || off >= (int64(of.lastStripe.Start)+int64(len(*of.lastStripe.Buf))) {
+		var err error
+		of.lastStripe, err = client.FetchStripe(logger, bufPool, of.blockServices, of.spans, uint64(off))
+		if err != nil {
+			return 0, eggsErrToErrno(err)
 		}
-		if err := of.getSpanReaderAt(off); err != 0 {
-			return 0, err
+		if of.lastStripe == nil {
+			return 0, 0
 		}
 	}
 
-	read, err := of.spanReader.Read(dest)
-	if err == io.EOF { // load next span
-		logger.Debug("finished reading current span, loading next")
-		// close normally here so that we can reuse the connections
-		of.spanReader.Close()
-		of.spanReader = nil
-		if err := of.getSpanReaderAt(off); err != 0 {
-			return 0, err
-		}
-		read, err = of.spanReader.Read(dest)
-	}
-
-	of.readOffset += int64(read)
-
-	if err != nil {
-		return int64(read), eggsErrToErrno(err)
-	}
-	return int64(read), 0
+	// Now copy the thing the thing
+	return int64(copy(dest, (*of.lastStripe.Buf)[off-int64(of.lastStripe.Start):])), 0
 }
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
-	if of.spanReader != nil {
-		of.spanReader.Close()
+	if of.lastStripe != nil {
+		of.lastStripe.Put(bufPool)
 	}
 	return 0
 }
@@ -727,7 +657,7 @@ func (n *eggsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 func (n *eggsNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (node *fs.Inode, errno syscall.Errno) {
 	logger.Debug("symlink dir=%v, target=%v, name=%v", n.id, target, name)
-	tf, err := n.createInternal(name, syscall.S_IFLNK)
+	tf, err := n.createInternal(name, 0, syscall.S_IFLNK)
 	if err != 0 {
 		return nil, err
 	}
@@ -747,19 +677,11 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 		return nil, syscall.EINVAL
 	}
 
-	resp := msgs.FileSpansResp{}
-	if err := shardRequest(n.id.Shard(), &msgs.FileSpansReq{FileId: n.id}, &resp); err != 0 {
-		return nil, err
-	}
-	if len(resp.Spans) > 1 {
-		panic(fmt.Errorf("more than one span for symlink"))
-	}
-	spanReader, err := client.ReadSpan(logger, readBufPool, []msgs.BlockServiceId{}, resp.BlockServices, &resp.Spans[0])
+	fileReader, err := client.ReadFile(logger, bufPool, n.id)
 	if err != nil {
 		return nil, eggsErrToErrno(err)
-
 	}
-	bs, err := io.ReadAll(spanReader)
+	bs, err := io.ReadAll(fileReader)
 	if err != nil {
 		return nil, eggsErrToErrno(err)
 	}
@@ -796,8 +718,13 @@ func terminate(server *fuse.Server, terminated *bool) {
 	pprof.StopCPUProfile()
 	logger.Info("about to terminate")
 	*terminated = true
-	if err := server.Unmount(); err != nil {
-		logger.Info("could not unmount: %v\n", err)
+	for i := 0; i < 10; i++ {
+		if err := server.Unmount(); err != nil {
+			logger.Info("could not unmount, might retry: %v\n", err)
+		} else {
+			break
+		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -869,14 +796,7 @@ func main() {
 
 	fileStatCache = make(map[msgs.InodeId]statCache)
 
-	writeBufPool = &sync.Pool{
-		New: func() any {
-			buf := []byte{}
-			return &buf
-		},
-	}
-
-	readBufPool = lib.NewReadSpanBufPool()
+	bufPool = lib.NewBufPool()
 
 	root := eggsNode{
 		id: msgs.ROOT_DIR_INODE_ID,

@@ -76,6 +76,7 @@ const char* eggsfs_shard_kind_str(int kind) {
     case 12: return "SAME_DIRECTORY_RENAME";
     case 16: return "ADD_INLINE_SPAN";
     case 115: return "FULL_READ_DIR";
+    case 123: return "MOVE_SPAN";
     default: return "UNKNOWN";
     }
 }

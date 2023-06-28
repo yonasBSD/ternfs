@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -44,7 +45,7 @@ type fsTestHarness[Id comparable] interface {
 type apiFsTestHarness struct {
 	client       *lib.Client
 	dirInfoCache *lib.DirInfoCache
-	readBufPool  *lib.ReadSpanBufPool
+	readBufPool  *lib.BufPool
 }
 
 func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.EggsTime) {
@@ -158,9 +159,8 @@ func ensureLen(buf []byte, l int) []byte {
 }
 
 func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
-	actualData := c.readBufPool.Get(int(size))
+	actualData := readFile(log, c.readBufPool, c.client, id, size)
 	defer c.readBufPool.Put(actualData)
-	*actualData = readFile(log, c.readBufPool, c.client, id, *actualData)
 	expectedData := c.readBufPool.Get(int(size))
 	defer c.readBufPool.Put(expectedData)
 	wyhash.New(dataSeed).Read(*expectedData)
@@ -190,7 +190,10 @@ func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
 type posixFsTestHarness struct {
-	bufPool *lib.ReadSpanBufPool
+	bufPool      *lib.BufPool
+	client       *lib.Client
+	dirInfoCache *lib.DirInfoCache
+	writeDirect  bool
 }
 
 func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
@@ -222,14 +225,42 @@ func (*posixFsTestHarness) rename(
 	return newFullPath, 0
 }
 
+func getInodeId(log *lib.Logger, path string) msgs.InodeId {
+	info, err := os.Stat(path)
+	if err != nil {
+		panic(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		panic(fmt.Errorf("unexpected non-stat_t"))
+	}
+	id := msgs.InodeId(stat.Ino)
+	if id == 0 { // TODO why does this happen?
+		id = msgs.ROOT_DIR_INODE_ID
+	}
+	return id
+}
+
 func (c *posixFsTestHarness) createFile(
 	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (fileFullPath string, t msgs.EggsTime) {
+	fileFullPath = path.Join(dirFullPath, name)
+
+	if c.writeDirect {
+		c2 := &apiFsTestHarness{
+			client:       c.client,
+			dirInfoCache: c.dirInfoCache,
+			readBufPool:  c.bufPool,
+		}
+		c2.createFile(log, getInodeId(log, dirFullPath), spanSize, name, size, dataSeed)
+		return fileFullPath, 0
+	}
+
 	actualDataBuf := c.bufPool.Get(int(size))
 	defer c.bufPool.Put(actualDataBuf)
 	rand := wyhash.New(dataSeed)
 	rand.Read(*actualDataBuf)
-	fileFullPath = path.Join(dirFullPath, name)
+	var f *os.File
 	f, err := os.Create(fileFullPath)
 	if err != nil {
 		panic(err)
@@ -246,7 +277,7 @@ func (c *posixFsTestHarness) createFile(
 		offsets[chunks] = int(size)
 		sort.Ints(offsets)
 		for i := 0; i < chunks; i++ {
-			log.Trace("writing from %v to %v", offsets[i], offsets[i+1])
+			log.Trace("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
 			if _, err := f.Write((*actualDataBuf)[offsets[i]:offsets[i+1]]); err != nil {
 				panic(err)
 			}
@@ -451,7 +482,7 @@ func (state *fsTestState[Id]) incrementFiles(log *lib.Logger, opts *fsTestOpts) 
 
 func (state *fsTestState[Id]) calcFileSize(log *lib.Logger, opts *fsTestOpts, rand *wyhash.Rand) (size uint64) {
 	p := rand.Float64()
-	if p < opts.emptyFileProb {
+	if p < opts.emptyFileProb || opts.maxFileSize == 0 {
 		size = 0
 	} else if p < opts.emptyFileProb+opts.inlineFileProb {
 		size = 1 + rand.Uint64()%254
@@ -459,7 +490,7 @@ func (state *fsTestState[Id]) calcFileSize(log *lib.Logger, opts *fsTestOpts, ra
 		size = 1 + rand.Uint64()%uint64(opts.maxFileSize)
 	}
 	state.totalFilesSize += size
-	log.Debug("creating file with size %v, total size %v", size, state.totalFilesSize)
+	log.Debug("creating file with size %v, total size %v (max %v, p=%v)", size, state.totalFilesSize, opts.maxFileSize, p)
 	return size
 }
 
@@ -665,17 +696,6 @@ func fsTestInternal[Id comparable](
 			state.makeFile(log, harness, opts, rand, dir, state.totalDirs+state.totalFiles)
 		}
 	}
-}
-
-func fsTestInternalCheck[Id comparable](
-	log *lib.Logger,
-	state *fsTestState[Id],
-	shuckleAddress string,
-	opts *fsTestOpts,
-	counters *lib.ClientCounters,
-	harness fsTestHarness[Id],
-	rootId Id,
-) {
 	// finally, check that our view of the world is the real view of the world
 	log.Info("checking directories/files")
 	errsChans := make([](chan any), opts.checkThreads)
@@ -706,7 +726,7 @@ func fsTestInternalCheck[Id comparable](
 	state.rootDir.check(log, harness)
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
-	{
+	if opts.maxFileSize > 0 {
 		client, err := lib.NewClient(log, shuckleAddress, 1)
 		if err != nil {
 			panic(err)
@@ -731,51 +751,13 @@ func fsTestInternalCheck[Id comparable](
 	state.rootDir.clean(log, harness)
 }
 
-func replaceMountPoint(mountPoint string, mountPointFuse string, fp string) string {
-	return mountPointFuse + fp[len(mountPoint):]
-}
-
-func convertDirToFuse(
-	dir *fsTestDir[string],
-	mountPoint string,
-	mountPointFuse string,
-) *fsTestDir[string] {
-	newDir := fsTestDir[string]{
-		id: replaceMountPoint(mountPoint, mountPointFuse, dir.id),
-		children: fsTestChildren[string]{
-			files:       make(map[int]fsTestChild[fsTestFile[string]]),
-			directories: make(map[int]fsTestChild[fsTestDir[string]]),
-		},
-	}
-	for i, file := range dir.children.files {
-		newFile := file
-		newFile.body.id = replaceMountPoint(mountPoint, mountPointFuse, newFile.body.id)
-		newDir.children.files[i] = newFile
-	}
-	for i, childDir := range dir.children.directories {
-		newChildDir := childDir
-		newChildDir.body = *convertDirToFuse(&childDir.body, mountPoint, mountPointFuse)
-		newDir.children.directories[i] = newChildDir
-	}
-	return &newDir
-}
-
-func convertToFuse(
-	state *fsTestState[string],
-	mountPoint string,
-	mountPointFuse string,
-) *fsTestState[string] {
-	newState := *state
-	newState.rootDir = *convertDirToFuse(&state.rootDir, mountPoint, mountPointFuse)
-	return &newState
-}
-
 func fsTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *lib.ClientCounters,
 	realFs string, // if non-empty, will run the tests using this mountpoint
+	writeDirect bool,
 ) {
 	client, err := lib.NewClient(log, shuckleAddress, opts.checkThreads)
 	if err != nil {
@@ -787,23 +769,24 @@ func fsTest(
 		harness := &apiFsTestHarness{
 			client:       client,
 			dirInfoCache: lib.NewDirInfoCache(),
-			readBufPool:  lib.NewReadSpanBufPool(),
+			readBufPool:  lib.NewBufPool(),
 		}
 		state := fsTestState[msgs.InodeId]{
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 		}
 		fsTestInternal[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
-		fsTestInternalCheck[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{
-			bufPool: lib.NewReadSpanBufPool(),
+			bufPool:      lib.NewBufPool(),
+			client:       client,
+			dirInfoCache: lib.NewDirInfoCache(),
+			writeDirect:  writeDirect,
 		}
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(realFs),
 		}
 		fsTestInternal[string](log, &state, shuckleAddress, opts, counters, harness, realFs)
-		fsTestInternalCheck[string](log, &state, shuckleAddress, opts, counters, harness, realFs)
 	}
 }

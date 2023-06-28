@@ -1,12 +1,6 @@
 package lib
 
-import (
-	"testing"
-	"time"
-	"xtx/eggsfs/assert"
-	"xtx/eggsfs/msgs"
-)
-
+/*
 func TestBlocksConn(t *testing.T) {
 	factory := blocksConnFactory{
 		cached: make(map[msgs.BlockServiceId]*cachedBlocksConns),
@@ -30,3 +24,5 @@ func TestBlocksConn(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "conn3", conn.(string))
 }
+
+*/

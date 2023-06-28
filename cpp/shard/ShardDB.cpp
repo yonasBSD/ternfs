@@ -688,8 +688,8 @@ struct ShardDBImpl {
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
 
         // setup bounds
-        StaticValue<EdgeKey> endKey;
-        endKey().setDirIdWithCurrent(InodeId::FromU64(req.dirId.u64 + (forwards ? 1 : -1)), !forwards);
+        StaticValue<EdgeKey> endKey; // unchecked because it might stop being a directory
+        endKey().setDirIdWithCurrent(InodeId::FromU64Unchecked(req.dirId.u64 + (forwards ? 1 : -1)), !forwards);
         endKey().setNameHash(forwards ? 0 : ~(uint64_t)0);
         endKey().setName(forwards ? BincodeBytes().ref() : maxName.ref());
         endKey().setCreationTime(forwards ? 0 : EggsTime(~(uint64_t)0));
@@ -1407,7 +1407,7 @@ struct ShardDBImpl {
         }
     
         if (req.byteOffset%EGGSFS_PAGE_SIZE != 0) {
-            LOG_DEBUG(_env, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
+            RAISE_ALERT(_env, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
             return EggsError::BAD_SPAN_BODY;
         }
 
@@ -1446,7 +1446,7 @@ struct ShardDBImpl {
             return EggsError::BAD_SPAN_BODY;
         }
         if (req.byteOffset%EGGSFS_PAGE_SIZE != 0 || req.cellSize%EGGSFS_PAGE_SIZE != 0) {
-            LOG_DEBUG(_env, "req.byteOffset=%s or cellSize=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, req.cellSize, EGGSFS_PAGE_SIZE);
+            RAISE_ALERT(_env, "req.byteOffset=%s or cellSize=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, req.cellSize, EGGSFS_PAGE_SIZE);
             return EggsError::BAD_SPAN_BODY;
         }
         if (!_checkSpanBody(req)) {
@@ -1526,7 +1526,7 @@ struct ShardDBImpl {
                             if (isCandidate == candidateBlockServices.end()) {
                                 continue;
                             }
-                            LOG_DEBUG(_env, "(1) Picking block service candidate %s", spanBlock.blockService());
+                            LOG_DEBUG(_env, "(1) Picking block service candidate %s, failure domain %s", spanBlock.blockService(), GoLangQuotedStringFmt((const char*)_blockServicesCache.at(spanBlock.blockService().u64).failureDomain.data(), 16));
                             BlockServiceId blockServiceId = spanBlock.blockService();
                             pickedBlockServices.emplace_back(blockServiceId);
                             std::iter_swap(isCandidate, candidateBlockServices.end()-1);
@@ -1541,7 +1541,7 @@ struct ShardDBImpl {
                 uint64_t rand = time.ns;
                 while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
                     uint64_t ix = wyhash64(&rand) % candidateBlockServices.size();
-                    LOG_DEBUG(_env, "(2) Picking block service candidate %s", candidateBlockServices[ix]);
+                    LOG_DEBUG(_env, "(2) Picking block service candidate %s, failure domain %s", candidateBlockServices[ix], GoLangQuotedStringFmt((const char*)_blockServicesCache.at(candidateBlockServices[ix].u64).failureDomain.data(), 16));
                     pickedBlockServices.emplace_back(candidateBlockServices[ix]);
                     std::iter_swap(candidateBlockServices.begin()+ix, candidateBlockServices.end()-1);
                     candidateBlockServices.pop_back();
@@ -1662,6 +1662,28 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _prepareMoveSpan(EggsTime time, const MoveSpanReq& req, MoveSpanEntry& entry) {
+        if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        EggsError err = _checkTransientFileCookie(req.fileId1, req.cookie1.data);
+        if (err != NO_ERROR) {
+            return err;
+        }
+        err = _checkTransientFileCookie(req.fileId2, req.cookie2.data);
+        if (err != NO_ERROR) {
+            return err;
+        }
+        entry.fileId1 = req.fileId1;
+        entry.cookie1 = req.cookie1;
+        entry.byteOffset1 = req.byteOffset1;
+        entry.fileId2 = req.fileId2;
+        entry.cookie2 = req.cookie2;
+        entry.byteOffset2 = req.byteOffset2;
+        entry.spanSize = req.spanSize;
+        return NO_ERROR;
+    }
+
     EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         logEntry.clear();
@@ -1740,6 +1762,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
             err = _prepareExpireTransientFile(time, req.getExpireTransientFile(), logEntryBody.setExpireTransientFile());
+            break;
+        case ShardMessageKind::MOVE_SPAN:
+            err = _prepareMoveSpan(time, req.getMoveSpan(), logEntryBody.setMoveSpan());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -3300,6 +3325,85 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _applyMoveSpan(EggsTime time, rocksdb::WriteBatch& batch, const MoveSpanEntry& entry, MoveSpanResp& resp) {
+        // fetch files
+        std::string transientValue1;
+        ExternalValue<TransientFileBody> transientFile1;
+        {
+            EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId1, transientValue1, transientFile1);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        std::string transientValue2;
+        ExternalValue<TransientFileBody> transientFile2;
+        {
+            EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId2, transientValue2, transientFile2);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        // We might have already moved this, need to be idempotent.
+        LOG_DEBUG(_env, "movespan: spanSize=%s offset1=%s offset2=%s", entry.spanSize, entry.byteOffset1, entry.byteOffset2);
+        LOG_DEBUG(_env, "movespan: size1=%s state1=%s size2=%s state2=%s", transientFile1().fileSize(), transientFile1().lastSpanState(), transientFile2().fileSize(), transientFile2().lastSpanState());
+        if (
+            transientFile1().fileSize() == entry.byteOffset1 && transientFile1().lastSpanState() == SpanState::CLEAN &&
+            transientFile2().fileSize() == entry.byteOffset2 + entry.spanSize && transientFile2().lastSpanState() == SpanState::DIRTY
+        ) {
+            return NO_ERROR;
+        }
+        if (
+            transientFile1().lastSpanState() != SpanState::DIRTY ||
+            transientFile1().fileSize() != entry.byteOffset1 + entry.spanSize ||
+            transientFile2().lastSpanState() != SpanState::CLEAN ||
+            transientFile2().fileSize() != entry.byteOffset2
+        ) {
+            return EggsError::SPAN_NOT_FOUND; // TODO better error?
+        }
+        // fetch span to move
+        StaticValue<SpanKey> spanKey;
+        std::string spanValue;
+        spanKey().setFileId(entry.fileId1);
+        spanKey().setOffset(entry.byteOffset1);
+        auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
+        if (status.IsNotFound()) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status); // TODO better error if not found
+        ExternalValue<SpanBody> span(spanValue);
+        ExternalValue<SpanBody> spanBody(spanValue);
+        if (spanBody().spanSize() != entry.spanSize) {
+            return EggsError::SPAN_NOT_FOUND; // TODO better error
+        }
+        // move span
+        ROCKS_DB_CHECKED(batch.Delete(_spansCf, spanKey.toSlice()));
+        spanKey().setFileId(entry.fileId2);
+        spanKey().setOffset(entry.byteOffset2);
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), span.toSlice()));
+        // change size and dirtiness
+        transientFile1().setFileSize(transientFile1().fileSize() - span().spanSize());
+        transientFile1().setLastSpanState(SpanState::CLEAN);
+        {
+            auto k = InodeIdKey::Static(entry.fileId1);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile1.toSlice()));
+        }
+        transientFile2().setFileSize(transientFile2().fileSize() + span().spanSize());
+        transientFile2().setLastSpanState(SpanState::DIRTY);
+        {
+            auto k = InodeIdKey::Static(entry.fileId2);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile2.toSlice()));
+        }
+        // record block count changes
+        auto blocksBody = span().blocksBody();
+        for (int i = 0; i < blocksBody.parity().blocks(); i++) {
+            auto block = blocksBody.block(i);
+            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId1, -1);
+            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId2, +1);
+        }
+        // we're done
+        return NO_ERROR;
+    }
+
     EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
@@ -3398,6 +3502,9 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::EXPIRE_TRANSIENT_FILE:
             err = _applyExpireTransientFile(time, batch, logEntryBody.getExpireTransientFile(), resp.setExpireTransientFile());
+            break;
+        case ShardLogEntryKind::MOVE_SPAN:
+            err = _applyMoveSpan(time, batch, logEntryBody.getMoveSpan(), resp.setMoveSpan());
             break;
         default:
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
@@ -3619,6 +3726,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
     case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+    case ShardMessageKind::MOVE_SPAN:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

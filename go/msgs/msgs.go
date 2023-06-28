@@ -113,6 +113,10 @@ func (flags BlockServiceFlags) String() string {
 	return strings.Join(ret, "|")
 }
 
+func (flags BlockServiceFlags) CanRead() bool {
+	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_READ | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
+}
+
 const (
 	DIRECTORY InodeType = 1
 	FILE      InodeType = 2
@@ -343,7 +347,7 @@ type StatTransientFileResp struct {
 // edges.
 //
 // The caller can detect if the directory is snapshot (unlike with files),
-// and avoid calling `ReadDirReq`, which won't work.1
+// and avoid calling `ReadDirReq`, which won't work.
 type StatDirectoryReq struct {
 	Id InodeId
 }
@@ -607,7 +611,7 @@ type BlockService struct {
 	//
 	// The ip/port are not, and in fact might be shared by multiple block services.
 	Id    BlockServiceId
-	Flags uint8
+	Flags BlockServiceFlags
 }
 
 type FileSpansResp struct {
@@ -921,6 +925,20 @@ type ExpireTransientFileReq struct {
 }
 
 type ExpireTransientFileResp struct{}
+
+// Moves a span (possibly dirty) from the end of a file onto another file
+// (last span must be clean). Useful to get rid of bad under construction spans.
+type MoveSpanReq struct {
+	SpanSize    uint32
+	FileId1     InodeId
+	ByteOffset1 uint64
+	Cookie1     [8]byte
+	FileId2     InodeId
+	ByteOffset2 uint64
+	Cookie2     [8]byte
+}
+
+type MoveSpanResp struct{}
 
 // --------------------------------------------------------------------
 // CDC requests/responses
@@ -1393,6 +1411,16 @@ type SwapBlocksEntry struct {
 
 type ExpireTransientFileEntry struct {
 	Id InodeId
+}
+
+type MoveSpanEntry struct {
+	SpanSize    uint32
+	FileId1     InodeId
+	ByteOffset1 uint64
+	Cookie1     [8]byte
+	FileId2     InodeId
+	ByteOffset2 uint64
+	Cookie2     [8]byte
 }
 
 // --------------------------------------------------------------------

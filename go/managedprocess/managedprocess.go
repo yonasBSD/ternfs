@@ -199,7 +199,8 @@ func (procs *ManagedProcesses) Kill(id ManagedProcessId, sig syscall.Signal) {
 	proc, present := procs.processes[uint64(id)]
 	if !present {
 		procs.mu.Unlock()
-		panic(fmt.Errorf("process %v not present", id))
+		// process is already gone
+		return
 	}
 	delete(procs.processes, uint64(id))
 	procs.mu.Unlock()
@@ -375,6 +376,7 @@ type ShuckleOpts struct {
 	LogLevel    lib.LogLevel
 	BincodePort uint16
 	HttpPort    uint16
+	Stale       time.Duration
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -390,6 +392,9 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	}
 	if opts.LogLevel == lib.TRACE {
 		args = append(args, "-trace")
+	}
+	if opts.Stale != 0 {
+		args = append(args, "-stale", opts.Stale.String())
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",
@@ -407,8 +412,12 @@ type GoExes struct {
 	FuseExe    string
 }
 
-func BuildGoExes(ll *lib.Logger, repoDir string) *GoExes {
-	buildCmd := exec.Command("./build.py", "eggsshuckle", "eggsblocks", "eggsfuse")
+func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
+	args := []string{"eggsshuckle", "eggsblocks", "eggsfuse"}
+	if race {
+		args = append(args, "--race")
+	}
+	buildCmd := exec.Command("./build.py", args...)
 	buildCmd.Dir = goDir(repoDir)
 	ll.Info("building shuckle/blocks/fuse")
 	if out, err := buildCmd.CombinedOutput(); err != nil {

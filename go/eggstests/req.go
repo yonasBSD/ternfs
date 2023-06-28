@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -65,7 +64,7 @@ func createFile(
 	name string,
 	size uint64,
 	dataSeed uint64,
-	bufPool *lib.ReadSpanBufPool,
+	bufPool *lib.BufPool,
 ) (id msgs.InodeId, creationTime msgs.EggsTime) {
 	// construct
 	constructReq := msgs.ConstructFileReq{
@@ -116,57 +115,28 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *lib.Logger, bufPool *lib.ReadSpanBufPool, client *lib.Client, id msgs.InodeId, buf []byte) []byte {
-	statResp := msgs.StatFileResp{}
-	shardReq(log, client, id.Shard(), &msgs.StatFileReq{Id: id}, &statResp)
-	if len(buf) < int(statResp.Size) {
-		buf = append(buf, make([]byte, int(statResp.Size)-len(buf))...)
+func readFile(log *lib.Logger, bufPool *lib.BufPool, client *lib.Client, id msgs.InodeId, size uint64) *[]byte {
+	buf := bufPool.Get(int(size))
+	r, err := client.ReadFile(log, bufPool, id)
+	if err != nil {
+		panic(err)
 	}
-	spansReq := msgs.FileSpansReq{
-		FileId: id,
-	}
-	readSoFar := 0
-	spansResp := msgs.FileSpansResp{}
+	defer r.Close()
+	cursor := 0
 	for {
-		shardReq(log, client, id.Shard(), &spansReq, &spansResp)
-		for i := range spansResp.Spans {
-			span := &spansResp.Spans[i]
-			// TODO random blacklist
-			spanR, err := client.ReadSpan(log, bufPool, []msgs.BlockServiceId{}, spansResp.BlockServices, span)
-			if err != nil {
-				panic(err)
+		read, err := r.Read((*buf)[cursor:])
+		if err == io.EOF {
+			if cursor != len(*buf) {
+				panic(fmt.Errorf("expected file read of size %v, got %v", len(*buf), cursor))
 			}
-			spanRead := 0
-			for {
-				r, err := spanR.Read(buf[readSoFar+spanRead:])
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					spanR.Close()
-					panic(err)
-				}
-				spanRead += r
-			}
-			spanR.Close() // TODO replace with Put?
-			if err != nil {
-				panic(err)
-			}
-			spanCrc := msgs.Crc(crc32c.Sum(0, buf[readSoFar:readSoFar+spanRead]))
-			if spanCrc != span.Header.Crc {
-				panic(fmt.Errorf("expected crc %v for span, but got %v", span.Header.Crc, spanCrc))
-			}
-			readSoFar += spanRead
-		}
-		if spansResp.NextOffset == 0 {
 			break
 		}
-		spansReq.ByteOffset = spansResp.NextOffset
+		if err != nil {
+			panic(err)
+		}
+		cursor += read
 	}
-	if readSoFar != int(statResp.Size) {
-		panic(fmt.Errorf("readSoFar=%v != statResp.Size=%v", readSoFar, statResp.Size))
-	}
-	return buf[:readSoFar]
+	return buf
 }
 
 func readDir(log *lib.Logger, client *lib.Client, dir msgs.InodeId) []edge {

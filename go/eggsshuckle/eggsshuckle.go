@@ -1188,7 +1188,7 @@ func (r *clientSpanReader) Close() (err error) {
 	return err
 }
 
-var readSpanBufPool *lib.ReadSpanBufPool
+var readSpanBufPool *lib.BufPool
 
 func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
@@ -1229,7 +1229,7 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 				panic(err)
 			}
 
-			r, err := client.ReadFile(log, readSpanBufPool, []msgs.BlockServiceId{}, fileId)
+			r, err := client.ReadFile(log, readSpanBufPool, fileId)
 			if err != nil {
 				panic(err)
 			}
@@ -1481,6 +1481,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	dbFile := flag.String("db-file", "", "file path of the sqlite database file")
 	mtu := flag.Uint64("mtu", 0, "")
+	stale := flag.Duration("stale", 3*time.Minute, "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -1508,6 +1509,7 @@ func main() {
 	ll.Info("  logFile = '%v'", *logFile)
 	ll.Info("  logLevel = %v", level)
 	ll.Info("  mtu = %v", *mtu)
+	ll.Info("  stale = '%v'", *stale)
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
@@ -1578,7 +1580,7 @@ func main() {
 		panic(err)
 	}
 
-	readSpanBufPool = lib.NewReadSpanBufPool()
+	readSpanBufPool = lib.NewBufPool()
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
 	if err != nil {
@@ -1622,7 +1624,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-		err := serviceMonitor(ll, state, 3*time.Minute)
+		err := serviceMonitor(ll, state, *stale)
 		ll.Error("serviceMonitor ended with error %s", err)
 	}()
 

@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/netip"
 	"path/filepath"
@@ -91,101 +92,39 @@ func (counters *ClientCounters) Log(log *Logger) {
 
 }
 
-type timedBlocksConn struct {
-	conn     any
-	lastSeen time.Time
+type blockConnKey uint64
+
+func newBlockConnKey(ip [4]byte, port uint16) blockConnKey {
+	ip4 := uint64(ip[0])<<24 | uint64(ip[1])<<16 | uint64(ip[2])<<8 | uint64(ip[3])<<0
+	return blockConnKey(ip4<<32 | uint64(port))
 }
 
-const maxBlocksConns int = 3
-const blocksConnsTimeout time.Duration = 10 * time.Second
-
-// ring buffer, oldest conn is at the `head`.
-type cachedBlocksConns struct {
-	buf  [maxBlocksConns]timedBlocksConn
-	size int
-	head int
-}
-
-func (conns *cachedBlocksConns) purge(now time.Time) {
-	for conns.size > 0 {
-		conn := &conns.buf[conns.head]
-		if now.Sub(conn.lastSeen) > blocksConnsTimeout {
-			conns.pop()
-		} else {
-			break
-		}
-	}
-}
-
-func (conns *cachedBlocksConns) pop() any {
-	if conns.size > 0 {
-		conn := &conns.buf[conns.head]
-		v := conn.conn
-		conn.conn = nil
-		conn.lastSeen = time.Time{}
-		conns.size--
-		conns.head = (conns.head + 1) % maxBlocksConns
-		return v
-	} else {
-		return nil
-	}
-}
-
-func (conns *cachedBlocksConns) push(tcpConn any, now time.Time) {
-	if conns.size < maxBlocksConns {
-		// add new entry
-		conn := &conns.buf[(conns.head+conns.size)%maxBlocksConns]
-		conn.conn = tcpConn
-		conn.lastSeen = now
-		conns.size++
-	} else {
-		// replace oldest entry
-		conn := &conns.buf[conns.head]
-		conn.conn = tcpConn
-		conn.lastSeen = now
-		conns.head = (conns.head + 1) % maxBlocksConns
-	}
+type blockConn struct {
+	conn          *net.TCPConn // might be null
+	mu            sync.Mutex
+	possiblyStale bool
 }
 
 type blocksConnFactory struct {
-	mu     sync.Mutex
-	cached map[msgs.BlockServiceId]*cachedBlocksConns
+	mu     sync.RWMutex // to access the map
+	cached map[blockConnKey]*blockConn
 }
 
-// must be locked
-func (factory *blocksConnFactory) lookup(blockService msgs.BlockServiceId, now time.Time) *cachedBlocksConns {
-	conns, found := factory.cached[blockService]
-	if !found {
-		conns = &cachedBlocksConns{}
-		factory.cached[blockService] = conns
+func (cf *blocksConnFactory) close() {
+	if !cf.mu.TryLock() {
+		panic(fmt.Errorf("could not lock blockConnsFactory, did you close all connections before closing the client?"))
 	}
-	conns.purge(now)
-	return conns
-}
-
-func (factory *blocksConnFactory) get(blockServiceId msgs.BlockServiceId, now time.Time, getConn func() (any, error)) (any, error) {
-	factory.mu.Lock()
-	defer factory.mu.Unlock()
-
-	conns := factory.lookup(blockServiceId, now)
-	conn := conns.pop()
-	if conn != nil {
-		return conn, nil
+	defer cf.mu.Unlock()
+	for key, conn := range cf.cached {
+		if !conn.mu.TryLock() {
+			panic(fmt.Errorf("could not lock block conn %+v %p, did you close all connections before closing the client?", conn, &conn))
+		}
+		delete(cf.cached, key)
+		if conn.conn != nil {
+			conn.conn.Close()
+		}
+		conn.mu.Unlock()
 	}
-	var err error
-	conn, err = getConn()
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
-func (factory *blocksConnFactory) put(blockServiceId msgs.BlockServiceId, now time.Time, conn any) {
-	factory.mu.Lock()
-	defer factory.mu.Unlock()
-
-	conns := factory.lookup(blockServiceId, now)
-	conns.push(conn, now)
 }
 
 var clientMtu uint16 = msgs.DEFAULT_UDP_MTU
@@ -202,13 +141,14 @@ func SetMTU(mtu uint64) {
 }
 
 type Client struct {
-	shardAddrs  [256][2]net.UDPAddr
-	cdcAddrs    [2]net.UDPAddr
-	udpSocks    []net.PacketConn
-	socksLock   sync.Mutex
-	counters    *ClientCounters
-	cdcKey      cipher.Block
-	blocksConns blocksConnFactory
+	shardAddrs       [256][2]net.UDPAddr
+	cdcAddrs         [2]net.UDPAddr
+	udpSocks         []net.PacketConn
+	socksLock        sync.Mutex
+	counters         *ClientCounters
+	cdcKey           cipher.Block
+	writeBlocksConns blocksConnFactory
+	readBlocksConns  blocksConnFactory
 }
 
 func NewClient(
@@ -272,8 +212,11 @@ func NewClientDirect(
 	shardPorts *[256][2]uint16,
 ) (c *Client, err error) {
 	c = &Client{
-		blocksConns: blocksConnFactory{
-			cached: make(map[msgs.BlockServiceId]*cachedBlocksConns),
+		writeBlocksConns: blocksConnFactory{
+			cached: make(map[blockConnKey]*blockConn),
+		},
+		readBlocksConns: blocksConnFactory{
+			cached: make(map[blockConnKey]*blockConn),
 		},
 	}
 	for i := 0; i < 2; i++ {
@@ -344,6 +287,8 @@ func (c *Client) Close() {
 		}
 		c.udpSocks[i].Close()
 	}
+	c.readBlocksConns.close()
+	c.writeBlocksConns.close()
 }
 
 // Not atomic between the read/write
@@ -479,45 +424,213 @@ type BlocksConn interface {
 	Puttable
 }
 
-type trackedBlocksConn struct {
-	blockService msgs.BlockServiceId
-	conn         *net.TCPConn
-	factory      *blocksConnFactory
+func dialBlockService(addr *net.TCPAddr) (*net.TCPConn, error) {
+	return net.DialTCP("tcp4", nil, addr)
 }
 
-func (c *trackedBlocksConn) Read(p []byte) (int, error) {
-	return c.conn.Read(p)
+func (c *blockConn) refresh() bool {
+	if !c.possiblyStale {
+		return false
+	}
+	// try to reconnect
+	sock, err := dialBlockService(c.conn.RemoteAddr().(*net.TCPAddr))
+	if err == nil {
+		c.possiblyStale = false
+		c.conn = sock
+		return true
+	}
+	return false
 }
 
-func (c *trackedBlocksConn) Write(p []byte) (int, error) {
-	return c.conn.Write(p)
+// probably should be made configurable
+const blockConnDeadline time.Duration = 1 * time.Second
+
+func (c *blockConn) Read(p []byte) (int, error) {
+	c.conn.SetReadDeadline(time.Now().Add(blockConnDeadline))
+	r, err := c.conn.Read(p)
+	if r == 0 && err != nil && err != io.EOF && c.refresh() {
+		return c.Read(p)
+	}
+	return r, err
 }
 
-func (c *trackedBlocksConn) ReadFrom(r io.Reader) (int64, error) {
+func (c *blockConn) ReadFrom(r io.Reader) (int64, error) {
+	c.conn.SetWriteDeadline(time.Now().Add(blockConnDeadline))
+	w, err := c.conn.ReadFrom(r)
+	if w == 0 && err != nil && err != io.EOF && c.refresh() {
+		return c.ReadFrom(r)
+	}
 	return c.conn.ReadFrom(r)
 }
 
-func (c *trackedBlocksConn) Close() error {
-	return c.conn.Close()
+func (c *blockConn) Write(p []byte) (int, error) {
+	c.conn.SetWriteDeadline(time.Now().Add(blockConnDeadline))
+	w, err := c.conn.Write(p)
+	if w == 0 && err != nil && c.refresh() {
+		return c.Write(p)
+	}
+	return w, err
 }
 
-func (c *trackedBlocksConn) Put() {
-	c.factory.put(c.blockService, time.Now(), c.conn)
+func (c *blockConn) Close() error {
+	err := c.conn.Close()
 	c.conn = nil
+	c.mu.Unlock()
+	return err
+}
+
+func (c *blockConn) Put() {
+	c.possiblyStale = true
+	c.mu.Unlock()
+}
+
+// if block=False, will return nil, nil when we found but couldn't acquire the conn.
+func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]byte, port uint16) (*blockConn, error) {
+	key := newBlockConnKey(ip, port)
+
+	f.mu.RLock()
+	conn, found := f.cached[key]
+	f.mu.RUnlock()
+
+	if found {
+		if block {
+			conn.mu.Lock()
+		} else {
+			locked := conn.mu.TryLock()
+			if !locked {
+				return nil, nil
+			}
+		}
+		var err error
+		defer func() {
+			if err != nil {
+				conn.mu.Unlock()
+			}
+		}()
+		if conn.conn != nil {
+			return conn, nil
+		} else {
+			var sock *net.TCPConn
+			sock, err = dialBlockService(&net.TCPAddr{IP: net.IP(ip[:]), Port: int(port)})
+			if err != nil {
+				return nil, err
+			} else {
+				conn.possiblyStale = false
+				conn.conn = sock
+				return conn, nil
+			}
+		}
+	} else {
+		f.mu.Lock()
+		_, found = f.cached[key]
+		if !found {
+			conn := &blockConn{}
+			f.cached[key] = conn
+		}
+		f.mu.Unlock()
+		return f.getBlocksConnInner(log, block, ip, port)
+
+	}
 }
 
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
-func (c *Client) GetBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
-	conn, err := c.blocksConns.get(blockServiceId, time.Now(), func() (any, error) {
-		return BlockServiceConnection(log, ip1, port1, ip2, port2)
-	})
-	if err != nil {
-		return nil, err
+func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*blockConn, error) {
+	// decide at random which one we want to stimulate the two ports path
+	if port1 == 0 {
+		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
-	return &trackedBlocksConn{
-		blockService: blockServiceId,
-		conn:         conn.(*net.TCPConn),
-		factory:      &c.blocksConns,
-	}, nil
+	var ips [2][4]byte
+	ips[0] = ip1
+	ips[1] = ip2
+	var ports [2]uint16
+	ports[0] = port1
+	ports[1] = port2
+	var errs [2]error
+	var sock *blockConn
+	start := int(rand.Uint32())
+	// first round, non blocking
+	for i := start; i < start+2; i++ {
+		ip := ips[i&1]
+		port := ports[i&1]
+		sock, errs[i&1] = f.getBlocksConnInner(log, false, ip, port)
+		if sock != nil && errs[i&1] == nil {
+			return sock, nil
+		}
+		if errs[i&1] != nil {
+			log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1]))
+		}
+	}
+	// if we got two errors, return one of them
+	if errs[0] != nil && errs[1] != nil {
+		// return one of the two errors, we don't want to mess with them too much and they are alerts
+		return nil, errs[0]
+	}
+	// second round, blocking
+	for i := start; i < start+2; i++ {
+		ip := ips[i&1]
+		port := ports[i&1]
+		sock, errs[i&1] = f.getBlocksConnInner(log, true, ip, port)
+		if errs[i&1] == nil {
+			return sock, nil
+		}
+		log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1]))
+	}
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	panic("impossible")
+}
+
+type wrappedBlockConn struct {
+	conn *blockConn
+}
+
+func (c *wrappedBlockConn) Read(p []byte) (int, error) {
+	return c.conn.Read(p)
+}
+
+func (c *wrappedBlockConn) ReadFrom(p io.Reader) (int64, error) {
+	return c.conn.ReadFrom(p)
+}
+
+func (c *wrappedBlockConn) Write(p []byte) (int, error) {
+	return c.conn.Write(p)
+}
+
+func (c *wrappedBlockConn) Close() error {
+	if c.conn == nil {
+		return nil
+	}
+	err := c.conn.Close()
+	c.conn = nil
+	return err
+}
+
+func (c *wrappedBlockConn) Put() {
+	if c.conn == nil {
+		return
+	}
+	c.conn.Put()
+	c.conn = nil
+}
+
+// These two will block until the connection gets freed -- you can't nest calls to these.
+func (c *Client) GetWriteBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
+	conn, err := c.writeBlocksConns.getBlocksConns(log, blockServiceId, ip1, port1, ip2, port2)
+	if err == nil {
+		return &wrappedBlockConn{conn: conn}, nil
+	}
+	return nil, err
+}
+
+func (c *Client) GetReadBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
+	conn, err := c.readBlocksConns.getBlocksConns(log, blockServiceId, ip1, port1, ip2, port2)
+	if err == nil {
+		return &wrappedBlockConn{conn: conn}, nil
+	}
+	return nil, err
+
 }

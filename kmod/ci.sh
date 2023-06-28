@@ -15,7 +15,7 @@ export https_proxy=http://REDACTED
 (cd linux && make oldconfig && make prepare && make -j)
 
 # build kernel module
-make "KDIR=${SCRIPT_DIR}/linux-5.4.237" -j kmod
+make "KDIR=${SCRIPT_DIR}/linux" -j kmod
 
 # create vm image
 ./createimg.sh "$base_img"

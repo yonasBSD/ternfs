@@ -301,18 +301,7 @@ func main() {
 	cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
 	cpOutofInput := cpOutofCmd.String("i", "", "What to copy from eggs.")
 	cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
-	cpOutofExclude := cpOutofCmd.String("exclude", "", "What (if any) block services to exclude")
 	cpOutofRun := func() {
-		exclude := []msgs.BlockServiceId{}
-		if *cpOutofExclude != "" {
-			for _, s := range strings.Split(*cpOutofExclude, ",") {
-				u, err := strconv.ParseUint(s, 0, 64)
-				if err != nil {
-					panic(err)
-				}
-				exclude = append(exclude, msgs.BlockServiceId(u))
-			}
-		}
 		out := os.Stdout
 		if *cpOutofOut != "" {
 			var err error
@@ -329,8 +318,8 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		bufPool := lib.NewReadSpanBufPool()
-		r, err := client.ReadFile(log, bufPool, exclude, id)
+		bufPool := lib.NewBufPool()
+		r, err := client.ReadFile(log, bufPool, id)
 		if err != nil {
 			panic(err)
 		}

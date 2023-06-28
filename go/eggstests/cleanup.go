@@ -46,6 +46,7 @@ func cleanupAfterTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	counters *lib.ClientCounters,
+	acceptGcFailures bool,
 ) {
 	client, err := lib.NewClient(log, shuckleAddress, 1)
 	if err != nil {
@@ -61,7 +62,11 @@ func cleanupAfterTest(
 		panic(err)
 	}
 	if err := lib.DestructFilesInAllShards(log, shuckleAddress, counters); err != nil {
-		panic(err)
+		if acceptGcFailures {
+			log.Info("gc failed: %v, but acceptGcFailures is on, proceeding", err)
+		} else {
+			panic(err)
+		}
 	}
 	// Make sure nothing is left
 	for i := 0; i < 256; i++ {
@@ -97,7 +102,11 @@ func cleanupAfterTest(
 					panic(err)
 				}
 				if statResp.Size > 0 {
-					panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))
+					if acceptGcFailures {
+						log.Info("unexpected non-empty transient file %+v, %+v after cleanup, acceptGcFailures is on, proceeding", file, statResp)
+					} else {
+						panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))
+					}
 				}
 			}
 			if visitTransientFilesResp.NextId == 0 {

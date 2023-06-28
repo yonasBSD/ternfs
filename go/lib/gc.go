@@ -51,14 +51,16 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
-				conn, err := client.GetBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+				conn, err := client.GetWriteBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 				if err != nil {
 					return err
 				}
+				defer conn.Close()
 				proof, err = EraseBlock(log, conn, block)
-				conn.Close()
 				if err != nil {
 					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
+				} else {
+					conn.Put()
 				}
 				stats.DestructedBlocks++
 				certifyReq.Proofs[i].BlockId = block.BlockId
@@ -90,6 +92,7 @@ func destructFilesInternal(
 ) error {
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
+	someErrored := false
 	for {
 		log.Debug("visiting files with %+v", req)
 		err := client.ShardRequest(log, shid, &req, &resp)
@@ -99,13 +102,17 @@ func destructFilesInternal(
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
 			if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				return fmt.Errorf("%+v: error while destructing file: %w", file, err)
+				log.Error("%+v: error while destructing file: %v", file, err)
+				someErrored = true
 			}
 		}
 		req.BeginId = resp.NextId
 		if resp.NextId == 0 {
 			break
 		}
+	}
+	if someErrored {
+		return fmt.Errorf("destructing some files failed, see logs")
 	}
 	return nil
 }

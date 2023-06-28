@@ -33,7 +33,6 @@ struct eggsfs_transient_span {
     u64 block_ids[EGGSFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
     spinlock_t blocks_proofs_lock;
     u64 blocks_proofs[EGGSFS_MAX_BLOCKS];
-    struct list_head bad_failure_domains; // failed failure domains in the last attempt
     u32 written; // how much we've written to this span
     u32 block_size;
     atomic_t refcount;
@@ -77,7 +76,6 @@ static void init_transient_span(void* p) {
     for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
-    INIT_LIST_HEAD(&span->bad_failure_domains);
     spin_lock_init(&span->blocks_proofs_lock);
 }
 
@@ -119,10 +117,6 @@ static void put_transient_span(struct eggsfs_transient_span* span) {
 #undef FREE_PAGES
         add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
         eggsfs_in_flight_end(span->enode);
-        // free bad failure domains
-        while (!list_empty(&span->bad_failure_domains)) {
-
-        }
         // Free the span itself
         kmem_cache_free(eggsfs_transient_span_cachep, span);
     }

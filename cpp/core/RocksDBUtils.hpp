@@ -87,8 +87,6 @@ private:
     static_assert(std::is_same_v<decltype(((T*)nullptr)->_data), char*>);
     T _val;
 public:
-    ExternalValue(const ExternalValue&) = delete;
-
     ExternalValue() {
         _val._data = nullptr;
     }

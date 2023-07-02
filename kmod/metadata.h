@@ -25,12 +25,34 @@ int eggsfs_shard_getattr(struct eggsfs_fs_info* info, u64 id);
 int eggsfs_shard_create_file(struct eggsfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie);
 int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u64* next_offset, void* data);
 int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cookie, u64 offset, u32 size, const char* data, u8 len);
+
+// just to have some static size
+#define EGGSFS_MAX_BLACKLIST_LENGTH 8
+
+struct eggsfs_add_span_initiate_block {
+    u8 failure_domain[16];
+    u64 block_service_id;
+    u64 block_id;
+    u64 certificate;
+    u32 ip1;
+    u32 ip2;
+    u16 port2;
+    u16 port1;
+};
+
 int eggsfs_shard_add_span_initiate(
     struct eggsfs_fs_info* info, void* data, u64 file, u64 cookie, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity,
-    u8 stripes, u32 cell_size, u32* cell_crcs
+    u8 stripes, u32 cell_size, u32* cell_crcs,
+    // blacklisted failure domains
+    u16 blacklist_length, char (*blacklist)[16],
+    // B long
+    struct eggsfs_add_span_initiate_block* blocks
 );
 int eggsfs_shard_add_span_certify(
     struct eggsfs_fs_info* info, u64 file, u64 cookie, u64 offset, u8 parity, const u64* block_ids, const u64* block_proofs
+);
+int eggsfs_shard_move_span(
+    struct eggsfs_fs_info* info, u64 file1, u64 offset1, u64 cookie1, u64 file2, u64 offset2, u64 cookie2, u32 span_size
 );
 
 struct eggsfs_shard_add_span_initiate_new_block {

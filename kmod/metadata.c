@@ -594,9 +594,12 @@ int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cook
 }
 
 int eggsfs_shard_add_span_initiate(
-    struct eggsfs_fs_info* info, void* data, u64 file, u64 cookie, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, u32* cell_crcs
+    struct eggsfs_fs_info* info, void* data, u64 file, u64 cookie, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, u32* cell_crcs,
+    u16 blacklist_length, char (*blacklist)[16],
+    struct eggsfs_add_span_initiate_block* blocks_out
 ) {
     struct sk_buff* skb;
+    int i;
     u32 attempts;
     u64 req_id = alloc_request_id();
     u8 kind = EGGSFS_SHARD_ADD_SPAN_INITIATE;
@@ -608,22 +611,23 @@ int eggsfs_shard_add_span_initiate(
         return -EINVAL;
     }
 
-#define MSG_SIZE(__B, __stripes) ( \
+#define MSG_SIZE(__B, __stripes, __blacklist_length) ( \
         8 + /* FileId */ \
         8 + /* Cookie */ \
         8 + /* ByteOffset */ \
         4 + /* Size */ \
         4 + /* CRC */ \
         1 + /* StorageClass */ \
-        2 + /* Blacklist (just length) */ \
+        2 + /* Blacklist length */ \
+        (__blacklist_length * (16 + 8)) + /* blacklist */ \
         1 + /* Parity */ \
         1 + /* Stripes */ \
         4 + /* CellSize */ \
         2 + (4*__stripes*__B) /* CRCs */ \
     )
 
-    size_t msg_size = MSG_SIZE(stripes, B);
-    char req[EGGSFS_SHARD_HEADER_SIZE + MSG_SIZE(EGGSFS_MAX_STRIPES, EGGSFS_MAX_BLOCKS)];
+    size_t msg_size = MSG_SIZE(B, stripes, blacklist_length);
+    char req[EGGSFS_SHARD_HEADER_SIZE + MSG_SIZE(EGGSFS_MAX_BLOCKS, EGGSFS_MAX_STRIPES, EGGSFS_MAX_BLACKLIST_LENGTH)];
     if (req == NULL) {
         return -ENOMEM;
     }
@@ -639,7 +643,14 @@ int eggsfs_shard_add_span_initiate(
         eggsfs_add_span_initiate_req_put_size(&ctx, req_byteoffset, req_size, size);
         eggsfs_add_span_initiate_req_put_crc(&ctx, req_size, req_crc, crc);
         eggsfs_add_span_initiate_req_put_storage_class(&ctx, req_crc, req_storage_class, storage_class);
-        eggsfs_add_span_initiate_req_put_blacklist(&ctx, req_storage_class, req_blacklist, 0);
+        eggsfs_add_span_initiate_req_put_blacklist(&ctx, req_storage_class, req_blacklist, blacklist_length);
+        for (i = 0; i < blacklist_length; i++) {
+            BUG_ON(ctx.end - ctx.cursor < 16 + 8); // failure domain + block service id
+            memcpy(ctx.cursor, blacklist[i], 16);
+            ctx.cursor += 16;
+            memset(ctx.cursor, 0, 8);
+            ctx.cursor += 8;
+        }
         eggsfs_add_span_initiate_req_put_parity(&ctx, req_blacklist, req_parity, parity);
         eggsfs_add_span_initiate_req_put_stripes(&ctx, req_parity, req_stripes, stripes);
         eggsfs_add_span_initiate_req_put_cell_size(&ctx, req_stripes, req_cell_size, cell_size);
@@ -676,14 +687,14 @@ int eggsfs_shard_add_span_initiate(
             eggsfs_block_info_get_block_id(&ctx, failure_domain_end, block_id);
             eggsfs_block_info_get_certificate(&ctx, block_id, certificate);
             if (likely(ctx.err == 0)) {
-                int err = eggsfs_shard_add_span_initiate_block_cb(
-                    data, i, bs_ip1.x, bs_port1.x, bs_ip2.x, bs_port2.x, bs_id.x, failure_domain,
-                    block_id.x, certificate.x
-                );
-                if (err) {
-                    consume_skb(skb);
-                    return err;
-                }
+                blocks_out[i].ip1 = bs_ip1.x;
+                blocks_out[i].port1 = bs_port1.x;
+                blocks_out[i].ip2 = bs_ip2.x;
+                blocks_out[i].port2 = bs_port2.x;
+                blocks_out[i].block_id = block_id.x;
+                blocks_out[i].certificate = certificate.x;
+                blocks_out[i].block_service_id = bs_id.x;
+                memcpy(blocks_out[i].failure_domain, failure_domain, sizeof(failure_domain));
             }
         }
         eggsfs_add_span_initiate_resp_get_end(&ctx, blocks, end);
@@ -870,6 +881,44 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
 
     return 0;
 }
+
+int eggsfs_shard_move_span(
+    struct eggsfs_fs_info* info, u64 file1, u64 offset1, u64 cookie1, u64 file2, u64 offset2, u64 cookie2, u32 span_size
+) {
+    BUG_ON(eggsfs_inode_shard(file1) != eggsfs_inode_shard(file2));
+    u8 shard = eggsfs_inode_shard(file1);
+
+    struct sk_buff* skb;
+    u32 attempts;
+    u64 req_id = alloc_request_id();
+    u8 kind = EGGSFS_SHARD_MOVE_SPAN;
+    {
+        PREPARE_SHARD_REQ_CTX(EGGSFS_MOVE_SPAN_REQ_SIZE);
+        eggsfs_move_span_req_put_start(&ctx, start);
+        eggsfs_move_span_req_put_span_size(&ctx, start, span_size_req, span_size);
+        eggsfs_move_span_req_put_file_id1(&ctx, span_size_req, file1_req, file1);
+        eggsfs_move_span_req_put_byte_offset1(&ctx, file1_req, offset1_req, offset1);
+        eggsfs_move_span_req_put_cookie1(&ctx, offset1_req, cookie1_req, cookie1);
+        eggsfs_move_span_req_put_file_id2(&ctx, cookie1_req, file2_req, file2);
+        eggsfs_move_span_req_put_byte_offset2(&ctx, file2_req, offset2_req, offset2);
+        eggsfs_move_span_req_put_cookie2(&ctx, offset2_req, cookie2_req, cookie2);
+        eggsfs_move_span_req_put_end(&ctx, cookie2_req, end);
+        skb = eggsfs_send_shard_req(info, shard, req_id, &ctx, &attempts);
+        if (IS_ERR(skb)) { return PTR_ERR(skb); }
+    }
+
+    {
+        PREPARE_SHARD_RESP_CTX();
+        eggsfs_move_span_resp_get_start(&ctx, start);
+        eggsfs_move_span_resp_get_end(&ctx, start, end);
+        eggsfs_move_span_resp_get_finish(&ctx, end);
+        FINISH_RESP();
+    }
+
+    return 0;    
+    
+}
+
 
 int eggsfs_cdc_mkdir(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time) {
     struct sk_buff* skb;

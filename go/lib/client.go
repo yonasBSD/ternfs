@@ -529,7 +529,6 @@ func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]by
 		}
 		f.mu.Unlock()
 		return f.getBlocksConnInner(log, block, ip, port)
-
 	}
 }
 

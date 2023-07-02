@@ -28,19 +28,26 @@ struct eggsfs_transient_span {
     // Linear list of pages with the body of the span, used when we're still gathering
     // content for it. We use `index` in the page to track where we're writing to.
     struct list_head pages;
+    u32 written; // how much we've written to this span
+    atomic_t refcount;
+
     // These are finalized when we start flushing out a span.
+    char failure_domains[EGGSFS_MAX_BLOCKS][16]; // used to decide which to avoid in subsequent runs
     struct list_head blocks[EGGSFS_MAX_BLOCKS]; // the pages for each block
     u64 block_ids[EGGSFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
-    spinlock_t blocks_proofs_lock;
-    u64 blocks_proofs[EGGSFS_MAX_BLOCKS];
-    u32 written; // how much we've written to this span
+    spinlock_t lock; // we use this for various modifications
+    u64 blocks_proofs[EGGSFS_MAX_BLOCKS]; // when completing blocks, one of proof or err is set.
+    int blocks_errs[EGGSFS_MAX_BLOCKS];
+    u32 span_crc;
+    u32 cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
     u32 block_size;
-    atomic_t refcount;
     u8 attempts;
     u8 stripes;
     u8 storage_class;
     u8 parity;
 };
+// just a sanity check, this is just two per page rn
+static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
 
 // open_mutex held here
 // really want atomic open for this
@@ -76,7 +83,7 @@ static void init_transient_span(void* p) {
     for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
-    spin_lock_init(&span->blocks_proofs_lock);
+    spin_lock_init(&span->lock);
 }
 
 // starts out with refcount = 1
@@ -88,7 +95,11 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     atomic_set(&span->refcount, 1);
     span->offset = offset;
     span->written = 0;
+    memset(span->failure_domains, 0, sizeof(span->failure_domains));
     memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
+    memset(span->blocks_errs, 0, sizeof(span->blocks_errs));
+    span->span_crc = 0;
+    memset(span->cell_crcs, 0, sizeof(span->cell_crcs));
     span->attempts = 0;
     return span;
 }
@@ -99,7 +110,7 @@ static void hold_transient_span(struct eggsfs_transient_span* span) {
 
 static void put_transient_span(struct eggsfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
-        BUG_ON(spin_is_locked(&span->blocks_proofs_lock));
+        BUG_ON(spin_is_locked(&span->lock));
         // free pages, adjust OOM score
         int num_pages = 0;
 #define FREE_PAGES(__pages) \
@@ -122,28 +133,133 @@ static void put_transient_span(struct eggsfs_transient_span* span) {
     }
 }
 
-static void write_block_done(void* data, u64 block_id, u64 proof, int err) {
+static int add_span_initiate(struct eggsfs_transient_span* span);
+
+static int move_span_and_restart(struct eggsfs_transient_span* span) {
+    struct eggsfs_inode* enode = span->enode;
+
+    // create new file
+    u64 ino;
+    u64 cookie;
+    const char* name = "move_span";
+    int err = eggsfs_error_to_linux(eggsfs_shard_create_file(
+        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+        eggsfs_inode_shard(enode->inode.i_ino), EGGSFS_INODE_FILE, name, strlen(name), &ino, &cookie
+    ));
+    if (err) { goto out_err; }
+
+    // move span
+    err = eggsfs_error_to_linux(eggsfs_shard_move_span(
+        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+        enode->inode.i_ino, span->offset, enode->file.cookie, ino, 0, cookie, span->written
+    ));
+    if (err) { goto out_err; }
+
+    // go for it
+    err = add_span_initiate(span);
+    if (err) { goto out_err; }
+
+    return 0;
+
+out_err:
+    eggsfs_info("moving span failed %d", err);
+    return err;
+}
+
+static int retry_after_block_error(struct eggsfs_transient_span* span) {
+    int i;
+    int B = eggsfs_blocks(span->parity);
+    int err = 0;
+
+    if (span->attempts < eggsfs_max_write_span_attempts) {
+        eggsfs_info("writing span failed after %d attempts, will try again", span->attempts);
+        return move_span_and_restart(span);
+    } else {
+        for (i = 0; i < B; i++) {
+            if (span->blocks_errs[i]) {
+                if (err) {
+                    eggsfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
+                } else {
+                    err = span->blocks_errs[i];
+                }
+            }
+        }
+        BUG_ON(err == 0);
+        eggsfs_warn("writing span failed after %d attempts with err %d, giving up", span->attempts, err);
+        return err;
+    }
+}
+
+static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 proof, int block_write_err) {
+    int i;
+    int B = eggsfs_blocks(span->parity);
+    struct eggsfs_inode* enode = span->enode;
+
+    eggsfs_debug("block=%d proof=%016llx err=%d", b, proof, block_write_err);
+
+    bool finished_writing = true;
+    bool any_block_errs = false;
+    // Mark the current one as done/error out, and check if we're done with all block
+    // writing requests.
+    spin_lock_bh(&span->lock);
+    for (i = 0; i < B; i++) {
+        BUG_ON(span->block_ids[i] == 0);
+        if (i == b) {
+            if (block_write_err == 0) {
+                span->blocks_proofs[i] = proof;
+            } else {
+                span->blocks_errs[i] = block_write_err;
+            }
+        } else if (span->blocks_proofs[i] == 0 && span->blocks_errs[i] == 0) {
+            // we're waiting on some other block proof.
+            finished_writing = false;
+        }
+        any_block_errs = any_block_errs || (span->blocks_errs[i] != 0);
+    }
+    spin_unlock_bh(&span->lock);
+
+    int err = 0;
+    if (finished_writing && likely(!any_block_errs)) {
+        // TODO just like in the other case, would be nicer to have this async, since we're in a queue here.
+        err = eggsfs_error_to_linux(eggsfs_shard_add_span_certify(
+            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+            enode->inode.i_ino, enode->file.cookie, span->offset, span->parity,
+            span->block_ids, span->blocks_proofs
+        ));
+    }
+
+    if (finished_writing) {
+        span->attempts++;
+        if (unlikely(err == 0 && any_block_errs)) {
+            // if we failed writing blocks, consider retrying
+            err = retry_after_block_error(span);
+            if (err == 0) {
+                // we've successfully retried, so not done yet.
+                goto out;
+            }
+        }
+        atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
+        up(&span->enode->file.flushing_span_sema); // wake up waiters
+    }
+
+out:
+    put_transient_span(span);
+    return;
+}
+
+static void write_block_done(void* data, struct list_head* pages, u64 block_id, u64 proof, int block_write_err) {
     // We need to be careful with locking here: the writer waits on the
     // flushing semaphore while holding the inode lock.
 
     // we use 0 to mean "no proof yet"
-    BUG_ON(proof == 0); // we need to get _very_ unlucky for this to happen!
+    if (unlikely(block_write_err == 0 && proof == 0)) {
+        block_write_err = -EIO; // we need to get _very_ unlucky for this to happen!
+    }
 
     struct eggsfs_transient_span* span = (struct eggsfs_transient_span*)data;
-    struct eggsfs_inode* enode = span->enode;
 
-    eggsfs_debug("block_id=%016llx proof=%016llx err=%d", block_id, proof, err);
+    eggsfs_debug("block_id=%016llx proof=%016llx err=%d", block_id, proof, block_write_err);
 
-    bool just_finished = true;
-
-    // the block is toast
-    if (err) { goto out; }
-
-    // the file is already toast
-    err = atomic_read(&enode->file.transient_err);
-    if (err) { goto out; }
-
-    // OK, the file & block are good, and block_err = 0.
     int B = eggsfs_blocks(span->parity);
 
     // find the index that concerns us now
@@ -154,81 +270,103 @@ static void write_block_done(void* data, u64 block_id, u64 proof, int err) {
         }
     }
     BUG_ON(b == B); // we found the block
-    BUG_ON(span->blocks_proofs[b] != 0); // no proof already
+    BUG_ON(span->blocks_proofs[b] != 0); // no proof or err already
+    BUG_ON(span->blocks_errs[b] != 0);
 
-    // Mark the current one as done, and check if we're just completing things
-    int i;
-    spin_lock_bh(&span->blocks_proofs_lock);
-    for (i = 0; i < B; i++) {
-        if (span->block_ids[i] == 0) { continue; } // we weren't downloading this
-        if (i == b) { span->blocks_proofs[i] = proof; }
-        else if (span->blocks_proofs[i] == 0) {
-            // we're waiting on some other block proof.
-            just_finished = false;
-        }
-    }
-    spin_unlock_bh(&span->blocks_proofs_lock);
+    // re-acquire the pages
+    list_replace_init(pages, &span->blocks[b]);
 
-    if (just_finished) {
-        // TODO just like in the other case, would be nicer to have this async, since we're in a queue here.
-        err = eggsfs_error_to_linux(eggsfs_shard_add_span_certify(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
-            enode->inode.i_ino, enode->file.cookie, span->offset, span->parity,
-            span->block_ids, span->blocks_proofs
-        ));
-    }
-
-out:
-    if (err) {
-        atomic_cmpxchg(&enode->file.transient_err, 0, err);
-    }
-    if (err || just_finished) {
-        up(&span->enode->file.flushing_span_sema); // wake up waiters
-    }
-    put_transient_span(span);
+    write_block_finalize(span, b, proof, block_write_err);
 }
 
-struct initiate_ctx {
-    struct eggsfs_transient_span* span;
-    u32* cell_crcs;
-};
+static int add_span_initiate(struct eggsfs_transient_span* span) {
+    int i;
+    struct eggsfs_inode* enode = span->enode;
+    int B = eggsfs_blocks(span->parity);
+    
+    int cell_size = span->block_size / span->stripes;
 
-int eggsfs_shard_add_span_initiate_block_cb(
-    void* data, int block, u32 ip1, u16 port1, u32 ip2, u16 port2, u64 block_service_id, const u8* failure_domain, u64 block_id, u64 certificate
-) {
-    struct initiate_ctx* ctx = data;
-    struct eggsfs_block_service bs = {
-        .id = block_service_id,
-        .ip1 = ip1,
-        .port1 = port1,
-        .ip2 = ip2,
-        .port2 = port2,
-    };
-    memcpy(bs.failure_domain, failure_domain, 16);
-    int B = eggsfs_blocks(ctx->span->parity);
-    int cell_size = ctx->span->block_size / ctx->span->stripes;
-    u32 block_crc = 0;
-    int s;
-    for (s = 0; s < ctx->span->stripes; s++) {
-        block_crc = eggsfs_crc32c_append(block_crc, ctx->cell_crcs[s*B + block], cell_size);
+    eggsfs_debug("add span initiate");
+
+    // fill in blacklist
+    char blacklist[EGGSFS_MAX_BLACKLIST_LENGTH][16];
+    u16 blacklist_length = 0;
+    for (i = 0; i < B; i++) {
+        if (span->blocks_errs[i]) {
+            if (blacklist_length >= EGGSFS_MAX_BLACKLIST_LENGTH) {
+                eggsfs_info("could not fit blacklist! this almost certainly means we're screwed anyway");
+                return -EIO;
+            }
+            static_assert(sizeof(blacklist[blacklist_length]) == sizeof(span->failure_domains[i]));
+            memcpy(blacklist[blacklist_length], span->failure_domains[i], sizeof(span->failure_domains[i]));
+            blacklist_length++;
+        }
     }
-    ctx->span->block_ids[block] = block_id;
-    eggsfs_debug("about to write block from callback, crc %08x", block_crc);
-    int err = eggsfs_write_block(
-        &write_block_done,
-        ctx->span,
-        &bs,
-        block_id,
-        certificate,
-        ctx->span->block_size,
-        block_crc,
-        &ctx->span->blocks[block]
-    );
-    if (err) {
+
+    // reset stuff (including bad failure domains themselves)
+    memset(span->block_ids, 0, sizeof(span->block_ids));
+    memset(span->failure_domains, 0, sizeof(span->failure_domains));
+    memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
+    memset(span->blocks_errs, 0, sizeof(span->blocks_errs));
+
+    struct eggsfs_add_span_initiate_block blocks[EGGSFS_MAX_BLOCKS];
+    int err = eggsfs_error_to_linux(eggsfs_shard_add_span_initiate(
+        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+        span, enode->inode.i_ino, enode->file.cookie, span->offset, span->written,
+        span->span_crc, span->storage_class, span->parity, span->stripes, cell_size, span->cell_crcs,
+        blacklist_length, blacklist,
+        blocks
+    ));
+    if (unlikely(err)) {
+        // this means that we've failed to do the metadata (not the blocks), we can't recover from this
         return err;
     }
-    // for the callback
-    hold_transient_span(ctx->span);
+
+    // send all the requests. at this point we never fail, we instead defer
+    // failure to the block requests. we intentionally let all the requests
+    // reach completion (rather than erroring on the first one) to try to
+    // clear out all bad failure domains in one go.
+    for (i = 0; i < B; i++) {
+        // first mark the downloading blocks. required to do this upfront
+        // so that we'll mark everything as finished only once we've gone
+        // through all the requests.
+        struct eggsfs_add_span_initiate_block* block = &blocks[i];
+        span->block_ids[i] = block->block_id;
+        static_assert(sizeof(span->failure_domains[i]) == sizeof(block->failure_domain));
+        memcpy(span->failure_domains[i], block->failure_domain, sizeof(block->failure_domain));
+    }
+    for (i = 0; i < B; i++) { // then start downloading
+        struct eggsfs_add_span_initiate_block* block = &blocks[i];
+        u32 block_crc = 0;
+        int s;
+        for (s = 0; s < span->stripes; s++) {
+            block_crc = eggsfs_crc32c_append(block_crc, span->cell_crcs[s*B + i], cell_size);
+        }
+        struct eggsfs_block_service bs = {
+            .id = block->block_service_id,
+            .ip1 = block->ip1,
+            .port1 = block->port1,
+            .ip2 = block->ip2,
+            .port2 = block->port2,
+        };
+        int err = eggsfs_write_block(
+            &write_block_done,
+            span,
+            &bs,
+            block->block_id,
+            block->certificate,
+            span->block_size,
+            block_crc,
+            &span->blocks[i]
+        );
+        hold_transient_span(span); // for the callback when block is done
+        if (err) { // "finish" immediately, we've errored out
+            write_block_finalize(span, i, 0, err);
+        }
+    }
+
+    // Now we wait.
+    eggsfs_debug("sent all block writing requests");
     return 0;
 }
 
@@ -345,11 +483,13 @@ static int write_blocks(struct eggsfs_transient_span* span) {
 
     struct eggsfs_inode* enode = span->enode;
 
+    // transient file is already borked
+    err = atomic_read(&enode->file.transient_err);
+    if (err) { goto out; }
+
     int D = eggsfs_data_blocks(span->parity);
     int B = eggsfs_blocks(span->parity);
     int S = span->stripes;
-    uint32_t cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
-    memset(cell_crcs, 0, sizeof(cell_crcs));
 
     eggsfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
     loff_t offset = enode->inode.i_size - span->written;
@@ -401,7 +541,6 @@ static int write_blocks(struct eggsfs_transient_span* span) {
     }
     eggsfs_debug("computing parity");
     // Then, we compute the parity blocks and the CRCs for each block.
-    u32 span_crc = 0;
     {
         char* pages_bufs[EGGSFS_MAX_BLOCKS];
         kernel_fpu_begin();
@@ -416,7 +555,7 @@ static int write_blocks(struct eggsfs_transient_span* span) {
             err = eggsfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
             // compute CRCs
             for (i = 0; i < B; i++) {
-                cell_crcs[s*B + i] = eggsfs_crc32c(cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
+                span->cell_crcs[s*B + i] = eggsfs_crc32c(span->cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
             }
             for (i = 0; i < B; i++) {
                 kunmap_atomic(pages_bufs[i]);
@@ -429,34 +568,25 @@ static int write_blocks(struct eggsfs_transient_span* span) {
         int s;
         for (s = 0; s < S; s++) {
             for (i = 0; i < D; i++) {
-                span_crc = eggsfs_crc32c_append(span_crc, cell_crcs[s*B + i], cell_size);
+                span->span_crc = eggsfs_crc32c_append(span->span_crc, span->cell_crcs[s*B + i], cell_size);
             }
         }
-        span_crc = eggsfs_crc32c_zero_extend(span_crc, (int)span->written - (int)(span->block_size*D));
+        span->span_crc = eggsfs_crc32c_zero_extend(span->span_crc, (int)span->written - (int)(span->block_size*D));
         kernel_fpu_end();
     }
+    // Start the first attempt
     // Now we need to init the span (the callback will actually send the requests)
     // TODO would be better to have this async, and free up the queue for other stuff,
     // and also not block in this call which might be in a non-blocking write.
     // TODO Isn't this called on file write, and therefore not taking up time in
     // the queue? I think the comment above is partially outdated.
-    eggsfs_debug("add span initiate");
-    {
-        struct initiate_ctx ctx = {
-            .span = span,
-            .cell_crcs = cell_crcs,
-        };
-        err = eggsfs_error_to_linux(eggsfs_shard_add_span_initiate(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
-            &ctx, enode->inode.i_ino, enode->file.cookie, offset, span->written,
-            span_crc, span->storage_class, span->parity, span->stripes, cell_size, cell_crcs
-        ));
-        if (err) { goto out; }
-        // Now we wait.
-        eggsfs_debug("sent all block writing requests");
-    }
+    err = add_span_initiate(span);
 
 out:
+    if (err) { // we've failed before trying to write blocks, terminate immediately
+        atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
+        up(&span->enode->file.flushing_span_sema); // wake up waiters
+    }
     return err;
 
 out_err_fpu:

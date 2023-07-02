@@ -830,7 +830,7 @@ func main() {
 			short:            *short,
 			filter:           filterRe,
 			// TODO write explanation for this
-			writeDirectInMountedTest: *blockServiceKiller,
+			writeDirectInMountedTest: *blockServiceKiller && !*kmod,
 		}
 		r.run(terminateChan, log)
 	}()

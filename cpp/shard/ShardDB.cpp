@@ -3358,6 +3358,7 @@ struct ShardDBImpl {
             transientFile2().lastSpanState() != SpanState::CLEAN ||
             transientFile2().fileSize() != entry.byteOffset2
         ) {
+            LOG_DEBUG(_env, "span not found because of offset checks");
             return EggsError::SPAN_NOT_FOUND; // TODO better error?
         }
         // fetch span to move
@@ -3367,12 +3368,14 @@ struct ShardDBImpl {
         spanKey().setOffset(entry.byteOffset1);
         auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
         if (status.IsNotFound()) {
+            LOG_DEBUG(_env, "span not found in db (this should probably never happen)");
             return EggsError::SPAN_NOT_FOUND;
         }
-        ROCKS_DB_CHECKED(status); // TODO better error if not found
+        ROCKS_DB_CHECKED(status);
         ExternalValue<SpanBody> span(spanValue);
         ExternalValue<SpanBody> spanBody(spanValue);
         if (spanBody().spanSize() != entry.spanSize) {
+            LOG_DEBUG(_env, "span not found because of differing sizes");
             return EggsError::SPAN_NOT_FOUND; // TODO better error
         }
         // move span

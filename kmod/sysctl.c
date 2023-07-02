@@ -7,6 +7,7 @@
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 1;
+int eggsfs_max_write_span_attempts = 5;
 extern int eggsfs_rs_cpu_level;
 
 static int drop_cached_spans;
@@ -70,6 +71,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .procname = "prefetch",
         .data = &eggsfs_prefetch,
         .maxlen = sizeof(eggsfs_prefetch),
+        .mode = 0644,
+        .proc_handler = proc_dointvec,
+    },
+
+    {
+        .procname = "max_write_span_attempts",
+        .data = &eggsfs_max_write_span_attempts,
+        .maxlen = sizeof(eggsfs_max_write_span_attempts),
         .mode = 0644,
         .proc_handler = proc_dointvec,
     },

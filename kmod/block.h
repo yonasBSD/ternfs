@@ -14,13 +14,13 @@
 #define EGGSFS_BLOCKS_RESP_HEADER_SIZE (4 + 1) // protocol + kind
 
 struct eggsfs_block_service {
+    u8 failure_domain[16];
     u64 id;
     u32 ip1;
     u32 ip2;
     u16 port1;
     u16 port2;
     u8 flags;
-    u8 failure_domain[16];
 };
 
 // Calls `eggsfs_fetch_block_complete_cb` when done.
@@ -42,7 +42,8 @@ int eggsfs_fetch_block(
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
 int eggsfs_write_block(
-    void (*callback)(void* data, u64 block_id, u64 proof, int err),
+    // This callback _must_ take ownership of the pages (and free them if necessary)
+    void (*callback)(void* data, struct list_head* pages, u64 block_id, u64 proof, int err),
     void* data,
     struct eggsfs_block_service* bs,
     u64 block_id,
@@ -51,7 +52,7 @@ int eggsfs_write_block(
     u32 crc,
     // There must be enough pages to write everything.
     // After this call, ownership of these pages is passed onto the block
-    // writing (if the call succeeds)
+    // writing until control is returned to the callback.
     struct list_head* pages
 );
 

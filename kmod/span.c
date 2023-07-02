@@ -664,9 +664,7 @@ static void fetch_stripe_trace(struct fetch_stripe_state* st, u8 event, s8 block
     );
 }
 
-static void put_fetch_stripe(struct fetch_stripe_state* st) {
-    if (atomic_dec_return(&st->refcount) > 0) { return; }
-
+static void free_fetch_stripe(struct fetch_stripe_state* st) {
     // we're the last ones here
     fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_FREE, -1, atomic_read(&st->err));
 
@@ -687,9 +685,14 @@ static void put_fetch_stripe(struct fetch_stripe_state* st) {
     eggsfs_in_flight_end(st->enode);
 
     // We don't need the span anymore
-    eggsfs_put_span(&st->span->span, false);
+    eggsfs_put_span(&st->span->span, !st->prefetching);
 
     kmem_cache_free(eggsfs_fetch_stripe_cachep, st);
+}
+
+static void put_fetch_stripe(struct fetch_stripe_state* st) {
+    if (atomic_dec_return(&st->refcount) > 0) { return; }
+    free_fetch_stripe(st);
 }
 
 static void store_pages(struct fetch_stripe_state* st) {
@@ -763,7 +766,9 @@ static void store_pages(struct fetch_stripe_state* st) {
         // eggsfs_info("i=%d curr_page=%u", i, curr_page);
     }
     kernel_fpu_end();
-    // eggsfs_info("curr_page=%u end_page=%u", curr_page, end_page);
+    if (curr_page != end_page) {
+        eggsfs_info("curr_page=%u end_page=%u", curr_page, end_page);
+    }
     BUG_ON(curr_page != end_page);
     if (crc != span->stripes_crc[st->stripe]) {
         eggsfs_warn("bad crc for file %016lx, stripe %u, expected %08x, got %08x", st->enode->inode.i_ino, st->stripe, span->stripes_crc[st->stripe], crc);
@@ -774,7 +779,7 @@ static void store_pages(struct fetch_stripe_state* st) {
 static void block_done(void* data, u64 block_id, struct list_head* pages, int err);
 
 // Starts loading up D blocks as necessary.
-static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) {
+static int fetch_blocks(struct fetch_stripe_state* st) {
     int i;
     int err = 0;
 
@@ -798,7 +803,7 @@ static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) 
         if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
             eggsfs_debug("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
             err = err ?: -EIO;
-            return err;
+            goto out;
         }
 
         // find the next block to download
@@ -838,6 +843,13 @@ static int fetch_blocks(struct fetch_stripe_state* st, bool increase_remaining) 
         }
     }
 
+out:
+    // we might have triggered this on the way down of the `atomic_dec`s above
+    if (atomic_read(&st->refcount) == 0) {
+        free_fetch_stripe(st);
+    }
+    return err;
+
 #undef LOG_STR
 #undef LOG_ARGS
 }
@@ -866,7 +878,7 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
         // mark it as failed and not downloading
         s64 blocks = atomic64_read(&st->blocks);
         while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
-        err = fetch_blocks(st, true);
+        err = fetch_blocks(st);
         // if we failed to restore order, mark the whole thing as failed
         if (err) { atomic_cmpxchg(&st->err, 0, err); }
     } else {
@@ -928,7 +940,7 @@ static struct fetch_stripe_state* start_fetch_stripe(
     
     // start fetching blocks
     eggsfs_debug("fetching blocks");
-    err = fetch_blocks(st, false);
+    err = fetch_blocks(st);
     if (err) { goto out_err; }
 
     eggsfs_debug("fetch stripe started");

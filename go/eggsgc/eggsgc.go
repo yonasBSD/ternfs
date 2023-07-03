@@ -66,7 +66,7 @@ func main() {
 	for _, shard := range shards {
 		shardsStrs = append(shardsStrs, fmt.Sprintf("%v", shard))
 	}
-	ai := fmt.Sprintf("gc:%s", strings.Join(shardStrs(",")))
+	ai := fmt.Sprintf("gc:%s", strings.Join(shardsStrs, ","))
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: ai})
 
 	if *mtu != 0 {

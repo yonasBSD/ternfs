@@ -17,6 +17,7 @@ import (
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
+	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	singleIteration := flag.Bool("single-iteration", false, "Whether to run a single iteration of GC and terminate.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
@@ -61,7 +62,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)

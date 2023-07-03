@@ -510,6 +510,7 @@ func main() {
 	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll advertise to shuckle. If it is not provided, we will only bind to the first IP.")
 	port2 := flag.Uint("port-2", 0, "Port on which to run on. By default it will be picked automatically.")
 	verbose := flag.Bool("verbose", false, "")
+	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
@@ -591,6 +592,7 @@ func main() {
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{
 		Level:  level,
 		Syslog: *syslog,
+		Xmon:   *xmon,
 	})
 
 	if *profileFile != "" {

@@ -62,19 +62,18 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon})
+	shardsStrs := []string{}
+	for _, shard := range shards {
+		shardsStrs = append(shardsStrs, fmt.Sprintf("%v", shard))
+	}
+	ai := fmt.Sprintf("gc:%s", strings.Join(shardStrs(",")))
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: ai})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
 	}
 
-	{
-		shardsStrs := []string{}
-		for _, shard := range shards {
-			shardsStrs = append(shardsStrs, fmt.Sprintf("%v", shard))
-		}
-		log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
-	}
+	log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
 
 	panicChan := make(chan error)
 	finishedChan := make(chan struct{})

@@ -590,9 +590,10 @@ func main() {
 		level = lib.TRACE
 	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{
-		Level:  level,
-		Syslog: *syslog,
-		Xmon:   *xmon,
+		Level:       level,
+		Syslog:      *syslog,
+		Xmon:        *xmon,
+		AppInstance: "blockservice",
 	})
 
 	if *profileFile != "" {

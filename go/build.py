@@ -3,15 +3,23 @@ import sys
 import os
 from pathlib import Path
 import subprocess
+import argparse
 
 go_dir = Path(__file__).parent
 repo_dir = go_dir.parent
 
-paths = sys.argv[1:]
-race = "--race" in paths
-paths = list(filter(lambda x: x != "--race", paths))
+parser = argparse.ArgumentParser()
+parser.add_argument('--race', action='store_true', help='Build Go with -race')
+parser.add_argument('--generate', action='store_true', help='Run generate rather than build')
+parser.add_argument('paths', nargs='*')
+args = parser.parse_args()
 
-if len(paths) == 0:
+paths = args.paths
+
+if args.generate and (args.race or paths):
+    printf('--generate only works as the only flag')
+
+if not args.generate and len(paths) == 0:
     for path in os.listdir(str(go_dir)):
         if path == 'vendor':
             continue
@@ -20,18 +28,21 @@ if len(paths) == 0:
 
 if 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
     subprocess.run(
-        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', 'REDACTED', '/eggsfs/go/build.py'] + sys.argv[1:] + (["--race"] if race else []),
+        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', 'REDACTED', '/eggsfs/go/build.py'] + sys.argv[1:],
         check=True,
     )
 else:
     # Otherwise go will try to create the cache in /.cache, which won't work
     # since we're not running as root.
     os.environ['GOCACHE'] = '/eggsfs/.cache'
-    for path_str in paths:
-        print(f'Building {path_str}')
-        path = go_dir / Path(path_str)
-        subprocess.run(
-            ['go', 'build', '-ldflags=-extldflags=-static'] + (["-race"] if race else []) + ['.'],
-            cwd=str(path),
-            check=True,
-        )
+    if args.generate:
+        subprocess.run(['go', 'generate', './...'], cwd=go_dir, check=True)
+    else:
+        for path_str in paths:
+            path = go_dir / Path(path_str)
+            print(f'Building {path_str}')
+            subprocess.run(
+                ['go', 'build', '-ldflags=-extldflags=-static'] + (["-race"] if args.race else []) + ['.'],
+                cwd=str(path),
+                check=True,
+            )

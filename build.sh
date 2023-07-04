@@ -9,7 +9,7 @@ out_dir=build/$build_variant
 mkdir -p build/$build_variant
 
 ./cpp/build.py alpine rs crc32c # build libs for go
-(cd go/msgs && go generate ./...) # generate C++ files
+./go/build.py --generate # generate C++ files
 
 # build C++
 ./cpp/build.py $build_variant

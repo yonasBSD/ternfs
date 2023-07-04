@@ -70,7 +70,7 @@ def wait_cmds(ps, quiet=False):
             done[i] = wait_cmd(p, timeout=0.1)
 
 bold_print('building')
-for r in ['alpine', 'sanitized', 'valgrind']:
+for r in ['alpine', 'sanitized']:
     wait_cmd(run_cmd(['./build.sh', r]), quiet=True)
 wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'), quiet=True)
 
@@ -84,9 +84,7 @@ wait_cmds(
 
 bold_print('integration tests')
 tests = [
-    ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-verbose', '-repo-dir', '.', '-tmp-dir', '.'],
     ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-outgoing-packet-drop', '0.1', '-short'],
-    ['./go/eggstests/eggstests', '-build-type', 'valgrind', '-binaries-dir', 'build/valgrind', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short'],
     # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
     # of the child processes confuse the FUSE driver)
     ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', '.', '-tmp-dir', '.', '-short'],

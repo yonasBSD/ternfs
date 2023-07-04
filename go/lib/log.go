@@ -118,8 +118,10 @@ type LoggerOptions struct {
 }
 
 type Logger struct {
-	level LogLevel
-	troll *monitor.ChildTroll
+	level         LogLevel
+	troll         *monitor.ParentTroll
+	raisedAlerts  map[string]*monitor.AlertStatus
+	droppedAlerts *monitor.AlertStatus
 }
 
 func isTerminal(f *os.File) bool {
@@ -139,7 +141,10 @@ func NewLogger(
 	out *os.File,
 	options *LoggerOptions,
 ) *Logger {
-	logger := Logger{level: options.Level}
+	logger := Logger{
+		level:        options.Level,
+		raisedAlerts: make(map[string]*monitor.AlertStatus),
+	}
 
 	if !atomic.CompareAndSwapInt32(&hasLogger, 0, 1) {
 		panic(fmt.Errorf("NewLogger called twice"))
@@ -180,7 +185,8 @@ func NewLogger(
 		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 1000)
 		// The call below will log the info message once connected to xmon.
 		troll.Connect()
-		logger.troll = troll.NewChildTroll(appType, appInstance)
+		logger.troll = troll
+		logger.droppedAlerts = troll.NewAlertStatus()
 	}
 
 	return &logger
@@ -250,27 +256,43 @@ func (l *Logger) Info(format string, v ...any) {
 	l.LogStack(1, INFO, format, v...)
 }
 
-func (l *Logger) Error(format string, v ...any) {
-	if l.troll != nil {
-		a := l.troll.NewAlertStatus()
-		a.Alert(fmt.Sprintf(format, v...))
+func (l *Logger) alert(msg string) {
+	if l.troll == nil {
+		return
 	}
+	// Deduplicate by alert message
+	_, ok := l.raisedAlerts[msg]
+	if ok {
+		return
+	}
+
+	if len(l.raisedAlerts) > 10 {
+		l.droppedAlerts.Alert("Alert limit exceeded, some have been dropped")
+		return
+	}
+	l.droppedAlerts.Clear()
+
+	binCb := func(alertID int64) {
+		delete(l.raisedAlerts, msg)
+	}
+	a := l.troll.Alert(msg, true, binCb)
+	l.raisedAlerts[msg] = a
+}
+
+func (l *Logger) Error(format string, v ...any) {
+	l.alert(fmt.Sprintf(format, v...))
 	l.LogStack(1, ERROR, format, v...)
 }
 
 func (l *Logger) RaiseAlert(err any) {
-	if l.troll != nil {
-		a := l.troll.NewAlertStatus()
-		a.Alert(fmt.Sprintf("%v", err))
-	}
-	l.LogStack(1, ERROR, "ALERT %v", err)
+	msg := fmt.Sprintf("ALERT %v", err)
+	l.alert(msg)
+	l.LogStack(1, ERROR, msg)
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, err any) {
-	if l.troll != nil {
-		a := l.troll.NewAlertStatus()
-		a.Alert(fmt.Sprintf("%v", err))
-	}
+	msg := fmt.Sprintf("ALERT %v", err)
+	l.alert(msg)
 	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
 }
 

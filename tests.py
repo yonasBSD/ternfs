@@ -70,9 +70,9 @@ def wait_cmds(ps, quiet=False):
             done[i] = wait_cmd(p, timeout=0.1)
 
 bold_print('building requisites')
-wait_cmd(run_cmd(['./cpp/build.py', 'alpine']), quiet=True)
-wait_cmd(run_cmd(['./cpp/build.py', 'sanitized']), quiet=True)
-wait_cmd(run_cmd(['./cpp/build.py', 'valgrind']), quiet=True)
+# need the alpine build before we can build go (rs/crc32c libs)
+for r in ['alpine', 'sanitized', 'valgrind']:
+    wait_cmd(run_cmd(['./cpp/build.py', r]), quiet=True)
 wait_cmd(run_cmd(['go', 'generate', './...'], cwd='go/msgs'), quiet=True)
 wait_cmd(run_cmd(['go', 'build', '.'], cwd='go/eggstests'), quiet=True)
 wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'), quiet=True)
@@ -87,7 +87,7 @@ wait_cmds(
 
 bold_print('integration tests')
 tests = [
-    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir],
+    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'alpine'],
     ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short'],
     ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'valgrind', '-short'],
     # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs

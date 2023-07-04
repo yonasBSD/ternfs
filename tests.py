@@ -69,12 +69,9 @@ def wait_cmds(ps, quiet=False):
                 continue
             done[i] = wait_cmd(p, timeout=0.1)
 
-bold_print('building requisites')
-# need the alpine build before we can build go (rs/crc32c libs)
+bold_print('building')
 for r in ['alpine', 'sanitized', 'valgrind']:
-    wait_cmd(run_cmd(['./cpp/build.py', r]), quiet=True)
-wait_cmd(run_cmd(['go', 'generate', './...'], cwd='go/msgs'), quiet=True)
-wait_cmd(run_cmd(['go', 'build', '.'], cwd='go/eggstests'), quiet=True)
+    wait_cmd(run_cmd(['./build.sh', r]), quiet=True)
 wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'), quiet=True)
 
 tests_quiet = not sys.stdout.isatty()
@@ -87,12 +84,12 @@ wait_cmds(
 
 bold_print('integration tests')
 tests = [
-    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'alpine'],
-    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-outgoing-packet-drop', '0.1', '-short'],
-    ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'valgrind', '-short'],
+    ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-verbose', '-repo-dir', '.', '-tmp-dir', '.'],
+    ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-outgoing-packet-drop', '0.1', '-short'],
+    ['./go/eggstests/eggstests', '-build-type', 'valgrind', '-binaries-dir', 'build/valgrind', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short'],
     # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
     # of the child processes confuse the FUSE driver)
-    ['./go/eggstests/eggstests', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-short'],
+    ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', '.', '-tmp-dir', '.', '-short'],
 ]
 # we need three free ports, we get them here upfront rather than in shuckle to reduce
 # the chance of races -- if we got it from the integration tests it'll be while

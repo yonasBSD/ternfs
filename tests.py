@@ -92,7 +92,7 @@ tests = [
     ['./go/eggstests/eggstests', '-verbose', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'valgrind', '-short'],
     # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
     # of the child processes confuse the FUSE driver)
-    ['./go/eggstests/eggstests', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-short'],
+    ['./go/eggstests/eggstests', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'mounted|filter', '-repo-dir', script_dir, '-tmp-dir', script_dir, '-build-type', 'sanitized', '-short'],
 ]
 # we need three free ports, we get them here upfront rather than in shuckle to reduce
 # the chance of races -- if we got it from the integration tests it'll be while

@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"xtx/ecninfra/log"
@@ -120,6 +121,7 @@ type LoggerOptions struct {
 type Logger struct {
 	level         LogLevel
 	troll         *monitor.ParentTroll
+	alertsLock    sync.RWMutex
 	raisedAlerts  map[string]*monitor.AlertStatus
 	droppedAlerts *monitor.AlertStatus
 }
@@ -143,6 +145,7 @@ func NewLogger(
 ) *Logger {
 	logger := Logger{
 		level:        options.Level,
+		alertsLock:   sync.RWMutex{},
 		raisedAlerts: make(map[string]*monitor.AlertStatus),
 	}
 
@@ -178,7 +181,7 @@ func NewLogger(
 		}
 		hostname := strings.Split(hn, ".")[0]
 
-		appType := "restech.critical"
+		appType := "restech.info"
 		prod := options.Xmon == "prod"
 		appInstance := fmt.Sprintf("%s@%s", options.AppInstance, hostname)
 		xh := monitor.XmonHost(prod)
@@ -260,6 +263,8 @@ func (l *Logger) alert(msg string) {
 	if l.troll == nil {
 		return
 	}
+	l.alertsLock.Lock()
+	defer l.alertsLock.Unlock()
 	// Deduplicate by alert message
 	_, ok := l.raisedAlerts[msg]
 	if ok {
@@ -273,6 +278,8 @@ func (l *Logger) alert(msg string) {
 	l.droppedAlerts.Clear()
 
 	binCb := func(alertID int64) {
+		l.alertsLock.Lock()
+		defer l.alertsLock.Unlock()
 		delete(l.raisedAlerts, msg)
 	}
 	a := l.troll.Alert(msg, true, binCb)

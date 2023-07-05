@@ -1016,6 +1016,7 @@ static void do_prefetch(struct eggsfs_block_span* block_span, u64 off) {
 
     // We want the state to go once all the block fetches are done.
     put_fetch_stripe(st);
+
 out_span:
     // The fetch state has ownership itself
     eggsfs_put_span(&block_span->span, false);

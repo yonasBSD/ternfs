@@ -927,7 +927,7 @@ void eggsfs_link_destructor(void* buf) {
     kfree(buf);
 }
 
-char* eggsfs_write_link(struct eggsfs_inode* enode) {
+char* eggsfs_read_link(struct eggsfs_inode* enode) {
     eggsfs_debug("ino=%016lx", enode->inode.i_ino);
 
     BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);

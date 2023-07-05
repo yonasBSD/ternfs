@@ -7,7 +7,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
 int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry);
 
 void eggsfs_link_destructor(void*);
-char* eggsfs_write_link(struct eggsfs_inode* enode);
+char* eggsfs_read_link(struct eggsfs_inode* enode);
 
 extern const struct file_operations eggsfs_file_operations;
 

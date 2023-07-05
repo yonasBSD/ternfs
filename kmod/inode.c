@@ -262,7 +262,7 @@ static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, s
     if (dentry == NULL) { return ERR_PTR(-ECHILD); }
 
     struct eggsfs_inode* enode = EGGSFS_I(inode);
-    char* buf = eggsfs_write_link(enode);
+    char* buf = eggsfs_read_link(enode);
 
     if (IS_ERR(buf)) { return buf; }
 

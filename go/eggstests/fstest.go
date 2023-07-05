@@ -277,7 +277,7 @@ func (c *posixFsTestHarness) createFile(
 		offsets[chunks] = int(size)
 		sort.Ints(offsets)
 		for i := 0; i < chunks; i++ {
-			log.Trace("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
+			log.Debug("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
 			if _, err := f.Write((*actualDataBuf)[offsets[i]:offsets[i+1]]); err != nil {
 				panic(err)
 			}

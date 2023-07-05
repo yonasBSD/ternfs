@@ -355,6 +355,8 @@ func handleRequest(
 
 NextRequest:
 	for {
+		// clean up connections after 1 minute
+		conn.SetReadDeadline(time.Now().Add(time.Minute))
 		blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 		if err != nil {
 			switch v := err.(type) {

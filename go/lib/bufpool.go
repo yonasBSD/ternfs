@@ -20,6 +20,10 @@ func NewBufPool() *BufPool {
 // This does _not_ zero the memory in the bufs -- i.e. there might
 // be garbage in it.
 func (pool *BufPool) Get(l int) *[]byte {
+	if l == 0 {
+		b := []byte{}
+		return &b
+	}
 	buf := (*sync.Pool)(pool).Get().(*[]byte)
 	if cap(*buf) >= l {
 		*buf = (*buf)[:l]
@@ -35,6 +39,9 @@ func (pool *BufPool) Get(l int) *[]byte {
 // by marking the put thing as dirty.
 func (pool *BufPool) Put(buf *[]byte) {
 	if buf == nil {
+		return
+	}
+	if cap(*buf) == 0 {
 		return
 	}
 	(*sync.Pool)(pool).Put(buf)

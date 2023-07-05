@@ -735,7 +735,10 @@ out_err_permanent:
 out_err:
     eggsfs_debug("err=%d", err);
     if (err == -EAGAIN && *ppos > ppos_before) {
-        goto out; // we can just return what we've already written
+        // We can just return what we've already written. In fact, it's important
+        // that we do so, otherwise repeated calls might fail because they'd be
+        // with the wrong offset.
+        goto out;
     }
     return err;
 }

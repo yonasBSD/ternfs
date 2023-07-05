@@ -381,25 +381,27 @@ func (f *transientFile) writeSpan() syscall.Errno {
 	if f.data == nil {
 		return 0 // happens when dup is called on file
 	}
-	maxSize := int(f.spanPolicy.Entries[len(f.spanPolicy.Entries)-1].MaxSize)
-	boundary := maxSize
-	if len(*f.data) < maxSize {
-		boundary = len(*f.data)
-	}
-	spanData := (*f.data)[:boundary]
-	leftover := append([]byte{}, (*f.data)[boundary:]...)
-	spanSize := uint32(len(spanData))
-	if spanSize == 0 {
+	if len(*f.data) == 0 {
 		return 0
 	}
-	var err error
-	*f.data, err = client.CreateSpan(logger, []msgs.BlacklistEntry{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, spanSize, spanData)
-	if err != nil {
+	maxSize := int(f.spanPolicy.Entries[len(f.spanPolicy.Entries)-1].MaxSize)
+	spanSize := maxSize
+	if len(*f.data) < maxSize {
+		spanSize = len(*f.data)
+	}
+	// split span and leftover.
+	leftover := bufPool.Get(len(*f.data) - spanSize)
+	copy(*leftover, (*f.data)[spanSize:])
+	span := f.data
+	*span = (*span)[:spanSize]
+	f.data = leftover
+	defer bufPool.Put(span)
+	if err := client.CreateSpan(logger, []msgs.BlacklistEntry{}, f.spanPolicy, f.blockPolicy, f.stripePolicy, f.id, f.cookie, f.written, uint32(spanSize), f.data); err != nil {
 		f.valid = false
 		return eggsErrToErrno(err)
+
 	}
 	f.written += uint64(spanSize)
-	*f.data = append((*f.data)[:0], leftover...)
 
 	return 0
 }
@@ -428,8 +430,12 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 		return 0, syscall.EBADF
 	}
 
-	if off != int64(f.written)+int64(len(*f.data)) {
+	if off < int64(f.written)+int64(len(*f.data)) {
 		logger.Info("refusing to write in the past off=%v written=%v len=%v", off, f.written, len(*f.data))
+		return 0, syscall.EINVAL
+	}
+	if off > int64(f.written)+int64(len(*f.data)) {
+		logger.Info("refusing to write in the future off=%v written=%v len=%v", off, f.written, len(*f.data))
 		return 0, syscall.EINVAL
 	}
 

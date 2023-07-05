@@ -287,7 +287,8 @@ func main() {
 				panic(err)
 			}
 		}
-		fileId, err := client.CreateFile(log, lib.NewDirInfoCache(), path, input)
+		bufPool := lib.NewBufPool()
+		fileId, err := client.CreateFile(log, bufPool, lib.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}

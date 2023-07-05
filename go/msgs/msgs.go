@@ -1570,6 +1570,7 @@ type WriteBlockReq struct {
 type WriteBlockResp struct {
 	Proof [8]byte
 }
+
 type TestWriteReq struct {
 	Size uint64
 }

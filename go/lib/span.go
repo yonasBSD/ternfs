@@ -58,19 +58,18 @@ func (c *Client) createInlineSpan(
 	return nil
 }
 
-func ensureLen(buf []byte, l int) []byte {
-	lenBefore := len(buf)
-	if l <= cap(buf) {
-		buf = buf[:l]
+func ensureLen(buf *[]byte, l int) {
+	lenBefore := len(*buf)
+	if l <= cap(*buf) {
+		*buf = (*buf)[:l]
 	} else {
-		buf = buf[:cap(buf)]
-		buf = append(buf, make([]byte, l-len(buf))...)
+		*buf = (*buf)[:cap(*buf)]
+		*buf = append(*buf, make([]byte, l-len(*buf))...)
 	}
 	// memset? what's that?
-	for i := lenBefore; i < len(buf); i++ {
-		buf[i] = 0
+	for i := lenBefore; i < len(*buf); i++ {
+		(*buf)[i] = 0
 	}
-	return buf
 }
 
 const EGGSFS_PAGE_SIZE int = 4096
@@ -84,26 +83,26 @@ func prepareSpanInitiateReq(
 	cookie [8]byte,
 	offset uint64,
 	sizeWithZeros uint32,
-	data []byte,
-) ([]byte, *msgs.AddSpanInitiateReq) {
-	if int(sizeWithZeros) < len(data) {
-		panic(fmt.Errorf("sizeWithZeros=%v < len(data)=%v", sizeWithZeros, len(data)))
+	data *[]byte,
+) *msgs.AddSpanInitiateReq {
+	if int(sizeWithZeros) < len(*data) {
+		panic(fmt.Errorf("sizeWithZeros=%v < len(data)=%v", sizeWithZeros, len(*data)))
 	}
 
-	crc := crc32c.Sum(0, data)
-	crc = crc32c.ZeroExtend(crc, int(sizeWithZeros)-len(data))
+	crc := crc32c.Sum(0, *data)
+	crc = crc32c.ZeroExtend(crc, int(sizeWithZeros)-len(*data))
 
 	// Compute all the size parameters. We use TargetStripeSize as an upper bound,
 	// for now (i.e. the stripe will always be smaller than TargetStripeSize)
-	S := (len(data) + int(stripePolicy.TargetStripeSize) - 1) / int(stripePolicy.TargetStripeSize)
+	S := (len(*data) + int(stripePolicy.TargetStripeSize) - 1) / int(stripePolicy.TargetStripeSize)
 	if S > 15 {
 		S = 15
 	}
-	spanPolicy := spanPolicies.Pick(uint32(len(data)))
+	spanPolicy := spanPolicies.Pick(uint32(len(*data)))
 	D := spanPolicy.Parity.DataBlocks()
 	P := spanPolicy.Parity.ParityBlocks()
 	B := spanPolicy.Parity.Blocks()
-	blockSize := (len(data) + D - 1) / D
+	blockSize := (len(*data) + D - 1) / D
 	cellSize := (blockSize + S - 1) / S
 	// Round up cell to page size
 	cellSize = EGGSFS_PAGE_SIZE * ((cellSize + EGGSFS_PAGE_SIZE - 1) / EGGSFS_PAGE_SIZE)
@@ -111,7 +110,7 @@ func prepareSpanInitiateReq(
 	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
 
 	// Pad the data with zeros
-	data = ensureLen(data, S*D*cellSize)
+	ensureLen(data, S*D*cellSize)
 
 	initiateReq := msgs.AddSpanInitiateReq{
 		FileId:       id,
@@ -129,14 +128,14 @@ func prepareSpanInitiateReq(
 
 	if D == 1 { // mirroring
 		for s := 0; s < S; s++ {
-			crc := msgs.Crc(crc32c.Sum(0, data[s*cellSize:(s+1)*cellSize]))
+			crc := msgs.Crc(crc32c.Sum(0, (*data)[s*cellSize:(s+1)*cellSize]))
 			for b := 0; b < B; b++ {
 				initiateReq.Crcs[B*s+b] = crc
 			}
 		}
 	} else { // RS
 		// Make space for the parity blocks after the data blocks
-		data = ensureLen(data, blockSize*B)
+		ensureLen(data, blockSize*B)
 		rs := rs.Get(spanPolicy.Parity)
 		dataSrcs := make([][]byte, D)
 		parityDests := make([][]byte, P)
@@ -145,14 +144,14 @@ func prepareSpanInitiateReq(
 			for d := 0; d < D; d++ {
 				dataStart := D*cellSize*s + cellSize*d
 				dataEnd := D*cellSize*s + cellSize*(d+1)
-				dataSrcs[d] = data[dataStart:dataEnd]
+				dataSrcs[d] = (*data)[dataStart:dataEnd]
 				initiateReq.Crcs[B*s+d] = msgs.Crc(crc32c.Sum(0, dataSrcs[d]))
 			}
 			// Generate parity
 			for p := 0; p < P; p++ {
 				dataStart := S*D*cellSize + P*cellSize*s + cellSize*p
 				dataEnd := S*D*cellSize + P*cellSize*s + cellSize*(p+1)
-				parityDests[p] = data[dataStart:dataEnd]
+				parityDests[p] = (*data)[dataStart:dataEnd]
 			}
 			rs.ComputeParityInto(dataSrcs, parityDests)
 			// Compute parity CRC
@@ -162,7 +161,7 @@ func prepareSpanInitiateReq(
 		}
 	}
 
-	return data, &initiateReq
+	return &initiateReq
 }
 
 func mkBlockReader(
@@ -221,25 +220,24 @@ func (c *Client) CreateSpan(
 	// The span size might be greater than `len(*data)`, in which case we have trailing
 	// zeros (this allows us to cheaply stored zero sections).
 	spanSize uint32,
-	// This function might append to this, and write after it. It never modifies the data.
-	// The new buffer is returned, so the caller can keep using the new, larger buffer,
-	// for subsequent spans.
-	//
-	// Note that the new buffer is returned even if an error is returned.
-	data []byte,
-) ([]byte, error) {
-	if len(data) < 256 {
-		if err := c.createInlineSpan(log, id, cookie, offset, spanSize, data); err != nil {
-			return data, err
+	// The contents of this pointer might be modified by this function (we might have to extend the
+	// buffer), the intention is that if you're using a buf pool to get this you can put it back after.
+	data *[]byte,
+) error {
+	log.Debug("writing span spanSize=%v len=%v", spanSize, len(*data))
+
+	if len(*data) < 256 {
+		if err := c.createInlineSpan(log, id, cookie, offset, spanSize, *data); err != nil {
+			return err
 		}
-		return data, nil
+		return nil
 	}
 
 	// initiate span add
 	var initiateReq *msgs.AddSpanInitiateReq
-	data, initiateReq = prepareSpanInitiateReq(append([]msgs.BlacklistEntry{}, blacklist...), spanPolicies, blockPolicies, stripePolicy, id, cookie, offset, spanSize, data)
+	initiateReq = prepareSpanInitiateReq(append([]msgs.BlacklistEntry{}, blacklist...), spanPolicies, blockPolicies, stripePolicy, id, cookie, offset, spanSize, data)
 	{
-		expectedSize := float64(spanSize) * float64(initiateReq.Parity.Blocks()/initiateReq.Parity.DataBlocks())
+		expectedSize := float64(spanSize) * float64(initiateReq.Parity.Blocks()) / float64(initiateReq.Parity.DataBlocks())
 		actualSize := initiateReq.CellSize * uint32(initiateReq.Stripes) * uint32(initiateReq.Parity.Blocks())
 		log.Debug("span logical size: %v, span physical size: %v, waste: %v%%", spanSize, actualSize, 100.0*(float64(actualSize)-expectedSize)/float64(actualSize))
 	}
@@ -250,7 +248,7 @@ func (c *Client) CreateSpan(
 		log.Debug("span writing attempt %v", attempt+1)
 		initiateResp := msgs.AddSpanInitiateResp{}
 		if err = c.ShardRequest(log, id.Shard(), initiateReq, &initiateResp); err != nil {
-			return data, err
+			return err
 		}
 		// write blocks
 		certifyReq := msgs.AddSpanCertifyReq{
@@ -268,7 +266,7 @@ func (c *Client) CreateSpan(
 				goto FailedAttempt
 			}
 			defer conn.Close()
-			blockCrc, blockReader := mkBlockReader(initiateReq, data, i)
+			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
 			var proof [8]byte
 			proof, err = WriteBlock(log, conn, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
 			if err != nil {
@@ -282,7 +280,7 @@ func (c *Client) CreateSpan(
 			certifyReq.Proofs[i].Proof = proof
 		}
 		if err = c.ShardRequest(log, id.Shard(), &certifyReq, &msgs.AddSpanCertifyResp{}); err != nil {
-			return data, err
+			return err
 		}
 		// we've managed
 		break
@@ -295,7 +293,7 @@ func (c *Client) CreateSpan(
 		// create temp file, move the bad span there, then we can restart
 		constructResp := &msgs.ConstructFileResp{}
 		if err := c.ShardRequest(log, id.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE, Note: "bad_add_span_attempt"}, constructResp); err != nil {
-			return data, err
+			return err
 		}
 		moveSpanReq := &msgs.MoveSpanReq{
 			FileId1:     id,
@@ -307,15 +305,16 @@ func (c *Client) CreateSpan(
 			SpanSize:    spanSize,
 		}
 		if err := c.ShardRequest(log, id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
-			return data, err
+			return err
 		}
 	}
 
-	return data, err
+	return err
 }
 
 func (c *Client) CreateFile(
 	log *Logger,
+	bufPool *BufPool,
 	dirInfoCache *DirInfoCache,
 	path string, // must be absolute
 	r io.Reader,
@@ -351,20 +350,22 @@ func (c *Client) CreateFile(
 	fileId := fileResp.Id
 	cookie := fileResp.Cookie
 	maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
-	spanBuf := make([]byte, maxSpanSize)
+	spanBuf := bufPool.Get(int(maxSpanSize))
+	defer bufPool.Put(spanBuf)
 	offset := uint64(0)
 	for {
-		spanBuf = spanBuf[:maxSpanSize]
-		read, err := io.ReadFull(r, spanBuf)
+		*spanBuf = (*spanBuf)[:maxSpanSize]
+		read, err := io.ReadFull(r, *spanBuf)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return 0, err
 		}
 		if err == io.EOF {
 			break
 		}
-		spanBuf, err = c.CreateSpan(
+		*spanBuf = (*spanBuf)[:read]
+		err = c.CreateSpan(
 			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy,
-			fileId, cookie, offset, uint32(read), spanBuf[:read],
+			fileId, cookie, offset, uint32(read), spanBuf,
 		)
 		if err != nil {
 			return 0, err

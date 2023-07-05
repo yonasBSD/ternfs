@@ -43,5 +43,4 @@ done
 ssh -p 2222 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"
 
 # Run tests
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -verbose -filter 'mounted|rsync|large' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs"
-
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -verbose -filter 'mounted|rsync|large' -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs"

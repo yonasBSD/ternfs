@@ -229,21 +229,17 @@ static bool span_acquire(struct eggsfs_span* span) {
 // with LRU reclaimer). Returns NULL if the span is not there.
 static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u64 offset) {
     struct eggsfs_inode_file* file = &enode->file;
-    int err;
-    err = down_read_killable(&enode->file.spans_lock);
+    int err = down_read_killable(&enode->file.spans_lock);
     if (err) { return ERR_PTR(err); }
-    {
-        struct eggsfs_span* span = lookup_span(&file->spans, offset);
-        if (likely(span)) {
-            if (unlikely(!span_acquire(span))) {
-                up_read(&enode->file.spans_lock);
-                return ERR_PTR(-EBUSY);
-            }
-            up_read(&enode->file.spans_lock);
-            return span;
+
+    struct eggsfs_span* span = lookup_span(&file->spans, offset);
+    if (likely(span)) {
+        if (unlikely(!span_acquire(span))) {
+            err = -EBUSY;
         }
-        up_read(&enode->file.spans_lock);
     }
+    up_read(&enode->file.spans_lock);
+
     return NULL;
 }
 
@@ -384,7 +380,7 @@ retry:
 
 // If it returns -1, there are no spans to drop. Otherwise, returns the
 // next index to pass in to reclaim the next span.
-static int drop_one_span(int lru_ix, u64* dropped_pages) {
+static int drop_one_span(int lru_ix, u64* examined_spans, u64* dropped_pages) {
     BUG_ON(lru_ix < 0 || lru_ix >= EGGSFS_SPAN_LRUS);
 
     int i;
@@ -401,6 +397,7 @@ static int drop_one_span(int lru_ix, u64* dropped_pages) {
         if (unlikely(candidate == NULL)) {
             goto unlock;
         } else {
+            (*examined_spans)++;
             BUG_ON(candidate->storage_class == EGGSFS_INLINE_STORAGE); // no inline spans in LRU
             struct eggsfs_block_span* candidate_blocks = EGGSFS_BLOCK_SPAN(candidate);
             if (likely(candidate_blocks->enode)) {
@@ -462,10 +459,11 @@ u64 eggsfs_drop_all_spans(void) {
     drop_spans_enter("all");
 
     u64 dropped_pages = 0;
+    u64 examined_spans = 0;
     s64 spans_begin = eggsfs_counter_get(&eggsfs_stat_cached_spans);
     int lru_ix = 0;
     for (;;) {
-        lru_ix = drop_one_span(lru_ix, &dropped_pages);
+        lru_ix = drop_one_span(lru_ix, &examined_spans, &dropped_pages);
         if (lru_ix < 0) { break; }
     }
     s64 spans_end = eggsfs_counter_get(&eggsfs_stat_cached_spans);
@@ -482,6 +480,7 @@ static u64 drop_spans(const char* type) {
     drop_spans_enter(type);
 
     u64 dropped_pages = 0;
+    u64 examined_spans = 0;
     int lru_ix = 0;
     for (;;) {
         u64 pages = atomic64_read(&eggsfs_stat_cached_span_pages);
@@ -491,10 +490,10 @@ static u64 drop_spans(const char* type) {
         ) {
             break;
         }
-        lru_ix = drop_one_span(lru_ix, &dropped_pages);
+        lru_ix = drop_one_span(lru_ix, &examined_spans, &dropped_pages);
         if (lru_ix < 0) { break; }
     }
-    eggsfs_debug("dropped %llu pages", dropped_pages);
+    eggsfs_debug("dropped %llu pages, %llu spans examined", dropped_pages, examined_spans);
     
     drop_spans_exit(type, dropped_pages);
 
@@ -522,10 +521,11 @@ static u64 eggsfs_span_shrinker_pages_round = 25600; // We drop at most 100MiB i
 
 static unsigned long eggsfs_span_shrinker_scan(struct shrinker* shrinker, struct shrink_control* sc) {
     drop_spans_enter("shrinker");
-    u64 dropped_pages;
+    u64 dropped_pages = 0;
+    u64 examined_spans = 0;
     int lru_ix = eggsfs_span_shrinker_lru_ix;
     for (dropped_pages = 0; dropped_pages < eggsfs_span_shrinker_pages_round;) {
-        lru_ix = drop_one_span(lru_ix, &dropped_pages);
+        lru_ix = drop_one_span(lru_ix, &examined_spans, &dropped_pages);
         if (lru_ix < 0) { break; }
     }
     eggsfs_span_shrinker_lru_ix = lru_ix >= 0 ? lru_ix : 0;

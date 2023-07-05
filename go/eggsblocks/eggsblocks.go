@@ -56,7 +56,7 @@ func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
 	return msgs.BlockServiceId(binary.LittleEndian.Uint64(secretKey[:8]) & uint64(0x7FFFFFFFFFFFFFFF))
 }
 
-func countBlocks(basePath string) uint64 {
+func countBlocks(basePath string) (uint64, error) {
 	blocks := uint64(0)
 	for i := 0; i < 256; i++ {
 		blockDir := fmt.Sprintf("%02x", i)
@@ -65,7 +65,7 @@ func countBlocks(basePath string) uint64 {
 			continue
 		}
 		if err != nil {
-			panic(err)
+			return 0, err
 		}
 		defer d.Close()
 		for {
@@ -74,12 +74,47 @@ func countBlocks(basePath string) uint64 {
 				break
 			}
 			if err != nil {
-				panic(err)
+				return 0, err
 			}
 			blocks += uint64(len(entries))
 		}
 	}
-	return blocks
+	return blocks, nil
+}
+
+func prepareBlockServiceInfo(
+	log *lib.Logger,
+	ip1 [4]byte,
+	port1 uint16,
+	ip2 [4]byte,
+	port2 uint16,
+	failureDomain [16]byte,
+	id msgs.BlockServiceId,
+	blockService *blockService,
+) (*msgs.BlockServiceInfo, error) {
+	bsInfo := &msgs.BlockServiceInfo{
+		Id:            id,
+		Ip1:           ip1,
+		Port1:         port1,
+		Ip2:           ip2,
+		Port2:         port2,
+		SecretKey:     blockService.key,
+		StorageClass:  blockService.storageClass,
+		FailureDomain: failureDomain,
+		Path:          blockService.path,
+	}
+	var statfs unix.Statfs_t
+	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
+		return nil, err
+	}
+	bsInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
+	bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
+	var err error
+	bsInfo.Blocks, err = countBlocks(blockService.path)
+	if err != nil {
+		return nil, err
+	}
+	return bsInfo, nil
 }
 
 func registerPeriodically(
@@ -93,33 +128,16 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
-	for id := range blockServices {
-		blockService := blockServices[id]
-		bs := msgs.BlockServiceInfo{
-			Id:            id,
-			Ip1:           ip1,
-			Port1:         port1,
-			Ip2:           ip2,
-			Port2:         port2,
-			SecretKey:     blockService.key,
-			StorageClass:  blockService.storageClass,
-			FailureDomain: failureDomain,
-			Path:          blockService.path,
-		}
-		req.BlockServices = append(req.BlockServices, bs)
-	}
 	for {
-		for ix := range req.BlockServices {
-			bsInfo := &req.BlockServices[ix]
-			blockService := blockServices[bsInfo.Id]
-			var statfs unix.Statfs_t
-			if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
-				panic(err)
+		req.BlockServices = req.BlockServices[:0]
+		for id := range blockServices {
+			blockService := blockServices[id]
+			bsInfo, err := prepareBlockServiceInfo(log, ip1, port1, ip2, port2, failureDomain, id, &blockService)
+			if err != nil {
+				log.RaiseAlert(fmt.Errorf("could not count blocks for %v, will not register it: %v", id, err))
+				continue
 			}
-			log.Trace("statfs for %v: %+v", blockService.path, statfs)
-			bsInfo.Blocks = countBlocks(blockService.path)
-			bsInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
-			bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
+			req.BlockServices = append(req.BlockServices, *bsInfo)
 		}
 		log.Trace("registering with %+v", req)
 		_, err := lib.ShuckleRequest(log, shuckleAddress, &req)

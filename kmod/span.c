@@ -234,9 +234,7 @@ static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u
 
     struct eggsfs_span* span = lookup_span(&file->spans, offset);
     if (likely(span)) {
-        if (unlikely(!span_acquire(span))) {
-            err = -EBUSY;
-        }
+        if (unlikely(!span_acquire(span))) { err = -EBUSY; }
     }
     up_read(&enode->file.spans_lock);
 
@@ -989,7 +987,7 @@ static void do_prefetch(struct eggsfs_block_span* block_span, u64 off) {
     u32 stripe = span_offset / (block_span->cell_size*D);
     if (stripe > block_span->stripes) {
         eggsfs_warn("span_offset=%u, stripe=%u, stripes=%u", span_offset, stripe, block_span->stripes);
-        return;
+        goto out_span;
     }
 
     struct page* page = xa_load(&block_span->pages, page_ix);
@@ -1013,7 +1011,7 @@ static void do_prefetch(struct eggsfs_block_span* block_span, u64 off) {
     if (IS_ERR(st)) {
         eggsfs_latch_release(&block_span->stripe_latches[stripe], seqno);
         eggsfs_debug("prefetch failed err=%ld", PTR_ERR(st));
-        return;
+        goto out_span;
     }
 
     // We want the state to go once all the block fetches are done.

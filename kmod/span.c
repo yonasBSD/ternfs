@@ -399,20 +399,30 @@ static int drop_one_span(int lru_ix, u64* dropped_pages) {
         spin_lock_bh(&lru->lock);
         candidate = list_first_entry_or_null(&lru->lru, struct eggsfs_span, lru);
         if (unlikely(candidate == NULL)) {
-            spin_unlock_bh(&lru->lock);
+            goto unlock;
         } else {
             BUG_ON(candidate->storage_class == EGGSFS_INLINE_STORAGE); // no inline spans in LRU
             struct eggsfs_block_span* candidate_blocks = EGGSFS_BLOCK_SPAN(candidate);
+            if (likely(candidate_blocks->enode)) {
+                // There's a span of time between the last inode reference being dropped
+                // and the eviction function being called where we do have this enode
+                // here but we also don't have references to it anymore. In that case
+                // we let the enode eviction take care of this (we can't do it ourselves
+                // because we can't safely remove the span from the enode afterwards).
+                if (likely(atomic_inc_not_zero(&candidate_blocks->enode->inode.i_count))) { // conditional ihold
+                    enode = candidate_blocks->enode;
+                } else {
+                    candidate = NULL; // skip
+                    goto unlock;
+                }
+            }
             // we just got this from LRU, it must be readers == 0
             BUG_ON(candidate_blocks->refcount != 0);
             candidate_blocks->refcount = -1;
             list_del(&candidate->lru);
-            if (likely(candidate_blocks->enode)) {
-                ihold(&candidate_blocks->enode->inode);
-                enode = candidate_blocks->enode;
-            }
-            spin_unlock_bh(&lru->lock);
         }
+unlock:
+        spin_unlock_bh(&lru->lock);
 
         if (candidate) {
             // Take it out of the spans for the file
@@ -547,7 +557,8 @@ again:
             spin_lock_bh(&lru->lock);
             if (unlikely(block_span->refcount < 0)) {
                 // This is being reclaimed, we wait until the reclaimer cleans
-                // it up for us.
+                // it up for us. This is very unlikely: the reclaiming would have
+                // had to start before the last inode reference was dropped.
                 spin_unlock_bh(&lru->lock);
                 up_write(&enode->file.spans_lock);
                 goto again;
@@ -555,10 +566,12 @@ again:
                 eggsfs_warn("span at %llu for inode %016lx still has %d readers, will linger on until next reclaim", span->start, enode->inode.i_ino, block_span->refcount);
                 can_free_span = false;
             } else {
-                // Make ourselves the reclaimer.
-                // This is technically an optimization: we could just wait until they are reclaimed. But
-                // it will also be the mega common case and will free memory more eagerly.
-                // TODO tests that things still work if we don't have this optimization.
+                // Make ourselves the reclaimer. Note that we can't just let the
+                // reclaimer take care of it eventually. Apart from the fact that
+                // it'd be slower (we know that we don't need the span now), there's
+                // also a time window where the enode is technically not active anymore
+                // (ref count 0), but eviction hasn't run yet, and in that span only
+                // we (the eviction function) can safely clean up the spans.
                 list_del(&span->lru);
                 block_span->refcount = -1;
             }

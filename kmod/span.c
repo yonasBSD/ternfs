@@ -224,7 +224,7 @@ static bool span_acquire(struct eggsfs_span* span) {
     return true;
 }
 
-// Non-blockingly looks up and acquires a span. Returns -EBUSY if
+// Looks up and acquires a span. Returns -EBUSY if
 // the span is there, but it could not be acquired (contention
 // with LRU reclaimer). Returns NULL if the span is not there.
 static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u64 offset) {
@@ -238,7 +238,7 @@ static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u
     }
     up_read(&enode->file.spans_lock);
 
-    return NULL;
+    return span;
 }
 
 void eggsfs_put_span(struct eggsfs_span* span, bool was_read) {
@@ -289,15 +289,15 @@ retry:
         eggsfs_warn("we've been fetching the same span for %llu iterations, we're probably stuck on a yet-to-be enabled span we just fetched", iterations);
     }
 
-    // Try to read the semaphore if it's already there.
+    // Check if we already have the span
     {
         struct eggsfs_span* span = lookup_and_acquire_span(enode, offset);
         if (unlikely(IS_ERR(span))) {
             int err = PTR_ERR(span);
             if (err == -EBUSY) { goto retry; } // we couldn't acquire the span
-            return span; // some other error
+            GET_SPAN_EXIT(span); // some other error
         } else if (likely(span != NULL)) {
-            return span;
+            GET_SPAN_EXIT(span);
         }
     }
 
@@ -305,7 +305,8 @@ retry:
     err = down_write_killable(&file->spans_lock);
     if (err) { GET_SPAN_EXIT(ERR_PTR(err)); }
 
-    // Check if somebody go to it first.
+    // Check if somebody go to it first, in which case we can acquire it and
+    // return immediately.
     {
         struct eggsfs_span* span = lookup_span(&file->spans, offset);
         if (unlikely(span)) {
@@ -561,15 +562,14 @@ again:
                 up_write(&enode->file.spans_lock);
                 goto again;
             } else if (unlikely(block_span->refcount > 0)) {
+                // Note that the assumption here is that the reader will correctly put
+                // the span back in the LRU once done.
                 eggsfs_warn("span at %llu for inode %016lx still has %d readers, will linger on until next reclaim", span->start, enode->inode.i_ino, block_span->refcount);
                 can_free_span = false;
             } else {
-                // Make ourselves the reclaimer. Note that we can't just let the
-                // reclaimer take care of it eventually. Apart from the fact that
-                // it'd be slower (we know that we don't need the span now), there's
-                // also a time window where the enode is technically not active anymore
-                // (ref count 0), but eviction hasn't run yet, and in that span only
-                // we (the eviction function) can safely clean up the spans.
+                // Make ourselves the reclaimer. Note that we could just let the
+                // reclaimer take care of it eventually, but this is the very
+                // common case and it'll be faster.
                 list_del(&span->lru);
                 block_span->refcount = -1;
             }
@@ -706,6 +706,10 @@ static void put_fetch_stripe(struct fetch_stripe_state* st) {
     free_fetch_stripe(st);
 }
 
+static void hold_fetch_stripe(struct fetch_stripe_state* st) {
+    WARN_ON(atomic_inc_return(&st->refcount) < 2);
+}
+
 static void store_pages(struct fetch_stripe_state* st) {
     struct eggsfs_block_span* span = st->span;
     int D = eggsfs_data_blocks(span->parity);
@@ -802,6 +806,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
 #define LOG_STR "span=%llu file=%016llx D=%d P=%d downloading=%04x(%llu) succeeded=%04x(%llu) failed=%04x(%llu) err=%d"
 #define LOG_ARGS span->span.start, span->span.ino, D, P, downloading, __builtin_popcountll(downloading), succeeded, __builtin_popcountll(succeeded), failed, __builtin_popcountll(failed), err
 
+    hold_fetch_stripe(st); // extra hold to make sure that the stripe survives this loop
     for (;;) {
         s64 blocks = atomic64_read(&st->blocks);
         u16 downloading = DOWNLOADING_GET(blocks);
@@ -809,7 +814,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         u16 failed = FAILED_GET(blocks);
         if (__builtin_popcountll(downloading)+__builtin_popcountll(succeeded) >= D) { // we managed to get out of the woods
             eggsfs_debug("we have enough blocks, terminating " LOG_STR, LOG_ARGS);
-            return 0;
+            goto out;
         }
         if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
             eggsfs_debug("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
@@ -836,14 +841,14 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         struct eggsfs_block* block = &st->span->blocks[i];
         u32 block_offset = st->stripe * span->cell_size;
         fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_START, i, 0);
-        atomic_inc(&st->refcount);
+        hold_fetch_stripe(st);
         int err = eggsfs_fetch_block(
             &block_done,
             (void*)st,
             &block->bs, block->id, block_offset, span->cell_size
         );
         if (err) {
-            atomic_dec(&st->refcount);
+            put_fetch_stripe(st);
             eggsfs_debug("loading block failed %d " LOG_STR, i, LOG_ARGS);
             fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, err);
             // mark it as failed and not downloading
@@ -855,10 +860,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
     }
 
 out:
-    // we might have triggered this on the way down of the `atomic_dec`s above
-    if (atomic_read(&st->refcount) == 0) {
-        free_fetch_stripe(st);
-    }
+    put_fetch_stripe(st);
     return err;
 
 #undef LOG_STR

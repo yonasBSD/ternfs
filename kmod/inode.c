@@ -367,9 +367,11 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
 void eggsfs_wait_in_flight(struct eggsfs_inode* enode) {
     if (atomic_read(&enode->file.in_flight) == 0) { return; }
 
-    // Wait for 10 secs, then give up
     long res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, 10 * HZ);
     if (res > 0) { return; }
+    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug, will wait for a minute more", enode->inode.i_ino);
 
-    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug.", enode->inode.i_ino);
+    res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, 60 * HZ);
+    if (res > 0) { return; }
+    eggsfs_warn("waited for 60 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug", enode->inode.i_ino);
 }

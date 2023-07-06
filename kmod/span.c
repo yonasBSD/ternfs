@@ -229,12 +229,16 @@ static bool span_acquire(struct eggsfs_span* span) {
 // with LRU reclaimer). Returns NULL if the span is not there.
 static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u64 offset) {
     struct eggsfs_inode_file* file = &enode->file;
+
     int err = down_read_killable(&enode->file.spans_lock);
     if (err) { return ERR_PTR(err); }
 
     struct eggsfs_span* span = lookup_span(&file->spans, offset);
     if (likely(span)) {
-        if (unlikely(!span_acquire(span))) { err = -EBUSY; }
+        if (unlikely(!span_acquire(span))) {
+            up_read(&enode->file.spans_lock);
+            return ERR_PTR(-EBUSY);
+        }
     }
     up_read(&enode->file.spans_lock);
 
@@ -250,6 +254,7 @@ void eggsfs_put_span(struct eggsfs_span* span, bool was_read) {
     spin_lock_bh(&lru->lock);
     BUG_ON(block_span->refcount < 1);
     block_span->refcount--;
+    block_span->touched = block_span->touched || was_read;
     if (block_span->refcount == 0) { // we need to put it back into the LRU, or free it
         if (block_span->touched) {
             list_add_tail(&span->lru, &lru->lru);
@@ -969,12 +974,14 @@ static void do_prefetch(struct eggsfs_block_span* block_span, u64 off) {
     BUG_ON(!block_span->enode); // must still be alive at this point
     struct eggsfs_inode* enode = block_span->enode;
 
+    // we first acquire the span for our purposes.
     if (off < block_span->span.start || off >= block_span->span.end) {
         // Another span, we need to load it. We give up if we can't at any occurrence.
         struct eggsfs_span* span = lookup_and_acquire_span(enode, off);
+        // this is probably with err = -EBUSY, just give up
         if (unlikely(span == NULL || IS_ERR(span))) { return; }
         if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-            return; // nothing to do, it's an inline span
+            goto out_span; // nothing to do, it's an inline span
         }
         block_span = EGGSFS_BLOCK_SPAN(span);
     } else if (unlikely(!span_acquire(&block_span->span))) {

@@ -3,6 +3,8 @@
 
 #include "inode.h"
 
+extern unsigned eggsfs_max_write_span_attempts;
+
 ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
 int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry);
 

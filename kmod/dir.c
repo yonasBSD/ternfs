@@ -9,9 +9,10 @@
 #include "metadata.h"
 #include "trace.h"
 
+#define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
+
 // sysctls
-int eggsfs_dir_refresh_time; // in jiffies
-                             //
+int eggsfs_dir_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
 #define eggsfs_dir_get_page_n(_page) ({ *((((u32*)&(_page)->private))+1); })
 #define eggsfs_dir_set_page_n(_page, _n) ({ *((((u32*)&(_page)->private))+1) = _n; })
 

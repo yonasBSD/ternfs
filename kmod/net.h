@@ -8,6 +8,13 @@
 
 #define EGGSFS_UDP_MTU 1472
 
+extern unsigned eggsfs_initial_shard_timeout_jiffies;
+extern unsigned eggsfs_max_shard_timeout_jiffies;
+extern unsigned eggsfs_overall_shard_timeout_jiffies;
+extern unsigned eggsfs_initial_cdc_timeout_jiffies;
+extern unsigned eggsfs_max_cdc_timeout_jiffies;
+extern unsigned eggsfs_overall_cdc_timeout_jiffies;
+
 struct eggsfs_shard_socket {
     struct socket* sock;
     struct rb_root requests;

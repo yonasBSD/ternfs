@@ -8,7 +8,7 @@
 
 extern struct file_operations eggsfs_dir_operations;
 
-extern int eggsfs_dir_refresh_time;
+extern int eggsfs_dir_refresh_time_jiffies;
 
 int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 edge_creation_time, u64 ino);
 

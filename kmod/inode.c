@@ -109,7 +109,7 @@ again: // progress: whoever wins the lock won't try again
                 if (target_stripe_size) {
                     enode->target_stripe_size = target_stripe_size;
                 }
-                expiry = ts + eggsfs_dir_refresh_time;
+                expiry = ts + eggsfs_dir_refresh_time_jiffies;
             }
         } else {
             u64 size;

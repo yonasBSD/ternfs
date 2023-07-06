@@ -13,14 +13,14 @@ typedef uint64_t u64;
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 
-#define UDP_MTU 1472
-
 #define BUG_ON(x) \
     if (unlikely(x)) { \
         fprintf(stderr, "bug: " #x); \
         fprintf(stderr, "\n"); \
         exit(1); \
     }
+
+#define EGGSFS_UDP_MTU 1472
 
 static inline u64 get_unaligned_le64(const void* p) {
     u64 x;
@@ -103,7 +103,7 @@ int main(void) {
     }
 
     {
-        char read_dir_resp[UDP_MTU];
+        char read_dir_resp[EGGSFS_UDP_MTU];
         struct eggsfs_bincode_put_ctx put_ctx = {
             .start = read_dir_resp,
             .cursor = read_dir_resp,

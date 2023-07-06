@@ -6,6 +6,15 @@
 #include "trace.h"
 #include "err.h"
 
+#define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
+
+unsigned eggsfs_initial_shard_timeout_jiffies = MSECS_TO_JIFFIES(100);
+unsigned eggsfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
+unsigned eggsfs_overall_shard_timeout_jiffies = MSECS_TO_JIFFIES(10000);
+unsigned eggsfs_initial_cdc_timeout_jiffies = MSECS_TO_JIFFIES(500);
+unsigned eggsfs_max_cdc_timeout_jiffies = MSECS_TO_JIFFIES(2000);
+unsigned eggsfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(10000);
+
 static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket* s, u64 request_id) __must_hold(s->lock) {
     struct rb_node* node = s->requests.rb_node;
     while (node) {
@@ -26,7 +35,7 @@ static void sock_readable(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     s = (struct eggsfs_shard_socket*)sk->sk_user_data;
     BUG_ON(!s);
-    while (1) {
+    for (;;) {
         skb = skb_recv_udp(sk, 0, 1, &err);
         if (!skb) {
             read_unlock_bh(&sk->sk_callback_lock);
@@ -193,15 +202,15 @@ struct sk_buff* eggsfs_metadata_request(
     vec.iov_base = p;
     vec.iov_len = len;
 
-    unsigned timeout = shard_id < 0 ? eggsfs_initial_cdc_timeout_ms : eggsfs_initial_shard_timeout_ms;
-    unsigned max_timeout = shard_id < 0 ? eggsfs_max_cdc_timeout_ms : eggsfs_max_shard_timeout_ms;
-    unsigned overall_timeout = shard_id < 0 ? eggsfs_overall_cdc_timeout_ms : eggsfs_overall_shard_timeout_ms;
-    u64 start_t_ms = jiffies64_to_msecs(get_jiffies_64());
-    u64 elapsed_ms = 0;
+    unsigned timeout = shard_id < 0 ? eggsfs_initial_cdc_timeout_jiffies : eggsfs_initial_shard_timeout_jiffies;
+    unsigned max_timeout = shard_id < 0 ? eggsfs_max_cdc_timeout_jiffies : eggsfs_max_shard_timeout_jiffies;
+    unsigned overall_timeout = shard_id < 0 ? eggsfs_overall_cdc_timeout_jiffies : eggsfs_overall_shard_timeout_jiffies;
+    u64 start_t = get_jiffies_64();
+    u64 elapsed = 0;
 
 #define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
-#define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, elapsed_ms
-#define WARN_LATE if (elapsed_ms > 1000) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
+#define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, jiffies64_to_msecs(elapsed)
+#define WARN_LATE if (elapsed > MSECS_TO_JIFFIES(1000)) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
 
     for (;;) {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
@@ -222,8 +231,8 @@ struct sk_buff* eggsfs_metadata_request(
         }
 
         err = wait_for_request(sock, &req, timeout);
-        u64 t_ms = jiffies64_to_msecs(get_jiffies_64());
-        elapsed_ms = t_ms - start_t_ms;
+        u64 t = get_jiffies_64();
+        elapsed = t - start_t;
         (*attempts)++;
         timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
         if (!err) {
@@ -246,9 +255,9 @@ struct sk_buff* eggsfs_metadata_request(
         }
 
         eggsfs_debug("err=%d", err);
-        if (err != -ETIMEDOUT || elapsed_ms >= overall_timeout) {
+        if (err != -ETIMEDOUT || elapsed >= overall_timeout) {
             if (err != -ERESTARTSYS) {
-                eggsfs_info("giving up (might be too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
+                eggsfs_info("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
             }
             goto out_err;
         }
@@ -261,7 +270,7 @@ out_unregister:
     BUG_ON(req.skb);
     rb_erase(&req.node, &sock->requests);
     spin_unlock_bh(&sock->lock);
-    elapsed_ms = jiffies64_to_msecs(get_jiffies_64()) - start_t_ms;
+    elapsed = get_jiffies_64() - start_t;
 
 out_err:
     WARN_LATE

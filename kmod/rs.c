@@ -17,6 +17,9 @@ enum rs_cpu_level {
     RS_CPU_GFNI = 3,
 };
 
+int eggsfs_rs_cpu_level_min = 1;
+int eggsfs_rs_cpu_level_max = 3;
+
 static inline bool rs_detect_valgrind(void) {
     return false;
 }

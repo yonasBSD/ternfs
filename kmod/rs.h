@@ -8,6 +8,8 @@
 #define EGGSFS_MAX_BLOCKS (EGGSFS_MAX_DATA+EGGSFS_MAX_PARITY)
 
 extern int eggsfs_rs_cpu_level;
+extern int eggsfs_rs_cpu_level_min;
+extern int eggsfs_rs_cpu_level_max;
 
 static inline u8 eggsfs_data_blocks(u8 parity) {
     return parity & 0x0F;

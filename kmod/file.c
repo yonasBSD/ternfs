@@ -17,6 +17,8 @@
 #include "wq.h"
 #include "bincode.h"
 
+unsigned eggsfs_max_write_span_attempts = 5;
+
 static struct kmem_cache* eggsfs_transient_span_cachep;
 
 struct eggsfs_transient_span {

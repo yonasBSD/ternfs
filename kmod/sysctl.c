@@ -4,17 +4,11 @@
 #include "span.h"
 #include "log.h"
 #include "sysctl.h"
+#include "net.h"
+#include "file.h"
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 1;
-unsigned eggsfs_max_write_span_attempts = 5;
-unsigned eggsfs_initial_shard_timeout_ms = 100;
-unsigned eggsfs_max_shard_timeout_ms = 2000;
-unsigned eggsfs_overall_shard_timeout_ms = 10000;
-unsigned eggsfs_initial_cdc_timeout_ms = 500;
-unsigned eggsfs_max_cdc_timeout_ms = 2000;
-unsigned eggsfs_overall_cdc_timeout_ms = 10000;
-extern int eggsfs_rs_cpu_level;
 
 static int drop_cached_spans;
 
@@ -39,11 +33,34 @@ static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __u
         .proc_handler = proc_doulongvec_minmax,  \
     }
 
-#define EGGSFS_CTL_INT_TIME(_name) \
+#define EGGSFS_CTL_UINT(_name) \
     { \
-        .procname = #_name "_ms", \
+        .procname = #_name, \
         .data = &eggsfs_##_name, \
         .maxlen = sizeof(eggsfs_##_name), \
+        .mode = 0644, \
+        .proc_handler = proc_douintvec,  \
+    }
+
+static int bool_off = 0;
+static int bool_on = 1;
+
+#define EGGSFS_CTL_BOOL(_name) \
+    { \
+        .procname = #_name, \
+        .data = &eggsfs_##_name, \
+        .maxlen = sizeof(eggsfs_##_name), \
+        .mode = 0644, \
+        .proc_handler = proc_dointvec_minmax,  \
+        .extra1 = &bool_off,  \
+        .extra2 = &bool_on,  \
+    }
+
+#define EGGSFS_CTL_INT_JIFFIES(_name) \
+    { \
+        .procname = #_name "_ms", \
+        .data = &eggsfs_##_name##_jiffies, \
+        .maxlen = sizeof(eggsfs_##_name##_jiffies), \
         .mode = 0644, \
         .proc_handler = proc_dointvec_ms_jiffies,  \
     }
@@ -54,7 +71,9 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &eggsfs_debug_output,
         .maxlen = sizeof(eggsfs_debug_output),
         .mode = 0644,
-        .proc_handler = proc_dointvec,
+        .proc_handler = proc_dointvec_minmax,
+        .extra1 = &bool_off,
+        .extra2 = &bool_on,
     },
 
     {
@@ -62,7 +81,9 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &eggsfs_rs_cpu_level,
         .maxlen = sizeof(eggsfs_rs_cpu_level),
         .mode = 0644,
-        .proc_handler = proc_dointvec,
+        .proc_handler = proc_dointvec_minmax,
+        .extra1 = &eggsfs_rs_cpu_level_min,
+        .extra2 = &eggsfs_rs_cpu_level_max,
     },
 
     {
@@ -73,23 +94,18 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .proc_handler = eggsfs_drop_spans_sysctl,
     },
 
-    {
-        .procname = "prefetch",
-        .data = &eggsfs_prefetch,
-        .maxlen = sizeof(eggsfs_prefetch),
-        .mode = 0644,
-        .proc_handler = proc_dointvec,
-    },
+    EGGSFS_CTL_BOOL(prefetch),
 
-    {
-        .procname = "max_write_span_attempts",
-        .data = &eggsfs_max_write_span_attempts,
-        .maxlen = sizeof(eggsfs_max_write_span_attempts),
-        .mode = 0644,
-        .proc_handler = proc_douintvec,
-    },
+    EGGSFS_CTL_INT_JIFFIES(dir_refresh_time),
 
-    EGGSFS_CTL_INT_TIME(dir_refresh_time),
+    EGGSFS_CTL_INT_JIFFIES(initial_shard_timeout),
+    EGGSFS_CTL_INT_JIFFIES(max_shard_timeout),
+    EGGSFS_CTL_INT_JIFFIES(overall_shard_timeout),
+    EGGSFS_CTL_INT_JIFFIES(initial_cdc_timeout),
+    EGGSFS_CTL_INT_JIFFIES(max_cdc_timeout),
+    EGGSFS_CTL_INT_JIFFIES(overall_cdc_timeout),
+
+    EGGSFS_CTL_UINT(max_write_span_attempts),
 
     EGGSFS_CTL_ULONG(span_cache_max_size_async),
     EGGSFS_CTL_ULONG(span_cache_min_avail_mem_async),

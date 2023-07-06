@@ -55,11 +55,6 @@ func (requestId *unpackedCDCRequestId) Unpack(r io.Reader) error {
 	return nil
 }
 
-// 5 times the shard numbers, given that we roughly do 5 shard requests per CDC request
-const minCDCSingleTimeout = 25 * time.Millisecond
-const maxCDCSingleTimeout = 500 * time.Millisecond
-const cdcMaxElapsed = 25 * time.Second // TODO these are a bit ridicolous now because of the valgrind test, adjust
-
 func (c *Client) checkRepeatedCDCRequestError(
 	logger *Logger,
 	// these are already filled in by now
@@ -140,13 +135,13 @@ func (c *Client) CDCRequest(
 		hasSecondIp = 1
 	}
 	respBuf := make([]byte, msgs.DEFAULT_UDP_MTU)
-	requestIds := make([]uint64, cdcMaxElapsed/minCDCSingleTimeout)
+	requestIds := make([]uint64, cdcTimeout.Overall/cdcTimeout.Initial)
 	attempts := 0
 	startedAt := time.Now()
 	// will keep trying as long as we get timeouts
 	for {
 		elapsed := time.Since(startedAt)
-		if elapsed > cdcMaxElapsed {
+		if elapsed > cdcTimeout.Overall {
 			logger.RaiseAlert(fmt.Errorf("giving up on request to CDC after waiting for %v", elapsed))
 			return msgs.TIMEOUT
 		}
@@ -173,7 +168,7 @@ func (c *Client) CDCRequest(
 		// Keep going until we found the right request id --
 		// we can't assume that what we get isn't some other
 		// request we thought was timed out.
-		timeout := time.Duration(math.Min(float64(minCDCSingleTimeout)*math.Pow(2.0, float64(attempts)), float64(maxCDCSingleTimeout)))
+		timeout := time.Duration(math.Min(float64(cdcTimeout.Initial)*math.Pow(2.0, float64(attempts)), float64(cdcTimeout.Max)))
 		readLoopStart := time.Now()
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)

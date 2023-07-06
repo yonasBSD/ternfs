@@ -127,17 +127,10 @@ func (cf *blocksConnFactory) close() {
 	}
 }
 
-var clientMtu uint16 = msgs.DEFAULT_UDP_MTU
-
-// MTU used for large responses (file spans etc)
-func SetMTU(mtu uint64) {
-	if mtu < msgs.DEFAULT_UDP_MTU {
-		panic(fmt.Errorf("mtu (%v) < DEFAULT_UDP_MTU (%v)", mtu, msgs.DEFAULT_UDP_MTU))
-	}
-	if mtu > msgs.MAX_UDP_MTU {
-		panic(fmt.Errorf("mtu (%v) > MAX_UDP_MTU (%v)", mtu, msgs.MAX_UDP_MTU))
-	}
-	clientMtu = uint16(mtu)
+type ReqTimeouts struct {
+	Initial time.Duration // the first timeout
+	Max     time.Duration // the max timeout
+	Overall time.Duration // the max overall waiting time for a request
 }
 
 type Client struct {
@@ -201,6 +194,39 @@ func (c *Client) SetCounters(counters *ClientCounters) {
 
 func (c *Client) SetCDCKey(cdcKey cipher.Block) {
 	c.cdcKey = cdcKey
+}
+
+var shardTimeout = ReqTimeouts{
+	Initial: 100 * time.Millisecond,
+	Max:     2 * time.Second,
+	Overall: 10 * time.Second,
+}
+
+var cdcTimeout = ReqTimeouts{
+	Initial: 200 * time.Millisecond,
+	Max:     2 * time.Second,
+	Overall: 10 * time.Second,
+}
+
+func SetShardTimeouts(t *ReqTimeouts) {
+	shardTimeout = *t
+}
+
+func SetCDCTimeouts(t *ReqTimeouts) {
+	cdcTimeout = *t
+}
+
+var clientMtu uint16 = 1472
+
+// MTU used for large responses (file spans etc)
+func SetMTU(mtu uint64) {
+	if mtu < msgs.DEFAULT_UDP_MTU {
+		panic(fmt.Errorf("mtu (%v) < DEFAULT_UDP_MTU (%v)", mtu, msgs.DEFAULT_UDP_MTU))
+	}
+	if mtu > msgs.MAX_UDP_MTU {
+		panic(fmt.Errorf("mtu (%v) > MAX_UDP_MTU (%v)", mtu, msgs.MAX_UDP_MTU))
+	}
+	clientMtu = uint16(mtu)
 }
 
 func NewClientDirect(

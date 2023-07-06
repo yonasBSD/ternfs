@@ -73,10 +73,6 @@ func (requestId *unpackedShardRequestId) Unpack(r io.Reader) error {
 	return nil
 }
 
-const minShardSingleTimeout = 10 * time.Millisecond
-const maxShardSingleTimeout = 100 * time.Millisecond
-const shardMaxElapsed = 5 * time.Second // TODO these are a bit ridicolous now because of the valgrind test, adjust
-
 var requestIdGenerator = uint64(0)
 
 // Starts from 1, we use 0 as a placeholder in `requestIds`
@@ -223,13 +219,13 @@ func (c *Client) ShardRequest(
 		r.Mtu = mtu
 	}
 	respBuf := make([]byte, mtu)
-	requestIds := make([]uint64, shardMaxElapsed/minShardSingleTimeout)
+	requestIds := make([]uint64, shardTimeout.Overall/shardTimeout.Initial)
 	attempts := 0
 	startedAt := time.Now()
 	// will keep trying as long as we get timeouts
 	for {
 		elapsed := time.Since(startedAt)
-		if elapsed > shardMaxElapsed {
+		if elapsed > shardTimeout.Overall {
 			logger.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
 			return msgs.TIMEOUT
 		}
@@ -255,7 +251,7 @@ func (c *Client) ShardRequest(
 		}
 		// Keep going until we found the right request id -- we can't assume that what we get isn't
 		// some other request we thought was timed out.
-		timeout := time.Duration(math.Min(float64(minShardSingleTimeout)*math.Pow(2.0, float64(attempts)), float64(maxShardSingleTimeout)))
+		timeout := time.Duration(math.Min(float64(shardTimeout.Initial)*math.Pow(1.5, float64(attempts)), float64(shardTimeout.Max)))
 		readLoopStart := time.Now()
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)

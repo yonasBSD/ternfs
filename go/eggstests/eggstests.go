@@ -172,16 +172,15 @@ func (i *cfgOverrides) int(k string, def int) int {
 }
 
 type RunTests struct {
-	acceptGcFailures         bool
-	overrides                *cfgOverrides
-	shuckleIp                string
-	shucklePort              uint16
-	mountPoint               string
-	fuseMountPoint           string
-	kmod                     bool
-	short                    bool
-	filter                   *regexp.Regexp
-	writeDirectInMountedTest bool
+	acceptGcFailures bool
+	overrides        *cfgOverrides
+	shuckleIp        string
+	shucklePort      uint16
+	mountPoint       string
+	fuseMountPoint   string
+	kmod             bool
+	short            bool
+	filter           *regexp.Regexp
 }
 
 func (r *RunTests) run(
@@ -299,7 +298,7 @@ func (r *RunTests) run(
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, "", r.writeDirectInMountedTest)
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
 		},
 	)
 
@@ -331,7 +330,7 @@ func (r *RunTests) run(
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, r.mountPoint, r.writeDirectInMountedTest)
+			fsTest(log, shuckleAddress, &fsTestOpts, counters, r.mountPoint)
 		},
 	)
 
@@ -829,8 +828,6 @@ func main() {
 			kmod:             *kmod,
 			short:            *short,
 			filter:           filterRe,
-			// TODO write explanation for this
-			writeDirectInMountedTest: *blockServiceKiller && !*kmod,
 		}
 		r.run(terminateChan, log)
 	}()

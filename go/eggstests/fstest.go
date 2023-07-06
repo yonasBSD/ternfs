@@ -190,10 +190,7 @@ func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
 type posixFsTestHarness struct {
-	bufPool      *lib.BufPool
-	client       *lib.Client
-	dirInfoCache *lib.DirInfoCache
-	writeDirect  bool
+	bufPool *lib.BufPool
 }
 
 func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
@@ -245,16 +242,6 @@ func (c *posixFsTestHarness) createFile(
 	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (fileFullPath string, t msgs.EggsTime) {
 	fileFullPath = path.Join(dirFullPath, name)
-
-	if c.writeDirect {
-		c2 := &apiFsTestHarness{
-			client:       c.client,
-			dirInfoCache: c.dirInfoCache,
-			readBufPool:  c.bufPool,
-		}
-		c2.createFile(log, getInodeId(log, dirFullPath), spanSize, name, size, dataSeed)
-		return fileFullPath, 0
-	}
 
 	actualDataBuf := c.bufPool.Get(int(size))
 	defer c.bufPool.Put(actualDataBuf)
@@ -757,7 +744,6 @@ func fsTest(
 	opts *fsTestOpts,
 	counters *lib.ClientCounters,
 	realFs string, // if non-empty, will run the tests using this mountpoint
-	writeDirect bool,
 ) {
 	client, err := lib.NewClient(log, shuckleAddress, opts.checkThreads)
 	if err != nil {
@@ -778,10 +764,7 @@ func fsTest(
 		fsTestInternal[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{
-			bufPool:      lib.NewBufPool(),
-			client:       client,
-			dirInfoCache: lib.NewDirInfoCache(),
-			writeDirect:  writeDirect,
+			bufPool: lib.NewBufPool(),
 		}
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir

@@ -11,7 +11,6 @@ import (
 	"runtime/pprof"
 	"sync"
 	"syscall"
-	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
@@ -723,14 +722,8 @@ func terminate(server *fuse.Server, terminated *bool) {
 	logger.Info("stopping cpu profile")
 	pprof.StopCPUProfile()
 	logger.Info("about to terminate")
-	*terminated = true
-	for i := 0; i < 10; i++ {
-		if err := server.Unmount(); err != nil {
-			logger.Info("could not unmount, might retry: %v\n", err)
-		} else {
-			break
-		}
-		time.Sleep(time.Second)
+	if err := server.Unmount(); err != nil {
+		logger.Info("could not unmount: %v\n", err)
 	}
 }
 

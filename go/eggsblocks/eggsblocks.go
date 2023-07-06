@@ -433,6 +433,14 @@ NextRequest:
 				return
 			}
 		case *msgs.WriteBlockReq:
+			pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) - PAST_CUTOFF).Time()
+			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) + FUTURE_CUTOFF).Time()
+			now := time.Now()
+			if timeCheck && (now.Before(pastCutoffTime) || now.After(futureCutoffTime)) {
+				log.RaiseAlert(fmt.Errorf("block %v is too old or too new to be deleted (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime))
+				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+				continue NextRequest
+			}
 			if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != 0 {
 				if err := consumeBlock(whichReq.Size, conn); err != nil {
 					handleError(log, conn, fmt.Errorf("could not consume block from %v: %w", conn.RemoteAddr(), err))

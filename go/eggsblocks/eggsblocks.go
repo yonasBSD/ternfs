@@ -161,10 +161,14 @@ func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) error {
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
 		if os.IsNotExist(err) {
-			log.RaiseAlert(fmt.Errorf("could not find block to erase at path %v", blockPath))
-			return msgs.BLOCK_NOT_FOUND
+			log.Info("could not find block to erase at path %v", blockPath)
+			// we allow block to not exist here, because it could be that
+			// a process that was in the process of destructing a span managed to erase the
+			// block but not certify the deletion in the shard.
+			return nil
 		}
-		panic(err)
+		log.RaiseAlert(fmt.Errorf("internal error deleting block at path %v: %v", blockPath, err))
+		return msgs.INTERNAL_ERROR
 	}
 	return nil
 }
@@ -388,9 +392,6 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
-			// note: we might consider allow BLOCK_NOT_FOUND here, because it could be that
-			// a process that was in the process of destructing a span managed to erase the
-			// block but not certify the deletion in the shard.
 			if err := eraseBlock(log, blockService.path, whichReq.BlockId); err != nil {
 				handleError(log, conn, err)
 				return

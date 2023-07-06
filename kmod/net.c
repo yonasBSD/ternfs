@@ -102,42 +102,14 @@ static void insert_shard_request(struct eggsfs_shard_socket* s, struct eggsfs_sh
 }
 
 
-static_assert(HZ / 100 > 0);
-
-#if 0
-#define SHARD_ATTEMPTS 10
-const static u64 shard_timeouts_10ms[SHARD_ATTEMPTS] = {
-    1, 2, 4, 8, 16, 32, 64, 100, 200, 200
-};
-
-// 5 times the shard numbers, given that we roughly do 5 shard requests per CDC request
-
-#define CDC_ATTEMPTS 10
-const static u64 cdc_timeouts_10ms[CDC_ATTEMPTS] = {
-    5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000
-};
-#endif
-
-// higher timeouts since I'm testing in qemu with kasan
-
-#define SHARD_ATTEMPTS 10
-const static u64 shard_timeouts_10ms[SHARD_ATTEMPTS] = {
-    5, 10, 20, 40, 80, 160, 320, 640, 1000, 1000
-};
-
-#define CDC_ATTEMPTS 10
-const static u64 cdc_timeouts_10ms[CDC_ATTEMPTS] = {
-    10, 20, 40, 80, 160, 320, 640, 1000, 1000, 1000
-};
-
 // Returns:
 //
 // * n == 0 for success
 // * n < 0 for error (notable ones being -ETIMEOUT and -ERESTARTSYS)
 //
 // Once this is done, the request is guaranteed to not be in the tree anymore.
-static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct eggsfs_shard_request* req, u64 timeout_10ms) {
-    int ret = wait_for_completion_killable_timeout(&req->comp, (timeout_10ms * 10 * HZ) / 1000);
+static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct eggsfs_shard_request* req, u64 timeout_ms) {
+    int ret = wait_for_completion_killable_timeout(&req->comp, _msecs_to_jiffies(timeout_ms));
     // We got a response, this is the happy path.
     if (likely(ret > 0)) {
         BUG_ON(!req->skb);
@@ -221,16 +193,17 @@ struct sk_buff* eggsfs_metadata_request(
     vec.iov_base = p;
     vec.iov_len = len;
 
-    int max_attempts = shard_id < 0 ? CDC_ATTEMPTS : SHARD_ATTEMPTS;
-    const u64* timeouts_10ms = shard_id < 0 ? cdc_timeouts_10ms : shard_timeouts_10ms;
-    u64 start_t = get_jiffies_64();
+    unsigned timeout = shard_id < 0 ? eggsfs_initial_cdc_timeout_ms : eggsfs_initial_shard_timeout_ms;
+    unsigned max_timeout = shard_id < 0 ? eggsfs_max_cdc_timeout_ms : eggsfs_max_shard_timeout_ms;
+    unsigned overall_timeout = shard_id < 0 ? eggsfs_overall_cdc_timeout_ms : eggsfs_overall_shard_timeout_ms;
+    u64 start_t_ms = jiffies64_to_msecs(get_jiffies_64());
     u64 elapsed_ms = 0;
 
 #define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
 #define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, elapsed_ms
 #define WARN_LATE if (elapsed_ms > 1000) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
 
-    do {
+    for (;;) {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
         init_completion(&req.comp);
 
@@ -248,9 +221,11 @@ struct sk_buff* eggsfs_metadata_request(
             goto out_unregister;
         }
 
-        err = wait_for_request(sock, &req, timeouts_10ms[*attempts]);
-        elapsed_ms = jiffies64_to_msecs(get_jiffies_64() - start_t);
+        err = wait_for_request(sock, &req, timeout);
+        u64 t_ms = jiffies64_to_msecs(get_jiffies_64());
+        elapsed_ms = t_ms - start_t_ms;
         (*attempts)++;
+        timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
         if (!err) {
             eggsfs_debug("got response");
             BUG_ON(!req.skb);
@@ -271,13 +246,13 @@ struct sk_buff* eggsfs_metadata_request(
         }
 
         eggsfs_debug("err=%d", err);
-        if (err != -ETIMEDOUT || *attempts >= max_attempts) {
+        if (err != -ETIMEDOUT || elapsed_ms >= overall_timeout) {
             if (err != -ERESTARTSYS) {
-                eggsfs_info("giving up (might be too many attempts): " LOG_STR " max_attempts=%d err=%d", LOG_ARGS, max_attempts, err);
+                eggsfs_info("giving up (might be too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
             }
             goto out_err;
         }
-    } while (1);
+    }
 
 out_unregister:
     spin_lock_bh(&sock->lock);
@@ -286,7 +261,7 @@ out_unregister:
     BUG_ON(req.skb);
     rb_erase(&req.node, &sock->requests);
     spin_unlock_bh(&sock->lock);
-    elapsed_ms = jiffies64_to_msecs(get_jiffies_64() - start_t);
+    elapsed_ms = jiffies64_to_msecs(get_jiffies_64()) - start_t_ms;
 
 out_err:
     WARN_LATE

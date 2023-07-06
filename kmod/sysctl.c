@@ -7,7 +7,13 @@
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 1;
-int eggsfs_max_write_span_attempts = 5;
+unsigned eggsfs_max_write_span_attempts = 5;
+unsigned eggsfs_initial_shard_timeout_ms = 100;
+unsigned eggsfs_max_shard_timeout_ms = 2000;
+unsigned eggsfs_overall_shard_timeout_ms = 10000;
+unsigned eggsfs_initial_cdc_timeout_ms = 500;
+unsigned eggsfs_max_cdc_timeout_ms = 2000;
+unsigned eggsfs_overall_cdc_timeout_ms = 10000;
 extern int eggsfs_rs_cpu_level;
 
 static int drop_cached_spans;
@@ -80,7 +86,7 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &eggsfs_max_write_span_attempts,
         .maxlen = sizeof(eggsfs_max_write_span_attempts),
         .mode = 0644,
-        .proc_handler = proc_dointvec,
+        .proc_handler = proc_douintvec,
     },
 
     EGGSFS_CTL_INT_TIME(dir_refresh_time),

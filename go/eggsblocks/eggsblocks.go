@@ -319,7 +319,7 @@ func testWrite(
 
 const ONE_HOUR_IN_NS uint64 = 60 * 60 * 1000 * 1000 * 1000
 const PAST_CUTOFF uint64 = ONE_HOUR_IN_NS * 22
-const FUTURE_CUTOFF uint64 = ONE_HOUR_IN_NS * 2
+const FUTURE_CUTOFF time.Duration = 1 * time.Hour
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
 
@@ -381,7 +381,7 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, err)
 				continue NextRequest
 			}
-			cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) + FUTURE_CUTOFF).Time()
+			cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
 			now := time.Now()
 			if timeCheck && now.Before(cutoffTime) {
 				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime))

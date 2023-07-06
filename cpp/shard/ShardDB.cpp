@@ -198,7 +198,7 @@ static int pickMtu(uint16_t mtu) {
     return mtu;
 }
 
-constexpr uint64_t DEADLINE_INTERVAL = (60ull /*mins*/ * 60 /*secs*/ * 1'000'000'000 /*ns*/); // 1 hr
+constexpr uint64_t DEADLINE_INTERVAL = (120ull /*mins*/ * 60 /*secs*/ * 1'000'000'000 /*ns*/); // 2 hr
 
 void ShardLogEntry::pack(BincodeBuf& buf) const {
     time.pack(buf);

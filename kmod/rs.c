@@ -246,6 +246,8 @@ int __init eggsfs_rs_init(void) {
     return 0;
 }
 
-void __cold eggsfs_rs_exit(void) {}
+void __cold eggsfs_rs_exit(void) {
+    eggsfs_debug("rs exit");
+}
 
 #include "gf_tables.c"

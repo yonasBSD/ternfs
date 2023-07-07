@@ -11,8 +11,6 @@
 
 #define EGGSFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
 
-#define EGGSFS_BLOCKS_RESP_HEADER_SIZE (4 + 1) // protocol + kind
-
 struct eggsfs_block_service {
     u8 failure_domain[16];
     u64 id;
@@ -23,7 +21,6 @@ struct eggsfs_block_service {
     u8 flags;
 };
 
-// Calls `eggsfs_fetch_block_complete_cb` when done.
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
 //
@@ -38,7 +35,11 @@ int eggsfs_fetch_block(
     u32 count
 );
 
-// Will call back into `eggsfs_write_block_complete_cb` when done.
+// Returns how many sockets were dropped. Note that the sockets won't be
+// dropped immediately, they will just be scheduled for deletion (but dropping
+// them _will_ fail the requests within them).
+int eggsfs_drop_fetch_block_sockets(void);
+
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
 int eggsfs_write_block(

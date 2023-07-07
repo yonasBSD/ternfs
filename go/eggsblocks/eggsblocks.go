@@ -367,13 +367,15 @@ func handleRequest(
 	blockServices map[msgs.BlockServiceId]blockService,
 	conn *net.TCPConn,
 	timeCheck bool,
+	connectionTimeout time.Duration,
 ) {
 	defer conn.Close()
 
 NextRequest:
 	for {
-		// clean up connections after 1 minute
-		conn.SetReadDeadline(time.Now().Add(time.Minute))
+		if connectionTimeout != 0 {
+			conn.SetReadDeadline(time.Now().Add(connectionTimeout))
+		}
 		blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 		if err != nil {
 			switch v := err.(type) {
@@ -548,6 +550,7 @@ func main() {
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
+	connectionTimeout := flag.Duration("connection-timeout", time.Minute, "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
@@ -661,6 +664,7 @@ func main() {
 	log.Info("  logLevel = %v", level)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
+	log.Info("  connectionTimeout = %v", *connectionTimeout)
 
 	blockServices := make(map[msgs.BlockServiceId]blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
@@ -732,7 +736,7 @@ func main() {
 			}
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
+				handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 			}()
 		}
 	}()
@@ -748,7 +752,7 @@ func main() {
 				}
 				go func() {
 					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck)
+					handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 				}()
 			}
 		}()

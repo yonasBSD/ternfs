@@ -1000,6 +1000,7 @@ int __init eggsfs_file_init(void) {
 }
 
 void __cold eggsfs_file_exit(void) {
+    eggsfs_debug("file exit");
     // TODO: handle case where there still are requests in flight.
     kmem_cache_destroy(eggsfs_transient_span_cachep);
 }

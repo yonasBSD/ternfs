@@ -54,7 +54,8 @@ struct eggsfs_block_span {
     // happen, but it's a good sanity check.
     //
     // Note that ihold'ing this would defeat the purpose (the cached
-    // spans would prevent inode eviction).
+    // spans would prevent inode eviction). Think of it as a weak
+    // reference to the inode.
     struct eggsfs_inode* enode;
     // When refcount = 0, this might still be alive, but in an LRU.
     // When refcount < 0, we're currently reclaiming this span.

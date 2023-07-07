@@ -56,7 +56,7 @@ tmux new-window -t uovo:4 './startvm.sh'
 while ! scp eggsfs.ko uovo: ; do sleep 1; done
 
 # Start dmesg as soon as it's booted (before we insert module)
-tmux send-keys -t uovo:0 "ssh -t uovo dmesg -wHT" Enter
+tmux send-keys -t uovo:0 "ssh -t uovo dmesg -wHT | tee dmesg" Enter
 
 # and trace_pipe
 tmux new-window -t uovo:3 'ssh -t uovo sudo cat /sys/kernel/debug/tracing/trace_pipe'

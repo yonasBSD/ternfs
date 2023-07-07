@@ -69,6 +69,7 @@ int __init eggsfs_inode_init(void) {
 }
 
 void __cold eggsfs_inode_exit(void) {
+    eggsfs_debug("inode exit");
     rcu_barrier();
     kmem_cache_destroy(eggsfs_inode_cachep);
 }

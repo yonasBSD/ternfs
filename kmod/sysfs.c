@@ -5,6 +5,7 @@
 
 #include "dentry.h"
 #include "span.h"
+#include "log.h"
 
 static struct kset* eggsfs_kset;
 
@@ -99,6 +100,7 @@ out_unreg:
 }
 
 void __cold eggsfs_sysfs_exit(void) {
+    eggsfs_debug("sysfs exit");
     kset_unregister(eggsfs_kset);
 }
 

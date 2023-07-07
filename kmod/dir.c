@@ -458,5 +458,6 @@ int __init eggsfs_dir_init(void) {
 }
 
 void __cold eggsfs_dir_exit(void) {
+    eggsfs_debug("dir exit");
     kmem_cache_destroy(eggsfs_readdir_ctx_cachep);
 }

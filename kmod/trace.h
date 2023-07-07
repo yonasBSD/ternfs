@@ -437,28 +437,12 @@ TRACE_EVENT(eggsfs_span_add,
     TP_printk("file_id=%016llx offset=%llu", __entry->file_id, __entry->offset)
 );
 
-TRACE_EVENT(eggsfs_drop_spans_enter,
-    TP_PROTO(const char* type, long mem_available, u64 cached_pages, u64 cached_spans),
-    TP_ARGS(             type,      mem_available,    cached_pages,     cached_spans),
+#define EGGSFS_DROP_SPANS_START 0
+#define EGGSFS_DROP_SPANS_END 1
 
-    TP_STRUCT__entry(
-        __field(const char*, type)
-        __field(long, mem_available)
-        __field(u64, cached_pages)
-        __field(u64, cached_spans)
-    ),
-    TP_fast_assign(
-        __entry->type = type;
-        __entry->mem_available = mem_available;
-        __entry->cached_pages = cached_pages;
-        __entry->cached_spans = cached_spans;
-    ),
-    TP_printk("type=%s mem_available=%ld cached_pages=%llu cached_spans=%llu", __entry->type, __entry->mem_available, __entry->cached_pages, __entry->cached_spans)
-);
-
-TRACE_EVENT(eggsfs_drop_spans_exit,
-    TP_PROTO(const char* type, long mem_available, u64 cached_pages, u64 cached_spans, u64 dropped_pages),
-    TP_ARGS(             type,      mem_available,    cached_pages,     cached_spans,      dropped_pages),
+TRACE_EVENT(eggsfs_drop_spans,
+    TP_PROTO(const char* type, long mem_available, u64 cached_pages, u64 cached_spans, u8 event, u64 examined_spans, u64 dropped_pages, int err),
+    TP_ARGS(             type,      mem_available,     cached_pages,     cached_spans,    event,     examined_spans,     dropped_pages,     err),
 
     TP_STRUCT__entry(
         __field(const char*, type)
@@ -466,6 +450,9 @@ TRACE_EVENT(eggsfs_drop_spans_exit,
         __field(u64, cached_pages)
         __field(u64, cached_spans)
         __field(u64, dropped_pages)
+        __field(u64, examined_spans)
+        __field(int, err)
+        __field(u8, event)
     ),
     TP_fast_assign(
         __entry->type = type;
@@ -473,8 +460,20 @@ TRACE_EVENT(eggsfs_drop_spans_exit,
         __entry->cached_pages = cached_pages;
         __entry->cached_spans = cached_spans;
         __entry->dropped_pages = dropped_pages;
+        __entry->examined_spans = examined_spans;
+        __entry->err = err;
+        __entry->event = event;
     ),
-    TP_printk("type=%s mem_available=%ld cached_pages=%llu cached_spans=%llu, dropped_pages=%llu", __entry->type, __entry->mem_available, __entry->cached_pages, __entry->cached_spans, __entry->dropped_pages)
+    TP_printk(
+        "type=%s mem_available=%ld cached_pages=%llu cached_spans=%llu event=%s examined_spans=%llu dropped_pages=%llu err=%d",
+        __entry->type, __entry->mem_available, __entry->cached_pages, __entry->cached_spans,
+        __print_symbolic(
+            __entry->event,
+            { EGGSFS_DROP_SPANS_START, "start" },
+            { EGGSFS_DROP_SPANS_END, "end" }
+        ),
+        __entry->examined_spans, __entry->dropped_pages,  __entry->err
+    )
 );
 
 TRACE_EVENT(eggsfs_get_span_enter,
@@ -588,6 +587,45 @@ TRACE_EVENT(eggsfs_fetch_stripe,
         __entry->block, __entry->err
     )
 );
+
+#if 0
+#define EGGSFS_FETCH_BLOCK_SOCKET_START 0
+#define EGGSFS_FETCH_BLOCK_SOCKET_BLOCK_START 1
+#define EGGSFS_FETCH_BLOCK_SOCKET_BLOCK_DONE 2
+#define EGGSFS_FETCH_BLOCK_SOCKET_END 3
+#define EGGSFS_FETCH_BLOCK_SOCKET_FREE 4
+
+TRACE_EVENT(eggsfs_fetch_block_socket,
+    TP_PROTO(u32 ip, u16 port, u8 event, int err),
+    TP_ARGS(     ip,     port,    event,     err),
+
+    TP_STRUCT__entry(
+        __field(u32, ip)
+        __field(int, err)
+        __field(u16, port)
+        __field(u8, event)
+    ),
+    TP_fast_assign(
+        __entry->ip = ip;
+        __entry->err = err;
+        __entry->port = port;
+        __entry->event = event;
+    ),
+    TP_printk(
+        "ip=%08x port=%u event=%s err=%d",
+        __entry->ip, __entry->port,
+        __print_symbolic(
+            __entry->event,
+            { EGGSFS_FETCH_STRIPE_START, "start" },
+            { EGGSFS_FETCH_STRIPE_BLOCK_START, "block_start" },
+            { EGGSFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
+            { EGGSFS_FETCH_STRIPE_END, "end" },
+            { EGGSFS_FETCH_STRIPE_FREE, "free" }
+        ),
+        __entry->block, __entry->err
+    )
+)
+#endif
 
 #endif /* _TRACE_EGGFS_H */
 

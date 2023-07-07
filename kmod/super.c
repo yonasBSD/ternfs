@@ -388,6 +388,7 @@ int __init eggsfs_fs_init(void) {
 }
 
 void __cold eggsfs_fs_exit(void) {
+    eggsfs_debug("fs exit");
     unregister_filesystem(&eggsfs_fs_type);
 }
 

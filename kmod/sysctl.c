@@ -6,22 +6,30 @@
 #include "sysctl.h"
 #include "net.h"
 #include "file.h"
+#include "block.h"
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 1;
 
-static int drop_cached_spans;
-
-static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
-    int ret;
-    ret = proc_dointvec_minmax(table, write, buffer, len, ppos);
-    if (ret) {
-        return ret;
-    }
-    if (write) {
-        eggsfs_drop_all_spans();
-    }
+#define eggsfs_do_sysctl(__callback) \
+    int ret; \
+    ret = proc_dointvec_minmax(table, write, buffer, len, ppos); \
+    if (ret) { \
+        return ret; \
+    } \
+    if (write) { \
+        __callback(); \
+    } \
     return 0;
+
+static int drop_cached_spans;
+static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+    eggsfs_do_sysctl(eggsfs_drop_all_spans);
+}
+
+static int drop_fetch_block_sockets;
+static int eggsfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+    eggsfs_do_sysctl(eggsfs_drop_fetch_block_sockets);
 }
 
 #define EGGSFS_CTL_ULONG(_name) \
@@ -94,6 +102,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .proc_handler = eggsfs_drop_spans_sysctl,
     },
 
+    {
+        .procname = "drop_fetch_block_sockets",
+        .data = &drop_fetch_block_sockets,
+        .maxlen = sizeof(int),
+        .mode = 0200,
+        .proc_handler = eggsfs_drop_fetch_block_sockets_sysctl,
+    },
+
     EGGSFS_CTL_BOOL(prefetch),
 
     EGGSFS_CTL_INT_JIFFIES(dir_refresh_time),
@@ -146,6 +162,8 @@ int __init eggsfs_sysctl_init(void) {
 }
 
 void __cold eggsfs_sysctl_exit(void) {
+    eggsfs_debug("sysctl exit");
+
     unregister_sysctl_table(eggsfs_callback_sysctl_table);
     eggsfs_callback_sysctl_table = NULL;
 }

@@ -339,8 +339,7 @@ func testWrite(
 	return nil
 }
 
-const ONE_HOUR_IN_NS uint64 = 60 * 60 * 1000 * 1000 * 1000
-const PAST_CUTOFF uint64 = ONE_HOUR_IN_NS * 22
+const PAST_CUTOFF time.Duration = 22 * time.Hour
 const FUTURE_CUTOFF time.Duration = 1 * time.Hour
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
@@ -384,6 +383,9 @@ NextRequest:
 			default:
 				if err == io.EOF {
 					log.Debug("got EOF, terminating")
+					return
+				} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					log.Debug("got timeout, terminating")
 					return
 				} else {
 					log.RaiseAlert(fmt.Errorf("got error %w when reading request, terminating", err))
@@ -433,8 +435,8 @@ NextRequest:
 				return
 			}
 		case *msgs.WriteBlockReq:
-			pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) - PAST_CUTOFF).Time()
-			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId) + FUTURE_CUTOFF).Time()
+			pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
+			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
 			now := time.Now()
 			if timeCheck && (now.Before(pastCutoffTime) || now.After(futureCutoffTime)) {
 				log.RaiseAlert(fmt.Errorf("block %v is too old or too new to be deleted (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime))

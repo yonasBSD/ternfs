@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,9 +10,12 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"xtx/ecninfra/hostmon"
 	"xtx/ecninfra/log"
 	"xtx/ecninfra/monitor"
+	xrt "xtx/ecninfra/runtime"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -114,13 +118,16 @@ func (lf *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 type LoggerOptions struct {
 	Level       LogLevel
 	Syslog      bool
+	AppName     string
 	AppInstance string
 	Xmon        string // "dev", "qa", empty string for no xmon
+	Metrics     bool
 }
 
 type Logger struct {
 	level         LogLevel
 	troll         *monitor.ParentTroll
+	mw            *hostmon.MetricWriter
 	alertsLock    sync.RWMutex
 	raisedAlerts  map[string]*monitor.AlertStatus
 	droppedAlerts *monitor.AlertStatus
@@ -183,13 +190,34 @@ func NewLogger(
 
 		appType := "restech.info"
 		prod := options.Xmon == "prod"
-		appInstance := fmt.Sprintf("%s@%s", options.AppInstance, hostname)
+		ai := options.AppName
+		if len(options.AppInstance) > 0 {
+			ai = fmt.Sprintf("%s:%s", options.AppName, options.AppInstance)
+		}
+		appInstance := fmt.Sprintf("%s@%s", ai, hostname)
 		xh := monitor.XmonHost(prod)
 		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 1000)
 		// The call below will log the info message once connected to xmon.
 		troll.Connect()
 		logger.troll = troll
 		logger.droppedAlerts = troll.NewAlertStatus()
+	}
+
+	if options.Metrics {
+		xrt.ServiceInit(xrt.IsProd(), monitor.AppTypeNever)
+		mp := fmt.Sprintf("eggsfs_%s", options.AppName)
+		logger.mw = hostmon.NewMetricWriterWithLabels(
+			600*time.Second,
+			logger.troll,
+			mp,
+			xrt.HostTeam.InfluxOrg,
+			xrt.HostTeam.InfluxDBURL,
+			xrt.HostTeam.InfluxTokenProd,
+			map[string]string{"hostname": xrt.Hostname, "app": options.AppName, "instance": options.AppInstance},
+		)
+		go func() {
+			logger.mw.PushMetrics(context.Background())
+		}()
 	}
 
 	return &logger
@@ -301,6 +329,16 @@ func (l *Logger) RaiseAlertStack(calldepth int, err any) {
 	msg := fmt.Sprintf("ALERT %v", err)
 	l.alert(msg)
 	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
+}
+
+func (l *Logger) Metric(category, name string, help string, value uint64, extralabels map[string]string) {
+	if l.mw == nil {
+		return
+	}
+	if extralabels == nil {
+		extralabels = make(map[string]string)
+	}
+	l.mw.AddMetric(hostmon.NewMetricNowWithLabels(category, name, help, float64(value), extralabels))
 }
 
 // NCAlert is a non binnable alert

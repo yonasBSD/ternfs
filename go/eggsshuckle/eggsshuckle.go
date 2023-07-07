@@ -1380,6 +1380,27 @@ func setupRouting(log *lib.Logger, st *state) {
 	setupPage("/stats", handleStats)
 }
 
+func metricWriter(ll *lib.Logger, st *state) error {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		<-ticker.C
+		for i := 0; i < len(st.counters[:]); i++ {
+			totalCount := st.counters[i].TotalCount()
+			if totalCount == 0 {
+				continue
+			}
+			t := msgs.ShuckleMessageKind(i)
+			for j := 0; j < st.counters[i].Buckets(); j++ {
+				_, count, ub := st.counters[i].Bucket(j)
+				el := map[string]string{"ub": fmt.Sprintf("%d", ub), "type": t.String()}
+				ll.Metric("request", "duration_bucket", "request duration", count, el)
+			}
+			ll.Metric("request", "duration_count", "request count", totalCount, map[string]string{"type": t.String()})
+		}
+	}
+}
+
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -1479,6 +1500,7 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
+	metrics := flag.Bool("metrics", false, "")
 	dbFile := flag.String("db-file", "", "file path of the sqlite database file")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
@@ -1501,7 +1523,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "shuckle"})
+	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle", Metrics: *metrics})
 
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)
@@ -1627,6 +1649,14 @@ func main() {
 		err := serviceMonitor(ll, state, *stale)
 		ll.Error("serviceMonitor ended with error %s", err)
 	}()
+
+	if *metrics {
+		go func() {
+			defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+			metricWriter(ll, state)
+			panic("metricWriter has terminated")
+		}()
+	}
 
 	panic(<-terminateChan)
 }

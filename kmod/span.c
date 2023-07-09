@@ -792,9 +792,7 @@ static void store_pages(struct fetch_stripe_state* st) {
         return;
     }
 
-    u32 start_page = pages_per_block*D*st->stripe;
-    u32 end_page = pages_per_block*D*((int)st->stripe + 1);
-    u32 curr_page = start_page;
+    u32 curr_page = pages_per_block*D*st->stripe;
 
     // Now move pages to the span. Note that we can't add them
     // as we compute the CRC because `xa_store` might allocate.
@@ -823,13 +821,9 @@ static void store_pages(struct fetch_stripe_state* st) {
         }
     }
 
-    if (curr_page != end_page) {
-        eggsfs_info("ino=%016lx curr_page=%u end_page=%u", span->enode->inode.i_ino, curr_page, end_page);
-    }
-    BUG_ON(curr_page != end_page);
     // We know that we added all of them given the BUG_ON(old_page != NULL)
     // above.
-    atomic64_add(end_page-start_page, &eggsfs_stat_cached_span_pages);
+    atomic64_add(pages_per_block*D, &eggsfs_stat_cached_span_pages);
     if (crc != span->stripes_crc[st->stripe]) {
         eggsfs_warn("bad crc for file %016lx, stripe %u, expected %08x, got %08x", st->enode->inode.i_ino, st->stripe, span->stripes_crc[st->stripe], crc);
         atomic_set(&st->err, -EIO);
@@ -953,10 +947,6 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
             eggsfs_info("failed finished=%d", finished);
         }
     } else {
-        // mark as fetched, see if we're the last ones
-        s64 blocks = atomic64_read(&st->blocks);
-        while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
-        finished = __builtin_popcountll(SUCCEEDED_GET(SUCCEEDED_SET(blocks, i))) == D; // blocks = last old one, we need to reapply
         // it succeeded, grab all the pages
         BUG_ON(!list_empty(&st->blocks_pages[i]));
         struct page* page;
@@ -968,6 +958,10 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
             fetched_pages++;
         }
         BUG_ON(fetched_pages != pages_per_block);
+        // mark as fetched, see if we're the last ones
+        s64 blocks = atomic64_read(&st->blocks);
+        while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+        finished = __builtin_popcountll(SUCCEEDED_GET(SUCCEEDED_SET(blocks, i))) == D; // blocks = last old one, we need to reapply
     }
 
     if (finished) {

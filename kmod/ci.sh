@@ -45,5 +45,8 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"
 # Run tests
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs"
 
-# sudo sysctl fs.eggsfs.debug=1
-# eggs/eggstests -verbose -kmod -filter 'mounted' -block-service-killer -cfg fsTest.numFiles=1000 -cfg fsTest.numDirs=1 -cfg fsTest.checkThreads=1 -short -binaries-dir eggs
+# Unmount
+timeout -s KILL 10 ssh -p 2222 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
+
+# Rmmod
+timeout -s KILL 10 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsfs"

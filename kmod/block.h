@@ -60,6 +60,8 @@ int eggsfs_write_block(
     struct list_head* pages
 );
 
+int eggsfs_drop_write_block_sockets(void);
+
 int __init eggsfs_block_init(void);
 void __cold eggsfs_block_exit(void);
 

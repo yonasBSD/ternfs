@@ -32,6 +32,11 @@ static int eggsfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int w
     eggsfs_do_sysctl(eggsfs_drop_fetch_block_sockets);
 }
 
+static int drop_write_block_sockets;
+static int eggsfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+    eggsfs_do_sysctl(eggsfs_drop_write_block_sockets);
+}
+
 #define EGGSFS_CTL_ULONG(_name) \
     { \
         .procname = #_name, \
@@ -108,6 +113,14 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .maxlen = sizeof(int),
         .mode = 0200,
         .proc_handler = eggsfs_drop_fetch_block_sockets_sysctl,
+    },
+
+    {
+        .procname = "drop_write_block_sockets",
+        .data = &drop_write_block_sockets,
+        .maxlen = sizeof(int),
+        .mode = 0200,
+        .proc_handler = eggsfs_drop_write_block_sockets_sysctl,
     },
 
     EGGSFS_CTL_BOOL(prefetch),

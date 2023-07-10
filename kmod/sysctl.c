@@ -9,7 +9,7 @@
 #include "block.h"
 
 int eggsfs_debug_output = 0;
-int eggsfs_prefetch = 1;
+int eggsfs_prefetch = 0;
 
 #define eggsfs_do_sysctl(__callback) \
     int ret; \

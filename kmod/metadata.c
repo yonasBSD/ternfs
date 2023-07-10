@@ -8,7 +8,6 @@
 #include "err.h"
 #include "log.h"
 #include "inode.h"
-#include "skb.h"
 #include "crc.h"
 #include "rs.h"
 #include "file.h"

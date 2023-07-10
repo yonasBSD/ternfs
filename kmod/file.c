@@ -10,7 +10,6 @@
 #include "err.h"
 #include "rs.h"
 #include "block.h"
-#include "skb.h"
 #include "crc.h"
 #include "trace.h"
 #include "span.h"

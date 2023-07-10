@@ -1133,11 +1133,11 @@ static void maybe_prefetch(
         u64 off;
         // there is some overlap, but we're pushing the boundary, prefetch the next or previous thing
         if (stripe_end > prefetch_section_end) { // going rightwards
-            eggsfs_debug("prefetching forwards");
+            eggsfs_debug("prefetching forwards (stripe_end=%llu, prefetch_section_end=%u)", stripe_end, prefetch_section_end);
             prefetch_section_end = stripe_end;
             off = stripe_end;
         } else { // going leftwards
-            eggsfs_debug("prefetching backwards");
+            eggsfs_debug("prefetching backwards (stripe_end=%llu, prefetch_section_end=%u)", stripe_end, prefetch_section_end);
             prefetch_section_begin = stripe_start;
             off = stripe_start-1;
         }

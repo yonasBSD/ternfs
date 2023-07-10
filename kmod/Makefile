@@ -12,7 +12,6 @@ eggsfs-objs += \
 	metadata.o \
 	dentry.o \
 	net.o \
-	skb.o \
 	super.o \
 	sysctl.o \
 	sysfs.o \

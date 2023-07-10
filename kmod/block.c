@@ -5,7 +5,6 @@
 #include "block.h"
 #include "log.h"
 #include "err.h"
-#include "skb.h"
 #include "super.h"
 #include "crc.h"
 #include "trace.h"
@@ -39,8 +38,8 @@ static u64 block_socket_key(struct sockaddr_in* addr) {
 
 static DEFINE_HASHTABLE(fetch_sockets, BLOCK_SOCKET_BITS);
 static spinlock_t fetch_sockets_locks[BLOCK_SOCKET_BUCKETS]; // to sync writes to hashmap
-static wait_queue_head_t fetch_sockets_wqs[BLOCK_SOCKET_BUCKETS]; // TODO init
-static atomic_t fetch_sockets_len[BLOCK_SOCKET_BUCKETS]; // TODO init
+static wait_queue_head_t fetch_sockets_wqs[BLOCK_SOCKET_BUCKETS];
+static atomic_t fetch_sockets_len[BLOCK_SOCKET_BUCKETS];
 
 #if 0
 static DEFINE_HASHTABLE(write_sockets, BLOCK_SOCKET_BITS);
@@ -49,6 +48,32 @@ static spinlock_t write_sockets_locks[BLOCK_SOCKET_BUCKETS];
 
 static void timeout_sockets(struct work_struct* w);
 static DECLARE_DELAYED_WORK(timeout_work, timeout_sockets);
+
+// Utils
+// --------------------------------------------------------------------
+
+static u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len) {
+    struct skb_seq_state seq;
+    u32 consumed = 0;
+    char* dst = dstp;
+
+    skb_prepare_seq_read(skb, offset, min(offset + len, skb->len), &seq);
+    for (;;) {
+        const u8* ptr;
+        int avail = skb_seq_read(consumed, &ptr, &seq);
+        if (avail == 0) { return consumed; }
+        BUG_ON(avail < 0);
+        // avail _can_ exceed the upper bound here
+        int actual_avail = min((u32)avail, len-consumed);
+        memcpy(dst + consumed, ptr, actual_avail);
+        consumed += actual_avail;
+        if (actual_avail < avail) {
+            skb_abort_seq_read(&seq);
+            return consumed;
+        }
+    }
+    BUG();
+}
 
 // Fetch
 // --------------------------------------------------------------------
@@ -174,6 +199,9 @@ static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
     // TFO would be nice, but it doesn't really matter given that we aggressively recycle
     // connections, and also given that we have our own callbacks which do not play well
     // at connection opening stage. So open the connection
+    //
+    // TODO actually this might not be relevant anymore, because we now call the original
+    // callbacks in the state change callback (like iscsi does).
     err = kernel_connect(sock->sock, (struct sockaddr*)&sock->addr, sizeof(sock->addr), 0);
     if (err < 0) {
         if (err == -ERESTARTSYS || err == -ERESTARTNOINTR) {
@@ -183,34 +211,6 @@ static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
         }
         goto out_err;
     }
-
-    INIT_LIST_HEAD(&sock->write);
-    spin_lock_init(&sock->write_lock);
-    INIT_WORK(&sock->work, fetch_work);
-    INIT_LIST_HEAD(&sock->read);
-    spin_lock_init(&sock->read_lock);
-
-    // now insert
-    int bucket = hash_min(key, HASH_BITS(fetch_sockets));
-    struct fetch_socket* other_sock;
-
-    spin_lock(&fetch_sockets_locks[bucket]);
-    // first check if somebody else got there first
-    hash_for_each_possible_rcu(fetch_sockets, other_sock, hnode, key) { // first we check if somebody didn't get to it first
-        if (block_socket_key(&other_sock->addr) == key) {
-            // somebody got here before us
-            spin_unlock(&fetch_sockets_locks[bucket]);
-            sock_release(sock->sock);
-            kfree(sock);
-            return other_sock;
-        }
-    }
-    // now actually insert. before exiting the critical section,
-    // re-acquire the RCU lock, so that we won't get it removed
-    // now because of timeouts or such.
-    hash_add_rcu(fetch_sockets, &sock->hnode, key);
-    rcu_read_lock();
-    spin_unlock(&fetch_sockets_locks[bucket]);
 
     // Important for the callbacks to happen after the connect, see comment about
     // fastopen above. Also, we want the callbacks to set last, after we've setup
@@ -224,6 +224,36 @@ static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
     sock->sock->sk->sk_state_change = fetch_state_change;
     sock->sock->sk->sk_write_space = fetch_write_space;
     write_unlock(&sock->sock->sk->sk_callback_lock);
+
+    INIT_LIST_HEAD(&sock->write);
+    spin_lock_init(&sock->write_lock);
+    INIT_WORK(&sock->work, fetch_work);
+    INIT_LIST_HEAD(&sock->read);
+    spin_lock_init(&sock->read_lock);
+
+    // now insert
+    int bucket = hash_min(key, HASH_BITS(fetch_sockets));
+    struct fetch_socket* other_sock;
+
+    spin_lock(&fetch_sockets_locks[bucket]);
+    // Take the RCU lock while holding the socket lock so that
+    // we know it won't get removed by timeouts or such in the
+    // span of time between unlocking the socket lock and acquiring
+    // the RCU lock.
+    rcu_read_lock();
+    // first check if somebody else got there first
+    hash_for_each_possible_rcu(fetch_sockets, other_sock, hnode, key) { // first we check if somebody didn't get to it first
+        if (block_socket_key(&other_sock->addr) == key) {
+            // somebody got here before us
+            spin_unlock(&fetch_sockets_locks[bucket]);
+            sock_release(sock->sock);
+            kfree(sock);
+            return other_sock; // exit with read lock held
+        }
+    }
+    // Now actually insert.
+    hash_add_rcu(fetch_sockets, &sock->hnode, key);
+    spin_unlock(&fetch_sockets_locks[bucket]);
 
     atomic_inc(&fetch_sockets_len[bucket]);
 
@@ -271,7 +301,7 @@ int eggsfs_drop_fetch_block_sockets(void) {
     }
     rcu_read_unlock();
 
-    eggsfs_info("dropped %d sockets", dropped);
+    eggsfs_debug("dropped %d sockets", dropped);
 
     return dropped;
 }
@@ -327,7 +357,8 @@ static void remove_fetch_socket(struct fetch_socket* socket) {
 
     list_for_each_entry_safe(req, tmp, &all_reqs, list) {
         atomic_cmpxchg(&req->err, 0, err);
-        fetch_complete(req); // no need to go through wq, we're not in BH
+        eggsfs_debug("completing request because of a socket winddown");
+        fetch_complete(req); // no need to go through wq, we're in process context already
     }
 
     // Finally, kill the socket.
@@ -441,18 +472,23 @@ static void fetch_block_state_check(struct sock* sk) {
 
 void fetch_state_change(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
+    struct fetch_socket* socket = sk->sk_user_data;
+    void (*saved_state_change)(struct sock *) = socket->saved_state_change;
     fetch_block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
+
+    saved_state_change(sk);
 }
 
 void fetch_write_space(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     struct fetch_socket* socket = (struct fetch_socket*)sk->sk_user_data;
-    if (sk_stream_is_writeable(sk)) {
-        clear_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
-        queue_work(eggsfs_wq, &socket->work);
-    }
+    void (*old_write_space)(struct sock *) = socket->saved_write_space;
     read_unlock_bh(&sk->sk_callback_lock);
+
+    old_write_space(sk);
+
+    queue_work(eggsfs_wq, &socket->work);
 }
 
 // Returns a negative result if the socket has to be considered corrupted.
@@ -511,13 +547,15 @@ static int fetch_receive_single_req(
     char* page_ptr = kmap_atomic(page);
 
     struct skb_seq_state seq;
-    skb_prepare_seq_read(skb, offset, offset + min(req->read_bytes_left, (u32)len), &seq);
+    u32 read_len = min(req->read_bytes_left, (u32)len);
+    skb_prepare_seq_read(skb, offset, offset + read_len, &seq);
 
     u32 block_bytes_read = 0;
     while (block_bytes_read < req->read_bytes_left) {
         const u8* data;
         u32 avail = skb_seq_read(block_bytes_read, &data, &seq);
         if (avail == 0) { break; }
+        avail = min(avail, read_len - block_bytes_read); // avail can exceed the len upper bound
 
         while (avail) {
             u32 this_len = min3(avail, (u32)PAGE_SIZE - req->page_offset, req->read_bytes_left - block_bytes_read);

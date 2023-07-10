@@ -313,6 +313,7 @@ int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode
         memcpy(&enode->block_policies, &new_edir->block_policies, sizeof(new_edir->block_policies));
         memcpy(&enode->span_policies, &new_edir->span_policies, sizeof(new_edir->span_policies));
         enode->target_stripe_size = new_edir->target_stripe_size;
+        enode->edge_creation_time = new_creation_time;
         BUG_ON(!enode->block_policies.len || !enode->span_policies.len || !enode->target_stripe_size);
         d_move(old_dentry, new_dentry);
     }

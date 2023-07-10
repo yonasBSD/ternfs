@@ -11,6 +11,9 @@
 
 #define EGGSFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
 
+extern int eggsfs_fetch_block_timeout_jiffies;
+extern int eggsfs_write_block_timeout_jiffies;
+
 struct eggsfs_block_service {
     u8 failure_domain[16];
     u64 id;

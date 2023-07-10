@@ -944,7 +944,7 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
         if (err) {
             int old_err = 0;
             finished = atomic_try_cmpxchg(&st->err, &old_err, err);
-            eggsfs_info("failed finished=%d", finished);
+            eggsfs_debug("failed finished=%d", finished);
         }
     } else {
         // it succeeded, grab all the pages

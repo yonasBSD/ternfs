@@ -27,27 +27,52 @@ static u64 WHICH_BLOCK_IP = 0;
 static struct kmem_cache* fetch_request_cachep;
 static struct kmem_cache* write_request_cachep;
 
-// two 128 elements arrays (we have ~100 disks per block service, so
-// with one bucket per element we can hold ~10k disks comfortably)
-#define BLOCK_SOCKET_BITS 7
+// two 256 elements arrays (we have ~100 disks per block service, so
+// with one bucket per element we can hold ~25k disks comfortably)
+#define BLOCK_SOCKET_BITS 8
 #define BLOCK_SOCKET_BUCKETS (1<<BLOCK_SOCKET_BITS)
 
 static u64 block_socket_key(struct sockaddr_in* addr) {
     return ((u64)addr->sin_addr.s_addr << 16) | addr->sin_port;
 }
 
-static DEFINE_HASHTABLE(fetch_sockets, BLOCK_SOCKET_BITS);
-static spinlock_t fetch_sockets_locks[BLOCK_SOCKET_BUCKETS]; // to sync writes to hashmap
-static wait_queue_head_t fetch_sockets_wqs[BLOCK_SOCKET_BUCKETS];
-static atomic_t fetch_sockets_len[BLOCK_SOCKET_BUCKETS];
+struct block_socket;
+struct block_request;
 
-#if 0
-static DEFINE_HASHTABLE(write_sockets, BLOCK_SOCKET_BITS);
-static spinlock_t write_sockets_locks[BLOCK_SOCKET_BUCKETS];
-#endif
+struct block_ops {
+    DECLARE_HASHTABLE(sockets, BLOCK_SOCKET_BITS);
+    spinlock_t locks[BLOCK_SOCKET_BUCKETS];
+    // these two are just to detect when a socket is gone
+    wait_queue_head_t wqs[BLOCK_SOCKET_BUCKETS];
+    atomic_t len[BLOCK_SOCKET_BUCKETS];
 
-static void timeout_sockets(struct work_struct* w);
-static DECLARE_DELAYED_WORK(timeout_work, timeout_sockets);
+    int* timeout_jiffies;
+
+    // functions
+    void (*data_ready)(struct sock *sk);
+    void (*work)(struct work_struct* work);
+    void (*complete)(struct block_request* req);
+    int (*write)(struct block_socket* socket, struct block_request* req);
+    int (*receive)(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
+};
+
+static void fetch_data_ready(struct sock *sk);
+static void fetch_work(struct work_struct* work);
+static void fetch_complete(struct block_request* req);
+static int fetch_write(struct block_socket* socket, struct block_request* breq);
+static int fetch_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
+
+static struct block_ops fetch_ops = {
+    .data_ready = fetch_data_ready,
+    .work = fetch_work,
+    .complete = fetch_complete,
+    .write = fetch_write,
+    .receive = fetch_receive,
+    .timeout_jiffies = &eggsfs_fetch_block_timeout_jiffies,
+};
+
+static void do_timeout_sockets(struct work_struct* w);
+static DECLARE_DELAYED_WORK(timeout_work, do_timeout_sockets);
 
 // Utils
 // --------------------------------------------------------------------
@@ -75,10 +100,20 @@ static u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len)
     BUG();
 }
 
-// Fetch
+// Generic socket/request infra
 // --------------------------------------------------------------------
 
-struct fetch_socket {
+static void block_ops_init(struct block_ops* ops) {
+    int i;
+    hash_init(ops->sockets);    
+    for (i = 0; i < BLOCK_SOCKET_BUCKETS; i++) {
+        spin_lock_init(&ops->locks[i]);
+        atomic_set(&ops->len[i], 0);
+        init_waitqueue_head(&ops->wqs[i]);
+    }
+}
+
+struct block_socket {
     struct socket* sock;
     struct sockaddr_in addr;
     // If non-zero, we'll check that not more than `eggsfs_fetch_block_timeout_jiffies`
@@ -109,74 +144,80 @@ struct fetch_socket {
     void (*saved_write_space)(struct sock *sk);
 };
 
-struct fetch_request {
-    void (*callback)(void* data, u64 block_id, struct list_head* pages, int err);
-    void* data;
+static void block_ops_exit(struct block_ops* ops) {
+    struct block_socket* sock;
+    int bucket;
+    rcu_read_lock();
+    hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        atomic_cmpxchg(&sock->err, 0, -ECONNABORTED);
+        queue_work(eggsfs_wq, &sock->work);
+    }
+    rcu_read_unlock();
 
-    // Completion data.
+    // wait for all of them to be freed by work
+    for (bucket = 0; bucket < BLOCK_SOCKET_BUCKETS; bucket++) {
+        wait_event(ops->wqs[bucket], atomic_read(&ops->len[bucket]) == 0);
+    }
+}
+
+struct block_request {
     atomic_t err;
-    struct list_head pages;
 
     // What we use to call back into the callback from BH
     struct work_struct complete_work;
 
-    // Either in the write or in the read end of the socket.
+    // To store the request in the read/write lists of the socket
     struct list_head list;
 
-    // Req info
-    u64 block_service_id;
-    u64 block_id;
-    u32 offset;
-    u32 count;
-
-    // How much we've written of the request
-    u32 written_bytes;
-
-    // How many bytes we have left to read.
-    u32 read_bytes_left;
-    // The cursor inside the current page.
-    u16 page_offset;
-    // How much we've read of the header.
-    u8 header_read;
-    static_assert(EGGSFS_FETCH_BLOCK_RESP_SIZE == 0);
-    union {
-        char buf[EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2];
-        struct {
-            __le32 protocol;
-            u8 kind;
-            __le16 error;
-        } __attribute__((packed)) data;
-    } header;
+    // How much is left to write (including the block body if writin)
+    u32 left_to_write;
+    // How much is left to read (including block body if reading)
+    u32 left_to_read;
 };
 
-static void fetch_data_ready(struct sock* sk);
-static void fetch_state_change(struct sock* sk);
-static void fetch_write_space(struct sock* sk);
-static void fetch_work(struct work_struct* work);
+static void block_state_check(struct sock* sk) {
+    struct block_socket* socket = sk->sk_user_data;
 
-#if 0
-static void fetch_block_socket_trace(struct fetch_socket* st, u8 event) {
-    u32 ip = 
-    trace_eggsfs_fetch_block_socket(
-        st->enode->inode.i_ino,
-        st->span->span.start,
-        st->stripe,
-        st->span->parity,
-        st->prefetching,
-        event,
-        block,
-        err
-    );
+    if (sk->sk_state == TCP_ESTABLISHED) { return; } // the only good one
+
+    // Right now we connect beforehand, so every change is trouble. Just
+    // kill the socket.
+    eggsfs_debug("socket state check triggered: %d, will fail reqs", sk->sk_state);
+    atomic_cmpxchg(&socket->err, 0, -ECONNABORTED); // TODO we could have nicer errors
+    queue_work(eggsfs_wq, &socket->work);
 }
-#endif
+
+static void block_state_change(struct sock* sk) {
+    read_lock_bh(&sk->sk_callback_lock);
+    struct block_socket* socket = sk->sk_user_data;
+    void (*saved_state_change)(struct sock *) = socket->saved_state_change;
+    block_state_check(sk);
+    read_unlock_bh(&sk->sk_callback_lock);
+
+    saved_state_change(sk);
+}
+
+static void block_write_space(struct sock* sk) {
+    read_lock_bh(&sk->sk_callback_lock);
+    struct block_socket* socket = (struct block_socket*)sk->sk_user_data;
+    void (*old_write_space)(struct sock *) = socket->saved_write_space;
+    queue_work(eggsfs_wq, &socket->work);
+    read_unlock_bh(&sk->sk_callback_lock);
+
+    old_write_space(sk);
+}
 
 // Gets the socket, and acquires a reference to it.
-static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
+static struct block_socket* get_block_socket(
+    struct block_ops* ops,
+    struct sockaddr_in* addr
+) {
     u64 key = block_socket_key(addr);
+    int bucket = hash_min(key, BLOCK_SOCKET_BITS);
 
     rcu_read_lock();
-    struct fetch_socket* sock;
-    hash_for_each_possible_rcu(fetch_sockets, sock, hnode, key) {
+    struct block_socket* sock;
+    hlist_for_each_entry_rcu(sock, &ops->sockets[bucket], hnode) {
         if (block_socket_key(&sock->addr) == key) {
             rcu_read_unlock();
             return sock;
@@ -185,7 +226,7 @@ static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
 
     eggsfs_debug("socket to %pI4:%d not found, will create", &addr->sin_addr, ntohs(addr->sin_port));
 
-    sock = kmalloc(sizeof(struct fetch_socket), GFP_KERNEL);
+    sock = kmalloc(sizeof(struct block_socket), GFP_KERNEL);
     if (sock == NULL) { return ERR_PTR(-ENOMEM); }
 
     memcpy(&sock->addr, addr, sizeof(struct sockaddr_in));
@@ -220,42 +261,41 @@ static struct fetch_socket* get_fetch_block_socket(struct sockaddr_in* addr) {
     sock->saved_state_change = sock->sock->sk->sk_state_change;
     sock->saved_write_space = sock->sock->sk->sk_write_space;
     sock->sock->sk->sk_user_data = sock;
-    sock->sock->sk->sk_data_ready = fetch_data_ready;
-    sock->sock->sk->sk_state_change = fetch_state_change;
-    sock->sock->sk->sk_write_space = fetch_write_space;
+    sock->sock->sk->sk_data_ready = ops->data_ready;
+    sock->sock->sk->sk_state_change = block_state_change;
+    sock->sock->sk->sk_write_space = block_write_space;
     write_unlock(&sock->sock->sk->sk_callback_lock);
 
     INIT_LIST_HEAD(&sock->write);
     spin_lock_init(&sock->write_lock);
-    INIT_WORK(&sock->work, fetch_work);
+    INIT_WORK(&sock->work, ops->work);
     INIT_LIST_HEAD(&sock->read);
     spin_lock_init(&sock->read_lock);
 
     // now insert
-    int bucket = hash_min(key, HASH_BITS(fetch_sockets));
-    struct fetch_socket* other_sock;
+    struct block_socket* other_sock;
 
-    spin_lock(&fetch_sockets_locks[bucket]);
+    spin_lock(&ops->locks[bucket]);
     // Take the RCU lock while holding the socket lock so that
     // we know it won't get removed by timeouts or such in the
     // span of time between unlocking the socket lock and acquiring
     // the RCU lock.
     rcu_read_lock();
     // first check if somebody else got there first
-    hash_for_each_possible_rcu(fetch_sockets, other_sock, hnode, key) { // first we check if somebody didn't get to it first
+    hlist_for_each_entry_rcu(other_sock, &ops->sockets[bucket], hnode) { // first we check if somebody didn't get to it first
         if (block_socket_key(&other_sock->addr) == key) {
             // somebody got here before us
-            spin_unlock(&fetch_sockets_locks[bucket]);
+            spin_unlock(&ops->locks[bucket]);
             sock_release(sock->sock);
             kfree(sock);
             return other_sock; // exit with read lock held
         }
     }
     // Now actually insert.
-    hash_add_rcu(fetch_sockets, &sock->hnode, key);
-    spin_unlock(&fetch_sockets_locks[bucket]);
+    hlist_add_head_rcu(&sock->hnode, &ops->sockets[bucket]);
+    spin_unlock(&ops->locks[bucket]);
 
-    atomic_inc(&fetch_sockets_len[bucket]);
+    atomic_inc(&ops->len[bucket]);
 
     return sock;
 
@@ -264,50 +304,11 @@ out_err:
     return ERR_PTR(err);
 }
 
-static void fetch_complete(struct fetch_request* req) {
-    eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->err));
-    req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->err));
-
-    eggsfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->err));
-
-    put_pages_list(&req->pages);
-    kmem_cache_free(fetch_request_cachep, req);
-}
-
-static void fetch_complete_work(struct work_struct* work) {
-    fetch_complete(container_of(work, struct fetch_request, complete_work));
-}
-
-static void fetch_request_constructor(void* ptr) {
-    struct fetch_request* req = (struct fetch_request*)ptr;
-
-    INIT_LIST_HEAD(&req->pages);
-    INIT_WORK(&req->complete_work, fetch_complete_work);
-}
-
-int eggsfs_drop_fetch_block_sockets(void) {
-    int dropped = 0;
-    int bucket;
-    struct fetch_socket* sock;
-
-    rcu_read_lock();
-    hash_for_each_rcu(fetch_sockets, bucket, sock, hnode) {
-        dropped++;
-        // We put EAGAIN here so that the caller can restart the
-        // request if it wants to (since we didn't really encounter
-        // any error). We don't currently do this though.
-        atomic_cmpxchg(&sock->err, 0, -EAGAIN);
-        queue_work(eggsfs_wq, &sock->work);
-    }
-    rcu_read_unlock();
-
-    eggsfs_debug("dropped %d sockets", dropped);
-
-    return dropped;
-}
-
-// Can only be called from fetch_block_work! Otherwise it'll race with it.
-static void remove_fetch_socket(struct fetch_socket* socket) {
+// Can only be called from the socket work! Otherwise it'll race with it.
+static void remove_block_socket(
+    struct block_ops* ops,
+    struct block_socket* socket
+) {
     int err = atomic_read(&socket->err);
     BUG_ON(!err);
 
@@ -316,10 +317,10 @@ static void remove_fetch_socket(struct fetch_socket* socket) {
     // First, remove socket from hashmap. After we're done with this,
     // we know nobody's going to add stuff to the write queue.
     u64 key = block_socket_key(&socket->addr);
-    int bucket = hash_min(key, HASH_BITS(fetch_sockets));
-    spin_lock(&fetch_sockets_locks[bucket]);
+    int bucket = hash_min(key, BLOCK_SOCKET_BITS);
+    spin_lock(&ops->locks[bucket]);
     hash_del_rcu(&socket->hnode);
-    spin_unlock(&fetch_sockets_locks[bucket]);
+    spin_unlock(&ops->locks[bucket]);
     synchronize_rcu();
 
     // Then, change back the callbacks: this will also ensure that no
@@ -335,8 +336,8 @@ static void remove_fetch_socket(struct fetch_socket* socket) {
     // Note that we're the only one remaining, but we still
     // take locks for hygiene.
 
-    struct fetch_request* req;
-    struct fetch_request* tmp;
+    struct block_request* req;
+    struct block_request* tmp;
 
     struct list_head all_reqs;
     INIT_LIST_HEAD(&all_reqs);
@@ -358,7 +359,7 @@ static void remove_fetch_socket(struct fetch_socket* socket) {
     list_for_each_entry_safe(req, tmp, &all_reqs, list) {
         atomic_cmpxchg(&req->err, 0, err);
         eggsfs_debug("completing request because of a socket winddown");
-        fetch_complete(req); // no need to go through wq, we're in process context already
+        ops->complete(req); // no need to go through wq, we're in process context already
     }
 
     // Finally, kill the socket.
@@ -367,23 +368,24 @@ static void remove_fetch_socket(struct fetch_socket* socket) {
 
     // Adjust len, notify waiters
     smp_mb__before_atomic();
-    atomic_dec(&fetch_sockets_len[bucket]);
-    wake_up_all(&fetch_sockets_wqs[bucket]);
+    atomic_dec(&ops->len[bucket]);
+    wake_up_all(&ops->wqs[bucket]);
 }
 
 // This has three purposes:
 //
-// * Writing out fetch requests;
-// * If the socket is to be decommissioned, fail all the requests.
-void fetch_work(struct work_struct* work) {
-    struct fetch_socket* socket = container_of(work, struct fetch_socket, work);
-
+// * Writing out stuff to socket;
+// * If the socket is to be decommissioned, fail all the remaining requests.
+static void block_work(
+    struct block_ops* ops,
+    struct block_socket* socket
+) {
     eggsfs_debug("%pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
 
     // if we've failed, then we need to clean up the mess
     int err = atomic_read(&socket->err);
     if (err) {
-        remove_fetch_socket(socket);
+        remove_block_socket(ops, socket);
         return;
     }
 
@@ -391,58 +393,31 @@ void fetch_work(struct work_struct* work) {
 
     for (;;) {
         // Get request, if any
-        struct fetch_request* req;
+        struct block_request* req;
         spin_lock_bh(&socket->write_lock);
-        req = list_first_entry_or_null(&socket->write, struct fetch_request, list);
+        req = list_first_entry_or_null(&socket->write, struct block_request, list);
         spin_unlock_bh(&socket->write_lock);
-
-        char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE];
 
         // Check if we've got nothing to do
         if (req == NULL) { return; }
 
         // Can't be done already, we just got the req
-        BUG_ON(req->written_bytes == sizeof(req_msg_buf));
+        BUG_ON(req->left_to_write == 0);
 
-        // we're not done, fill in the req
-        char* req_msg = req_msg_buf;
-        put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
-        put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
-        *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK; req_msg += 1;
-        {
-            struct eggsfs_bincode_put_ctx ctx = {
-                .start = req_msg,
-                .cursor = req_msg,
-                .end = req_msg_buf + sizeof(req_msg_buf),
-            };
-            eggsfs_fetch_block_req_put_start(&ctx, start);
-            eggsfs_fetch_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
-            eggsfs_fetch_block_req_put_offset(&ctx, req_block_id, req_offset, req->offset);
-            eggsfs_fetch_block_req_put_count(&ctx, req_offset, req_count, req->count);
-            eggsfs_fetch_block_req_put_end(ctx, req_count, end);
-            BUG_ON(ctx.cursor != ctx.end);
-        }
-
-        // send message
-        struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
-        eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
-        struct kvec iov = {
-            .iov_base = req_msg_buf + req->written_bytes,
-            .iov_len = sizeof(req_msg_buf) - req->written_bytes,
-        };
-        int sent = kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
+        int sent = ops->write(socket, req);
         if (sent == -EAGAIN) { return; } // done for now, will be rescheduled by `sk_write_space`
         if (sent < 0) { 
             atomic_cmpxchg(&socket->err, 0, sent);
-            remove_fetch_socket(socket); // bail
+            remove_block_socket(ops, socket); // bail
             return;
         }
-        req->written_bytes += sent;
+        BUG_ON(sent > req->left_to_write);
+        req->left_to_write -= sent;
         if (sent > 0) {
             socket->timeout_start = get_jiffies_64();
         }
 
-        if (req->written_bytes == sizeof(req_msg_buf)) {
+        if (req->left_to_write == 0) {
             // we're done with this, move it to read list and keep going
             spin_lock_bh(&socket->write_lock);
             list_del(&req->list);
@@ -458,37 +433,291 @@ void fetch_work(struct work_struct* work) {
     }
 }
 
-static void fetch_block_state_check(struct sock* sk) {
-    struct fetch_socket* socket = sk->sk_user_data;
+static int block_receive(
+    int (*receive_single_req)(struct block_request* req, struct sk_buff* skb, unsigned int offset, size_t len),
+    read_descriptor_t* rd_desc,
+    struct sk_buff* skb,
+    unsigned int offset,
+    size_t len
+) {
+    struct block_socket* socket = rd_desc->arg.data;
 
-    if (sk->sk_state == TCP_ESTABLISHED) { return; } // the only good one
+    eggsfs_debug("%pI4:%d offset=%u len=%lu", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), offset, len);
 
-    // Right now we connect beforehand, so every change is trouble. Just
-    // kill the socket.
-    eggsfs_debug("socket state check triggered: %d, will fail reqs", sk->sk_state);
-    atomic_cmpxchg(&socket->err, 0, -ECONNABORTED); // TODO we could have nicer errors
-    queue_work(eggsfs_wq, &socket->work);
+    size_t len0 = len;
+
+    if (atomic_read(&socket->err)) {
+        // Socket is scuppered, exit immediately.
+        // Note that whoever sets the error first must also schedule the work to take care of
+        // it.
+        return len0;
+    }
+
+    socket->timeout_start = get_jiffies_64();
+
+    // eggsfs_info("enter sock=%p", socket);
+
+    // line up first req
+    struct block_request* req;
+    spin_lock_bh(&socket->read_lock);
+    req = list_first_entry_or_null(&socket->read, struct block_request, list);
+    spin_unlock_bh(&socket->read_lock);
+
+    for (;;) {
+        if (req == NULL) { break; }
+        int consumed = receive_single_req(req, skb, offset, len);
+        if (consumed < 0) {
+            // socket is scuppered, let the work handle this
+            atomic_cmpxchg(&socket->err, 0, consumed);
+            queue_work(eggsfs_wq, &socket->work);
+            return len0;
+        }
+        BUG_ON(consumed > req->left_to_read);
+        req->left_to_read -= consumed;
+        // eggsfs_info("sock=%p req=%p consumed=%d len=%llu offset=%u err=%d", socket, req, consumed, len, offset, req->err);
+        len -= consumed;
+        offset += consumed;
+        if (req->left_to_read == 0 || atomic_read(&req->err)) {
+            // this request is done
+            spin_lock_bh(&socket->read_lock);
+            list_del(&req->list);
+            queue_work(eggsfs_wq, &req->complete_work);
+            req = list_first_entry_or_null(&socket->read, struct block_request, list);
+            if (req == NULL) {
+                // Non-blockingly reset timeout if we're the last ones here
+                // (note that not resetting it in this case it's fine, the other
+                // critical section will update it anyway, and it wouldn't matter
+                // either way)
+                if (spin_trylock_bh(&socket->write_lock)) {
+                    socket->timeout_start = 0;
+                    spin_unlock_bh(&socket->write_lock);
+                }
+            }
+            spin_unlock_bh(&socket->read_lock);
+        } else {
+            break; // we're not done yet
+        }
+    }
+
+    // Intuitively we'd think that we always consume everything, but there's
+    // a time between sending the message and adding the req to the read list
+    // where we might have leftovers.
+    return len0 - len;
 }
 
-void fetch_state_change(struct sock* sk) {
+static void block_data_ready(
+    struct block_ops* ops,
+    struct sock* sk
+) {
     read_lock_bh(&sk->sk_callback_lock);
-    struct fetch_socket* socket = sk->sk_user_data;
-    void (*saved_state_change)(struct sock *) = socket->saved_state_change;
-    fetch_block_state_check(sk);
+    read_descriptor_t rd_desc;
+    // Taken from iscsi -- we set count to 1 because we want the network layer to
+    // hand us all the skbs that are available.
+    rd_desc.arg.data = sk->sk_user_data;
+    rd_desc.count = 1;
+    tcp_read_sock(sk, &rd_desc, ops->receive);
+    block_state_check(sk);
     read_unlock_bh(&sk->sk_callback_lock);
-
-    saved_state_change(sk);
 }
 
-void fetch_write_space(struct sock* sk) {
-    read_lock_bh(&sk->sk_callback_lock);
-    struct fetch_socket* socket = (struct fetch_socket*)sk->sk_user_data;
-    void (*old_write_space)(struct sock *) = socket->saved_write_space;
-    read_unlock_bh(&sk->sk_callback_lock);
+static int block_start(
+    struct block_ops* ops,
+    struct block_request* req,
+    struct eggsfs_block_service* bs,
+    u32 left_to_write,
+    u32 left_to_read
+) {
+    int err, i;
 
-    old_write_space(sk);
+    atomic_set(&req->err, 0);
 
-    queue_work(eggsfs_wq, &socket->work);
+    req->left_to_write = left_to_write;
+    req->left_to_read = left_to_read;
+
+    // As the very last thing, try to get the socket (will get RCU lock).
+    // Try both ips (if we have them) before giving up
+    int block_ip = WHICH_BLOCK_IP++;
+    struct sockaddr_in addr;
+    struct block_socket* sock;
+    for (i = 0; i < 1 + (bs->port2 != 0); i++, block_ip++) { // we might not have a second address
+        addr.sin_family = AF_INET;
+        if (bs->port2 == 0 || block_ip&1) {
+            addr.sin_addr.s_addr = htonl(bs->ip1);
+            addr.sin_port = htons(bs->port1);
+        } else {
+            addr.sin_addr.s_addr = htonl(bs->ip2);
+            addr.sin_port = htons(bs->port2);
+        }
+
+        sock = get_block_socket(ops, &addr);
+        if (!IS_ERR(sock)) {
+            goto sock_found;
+        } else {
+            err = PTR_ERR(sock);
+        }
+    }
+    if (err < 0) { goto out_err; }
+sock_found:
+    err = 0;
+
+    // We have a socket, and we also have the RCU lock. We need to hurry
+    // and place the request in the queue, and schedule work. Everything
+    // in the RCU section, since otherwise the socket might be cleared
+    // under our feet.
+    spin_lock_bh(&sock->write_lock);
+    list_add_tail(&req->list, &sock->write);
+    sock->timeout_start = get_jiffies_64();
+    spin_unlock_bh(&sock->write_lock);
+
+    queue_work(eggsfs_wq, &sock->work);
+
+    // we're done
+    rcu_read_unlock();
+
+    return 0;
+
+out_err:
+    eggsfs_info("couldn't start block request, err=%d", err);
+    return err;
+}
+
+// Periodically checks all sockets and schedules the timed out ones for deletion
+static void timeout_sockets(struct block_ops* ops) {
+    int bucket;
+    struct block_socket* sock;
+    u64 now = get_jiffies_64();
+
+    rcu_read_lock();
+    hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        if (sock->timeout_start == 0) { continue; }
+        u64 dt = now - sock->timeout_start;
+        if (dt > *ops->timeout_jiffies) {
+            eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
+            atomic_cmpxchg(&sock->err, 0, -ETIMEDOUT);
+            queue_work(eggsfs_wq, &sock->work);
+        }
+    }
+    rcu_read_unlock();
+}
+
+static int drop_sockets(struct block_ops* ops) {
+    int dropped = 0;
+    int bucket;
+    struct block_socket* sock;
+
+    rcu_read_lock();
+    hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        dropped++;
+        // We put EAGAIN here so that the caller can restart the
+        // request if it wants to (since we didn't really encounter
+        // any error). We don't currently do this though.
+        atomic_cmpxchg(&sock->err, 0, -EAGAIN);
+        queue_work(eggsfs_wq, &sock->work);
+    }
+    rcu_read_unlock();
+
+    eggsfs_debug("dropped %d sockets", dropped);
+
+    return dropped;
+}
+
+// Fetch
+// --------------------------------------------------------------------
+
+struct fetch_request {
+    struct block_request breq;
+
+    void (*callback)(void* data, u64 block_id, struct list_head* pages, int err);
+    void *data;
+    struct list_head pages;
+
+    // Req info
+    u64 block_service_id;
+    u64 block_id;
+    u32 offset;
+    u32 count;
+
+    // The cursor inside the current page.
+    u16 page_offset;
+    // How much we've read of the header.
+    u8 header_read;
+    static_assert(EGGSFS_FETCH_BLOCK_RESP_SIZE == 0);
+    union {
+        char buf[EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2];
+        struct {
+            __le32 protocol;
+            u8 kind;
+            __le16 error;
+        } __attribute__((packed)) data;
+    } header;
+};
+
+#define get_fetch_request(req) container_of(req, struct fetch_request, breq)
+
+static void fetch_complete(struct block_request* breq) {
+    struct fetch_request* req = get_fetch_request(breq);
+    eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
+    req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->breq.err));
+
+    eggsfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
+
+    put_pages_list(&req->pages);
+    kmem_cache_free(fetch_request_cachep, req);
+}
+
+static void fetch_complete_work(struct work_struct* work) {
+    fetch_complete(container_of(work, struct block_request, complete_work));
+}
+
+static void fetch_request_constructor(void* ptr) {
+    struct fetch_request* req = (struct fetch_request*)ptr;
+
+    INIT_LIST_HEAD(&req->pages);
+    INIT_WORK(&req->breq.complete_work, fetch_complete_work);
+}
+
+int eggsfs_drop_fetch_block_sockets(void) {
+    return drop_sockets(&fetch_ops);
+}
+
+static int fetch_write(struct block_socket* socket, struct block_request* breq) {
+    struct fetch_request* req = get_fetch_request(breq);
+
+    char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE];
+    BUG_ON(breq->left_to_write > sizeof(req_msg_buf));
+
+    // we're not done, fill in the req
+    char* req_msg = req_msg_buf;
+    put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
+    put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
+    *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK; req_msg += 1;
+    {
+        struct eggsfs_bincode_put_ctx ctx = {
+            .start = req_msg,
+            .cursor = req_msg,
+            .end = req_msg_buf + sizeof(req_msg_buf),
+        };
+        eggsfs_fetch_block_req_put_start(&ctx, start);
+        eggsfs_fetch_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
+        eggsfs_fetch_block_req_put_offset(&ctx, req_block_id, req_offset, req->offset);
+        eggsfs_fetch_block_req_put_count(&ctx, req_offset, req_count, req->count);
+        eggsfs_fetch_block_req_put_end(ctx, req_count, end);
+        BUG_ON(ctx.cursor != ctx.end);
+    }
+
+    // send message
+    struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
+    eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
+    struct kvec iov = {
+        .iov_base = req_msg_buf + (sizeof(req_msg_buf) - breq->left_to_write),
+        .iov_len = breq->left_to_write,
+    };
+    return kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
+}
+
+static void fetch_work(struct work_struct* work) {
+    struct block_socket* socket = container_of(work, struct block_socket, work);
+    block_work(&fetch_ops, socket);
 }
 
 // Returns a negative result if the socket has to be considered corrupted.
@@ -497,11 +726,14 @@ void fetch_write_space(struct sock* sk) {
 // error occurs `req->complete.err` will be filled in also, but it's expected that the
 // caller stops operating on this socket.
 static int fetch_receive_single_req(
-    struct fetch_request* req,
+    struct block_request* breq,
     struct sk_buff* skb,
     unsigned int offset, size_t len0
 ) {
+    struct fetch_request* req = get_fetch_request(breq);
     size_t len = len0;
+
+    BUG_ON(req->breq.left_to_read == 0);
 
 #define HEADER_COPY(buf, count) ({ \
         int read = count > 0 ? eggsfs_skb_copy(buf, skb, offset, count) : 0; \
@@ -532,7 +764,7 @@ static int fetch_receive_single_req(
         error_left -= read;
         if (error_left > 0) { return len0-len; }
         // we got an error "nicely", the socket can carry on living.
-        atomic_cmpxchg(&req->err, 0, eggsfs_error_to_linux(le16_to_cpu(req->header.data.error)));
+        atomic_cmpxchg(&req->breq.err, 0, eggsfs_error_to_linux(le16_to_cpu(req->header.data.error)));
         return len0-len;
     }
 
@@ -540,25 +772,23 @@ static int fetch_receive_single_req(
 
     // Actual data copy
 
-    BUG_ON(req->read_bytes_left == 0);
-
     struct page* page = list_first_entry(&req->pages, struct page, lru);
     BUG_ON(!page);
     char* page_ptr = kmap_atomic(page);
 
     struct skb_seq_state seq;
-    u32 read_len = min(req->read_bytes_left, (u32)len);
+    u32 read_len = min(req->breq.left_to_read, (u32)len);
     skb_prepare_seq_read(skb, offset, offset + read_len, &seq);
 
     u32 block_bytes_read = 0;
-    while (block_bytes_read < req->read_bytes_left) {
+    while (block_bytes_read < req->breq.left_to_read) {
         const u8* data;
         u32 avail = skb_seq_read(block_bytes_read, &data, &seq);
         if (avail == 0) { break; }
         avail = min(avail, read_len - block_bytes_read); // avail can exceed the len upper bound
 
         while (avail) {
-            u32 this_len = min3(avail, (u32)PAGE_SIZE - req->page_offset, req->read_bytes_left - block_bytes_read);
+            u32 this_len = min3(avail, (u32)PAGE_SIZE - req->page_offset, req->breq.left_to_read - block_bytes_read);
             memcpy(page_ptr + req->page_offset, data, this_len);
             data += this_len;
             req->page_offset += this_len;
@@ -580,10 +810,10 @@ static int fetch_receive_single_req(
     // We might have not terminated with avail == 0, but because we're done with this request
     skb_abort_seq_read(&seq);
 
-    req->read_bytes_left -= block_bytes_read;
+    BUG_ON(block_bytes_read > req->breq.left_to_read);
 
     // The last page is partially filled, zero it and return to first page
-    if (!req->read_bytes_left && req->page_offset) {
+    if (!req->breq.left_to_read && req->page_offset) {
         memset(page_ptr + req->page_offset, 0, PAGE_SIZE - req->page_offset);
         list_rotate_left(&req->pages);
         req->page_offset = 0;
@@ -595,79 +825,11 @@ static int fetch_receive_single_req(
 }
 
 static int fetch_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
-    struct fetch_socket* socket = rd_desc->arg.data;
-
-    eggsfs_debug("%pI4:%d offset=%u len=%lu", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), offset, len);
-
-    size_t len0 = len;
-
-    if (atomic_read(&socket->err)) {
-        // Socket is scuppered, exit immediately.
-        // Note that whoever sets the error first must also schedule the work to take care of
-        // it.
-        return len0;
-    }
-
-    socket->timeout_start = get_jiffies_64();
-
-    // eggsfs_info("enter sock=%p", socket);
-
-    // line up first req
-    struct fetch_request* req;
-    spin_lock_bh(&socket->read_lock);
-    req = list_first_entry_or_null(&socket->read, struct fetch_request, list);
-    spin_unlock_bh(&socket->read_lock);
-
-    for (;;) {
-        if (req == NULL) { break; }
-        int consumed = fetch_receive_single_req(req, skb, offset, len);
-        if (consumed < 0) {
-            // socket is scuppered, let the work handle this
-            atomic_cmpxchg(&socket->err, 0, consumed);
-            queue_work(eggsfs_wq, &socket->work);
-            return len0;
-        }
-        // eggsfs_info("sock=%p req=%p consumed=%d len=%llu offset=%u err=%d", socket, req, consumed, len, offset, req->err);
-        len -= consumed;
-        offset += consumed;
-        if (req->read_bytes_left == 0 || atomic_read(&req->err)) {
-            // this request is done
-            spin_lock_bh(&socket->read_lock);
-            list_del(&req->list);
-            queue_work(eggsfs_wq, &req->complete_work);
-            req = list_first_entry_or_null(&socket->read, struct fetch_request, list);
-            if (req == NULL) {
-                // Non-blockingly reset timeout if we're the last ones here
-                // (note that not resetting it in this case it's fine, the other
-                // critical section will update it anyway, and it wouldn't matter
-                // either way)
-                if (spin_trylock_bh(&socket->write_lock)) {
-                    socket->timeout_start = 0;
-                    spin_unlock_bh(&socket->write_lock);
-                }
-            }
-            spin_unlock_bh(&socket->read_lock);
-        } else {
-            break; // we're not done yet
-        }
-    }
-
-    // Intuitively we'd think that we always consume everything, but there's
-    // a time between sending the message and adding the req to the read list
-    // where we might have leftovers.
-    return len0 - len;
+    return block_receive(fetch_receive_single_req, rd_desc, skb, offset, len);
 }
 
-void fetch_data_ready(struct sock* sk) {
-    read_lock_bh(&sk->sk_callback_lock);
-    read_descriptor_t rd_desc;
-    // Taken from iscsi -- we set count to 1 because we want the network layer to
-    // hand us all the skbs that are available.
-    rd_desc.arg.data = sk->sk_user_data;
-    rd_desc.count = 1;
-    tcp_read_sock(sk, &rd_desc, fetch_receive);
-    fetch_block_state_check(sk);
-    read_unlock_bh(&sk->sk_callback_lock);
+static void fetch_data_ready(struct sock* sk) {
+    block_data_ready(&fetch_ops, sk);
 }
 
 int eggsfs_fetch_block(
@@ -691,7 +853,12 @@ int eggsfs_fetch_block(
 
     req->callback = callback;
     req->data = data;
-    atomic_set(&req->err, 0);
+    req->block_service_id = bs->id;
+    req->block_id = block_id;
+    req->offset = offset;
+    req->count = count;
+    req->page_offset = 0;
+    req->header_read = 0;
 
     BUG_ON(!list_empty(&req->pages));
     for (i = 0; i < (count + PAGE_SIZE - 1)/PAGE_SIZE; i++) {
@@ -700,56 +867,16 @@ int eggsfs_fetch_block(
         list_add_tail(&page->lru, &req->pages);
     }
 
-    req->block_service_id = bs->id;
-    req->block_id = block_id;
-    req->offset = offset;
-    req->count = count;
-
-    req->written_bytes = 0;
-
-    req->read_bytes_left = count;
-    req->page_offset = 0;
-    req->header_read = 0;
-
-    // As the very last thing, try to get the socket (will get RCU lock).
-    // Try both ips (if we have them) before giving up
-    int block_ip = WHICH_BLOCK_IP++;
-    struct sockaddr_in addr;
-    struct fetch_socket* sock;
-    for (i = 0; i < 1 + (bs->port2 != 0); i++, block_ip++) { // we might not have a second address
-        addr.sin_family = AF_INET;
-        if (bs->port2 == 0 || block_ip&1) {
-            addr.sin_addr.s_addr = htonl(bs->ip1);
-            addr.sin_port = htons(bs->port1);
-        } else {
-            addr.sin_addr.s_addr = htonl(bs->ip2);
-            addr.sin_port = htons(bs->port2);
-        }
-
-        sock = get_fetch_block_socket(&addr);
-        if (!IS_ERR(sock)) {
-            goto sock_found;
-        } else {
-            err = PTR_ERR(sock);
-        }
+    err = block_start(
+        &fetch_ops,
+        &req->breq,
+        bs,
+        EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE,
+        EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_FETCH_BLOCK_RESP_SIZE + count
+    );
+    if (err) {
+        goto out_err_pages;
     }
-    if (err < 0) { goto out_err_pages; }
-sock_found:
-    err = 0;
-
-    // We have a socket, and we also have the RCU lock. We need to hurry
-    // and place the request in the queue, and schedule work. Everything
-    // in the RCU section, since otherwise the socket might be cleared
-    // under our feet.
-    spin_lock_bh(&sock->write_lock);
-    list_add_tail(&req->list, &sock->write);
-    sock->timeout_start = get_jiffies_64();
-    spin_unlock_bh(&sock->write_lock);
-
-    queue_work(eggsfs_wq, &sock->work);
-
-    // we're done
-    rcu_read_unlock();
 
     return 0;
 
@@ -1227,36 +1354,16 @@ out_err:
 // --------------------------------------------------------------------
 
 // Periodically checks all sockets and schedules the timed out ones for deletion
-void timeout_sockets(struct work_struct* w) {
-    int bucket;
-    struct fetch_socket* sock;
-    u64 now = get_jiffies_64();
-
-    rcu_read_lock();
-    hash_for_each_rcu(fetch_sockets, bucket, sock, hnode) {
-        if (sock->timeout_start == 0) { continue; }
-        // this loop is relatively long, this could happen
-        if (unlikely(sock->timeout_start > now)) {
-            eggsfs_info("timeout start apparently in the future, skipping (%llums > %llums)", jiffies64_to_msecs(sock->timeout_start), now);
-            continue;
-        }
-        u64 dt = now - sock->timeout_start;
-        if (dt > eggsfs_fetch_block_timeout_jiffies) {
-            eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(eggsfs_fetch_block_timeout_jiffies));
-            atomic_cmpxchg(&sock->err, 0, -ETIMEDOUT);
-            queue_work(eggsfs_wq, &sock->work);
-        }
-    }
-    rcu_read_unlock();
-
-    queue_delayed_work(eggsfs_wq, &timeout_work, eggsfs_fetch_block_timeout_jiffies);
+void do_timeout_sockets(struct work_struct* w) {
+    timeout_sockets(&fetch_ops);
+    queue_delayed_work(eggsfs_wq, &timeout_work, *fetch_ops.timeout_jiffies);
 }
 
 // init/exit
 // --------------------------------------------------------------------
 
 int __init eggsfs_block_init(void) {
-    int err, i;
+    int err;
     fetch_request_cachep = kmem_cache_create(
         "eggsfs_fetch_block_request_cache",
         sizeof(struct fetch_request),
@@ -1275,11 +1382,9 @@ int __init eggsfs_block_init(void) {
     );
     if (!write_request_cachep) { err = -ENOMEM; goto out_fetch_request; }
 
+    block_ops_init(&fetch_ops);
+
     queue_work(eggsfs_wq, &timeout_work.work);
-    for (i = 0; i < BLOCK_SOCKET_BUCKETS; i++) {
-        atomic_set(&fetch_sockets_len[i], 0);
-        init_waitqueue_head(&fetch_sockets_wqs[i]);
-    }
 
     return 0;
 
@@ -1302,20 +1407,7 @@ void __cold eggsfs_block_exit(void) {
     // by erroring out each socket and waiting
     // for all sockets to be released.
 
-    // error out all the sockets
-    struct fetch_socket* sock;
-    int bucket;
-    rcu_read_lock();
-    hash_for_each_rcu(fetch_sockets, bucket, sock, hnode) {
-        atomic_cmpxchg(&sock->err, 0, -ECONNABORTED);
-        queue_work(eggsfs_wq, &sock->work);
-    }
-    rcu_read_unlock();
-
-    // wait for all of them to be freed by work
-    for (bucket = 0; bucket < BLOCK_SOCKET_BUCKETS; bucket++) {
-        wait_event(fetch_sockets_wqs[bucket], atomic_read(&fetch_sockets_len[bucket]) == 0);
-    }
+    block_ops_exit(&fetch_ops);
 
     // clear caches
     kmem_cache_destroy(fetch_request_cachep);

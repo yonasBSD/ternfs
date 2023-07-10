@@ -128,7 +128,7 @@ again: // progress: whoever wins the lock won't try again
         if (err) { err = eggsfs_error_to_linux(err); goto out; }
         else {
             WRITE_ONCE(enode->mtime, mtime);
-            enode->inode.i_mtime.tv_sec = mtime / 1000000000 + 1577836800;
+            enode->inode.i_mtime.tv_sec = mtime / 1000000000;
             enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
         }
 

@@ -2057,6 +2057,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    // the creation time of the delete edge is always `time`.
     EggsError _softUnlinkCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, InodeId dirId, const BincodeBytes& name, EggsTime creationTime, InodeId targetId, bool owned) {
         // compute hash
         uint64_t nameHash;
@@ -2116,7 +2117,10 @@ struct ShardDBImpl {
     }
 
     EggsError _applySoftUnlinkFile(EggsTime time, rocksdb::WriteBatch& batch, const SoftUnlinkFileEntry& entry, SoftUnlinkFileResp& resp) {
-        return _softUnlinkCurrentEdge(time, batch, entry.ownerId, entry.name, entry.creationTime, entry.fileId, true);
+        EggsError err = _softUnlinkCurrentEdge(time, batch, entry.ownerId, entry.name, entry.creationTime, entry.fileId, true);
+        if (err != NO_ERROR) { return err; }
+        resp.deleteCreationTime = time;
+        return NO_ERROR;
     }
 
     EggsError _applyCreateDirectoryInode(EggsTime time, rocksdb::WriteBatch& batch, const CreateDirectoryInodeEntry& entry, CreateDirectoryInodeResp& resp) {

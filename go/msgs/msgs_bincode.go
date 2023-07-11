@@ -1182,10 +1182,16 @@ func (v *SoftUnlinkFileResp) ShardResponseKind() ShardMessageKind {
 }
 
 func (v *SoftUnlinkFileResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.DeleteCreationTime)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *SoftUnlinkFileResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.DeleteCreationTime)); err != nil {
+		return err
+	}
 	return nil
 }
 

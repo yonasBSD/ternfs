@@ -542,7 +542,9 @@ type SoftUnlinkFileReq struct {
 	CreationTime EggsTime
 }
 
-type SoftUnlinkFileResp struct{}
+type SoftUnlinkFileResp struct {
+	DeleteCreationTime EggsTime // the creation time of the newly created delete edge
+}
 
 // Starts from the first span with byte offset <= than the provided
 // ByteOffset (this is so that you can just start reading a file

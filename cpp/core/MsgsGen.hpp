@@ -1225,12 +1225,14 @@ struct SoftUnlinkFileReq {
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileReq& x);
 
 struct SoftUnlinkFileResp {
+    EggsTime deleteCreationTime;
 
-    static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr uint16_t STATIC_SIZE = 8; // deleteCreationTime
 
     SoftUnlinkFileResp() { clear(); }
     uint16_t packedSize() const {
         uint16_t _size = 0;
+        _size += 8; // deleteCreationTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;

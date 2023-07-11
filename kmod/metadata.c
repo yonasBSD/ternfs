@@ -316,7 +316,7 @@ static bool check_new_edge_after_rename(
     return true;
 }
 
-int eggsfs_shard_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time) {
+int eggsfs_shard_soft_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time, u64* delete_creation_time) {
     eggsfs_debug("unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
     struct sk_buff* skb;
     u32 attempts;
@@ -337,7 +337,8 @@ int eggsfs_shard_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, con
     {
         PREPARE_SHARD_RESP_CTX();
         eggsfs_soft_unlink_file_resp_get_start(&ctx, start);
-        eggsfs_soft_unlink_file_resp_get_end(&ctx, start, end);
+        eggsfs_soft_unlink_file_resp_get_delete_creation_time(&ctx, start, delete_creation_time_resp);
+        eggsfs_soft_unlink_file_resp_get_end(&ctx, delete_creation_time_resp, end);
         eggsfs_soft_unlink_file_resp_get_finish(&ctx, end);
         if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
             // See commentary in shardreq.go
@@ -346,7 +347,9 @@ int eggsfs_shard_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file, con
             }
         }
         FINISH_RESP();
+        *delete_creation_time = delete_creation_time_resp.x;
     }
+
 
     return 0;
 }
@@ -1082,15 +1085,6 @@ int eggsfs_cdc_rename_file(
     }
 
     return 0;
-}
-
-void eggsfs_shard_add_span_initiate_async(struct eggsfs_fs_info* info, struct eggsfs_shard_add_span_initiate_async_request* request, u64 enode, u64 cookie, u64 byte_offset, u8 storage_class, u8 parity, u32 crc32, u64 size, struct eggsfs_shard_add_span_initiate_new_block* blocks, u16 n_blocks) {
-    BUG_ON(1);
-    return;
-}
-void eggsfs_shard_add_span_certify_async(struct eggsfs_fs_info* info, struct eggsfs_shard_add_span_certify_async_request* request, u64 enode, u64 cookie, u64 offset, struct eggsfs_shard_add_span_certify_block_proof* proofs, u16 n_blocks) {
-    BUG_ON(1);
-    return;
 }
 
 void __init eggsfs_shard_init(void) {

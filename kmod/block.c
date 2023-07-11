@@ -377,6 +377,9 @@ static void remove_block_socket(
         ops->complete(req); // no need to go through wq, we're in process context already
     }
 
+    // cancel any remaining work
+    cancel_work_sync(&socket->work);
+
     // Finally, kill the socket.
     sock_release(socket->sock);
     kfree(socket);
@@ -636,7 +639,7 @@ static int drop_sockets(struct block_ops* ops) {
     }
     rcu_read_unlock();
 
-    eggsfs_debug("dropped %d sockets", dropped);
+    eggsfs_info("dropped %d sockets", dropped);
 
     return dropped;
 }

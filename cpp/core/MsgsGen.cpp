@@ -1486,16 +1486,20 @@ std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileReq& x) {
 }
 
 void SoftUnlinkFileResp::pack(BincodeBuf& buf) const {
+    deleteCreationTime.pack(buf);
 }
 void SoftUnlinkFileResp::unpack(BincodeBuf& buf) {
+    deleteCreationTime.unpack(buf);
 }
 void SoftUnlinkFileResp::clear() {
+    deleteCreationTime = EggsTime();
 }
 bool SoftUnlinkFileResp::operator==(const SoftUnlinkFileResp& rhs) const {
+    if ((EggsTime)this->deleteCreationTime != (EggsTime)rhs.deleteCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileResp& x) {
-    out << "SoftUnlinkFileResp(" << ")";
+    out << "SoftUnlinkFileResp(" << "DeleteCreationTime=" << x.deleteCreationTime << ")";
     return out;
 }
 

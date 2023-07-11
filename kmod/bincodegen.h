@@ -3386,13 +3386,28 @@ static inline void _eggsfs_soft_unlink_file_req_put_creation_time(struct eggsfs_
     { struct eggsfs_soft_unlink_file_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_soft_unlink_file_req_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_SOFT_UNLINK_FILE_RESP_SIZE 0
+#define EGGSFS_SOFT_UNLINK_FILE_RESP_SIZE 8
 struct eggsfs_soft_unlink_file_resp_start;
 #define eggsfs_soft_unlink_file_resp_get_start(ctx, start) struct eggsfs_soft_unlink_file_resp_start* start = NULL
 
+struct eggsfs_soft_unlink_file_resp_delete_creation_time { u64 x; };
+static inline void _eggsfs_soft_unlink_file_resp_get_delete_creation_time(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_soft_unlink_file_resp_start** prev, struct eggsfs_soft_unlink_file_resp_delete_creation_time* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_soft_unlink_file_resp_get_delete_creation_time(ctx, prev, next) \
+    struct eggsfs_soft_unlink_file_resp_delete_creation_time next; \
+    _eggsfs_soft_unlink_file_resp_get_delete_creation_time(ctx, &(prev), &(next))
+
 struct eggsfs_soft_unlink_file_resp_end;
 #define eggsfs_soft_unlink_file_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_soft_unlink_file_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_soft_unlink_file_resp_delete_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_soft_unlink_file_resp_end* next = NULL
 
 static inline void eggsfs_soft_unlink_file_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_soft_unlink_file_resp_end* end) {
@@ -3403,8 +3418,18 @@ static inline void eggsfs_soft_unlink_file_resp_get_finish(struct eggsfs_bincode
 
 #define eggsfs_soft_unlink_file_resp_put_start(ctx, start) struct eggsfs_soft_unlink_file_resp_start* start = NULL
 
+static inline void _eggsfs_soft_unlink_file_resp_put_delete_creation_time(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_soft_unlink_file_resp_start** prev, struct eggsfs_soft_unlink_file_resp_delete_creation_time* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_soft_unlink_file_resp_put_delete_creation_time(ctx, prev, next, x) \
+    struct eggsfs_soft_unlink_file_resp_delete_creation_time next; \
+    _eggsfs_soft_unlink_file_resp_put_delete_creation_time(ctx, &(prev), &(next), x)
+
 #define eggsfs_soft_unlink_file_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_soft_unlink_file_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    { struct eggsfs_soft_unlink_file_resp_delete_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_soft_unlink_file_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FILE_SPANS_REQ_SIZE 22

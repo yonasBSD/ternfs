@@ -778,6 +778,10 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
         goto out_early;
     }
 
+    // if we've errored out already, just exit
+    err = atomic_read(&enode->file.transient_err);
+    if (err < 0) { goto out; }
+
     // If the owner doesn't have an mm anymore, it means that the file
     // is being torn down after the process has been terminated. In that case
     // we shouldn't even link the file.
@@ -813,19 +817,30 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     enode->file.status = EGGSFS_FILE_STATUS_READING;
 
 out:
-    if (err && err != -EAGAIN) {
+    if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    // Put spans, if any
-    if (err != -EAGAIN) {
-        if (enode->file.writing_span != NULL) {
-            put_transient_span(enode->file.writing_span);
-        }
-        enode->file.writing_span = NULL;
+    // Put span, if any
+    if (enode->file.writing_span != NULL) {
+        put_transient_span(enode->file.writing_span);
     }
+    enode->file.writing_span = NULL;
+    // unlock
+    inode_unlock(&enode->inode);
+    // wait for all in flight requests to be done, this will mean that we will
+    // be able to unmount safely
+    eggsfs_wait_in_flight(enode);
+    // now drop MM (otherwise the transient span might access it)
+    inode_lock(&enode->inode);
+    if (enode->file.mm) {
+        mmdrop(enode->file.mm);
+    }
+    enode->file.mm = NULL;
+    inode_unlock(&enode->inode);
+    return err;
+
 out_early:
     inode_unlock(&enode->inode);
-    eggsfs_wait_in_flight(enode);
     return err;
 }
 

@@ -346,14 +346,7 @@ func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats
 	return nil
 }
 
-func CollectDirectories(log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId) error {
-	log.Info("starting to collect directories in shard %v", shid)
-	client, err := NewClient(log, shuckleAddress, 1)
-	if err != nil {
-		return err
-	}
-	client.SetCounters(counters)
-	defer client.Close()
+func CollectDirectories(log *Logger, shuckleAddress string, client *Client, shid msgs.ShardId) error {
 	stats := CollectStats{}
 	if err := collectDirectoriesInternal(log, client, &stats, shid); err != nil {
 		return err

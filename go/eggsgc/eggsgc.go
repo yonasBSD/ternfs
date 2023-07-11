@@ -106,8 +106,14 @@ func main() {
 		managedRoutines.Start(
 			fmt.Sprintf("GC %v", shard),
 			func() {
+				client, err := lib.NewClient(log, *shuckleAddress, 1)
+				if err != nil {
+					log.RaiseAlert(err)
+				}
+				client.SetCounters(counters)
+				defer client.Close()
 				for {
-					if err := lib.CollectDirectories(log, *shuckleAddress, counters, shard); err != nil {
+					if err := lib.CollectDirectories(log, *shuckleAddress, client, shard); err != nil {
 						log.RaiseAlert(fmt.Errorf("could not collect directories: %v", err))
 					}
 					if err := lib.DestructFiles(log, *shuckleAddress, counters, shard); err != nil {

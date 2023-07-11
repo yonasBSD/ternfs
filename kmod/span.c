@@ -1302,8 +1302,8 @@ out_shrinker:
 
 void eggsfs_span_exit(void) {
     eggsfs_debug("span exit");
-    kmem_cache_destroy(eggsfs_fetch_stripe_cachep);
-    kmem_cache_destroy(eggsfs_inline_span_cachep);
-    kmem_cache_destroy(eggsfs_block_span_cachep);
     unregister_shrinker(&eggsfs_span_shrinker);
+    kmem_cache_destroy(eggsfs_block_span_cachep);
+    kmem_cache_destroy(eggsfs_inline_span_cachep);
+    kmem_cache_destroy(eggsfs_fetch_stripe_cachep);
 }

@@ -160,7 +160,10 @@ func main() {
 	shardReqKind := shardReqCmd.String("kind", "", "")
 	shardReqReq := shardReqCmd.String("req", "", "Request body, in JSON")
 	shardReqRun := func() {
-		req, resp := msgs.MkShardMessage(*shardReqKind)
+		req, resp, err := msgs.MkShardMessage(*shardReqKind)
+		if err != nil {
+			panic(err)
+		}
 		if err := json.Unmarshal([]byte(*shardReqReq), &req); err != nil {
 			panic(fmt.Errorf("could not decode shard req: %w", err))
 		}
@@ -189,7 +192,10 @@ func main() {
 	cdcReqKind := cdcReqCmd.String("kind", "", "")
 	cdcReqReq := cdcReqCmd.String("req", "", "Request body, in JSON")
 	cdcReqRun := func() {
-		req, resp := msgs.MkCDCMessage(*cdcReqKind)
+		req, resp, err := msgs.MkCDCMessage(*cdcReqKind)
+		if err != nil {
+			panic(err)
+		}
 		if err := json.Unmarshal([]byte(*cdcReqReq), &req); err != nil {
 			panic(fmt.Errorf("could not decode cdc req: %w", err))
 		}

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"log"
 	"mime"
 	"net"
@@ -161,7 +163,7 @@ func newState(db *sql.DB) *state {
 	}
 }
 
-func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
+func handleAllBlockServicesReq(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
 	blockServices, err := s.blockServices()
 	if err != nil {
@@ -179,7 +181,7 @@ func handleAllBlockServicesReq(ll *lib.Logger, s *state, w io.Writer, req *msgs.
 	return &resp, nil
 }
 
-func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
+func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
 	if len(req.BlockServices) == 0 {
 		return &msgs.RegisterBlockServicesResp{}, nil
 	}
@@ -242,7 +244,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, w io.Writer, req *msg
 	return &msgs.RegisterBlockServicesResp{}, nil
 }
 
-func handleSetBlockServiceFlags(ll *lib.Logger, s *state, w io.Writer, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
+func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -267,7 +269,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, w io.Writer, req *msgs
 	return &msgs.SetBlockServiceFlagsResp{}, nil
 }
 
-func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) (*msgs.ShardsResp, error) {
+func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsResp, error) {
 	resp := msgs.ShardsResp{}
 
 	shards, err := s.shards()
@@ -280,7 +282,7 @@ func handleShards(ll *lib.Logger, s *state, w io.Writer, req *msgs.ShardsReq) (*
 	return &resp, nil
 }
 
-func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
+func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -297,7 +299,7 @@ func handleRegisterShard(ll *lib.Logger, s *state, w io.Writer, req *msgs.Regist
 	return &msgs.RegisterShardResp{}, err
 }
 
-func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) (*msgs.CdcResp, error) {
+func handleCdcReq(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -315,7 +317,7 @@ func handleCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.CdcReq) (*ms
 	return &resp, nil
 }
 
-func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
+func handleRegisterCdcReq(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -335,7 +337,7 @@ func handleRegisterCdcReq(log *lib.Logger, s *state, w io.Writer, req *msgs.Regi
 	return &msgs.RegisterCdcResp{}, nil
 }
 
-func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) (*msgs.InfoResp, error) {
+func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
 	resp := msgs.InfoResp{}
 
 	// TODO remove decommissioned block services, probably.
@@ -358,50 +360,36 @@ func handleInfoReq(log *lib.Logger, s *state, w io.Writer, req *msgs.InfoReq) (*
 	return &resp, nil
 }
 
-func handleRequestParsed(log *lib.Logger, s *state, conn *net.TCPConn, req msgs.ShuckleRequest) {
+func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
 		s.counters[int(req.ShuckleRequestKind())].Add(time.Since(t0))
 	}()
+	log.Debug("handling request %T %+v", req, req)
 	var err error
-	log.Debug("handling request %T %+v from %s", req, req, conn.RemoteAddr())
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
 	case *msgs.RegisterBlockServicesReq:
-		resp, err = handleRegisterBlockServices(log, s, conn, whichReq)
+		resp, err = handleRegisterBlockServices(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
-		resp, err = handleSetBlockServiceFlags(log, s, conn, whichReq)
+		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
 	case *msgs.ShardsReq:
-		resp, err = handleShards(log, s, conn, whichReq)
+		resp, err = handleShards(log, s, whichReq)
 	case *msgs.RegisterShardReq:
-		resp, err = handleRegisterShard(log, s, conn, whichReq)
+		resp, err = handleRegisterShard(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
-		resp, err = handleAllBlockServicesReq(log, s, conn, whichReq)
+		resp, err = handleAllBlockServicesReq(log, s, whichReq)
 	case *msgs.CdcReq:
-		resp, err = handleCdcReq(log, s, conn, whichReq)
+		resp, err = handleCdcReq(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
-		resp, err = handleRegisterCdcReq(log, s, conn, whichReq)
+		resp, err = handleRegisterCdcReq(log, s, whichReq)
 	case *msgs.InfoReq:
-		resp, err = handleInfoReq(log, s, conn, whichReq)
+		resp, err = handleInfoReq(log, s, whichReq)
 	default:
-		log.RaiseAlert(fmt.Errorf("bad req type %T from %s", req, conn.RemoteAddr()))
+		err = fmt.Errorf("bad req type %T", req)
 	}
 
-	if err != nil {
-		log.RaiseAlert(fmt.Errorf("error processing request %+v from %s", req, conn.RemoteAddr()))
-		eggsErr, ok := err.(msgs.ErrCode)
-		if !ok {
-			eggsErr = msgs.INTERNAL_ERROR
-		}
-		if err := lib.WriteShuckleResponseError(log, conn, eggsErr); err != nil {
-			log.RaiseAlert(fmt.Errorf("could not send error: %w", err))
-		}
-	} else {
-		log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
-		if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
-			log.RaiseAlert(fmt.Errorf("could not send response %T to %s: %w", resp, conn.RemoteAddr(), err))
-		}
-	}
+	return resp, err
 }
 
 func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
@@ -416,7 +404,23 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			log.RaiseAlert(fmt.Errorf("could not decode request from %s: %w", conn.RemoteAddr(), err))
 			return
 		}
-		handleRequestParsed(log, s, conn, req)
+		log.Debug("handling request %T %+v from %s", req, req, conn.RemoteAddr())
+		resp, err := handleRequestParsed(log, s, req)
+		if err != nil {
+			log.RaiseAlert(fmt.Errorf("error processing request %+v from %s", req, conn.RemoteAddr()))
+			eggsErr, ok := err.(msgs.ErrCode)
+			if !ok {
+				eggsErr = msgs.INTERNAL_ERROR
+			}
+			if err := lib.WriteShuckleResponseError(log, conn, eggsErr); err != nil {
+				log.RaiseAlert(fmt.Errorf("could not send error: %w", err))
+			}
+		} else {
+			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
+			if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
+				log.RaiseAlert(fmt.Errorf("could not send response %T to %s: %w", resp, conn.RemoteAddr(), err))
+			}
+		}
 	}
 }
 
@@ -465,8 +469,12 @@ func handleWithRecover(
 	log *lib.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
+	methodAllowed *string,
 	handle func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
+	if methodAllowed == nil {
+		*methodAllowed = http.MethodGet
+	}
 	statusPtr := new(int)
 	var content io.ReadCloser
 	defer func() {
@@ -485,7 +493,7 @@ func handleWithRecover(
 				*sizePtr = size
 			}
 		}()
-		if r.Method != http.MethodGet {
+		if r.Method != *methodAllowed {
 			content, size, status = sendPage(errorPage(http.StatusMethodNotAllowed, "Only GET allowed"))
 		} else {
 			query, err := url.ParseQuery(r.URL.RawQuery)
@@ -513,7 +521,7 @@ func handlePage(
 	page func(query url.Values) (*template.Template, *pageData, int),
 ) {
 	handleWithRecover(
-		log, w, r,
+		log, w, r, nil,
 		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			return sendPage(page(query))
 		},
@@ -1113,7 +1121,7 @@ func handleInode(
 
 func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
-		log, w, r,
+		log, w, r, nil,
 		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "blocks" {
@@ -1192,7 +1200,7 @@ var readSpanBufPool *lib.BufPool
 
 func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
-		log, w, r,
+		log, w, r, nil,
 		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "files" {
@@ -1313,6 +1321,39 @@ func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 	)
 }
 
+func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+	methodAllowed := http.MethodPost
+	handleWithRecover(
+		log, w, r, &methodAllowed,
+		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+			segments := strings.Split(r.URL.Path, "/")[1:]
+			if segments[0] != "api" {
+				panic(fmt.Errorf("bad path %v", r.URL.Path))
+			}
+			if len(segments) != 2 {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /api/<req>, got %v", r.URL.Path)))
+			}
+			req, _, err := msgs.MkShuckleMessage(segments[1])
+			if err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /api/<req>, got %v", r.URL.Path)))
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Could not decode request: %v", err)))
+			}
+			resp, err := handleRequestParsed(log, st, req)
+			if err != nil {
+				return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Could not handle request: %v", err)))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			out, err := json.Marshal(resp)
+			if err != nil {
+				return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Could not marshal request: %v", err)))
+			}
+			return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
+		},
+	)
+}
+
 func setupRouting(log *lib.Logger, st *state) {
 	errorTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
@@ -1354,6 +1395,11 @@ func setupRouting(log *lib.Logger, st *state) {
 	http.HandleFunc(
 		"/files/",
 		func(w http.ResponseWriter, r *http.Request) { handleFile(log, st, w, r) },
+	)
+
+	http.HandleFunc(
+		"/api/",
+		func(w http.ResponseWriter, r *http.Request) { handleApi(log, st, w, r) },
 	)
 
 	// pages

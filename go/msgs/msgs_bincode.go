@@ -411,80 +411,80 @@ const (
 	MAKE_FILE_TRANSIENT ShardMessageKind = 0x87
 )
 
-func MkShardMessage(k string) (ShardRequest, ShardResponse) {
+func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 	switch {
 	case k == "LOOKUP":
-		return &LookupReq{}, &LookupResp{}
+		return &LookupReq{}, &LookupResp{}, nil
 	case k == "STAT_FILE":
-		return &StatFileReq{}, &StatFileResp{}
+		return &StatFileReq{}, &StatFileResp{}, nil
 	case k == "STAT_DIRECTORY":
-		return &StatDirectoryReq{}, &StatDirectoryResp{}
+		return &StatDirectoryReq{}, &StatDirectoryResp{}, nil
 	case k == "READ_DIR":
-		return &ReadDirReq{}, &ReadDirResp{}
+		return &ReadDirReq{}, &ReadDirResp{}, nil
 	case k == "CONSTRUCT_FILE":
-		return &ConstructFileReq{}, &ConstructFileResp{}
+		return &ConstructFileReq{}, &ConstructFileResp{}, nil
 	case k == "ADD_SPAN_INITIATE":
-		return &AddSpanInitiateReq{}, &AddSpanInitiateResp{}
+		return &AddSpanInitiateReq{}, &AddSpanInitiateResp{}, nil
 	case k == "ADD_SPAN_CERTIFY":
-		return &AddSpanCertifyReq{}, &AddSpanCertifyResp{}
+		return &AddSpanCertifyReq{}, &AddSpanCertifyResp{}, nil
 	case k == "LINK_FILE":
-		return &LinkFileReq{}, &LinkFileResp{}
+		return &LinkFileReq{}, &LinkFileResp{}, nil
 	case k == "SOFT_UNLINK_FILE":
-		return &SoftUnlinkFileReq{}, &SoftUnlinkFileResp{}
+		return &SoftUnlinkFileReq{}, &SoftUnlinkFileResp{}, nil
 	case k == "FILE_SPANS":
-		return &FileSpansReq{}, &FileSpansResp{}
+		return &FileSpansReq{}, &FileSpansResp{}, nil
 	case k == "SAME_DIRECTORY_RENAME":
-		return &SameDirectoryRenameReq{}, &SameDirectoryRenameResp{}
+		return &SameDirectoryRenameReq{}, &SameDirectoryRenameResp{}, nil
 	case k == "ADD_INLINE_SPAN":
-		return &AddInlineSpanReq{}, &AddInlineSpanResp{}
+		return &AddInlineSpanReq{}, &AddInlineSpanResp{}, nil
 	case k == "FULL_READ_DIR":
-		return &FullReadDirReq{}, &FullReadDirResp{}
+		return &FullReadDirReq{}, &FullReadDirResp{}, nil
 	case k == "MOVE_SPAN":
-		return &MoveSpanReq{}, &MoveSpanResp{}
+		return &MoveSpanReq{}, &MoveSpanResp{}, nil
 	case k == "STAT_TRANSIENT_FILE":
-		return &StatTransientFileReq{}, &StatTransientFileResp{}
+		return &StatTransientFileReq{}, &StatTransientFileResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
-		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}
+		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}, nil
 	case k == "EXPIRE_TRANSIENT_FILE":
-		return &ExpireTransientFileReq{}, &ExpireTransientFileResp{}
+		return &ExpireTransientFileReq{}, &ExpireTransientFileResp{}, nil
 	case k == "VISIT_DIRECTORIES":
-		return &VisitDirectoriesReq{}, &VisitDirectoriesResp{}
+		return &VisitDirectoriesReq{}, &VisitDirectoriesResp{}, nil
 	case k == "VISIT_FILES":
-		return &VisitFilesReq{}, &VisitFilesResp{}
+		return &VisitFilesReq{}, &VisitFilesResp{}, nil
 	case k == "VISIT_TRANSIENT_FILES":
-		return &VisitTransientFilesReq{}, &VisitTransientFilesResp{}
+		return &VisitTransientFilesReq{}, &VisitTransientFilesResp{}, nil
 	case k == "REMOVE_NON_OWNED_EDGE":
-		return &RemoveNonOwnedEdgeReq{}, &RemoveNonOwnedEdgeResp{}
+		return &RemoveNonOwnedEdgeReq{}, &RemoveNonOwnedEdgeResp{}, nil
 	case k == "SAME_SHARD_HARD_FILE_UNLINK":
-		return &SameShardHardFileUnlinkReq{}, &SameShardHardFileUnlinkResp{}
+		return &SameShardHardFileUnlinkReq{}, &SameShardHardFileUnlinkResp{}, nil
 	case k == "REMOVE_SPAN_INITIATE":
-		return &RemoveSpanInitiateReq{}, &RemoveSpanInitiateResp{}
+		return &RemoveSpanInitiateReq{}, &RemoveSpanInitiateResp{}, nil
 	case k == "REMOVE_SPAN_CERTIFY":
-		return &RemoveSpanCertifyReq{}, &RemoveSpanCertifyResp{}
+		return &RemoveSpanCertifyReq{}, &RemoveSpanCertifyResp{}, nil
 	case k == "SWAP_BLOCKS":
-		return &SwapBlocksReq{}, &SwapBlocksResp{}
+		return &SwapBlocksReq{}, &SwapBlocksResp{}, nil
 	case k == "BLOCK_SERVICE_FILES":
-		return &BlockServiceFilesReq{}, &BlockServiceFilesResp{}
+		return &BlockServiceFilesReq{}, &BlockServiceFilesResp{}, nil
 	case k == "REMOVE_INODE":
-		return &RemoveInodeReq{}, &RemoveInodeResp{}
+		return &RemoveInodeReq{}, &RemoveInodeResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
-		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}
+		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
-		return &SetDirectoryOwnerReq{}, &SetDirectoryOwnerResp{}
+		return &SetDirectoryOwnerReq{}, &SetDirectoryOwnerResp{}, nil
 	case k == "REMOVE_DIRECTORY_OWNER":
-		return &RemoveDirectoryOwnerReq{}, &RemoveDirectoryOwnerResp{}
+		return &RemoveDirectoryOwnerReq{}, &RemoveDirectoryOwnerResp{}, nil
 	case k == "CREATE_LOCKED_CURRENT_EDGE":
-		return &CreateLockedCurrentEdgeReq{}, &CreateLockedCurrentEdgeResp{}
+		return &CreateLockedCurrentEdgeReq{}, &CreateLockedCurrentEdgeResp{}, nil
 	case k == "LOCK_CURRENT_EDGE":
-		return &LockCurrentEdgeReq{}, &LockCurrentEdgeResp{}
+		return &LockCurrentEdgeReq{}, &LockCurrentEdgeResp{}, nil
 	case k == "UNLOCK_CURRENT_EDGE":
-		return &UnlockCurrentEdgeReq{}, &UnlockCurrentEdgeResp{}
+		return &UnlockCurrentEdgeReq{}, &UnlockCurrentEdgeResp{}, nil
 	case k == "REMOVE_OWNED_SNAPSHOT_FILE_EDGE":
-		return &RemoveOwnedSnapshotFileEdgeReq{}, &RemoveOwnedSnapshotFileEdgeResp{}
+		return &RemoveOwnedSnapshotFileEdgeReq{}, &RemoveOwnedSnapshotFileEdgeResp{}, nil
 	case k == "MAKE_FILE_TRANSIENT":
-		return &MakeFileTransientReq{}, &MakeFileTransientResp{}
+		return &MakeFileTransientReq{}, &MakeFileTransientResp{}, nil
 	default:
-		panic(fmt.Errorf("bad kind string %s", k))
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
 }
 
@@ -517,22 +517,22 @@ const (
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
 )
 
-func MkCDCMessage(k string) (CDCRequest, CDCResponse) {
+func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 	switch {
 	case k == "MAKE_DIRECTORY":
-		return &MakeDirectoryReq{}, &MakeDirectoryResp{}
+		return &MakeDirectoryReq{}, &MakeDirectoryResp{}, nil
 	case k == "RENAME_FILE":
-		return &RenameFileReq{}, &RenameFileResp{}
+		return &RenameFileReq{}, &RenameFileResp{}, nil
 	case k == "SOFT_UNLINK_DIRECTORY":
-		return &SoftUnlinkDirectoryReq{}, &SoftUnlinkDirectoryResp{}
+		return &SoftUnlinkDirectoryReq{}, &SoftUnlinkDirectoryResp{}, nil
 	case k == "RENAME_DIRECTORY":
-		return &RenameDirectoryReq{}, &RenameDirectoryResp{}
+		return &RenameDirectoryReq{}, &RenameDirectoryResp{}, nil
 	case k == "HARD_UNLINK_DIRECTORY":
-		return &HardUnlinkDirectoryReq{}, &HardUnlinkDirectoryResp{}
+		return &HardUnlinkDirectoryReq{}, &HardUnlinkDirectoryResp{}, nil
 	case k == "CROSS_SHARD_HARD_UNLINK_FILE":
-		return &CrossShardHardUnlinkFileReq{}, &CrossShardHardUnlinkFileResp{}
+		return &CrossShardHardUnlinkFileReq{}, &CrossShardHardUnlinkFileResp{}, nil
 	default:
-		panic(fmt.Errorf("bad kind string %s", k))
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
 }
 
@@ -571,26 +571,26 @@ const (
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 )
 
-func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse) {
+func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
 	case k == "SHARDS":
-		return &ShardsReq{}, &ShardsResp{}
+		return &ShardsReq{}, &ShardsResp{}, nil
 	case k == "CDC":
-		return &CdcReq{}, &CdcResp{}
+		return &CdcReq{}, &CdcResp{}, nil
 	case k == "INFO":
-		return &InfoReq{}, &InfoResp{}
+		return &InfoReq{}, &InfoResp{}, nil
 	case k == "REGISTER_BLOCK_SERVICES":
-		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}
+		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}, nil
 	case k == "REGISTER_SHARD":
-		return &RegisterShardReq{}, &RegisterShardResp{}
+		return &RegisterShardReq{}, &RegisterShardResp{}, nil
 	case k == "ALL_BLOCK_SERVICES":
-		return &AllBlockServicesReq{}, &AllBlockServicesResp{}
+		return &AllBlockServicesReq{}, &AllBlockServicesResp{}, nil
 	case k == "REGISTER_CDC":
-		return &RegisterCdcReq{}, &RegisterCdcResp{}
+		return &RegisterCdcReq{}, &RegisterCdcResp{}, nil
 	case k == "SET_BLOCK_SERVICE_FLAGS":
-		return &SetBlockServiceFlagsReq{}, &SetBlockServiceFlagsResp{}
+		return &SetBlockServiceFlagsReq{}, &SetBlockServiceFlagsResp{}, nil
 	default:
-		panic(fmt.Errorf("bad kind string %s", k))
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
 }
 
@@ -617,18 +617,18 @@ const (
 	TEST_WRITE BlocksMessageKind = 0x5
 )
 
-func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse) {
+func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 	switch {
 	case k == "FETCH_BLOCK":
-		return &FetchBlockReq{}, &FetchBlockResp{}
+		return &FetchBlockReq{}, &FetchBlockResp{}, nil
 	case k == "WRITE_BLOCK":
-		return &WriteBlockReq{}, &WriteBlockResp{}
+		return &WriteBlockReq{}, &WriteBlockResp{}, nil
 	case k == "ERASE_BLOCK":
-		return &EraseBlockReq{}, &EraseBlockResp{}
+		return &EraseBlockReq{}, &EraseBlockResp{}, nil
 	case k == "TEST_WRITE":
-		return &TestWriteReq{}, &TestWriteResp{}
+		return &TestWriteReq{}, &TestWriteResp{}, nil
 	default:
-		panic(fmt.Errorf("bad kind string %s", k))
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
 }
 

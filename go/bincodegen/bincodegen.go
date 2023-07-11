@@ -235,14 +235,14 @@ func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, 
 	}
 	fmt.Fprintf(out, ")\n\n")
 
-	fmt.Fprintf(out, "func %s(k string) (%s, %s) {\n", mkName, reqInterface, respInterface)
+	fmt.Fprintf(out, "func %s(k string) (%s, %s, error) {\n", mkName, reqInterface, respInterface)
 	fmt.Fprintf(out, "\tswitch {\n")
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(out, "\tcase k == %q:\n", reqRespEnum(reqResp))
-		fmt.Fprintf(out, "\t\treturn &%v{}, &%v{}\n", reqResp.req.Name(), reqResp.resp.Name())
+		fmt.Fprintf(out, "\t\treturn &%v{}, &%v{}, nil\n", reqResp.req.Name(), reqResp.resp.Name())
 	}
 	fmt.Fprintf(out, "\tdefault:\n")
-	fmt.Fprintf(out, "\t\tpanic(fmt.Errorf(\"bad kind string %%s\", k))\n")
+	fmt.Fprintf(out, "\t\treturn nil, nil, fmt.Errorf(\"bad kind string %%s\", k)\n")
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 }

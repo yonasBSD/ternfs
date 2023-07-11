@@ -605,6 +605,11 @@ static void timeout_sockets(struct block_ops* ops) {
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
         if (sock->timeout_start == 0) { continue; }
+        // this loop is relatively long, this could happen
+        if (unlikely(sock->timeout_start > now)) {
+            eggsfs_info("timeout start apparently in the future, skipping (%llums > %llums)", jiffies64_to_msecs(sock->timeout_start), now);
+            continue;
+        }
         u64 dt = now - sock->timeout_start;
         if (dt > *ops->timeout_jiffies) {
             eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
@@ -1181,13 +1186,13 @@ int eggsfs_write_block(
         EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_WRITE_BLOCK_RESP_SIZE
     );
     if (err) {
-        goto out_err_pages;
+        goto out_err_req;
     }
 
     return 0;
 
-out_err_pages:
-    put_pages_list(&req->pages);
+out_err_req:
+    list_replace_init(&req->pages, pages);
     kmem_cache_free(write_request_cachep, req);
 out_err:
     eggsfs_info("couldn't start write block request, err=%d", err);

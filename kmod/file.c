@@ -336,7 +336,7 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
         static_assert(sizeof(span->failure_domains[i]) == sizeof(block->failure_domain));
         memcpy(span->failure_domains[i], block->failure_domain, sizeof(block->failure_domain));
     }
-    for (i = 0; i < B; i++) { // then start downloading
+    for (i = 0; i < B; i++) { // then start uploading
         struct eggsfs_add_span_initiate_block* block = &blocks[i];
         u32 block_crc = 0;
         int s;

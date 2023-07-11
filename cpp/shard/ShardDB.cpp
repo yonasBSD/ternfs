@@ -2570,7 +2570,10 @@ struct ShardDBImpl {
             v().setVersion(0);
             v().setFileSize(file().fileSize());
             v().setMtime(time);
-            v().setDeadline(time + DEADLINE_INTERVAL); // we might use this to keep writing empty files
+            v().setDeadline(0);
+            // TODO actually do the below if we end up doing in the kernel, right now I
+            // don't just because the tests fail otherwise.
+            // v().setDeadline(time + DEADLINE_INTERVAL); // we might use this to keep writing empty files
             v().setLastSpanState(SpanState::CLEAN);
             v().setNoteDangerous(entry.name.ref());
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));

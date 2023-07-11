@@ -64,7 +64,7 @@ func main() {
 	}
 	shardsStrs := []string{}
 	for _, shard := range shards {
-		shardsStrs = append(shardsStrs, fmt.Sprintf("%v", shard))
+		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
 	}
 
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppInstance: strings.Join(shardsStrs, ",")})

@@ -55,7 +55,7 @@ public:
     CDCDB() = delete;
     CDCDB& operator=(const CDCDB&) = delete;
 
-    CDCDB(Logger& env, const std::string& path);
+    CDCDB(Logger& env, std::shared_ptr<XmonAgent>& xmon, const std::string& path);
     ~CDCDB();
     void close();
 

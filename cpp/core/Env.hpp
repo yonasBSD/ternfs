@@ -5,10 +5,12 @@
 #include <sstream>
 #include <string>
 #include <signal.h>
+#include <memory>
 
 #include "Common.hpp"
 #include "Exception.hpp"
 #include "Time.hpp"
+#include "XmonAgent.hpp"
 
 enum class LogLevel : uint32_t {
     LOG_TRACE = 0,
@@ -90,9 +92,10 @@ public:
 struct Env {
 private:
     Logger& _logger;
+    std::shared_ptr<XmonAgent> _xmon;
     std::string _prefix;
 public:
-    Env(Logger& logger, const std::string& prefix): _logger(logger), _prefix(prefix) {}
+    Env(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& prefix): _logger(logger), _xmon(xmon), _prefix(prefix) {}
 
     template<typename ...Args>
     void _log(LogLevel level, const char* fmt, Args&&... args) {
@@ -100,8 +103,15 @@ public:
     }
 
     template<typename ...Args>
-    void _raiseAlert(const char* fmt, Args&&... args) {
-        _log(LogLevel::LOG_ERROR, fmt, std::forward<Args>(args)...);
+    XmonAlert _raiseAlert(const char* fmt, Args&&... args) {
+        std::stringstream ss;
+        format_pack(ss, fmt, args...);
+        std::string line;
+        std::string s = ss.str();
+        _log(LogLevel::LOG_ERROR, s.c_str());
+        XmonAlert alert = -1;
+        if (_xmon) { return _xmon->createAlert(true, s); }
+        return alert;
     }
 
     bool _shouldLog(LogLevel level) {

@@ -266,7 +266,7 @@ struct ShardDBImpl {
 
     ShardDBImpl() = delete;
 
-    ShardDBImpl(Logger& logger, ShardId shid, const std::string& path) : _env(logger, "shard_db"), _shid(shid) {
+    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const std::string& path) : _env(logger, xmon, "shard_db"), _shid(shid) {
         LOG_INFO(_env, "will run shard %s in db dir %s", shid, path);
 
         // TODO actually figure out the best strategy for each family, including the default
@@ -3737,8 +3737,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-ShardDB::ShardDB(Logger& logger, ShardId shid, const std::string& path) {
-    _impl = new ShardDBImpl(logger, shid, path);
+ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, const std::string& path) {
+    _impl = new ShardDBImpl(logger, agent, shid, path);
 }
 
 void ShardDB::close() {

@@ -29,6 +29,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -shard-timeout-ms milliseconds\n");
     fprintf(stderr, "    	How much to wait for shard responses. Right now this is a simple loop.\n");
+    fprintf(stderr, " -xmon\n");
+    fprintf(stderr, "    	Enable Xmon alerts.\n");
 }
 
 static uint32_t parseIpv4(const char* binary, const std::string& arg) {
@@ -118,6 +120,8 @@ int main(int argc, char** argv) {
                 die("Runoff character in number %s", msStr.c_str());
             }
             options.shardTimeout = Duration(ms * 1'000'000);
+        } else if (arg == "-xmon") {
+            options.xmon = true;
         } else {
             args.emplace_back(std::move(arg));
         }

@@ -93,3 +93,5 @@ struct EggsTime {
 std::ostream& operator<<(std::ostream& out, EggsTime t);
 
 EggsTime eggsNow();
+
+void sleepFor(Duration dt);

@@ -19,6 +19,7 @@
 #include "Msgs.hpp"
 #include "Shuckle.hpp"
 #include "Exception.hpp"
+#include "Connect.hpp"
 
 static std::string explicitGenerateErrString(const std::string& what, int err, const char* str) {
     std::stringstream ss;
@@ -37,54 +38,12 @@ struct ShuckleSock {
 
 static ShuckleSock shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
     ShuckleSock sock;
-    sock.fd = -1;
+    // We retry upstream anyway, and we want prompt termination of `connect`.
+    // If we don't do this, mistakenly trying to connect to an iceland shuckle (currently
+    // the default) will hang for a long time.
+    sock.fd = connectToHost(host, port, 0, errString);
 
-    std::unique_ptr<struct addrinfo, decltype(&freeaddrinfo)> infos(nullptr, &freeaddrinfo);
-    {
-        char portStr[10];
-        snprintf(portStr, sizeof(portStr), "%d", port);
-        struct addrinfo hint;
-        memset(&hint, 0, sizeof(hint));
-        hint.ai_family = AF_INET;
-        struct addrinfo* infosRaw;
-        int res = getaddrinfo(host.c_str(), portStr, &hint, &infosRaw);
-        if (res != 0) {
-            if (res == EAI_SYSTEM) { // errno is filled in in this case
-                throw SYSCALL_EXCEPTION("getaddrinfo");
-            }
-            std::string prefix = "resolve host " + host + ":" + std::to_string(port);
-            if (res == EAI_ADDRFAMILY || res == EAI_AGAIN || res == EAI_NONAME) { // things that might be worth retrying
-                errString = explicitGenerateErrString(prefix, res, gai_strerror(res));
-                return sock;
-            }
-            throw EGGS_EXCEPTION("%s: %s/%s", prefix, res, gai_strerror(res)); // we're probably hosed
-        }
-        infos.reset(infosRaw);
-    }
-
-    for (struct addrinfo* info = infos.get(); info != nullptr; info = info->ai_next) {
-        int infoSock = socket(AF_INET, SOCK_STREAM, 0);
-        if (infoSock < 0) {
-            throw SYSCALL_EXCEPTION("socket");
-        }
-
-        // We retry upstream anyway, and we want prompt termination of `connect`.
-        // If we don't do this, mistakenly trying to connect to an iceland shuckle (currently
-        // the default) will hang for a long time.
-        int synRetries = 0;
-        setsockopt(infoSock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
-
-        if (connect(infoSock, info->ai_addr, info->ai_addrlen) < 0) {
-            close(infoSock);
-        } else {
-            sock.fd = infoSock;
-            break;
-        }
-    }
-
-    if (sock.fd == -1) {
-        errString = generateErrString("connect to " + host, errno);
-    } else {
+    if (sock.fd >= 0) {
         struct timeval tv;
         tv.tv_sec = timeout.ns/1'000'000'000ull;
         tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;

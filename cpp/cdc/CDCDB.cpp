@@ -1225,7 +1225,7 @@ struct CDCDBImpl {
     CDCDBImpl() = delete;
     CDCDBImpl& operator=(const CDCDBImpl&) = delete;
 
-    CDCDBImpl(Logger& logger, const std::string& path) : _env(logger, "cdc_db") {
+    CDCDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) : _env(logger, xmon, "cdc_db") {
         rocksdb::Options options;
         options.create_if_missing = true;
         options.create_missing_column_families = true;
@@ -1622,8 +1622,8 @@ struct CDCDBImpl {
     }
 };
 
-CDCDB::CDCDB(Logger& logger, const std::string& path) {
-    _impl = new CDCDBImpl(logger, path);
+CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
+    _impl = new CDCDBImpl(logger, xmon, path);
 }
 
 void CDCDB::close() {

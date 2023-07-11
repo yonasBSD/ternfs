@@ -23,6 +23,7 @@ struct ShardOptions {
     double simulateIncomingPacketDrop = 0.0;
     double simulateOutgoingPacketDrop = 0.0;
     bool syslog = false;
+    bool xmon = false;
 };
 
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);

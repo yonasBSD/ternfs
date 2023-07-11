@@ -32,7 +32,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, ShardId shid, const std::string& path);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const std::string& path);
     ~ShardDB();
 
     // Stuff which might throw, and therefore not well suited to destructor.

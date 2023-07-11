@@ -14,6 +14,7 @@ struct CDCOptions {
     std::array<IpPort, 2> ipPorts = {IpPort(0, 0), IpPort(0, 0)};
     bool syslog = false;
     Duration shardTimeout = 100_ms;
+    bool xmon = false;
 };
 
 void runCDC(const std::string& dbDir, const CDCOptions& options);

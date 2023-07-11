@@ -392,13 +392,15 @@ struct TempShardDB {
         if (mkdtemp(dbDir.data()) == nullptr) {
             throw SYSCALL_EXCEPTION("mkdtemp");
         }
-        db = std::make_unique<ShardDB>(logger, shid, dbDir);
+        std::shared_ptr<XmonAgent> xmon;
+        db = std::make_unique<ShardDB>(logger, xmon, shid, dbDir);
     }
 
     // useful to test recovery
     void restart() {
         db->close();
-        db = std::make_unique<ShardDB>(logger, shid, dbDir);
+        std::shared_ptr<XmonAgent> xmon;
+        db = std::make_unique<ShardDB>(logger, xmon, shid, dbDir);
     }
 
     ~TempShardDB() {

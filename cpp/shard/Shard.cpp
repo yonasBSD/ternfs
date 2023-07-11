@@ -23,6 +23,7 @@
 #include "Undertaker.hpp"
 #include "Time.hpp"
 #include "wyhash.h"
+#include "Xmon.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -101,8 +102,8 @@ private:
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 public:
-    ShardServer(Logger& logger, ShardId shid, const ShardOptions& options, int ipPortIx, ShardShared& shared):
-        _env(logger, "server_" + std::to_string(ipPortIx+1)),
+    ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, int ipPortIx, ShardShared& shared):
+        _env(logger, xmon, "server_" + std::to_string(ipPortIx+1)),
         _shared(shared),
         _shid(shid),
         _ipPortIx(ipPortIx),
@@ -321,8 +322,8 @@ private:
     uint16_t _shucklePort;
     bool _hasSecondIp;
 public:
-    ShardRegisterer(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        _env(logger, "registerer"),
+    ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
+        _env(logger, xmon, "registerer"),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -394,8 +395,8 @@ private:
     std::string _shuckleHost;
     uint16_t _shucklePort;
 public:
-    ShardBlockServiceUpdater(Logger& logger, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        _env(logger, "block_service_updater"),
+    ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
+        _env(logger, xmon, "block_service_updater"),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -475,6 +476,11 @@ static void* runShardBlockServiceUpdater(void* server) {
     return nullptr;
 }
 
+static void* runXmon(void* server) {
+    ((Xmon*)server)->run();
+    return nullptr;
+}
+
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
 
@@ -489,8 +495,13 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
     Logger logger(options.logLevel, *logOut, options.syslog, true);
 
+    std::shared_ptr<XmonAgent> xmon;
+    if (options.xmon) {
+        xmon = std::make_shared<XmonAgent>();
+    }
+
     {
-        Env env(logger, "startup");
+        Env env(logger, xmon, "startup");
         LOG_INFO(env, "Running shard %s with options:", shid);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
@@ -509,12 +520,12 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
-    ShardDB db(logger, shid, dbDir);
+    ShardDB db(logger, xmon, shid, dbDir);
 
     ShardShared shared(db);
 
     {
-        auto server = std::make_unique<ShardServer>(logger, shid, options, 0, shared);
+        auto server = std::make_unique<ShardServer>(logger, xmon, shid, options, 0, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -523,7 +534,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
 
     if (options.ipPorts[1].ip != 0) {
-        auto server = std::make_unique<ShardServer>(logger, shid, options, 1, shared);
+        auto server = std::make_unique<ShardServer>(logger, xmon, shid, options, 1, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -532,7 +543,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
 
     {
-        auto shuckleRegisterer = std::make_unique<ShardRegisterer>(logger, shid, options, shared);
+        auto shuckleRegisterer = std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardRegisterer, &*shuckleRegisterer) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -541,12 +552,27 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     }
 
     {
-        auto shuckleUpdater = std::make_unique<ShardBlockServiceUpdater>(logger, shid, options, shared);
+        auto shuckleUpdater = std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runShardBlockServiceUpdater, &*shuckleUpdater) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(shuckleUpdater), tid, "block_service_updater");
+    }
+
+    if (xmon) {
+        XmonConfig config;
+        {
+            std::ostringstream ss;
+            ss << std::setw(3) << std::setfill('0') << shid;
+            config.appInstance = "shard:" + ss.str();
+        }
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config, shared.stop);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
 
     undertaker->reap();

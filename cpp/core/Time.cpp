@@ -1,6 +1,8 @@
 // #include <bits/types/struct_timespec.h>
 #include <cstdio>
 #include <time.h>
+#include <chrono>
+#include <thread>
 
 #include "Exception.hpp"
 #include "Time.hpp"
@@ -58,4 +60,8 @@ std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
     buf[30] = '\0';
     out << buf;
     return out;
+}
+
+void sleepFor(Duration dt) {
+    std::this_thread::sleep_for(std::chrono::nanoseconds(dt.ns));
 }

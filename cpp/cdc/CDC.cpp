@@ -27,6 +27,7 @@
 #include "CDCKey.hpp"
 #include "Shuckle.hpp"
 #include "wyhash.h"
+#include "Xmon.hpp"
 
 struct CDCShared {
     CDCDB& db;
@@ -83,8 +84,8 @@ private:
     std::optional<InFlightShardRequest> _inFlightShardReq;
 
 public:
-    CDCServer(Logger& logger, const CDCOptions& options, CDCShared& shared) :
-        _env(logger, "req_server"),
+    CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared) :
+        _env(logger, xmon, "req_server"),
         _shared(shared),
         _ipPorts(options.ipPorts),
         _recvBuf(DEFAULT_UDP_MTU),
@@ -493,8 +494,8 @@ struct CDCShardUpdater : Undertaker::Reapable {
     std::string _shuckleHost;
     uint16_t _shucklePort;
 public:
-    CDCShardUpdater(Logger& logger, const CDCOptions& options, CDCShared& shared):
-        _env(logger, "shard_updater"),
+    CDCShardUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
+        _env(logger, xmon, "shard_updater"),
         _shared(shared),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
@@ -567,8 +568,8 @@ struct CDCRegisterer : Undertaker::Reapable {
     uint16_t _shucklePort;
     bool _hasSecondIp;
 public:
-    CDCRegisterer(Logger& logger, const CDCOptions& options, CDCShared& shared):
-        _env(logger, "registerer"),
+    CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
+        _env(logger, xmon, "registerer"),
         _shared(shared),
         _ownIp1(options.ipPorts[0].ip),
         _ownIp2(options.ipPorts[1].ip),
@@ -631,6 +632,11 @@ static void* runCDCRegisterer(void* server) {
     return nullptr;
 }
 
+static void* runXmon(void* server) {
+    ((Xmon*)server)->run();
+    return nullptr;
+}
+
 void runCDC(const std::string& dbDir, const CDCOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
 
@@ -645,8 +651,13 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     }
     Logger logger(options.logLevel, *logOut, options.syslog, true);
 
+    std::shared_ptr<XmonAgent> xmon;
+    if (options.xmon) {
+        xmon = std::make_shared<XmonAgent>();
+    }
+
     {
-        Env env(logger, "startup");
+        Env env(logger, xmon, "startup");
         LOG_INFO(env, "Running CDC with options:");
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
@@ -664,11 +675,11 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
-    CDCDB db(logger, dbDir);
+    CDCDB db(logger, xmon, dbDir);
     auto shared = std::make_unique<CDCShared>(db);
 
     {
-        auto server = std::make_unique<CDCServer>(logger, options, *shared);
+        auto server = std::make_unique<CDCServer>(logger, xmon, options, *shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runCDCServer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -677,7 +688,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     }
 
     {
-        auto server = std::make_unique<CDCShardUpdater>(logger, options, *shared);
+        auto server = std::make_unique<CDCShardUpdater>(logger, xmon, options, *shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runCDCShardUpdater, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
@@ -686,12 +697,23 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     }
 
     {
-        auto server = std::make_unique<CDCRegisterer>(logger, options, *shared);
+        auto server = std::make_unique<CDCRegisterer>(logger, xmon, options, *shared);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runCDCRegisterer, &*server) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(server), tid, "registerer");
+    }
+
+    if (xmon) {
+        XmonConfig config;
+        config.appInstance = "cdc";
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config, shared->stop);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
 
     undertaker->reap();

@@ -34,6 +34,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Drop given ratio of packets on arrival.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
+    fprintf(stderr, " -xmon\n");
+    fprintf(stderr, "    	Enable Xmon alerts.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -136,6 +138,8 @@ int main(int argc, char** argv) {
             options.ipPorts[1].port = parsePort(getNextArg());
         } else if (arg == "-syslog") {
             options.syslog = true;
+        } else if (arg == "-xmon") {
+            options.xmon = true;
         } else {
             args.emplace_back(std::move(arg));
         }

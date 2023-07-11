@@ -19,7 +19,8 @@ struct XmonRequest {
     std::string message;
 };
 
-using XmonAlert = uint64_t;
+// We use -1 for "nothing" sometimes.
+using XmonAlert = int64_t;
 
 struct XmonAgent {
 private:

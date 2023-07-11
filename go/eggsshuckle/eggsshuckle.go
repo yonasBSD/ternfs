@@ -473,7 +473,8 @@ func handleWithRecover(
 	handle func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
 	if methodAllowed == nil {
-		*methodAllowed = http.MethodGet
+		str := http.MethodGet
+		methodAllowed = &str
 	}
 	statusPtr := new(int)
 	var content io.ReadCloser

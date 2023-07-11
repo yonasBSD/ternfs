@@ -81,14 +81,14 @@ enum class ShardMessageKind : uint8_t {
     ADD_INLINE_SPAN = 16,
     FULL_READ_DIR = 115,
     MOVE_SPAN = 123,
+    REMOVE_NON_OWNED_EDGE = 116,
+    SAME_SHARD_HARD_FILE_UNLINK = 117,
     STAT_TRANSIENT_FILE = 3,
     SET_DIRECTORY_INFO = 13,
     EXPIRE_TRANSIENT_FILE = 15,
     VISIT_DIRECTORIES = 112,
     VISIT_FILES = 113,
     VISIT_TRANSIENT_FILES = 114,
-    REMOVE_NON_OWNED_EDGE = 116,
-    SAME_SHARD_HARD_FILE_UNLINK = 117,
     REMOVE_SPAN_INITIATE = 118,
     REMOVE_SPAN_CERTIFY = 119,
     SWAP_BLOCKS = 120,
@@ -1483,6 +1483,90 @@ struct MoveSpanResp {
 
 std::ostream& operator<<(std::ostream& out, const MoveSpanResp& x);
 
+struct RemoveNonOwnedEdgeReq {
+    InodeId dirId;
+    InodeId targetId;
+    BincodeBytes name;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
+
+    RemoveNonOwnedEdgeReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // dirId
+        _size += 8; // targetId
+        _size += name.packedSize(); // name
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RemoveNonOwnedEdgeReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeReq& x);
+
+struct RemoveNonOwnedEdgeResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    RemoveNonOwnedEdgeResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RemoveNonOwnedEdgeResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeResp& x);
+
+struct SameShardHardFileUnlinkReq {
+    InodeId ownerId;
+    InodeId targetId;
+    BincodeBytes name;
+    EggsTime creationTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
+
+    SameShardHardFileUnlinkReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // ownerId
+        _size += 8; // targetId
+        _size += name.packedSize(); // name
+        _size += 8; // creationTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SameShardHardFileUnlinkReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkReq& x);
+
+struct SameShardHardFileUnlinkResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    SameShardHardFileUnlinkResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SameShardHardFileUnlinkResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkResp& x);
+
 struct StatTransientFileReq {
     InodeId id;
 
@@ -1724,90 +1808,6 @@ struct VisitTransientFilesResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const VisitTransientFilesResp& x);
-
-struct RemoveNonOwnedEdgeReq {
-    InodeId dirId;
-    InodeId targetId;
-    BincodeBytes name;
-    EggsTime creationTime;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
-
-    RemoveNonOwnedEdgeReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // dirId
-        _size += 8; // targetId
-        _size += name.packedSize(); // name
-        _size += 8; // creationTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const RemoveNonOwnedEdgeReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeReq& x);
-
-struct RemoveNonOwnedEdgeResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    RemoveNonOwnedEdgeResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const RemoveNonOwnedEdgeResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeResp& x);
-
-struct SameShardHardFileUnlinkReq {
-    InodeId ownerId;
-    InodeId targetId;
-    BincodeBytes name;
-    EggsTime creationTime;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
-
-    SameShardHardFileUnlinkReq() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        _size += 8; // ownerId
-        _size += 8; // targetId
-        _size += name.packedSize(); // name
-        _size += 8; // creationTime
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SameShardHardFileUnlinkReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkReq& x);
-
-struct SameShardHardFileUnlinkResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    SameShardHardFileUnlinkResp() { clear(); }
-    uint16_t packedSize() const {
-        uint16_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const SameShardHardFileUnlinkResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkResp& x);
 
 struct RemoveSpanInitiateReq {
     InodeId fileId;
@@ -3086,7 +3086,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, FullReadDirReq, MoveSpanReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
@@ -3117,6 +3117,10 @@ public:
     FullReadDirReq& setFullReadDir();
     const MoveSpanReq& getMoveSpan() const;
     MoveSpanReq& setMoveSpan();
+    const RemoveNonOwnedEdgeReq& getRemoveNonOwnedEdge() const;
+    RemoveNonOwnedEdgeReq& setRemoveNonOwnedEdge();
+    const SameShardHardFileUnlinkReq& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkReq& setSameShardHardFileUnlink();
     const StatTransientFileReq& getStatTransientFile() const;
     StatTransientFileReq& setStatTransientFile();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
@@ -3129,10 +3133,6 @@ public:
     VisitFilesReq& setVisitFiles();
     const VisitTransientFilesReq& getVisitTransientFiles() const;
     VisitTransientFilesReq& setVisitTransientFiles();
-    const RemoveNonOwnedEdgeReq& getRemoveNonOwnedEdge() const;
-    RemoveNonOwnedEdgeReq& setRemoveNonOwnedEdge();
-    const SameShardHardFileUnlinkReq& getSameShardHardFileUnlink() const;
-    SameShardHardFileUnlinkReq& setSameShardHardFileUnlink();
     const RemoveSpanInitiateReq& getRemoveSpanInitiate() const;
     RemoveSpanInitiateReq& setRemoveSpanInitiate();
     const RemoveSpanCertifyReq& getRemoveSpanCertify() const;
@@ -3172,7 +3172,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, FullReadDirResp, MoveSpanResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
@@ -3203,6 +3203,10 @@ public:
     FullReadDirResp& setFullReadDir();
     const MoveSpanResp& getMoveSpan() const;
     MoveSpanResp& setMoveSpan();
+    const RemoveNonOwnedEdgeResp& getRemoveNonOwnedEdge() const;
+    RemoveNonOwnedEdgeResp& setRemoveNonOwnedEdge();
+    const SameShardHardFileUnlinkResp& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkResp& setSameShardHardFileUnlink();
     const StatTransientFileResp& getStatTransientFile() const;
     StatTransientFileResp& setStatTransientFile();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
@@ -3215,10 +3219,6 @@ public:
     VisitFilesResp& setVisitFiles();
     const VisitTransientFilesResp& getVisitTransientFiles() const;
     VisitTransientFilesResp& setVisitTransientFiles();
-    const RemoveNonOwnedEdgeResp& getRemoveNonOwnedEdge() const;
-    RemoveNonOwnedEdgeResp& setRemoveNonOwnedEdge();
-    const SameShardHardFileUnlinkResp& getSameShardHardFileUnlink() const;
-    SameShardHardFileUnlinkResp& setSameShardHardFileUnlink();
     const RemoveSpanInitiateResp& getRemoveSpanInitiate() const;
     RemoveSpanInitiateResp& setRemoveSpanInitiate();
     const RemoveSpanCertifyResp& getRemoveSpanCertify() const;

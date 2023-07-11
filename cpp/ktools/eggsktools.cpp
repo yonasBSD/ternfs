@@ -34,6 +34,7 @@ static void writeFile(int argc, const char** argv) {
     ssize_t fileSize = -1;
     ssize_t bufSize = -1; // if -1, all in one go
     const char* filename = NULL;
+    bool closeAndReopen = false;
 
     for (int i = 0; i < argc; i++) {
         if (std::string(argv[i]) == "-buf-size") {
@@ -48,6 +49,8 @@ static void writeFile(int argc, const char** argv) {
             if (fileSize == ULLONG_MAX) {
                 badUsage("Bad -size: %d (%s)", errno, strerror(errno));
             }
+        } else if (std::string(argv[i]) == "-close-open") {
+            closeAndReopen = true;
         } else {
             if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
             filename = argv[i];
@@ -62,6 +65,16 @@ static void writeFile(int argc, const char** argv) {
     int fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
     if (fd < 0) {
         die("could not open file %s: %d (%s)", filename, errno, strerror(errno));
+    }
+
+    if (closeAndReopen) {
+        if (close(fd) < 0) {
+            die("could not close file %s: %d (%s)", filename, errno, strerror(errno));
+        }
+        fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0666);
+        if (fd < 0) {
+            die("could not reopen file %s: %d (%s)", filename, errno, strerror(errno));
+        }
     }
 
     uint8_t* buffer = (uint8_t*)malloc(bufSize);

@@ -325,6 +325,10 @@ func (k ShardMessageKind) String() string {
 		return "FULL_READ_DIR"
 	case 123:
 		return "MOVE_SPAN"
+	case 116:
+		return "REMOVE_NON_OWNED_EDGE"
+	case 117:
+		return "SAME_SHARD_HARD_FILE_UNLINK"
 	case 3:
 		return "STAT_TRANSIENT_FILE"
 	case 13:
@@ -337,10 +341,6 @@ func (k ShardMessageKind) String() string {
 		return "VISIT_FILES"
 	case 114:
 		return "VISIT_TRANSIENT_FILES"
-	case 116:
-		return "REMOVE_NON_OWNED_EDGE"
-	case 117:
-		return "SAME_SHARD_HARD_FILE_UNLINK"
 	case 118:
 		return "REMOVE_SPAN_INITIATE"
 	case 119:
@@ -388,14 +388,14 @@ const (
 	ADD_INLINE_SPAN ShardMessageKind = 0x10
 	FULL_READ_DIR ShardMessageKind = 0x73
 	MOVE_SPAN ShardMessageKind = 0x7B
+	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
+	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	EXPIRE_TRANSIENT_FILE ShardMessageKind = 0xF
 	VISIT_DIRECTORIES ShardMessageKind = 0x70
 	VISIT_FILES ShardMessageKind = 0x71
 	VISIT_TRANSIENT_FILES ShardMessageKind = 0x72
-	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
-	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
 	REMOVE_SPAN_INITIATE ShardMessageKind = 0x76
 	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x77
 	SWAP_BLOCKS ShardMessageKind = 0x78
@@ -441,6 +441,10 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &FullReadDirReq{}, &FullReadDirResp{}, nil
 	case k == "MOVE_SPAN":
 		return &MoveSpanReq{}, &MoveSpanResp{}, nil
+	case k == "REMOVE_NON_OWNED_EDGE":
+		return &RemoveNonOwnedEdgeReq{}, &RemoveNonOwnedEdgeResp{}, nil
+	case k == "SAME_SHARD_HARD_FILE_UNLINK":
+		return &SameShardHardFileUnlinkReq{}, &SameShardHardFileUnlinkResp{}, nil
 	case k == "STAT_TRANSIENT_FILE":
 		return &StatTransientFileReq{}, &StatTransientFileResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
@@ -453,10 +457,6 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &VisitFilesReq{}, &VisitFilesResp{}, nil
 	case k == "VISIT_TRANSIENT_FILES":
 		return &VisitTransientFilesReq{}, &VisitTransientFilesResp{}, nil
-	case k == "REMOVE_NON_OWNED_EDGE":
-		return &RemoveNonOwnedEdgeReq{}, &RemoveNonOwnedEdgeResp{}, nil
-	case k == "SAME_SHARD_HARD_FILE_UNLINK":
-		return &SameShardHardFileUnlinkReq{}, &SameShardHardFileUnlinkResp{}, nil
 	case k == "REMOVE_SPAN_INITIATE":
 		return &RemoveSpanInitiateReq{}, &RemoveSpanInitiateResp{}, nil
 	case k == "REMOVE_SPAN_CERTIFY":
@@ -1564,6 +1564,102 @@ func (v *MoveSpanResp) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *RemoveNonOwnedEdgeReq) ShardRequestKind() ShardMessageKind {
+	return REMOVE_NON_OWNED_EDGE
+}
+
+func (v *RemoveNonOwnedEdgeReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveNonOwnedEdgeReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Name); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveNonOwnedEdgeResp) ShardResponseKind() ShardMessageKind {
+	return REMOVE_NON_OWNED_EDGE
+}
+
+func (v *RemoveNonOwnedEdgeResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *RemoveNonOwnedEdgeResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *SameShardHardFileUnlinkReq) ShardRequestKind() ShardMessageKind {
+	return SAME_SHARD_HARD_FILE_UNLINK
+}
+
+func (v *SameShardHardFileUnlinkReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.OwnerId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SameShardHardFileUnlinkReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OwnerId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Name); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SameShardHardFileUnlinkResp) ShardResponseKind() ShardMessageKind {
+	return SAME_SHARD_HARD_FILE_UNLINK
+}
+
+func (v *SameShardHardFileUnlinkResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *SameShardHardFileUnlinkResp) Unpack(r io.Reader) error {
+	return nil
+}
+
 func (v *StatTransientFileReq) ShardRequestKind() ShardMessageKind {
 	return STAT_TRANSIENT_FILE
 }
@@ -1858,102 +1954,6 @@ func (v *VisitTransientFilesResp) Unpack(r io.Reader) error {
 			return err
 		}
 	}
-	return nil
-}
-
-func (v *RemoveNonOwnedEdgeReq) ShardRequestKind() ShardMessageKind {
-	return REMOVE_NON_OWNED_EDGE
-}
-
-func (v *RemoveNonOwnedEdgeReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RemoveNonOwnedEdgeReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.Name); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RemoveNonOwnedEdgeResp) ShardResponseKind() ShardMessageKind {
-	return REMOVE_NON_OWNED_EDGE
-}
-
-func (v *RemoveNonOwnedEdgeResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *RemoveNonOwnedEdgeResp) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *SameShardHardFileUnlinkReq) ShardRequestKind() ShardMessageKind {
-	return SAME_SHARD_HARD_FILE_UNLINK
-}
-
-func (v *SameShardHardFileUnlinkReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.OwnerId)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *SameShardHardFileUnlinkReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.OwnerId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.Name); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.CreationTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *SameShardHardFileUnlinkResp) ShardResponseKind() ShardMessageKind {
-	return SAME_SHARD_HARD_FILE_UNLINK
-}
-
-func (v *SameShardHardFileUnlinkResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *SameShardHardFileUnlinkResp) Unpack(r io.Reader) error {
 	return nil
 }
 

@@ -76,7 +76,9 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
 #define EGGSFS_SHARD_FULL_READ_DIR 0x73
 #define EGGSFS_SHARD_MOVE_SPAN 0x7B
-#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" })
+#define EGGSFS_SHARD_REMOVE_NON_OWNED_EDGE 0x74
+#define EGGSFS_SHARD_SAME_SHARD_HARD_FILE_UNLINK 0x75
+#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" }, { 116, "REMOVE_NON_OWNED_EDGE" }, { 117, "SAME_SHARD_HARD_FILE_UNLINK" })
 const char* eggsfs_shard_kind_str(int kind);
 
 #define EGGSFS_CDC_MAKE_DIRECTORY 0x1
@@ -4534,6 +4536,306 @@ static inline void eggsfs_move_span_resp_get_finish(struct eggsfs_bincode_get_ct
 #define eggsfs_move_span_resp_put_end(ctx, prev, next) \
     { struct eggsfs_move_span_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_move_span_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_REMOVE_NON_OWNED_EDGE_REQ_MAX_SIZE 280
+struct eggsfs_remove_non_owned_edge_req_start;
+#define eggsfs_remove_non_owned_edge_req_get_start(ctx, start) struct eggsfs_remove_non_owned_edge_req_start* start = NULL
+
+struct eggsfs_remove_non_owned_edge_req_dir_id { u64 x; };
+static inline void _eggsfs_remove_non_owned_edge_req_get_dir_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_start** prev, struct eggsfs_remove_non_owned_edge_req_dir_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_non_owned_edge_req_get_dir_id(ctx, prev, next) \
+    struct eggsfs_remove_non_owned_edge_req_dir_id next; \
+    _eggsfs_remove_non_owned_edge_req_get_dir_id(ctx, &(prev), &(next))
+
+struct eggsfs_remove_non_owned_edge_req_target_id { u64 x; };
+static inline void _eggsfs_remove_non_owned_edge_req_get_target_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_dir_id* prev, struct eggsfs_remove_non_owned_edge_req_target_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_non_owned_edge_req_get_target_id(ctx, prev, next) \
+    struct eggsfs_remove_non_owned_edge_req_target_id next; \
+    _eggsfs_remove_non_owned_edge_req_get_target_id(ctx, &(prev), &(next))
+
+struct eggsfs_remove_non_owned_edge_req_name { struct eggsfs_bincode_bytes str; };
+static inline void _eggsfs_remove_non_owned_edge_req_get_name(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_target_id* prev, struct eggsfs_remove_non_owned_edge_req_name* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->str.len = *(u8*)(ctx->buf);
+            ctx->buf++;
+            if (unlikely(ctx->end - ctx->buf < next->str.len)) {
+                ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+            } else {
+                next->str.buf = ctx->buf;
+                ctx->buf += next->str.len;
+            }
+        }
+    }
+}
+#define eggsfs_remove_non_owned_edge_req_get_name(ctx, prev, next) \
+    struct eggsfs_remove_non_owned_edge_req_name next; \
+    _eggsfs_remove_non_owned_edge_req_get_name(ctx, &(prev), &(next))
+
+struct eggsfs_remove_non_owned_edge_req_creation_time { u64 x; };
+static inline void _eggsfs_remove_non_owned_edge_req_get_creation_time(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_name* prev, struct eggsfs_remove_non_owned_edge_req_creation_time* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_non_owned_edge_req_get_creation_time(ctx, prev, next) \
+    struct eggsfs_remove_non_owned_edge_req_creation_time next; \
+    _eggsfs_remove_non_owned_edge_req_get_creation_time(ctx, &(prev), &(next))
+
+struct eggsfs_remove_non_owned_edge_req_end;
+#define eggsfs_remove_non_owned_edge_req_get_end(ctx, prev, next) \
+    { struct eggsfs_remove_non_owned_edge_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_non_owned_edge_req_end* next = NULL
+
+static inline void eggsfs_remove_non_owned_edge_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_remove_non_owned_edge_req_put_start(ctx, start) struct eggsfs_remove_non_owned_edge_req_start* start = NULL
+
+static inline void _eggsfs_remove_non_owned_edge_req_put_dir_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_start** prev, struct eggsfs_remove_non_owned_edge_req_dir_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_non_owned_edge_req_put_dir_id(ctx, prev, next, x) \
+    struct eggsfs_remove_non_owned_edge_req_dir_id next; \
+    _eggsfs_remove_non_owned_edge_req_put_dir_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_non_owned_edge_req_put_target_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_dir_id* prev, struct eggsfs_remove_non_owned_edge_req_target_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_non_owned_edge_req_put_target_id(ctx, prev, next, x) \
+    struct eggsfs_remove_non_owned_edge_req_target_id next; \
+    _eggsfs_remove_non_owned_edge_req_put_target_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_non_owned_edge_req_put_name(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_target_id* prev, struct eggsfs_remove_non_owned_edge_req_name* next, const char* str, int str_len) {
+    next = NULL;
+    BUG_ON(str_len < 0 || str_len > 255);
+    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));
+    *(u8*)(ctx->cursor) = str_len;
+    memcpy(ctx->cursor + 1, str, str_len);
+    ctx->cursor += 1 + str_len;
+}
+#define eggsfs_remove_non_owned_edge_req_put_name(ctx, prev, next, str, str_len) \
+    struct eggsfs_remove_non_owned_edge_req_name next; \
+    _eggsfs_remove_non_owned_edge_req_put_name(ctx, &(prev), &(next), str, str_len)
+
+static inline void _eggsfs_remove_non_owned_edge_req_put_creation_time(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_non_owned_edge_req_name* prev, struct eggsfs_remove_non_owned_edge_req_creation_time* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_non_owned_edge_req_put_creation_time(ctx, prev, next, x) \
+    struct eggsfs_remove_non_owned_edge_req_creation_time next; \
+    _eggsfs_remove_non_owned_edge_req_put_creation_time(ctx, &(prev), &(next), x)
+
+#define eggsfs_remove_non_owned_edge_req_put_end(ctx, prev, next) \
+    { struct eggsfs_remove_non_owned_edge_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_non_owned_edge_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_REMOVE_NON_OWNED_EDGE_RESP_SIZE 0
+struct eggsfs_remove_non_owned_edge_resp_start;
+#define eggsfs_remove_non_owned_edge_resp_get_start(ctx, start) struct eggsfs_remove_non_owned_edge_resp_start* start = NULL
+
+struct eggsfs_remove_non_owned_edge_resp_end;
+#define eggsfs_remove_non_owned_edge_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_remove_non_owned_edge_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_non_owned_edge_resp_end* next = NULL
+
+static inline void eggsfs_remove_non_owned_edge_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_non_owned_edge_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_remove_non_owned_edge_resp_put_start(ctx, start) struct eggsfs_remove_non_owned_edge_resp_start* start = NULL
+
+#define eggsfs_remove_non_owned_edge_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_remove_non_owned_edge_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_non_owned_edge_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SAME_SHARD_HARD_FILE_UNLINK_REQ_MAX_SIZE 280
+struct eggsfs_same_shard_hard_file_unlink_req_start;
+#define eggsfs_same_shard_hard_file_unlink_req_get_start(ctx, start) struct eggsfs_same_shard_hard_file_unlink_req_start* start = NULL
+
+struct eggsfs_same_shard_hard_file_unlink_req_owner_id { u64 x; };
+static inline void _eggsfs_same_shard_hard_file_unlink_req_get_owner_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_start** prev, struct eggsfs_same_shard_hard_file_unlink_req_owner_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_same_shard_hard_file_unlink_req_get_owner_id(ctx, prev, next) \
+    struct eggsfs_same_shard_hard_file_unlink_req_owner_id next; \
+    _eggsfs_same_shard_hard_file_unlink_req_get_owner_id(ctx, &(prev), &(next))
+
+struct eggsfs_same_shard_hard_file_unlink_req_target_id { u64 x; };
+static inline void _eggsfs_same_shard_hard_file_unlink_req_get_target_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_owner_id* prev, struct eggsfs_same_shard_hard_file_unlink_req_target_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_same_shard_hard_file_unlink_req_get_target_id(ctx, prev, next) \
+    struct eggsfs_same_shard_hard_file_unlink_req_target_id next; \
+    _eggsfs_same_shard_hard_file_unlink_req_get_target_id(ctx, &(prev), &(next))
+
+struct eggsfs_same_shard_hard_file_unlink_req_name { struct eggsfs_bincode_bytes str; };
+static inline void _eggsfs_same_shard_hard_file_unlink_req_get_name(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_target_id* prev, struct eggsfs_same_shard_hard_file_unlink_req_name* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->str.len = *(u8*)(ctx->buf);
+            ctx->buf++;
+            if (unlikely(ctx->end - ctx->buf < next->str.len)) {
+                ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+            } else {
+                next->str.buf = ctx->buf;
+                ctx->buf += next->str.len;
+            }
+        }
+    }
+}
+#define eggsfs_same_shard_hard_file_unlink_req_get_name(ctx, prev, next) \
+    struct eggsfs_same_shard_hard_file_unlink_req_name next; \
+    _eggsfs_same_shard_hard_file_unlink_req_get_name(ctx, &(prev), &(next))
+
+struct eggsfs_same_shard_hard_file_unlink_req_creation_time { u64 x; };
+static inline void _eggsfs_same_shard_hard_file_unlink_req_get_creation_time(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_name* prev, struct eggsfs_same_shard_hard_file_unlink_req_creation_time* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_same_shard_hard_file_unlink_req_get_creation_time(ctx, prev, next) \
+    struct eggsfs_same_shard_hard_file_unlink_req_creation_time next; \
+    _eggsfs_same_shard_hard_file_unlink_req_get_creation_time(ctx, &(prev), &(next))
+
+struct eggsfs_same_shard_hard_file_unlink_req_end;
+#define eggsfs_same_shard_hard_file_unlink_req_get_end(ctx, prev, next) \
+    { struct eggsfs_same_shard_hard_file_unlink_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_same_shard_hard_file_unlink_req_end* next = NULL
+
+static inline void eggsfs_same_shard_hard_file_unlink_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_same_shard_hard_file_unlink_req_put_start(ctx, start) struct eggsfs_same_shard_hard_file_unlink_req_start* start = NULL
+
+static inline void _eggsfs_same_shard_hard_file_unlink_req_put_owner_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_start** prev, struct eggsfs_same_shard_hard_file_unlink_req_owner_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_same_shard_hard_file_unlink_req_put_owner_id(ctx, prev, next, x) \
+    struct eggsfs_same_shard_hard_file_unlink_req_owner_id next; \
+    _eggsfs_same_shard_hard_file_unlink_req_put_owner_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_same_shard_hard_file_unlink_req_put_target_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_owner_id* prev, struct eggsfs_same_shard_hard_file_unlink_req_target_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_same_shard_hard_file_unlink_req_put_target_id(ctx, prev, next, x) \
+    struct eggsfs_same_shard_hard_file_unlink_req_target_id next; \
+    _eggsfs_same_shard_hard_file_unlink_req_put_target_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_same_shard_hard_file_unlink_req_put_name(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_target_id* prev, struct eggsfs_same_shard_hard_file_unlink_req_name* next, const char* str, int str_len) {
+    next = NULL;
+    BUG_ON(str_len < 0 || str_len > 255);
+    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));
+    *(u8*)(ctx->cursor) = str_len;
+    memcpy(ctx->cursor + 1, str, str_len);
+    ctx->cursor += 1 + str_len;
+}
+#define eggsfs_same_shard_hard_file_unlink_req_put_name(ctx, prev, next, str, str_len) \
+    struct eggsfs_same_shard_hard_file_unlink_req_name next; \
+    _eggsfs_same_shard_hard_file_unlink_req_put_name(ctx, &(prev), &(next), str, str_len)
+
+static inline void _eggsfs_same_shard_hard_file_unlink_req_put_creation_time(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_req_name* prev, struct eggsfs_same_shard_hard_file_unlink_req_creation_time* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_same_shard_hard_file_unlink_req_put_creation_time(ctx, prev, next, x) \
+    struct eggsfs_same_shard_hard_file_unlink_req_creation_time next; \
+    _eggsfs_same_shard_hard_file_unlink_req_put_creation_time(ctx, &(prev), &(next), x)
+
+#define eggsfs_same_shard_hard_file_unlink_req_put_end(ctx, prev, next) \
+    { struct eggsfs_same_shard_hard_file_unlink_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_same_shard_hard_file_unlink_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SAME_SHARD_HARD_FILE_UNLINK_RESP_SIZE 0
+struct eggsfs_same_shard_hard_file_unlink_resp_start;
+#define eggsfs_same_shard_hard_file_unlink_resp_get_start(ctx, start) struct eggsfs_same_shard_hard_file_unlink_resp_start* start = NULL
+
+struct eggsfs_same_shard_hard_file_unlink_resp_end;
+#define eggsfs_same_shard_hard_file_unlink_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_same_shard_hard_file_unlink_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_same_shard_hard_file_unlink_resp_end* next = NULL
+
+static inline void eggsfs_same_shard_hard_file_unlink_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_same_shard_hard_file_unlink_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_same_shard_hard_file_unlink_resp_put_start(ctx, start) struct eggsfs_same_shard_hard_file_unlink_resp_start* start = NULL
+
+#define eggsfs_same_shard_hard_file_unlink_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_same_shard_hard_file_unlink_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_same_shard_hard_file_unlink_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_MAKE_DIRECTORY_REQ_MAX_SIZE 264
 struct eggsfs_make_directory_req_start;

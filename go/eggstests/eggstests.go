@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -407,6 +409,54 @@ func (r *RunTests) run(
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
 			rsyncTest(log, &rsyncOpts, r.mountPoint)
+		},
+	)
+
+	runTest(
+		log,
+		r.acceptGcFailures,
+		shuckleAddress,
+		r.filter,
+		"cp",
+		"",
+		func(counters *lib.ClientCounters) {
+			from := path.Join(r.mountPoint, "test-1")
+			to := path.Join(r.mountPoint, "test-2")
+			contents := []byte("foo")
+			if err := ioutil.WriteFile(from, contents, 0644); err != nil {
+				panic(err)
+			}
+			if err := exec.Command("cp", from, to).Run(); err != nil {
+				panic(err)
+			}
+			contents1, err := os.ReadFile(from)
+			if err != nil {
+				panic(err)
+			}
+			if !bytes.Equal(contents, contents1) {
+				panic(fmt.Errorf("expected %v, got %v", contents, contents1))
+			}
+			contents2, err := os.ReadFile(from)
+			if err != nil {
+				panic(err)
+			}
+			if !bytes.Equal(contents, contents2) {
+				panic(fmt.Errorf("expected %v, got %v", contents, contents2))
+			}
+			/*
+				// now try shell redirection
+				f := path.Join(r.mountPoint, "test-3")
+				if err := exec.Command("sh", "-c", fmt.Sprintf("echo foo > %s", f)); err != nil {
+					panic(err)
+				}
+				contents3, err := os.ReadFile(from)
+				if err != nil {
+					panic(err)
+				}
+				if !bytes.Equal(contents, contents3) {
+					panic(fmt.Errorf("expected %v, got %v", contents, contents3))
+				}
+			*/
 		},
 	)
 

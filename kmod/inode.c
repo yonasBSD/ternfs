@@ -113,16 +113,18 @@ again: // progress: whoever wins the lock won't try again
                 expiry = ts + eggsfs_dir_refresh_time_jiffies;
             }
         } else {
-            u64 size;
-            err = eggsfs_shard_getattr_file(
-                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
-                enode->inode.i_ino,
-                &mtime,
-                &size
-            );
-            if (err == 0) {
-                enode->inode.i_size = size;
-                expiry = ~(uint64_t)0;
+            expiry = ~(uint64_t)0;
+            if (enode->file.status == EGGSFS_FILE_STATUS_READING) {
+                u64 size;
+                err = eggsfs_shard_getattr_file(
+                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
+                    enode->inode.i_ino,
+                    &mtime,
+                    &size
+                );
+                if (err == 0) {
+                    enode->inode.i_size = size;
+                }
             }
         }
         if (err) { err = eggsfs_error_to_linux(err); goto out; }
@@ -170,7 +172,7 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     if (IS_ERR(inode)) { return ERR_PTR(PTR_ERR(inode)); }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
-    enode->file.status = EGGSFS_FILE_STATUS_CREATED;
+    enode->file.status = EGGSFS_FILE_STATUS_WRITING;
 
     // Initialize all the transient specific fields
     enode->file.cookie = cookie;

@@ -1361,6 +1361,18 @@ func main() {
 			reflect.TypeOf(msgs.MoveSpanReq{}),
 			reflect.TypeOf(msgs.MoveSpanResp{}),
 		},
+		// again, this is private, but we plan to use it to restart writing empty
+		// files.
+		{
+			0x74,
+			reflect.TypeOf(msgs.RemoveNonOwnedEdgeReq{}),
+			reflect.TypeOf(msgs.RemoveNonOwnedEdgeResp{}),
+		},
+		{
+			0x75,
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkReq{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkResp{}),
+		},
 	}
 
 	shardReqResps := append(kernelShardReqResps, []reqRespType{
@@ -1395,16 +1407,6 @@ func main() {
 			0x72,
 			reflect.TypeOf(msgs.VisitTransientFilesReq{}),
 			reflect.TypeOf(msgs.VisitTransientFilesResp{}),
-		},
-		{
-			0x74,
-			reflect.TypeOf(msgs.RemoveNonOwnedEdgeReq{}),
-			reflect.TypeOf(msgs.RemoveNonOwnedEdgeResp{}),
-		},
-		{
-			0x75,
-			reflect.TypeOf(msgs.SameShardHardFileUnlinkReq{}),
-			reflect.TypeOf(msgs.SameShardHardFileUnlinkResp{}),
 		},
 		{
 			0x76,

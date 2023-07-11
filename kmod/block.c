@@ -160,10 +160,13 @@ struct block_socket {
 };
 
 static void block_ops_exit(struct block_ops* ops) {
+    eggsfs_debug("waiting for all sockets to be done");
+
     struct block_socket* sock;
     int bucket;
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        eggsfs_debug("scheduling winddown for %d", ntohs(sock->addr.sin_port));
         atomic_cmpxchg(&sock->err, 0, -ECONNABORTED);
         queue_work(eggsfs_wq, &sock->work);
     }
@@ -171,6 +174,7 @@ static void block_ops_exit(struct block_ops* ops) {
 
     // wait for all of them to be freed by work
     for (bucket = 0; bucket < BLOCK_SOCKET_BUCKETS; bucket++) {
+        eggsfs_debug("waiting for bucket %d (len %d)", bucket, atomic_read(&ops->len[bucket]));
         wait_event(ops->wqs[bucket], atomic_read(&ops->len[bucket]) == 0);
     }
 }
@@ -334,7 +338,7 @@ static void remove_block_socket(
     u64 key = block_socket_key(&socket->addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
     spin_lock(&ops->locks[bucket]);
-    hash_del_rcu(&socket->hnode);
+    hash_del_rcu(&socket->hnode); // tied to atomic_dec below
     spin_unlock(&ops->locks[bucket]);
     synchronize_rcu();
 
@@ -376,9 +380,6 @@ static void remove_block_socket(
         eggsfs_debug("completing request because of a socket winddown");
         ops->complete(req); // no need to go through wq, we're in process context already
     }
-
-    // cancel any remaining work
-    cancel_work_sync(&socket->work);
 
     // Finally, kill the socket.
     sock_release(socket->sock);

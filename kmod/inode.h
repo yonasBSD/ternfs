@@ -57,10 +57,9 @@ static inline void eggsfs_span_policies_last(struct eggsfs_span_policies* polici
 
 struct eggsfs_transient_span;
 
-#define EGGSFS_FILE_STATUS_NONE 0 // when we create the inode
-#define EGGSFS_FILE_STATUS_READING 1
-#define EGGSFS_FILE_STATUS_CREATED 2
-#define EGGSFS_FILE_STATUS_WRITING 3
+#define EGGSFS_FILE_STATUS_NONE 0     // we have created the inode, we haven't opened it yet
+#define EGGSFS_FILE_STATUS_READING 1  // the file has been linked (we can reopen it at will)
+#define EGGSFS_FILE_STATUS_WRITING 2  // the file is transient, we're writing it
 
 struct eggsfs_inode_file {
     int status;

@@ -53,28 +53,39 @@ static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
 // open_mutex held here
 // really want atomic open for this
 static int file_open(struct inode* inode, struct file* filp) {
+    int err = 0;
+    inode_lock(inode);
+
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     eggsfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
 
-    if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-        // TODO can this ever happen?
-        eggsfs_debug("trying to open file we're already writing");
-        return -ENOENT;
-    }
-
     if (filp->f_mode & FMODE_WRITE) {
         eggsfs_debug("opening file for writing");
-        if (enode->file.status != EGGSFS_FILE_STATUS_CREATED) {
-            eggsfs_debug("trying to open for write non-writeable file");
-            return -EPERM;
+        if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
+            // We could switch file owner, but that comes with its own annoyances (we'd
+            // have to transfer the MM_ counters over). This is the common case anyway.
+            // we switch the current process to be the one that matter
+            if (current->group_leader != enode->file.owner) {
+                err = -EROFS;
+                eggsfs_debug("trying to open for write non-writeable file");
+            }
+            goto out;
         }
-        enode->file.status = EGGSFS_FILE_STATUS_WRITING;
     } else {
+        if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+            // we can't read and write at the same time
+            err = -EPERM;
+            goto out;
+        }
+        // start reading if we haven't already
         enode->file.status = EGGSFS_FILE_STATUS_READING;
+        goto out;
     }
 
-    return 0;
+out:
+    inode_unlock(inode);
+    return err;
 }
 
 static void init_transient_span(void* p) {
@@ -663,9 +674,12 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
 
     loff_t ppos_before = *ppos;
 
-    eggsfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld", enode, enode->inode.i_ino, iov_iter_count(from), enode->inode.i_size, *ppos);
+    eggsfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, iov_iter_count(from), enode->inode.i_size, *ppos, enode->file.status);
 
-    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) { err = -EPERM; goto out_err; }
+    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
+        err = -EROFS;
+        goto out_err;
+    }
 
     // permanent error
     err = atomic_read(&enode->file.transient_err);

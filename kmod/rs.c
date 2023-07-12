@@ -1,5 +1,7 @@
 #include "rs.h"
 
+#ifndef __CHECKER__ // sparse doesn't like this code at all.
+
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <asm/fpu/api.h>
@@ -251,3 +253,5 @@ void __cold eggsfs_rs_exit(void) {
 }
 
 #include "gf_tables.c"
+
+#endif

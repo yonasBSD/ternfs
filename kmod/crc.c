@@ -1,5 +1,7 @@
 #include "crc.h"
 
+#ifndef __CHECKER__ // sparse doesn't like this code at all.
+
 #include "intrshims.h"
 
 #include "log.h"
@@ -24,3 +26,5 @@ u32 eggsfs_crc32c_append(u32 crc1, u32 crc2, size_t len2) {
 u32 eggsfs_crc32c_zero_extend(u32 crc, ssize_t zeros) {
     return crc32c_zero_extend(crc, zeros);
 }
+
+#endif

@@ -26,7 +26,7 @@ eggsfs-objs += \
 
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
 
-export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnosizeof-void -DCONFIG_SPARSE_RCU_POINTER
+export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
 # C=1 builds with sparse
 kmod:

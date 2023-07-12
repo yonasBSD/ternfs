@@ -230,7 +230,7 @@ static void block_write_space(struct sock* sk) {
 static struct block_socket* get_block_socket(
     struct block_ops* ops,
     struct sockaddr_in* addr
-) {
+) __acquires(RCU) {
     u64 key = block_socket_key(addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
 
@@ -238,10 +238,10 @@ static struct block_socket* get_block_socket(
     struct block_socket* sock;
     hlist_for_each_entry_rcu(sock, &ops->sockets[bucket], hnode) {
         if (block_socket_key(&sock->addr) == key) {
-            rcu_read_unlock();
             return sock;
         }
     }
+    rcu_read_unlock();
 
     eggsfs_debug("socket to %pI4:%d not found, will create", &addr->sin_addr, ntohs(addr->sin_port));
 

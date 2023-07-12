@@ -113,8 +113,12 @@ again: // progress: whoever wins the lock won't try again
                 expiry = ts + eggsfs_dir_refresh_time_jiffies;
             }
         } else {
-            expiry = ~(uint64_t)0;
-            if (enode->file.status == EGGSFS_FILE_STATUS_READING) {
+            // Make it so that this function is only called once. Afterwards
+            // we always keep this up to date internally, until the file is
+            // linked in which case it never changes size nor mtime TODO
+            // this will change soon as we add utime.
+            if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
+                eggsfs_debug("updating getattr for reading file");
                 u64 size;
                 err = eggsfs_shard_getattr_file(
                     (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
@@ -122,9 +126,19 @@ again: // progress: whoever wins the lock won't try again
                     &mtime,
                     &size
                 );
-                if (err == 0) {
+                if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
+                    enode->inode.i_size = 0;
+                    expiry = 0;
+                    mtime = 0;
+                } else if (err == 0) {
                     enode->inode.i_size = size;
+                    expiry = ~(uint64_t)0;
                 }
+            } else {
+                BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
+                expiry = ~(uint64_t)0; // we take care of this from now on
+                enode->inode.i_size = 0;
+                mtime = 0;
             }
         }
         if (err) { err = eggsfs_error_to_linux(err); goto out; }

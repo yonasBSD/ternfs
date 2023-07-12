@@ -709,6 +709,9 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
     }
     struct eggsfs_transient_span* span = enode->file.writing_span;
 
+    // Update mtime
+    ktime_get_real_ts64(&enode->inode.i_mtime);
+
     // We now start writing into the span, as much as we can anyway
     while (span->written < max_span_size && iov_iter_count(from)) {
         // grab the page to write to
@@ -826,6 +829,10 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
         &enode->edge_creation_time
     ));
     if (err < 0) { goto out; }
+
+    // finalize mtime
+    enode->inode.i_mtime.tv_sec = enode->edge_creation_time / 1000000000;
+    enode->inode.i_mtime.tv_nsec = enode->edge_creation_time % 1000000000;
 
     // Switch the file to a normal file
     enode->file.status = EGGSFS_FILE_STATUS_READING;

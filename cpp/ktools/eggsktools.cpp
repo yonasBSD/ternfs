@@ -35,6 +35,7 @@ static void writeFile(int argc, const char** argv) {
     ssize_t bufSize = -1; // if -1, all in one go
     const char* filename = NULL;
     bool closeAndReopen = false;
+    bool stat = false;
 
     for (int i = 0; i < argc; i++) {
         if (std::string(argv[i]) == "-buf-size") {
@@ -51,6 +52,8 @@ static void writeFile(int argc, const char** argv) {
             }
         } else if (std::string(argv[i]) == "-close-open") {
             closeAndReopen = true;
+        } else if (std::string(argv[i]) == "-stat") {
+            stat = true;
         } else {
             if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
             filename = argv[i];
@@ -91,6 +94,18 @@ static void writeFile(int argc, const char** argv) {
             die("couldn't write %s: %d (%s)", filename, errno, strerror(errno));
         }
         toWrite -= res;
+    }
+
+    // we should be able to stat a file open for writing
+    if (stat) {
+        struct stat st;
+        if(fstat(fd, &st) != 0) {
+            die("couldn't fstat %s: %d (%s)", filename, errno, strerror(errno));
+        }
+        char time_str[100];
+        struct tm *tm_info = localtime(&st.st_mtime);
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+        printf("stat size: %ld, mtime: %s\n", st.st_size, time_str);
     }
 
     printf("finished writing, will now close\n");

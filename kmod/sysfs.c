@@ -83,6 +83,14 @@ static const struct attribute_group eggsfs_stat_attr_group = {
     .attrs = eggsfs_stat_attrs,
 };
 
+extern const char* eggsfs_revision;
+
+static ssize_t eggsfs_revision_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf) {
+    return sprintf(buf, "%s\n", eggsfs_revision);
+}
+
+static struct kobj_attribute eggsfs_revision_attr = __ATTR(revision, 0444, eggsfs_revision_show, NULL);
+
 int __init eggsfs_sysfs_init(void) {
     int err;
 
@@ -90,6 +98,9 @@ int __init eggsfs_sysfs_init(void) {
     if (!eggsfs_kset) { return -ENOMEM; }
 
     err = sysfs_create_group(&eggsfs_kset->kobj, &eggsfs_stat_attr_group);
+    if (err) { goto out_unreg; }
+
+    err = sysfs_create_file(&eggsfs_kset->kobj, &eggsfs_revision_attr.attr);
     if (err) { goto out_unreg; }
 
     return 0;

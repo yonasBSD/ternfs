@@ -22,14 +22,19 @@ eggsfs-objs += \
 	rs.o \
 	crc.o \
 	span.o \
-	bincode.o
+	bincode.o \
+	revision.o
 
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
 
 export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
+.PHONY: revision.c
+revision.c:
+	printf "const char* eggsfs_revision = \"$(shell git describe --always --dirty)\";\n" > revision.c
+
 # C=1 builds with sparse
-kmod:
+kmod: revision.c
 	make -C $(KDIR) M=$(PWD) C=1 modules
 
 clean:

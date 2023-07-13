@@ -345,9 +345,9 @@ func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *tim
 	timeSinceLastReport := now.Sub(timeStats.lastReportAt)
 	timeSinceStart := now.Sub(timeStats.startedAt)
 	overallMiB := float64(stats.MigratedBytes) / float64(uint64(1)<<20)
-	overallMiBs := overallMiB / float64(timeSinceStart.Milliseconds()) / 1000.0
+	overallMiBs := 1000.0 * overallMiB / float64(timeSinceStart.Milliseconds())
 	recentMiB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / float64(uint64(1)<<20)
-	recentMiBs := recentMiB / float64(timeSinceLastReport.Milliseconds()) / 1000.0
+	recentMiBs := 1000.0 * recentMiB / float64(timeSinceLastReport.Milliseconds())
 	log.Info("migrated %0.2fMiB in %v blocks in %v files, at %.2fMiB/s (recent), %0.2fMiB/s (overall)", overallMiB, stats.MigratedBlocks, stats.MigratedFiles, recentMiBs, overallMiBs)
 	timeStats.lastReportAt = now
 	timeStats.lastReportBytes = stats.MigratedBytes

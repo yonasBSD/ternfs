@@ -1,6 +1,7 @@
 #include <linux/inet.h>
 #include <net/tcp.h>
 #include <net/sock.h>
+#include <linux/workqueue.h>
 
 #include "block.h"
 #include "log.h"
@@ -150,6 +151,7 @@ struct block_socket {
     spinlock_t write_lock;
     // This does both write work and also cleaning up timed out / errored sockets.
     struct work_struct work;
+    bool terminal;
     // Read end. "data available" callback does all the work.
     struct list_head read;
     spinlock_t read_lock;
@@ -291,6 +293,8 @@ static struct block_socket* get_block_socket(
     INIT_LIST_HEAD(&sock->read);
     spin_lock_init(&sock->read_lock);
 
+    sock->terminal = false;
+
     // now insert
     struct block_socket* other_sock;
 
@@ -333,62 +337,70 @@ static void remove_block_socket(
 
     eggsfs_debug("winding down socket to %pI4:%d due to %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
 
-    // First, remove socket from hashmap. After we're done with this,
-    // we know nobody's going to add stuff to the write queue.
     u64 key = block_socket_key(&socket->addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
-    spin_lock(&ops->locks[bucket]);
-    hash_del_rcu(&socket->hnode); // tied to atomic_dec below
-    spin_unlock(&ops->locks[bucket]);
-    synchronize_rcu();
 
-    // Then, change back the callbacks: this will also ensure that no
-    // callback is currently running, i.e. that nobody's using the
-    // socket.
-    write_lock_bh(&socket->sock->sk->sk_callback_lock);
-    socket->sock->sk->sk_data_ready = socket->saved_data_ready;
-    socket->sock->sk->sk_state_change = socket->saved_state_change;
-    socket->sock->sk->sk_write_space = socket->saved_write_space;
-    write_unlock_bh(&socket->sock->sk->sk_callback_lock);
+    if (!socket->terminal) {
+        socket->terminal = true;
     
-    // Now complete all the remaining requests with the error.
-    // Note that we're the only one remaining, but we still
-    // take locks for hygiene.
+        // First, remove socket from hashmap. After we're done with this,
+        // we know nobody's going to add new requests to this.
+        spin_lock(&ops->locks[bucket]);
+        hash_del_rcu(&socket->hnode); // tied to atomic_dec below
+        spin_unlock(&ops->locks[bucket]);
+        synchronize_rcu();
 
-    struct block_request* req;
-    struct block_request* tmp;
+        // Then, change back the callbacks: this will also ensure that no
+        // callback is currently running, i.e. that nobody's using the
+        // socket.
+        write_lock_bh(&socket->sock->sk->sk_callback_lock);
+        socket->sock->sk->sk_data_ready = socket->saved_data_ready;
+        socket->sock->sk->sk_state_change = socket->saved_state_change;
+        socket->sock->sk->sk_write_space = socket->saved_write_space;
+        write_unlock_bh(&socket->sock->sk->sk_callback_lock);
 
-    struct list_head all_reqs;
-    INIT_LIST_HEAD(&all_reqs);
+        // Now complete all the remaining requests with the error.
+        // Note that we're the only one remaining, but we still
+        // take locks for hygiene.
 
-    spin_lock_bh(&socket->write_lock);
-    list_for_each_entry_safe(req, tmp, &socket->write, list) {
-        list_del(&req->list);
-        list_add(&req->list, &all_reqs);
+        struct block_request* req;
+        struct block_request* tmp;
+
+        struct list_head all_reqs;
+        INIT_LIST_HEAD(&all_reqs);
+
+        spin_lock_bh(&socket->write_lock);
+        list_for_each_entry_safe(req, tmp, &socket->write, list) {
+            list_del(&req->list);
+            list_add(&req->list, &all_reqs);
+        }
+        spin_unlock_bh(&socket->write_lock);
+
+        spin_lock_bh(&socket->read_lock);
+        list_for_each_entry_safe(req, tmp, &socket->read, list) {
+            list_del(&req->list);
+            list_add(&req->list, &all_reqs);
+        }
+        spin_unlock_bh(&socket->read_lock);
+
+        list_for_each_entry_safe(req, tmp, &all_reqs, list) {
+            atomic_cmpxchg(&req->err, 0, err);
+            eggsfs_debug("completing request because of a socket winddown");
+            ops->complete(req); // no need to go through wq, we're in process context already
+        }
     }
-    spin_unlock_bh(&socket->write_lock);
 
-    spin_lock_bh(&socket->read_lock);
-    list_for_each_entry_safe(req, tmp, &socket->read, list) {
-        list_del(&req->list);
-        list_add(&req->list, &all_reqs);
+    // Finally, kill the socket, unless there's another work item remaining, in which
+    // case it'll kill the socket but won't execute the cleanup operation above.
+    if (!(test_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(&socket->work)))) {
+        sock_release(socket->sock);
+        kfree(socket);
+
+        // Adjust len, notify waiters
+        smp_mb__before_atomic();
+        atomic_dec(&ops->len[bucket]);
+        wake_up_all(&ops->wqs[bucket]);
     }
-    spin_unlock_bh(&socket->read_lock);
-
-    list_for_each_entry_safe(req, tmp, &all_reqs, list) {
-        atomic_cmpxchg(&req->err, 0, err);
-        eggsfs_debug("completing request because of a socket winddown");
-        ops->complete(req); // no need to go through wq, we're in process context already
-    }
-
-    // Finally, kill the socket.
-    sock_release(socket->sock);
-    kfree(socket);
-
-    // Adjust len, notify waiters
-    smp_mb__before_atomic();
-    atomic_dec(&ops->len[bucket]);
-    wake_up_all(&ops->wqs[bucket]);
 }
 
 // This has three purposes:

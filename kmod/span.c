@@ -1265,11 +1265,13 @@ int eggsfs_span_init(void) {
         goto out_shrinker;
     }
 
-    eggsfs_inline_span_cachep = kmem_cache_create(
+    eggsfs_inline_span_cachep = kmem_cache_create_usercopy(
         "eggsfs_inline_span_cache",
         sizeof(struct eggsfs_inline_span),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        offsetof(struct eggsfs_inline_span, body),
+        sizeof(((struct eggsfs_inline_span*)NULL)->body),
         NULL
     );
     if (!eggsfs_block_span_cachep) {

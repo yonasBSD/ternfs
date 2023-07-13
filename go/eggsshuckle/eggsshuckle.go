@@ -68,7 +68,7 @@ type state struct {
 	mutex sync.Mutex
 	db    *sql.DB
 	// TODO: this should somehow be tied to values from shuckleReqResps in bincodegen.go (or be a map)
-	counters [10]lib.Timings
+	counters [11]lib.Timings
 }
 
 func (s *state) cdc() (*cdcState, error) {
@@ -105,7 +105,7 @@ func (s *state) shards() (*[256]msgs.ShardInfo, error) {
 
 	rows, err := s.db.Query("SELECT * FROM shards")
 	if err != nil {
-		return nil, fmt.Errorf("error selecting blockServices: %s", err)
+		return nil, fmt.Errorf("error selecting shards: %s", err)
 	}
 	defer rows.Close()
 
@@ -131,9 +131,17 @@ func (s *state) shards() (*[256]msgs.ShardInfo, error) {
 	return &ret, nil
 }
 
-func (s *state) blockServices() (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) blockServices(id *msgs.BlockServiceId) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+	n := sql.Named
+
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
-	rows, err := s.db.Query("SELECT * FROM block_services")
+	q := "SELECT * FROM block_services"
+	args := []any{}
+	if id != nil {
+		q += " WHERE id = :id"
+		args = append(args, n("id", *id))
+	}
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("error selecting blockServices: %s", err)
 	}
@@ -165,7 +173,7 @@ func newState(db *sql.DB) *state {
 
 func handleAllBlockServicesReq(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.blockServices()
+	blockServices, err := s.blockServices(nil)
 	if err != nil {
 		ll.Error("error reading block services: %s", err)
 		return nil, err
@@ -179,6 +187,20 @@ func handleAllBlockServicesReq(ll *lib.Logger, s *state, req *msgs.AllBlockServi
 	}
 
 	return &resp, nil
+}
+
+func handleBlockServiceReq(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
+	blockServices, err := s.blockServices(&req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if len(blockServices) > 1 {
+		panic(fmt.Errorf("impossible: %v results for id blocks selection", len(blockServices)))
+	}
+	for _, bs := range blockServices {
+		return &msgs.BlockServiceResp{Info: bs}, nil
+	}
+	return nil, msgs.BLOCK_SERVICE_NOT_FOUND
 }
 
 func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
@@ -385,6 +407,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleRegisterCdcReq(log, s, whichReq)
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, whichReq)
+	case *msgs.BlockServiceReq:
+		resp, err = handleBlockServiceReq(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -649,7 +673,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.blockServices()
+			blockServices, err := state.blockServices(nil)
 			if err != nil {
 				ll.Error("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))

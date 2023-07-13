@@ -554,6 +554,8 @@ func (k ShuckleMessageKind) String() string {
 		return "REGISTER_CDC"
 	case 9:
 		return "SET_BLOCK_SERVICE_FLAGS"
+	case 10:
+		return "BLOCK_SERVICE"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -569,6 +571,7 @@ const (
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
 	REGISTER_CDC ShuckleMessageKind = 0x6
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
+	BLOCK_SERVICE ShuckleMessageKind = 0xA
 )
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
@@ -589,6 +592,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &RegisterCdcReq{}, &RegisterCdcResp{}, nil
 	case k == "SET_BLOCK_SERVICE_FLAGS":
 		return &SetBlockServiceFlagsReq{}, &SetBlockServiceFlagsResp{}, nil
+	case k == "BLOCK_SERVICE":
+		return &BlockServiceReq{}, &BlockServiceResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4037,6 +4042,42 @@ func (v *SetBlockServiceFlagsResp) Pack(w io.Writer) error {
 }
 
 func (v *SetBlockServiceFlagsResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *BlockServiceReq) ShuckleRequestKind() ShuckleMessageKind {
+	return BLOCK_SERVICE
+}
+
+func (v *BlockServiceReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceResp) ShuckleResponseKind() ShuckleMessageKind {
+	return BLOCK_SERVICE
+}
+
+func (v *BlockServiceResp) Pack(w io.Writer) error {
+	if err := v.Info.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceResp) Unpack(r io.Reader) error {
+	if err := v.Info.Unpack(r); err != nil {
+		return err
+	}
 	return nil
 }
 

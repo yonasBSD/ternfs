@@ -149,27 +149,61 @@ func (id InodeId) Shard() ShardId {
 }
 
 func (id InodeId) String() string {
-	return fmt.Sprintf("0x%x", uint64(id))
+	return fmt.Sprintf("0x%016x", uint64(id))
+}
+
+func marshalJSONId(id uint64) ([]byte, error) {
+	return []byte(fmt.Sprintf("\"0x%016x\"", uint64(id))), nil
+}
+
+func unmarshalJSONId(b []byte) (uint64, error) {
+	var ids string
+	if err := json.Unmarshal(b, &ids); err != nil {
+		return 0, err
+	}
+	idu, err := strconv.ParseUint(ids, 0, 63)
+	if err != nil {
+		return 0, err
+	}
+	return idu, nil
 }
 
 func (id InodeId) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", id.String())), nil
+	return marshalJSONId(uint64(id))
 }
 
 func (id *InodeId) UnmarshalJSON(b []byte) error {
-	var ids string
-	if err := json.Unmarshal(b, &ids); err != nil {
-		return err
-	}
-	if ids == "ROOT" {
-		*id = ROOT_DIR_INODE_ID
-		return nil
-	}
-	idu, err := strconv.ParseUint(ids, 0, 63)
+	idu, err := unmarshalJSONId(b)
 	if err != nil {
 		return err
 	}
 	*id = InodeId(idu)
+	return nil
+}
+
+func (id BlockId) MarshalJSON() ([]byte, error) {
+	return marshalJSONId(uint64(id))
+}
+
+func (id *BlockId) UnmarshalJSON(b []byte) error {
+	idu, err := unmarshalJSONId(b)
+	if err != nil {
+		return err
+	}
+	*id = BlockId(idu)
+	return nil
+}
+
+func (id BlockServiceId) MarshalJSON() ([]byte, error) {
+	return marshalJSONId(uint64(id))
+}
+
+func (id *BlockServiceId) UnmarshalJSON(b []byte) error {
+	idu, err := unmarshalJSONId(b)
+	if err != nil {
+		return err
+	}
+	*id = BlockServiceId(idu)
 	return nil
 }
 
@@ -242,6 +276,23 @@ func (t EggsTime) Time() time.Time {
 
 func (t EggsTime) String() string {
 	return t.Time().Format(time.RFC3339Nano)
+}
+
+func (t EggsTime) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("%q", t.String())), nil
+}
+
+func (t *EggsTime) UnmarshalJSON(b []byte) error {
+	var ts string
+	if err := json.Unmarshal(b, &ts); err != nil {
+		return err
+	}
+	tt, err := time.Parse(ts, time.RFC3339Nano)
+	if err != nil {
+		return err
+	}
+	*t = EggsTime(tt.Nanosecond())
+	return nil
 }
 
 type ErrCode uint16
@@ -1524,6 +1575,14 @@ type InfoResp struct {
 	Capacity          uint64
 	Available         uint64
 	Blocks            uint64
+}
+
+type BlockServiceReq struct {
+	Id BlockServiceId
+}
+
+type BlockServiceResp struct {
+	Info BlockServiceInfo
 }
 
 // --------------------------------------------------------------------

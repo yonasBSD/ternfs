@@ -1556,6 +1556,11 @@ func main() {
 			reflect.TypeOf(msgs.SetBlockServiceFlagsReq{}),
 			reflect.TypeOf(msgs.SetBlockServiceFlagsResp{}),
 		},
+		{
+			0x0A,
+			reflect.TypeOf(msgs.BlockServiceReq{}),
+			reflect.TypeOf(msgs.BlockServiceResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

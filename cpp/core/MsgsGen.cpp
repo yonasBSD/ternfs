@@ -349,6 +349,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << "SET_BLOCK_SERVICE_FLAGS";
         break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        out << "BLOCK_SERVICE";
+        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -3263,6 +3266,42 @@ std::ostream& operator<<(std::ostream& out, const SetBlockServiceFlagsResp& x) {
     return out;
 }
 
+void BlockServiceReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+}
+void BlockServiceReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+}
+void BlockServiceReq::clear() {
+    id = BlockServiceId(0);
+}
+bool BlockServiceReq::operator==(const BlockServiceReq& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceReq& x) {
+    out << "BlockServiceReq(" << "Id=" << x.id << ")";
+    return out;
+}
+
+void BlockServiceResp::pack(BincodeBuf& buf) const {
+    info.pack(buf);
+}
+void BlockServiceResp::unpack(BincodeBuf& buf) {
+    info.unpack(buf);
+}
+void BlockServiceResp::clear() {
+    info.clear();
+}
+bool BlockServiceResp::operator==(const BlockServiceResp& rhs) const {
+    if (info != rhs.info) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceResp& x) {
+    out << "BlockServiceResp(" << "Info=" << x.info << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -5345,6 +5384,16 @@ SetBlockServiceFlagsReq& ShuckleReqContainer::setSetBlockServiceFlags() {
     x.clear();
     return x;
 }
+const BlockServiceReq& ShuckleReqContainer::getBlockService() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICE);
+    return std::get<8>(_data);
+}
+BlockServiceReq& ShuckleReqContainer::setBlockService() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICE;
+    auto& x = std::get<8>(_data);
+    x.clear();
+    return x;
+}
 size_t ShuckleReqContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -5363,6 +5412,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<6>(_data).packedSize();
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return std::get<7>(_data).packedSize();
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        return std::get<8>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5393,6 +5444,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<7>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        std::get<8>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5426,6 +5480,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<7>(_data).unpack(buf);
         break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        std::get<8>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -5456,6 +5513,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << x.getSetBlockServiceFlags();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        out << x.getBlockService();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -5543,6 +5603,16 @@ SetBlockServiceFlagsResp& ShuckleRespContainer::setSetBlockServiceFlags() {
     x.clear();
     return x;
 }
+const BlockServiceResp& ShuckleRespContainer::getBlockService() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICE);
+    return std::get<8>(_data);
+}
+BlockServiceResp& ShuckleRespContainer::setBlockService() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICE;
+    auto& x = std::get<8>(_data);
+    x.clear();
+    return x;
+}
 size_t ShuckleRespContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -5561,6 +5631,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<6>(_data).packedSize();
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return std::get<7>(_data).packedSize();
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        return std::get<8>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5591,6 +5663,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<7>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        std::get<8>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5624,6 +5699,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<7>(_data).unpack(buf);
         break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        std::get<8>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -5654,6 +5732,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << x.getSetBlockServiceFlags();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        out << x.getBlockService();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

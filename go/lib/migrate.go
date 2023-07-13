@@ -329,15 +329,45 @@ func (k *keepScratchFileAlive) stop() {
 	<-k.heartbeatStopped
 }
 
+type timeStats struct {
+	startedAt       time.Time
+	lastReportAt    time.Time
+	lastReportBytes uint64
+}
+
+func newTimeStats() *timeStats {
+	now := time.Now()
+	return &timeStats{startedAt: now, lastReportAt: now}
+}
+
+func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *timeStats) {
+	now := time.Now()
+	timeSinceLastReport := now.Sub(timeStats.lastReportAt)
+	timeSinceStart := now.Sub(timeStats.startedAt)
+	overallMiB := float64(stats.MigratedBytes) / float64(uint64(1)<<20)
+	overallMiBs := overallMiB / float64(timeSinceStart.Milliseconds()) / 1000.0
+	recentMiB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / float64(uint64(1)<<20)
+	recentMiBs := recentMiB / float64(timeSinceLastReport.Milliseconds()) / 1000.0
+	log.Info("migrated %0.2fMiB in %v blocks in %v files, at %.2fMiB/s (recent), %0.2fMiB/s (overall)", overallMiB, stats.MigratedBlocks, stats.MigratedFiles, recentMiBs, overallMiBs)
+	timeStats.lastReportAt = now
+	timeStats.lastReportBytes = stats.MigratedBytes
+}
+
 func migrateBlocksInFileInternal(
 	log *Logger,
 	client *Client,
 	bufPool *sync.Pool,
 	stats *MigrateStats,
+	timeStats *timeStats,
 	blockServiceId msgs.BlockServiceId,
 	scratchFile *scratchFile,
 	fileId msgs.InodeId,
 ) error {
+	defer func() {
+		if time.Since(timeStats.lastReportAt) > time.Minute {
+			printStats(log, client, stats, timeStats)
+		}
+	}()
 	// do not migrate transient files -- they might have spans not fully written yet
 	{
 		err := client.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &msgs.StatFileResp{})
@@ -450,9 +480,7 @@ func migrateBlocksInFileInternal(
 					return err
 				}
 				stats.MigratedBlocks++
-				if stats.MigratedBlocks%uint64(100) == 0 {
-					log.Info("migrated %v blocks", stats.MigratedBlocks)
-				}
+				stats.MigratedBytes += uint64(D * int(body.CellSize))
 			}
 		}
 		if fileSpansResp.NextOffset == 0 {
@@ -468,6 +496,7 @@ func migrateBlocksInFileInternal(
 type MigrateStats struct {
 	MigratedFiles  uint64
 	MigratedBlocks uint64
+	MigratedBytes  uint64
 }
 
 func newBufPool() *sync.Pool {
@@ -494,7 +523,7 @@ func MigrateBlocksInFile(
 	scratchFile := scratchFile{}
 	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
 	defer keepAlive.stop()
-	return migrateBlocksInFileInternal(log, client, newBufPool(), stats, blockServiceId, &scratchFile, fileId)
+	return migrateBlocksInFileInternal(log, client, newBufPool(), stats, newTimeStats(), blockServiceId, &scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
@@ -504,6 +533,7 @@ func migrateBlocksInternal(
 	client *Client,
 	bufPool *sync.Pool,
 	stats *MigrateStats,
+	timeStats *timeStats,
 	shid msgs.ShardId,
 	blockServiceId msgs.BlockServiceId,
 ) error {
@@ -525,7 +555,7 @@ func migrateBlocksInternal(
 			if file == scratchFile.id {
 				continue
 			}
-			if err := migrateBlocksInFileInternal(log, client, bufPool, stats, blockServiceId, &scratchFile, file); err != nil {
+			if err := migrateBlocksInFileInternal(log, client, bufPool, stats, timeStats, blockServiceId, &scratchFile, file); err != nil {
 				return err
 			}
 		}
@@ -540,10 +570,12 @@ func MigrateBlocks(
 	shid msgs.ShardId,
 	blockServiceId msgs.BlockServiceId,
 ) error {
+	timeStats := newTimeStats()
 	bufPool := newBufPool()
-	if err := migrateBlocksInternal(log, client, bufPool, stats, shid, blockServiceId); err != nil {
+	if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, shid, blockServiceId); err != nil {
 		return err
 	}
+	printStats(log, client, stats, timeStats)
 	log.Info("finished migrating blocks out of %v in shard %v, stats: %+v", blockServiceId, shid, stats)
 	return nil
 }
@@ -554,14 +586,16 @@ func MigrateBlocksInAllShards(
 	stats *MigrateStats,
 	blockServiceId msgs.BlockServiceId,
 ) error {
+	timeStats := newTimeStats()
 	bufPool := newBufPool()
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		log.Info("migrating blocks in shard %v", shid)
-		if err := migrateBlocksInternal(log, client, bufPool, stats, shid, blockServiceId); err != nil {
+		if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, shid, blockServiceId); err != nil {
 			return err
 		}
 	}
+	printStats(log, client, stats, timeStats)
 	log.Info("finished migrating blocks out of %v in all shards, stats: %+v", blockServiceId, stats)
 	return nil
 }

@@ -312,6 +312,56 @@ func (c *Client) CreateSpan(
 	return err
 }
 
+func (c *Client) WriteFile(
+	log *Logger,
+	bufPool *BufPool,
+	dirInfoCache *DirInfoCache,
+	dirId msgs.InodeId, // to get policies
+	fileId msgs.InodeId,
+	cookie [8]byte,
+	r io.Reader,
+) error {
+	spanPolicies := msgs.SpanPolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
+		return err
+	}
+	blockPolicies := msgs.BlockPolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
+		return err
+	}
+	stripePolicy := msgs.StripePolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
+		return err
+	}
+	maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
+	spanBuf := bufPool.Get(int(maxSpanSize))
+	defer bufPool.Put(spanBuf)
+	offset := uint64(0)
+	for {
+		*spanBuf = (*spanBuf)[:maxSpanSize]
+		read, err := io.ReadFull(r, *spanBuf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return err
+		}
+		if err == io.EOF {
+			break
+		}
+		*spanBuf = (*spanBuf)[:read]
+		err = c.CreateSpan(
+			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy,
+			fileId, cookie, offset, uint32(read), spanBuf,
+		)
+		if err != nil {
+			return err
+		}
+		offset += uint64(read)
+		if read < int(maxSpanSize) {
+			break
+		}
+	}
+	return nil
+}
+
 func (c *Client) CreateFile(
 	log *Logger,
 	bufPool *BufPool,
@@ -331,49 +381,14 @@ func (c *Client) CreateFile(
 	if err != nil {
 		return 0, err
 	}
-	spanPolicies := msgs.SpanPolicy{}
-	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &spanPolicies); err != nil {
-		return 0, err
-	}
-	blockPolicies := msgs.BlockPolicy{}
-	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &blockPolicies); err != nil {
-		return 0, err
-	}
-	stripePolicy := msgs.StripePolicy{}
-	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, &stripePolicy); err != nil {
-		return 0, err
-	}
 	fileResp := msgs.ConstructFileResp{}
 	if err := c.ShardRequest(log, dirId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
 		return 0, err
 	}
 	fileId := fileResp.Id
 	cookie := fileResp.Cookie
-	maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
-	spanBuf := bufPool.Get(int(maxSpanSize))
-	defer bufPool.Put(spanBuf)
-	offset := uint64(0)
-	for {
-		*spanBuf = (*spanBuf)[:maxSpanSize]
-		read, err := io.ReadFull(r, *spanBuf)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return 0, err
-		}
-		if err == io.EOF {
-			break
-		}
-		*spanBuf = (*spanBuf)[:read]
-		err = c.CreateSpan(
-			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy,
-			fileId, cookie, offset, uint32(read), spanBuf,
-		)
-		if err != nil {
-			return 0, err
-		}
-		offset += uint64(read)
-		if read < int(maxSpanSize) {
-			break
-		}
+	if err := c.WriteFile(log, bufPool, dirInfoCache, dirId, fileId, cookie, r); err != nil {
+		return 0, err
 	}
 	if err := c.ShardRequest(log, dirId.Shard(), &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: dirId, Name: fileName}, &msgs.LinkFileResp{}); err != nil {
 		return 0, err

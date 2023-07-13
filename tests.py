@@ -82,9 +82,11 @@ wait_cmds(
     quiet=tests_quiet,
 )
 
+fuse_tests = 'history|direct|mounted|large|rsync'
+
 bold_print('integration tests')
 tests = [
-    ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', 'history|direct', '-outgoing-packet-drop', '0.1', '-short'],
+    ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.1', '-short'],
     # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
     # of the child processes confuse the FUSE driver)
     ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.', '-short'],

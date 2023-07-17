@@ -519,13 +519,31 @@ public:
         bool lastRequestSuccessful = false;
         std::vector<Stat> stats;
 
+        const auto insertShardStats = [this, &stats]() {
+            std::string err;
+            for (ShardMessageKind kind : allShardMessageKind) {
+                std::ostringstream prefix;
+                prefix << "shard." << std::setw(3) << std::setfill('0') << _shid << "." << kind;
+                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+            }
+            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            stats.clear();
+            if (err.empty()) {
+                for (ShardMessageKind kind : allShardMessageKind) {
+                    _shared.timings[(int)kind]->reset();
+                }
+            }
+            return err;
+        };
+
         #define GO_TO_NEXT_ITERATION \
             sleepFor(10_ms); \
             continue; \
 
         for (;;) {
             if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
+                LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
+                insertShardStats();
                 break;
             }
 
@@ -541,22 +559,14 @@ public:
             LOG_INFO(_env, "about to insert stats to %s:%s", _shuckleHost, _shucklePort);
             std::string err;
 
-            for (ShardMessageKind kind : allShardMessageKind) {
-                std::ostringstream prefix;
-                prefix << "shard." << std::setw(3) << std::setfill('0') << _shid << "." << kind;
-                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
-            }
-            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            err = insertShardStats();
             lastRequestSuccessful = err.empty();
             lastRequestT = t;
             if (!lastRequestSuccessful) {
                 RAISE_ALERT(_env, "could not reach shuckle: %s", err);
                 GO_TO_NEXT_ITERATION
             }
-            stats.clear();
-            for (ShardMessageKind kind : allShardMessageKind) {
-                _shared.timings[(int)kind]->reset();
-            }
+            LOG_INFO(_env, "stats inserted, will wait one hour");
         }
 
         #undef GO_TO_NEXT_ITERATION

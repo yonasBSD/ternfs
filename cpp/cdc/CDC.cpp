@@ -673,6 +673,23 @@ public:
         std::vector<Stat> stats;
         std::string prefix = "cdc";
 
+        const auto insertCDCStats = [this, &stats]() {
+            std::string err;
+            for (CDCMessageKind kind : allCDCMessageKind) {
+                std::ostringstream prefix;
+                prefix << "cdc." << kind;
+                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+            }
+            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            stats.clear();
+            if (err.empty()) {
+                for (CDCMessageKind kind : allCDCMessageKind) {
+                    _shared.timings[(int)kind]->reset();
+                }
+            }
+            return err;
+        };
+
         #define GO_TO_NEXT_ITERATION \
             sleepFor(10_ms); \
             continue; \
@@ -695,22 +712,14 @@ public:
             LOG_INFO(_env, "about to insert stats to %s:%s", _shuckleHost, _shucklePort);
             std::string err;
 
-            for (CDCMessageKind kind : allCDCMessageKind) {
-                std::ostringstream prefix;
-                prefix << "cdc." << kind;
-                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
-            }
-            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            err = insertCDCStats();
             lastRequestSuccessful = err.empty();
             lastRequestT = t;
             if (!lastRequestSuccessful) {
                 RAISE_ALERT(_env, "could not reach shuckle: %s", err);
                 GO_TO_NEXT_ITERATION
             }
-            stats.clear();
-            for (CDCMessageKind kind : allCDCMessageKind) {
-                _shared.timings[(int)kind]->reset();
-            }
+            LOG_INFO(_env, "stats inserted, will wait one hour");
         }
 
         #undef GO_TO_NEXT_ITERATION

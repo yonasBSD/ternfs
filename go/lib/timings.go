@@ -103,7 +103,7 @@ func (t *Timings) Add(d time.Duration) {
 	}
 	atomic.AddUint64(&t.count, 1)
 	atomic.AddUint64(&t.sum, nanos)
-	atomic.AddUint64(&t.sumSquares, nanos*2)
+	atomic.AddUint64(&t.sumSquares, nanos*nanos)
 	atomic.AddUint64(&t.hist[bin], 1)
 }
 

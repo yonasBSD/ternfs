@@ -80,7 +80,7 @@ func main() {
 	var wait sync.WaitGroup
 	wait.Add(len(shards))
 
-	counters := &lib.ClientCounters{}
+	counters := lib.NewClientCounters()
 
 	// print out stats when sent USR1
 	{

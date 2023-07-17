@@ -28,6 +28,7 @@
 #include "Shuckle.hpp"
 #include "wyhash.h"
 #include "Xmon.hpp"
+#include "Timings.hpp"
 
 struct CDCShared {
     CDCDB& db;
@@ -35,6 +36,7 @@ struct CDCShared {
     std::array<std::atomic<uint16_t>, 2> ownPorts;
     std::mutex shardsMutex;
     std::array<ShardInfo, 256> shards;
+    std::array<std::unique_ptr<Timings<40>>, maxCDCMessageKind+1> timings;
 
     CDCShared(CDCDB& db_) :
         db(db_),
@@ -45,6 +47,9 @@ struct CDCShared {
         }
         ownPorts[0].store(0);
         ownPorts[1].store(0);
+        for (CDCMessageKind kind : allCDCMessageKind) {
+            timings[(int)kind] = std::make_unique<Timings<40>>(10_us, 1.5);
+        }
     }
 };
 
@@ -57,6 +62,7 @@ struct InFlightShardRequest {
 
 struct InFlightCDCRequest {
     uint64_t cdcRequestId;
+    EggsTime receivedAt;
     struct sockaddr_in clientAddr;
     CDCMessageKind kind;
     int sock;
@@ -280,6 +286,7 @@ private:
             }
 
             LOG_DEBUG(_env, "received request id %s, kind %s", reqHeader.requestId, reqHeader.kind);
+            auto receivedAt = eggsNow();
 
             // If this will be filled in with an actual code, it means that we couldn't process
             // the request.
@@ -310,6 +317,7 @@ private:
                 inFlight.clientAddr = clientAddr;
                 inFlight.kind = reqHeader.kind;
                 inFlight.sock = sock;
+                inFlight.receivedAt = receivedAt;
                 // Go forward
                 _processStep(_step);
             } else {
@@ -401,6 +409,7 @@ private:
             if (inFlight == _inFlightTxns.end()) {
                 RAISE_ALERT(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
             } else {
+                _shared.timings[(int)inFlight->second.kind]->add(eggsNow() - inFlight->second.receivedAt);
                 if (step.err != NO_ERROR) {
                     RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
                     _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, step.err, inFlight->second.clientAddr);
@@ -440,9 +449,9 @@ private:
             int whichShardAddr = now.ns & !!shardInfo.port2;
             int whichSock = (now.ns>>1) & !!_ipPorts[1].ip;
             shardAddr.sin_family = AF_INET;
-            shardAddr.sin_port = htons(whichShardAddr ? shardInfo.port1 : shardInfo.port2);
+            shardAddr.sin_port = htons(whichShardAddr ? shardInfo.port2 : shardInfo.port1);
             static_assert(sizeof(shardAddr.sin_addr) == sizeof(shardInfo.ip1));
-            memcpy(&shardAddr.sin_addr, (whichShardAddr ? shardInfo.ip1 : shardInfo.ip2).data.data(), sizeof(shardAddr.sin_addr));
+            memcpy(&shardAddr.sin_addr, (whichShardAddr ? shardInfo.ip2 : shardInfo.ip1).data.data(), sizeof(shardAddr.sin_addr));
             LOG_DEBUG(_env, "sending request with req id %s to shard %s (%s)", shardReqHeader.requestId, step.shardReq.shid, shardAddr);
             _send(_socks[whichSock*2 + 1], shardAddr, (const char*)bbuf.data, bbuf.len());
             // Record the in-flight req
@@ -632,6 +641,87 @@ static void* runCDCRegisterer(void* server) {
     return nullptr;
 }
 
+struct CDCStatsInserter : Undertaker::Reapable {
+private:
+    Env _env;
+    CDCShared& _shared;
+    std::string _shuckleHost;
+    uint16_t _shucklePort;
+public:
+    CDCStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
+        _env(logger, xmon, "stats_inserter"),
+        _shared(shared),
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort)
+    {}
+
+    virtual ~CDCStatsInserter() = default;
+
+    virtual void terminate() override {
+        _env.flush();
+        _shared.stop.store(true);
+    }
+
+    virtual void onAbort() override {
+        _env.flush();
+    }
+
+    void run() {
+        EggsTime t0 = eggsNow();
+        EggsTime lastRequestT = 0;
+        bool lastRequestSuccessful = false;
+        std::vector<Stat> stats;
+        std::string prefix = "cdc";
+
+        #define GO_TO_NEXT_ITERATION \
+            sleepFor(10_ms); \
+            continue; \
+
+        for (;;) {
+            if (_shared.stop.load()) {
+                LOG_DEBUG(_env, "got told to stop, stopping");
+                break;
+            }
+
+            EggsTime t = eggsNow();
+            if (lastRequestSuccessful && (t - lastRequestT) < 1_hours) {
+                GO_TO_NEXT_ITERATION
+            }
+            if (!lastRequestSuccessful && (t - lastRequestT) < 100_ms) {
+                // if the last request failed, wait at least 100ms before retrying
+                GO_TO_NEXT_ITERATION
+            }
+
+            LOG_INFO(_env, "about to insert stats to %s:%s", _shuckleHost, _shucklePort);
+            std::string err;
+
+            for (CDCMessageKind kind : allCDCMessageKind) {
+                std::ostringstream prefix;
+                prefix << "cdc." << kind;
+                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+            }
+            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            lastRequestSuccessful = err.empty();
+            lastRequestT = t;
+            if (!lastRequestSuccessful) {
+                RAISE_ALERT(_env, "could not reach shuckle: %s", err);
+                GO_TO_NEXT_ITERATION
+            }
+            stats.clear();
+            for (CDCMessageKind kind : allCDCMessageKind) {
+                _shared.timings[(int)kind]->reset();
+            }
+        }
+
+        #undef GO_TO_NEXT_ITERATION
+    }
+};
+
+static void* runCDCStatsInserter(void* server) {
+    ((CDCStatsInserter*)server)->run();
+    return nullptr;
+}
+
 static void* runXmon(void* server) {
     ((Xmon*)server)->run();
     return nullptr;
@@ -703,6 +793,15 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(server), tid, "registerer");
+    }
+
+    {
+        auto statsInserter = std::make_unique<CDCStatsInserter>(logger, xmon, options, *shared);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runCDCStatsInserter, &*statsInserter) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(statsInserter), tid, "stats_inserter");
     }
 
     if (xmon) {

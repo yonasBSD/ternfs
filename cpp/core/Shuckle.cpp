@@ -283,3 +283,33 @@ bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shu
     shuckleHost = {fullShuckleAddress.begin(), fullShuckleAddress.begin()+colon};
     return true;
 }
+
+std::string insertStats(
+    const std::string& host,
+    uint16_t port,
+    Duration timeout,
+    const std::vector<Stat>& stats
+) {
+    std::string errString;
+    auto sock = shuckleSock(host, port, timeout, errString);
+    if (sock.fd < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setInsertStats();
+    req.stats.els.insert(req.stats.els.end(), std::make_move_iterator(stats.begin()), std::make_move_iterator(stats.end()));
+    errString = writeShuckleRequest(sock.fd, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock.fd, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    return {};
+
+}

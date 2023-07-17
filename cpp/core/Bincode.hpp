@@ -150,8 +150,12 @@ struct BincodeList {
 
     uint16_t packedSize() const {
         uint16_t sz = 2;
-        for (const auto& el: els) {
-            sz += el.packedSize();
+        if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
+            sz += els.size()*sizeof(A);
+        } else {
+            for (const auto& el: els) {
+                sz += el.packedSize();
+            }
         }
         return sz;
     }
@@ -304,8 +308,17 @@ struct BincodeBuf {
     void packList(const BincodeList<A>& xs) {
         ALWAYS_ASSERT(xs.els.size() < (1<<16));
         packScalar<uint16_t>(xs.els.size());
-        for (const auto& x: xs.els) {
-            x.pack(*this);
+        // If it's a number of some sorts, just memcpy it
+        if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
+            static_assert(std::endian::native == std::endian::little);
+            size_t sz = sizeof(A)*xs.els.size();
+            ensureSizeOrPanic(sz);
+            memcpy(cursor, xs.els.data(), sz);
+            cursor += sz;
+        } else {
+            for (const auto& x: xs.els) {
+                x.pack(*this);
+            }
         }
     }
 
@@ -343,8 +356,19 @@ struct BincodeBuf {
     template<typename A>
     void unpackList(BincodeList<A>& xs) {
         xs.els.resize(unpackScalar<uint16_t>());
-        for (int i = 0; i < xs.els.size(); i++) {
-            xs.els[i].unpack(*this);
+        // If it's a number of some sorts, just memcpy it
+        if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
+            static_assert(std::endian::native == std::endian::little);
+            size_t sz = sizeof(A)*xs.els.size();
+            if (unlikely(remaining() < sz)) {
+                throw BINCODE_EXCEPTION("not enough bytes to unpack scalars (need %s, got %s)", sz, remaining());
+            }
+            memcpy(xs.els.data(), cursor, sz);
+            cursor += sz;
+        } else {
+            for (int i = 0; i < xs.els.size(); i++) {
+                xs.els[i].unpack(*this);
+            }
         }
     }
 

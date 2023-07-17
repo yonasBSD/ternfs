@@ -667,7 +667,7 @@ func main() {
 		pprof.StartCPUProfile(f) // we stop in terminate()
 	}
 
-	counters := &lib.ClientCounters{}
+	counters := lib.NewClientCounters()
 
 	var err error
 	client, err = lib.NewClient(logger, *shuckleAddress, 10)

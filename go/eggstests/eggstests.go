@@ -21,8 +21,6 @@ import (
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/rs"
 	"xtx/eggsfs/wyhash"
-
-	"golang.org/x/exp/constraints"
 )
 
 func formatNanos(nanos uint64) string {
@@ -50,21 +48,20 @@ func formatNanos(nanos uint64) string {
 	return fmt.Sprintf("%7.2f%s", amount, unit)
 }
 
-func formatCounters[K constraints.Integer](what string, counters []lib.ReqCounters) {
+func formatCounters[K ~uint8](what string, counters map[K]*lib.ReqCounters) {
 	fmt.Printf("    %s reqs count/attempts/avg/total:\n", what)
-	for i := 0; i < len(counters); i++ {
-		count := &counters[i]
+	for k, count := range counters {
 		if count.Attempts == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", K(i), count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())/count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())))
+		fmt.Printf("      %-30v %10v %6.2f %7s %7s\n", k, count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())/count.Timings.TotalCount()), formatNanos(uint64(count.Timings.TotalTime())))
 	}
 }
 
-func totalRequests(c []lib.ReqCounters) uint64 {
+func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
 	total := uint64(0)
-	for i := 0; i < len(c); i++ {
-		total += c[i].Timings.TotalCount()
+	for _, c := range cs {
+		total += c.Timings.TotalCount()
 	}
 	return total
 }
@@ -83,7 +80,7 @@ func runTest(
 		return
 	}
 
-	counters := &lib.ClientCounters{}
+	counters := lib.NewClientCounters()
 
 	fmt.Printf("running %s test, %s\n", name, extra)
 	log.Info("running %s test, %s\n", name, extra) // also in log to track progress in CI more easily
@@ -91,28 +88,28 @@ func runTest(
 	run(counters)
 	elapsed := time.Since(t0)
 
-	totalShardRequests := totalRequests(counters.Shard[:])
-	totalCDCRequests := totalRequests(counters.CDC[:])
+	totalShardRequests := totalRequests(counters.Shard)
+	totalCDCRequests := totalRequests(counters.CDC)
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard[:])
+		formatCounters("shard", counters.Shard)
 	}
 	if totalCDCRequests > 0 {
-		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC[:])
+		formatCounters("CDC", counters.CDC)
 	}
 
-	counters = &lib.ClientCounters{}
+	counters = lib.NewClientCounters()
 	t0 = time.Now()
 	cleanupAfterTest(log, shuckleAddress, counters, acceptGcFailures)
 	elapsed = time.Since(t0)
-	totalShardRequests = totalRequests(counters.Shard[:])
-	totalCDCRequests = totalRequests(counters.CDC[:])
+	totalShardRequests = totalRequests(counters.Shard)
+	totalCDCRequests = totalRequests(counters.CDC)
 	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard[:])
+		formatCounters("shard", counters.Shard)
 	}
 	if totalCDCRequests > 0 {
-		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC[:])
+		formatCounters("CDC", counters.CDC)
 	}
 }
 

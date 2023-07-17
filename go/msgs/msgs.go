@@ -1637,3 +1637,15 @@ type TestWriteReq struct {
 }
 
 type TestWriteResp struct{}
+
+type Stat struct {
+	Name  string
+	Time  EggsTime
+	Value bincode.Blob
+}
+
+type InsertStatsReq struct {
+	Stats []Stat
+}
+
+type InsertStatsResp struct{}

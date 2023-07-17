@@ -22,17 +22,35 @@ type ReqCounters struct {
 }
 
 type ClientCounters struct {
-	// these maps are indexed by req type
-	Shard [256]ReqCounters
-	CDC   [10]ReqCounters
+	Shard map[msgs.ShardMessageKind]*ReqCounters
+	CDC   map[msgs.CDCMessageKind]*ReqCounters
+}
+
+func NewClientCounters() *ClientCounters {
+	counters := ClientCounters{
+		Shard: make(map[msgs.ShardMessageKind]*ReqCounters),
+		CDC:   make(map[msgs.CDCMessageKind]*ReqCounters),
+	}
+	for _, k := range msgs.AllShardMessageKind {
+		// max = ~1min
+		counters.Shard[k] = &ReqCounters{
+			Timings: *NewTimings(40, time.Microsecond*10, 1.5),
+		}
+	}
+	for _, k := range msgs.AllCDCMessageKind {
+		// max = ~2min
+		counters.CDC[k] = &ReqCounters{
+			Timings: *NewTimings(35, time.Millisecond, 1.5),
+		}
+	}
+	return &counters
 }
 
 func (counters *ClientCounters) Log(log *Logger) {
 	formatCounters := func(c *ReqCounters) {
 		totalCount := uint64(0)
-		for i := 0; i < c.Timings.Buckets(); i++ {
-			_, count, _ := c.Timings.Bucket(i)
-			totalCount += count
+		for _, bin := range c.Timings.Histogram() {
+			totalCount += bin.Count
 		}
 		log.Info("    count: %v", totalCount)
 		if totalCount == 0 {
@@ -40,53 +58,52 @@ func (counters *ClientCounters) Log(log *Logger) {
 		} else {
 			log.Info("    attempts: %v (%v)", c.Attempts, float64(c.Attempts)/float64(totalCount))
 		}
-		log.Info("    total time: %v", time.Duration(c.Timings.TotalTime()))
-		log.Info("    avg time: %v", time.Duration(uint64(c.Timings.TotalTime())/totalCount))
+		log.Info("    total time: %v", c.Timings.TotalTime())
+		log.Info("    avg time: %v", c.Timings.Mean())
+		log.Info("    stddev time: %v", c.Timings.Stddev())
 		hist := bytes.NewBuffer([]byte{})
 		first := true
 		countSoFar := uint64(0)
-		for i := 0; i < c.Timings.Buckets(); i++ {
-			lowerBound, count, upperBound := c.Timings.Bucket(i)
-			if count == 0 {
+		lowerBound := time.Duration(0)
+		for _, bin := range c.Timings.Histogram() {
+			if bin.Count == 0 {
 				continue
 			}
-			countSoFar += count
+			countSoFar += bin.Count
 			if first {
 				fmt.Fprintf(hist, "%v < ", lowerBound)
 			} else {
 				fmt.Fprintf(hist, ", ")
 			}
 			first = false
-			fmt.Fprintf(hist, "%v (%0.2f%%) < %v", count, float64(countSoFar*100)/float64(totalCount), upperBound)
+			fmt.Fprintf(hist, "%v (%0.2f%%) < %v", bin.Count, float64(countSoFar*100)/float64(totalCount), bin.UpperBound)
 		}
 		log.Info("    hist: %v", hist.String())
 	}
 	var shardTime time.Duration
-	for i := 0; i < len(counters.Shard[:]); i++ {
-		shardTime += counters.Shard[i].Timings.TotalTime()
+	for _, k := range msgs.AllShardMessageKind {
+		shardTime += counters.Shard[k].Timings.TotalTime()
 	}
 	log.Info("Shard stats (total shard time %v):", shardTime)
-	for i := 0; i < len(counters.Shard[:]); i++ {
-		c := &counters.Shard[i]
+	for _, k := range msgs.AllShardMessageKind {
+		c := counters.Shard[k]
 		if c.Attempts == 0 {
 			continue
 		}
-		kind := msgs.ShardMessageKind(i)
-		log.Info("  %v", kind)
+		log.Info("  %v", k)
 		formatCounters(c)
 	}
 	var cdcTime time.Duration
-	for i := 0; i < len(counters.CDC[:]); i++ {
-		cdcTime += counters.CDC[i].Timings.TotalTime()
+	for _, k := range msgs.AllCDCMessageKind {
+		cdcTime += counters.CDC[k].Timings.TotalTime()
 	}
 	log.Info("CDC stats (total CDC time %v):", cdcTime)
-	for i := 0; i < len(counters.CDC[:]); i++ {
-		c := &counters.CDC[i]
+	for _, k := range msgs.AllCDCMessageKind {
+		c := counters.CDC[k]
 		if c.Attempts == 0 {
 			continue
 		}
-		kind := msgs.CDCMessageKind(i)
-		log.Info("  %v", kind)
+		log.Info("  %v", k)
 		formatCounters(c)
 	}
 

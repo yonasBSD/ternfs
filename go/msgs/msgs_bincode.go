@@ -411,6 +411,46 @@ const (
 	MAKE_FILE_TRANSIENT ShardMessageKind = 0x87
 )
 
+var AllShardMessageKind = [...]ShardMessageKind{
+	LOOKUP,
+	STAT_FILE,
+	STAT_DIRECTORY,
+	READ_DIR,
+	CONSTRUCT_FILE,
+	ADD_SPAN_INITIATE,
+	ADD_SPAN_CERTIFY,
+	LINK_FILE,
+	SOFT_UNLINK_FILE,
+	FILE_SPANS,
+	SAME_DIRECTORY_RENAME,
+	ADD_INLINE_SPAN,
+	FULL_READ_DIR,
+	MOVE_SPAN,
+	REMOVE_NON_OWNED_EDGE,
+	SAME_SHARD_HARD_FILE_UNLINK,
+	STAT_TRANSIENT_FILE,
+	SET_DIRECTORY_INFO,
+	EXPIRE_TRANSIENT_FILE,
+	VISIT_DIRECTORIES,
+	VISIT_FILES,
+	VISIT_TRANSIENT_FILES,
+	REMOVE_SPAN_INITIATE,
+	REMOVE_SPAN_CERTIFY,
+	SWAP_BLOCKS,
+	BLOCK_SERVICE_FILES,
+	REMOVE_INODE,
+	CREATE_DIRECTORY_INODE,
+	SET_DIRECTORY_OWNER,
+	REMOVE_DIRECTORY_OWNER,
+	CREATE_LOCKED_CURRENT_EDGE,
+	LOCK_CURRENT_EDGE,
+	UNLOCK_CURRENT_EDGE,
+	REMOVE_OWNED_SNAPSHOT_FILE_EDGE,
+	MAKE_FILE_TRANSIENT,
+}
+
+const MaxShardMessageKind ShardMessageKind = 137
+
 func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 	switch {
 	case k == "LOOKUP":
@@ -517,6 +557,17 @@ const (
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
 )
 
+var AllCDCMessageKind = [...]CDCMessageKind{
+	MAKE_DIRECTORY,
+	RENAME_FILE,
+	SOFT_UNLINK_DIRECTORY,
+	RENAME_DIRECTORY,
+	HARD_UNLINK_DIRECTORY,
+	CROSS_SHARD_HARD_UNLINK_FILE,
+}
+
+const MaxCDCMessageKind CDCMessageKind = 6
+
 func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 	switch {
 	case k == "MAKE_DIRECTORY":
@@ -556,6 +607,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SET_BLOCK_SERVICE_FLAGS"
 	case 10:
 		return "BLOCK_SERVICE"
+	case 11:
+		return "INSERT_STATS"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -572,7 +625,23 @@ const (
 	REGISTER_CDC ShuckleMessageKind = 0x6
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 	BLOCK_SERVICE ShuckleMessageKind = 0xA
+	INSERT_STATS ShuckleMessageKind = 0xB
 )
+
+var AllShuckleMessageKind = [...]ShuckleMessageKind{
+	SHARDS,
+	CDC,
+	INFO,
+	REGISTER_BLOCK_SERVICES,
+	REGISTER_SHARD,
+	ALL_BLOCK_SERVICES,
+	REGISTER_CDC,
+	SET_BLOCK_SERVICE_FLAGS,
+	BLOCK_SERVICE,
+	INSERT_STATS,
+}
+
+const MaxShuckleMessageKind ShuckleMessageKind = 11
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -594,6 +663,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &SetBlockServiceFlagsReq{}, &SetBlockServiceFlagsResp{}, nil
 	case k == "BLOCK_SERVICE":
 		return &BlockServiceReq{}, &BlockServiceResp{}, nil
+	case k == "INSERT_STATS":
+		return &InsertStatsReq{}, &InsertStatsResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -621,6 +692,15 @@ const (
 	ERASE_BLOCK BlocksMessageKind = 0x1
 	TEST_WRITE BlocksMessageKind = 0x5
 )
+
+var AllBlocksMessageKind = [...]BlocksMessageKind{
+	FETCH_BLOCK,
+	WRITE_BLOCK,
+	ERASE_BLOCK,
+	TEST_WRITE,
+}
+
+const MaxBlocksMessageKind BlocksMessageKind = 5
 
 func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 	switch {
@@ -3664,6 +3744,32 @@ func (v *SnapshotPolicy) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *Stat) Pack(w io.Writer) error {
+	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Time)); err != nil {
+		return err
+	}
+	if err := bincode.PackBlob(w, v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *Stat) Unpack(r io.Reader) error {
+	if err := bincode.UnpackString(r, &v.Name); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Time)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *ShardsReq) ShuckleRequestKind() ShuckleMessageKind {
 	return SHARDS
 }
@@ -4078,6 +4184,49 @@ func (v *BlockServiceResp) Unpack(r io.Reader) error {
 	if err := v.Info.Unpack(r); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (v *InsertStatsReq) ShuckleRequestKind() ShuckleMessageKind {
+	return INSERT_STATS
+}
+
+func (v *InsertStatsReq) Pack(w io.Writer) error {
+	len1 := len(v.Stats)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Stats[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *InsertStatsReq) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Stats, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Stats[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *InsertStatsResp) ShuckleResponseKind() ShuckleMessageKind {
+	return INSERT_STATS
+}
+
+func (v *InsertStatsResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *InsertStatsResp) Unpack(r io.Reader) error {
 	return nil
 }
 

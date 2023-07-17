@@ -44,6 +44,21 @@ func PackLength(w io.Writer, l int) error {
 	return PackScalar(w, uint16(l))
 }
 
+type Blob []byte
+
+func PackBlob(w io.Writer, bs Blob) error {
+	if len(bs) > int(^uint16(0)) {
+		panic(fmt.Sprintf("bytes length exceed %v: %v", ^uint16(0), len(bs)))
+	}
+	if err := PackScalar(w, uint16(len(bs))); err != nil {
+		return err
+	}
+	if _, err := w.Write(bs); err != nil {
+		return err
+	}
+	return nil
+}
+
 func UnpackScalar[V bool | uint8 | uint16 | uint32 | uint64](r io.Reader, x *V) error {
 	return binary.Read(r, binary.LittleEndian, x)
 }
@@ -86,6 +101,20 @@ func UnpackString(r io.Reader, data *string) error {
 		return err
 	}
 	*data = string(bs)
+	return nil
+}
+
+// This function will discard what's in `data`, and just
+// set the pointer to a slice of the backing `buf`.
+func UnpackBlob(r io.Reader, data *Blob) error {
+	var l uint16
+	if err := UnpackScalar(r, &l); err != nil {
+		return err
+	}
+	*data = make([]byte, l)
+	if _, err := io.ReadFull(r, *data); err != nil {
+		return err
+	}
 	return nil
 }
 

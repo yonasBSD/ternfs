@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -65,10 +66,9 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex sync.Mutex
-	db    *sql.DB
-	// TODO: this should somehow be tied to values from shuckleReqResps in bincodegen.go (or be a map)
-	counters [11]lib.Timings
+	mutex    sync.Mutex
+	db       *sql.DB
+	counters [msgs.MaxShuckleMessageKind + 1]lib.Timings
 }
 
 func (s *state) cdc() (*cdcState, error) {
@@ -165,9 +165,17 @@ func (s *state) blockServices(id *msgs.BlockServiceId) (map[msgs.BlockServiceId]
 }
 
 func newState(db *sql.DB) *state {
-	return &state{
+	st := &state{
 		db:    db,
 		mutex: sync.Mutex{},
+	}
+	st.resetTimings()
+	return st
+}
+
+func (st *state) resetTimings() {
+	for i := 0; i < len(st.counters); i++ {
+		st.counters[i] = *lib.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
 }
 
@@ -382,6 +390,31 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 	return &resp, nil
 }
 
+func handleInsertStats(log *lib.Logger, s *state, req *msgs.InsertStatsReq) (*msgs.InsertStatsResp, error) {
+	var fmtBuilder strings.Builder
+	fmtBuilder.Write([]byte("INSERT INTO stats (name, time, value) VALUES "))
+	values := make([]any, 0, len(req.Stats)*3) // 3: number of columns
+	for i, s := range req.Stats {
+		values = append(values, s.Name, s.Time, []byte(s.Value))
+		if i > 0 {
+			fmtBuilder.Write([]byte(", "))
+		}
+		fmtBuilder.Write([]byte("(?, ?, ?)"))
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	_, err := s.db.Exec(fmtBuilder.String(), values...)
+
+	if err != nil {
+		log.Error("error inserting stats: %s", err)
+		return nil, err
+	}
+
+	return &msgs.InsertStatsResp{}, nil
+}
+
 func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
@@ -409,6 +442,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.BlockServiceReq:
 		resp, err = handleBlockServiceReq(log, s, whichReq)
+	case *msgs.InsertStatsReq:
+		resp, err = handleInsertStats(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1280,10 +1315,24 @@ var statsTemplateStr string
 
 var statsTemplate *template.Template
 
-type statsData struct {
-	Headers []string
-	Rows    [][]string
+type histogramBin struct {
+	Count        uint64
+	UpperBoundMs float64
 }
+
+type timings struct {
+	Time      string
+	MeanMs    float64
+	StddevMs  float64
+	Histogram []histogramBin
+}
+
+type statsData struct {
+	Timings string // json map[string][]timings
+}
+
+//go:embed chart-4.3.0.js
+var chartsJsStr []byte
 
 func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
@@ -1294,54 +1343,83 @@ func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 			if len(path) > 0 {
 				return errorPage(http.StatusNotFound, "path should be just /stats")
 			}
-			// compute non-empty buckets
-			buckets := []int{}
-			for i := 0; i < len(st.counters[:]); i++ {
-				for j := 0; j < st.counters[i].Buckets(); j++ {
-					_, count, _ := st.counters[i].Bucket(j)
-					if count > 0 {
-						// ordered list insert
-						idx := sort.Search(len(buckets), func(i int) bool { return buckets[i] >= j })
-						if idx == len(buckets) || buckets[idx] != j { // insert if not present already
-							buckets = append(buckets, 0)
-							copy(buckets[idx+1:], buckets[idx:])
-							buckets[idx] = j
-						}
+			// build things up in a map
+			data := make(map[string]map[string]*timings)
+			rows, err := st.db.Query("SELECT name, time, value FROM stats")
+			if err != nil {
+				panic(err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var name string
+				var time uint64
+				var value []byte
+				err = rows.Scan(&name, &time, &value)
+				if err != nil {
+					panic(err)
+				}
+				ix := strings.LastIndex(name, ".")
+				stem := name[:ix]
+				valueType := name[ix+1:]
+				timed, hasTimed := data[stem]
+				if !hasTimed {
+					timed = make(map[string]*timings)
+					data[stem] = timed
+				}
+				timeStr := msgs.EggsTime(time).String()
+				t, hasT := timed[timeStr]
+				if !hasT {
+					t = &timings{}
+					timed[timeStr] = t
+				}
+				t.Time = timeStr
+				if valueType == "mean" {
+					t.MeanMs = float64(binary.LittleEndian.Uint64(value)) / 1e6
+				} else if valueType == "stddev" {
+					t.StddevMs = float64(binary.LittleEndian.Uint64(value)) / 1e6
+				} else if valueType == "histogram" {
+					bins, err := lib.UnpackHistogram(value)
+					if err != nil {
+						panic(err)
 					}
+					t.Histogram = make([]histogramBin, 0, len(bins))
+					for _, bin := range bins {
+						t.Histogram = append(t.Histogram, histogramBin{
+							Count:        bin.Count,
+							UpperBoundMs: float64(bin.UpperBound.Nanoseconds()) / 1e6,
+						})
+					}
+				} else {
+					panic(fmt.Errorf("unknown value type %v", valueType))
 				}
+				log.Info("t after: %v", t)
 			}
-			// print out headers
+			// turn it into a list, sort (we could do it directly with the sql, it's
+			// just marginally more convenient this way)
+			sortedData := make(map[string][]timings)
+			for n, ts := range data {
+				tts := make([]timings, 0, len(ts))
+				for _, t := range ts {
+					tts = append(tts, *t)
+				}
+				sort.Slice(tts, func(i, j int) bool {
+					return tts[i].Time < tts[j].Time
+				})
+				sortedData[n] = tts
+			}
+			// we're good
+			timingsJson, err := json.Marshal(sortedData)
+			if err != nil {
+				panic(err)
+			}
 			statsData := &statsData{
-				Headers: []string{"", "count", "mean"},
-				Rows:    [][]string{},
+				Timings: string(timingsJson),
 			}
-			for _, j := range buckets {
-				_, _, upperBound := st.counters[0].Bucket(j)
-				statsData.Headers = append(statsData.Headers, fmt.Sprintf("< %v", upperBound))
-			}
-			// print out table
-			for i := 0; i < len(st.counters[:]); i++ {
-				totalCount := st.counters[i].TotalCount()
-				if totalCount == 0 {
-					continue
-				}
-				mean := time.Duration(uint64(st.counters[i].TotalTime().Nanoseconds()) / totalCount)
-				row := []string{
-					fmt.Sprintf("%v", msgs.ShuckleMessageKind(i)),
-					fmt.Sprintf("%v", totalCount),
-					fmt.Sprintf("%v", mean),
-				}
-				for _, j := range buckets {
-					_, count, _ := st.counters[i].Bucket(j)
-					row = append(row, fmt.Sprintf("%v (%.2f%%)", count, 100.0*float64(count)/float64(totalCount)))
-				}
-				statsData.Rows = append(statsData.Rows, row)
-			}
-			data := pageData{
+			pd := pageData{
 				Title: "stats",
 				Body:  statsData,
 			}
-			return statsTemplate, &data, http.StatusOK
+			return statsTemplate, &pd, http.StatusOK
 		},
 	)
 }
@@ -1405,10 +1483,38 @@ func setupRouting(log *lib.Logger, st *state) {
 		"/shuckle-face.png",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
-			w.Header().Set("Cache-Control", "max-age=300")
+			w.Header().Set("Cache-Control", "max-age=31536000")
 			w.Write(shuckleFacePngStr)
 		},
 	)
+	http.HandleFunc(
+		"/chart-4.3.0.js",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Cache-Control", "max-age=31536000")
+			w.Write(chartsJsStr)
+		},
+	)
+
+	/* useful to experiment with the stats.html script
+	http.HandleFunc(
+		"/stats.js",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			file, err := os.Open("/home/fmazzol/src/eggsfs/go/eggsshuckle/stats.js")
+			if err != nil {
+				panic(err)
+			}
+			defer file.Close()
+			if _, err := io.Copy(w, file); err != nil {
+				panic(err)
+			}
+		},
+	)
+	*/
 
 	// blocks serving
 	http.HandleFunc(
@@ -1451,6 +1557,7 @@ func setupRouting(log *lib.Logger, st *state) {
 	setupPage("/stats", handleStats)
 }
 
+// Writes stats to influx db.
 func metricWriter(ll *lib.Logger, st *state) error {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -1462,13 +1569,24 @@ func metricWriter(ll *lib.Logger, st *state) error {
 				continue
 			}
 			t := msgs.ShuckleMessageKind(i)
-			for j := 0; j < st.counters[i].Buckets(); j++ {
-				_, count, ub := st.counters[i].Bucket(j)
-				el := map[string]string{"ub": fmt.Sprintf("%d", ub), "type": t.String()}
-				ll.Metric("request", "duration_bucket", "request duration", count, el)
+			for _, bin := range st.counters[i].Histogram() {
+				el := map[string]string{"ub": fmt.Sprintf("%d", bin.UpperBound), "type": t.String()}
+				ll.Metric("request", "duration_bucket", "request duration", bin.Count, el)
 			}
 			ll.Metric("request", "duration_count", "request count", totalCount, map[string]string{"type": t.String()})
 		}
+	}
+}
+
+func statsWriter(ll *lib.Logger, st *state) error {
+	for {
+		stats := lib.TimingsToStats("shuckle", msgs.AllShuckleMessageKind[:], st.counters[:])
+		st.resetTimings()
+		ll.Info("writing %v stats to database", len(stats))
+		if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {
+			panic(err)
+		}
+		time.Sleep(time.Hour)
 	}
 }
 
@@ -1673,6 +1791,16 @@ func main() {
 		panic(err)
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS stats(
+		name TEXT NOT NULL,
+		time INT NOT NULL,
+		value BLOB NOT NULL,
+		PRIMARY KEY (name, time)
+	)`)
+	if err != nil {
+		panic(err)
+	}
+
 	readSpanBufPool = lib.NewBufPool()
 
 	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
@@ -1719,6 +1847,16 @@ func main() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
 		err := serviceMonitor(ll, state, *stale)
 		ll.Error("serviceMonitor ended with error %s", err)
+	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+
+	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+		statsWriter(ll, state)
 	}()
 
 	if *metrics {

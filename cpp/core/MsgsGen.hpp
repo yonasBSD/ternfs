@@ -104,6 +104,46 @@ enum class ShardMessageKind : uint8_t {
     MAKE_FILE_TRANSIENT = 135,
 };
 
+const std::vector<ShardMessageKind> allShardMessageKind {
+    ShardMessageKind::LOOKUP,
+    ShardMessageKind::STAT_FILE,
+    ShardMessageKind::STAT_DIRECTORY,
+    ShardMessageKind::READ_DIR,
+    ShardMessageKind::CONSTRUCT_FILE,
+    ShardMessageKind::ADD_SPAN_INITIATE,
+    ShardMessageKind::ADD_SPAN_CERTIFY,
+    ShardMessageKind::LINK_FILE,
+    ShardMessageKind::SOFT_UNLINK_FILE,
+    ShardMessageKind::FILE_SPANS,
+    ShardMessageKind::SAME_DIRECTORY_RENAME,
+    ShardMessageKind::ADD_INLINE_SPAN,
+    ShardMessageKind::FULL_READ_DIR,
+    ShardMessageKind::MOVE_SPAN,
+    ShardMessageKind::REMOVE_NON_OWNED_EDGE,
+    ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK,
+    ShardMessageKind::STAT_TRANSIENT_FILE,
+    ShardMessageKind::SET_DIRECTORY_INFO,
+    ShardMessageKind::EXPIRE_TRANSIENT_FILE,
+    ShardMessageKind::VISIT_DIRECTORIES,
+    ShardMessageKind::VISIT_FILES,
+    ShardMessageKind::VISIT_TRANSIENT_FILES,
+    ShardMessageKind::REMOVE_SPAN_INITIATE,
+    ShardMessageKind::REMOVE_SPAN_CERTIFY,
+    ShardMessageKind::SWAP_BLOCKS,
+    ShardMessageKind::BLOCK_SERVICE_FILES,
+    ShardMessageKind::REMOVE_INODE,
+    ShardMessageKind::CREATE_DIRECTORY_INODE,
+    ShardMessageKind::SET_DIRECTORY_OWNER,
+    ShardMessageKind::REMOVE_DIRECTORY_OWNER,
+    ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE,
+    ShardMessageKind::LOCK_CURRENT_EDGE,
+    ShardMessageKind::UNLOCK_CURRENT_EDGE,
+    ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE,
+    ShardMessageKind::MAKE_FILE_TRANSIENT,
+};
+
+constexpr int maxShardMessageKind = 137;
+
 std::ostream& operator<<(std::ostream& out, ShardMessageKind kind);
 
 enum class CDCMessageKind : uint8_t {
@@ -115,6 +155,17 @@ enum class CDCMessageKind : uint8_t {
     HARD_UNLINK_DIRECTORY = 5,
     CROSS_SHARD_HARD_UNLINK_FILE = 6,
 };
+
+const std::vector<CDCMessageKind> allCDCMessageKind {
+    CDCMessageKind::MAKE_DIRECTORY,
+    CDCMessageKind::RENAME_FILE,
+    CDCMessageKind::SOFT_UNLINK_DIRECTORY,
+    CDCMessageKind::RENAME_DIRECTORY,
+    CDCMessageKind::HARD_UNLINK_DIRECTORY,
+    CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE,
+};
+
+constexpr int maxCDCMessageKind = 6;
 
 std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
 
@@ -129,7 +180,23 @@ enum class ShuckleMessageKind : uint8_t {
     REGISTER_CDC = 6,
     SET_BLOCK_SERVICE_FLAGS = 9,
     BLOCK_SERVICE = 10,
+    INSERT_STATS = 11,
 };
+
+const std::vector<ShuckleMessageKind> allShuckleMessageKind {
+    ShuckleMessageKind::SHARDS,
+    ShuckleMessageKind::CDC,
+    ShuckleMessageKind::INFO,
+    ShuckleMessageKind::REGISTER_BLOCK_SERVICES,
+    ShuckleMessageKind::REGISTER_SHARD,
+    ShuckleMessageKind::ALL_BLOCK_SERVICES,
+    ShuckleMessageKind::REGISTER_CDC,
+    ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS,
+    ShuckleMessageKind::BLOCK_SERVICE,
+    ShuckleMessageKind::INSERT_STATS,
+};
+
+constexpr int maxShuckleMessageKind = 11;
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
@@ -140,6 +207,15 @@ enum class BlocksMessageKind : uint8_t {
     ERASE_BLOCK = 1,
     TEST_WRITE = 5,
 };
+
+const std::vector<BlocksMessageKind> allBlocksMessageKind {
+    BlocksMessageKind::FETCH_BLOCK,
+    BlocksMessageKind::WRITE_BLOCK,
+    BlocksMessageKind::ERASE_BLOCK,
+    BlocksMessageKind::TEST_WRITE,
+};
+
+constexpr int maxBlocksMessageKind = 5;
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
 
@@ -843,6 +919,29 @@ struct SnapshotPolicy {
 };
 
 std::ostream& operator<<(std::ostream& out, const SnapshotPolicy& x);
+
+struct Stat {
+    BincodeBytes name;
+    EggsTime time;
+    BincodeList<uint8_t> value;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeBytes::STATIC_SIZE + 8 + BincodeList<uint8_t>::STATIC_SIZE; // name + time + value
+
+    Stat() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += name.packedSize(); // name
+        _size += 8; // time
+        _size += value.packedSize(); // value
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const Stat&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const Stat& x);
 
 struct LookupReq {
     InodeId dirId;
@@ -2962,6 +3061,42 @@ struct BlockServiceResp {
 
 std::ostream& operator<<(std::ostream& out, const BlockServiceResp& x);
 
+struct InsertStatsReq {
+    BincodeList<Stat> stats;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<Stat>::STATIC_SIZE; // stats
+
+    InsertStatsReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += stats.packedSize(); // stats
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const InsertStatsReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const InsertStatsReq& x);
+
+struct InsertStatsResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    InsertStatsResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const InsertStatsResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const InsertStatsResp& x);
+
 struct FetchBlockReq {
     uint64_t blockId;
     uint32_t offset;
@@ -3353,7 +3488,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq> _data;
+    std::tuple<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsReq& getShards() const;
@@ -3374,6 +3509,8 @@ public:
     SetBlockServiceFlagsReq& setSetBlockServiceFlags();
     const BlockServiceReq& getBlockService() const;
     BlockServiceReq& setBlockService();
+    const InsertStatsReq& getInsertStats() const;
+    InsertStatsReq& setInsertStats();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
@@ -3387,7 +3524,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::tuple<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp> _data;
+    std::tuple<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp> _data;
 public:
     ShuckleMessageKind kind() const { return _kind; }
     const ShardsResp& getShards() const;
@@ -3408,6 +3545,8 @@ public:
     SetBlockServiceFlagsResp& setSetBlockServiceFlags();
     const BlockServiceResp& getBlockService() const;
     BlockServiceResp& setBlockService();
+    const InsertStatsResp& getInsertStats() const;
+    InsertStatsResp& setInsertStats();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 

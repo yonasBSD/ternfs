@@ -53,5 +53,12 @@ std::string fetchShards(
     std::array<ShardInfo, 256>& shards
 );
 
+std::string insertStats(
+    const std::string& shuckleHost,
+    uint16_t shucklePort,
+    Duration timeout,
+    const std::vector<Stat>& stats
+);
+
 const std::string defaultShuckleAddress = "REDACTED";
 bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort);

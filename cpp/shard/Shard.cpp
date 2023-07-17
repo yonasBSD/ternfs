@@ -24,6 +24,7 @@
 #include "Time.hpp"
 #include "wyhash.h"
 #include "Xmon.hpp"
+#include "Timings.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -37,10 +38,14 @@ public:
     std::atomic<uint16_t> port1;
     std::atomic<uint32_t> ip2;
     std::atomic<uint16_t> port2;
+    std::array<std::unique_ptr<Timings<40>>, maxShardMessageKind+1> timings;
 
     ShardShared() = delete;
     ShardShared(ShardDB& db_): db(db_), stop(false), ip1(0), port1(0), ip2(0), port2(0) {
         _currentLogIndex = db.lastAppliedLogEntry();
+        for (ShardMessageKind kind : allShardMessageKind) {
+            timings[(int)kind] = std::make_unique<Timings<40>>(10_us, 1.5);
+        }
     }
 
 private:
@@ -219,6 +224,8 @@ public:
                 continue;
             }
 
+            auto t0 = eggsNow();
+
             LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, clientAddr);
 
             // If this will be filled in with an actual code, it means that we couldn't process
@@ -260,7 +267,6 @@ public:
             }
 
             // Actually process the request
-            auto t0 = eggsNow();
             if (err == NO_ERROR) {
                 if (readOnlyShardReq(reqContainer->kind())) {
                     err = _shared.db.read(*reqContainer, *respContainer);
@@ -268,11 +274,11 @@ public:
                     err = _shared.prepareAndApplyLogEntry(*reqContainer, *logEntry, *respContainer);
                 }
             }
-            Duration elapsed = eggsNow() - t0;
+            Duration processElapsed = eggsNow() - t0;
 
             BincodeBuf respBbuf(sendBuf.data(), sendBuf.size());
             if (err == NO_ERROR) {
-                LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s", reqHeader.requestId, respContainer->kind(), elapsed);
+                LOG_DEBUG(_env, "successfully processed request %s with kind %s in %s", reqHeader.requestId, respContainer->kind(), processElapsed);
                 if (bigResponse(reqHeader.kind)) {
                     if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
                         LOG_TRACE(_env, "resp body: %s", *respContainer);
@@ -285,10 +291,14 @@ public:
                 ShardResponseHeader(reqHeader.requestId, respContainer->kind()).pack(respBbuf);
                 respContainer->pack(respBbuf);
             } else {
-                LOG_DEBUG(_env, "request %s failed with error %s in %s", reqContainer->kind(), err, elapsed);
+                LOG_DEBUG(_env, "request %s failed with error %s in %s", reqContainer->kind(), err, processElapsed);
                 ShardResponseHeader(reqHeader.requestId, ShardMessageKind::ERROR).pack(respBbuf);
                 respBbuf.packScalar<uint16_t>((uint16_t)err);
             }
+
+            Duration elapsed = eggsNow() - t0;
+
+            _shared.timings[(int)reqHeader.kind]->add(elapsed);
 
             if (wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
                 LOG_DEBUG(_env, "artificially dropping response %s", reqHeader.requestId);
@@ -476,6 +486,88 @@ static void* runShardBlockServiceUpdater(void* server) {
     return nullptr;
 }
 
+struct ShardStatsInserter : Undertaker::Reapable {
+private:
+    Env _env;
+    ShardShared& _shared;
+    ShardId _shid;
+    std::string _shuckleHost;
+    uint16_t _shucklePort;
+public:
+    ShardStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
+        _env(logger, xmon, "stats_inserter"),
+        _shared(shared),
+        _shid(shid),
+        _shuckleHost(options.shuckleHost),
+        _shucklePort(options.shucklePort)
+    {}
+
+    virtual ~ShardStatsInserter() = default;
+
+    virtual void terminate() override {
+        _env.flush();
+        _shared.stop.store(true);
+    }
+
+    virtual void onAbort() override {
+        _env.flush();
+    }
+
+    void run() {
+        EggsTime t0 = eggsNow();
+        EggsTime lastRequestT = 0;
+        bool lastRequestSuccessful = false;
+        std::vector<Stat> stats;
+
+        #define GO_TO_NEXT_ITERATION \
+            sleepFor(10_ms); \
+            continue; \
+
+        for (;;) {
+            if (_shared.stop.load()) {
+                LOG_DEBUG(_env, "got told to stop, stopping");
+                break;
+            }
+
+            EggsTime t = eggsNow();
+            if (lastRequestSuccessful && (t - lastRequestT) < 1_hours) {
+                GO_TO_NEXT_ITERATION
+            }
+            if (!lastRequestSuccessful && (t - lastRequestT) < 100_ms) {
+                // if the last request failed, wait at least 100ms before retrying
+                GO_TO_NEXT_ITERATION
+            }
+
+            LOG_INFO(_env, "about to insert stats to %s:%s", _shuckleHost, _shucklePort);
+            std::string err;
+
+            for (ShardMessageKind kind : allShardMessageKind) {
+                std::ostringstream prefix;
+                prefix << "shard." << std::setw(3) << std::setfill('0') << _shid << "." << kind;
+                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+            }
+            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
+            lastRequestSuccessful = err.empty();
+            lastRequestT = t;
+            if (!lastRequestSuccessful) {
+                RAISE_ALERT(_env, "could not reach shuckle: %s", err);
+                GO_TO_NEXT_ITERATION
+            }
+            stats.clear();
+            for (ShardMessageKind kind : allShardMessageKind) {
+                _shared.timings[(int)kind]->reset();
+            }
+        }
+
+        #undef GO_TO_NEXT_ITERATION
+    }
+};
+
+static void* runShardStatsInserter(void* server) {
+    ((ShardStatsInserter*)server)->run();
+    return nullptr;
+}
+
 static void* runXmon(void* server) {
     ((Xmon*)server)->run();
     return nullptr;
@@ -558,6 +650,15 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(shuckleUpdater), tid, "block_service_updater");
+    }
+
+    {
+        auto statsInserter = std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runShardStatsInserter, &*statsInserter) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(statsInserter), tid, "stats_inserter");
     }
 
     if (xmon) {

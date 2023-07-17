@@ -91,7 +91,10 @@ func (cg *goCodegen) gen(expr *subexpr) {
 		cg.ustep(fmt.Sprintf("%v.Unpack(r)", expr.fld))
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
-		if elem.Kind() == reflect.Uint8 {
+		if elem.Kind() == reflect.Uint8 && t.Name() == "Blob" {
+			cg.pstep(fmt.Sprintf("bincode.PackBlob(w, %v)", expr.fld))
+			cg.ustep(fmt.Sprintf("bincode.UnpackBlob(r, &%v)", expr.fld))
+		} else if elem.Kind() == reflect.Uint8 {
 			cg.pstep(fmt.Sprintf("bincode.PackBytes(w, []byte(%v))", expr.fld))
 			if expr.typ.Kind() == reflect.String {
 				cg.ustep(fmt.Sprintf("bincode.UnpackString(r, &%v)", expr.fld))
@@ -229,11 +232,23 @@ func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, 
 
 	fmt.Fprintf(out, "\n")
 
+	maxMessageKind := uint8(0)
 	fmt.Fprintf(out, "const (\n")
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(out, "\t%s %s = 0x%X\n", reqRespEnum(reqResp), kindTypeName, reqResp.kind)
+		if reqResp.kind > maxMessageKind {
+			maxMessageKind = reqResp.kind
+		}
 	}
 	fmt.Fprintf(out, ")\n\n")
+
+	fmt.Fprintf(out, "var All%s = [...]%s{\n", kindTypeName, kindTypeName)
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(out, "\t%s,\n", reqRespEnum(reqResp))
+	}
+	fmt.Fprintf(out, "}\n\n")
+
+	fmt.Fprintf(out, "const Max%s %s = %v\n\n", kindTypeName, kindTypeName, maxMessageKind)
 
 	fmt.Fprintf(out, "func %s(k string) (%s, %s, error) {\n", mkName, reqInterface, respInterface)
 	fmt.Fprintf(out, "\tswitch {\n")
@@ -721,6 +736,9 @@ func cppType(t reflect.Type) string {
 	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" || t.Name() == "BlockServiceId" {
 		return t.Name()
 	}
+	if t.Name() == "Blob" {
+		return "BincodeList<uint8_t>"
+	}
 	switch t.Kind() {
 	case reflect.Uint8:
 		return "uint8_t"
@@ -808,7 +826,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 		cg.uline(fmt.Sprintf("buf.unpackFixedBytes<%d>(%s)", len, expr.fld))
 	} else if k == reflect.Slice || k == reflect.String {
 		elem := sliceTypeElem(expr.typ)
-		if elem.Kind() == reflect.Uint8 {
+		if elem.Kind() == reflect.Uint8 && expr.typ.Name() != "Blob" {
 			cg.pline(fmt.Sprintf("buf.packBytes(%s)", expr.fld))
 			cg.uline(fmt.Sprintf("buf.unpackBytes(%s)", expr.fld))
 		} else {
@@ -950,6 +968,18 @@ func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRe
 		fmt.Fprintf(hpp, "    %s = %d,\n", reqRespEnum(reqResp), reqResp.kind)
 	}
 	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(hpp, "const std::vector<%sMessageKind> all%sMessageKind {\n", name, name)
+	max := int(0)
+	for _, reqResp := range reqResps {
+		fmt.Fprintf(hpp, "    %sMessageKind::%s,\n", name, reqRespEnum(reqResp))
+		if int(reqResp.kind) > max {
+			max = int(reqResp.kind)
+		}
+	}
+	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(hpp, "constexpr int max%sMessageKind = %d;\n\n", name, max)
 
 	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, %sMessageKind kind);\n\n", name)
 
@@ -1561,6 +1591,11 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceReq{}),
 			reflect.TypeOf(msgs.BlockServiceResp{}),
 		},
+		{
+			0x0B,
+			reflect.TypeOf(msgs.InsertStatsReq{}),
+			reflect.TypeOf(msgs.InsertStatsResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -1617,6 +1652,7 @@ func main() {
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
+		reflect.TypeOf(msgs.Stat{}),
 	}...)...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)

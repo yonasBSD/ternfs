@@ -82,6 +82,7 @@ void Xmon::packLogon(XmonBuf& buf) {
 }
 
 void Xmon::packUpdate(XmonBuf& buf) {
+    buf.reset();
     // Message type 	int32 	0x1
     // (unused) 	int32 	must be 0
     // Heap size 	int64 	(deprecated)
@@ -97,6 +98,7 @@ void Xmon::packUpdate(XmonBuf& buf) {
 }
 
 void Xmon::packRequest(XmonBuf& buf, const XmonRequest& req) {
+    buf.reset();
     buf.packScalar(req.msgType);
     buf.packScalar(req.alertId);
     if (req.msgType == XmonRequestType::CREATE || req.msgType == XmonRequestType::UPDATE) {

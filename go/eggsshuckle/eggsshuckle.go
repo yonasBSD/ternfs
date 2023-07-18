@@ -376,6 +376,7 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 	resp.Port1 = cdc.port1
 	resp.Ip2 = cdc.ip2
 	resp.Port2 = cdc.port2
+	resp.LastSeen = cdc.lastSeen
 
 	return &resp, nil
 }

@@ -355,6 +355,12 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::INSERT_STATS:
         out << "INSERT_STATS";
         break;
+    case ShuckleMessageKind::SHARD:
+        out << "SHARD";
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        out << "GET_STATS";
+        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -3363,6 +3369,94 @@ std::ostream& operator<<(std::ostream& out, const InsertStatsResp& x) {
     return out;
 }
 
+void ShardReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+}
+void ShardReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+}
+void ShardReq::clear() {
+    id = ShardId();
+}
+bool ShardReq::operator==(const ShardReq& rhs) const {
+    if ((ShardId)this->id != (ShardId)rhs.id) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardReq& x) {
+    out << "ShardReq(" << "Id=" << x.id << ")";
+    return out;
+}
+
+void ShardResp::pack(BincodeBuf& buf) const {
+    info.pack(buf);
+}
+void ShardResp::unpack(BincodeBuf& buf) {
+    info.unpack(buf);
+}
+void ShardResp::clear() {
+    info.clear();
+}
+bool ShardResp::operator==(const ShardResp& rhs) const {
+    if (info != rhs.info) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardResp& x) {
+    out << "ShardResp(" << "Info=" << x.info << ")";
+    return out;
+}
+
+void GetStatsReq::pack(BincodeBuf& buf) const {
+    startTime.pack(buf);
+    buf.packBytes(startName);
+    endTime.pack(buf);
+}
+void GetStatsReq::unpack(BincodeBuf& buf) {
+    startTime.unpack(buf);
+    buf.unpackBytes(startName);
+    endTime.unpack(buf);
+}
+void GetStatsReq::clear() {
+    startTime = EggsTime();
+    startName.clear();
+    endTime = EggsTime();
+}
+bool GetStatsReq::operator==(const GetStatsReq& rhs) const {
+    if ((EggsTime)this->startTime != (EggsTime)rhs.startTime) { return false; };
+    if (startName != rhs.startName) { return false; };
+    if ((EggsTime)this->endTime != (EggsTime)rhs.endTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const GetStatsReq& x) {
+    out << "GetStatsReq(" << "StartTime=" << x.startTime << ", " << "StartName=" << GoLangQuotedStringFmt(x.startName.data(), x.startName.size()) << ", " << "EndTime=" << x.endTime << ")";
+    return out;
+}
+
+void GetStatsResp::pack(BincodeBuf& buf) const {
+    nextTime.pack(buf);
+    buf.packBytes(nextName);
+    buf.packList<Stat>(stats);
+}
+void GetStatsResp::unpack(BincodeBuf& buf) {
+    nextTime.unpack(buf);
+    buf.unpackBytes(nextName);
+    buf.unpackList<Stat>(stats);
+}
+void GetStatsResp::clear() {
+    nextTime = EggsTime();
+    nextName.clear();
+    stats.clear();
+}
+bool GetStatsResp::operator==(const GetStatsResp& rhs) const {
+    if ((EggsTime)this->nextTime != (EggsTime)rhs.nextTime) { return false; };
+    if (nextName != rhs.nextName) { return false; };
+    if (stats != rhs.stats) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const GetStatsResp& x) {
+    out << "GetStatsResp(" << "NextTime=" << x.nextTime << ", " << "NextName=" << GoLangQuotedStringFmt(x.nextName.data(), x.nextName.size()) << ", " << "Stats=" << x.stats << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -5465,6 +5559,26 @@ InsertStatsReq& ShuckleReqContainer::setInsertStats() {
     x.clear();
     return x;
 }
+const ShardReq& ShuckleReqContainer::getShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD, "%s != %s", _kind, ShuckleMessageKind::SHARD);
+    return std::get<10>(_data);
+}
+ShardReq& ShuckleReqContainer::setShard() {
+    _kind = ShuckleMessageKind::SHARD;
+    auto& x = std::get<10>(_data);
+    x.clear();
+    return x;
+}
+const GetStatsReq& ShuckleReqContainer::getGetStats() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::GET_STATS, "%s != %s", _kind, ShuckleMessageKind::GET_STATS);
+    return std::get<11>(_data);
+}
+GetStatsReq& ShuckleReqContainer::setGetStats() {
+    _kind = ShuckleMessageKind::GET_STATS;
+    auto& x = std::get<11>(_data);
+    x.clear();
+    return x;
+}
 size_t ShuckleReqContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -5487,6 +5601,10 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<8>(_data).packedSize();
     case ShuckleMessageKind::INSERT_STATS:
         return std::get<9>(_data).packedSize();
+    case ShuckleMessageKind::SHARD:
+        return std::get<10>(_data).packedSize();
+    case ShuckleMessageKind::GET_STATS:
+        return std::get<11>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5523,6 +5641,12 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::INSERT_STATS:
         std::get<9>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SHARD:
+        std::get<10>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        std::get<11>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5562,6 +5686,12 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::INSERT_STATS:
         std::get<9>(_data).unpack(buf);
         break;
+    case ShuckleMessageKind::SHARD:
+        std::get<10>(_data).unpack(buf);
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        std::get<11>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -5598,6 +5728,12 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::INSERT_STATS:
         out << x.getInsertStats();
+        break;
+    case ShuckleMessageKind::SHARD:
+        out << x.getShard();
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        out << x.getGetStats();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -5705,6 +5841,26 @@ InsertStatsResp& ShuckleRespContainer::setInsertStats() {
     x.clear();
     return x;
 }
+const ShardResp& ShuckleRespContainer::getShard() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD, "%s != %s", _kind, ShuckleMessageKind::SHARD);
+    return std::get<10>(_data);
+}
+ShardResp& ShuckleRespContainer::setShard() {
+    _kind = ShuckleMessageKind::SHARD;
+    auto& x = std::get<10>(_data);
+    x.clear();
+    return x;
+}
+const GetStatsResp& ShuckleRespContainer::getGetStats() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::GET_STATS, "%s != %s", _kind, ShuckleMessageKind::GET_STATS);
+    return std::get<11>(_data);
+}
+GetStatsResp& ShuckleRespContainer::setGetStats() {
+    _kind = ShuckleMessageKind::GET_STATS;
+    auto& x = std::get<11>(_data);
+    x.clear();
+    return x;
+}
 size_t ShuckleRespContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -5727,6 +5883,10 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<8>(_data).packedSize();
     case ShuckleMessageKind::INSERT_STATS:
         return std::get<9>(_data).packedSize();
+    case ShuckleMessageKind::SHARD:
+        return std::get<10>(_data).packedSize();
+    case ShuckleMessageKind::GET_STATS:
+        return std::get<11>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -5763,6 +5923,12 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::INSERT_STATS:
         std::get<9>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SHARD:
+        std::get<10>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        std::get<11>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -5802,6 +5968,12 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::INSERT_STATS:
         std::get<9>(_data).unpack(buf);
         break;
+    case ShuckleMessageKind::SHARD:
+        std::get<10>(_data).unpack(buf);
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        std::get<11>(_data).unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -5838,6 +6010,12 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::INSERT_STATS:
         out << x.getInsertStats();
+        break;
+    case ShuckleMessageKind::SHARD:
+        out << x.getShard();
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        out << x.getGetStats();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

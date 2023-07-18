@@ -1,8 +1,5 @@
 {{define "body"}}
     <script src="/chart-4.3.0.js"></script>
-    <script>
-        window.data = JSON.parse({{.Timings}})
-    </script>
     <div>
         <input type="datetime-local" id="time-from" required> — <input type="datetime-local" id="time-to" required>
         <div id="charts"></div>
@@ -20,94 +17,158 @@
         
         const chartsEl = document.getElementById('charts');
         
-        function combineHistograms(old, timings) {
-            old = old || {
-                histogram: [],
-                count: 0,
-                meanMs: 0,
-            };
-            let count = 0;
-            for (let i = 0; i < timings.Histogram.length; i++) {
-                const bin = timings.Histogram[i];
-                count += bin.Count;
-                if (!old.histogram[i]) {
-                    old.histogram[i] = {
-                        upperBoundMs: bin.UpperBoundMs,
-                        count: 0,
-                    }
-                } else if (old.histogram[i].upperBoundMs != bin.UpperBoundMs) {
-                    throw `Differing upper bounds for ${fullNameWithKind} at ${i}, ${old.histogram[i].upperBoundMs} != ${bin.UpperBoundMs}`;
-                }
-                old.histogram[i].upperBoundMs = bin.UpperBoundMs;
-                old.histogram[i].count += bin.Count;
-            } 
-            return old;
-        }
-
-        function formatMs(ms) {
+        function formatNs(ns) {
             const twoDec = (x) => (Math.round(x*100) / 100).toFixed(2);
-            if (ms > 1000) {
-                return twoDec(ms/1000) + 's';
+            if (ns < BigInt(1000)) {
+                return ns.toString() + 'ns';
             }
-            if (ms < 1) {
-                return twoDec(ms*1000) + 'us'
+            if (ns < BigInt(1000000)) {
+                return twoDec(Number(ns)/1000) + 'us';
             }
-            return twoDec(ms) + 'ms';
+            if (ns < BigInt(1000000000))  {
+                return twoDec(Number(ns/BigInt(1000))/1000) + 'ms';
+            }
+            return twoDec(Number(ns/BigInt(1000000))/1000) + 's';
         }
-
+        
         function drawChart(el, req, timings) {
             const chartEl = document.createElement('canvas');
             el.appendChild(chartEl);
             new Chart(chartEl, {
                 type: 'line',
                 data: {
-                    labels: timings.histogram.map(({upperBoundMs}) => `< ${formatMs(upperBoundMs)}`),
-                    datasets: [{ label: req, data: timings.histogram.map(({count}) => count) }],
+                    labels: timings.histogram.map(({upperBoundNs}) => `< ${formatNs(upperBoundNs)}`),
+                    datasets: [{ label: req, data: timings.histogram.map(({count}) => Number(count)) }],
                 },
             });
         }
+    
+        function nsToRFC3339Nano(ns) {
+            // Convert BigInt nanoseconds to Number milliseconds
+            const msBigInt = ns / BigInt(1000000);
+            const msNumber = Number(msBigInt);
+            const date = new Date(msNumber);
         
-        function redraw() {
-            console.log('redrawing');
+            // Get the nanosecond part
+            const nanoSeconds = Number(ns % BigInt(1000000)).toString().padStart(6, '0');
+        
+            // Format the date and time parts
+            const dateStr = date.toISOString().replace('Z', '');
+        
+            // Construct the final string
+            const finalStr = `${dateStr}${nanoSeconds}Z`;
+        
+            return finalStr;
+        }
+    
+        async function getStats(startName, startTime, endTime) {
+            console.log(`fetching startName=${startName} startTime=${startTime} endTime=${endTime}`)
+            const response = await fetch('/api/GET_STATS', {
+                method: 'POST',
+                headers: { 'Accept': 'application/octet-stream' },
+                body: JSON.stringify({
+                    StartTime: nsToRFC3339Nano(startTime),
+                    StartName: startName,
+                    EndTime: nsToRFC3339Nano(endTime),
+                })
+            });
             
-            // erase everything
-            chartsEl.innerHTML = '';
+            if (!response.ok) {
+                throw new Error("HTTP error " + response.status);
+            }
+            
+            const buffer = await response.arrayBuffer();
+            return new Uint8Array(buffer);
+        }
+    
+        function* parseStats(buf) {
+            const decoder = new TextDecoder('ascii');
+            const view = new DataView(buf.buffer);
+            let cur = 0;
+            const nextTime = view.getBigUint64(cur, true); cur += 8;
+            const nextNameLen = buf[cur]; cur++;
+            const nextName = decoder.decode(buf.subarray(cur, cur+nextNameLen)); cur += nextNameLen;
+            let statsLen = view.getUint16(cur, true); cur += 2;
+            for (let i = 0; i < statsLen; i++) {
+                const nameLen = buf[cur]; cur++;
+                const name = decoder.decode(buf.subarray(cur, cur+nameLen)); cur += nameLen;
+                const time = view.getBigUint64(cur, true); cur += 8;
+                const valueLen = view.getUint16(cur, true); cur += 2;
+                const value = buf.subarray(cur, cur+valueLen); cur += valueLen;
+                yield { name, time, value };
+            }
+            return { nextName, nextTime };
+        }
+    
+        async function reload() {
+            // erase 
+            chartsEl.innerHTML = 'Loading...';
             
             // get current boundaries
-            const timeFrom = new Date(timeFromEl.value);
-            const timeTo = new Date(timeToEl.value);
-
-            // filter and sum histograms    
-            const data = {};
-            for (const [timingsName, timedTimings] of Object.entries(window.data)) {
-                for (const timings of timedTimings) {
-                    const time = new Date(timings.Time);
-                    if (time.getTime() < timeFrom.getTime() || time.getTime() > timeTo.getTime()) {
-                        continue;
+            const timeFrom = BigInt(new Date(timeFromEl.value)) * BigInt(1000000);
+            const timeTo = BigInt(new Date(timeToEl.value)) * BigInt(1000000);
+            
+            // fetch histos
+            let startTime = timeFrom;
+            let startName = "";
+            const endTime = timeTo;
+            const data = {}; // group -> req -> { histogram }
+            for (let i = 0; i < 10; i++) {
+                let respBuf;
+                try {
+                    respBuf = await getStats(startName, startTime, endTime);
+                } catch (error) {
+                    chartsEl.innerHTML = `Error fetching stats: ${error}`;
+                    return;
+                }
+                const stats = parseStats(respBuf);
+                let numStats;
+                for (numStats = 0;; numStats++) {
+                    const n = stats.next();
+                    if (n.done) {
+                        startName = n.value.nextName;
+                        startTime = n.value.nextTime;
+                        break;
                     }
-                    const segments = timingsName.split('.');
+                    const stat = n.value;
+                    if (!stat.name.endsWith('histogram')) { continue; }
+                    const segments = stat.name.split('.');
                     const group = segments[0];
                     let req = segments[1];
-                    if (group === 'shard') {
+                    if (group === 'shard') { // group all shards into one bunch
                         req = segments[2];
                     }
                     data[group] = data[group] || {};
-                    data[group][req] = combineHistograms(data[group][req], timings);
+                    data[group][req] = data[group][req] || { histogram: [] }
+                    histogram = data[group][req].histogram;
+                    // parse histo
+                    const valueView = new DataView(stat.value.buffer, stat.value.byteOffset, stat.value.byteLength);
+                    for (let i = 0, bin = 0; i < stat.value.length; i += 8+8, bin++) {
+                        const upperBoundNs = valueView.getBigUint64(i, true);
+                        const count = valueView.getBigUint64(i+8, true);
+                        histogram[bin] = histogram[bin] || { upperBoundNs, count: BigInt(0) };
+                        if (histogram[bin].upperBoundNs !== upperBoundNs) {
+                            throw `Differing upper bounds for ${stat.name} at ${bin}, ${histogram[bin].upperBoundNs} != ${upperBoundNs}`;
+                        }
+                        histogram[bin].count += count;
+                    }
                 }
+                if (startName === "") { break; }
             }
-
-            // trim histos
+        
+            // trim histos, replace undefineds with zero
             for (const groupData of Object.values(data)) {
                 for (const reqData of Object.values(groupData)) {
                     let skipStart = 0;
-                    for (; skipStart < reqData.histogram.length && reqData.histogram[skipStart].count == 0; skipStart++) {}
+                    for (; skipStart < reqData.histogram.length && !reqData.histogram[skipStart].count; skipStart++) {}
                     let skipEnd = 0;
-                    for (; skipEnd < reqData.histogram.length && reqData.histogram[reqData.histogram.length-skipEnd-1].count == 0; skipEnd++) {}
+                    for (; skipEnd < reqData.histogram.length && !reqData.histogram[reqData.histogram.length-skipEnd-1].count; skipEnd++) {}
                     reqData.histogram = reqData.histogram.slice(skipStart, reqData.histogram.length-skipEnd);
                 }
             }
-            
+    
             // now draw the divs
+            chartsEl.innerHTML = '';
             for (const [group, groupData] of Object.entries(data)) {
                 const groupEl = document.createElement('h2');
                 groupEl.innerHTML = group;
@@ -123,6 +184,8 @@
                     drawChart(chartContainerEl, req, reqData);
                 }
             }
+    
+            console.log('done loading');
         }
         
         const timeFromEl = document.getElementById('time-from');
@@ -133,9 +196,9 @@
         timeToEl.value = formatLocalDate(new Date());
         
         // redraw when changed
-        timeFromEl.addEventListener('change', redraw);
-        timeToEl.addEventListener('change', redraw);
+        timeFromEl.addEventListener('change', reload);
+        timeToEl.addEventListener('change', reload);
         
-        redraw();
+        reload();
     })();</script>
 {{end}}

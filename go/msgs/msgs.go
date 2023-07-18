@@ -287,11 +287,11 @@ func (t *EggsTime) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &ts); err != nil {
 		return err
 	}
-	tt, err := time.Parse(ts, time.RFC3339Nano)
+	tt, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		return err
 	}
-	*t = EggsTime(tt.Nanosecond())
+	*t = EggsTime(tt.UnixNano())
 	return nil
 }
 
@@ -1585,6 +1585,14 @@ type BlockServiceResp struct {
 	Info BlockServiceInfo
 }
 
+type ShardReq struct {
+	Id ShardId
+}
+
+type ShardResp struct {
+	Info ShardInfo
+}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 
@@ -1649,3 +1657,15 @@ type InsertStatsReq struct {
 }
 
 type InsertStatsResp struct{}
+
+type GetStatsReq struct {
+	StartTime EggsTime
+	StartName string
+	EndTime   EggsTime
+}
+
+type GetStatsResp struct {
+	NextTime EggsTime
+	NextName string
+	Stats    []Stat
+}

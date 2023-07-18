@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -71,7 +70,7 @@ type state struct {
 	counters [msgs.MaxShuckleMessageKind + 1]lib.Timings
 }
 
-func (s *state) cdc() (*cdcState, error) {
+func (s *state) selectCDC() (*cdcState, error) {
 	var cdc cdcState
 	rows, err := s.db.Query("SELECT * FROM cdc")
 	if err != nil {
@@ -100,7 +99,7 @@ func (s *state) cdc() (*cdcState, error) {
 	return &cdc, nil
 }
 
-func (s *state) shards() (*[256]msgs.ShardInfo, error) {
+func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 	var ret [256]msgs.ShardInfo
 
 	rows, err := s.db.Query("SELECT * FROM shards")
@@ -131,7 +130,33 @@ func (s *state) shards() (*[256]msgs.ShardInfo, error) {
 	return &ret, nil
 }
 
-func (s *state) blockServices(id *msgs.BlockServiceId) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
+	n := sql.Named
+
+	rows, err := s.db.Query("SELECT * FROM shards WHERE id = :id", n("id", shid))
+	if err != nil {
+		return nil, fmt.Errorf("error selecting shards: %s", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		si := msgs.ShardInfo{}
+		var ip1, ip2 []byte
+		var id int
+		err = rows.Scan(&id, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding shard row: %s", err)
+		}
+		copy(si.Ip1[:], ip1)
+		copy(si.Ip2[:], ip2)
+		return &si, nil
+	}
+
+	// can only happen at the very beginning of a deployment
+	return &msgs.ShardInfo{}, nil
+}
+
+func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
 	n := sql.Named
 
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
@@ -179,9 +204,9 @@ func (st *state) resetTimings() {
 	}
 }
 
-func handleAllBlockServicesReq(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
+func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.blockServices(nil)
+	blockServices, err := s.selectBlockServices(nil)
 	if err != nil {
 		ll.Error("error reading block services: %s", err)
 		return nil, err
@@ -197,8 +222,8 @@ func handleAllBlockServicesReq(ll *lib.Logger, s *state, req *msgs.AllBlockServi
 	return &resp, nil
 }
 
-func handleBlockServiceReq(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
-	blockServices, err := s.blockServices(&req.Id)
+func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
+	blockServices, err := s.selectBlockServices(&req.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +327,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsResp, error) {
 	resp := msgs.ShardsResp{}
 
-	shards, err := s.shards()
+	shards, err := s.selectShards()
 	if err != nil {
 		ll.Error("error reading shards: %s", err)
 		return nil, err
@@ -310,6 +335,14 @@ func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsRe
 
 	resp.Shards = shards[:]
 	return &resp, nil
+}
+
+func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp, error) {
+	info, err := s.selectShard(req.Id)
+	if err != nil {
+		return nil, err
+	}
+	return &msgs.ShardResp{Info: *info}, nil
 }
 
 func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
@@ -329,12 +362,12 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 	return &msgs.RegisterShardResp{}, err
 }
 
-func handleCdcReq(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, error) {
+func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	resp := msgs.CdcResp{}
-	cdc, err := s.cdc()
+	cdc, err := s.selectCDC()
 	if err != nil {
 		log.Error("error reading cdc: %s", err)
 		return nil, err
@@ -347,7 +380,7 @@ func handleCdcReq(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, e
 	return &resp, nil
 }
 
-func handleRegisterCdcReq(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
+func handleRegisterCdc(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -415,6 +448,41 @@ func handleInsertStats(log *lib.Logger, s *state, req *msgs.InsertStatsReq) (*ms
 	return &msgs.InsertStatsResp{}, nil
 }
 
+func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
+	n := sql.Named
+	end := req.EndTime
+	if end == 0 {
+		end = msgs.EggsTime(^uint64(0) & ^(uint64(1) << 63)) // sqlite doesn't have full uint64
+	}
+	log.Info("start time %v", req.StartTime)
+	// the limit is due to the max list size in bincode (but probably a good thing anyhow)
+	rowsLimit := 1 << 16
+	rows, err := s.db.Query(
+		"SELECT name, time, value FROM stats WHERE time >= :start AND time < :end ORDER BY time, name LIMIT :limit",
+		n("start", req.StartTime), n("end", end), n("limit", rowsLimit),
+	)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	resp := &msgs.GetStatsResp{}
+	for rows.Next() {
+		resp.Stats = append(resp.Stats, msgs.Stat{})
+		stat := &resp.Stats[len(resp.Stats)-1]
+		err = rows.Scan(&stat.Name, &stat.Time, &stat.Value)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if len(resp.Stats) == rowsLimit {
+		lastStat := resp.Stats[len(resp.Stats)-1]
+		resp.Stats = resp.Stats[:len(resp.Stats)-1]
+		resp.NextName = lastStat.Name
+		resp.NextTime = lastStat.Time
+	}
+	return resp, nil
+}
+
 func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
@@ -433,17 +501,21 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
-		resp, err = handleAllBlockServicesReq(log, s, whichReq)
+		resp, err = handleAllBlockServices(log, s, whichReq)
 	case *msgs.CdcReq:
-		resp, err = handleCdcReq(log, s, whichReq)
+		resp, err = handleCdc(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
-		resp, err = handleRegisterCdcReq(log, s, whichReq)
+		resp, err = handleRegisterCdc(log, s, whichReq)
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.BlockServiceReq:
-		resp, err = handleBlockServiceReq(log, s, whichReq)
+		resp, err = handleBlockService(log, s, whichReq)
 	case *msgs.InsertStatsReq:
 		resp, err = handleInsertStats(log, s, whichReq)
+	case *msgs.ShardReq:
+		resp, err = handleShard(log, s, whichReq)
+	case *msgs.GetStatsReq:
+		resp, err = handleGetStats(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -529,6 +601,8 @@ func handleWithRecover(
 	w http.ResponseWriter,
 	r *http.Request,
 	methodAllowed *string,
+	// if the ReadCloser == nil, it means that
+	// `handle` does not want us to handle the request.
 	handle func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
 	if methodAllowed == nil {
@@ -566,10 +640,12 @@ func handleWithRecover(
 		*statusPtr = status
 		*sizePtr = size
 	}()
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(*statusPtr)
-	if written, err := io.CopyN(w, content, *sizePtr); err != nil {
-		log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+	if content != nil {
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(*statusPtr)
+		if written, err := io.CopyN(w, content, *sizePtr); err != nil {
+			log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+		}
 	}
 }
 
@@ -708,7 +784,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.blockServices(nil)
+			blockServices, err := state.selectBlockServices(nil)
 			if err != nil {
 				ll.Error("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -761,7 +837,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				},
 			)
 
-			shards, err := state.shards()
+			shards, err := state.selectShards()
 			if err != nil {
 				ll.Error("error reading shards: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading shards: %s", err))
@@ -774,7 +850,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				})
 			}
 
-			cdc, err := state.cdc()
+			cdc, err := state.selectCDC()
 			if err != nil {
 				ll.Error("error reading cdc: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
@@ -872,11 +948,11 @@ type directoryData struct {
 }
 
 func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
-	shards, err := state.shards()
+	shards, err := state.selectShards()
 	if err != nil {
 		return nil, fmt.Errorf("error reading shards: %s", err)
 	}
-	cdc, err := state.cdc()
+	cdc, err := state.selectCDC()
 	if err != nil {
 		return nil, fmt.Errorf("error reading cdc: %s", err)
 	}
@@ -1315,22 +1391,6 @@ var statsTemplateStr string
 
 var statsTemplate *template.Template
 
-type histogramBin struct {
-	Count        uint64
-	UpperBoundMs float64
-}
-
-type timings struct {
-	Time      string
-	MeanMs    float64
-	StddevMs  float64
-	Histogram []histogramBin
-}
-
-type statsData struct {
-	Timings string // json map[string][]timings
-}
-
 //go:embed chart-4.3.0.js
 var chartsJsStr []byte
 
@@ -1343,85 +1403,30 @@ func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 			if len(path) > 0 {
 				return errorPage(http.StatusNotFound, "path should be just /stats")
 			}
-			// build things up in a map
-			data := make(map[string]map[string]*timings)
-			rows, err := st.db.Query("SELECT name, time, value FROM stats")
-			if err != nil {
-				panic(err)
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var name string
-				var time uint64
-				var value []byte
-				err = rows.Scan(&name, &time, &value)
-				if err != nil {
-					panic(err)
-				}
-				ix := strings.LastIndex(name, ".")
-				stem := name[:ix]
-				valueType := name[ix+1:]
-				timed, hasTimed := data[stem]
-				if !hasTimed {
-					timed = make(map[string]*timings)
-					data[stem] = timed
-				}
-				timeStr := msgs.EggsTime(time).String()
-				t, hasT := timed[timeStr]
-				if !hasT {
-					t = &timings{}
-					timed[timeStr] = t
-				}
-				t.Time = timeStr
-				if valueType == "mean" {
-					t.MeanMs = float64(binary.LittleEndian.Uint64(value)) / 1e6
-				} else if valueType == "stddev" {
-					t.StddevMs = float64(binary.LittleEndian.Uint64(value)) / 1e6
-				} else if valueType == "histogram" {
-					bins, err := lib.UnpackHistogram(value)
-					if err != nil {
-						panic(err)
-					}
-					t.Histogram = make([]histogramBin, 0, len(bins))
-					for _, bin := range bins {
-						t.Histogram = append(t.Histogram, histogramBin{
-							Count:        bin.Count,
-							UpperBoundMs: float64(bin.UpperBound.Nanoseconds()) / 1e6,
-						})
-					}
-				} else {
-					panic(fmt.Errorf("unknown value type %v", valueType))
-				}
-				log.Info("t after: %v", t)
-			}
-			// turn it into a list, sort (we could do it directly with the sql, it's
-			// just marginally more convenient this way)
-			sortedData := make(map[string][]timings)
-			for n, ts := range data {
-				tts := make([]timings, 0, len(ts))
-				for _, t := range ts {
-					tts = append(tts, *t)
-				}
-				sort.Slice(tts, func(i, j int) bool {
-					return tts[i].Time < tts[j].Time
-				})
-				sortedData[n] = tts
-			}
-			// we're good
-			timingsJson, err := json.Marshal(sortedData)
-			if err != nil {
-				panic(err)
-			}
-			statsData := &statsData{
-				Timings: string(timingsJson),
-			}
 			pd := pageData{
 				Title: "stats",
-				Body:  statsData,
+				Body:  nil,
 			}
 			return statsTemplate, &pd, http.StatusOK
 		},
 	)
+}
+
+func sendJson(w http.ResponseWriter, out []byte) (io.ReadCloser, int64, int) {
+	w.Header().Set("Content-Type", "application/json")
+	return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
+}
+
+func sendJsonErr(w http.ResponseWriter, err any, status int) (io.ReadCloser, int64, int) {
+	w.Header().Set("Content-Type", "application/json")
+	j := map[string]any{"err": fmt.Sprintf("%v", err)}
+	eggsErr, ok := err.(msgs.ErrCode)
+	if ok {
+		j["errCode"] = uint8(eggsErr)
+	}
+	out, err := json.Marshal(j)
+	w.Header().Set("Content-Type", "application/json")
+	return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), status
 }
 
 func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
@@ -1434,25 +1439,35 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
 			}
 			if len(segments) != 2 {
-				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /api/<req>, got %v", r.URL.Path)))
+				return sendJsonErr(w, fmt.Errorf("expected /api/<req>, got %v", r.URL.Path), http.StatusBadRequest)
 			}
 			req, _, err := msgs.MkShuckleMessage(segments[1])
 			if err != nil {
-				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Expected /api/<req>, got %v", r.URL.Path)))
+				return sendJsonErr(w, fmt.Errorf("expected /api/<req>, got %v", r.URL.Path), http.StatusBadRequest)
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				return sendPage(errorPage(http.StatusBadRequest, fmt.Sprintf("Could not decode request: %v", err)))
+				return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 			}
 			resp, err := handleRequestParsed(log, st, req)
 			if err != nil {
-				return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Could not handle request: %v", err)))
+				return sendJsonErr(w, err, http.StatusInternalServerError)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			out, err := json.Marshal(resp)
-			if err != nil {
-				return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Could not marshal request: %v", err)))
+			accept := r.Header.Get("Accept")
+			if accept == "application/octet-stream" {
+				buf := bytes.NewBuffer([]byte{})
+				if err := resp.Pack(buf); err != nil {
+					panic(err)
+				}
+				w.Header().Set("Content-Type", "application/octet-stream")
+				out := buf.Bytes()
+				return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
+			} else {
+				out, err := json.Marshal(map[string]any{"resp": resp})
+				if err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not marshal request: %v", err), http.StatusInternalServerError)
+				}
+				return sendJson(w, out)
 			}
-			return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
 		},
 	)
 }
@@ -1513,8 +1528,7 @@ func setupRouting(log *lib.Logger, st *state) {
 				panic(err)
 			}
 		},
-	)
-	*/
+	)*/
 
 	// blocks serving
 	http.HandleFunc(

@@ -609,6 +609,10 @@ func (k ShuckleMessageKind) String() string {
 		return "BLOCK_SERVICE"
 	case 11:
 		return "INSERT_STATS"
+	case 12:
+		return "SHARD"
+	case 13:
+		return "GET_STATS"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -626,6 +630,8 @@ const (
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 	BLOCK_SERVICE ShuckleMessageKind = 0xA
 	INSERT_STATS ShuckleMessageKind = 0xB
+	SHARD ShuckleMessageKind = 0xC
+	GET_STATS ShuckleMessageKind = 0xD
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -639,9 +645,11 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	SET_BLOCK_SERVICE_FLAGS,
 	BLOCK_SERVICE,
 	INSERT_STATS,
+	SHARD,
+	GET_STATS,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 11
+const MaxShuckleMessageKind ShuckleMessageKind = 13
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -665,6 +673,10 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &BlockServiceReq{}, &BlockServiceResp{}, nil
 	case k == "INSERT_STATS":
 		return &InsertStatsReq{}, &InsertStatsResp{}, nil
+	case k == "SHARD":
+		return &ShardReq{}, &ShardResp{}, nil
+	case k == "GET_STATS":
+		return &GetStatsReq{}, &GetStatsResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4227,6 +4239,115 @@ func (v *InsertStatsResp) Pack(w io.Writer) error {
 }
 
 func (v *InsertStatsResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ShardReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SHARD
+}
+
+func (v *ShardReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SHARD
+}
+
+func (v *ShardResp) Pack(w io.Writer) error {
+	if err := v.Info.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardResp) Unpack(r io.Reader) error {
+	if err := v.Info.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *GetStatsReq) ShuckleRequestKind() ShuckleMessageKind {
+	return GET_STATS
+}
+
+func (v *GetStatsReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.StartTime)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.StartName)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.EndTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *GetStatsReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartTime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.StartName); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.EndTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *GetStatsResp) ShuckleResponseKind() ShuckleMessageKind {
+	return GET_STATS
+}
+
+func (v *GetStatsResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NextTime)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.NextName)); err != nil {
+		return err
+	}
+	len1 := len(v.Stats)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Stats[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *GetStatsResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextTime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.NextName); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Stats, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Stats[i].Unpack(r); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

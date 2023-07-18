@@ -54,6 +54,10 @@ func ReadShuckleRequest(
 		req = &msgs.BlockServiceReq{}
 	case msgs.INSERT_STATS:
 		req = &msgs.InsertStatsReq{}
+	case msgs.SHARD:
+		req = &msgs.ShardReq{}
+	case msgs.GET_STATS:
+		req = &msgs.GetStatsReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}
@@ -133,6 +137,10 @@ func ReadShuckleResponse(
 		resp = &msgs.BlockServiceResp{}
 	case msgs.INSERT_STATS:
 		resp = &msgs.InsertStatsResp{}
+	case msgs.SHARD:
+		resp = &msgs.ShardResp{}
+	case msgs.GET_STATS:
+		resp = &msgs.GetStatsResp{}
 	default:
 		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
 	}

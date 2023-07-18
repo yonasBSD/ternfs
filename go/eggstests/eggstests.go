@@ -520,7 +520,7 @@ func killBlockServices(
 	killDuration := time.Second * 10
 	gracePeriod := time.Second * 0
 	log.Info("will kill %v block services for %v, with %v in between", killAtOnce, killDuration, gracePeriod)
-	rand := wyhash.New(uint64(time.Now().Nanosecond()))
+	rand := wyhash.New(uint64(time.Now().UnixNano()))
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		for {

@@ -1596,6 +1596,16 @@ func main() {
 			reflect.TypeOf(msgs.InsertStatsReq{}),
 			reflect.TypeOf(msgs.InsertStatsResp{}),
 		},
+		{
+			0x0C,
+			reflect.TypeOf(msgs.ShardReq{}),
+			reflect.TypeOf(msgs.ShardResp{}),
+		},
+		{
+			0x0D,
+			reflect.TypeOf(msgs.GetStatsReq{}),
+			reflect.TypeOf(msgs.GetStatsResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

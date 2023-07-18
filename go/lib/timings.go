@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/msgs"
@@ -17,34 +18,29 @@ type Timings struct {
 	firstUpperBound     uint64  // the upper bound of the first bin of the histogram
 	growthDivUpperBound float64 // growth/firstUpperBound
 	// Actual data. Everything time related is in nanos.
-	hist []uint64
+	hist  []uint64
+	total uint64
 	// To compute mean/variance
-	count      uint64
-	sum        uint64
-	sumSquares uint64
+	mu    sync.Mutex
+	count int64
+	mean  int64
+	m2    int64
 }
 
 func (t *Timings) Mean() time.Duration {
-	if t.count == 0 {
-		return 0
-	}
-	return time.Duration(t.sum / t.count)
+	return time.Duration(t.mean)
 }
 
 func (t *Timings) Stddev() time.Duration {
-	if t.count == 0 {
-		return 0
-	}
-	mean := t.sum / t.count
-	return time.Duration(math.Sqrt(float64((t.sumSquares / t.count) - mean*mean)))
+	return time.Duration(float64(math.Sqrt(float64(t.m2 / t.count))))
 }
 
 func (t *Timings) TotalTime() time.Duration {
-	return time.Duration(t.sum)
+	return time.Duration(t.total)
 }
 
 func (t *Timings) TotalCount() uint64 {
-	return t.count
+	return uint64(t.count)
 }
 
 type HistogramBin struct {
@@ -80,8 +76,8 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 		growthDivUpperBound: growth / float64(firstUpperBound.Nanoseconds()),
 		hist:                make([]uint64, bins),
 		count:               0,
-		sum:                 0,
-		sumSquares:          0,
+		mean:                0,
+		m2:                  0,
 	}
 	return &timings
 }
@@ -92,19 +88,31 @@ func (t *Timings) Add(d time.Duration) {
 		return
 	}
 	nanos := uint64(inanos)
-	// bin = floor(log_growth(t*growth/firstUpperBound))
-	//     = floor(log(t*growthDivUpperBound) * invLogGrowth)
-	bin := int(math.Log(float64(nanos)*t.growthDivUpperBound) * t.invLogGrowth)
-	if bin < 0 {
-		bin = 0
+	// update bin/count
+	{
+		atomic.AddUint64(&t.total, nanos)
+		// bin = floor(log_growth(t*growth/firstUpperBound))
+		//     = floor(log(t*growthDivUpperBound) * invLogGrowth)
+		bin := int(math.Log(float64(nanos)*t.growthDivUpperBound) * t.invLogGrowth)
+		if bin < 0 {
+			bin = 0
+		}
+		if bin >= len(t.hist) {
+			bin = len(t.hist) - 1
+		}
+		atomic.AddUint64(&t.hist[bin], 1)
 	}
-	if bin >= len(t.hist) {
-		bin = len(t.hist) - 1
+	// update mean/stddev, see
+	// <https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm>
+	{
+		t.mu.Lock()
+		t.count++
+		delta := inanos - t.mean
+		t.mean += delta / t.count
+		delta2 := inanos - t.mean
+		t.m2 += delta * delta2
+		t.mu.Unlock()
 	}
-	atomic.AddUint64(&t.count, 1)
-	atomic.AddUint64(&t.sum, nanos)
-	atomic.AddUint64(&t.sumSquares, nanos*nanos)
-	atomic.AddUint64(&t.hist[bin], 1)
 }
 
 func (t *Timings) ToStats(time msgs.EggsTime, prefix string) []msgs.Stat {

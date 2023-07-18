@@ -21,9 +21,11 @@ private:
 
     // changing stuff
     std::array<std::atomic<uint64_t>, BINS> _hist;
-    std::atomic<uint64_t> _count;
-    std::atomic<uint64_t> _sum;
-    std::atomic<uint64_t> _sumSquares;
+    // mean/variance
+    std::mutex _mu;
+    int64_t _count;
+    int64_t _mean;
+    int64_t _m2;
 
 public:
     Timings(Duration firstUpperBound, double growth) :
@@ -32,8 +34,8 @@ public:
         _firstUpperBound(firstUpperBound.ns),
         _growthDivUpperBound(growth / (double)firstUpperBound.ns),
         _count(0),
-        _sum(0),
-        _sumSquares(0)
+        _mean(0),
+        _m2(0)
     {
         if (firstUpperBound < 1) {
             throw EGGS_EXCEPTION("non-positive first upper bound %s", firstUpperBound);
@@ -47,29 +49,32 @@ public:
     }
 
     Duration mean() const {
-        uint64_t count = _count.load();
-        if (count == 0) { return 0; }
-        return Duration(_sum.load() / count);
+        return Duration(_mean);
     }
 
     Duration stddev() const {
-        uint64_t count = _count.load();
-        uint64_t sum = _sum.load();
-        uint64_t sumSquares = _sumSquares.load();
-        if (count == 0) { return 0; }
-        uint64_t mean = sum / count;
-        return Duration((uint64_t)sqrt((sumSquares / count) - mean*mean));
+        if (_count == 0) { return 0; }
+        return Duration(sqrt(_m2 / _count));
     }
 
     void add(Duration d) {
         int64_t inanos = d.ns;
         if (inanos < 0) { return; }
-        uint64_t nanos = inanos;
-        int bin = std::min<int>(BINS, std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
-        _count++;
-        _sum += nanos;
-        _sumSquares += nanos*2;
-        _hist[bin]++;
+        // add to bins/total
+        {
+            uint64_t nanos = inanos;
+            int bin = std::min<int>(BINS, std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
+            _hist[bin]++;
+        }
+        // mean/variance
+        {
+            std::lock_guard<std::mutex> guard(_mu); // should be almost always uncontended.
+            _count++;
+            int64_t delta = inanos - _mean;
+            _mean += delta / _count;
+            int64_t delta2 = inanos - _mean;
+            _m2 += delta * delta2;
+        }
     }
 
     void toStats(const std::string& prefix, std::vector<Stat>& stats) const {

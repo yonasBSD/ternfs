@@ -201,7 +201,8 @@ reconnect:
         // send all requests
         if (gotHeartbeat) {
             _agent->getRequests(requests);
-            for (const auto& req: requests) {
+            for (int i = 0; i < requests.size(); i++) {
+                const auto& req = requests[i];
                 if (req.msgType == XmonRequestType::CREATE) {
                     LOG_DEBUG(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::UPDATE) {
@@ -213,6 +214,12 @@ reconnect:
                 }
                 packRequest(buf, req);
                 errString = buf.writeOut(sock);
+                if (unlikely(!errString.empty())) {
+                    // re-insert all the requests
+                    for (int j = i; j < requests.size(); j++) {
+                        _agent->addRequest(std::move(requests[j]));
+                    }
+                }
                 CHECK_ERR_STRING(errString);
                 LOG_DEBUG(_env, "sent request to xmon");
             }

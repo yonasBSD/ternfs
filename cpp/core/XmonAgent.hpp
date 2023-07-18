@@ -28,13 +28,13 @@ private:
     std::deque<XmonRequest> _requests;
     std::atomic<int64_t> _alertId;
 
-    void _addRequest(XmonRequest&& req) {
+public:
+    XmonAgent() : _alertId(0) {}
+
+    void addRequest(XmonRequest&& req) {
         std::lock_guard<std::mutex> lock(_mu);
         _requests.emplace_back(req);
     }
-
-public:
-    XmonAgent() : _alertId(0) {}
 
     XmonAlert createAlert(bool binnable, const std::string& message) {
         XmonAlert aid = _alertId.fetch_add(1);
@@ -43,7 +43,7 @@ public:
         req.alertId = aid;
         req.binnable = binnable;
         req.message = message;
-        _addRequest(std::move(req));
+        addRequest(std::move(req));
         return aid;
     }
 
@@ -53,7 +53,7 @@ public:
         req.alertId = aid;
         req.binnable = binnable;
         req.message = message;
-        _addRequest(std::move(req));
+        addRequest(std::move(req));
     }
 
     void clearAlert(XmonAlert aid) {
@@ -62,7 +62,7 @@ public:
         req.alertId = aid;
         req.binnable = false;
         req.message = {};
-        _addRequest(std::move(req));
+        addRequest(std::move(req));
     }
 
     void getRequests(std::vector<XmonRequest>& reqs) {

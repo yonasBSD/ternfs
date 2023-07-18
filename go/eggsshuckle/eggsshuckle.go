@@ -1814,6 +1814,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS stats_by_time on stats (time, name)")
+	if err != nil {
+		panic(err)
+	}
 
 	readSpanBufPool = lib.NewBufPool()
 

@@ -117,8 +117,9 @@ public:
         for (int i = 0; i < BINS; i++) {
             _hist[i].store(0);
         }
-        _count.store(0);
-        _sum.store(0);
-        _sumSquares.store(0);
+        std::lock_guard<std::mutex> guard(_mu);
+        _count = 0;
+        _mean = 0;
+        _m2 = 0;
     }
 };

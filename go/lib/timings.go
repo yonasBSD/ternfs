@@ -32,6 +32,9 @@ func (t *Timings) Mean() time.Duration {
 }
 
 func (t *Timings) Stddev() time.Duration {
+	if t.count == 0 {
+		return 0
+	}
 	return time.Duration(float64(math.Sqrt(float64(t.m2 / t.count))))
 }
 

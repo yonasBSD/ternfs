@@ -46,4 +46,19 @@ static void wyhash64_bytes(uint64_t* state, uint8_t* bytes, size_t len) {
 }
 #endif
 
+#ifdef __cplusplus
+struct wyhash64_gen {
+private:
+    uint64_t _s;
+public:
+    wyhash64_gen(uint64_t s): _s(s) {}
+
+    using result_type = uint64_t;
+    static constexpr uint64_t min() { return 0; }
+    static constexpr uint64_t max() { return ~(uint64_t)0; }
+
+    uint64_t operator()() { return wyhash64(&_s); }
+};
+#endif
+
 #endif

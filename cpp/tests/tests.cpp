@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <rocksdb/db.h>
 #include <sstream>
+#include <random>
 
 #include "Common.hpp"
 #include "Bincode.hpp"
@@ -16,6 +17,7 @@
 #include "Undertaker.hpp"
 #include "CDCKey.hpp"
 #include "wyhash.h"
+#include "Timings.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -576,6 +578,47 @@ TEST_CASE("test fmt") {
         ss << EggsTime(1234567891ull);
         REQUIRE(ss.str() == "1970-01-01T00:00:01.234567891");
     }
+}
+
+TEST_CASE("test timings") {
+    uint64_t r = 42;
+    // The fast requests are ~10us, and we send reports every hour,
+    // so it's not unconcievable to have a 1 billion run.
+    int iterations = 1e6;
+    // what we use in production
+    Timings<40> timings(10_us, 40);
+#define CHECK_CLOSE_ENOUGH(d1, d2) CHECK((double)d1.ns == doctest::Approx((double)d2.ns).epsilon(0.01))
+    std::vector<double> durationsUs(iterations);
+    // uniform between 1us and 100ms
+    {
+        for (int i = 0; i < iterations; i++) {
+            Duration d(1'000 + wyhash64(&r) % (100'000'000 - 1'000));
+            timings.add(d);
+            durationsUs[i] = (double)d.ns / 1e3;
+        }
+        CHECK_CLOSE_ENOUGH(timings.mean(), 50_ms);
+        CHECK_CLOSE_ENOUGH(timings.stddev(), Duration(sqrt(1.0/12.0) * (100e6 - 1e3)));
+    }
+    timings.reset();
+    // log-normal with mu = ln(2000), sigma = 1, in microseconds, which means that a quarter of requests
+    // be below 1ms, and 5% above 10ms, somewhat more similar to real requests
+    {
+        double mu = log(2000.0);
+        double sigma = 1.0;
+        double meanUs = 3297.4425414002562936973016;
+        double stddevUs = 4322.3948317901755476923694;
+        wyhash64_gen gen(42);
+        std::lognormal_distribution<double> dist(mu, sigma);
+        for (int i = 0; i < iterations; i++) {
+            double durationUs = dist(gen);
+            Duration d = Duration(durationUs * 1e3);
+            timings.add(d);
+            durationsUs[i] = durationUs;
+        }
+        CHECK_CLOSE_ENOUGH(timings.mean(), Duration(meanUs*1e3));
+        CHECK_CLOSE_ENOUGH(timings.stddev(), Duration(stddevUs*1e3));
+    }
+#undef CHECK_CLOSE_ENOUGH
 }
 
 /*

@@ -20,13 +20,20 @@ private:
     double _growthDivUpperBound;
 
     std::array<std::atomic<uint64_t>, BINS> _hist;
-
+    // mean/variance
+    std::mutex _mu;
+    int64_t _count;
+    double _meanMs;
+    double _m2MsSq;
 public:
     Timings(Duration firstUpperBound, double growth) :
         _growth(growth),
         _invLogGrowth(1.0/log(growth)),
         _firstUpperBound(firstUpperBound.ns),
-        _growthDivUpperBound(growth / (double)firstUpperBound.ns)
+        _growthDivUpperBound(growth / (double)firstUpperBound.ns),
+        _count(0),
+        _meanMs(0),
+        _m2MsSq(0)
     {
         if (firstUpperBound < 1) {
             throw EGGS_EXCEPTION("non-positive first upper bound %s", firstUpperBound);
@@ -39,14 +46,33 @@ public:
         }
     }
 
+    Duration mean() const {
+        return Duration(_meanMs*1e6);
+    }
+
+    Duration stddev() const {
+        if (_count == 0) { return 0; }
+        return Duration(1e6 * sqrt(_m2MsSq/_count));
+    }
+
     void add(Duration d) {
         int64_t inanos = d.ns;
-        if (inanos < 0) { return; }
+        if (inanos <= 0) { return; }
         // add to bins/total
         {
             uint64_t nanos = inanos;
             int bin = std::min<int>(BINS, std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
             _hist[bin]++;
+        }
+        // mean/variance
+        {
+            std::lock_guard<std::mutex> guard(_mu); // should be almost always uncontended.
+            _count++;
+            double nanosMs = (double)(inanos/1'000'000ll) + (double)(inanos%1'000'000ll)/1e6;
+            double delta = nanosMs - _meanMs;
+            _meanMs += delta / _count;
+            double delta2 = nanosMs - _meanMs;
+            _m2MsSq += delta * delta2;
         }
     }
 
@@ -74,5 +100,9 @@ public:
         for (int i = 0; i < BINS; i++) {
             _hist[i].store(0);
         }
+        std::lock_guard<std::mutex> guard(_mu);
+        _count = 0;
+        _meanMs = 0;
+        _m2MsSq = 0;
     }
 };

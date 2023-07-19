@@ -17,25 +17,25 @@ type Timings struct {
 	invLogGrowth        float64 // 1/ln(factor)
 	firstUpperBound     uint64  // the upper bound of the first bin of the histogram
 	growthDivUpperBound float64 // growth/firstUpperBound
-	// Actual data. Everything time related is in nanos.
+	// Actual data
 	hist  []uint64
 	total uint64
 	// To compute mean/variance
-	mu    sync.Mutex
-	count int64
-	mean  int64
-	m2    int64
+	mu     sync.Mutex
+	count  int64
+	meanMs float64
+	m2MsSq float64
 }
 
 func (t *Timings) Mean() time.Duration {
-	return time.Duration(t.mean)
+	return time.Duration(t.meanMs * 1e6)
 }
 
 func (t *Timings) Stddev() time.Duration {
 	if t.count == 0 {
 		return 0
 	}
-	return time.Duration(float64(math.Sqrt(float64(t.m2 / t.count))))
+	return time.Duration(1e6 * float64(math.Sqrt(float64(t.m2MsSq/float64(t.count)))))
 }
 
 func (t *Timings) TotalTime() time.Duration {
@@ -78,9 +78,6 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 		firstUpperBound:     uint64(firstUpperBound.Nanoseconds()),
 		growthDivUpperBound: growth / float64(firstUpperBound.Nanoseconds()),
 		hist:                make([]uint64, bins),
-		count:               0,
-		mean:                0,
-		m2:                  0,
 	}
 	return &timings
 }
@@ -110,10 +107,11 @@ func (t *Timings) Add(d time.Duration) {
 	{
 		t.mu.Lock()
 		t.count++
-		delta := inanos - t.mean
-		t.mean += delta / t.count
-		delta2 := inanos - t.mean
-		t.m2 += delta * delta2
+		nanosMs := float64(inanos/1000000) + float64(inanos%1000000)/1e6
+		delta := nanosMs - t.meanMs
+		t.meanMs += delta / float64(t.count)
+		delta2 := nanosMs - t.meanMs
+		t.m2MsSq += delta * delta2
 		t.mu.Unlock()
 	}
 }

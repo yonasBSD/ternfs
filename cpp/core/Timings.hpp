@@ -19,23 +19,14 @@ private:
     uint64_t _firstUpperBound;
     double _growthDivUpperBound;
 
-    // changing stuff
     std::array<std::atomic<uint64_t>, BINS> _hist;
-    // mean/variance
-    std::mutex _mu;
-    int64_t _count;
-    int64_t _mean;
-    int64_t _m2;
 
 public:
     Timings(Duration firstUpperBound, double growth) :
         _growth(growth),
         _invLogGrowth(1.0/log(growth)),
         _firstUpperBound(firstUpperBound.ns),
-        _growthDivUpperBound(growth / (double)firstUpperBound.ns),
-        _count(0),
-        _mean(0),
-        _m2(0)
+        _growthDivUpperBound(growth / (double)firstUpperBound.ns)
     {
         if (firstUpperBound < 1) {
             throw EGGS_EXCEPTION("non-positive first upper bound %s", firstUpperBound);
@@ -48,15 +39,6 @@ public:
         }
     }
 
-    Duration mean() const {
-        return Duration(_mean);
-    }
-
-    Duration stddev() const {
-        if (_count == 0) { return 0; }
-        return Duration(sqrt(_m2 / _count));
-    }
-
     void add(Duration d) {
         int64_t inanos = d.ns;
         if (inanos < 0) { return; }
@@ -66,36 +48,11 @@ public:
             int bin = std::min<int>(BINS, std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
             _hist[bin]++;
         }
-        // mean/variance
-        {
-            std::lock_guard<std::mutex> guard(_mu); // should be almost always uncontended.
-            _count++;
-            int64_t delta = inanos - _mean;
-            _mean += delta / _count;
-            int64_t delta2 = inanos - _mean;
-            _m2 += delta * delta2;
-        }
     }
 
     void toStats(const std::string& prefix, std::vector<Stat>& stats) const {
         static_assert(std::endian::native == std::endian::little);
         auto now = eggsNow();
-        {
-            auto& meanStat = stats.emplace_back();
-            meanStat.time = now;
-            meanStat.name = BincodeBytes(prefix + ".mean");
-            uint64_t x = mean().ns;
-            meanStat.value.els.resize(sizeof(x));
-            memcpy(meanStat.value.els.data(), &x, sizeof(x));
-        }
-        {
-            auto& stddevStat = stats.emplace_back();
-            stddevStat.time = now;
-            stddevStat.name = BincodeBytes(prefix + ".stddev");
-            uint64_t x = stddev().ns;
-            stddevStat.value.els.resize(sizeof(x));
-            memcpy(stddevStat.value.els.data(), &x, sizeof(x));
-        }
         {
             auto& histStat = stats.emplace_back();
             histStat.time = now;
@@ -117,9 +74,5 @@ public:
         for (int i = 0; i < BINS; i++) {
             _hist[i].store(0);
         }
-        std::lock_guard<std::mutex> guard(_mu);
-        _count = 0;
-        _mean = 0;
-        _m2 = 0;
     }
 };

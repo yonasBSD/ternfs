@@ -47,7 +47,7 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo dmesg -wTH" > dmesg &
 dmesg_pid=$!
 
 # Run tests
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs" | tee test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large|bigdir|cp' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs" | tee test-out
 
 kill $dmesg_pid
 

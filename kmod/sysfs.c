@@ -83,8 +83,6 @@ static const struct attribute_group eggsfs_stat_attr_group = {
     .attrs = eggsfs_stat_attrs,
 };
 
-extern const char* eggsfs_revision;
-
 static ssize_t eggsfs_revision_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf) {
     return sprintf(buf, "%s\n", eggsfs_revision);
 }

@@ -7,6 +7,7 @@
 #include "net.h"
 #include "file.h"
 #include "block.h"
+#include "metadata.h"
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 0;
@@ -142,6 +143,16 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_ULONG(span_cache_min_avail_mem_sync),
     EGGSFS_CTL_ULONG(span_cache_max_size_drop),
     EGGSFS_CTL_ULONG(span_cache_min_avail_mem_drop),
+
+    {
+        .procname = "mtu",
+        .data = &eggsfs_mtu,
+        .maxlen = sizeof(eggsfs_mtu),
+        .mode = 0644,
+        .proc_handler = proc_douintvec_minmax,
+        .extra1 = &eggsfs_default_mtu,
+        .extra2 = &eggsfs_max_mtu,
+    },
 
     {}
 };

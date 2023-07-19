@@ -7,6 +7,13 @@
 #include "super.h"
 #include "inode.h"
 
+#define EGGSFS_DEFAULT_MTU 1472
+#define EGGSFS_MAX_MTU 8972
+
+extern int eggsfs_mtu;
+extern int eggsfs_default_mtu;
+extern int eggsfs_max_mtu;
+
 int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time);
 int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, void* data, u64* next_hash);
 int eggsfs_shard_soft_unlink_file(

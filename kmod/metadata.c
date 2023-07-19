@@ -14,6 +14,10 @@
 #include "span.h"
 #include "dir.h"
 
+int eggsfs_mtu = EGGSFS_DEFAULT_MTU;
+int eggsfs_default_mtu = EGGSFS_DEFAULT_MTU;
+int eggsfs_max_mtu = EGGSFS_MAX_MTU;
+
 static DEFINE_PER_CPU(u64, next_request_id);
 
 static inline u64 alloc_request_id(void) {
@@ -60,13 +64,60 @@ static void eggsfs_read_shard_header(struct eggsfs_bincode_get_ctx* ctx, u64 req
     char req[EGGSFS_SHARD_HEADER_SIZE + sz]; \
     PREPARE_SHARD_REQ_CTX_INNER(sz)
 
+static void prepare_resp_ctx(struct sk_buff* skb, struct eggsfs_bincode_get_ctx* ctx) {
+    ctx->err = 0;
+    // if the skb is linear (super common case) just use the
+    // skb buffer directly.
+    //
+    // otherwise we allocate enough space and copy in one pass -- we deem
+    // this more desirable than calling `skb_copy_bits` many times when deserializing,
+    // especially since I'd expect nonlinear skbs to appear only for large messages.
+    if (unlikely(skb_is_nonlinear(skb))) {
+        ctx->buf = kmalloc(skb->len, GFP_KERNEL);
+        if (unlikely(ctx->buf == NULL)) {
+            ctx->err = -ENOMEM;
+            ctx->owned = NULL;
+            ctx->end = NULL;
+            return;
+        } else {
+            ctx->owned = ctx->buf;
+            BUG_ON(skb_copy_bits(skb, 0, ctx->buf, skb->len) != 0);            
+        }
+    } else {
+        ctx->buf = skb->data;
+        ctx->owned = NULL;
+    }
+    ctx->end = ctx->buf + skb->len;
+}
+
+static void prepare_shard_resp_ctx(struct sk_buff* skb, u64 req_id, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
+    prepare_resp_ctx(skb, ctx);
+    if (likely(ctx->err == 0)) {
+        eggsfs_read_shard_header(ctx, req_id, kind);
+    };
+}
+
 #define PREPARE_SHARD_RESP_CTX() \
-    struct eggsfs_bincode_get_ctx ctx = { \
-        .buf = skb->data, \
-        .end = skb->data + skb->len, \
-        .err = 0, \
-    }; \
-    eggsfs_read_shard_header(&ctx, req_id, kind)
+    struct eggsfs_bincode_get_ctx ctx; \
+    prepare_shard_resp_ctx(skb, req_id, kind, &ctx);
+
+static int finish_resp(struct sk_buff* skb, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
+    if (unlikely(ctx->owned)) {
+        kfree(ctx->owned);
+        ctx->owned = NULL;
+    }
+    consume_skb(skb);
+    if (unlikely(ctx->err != 0)) {
+        eggsfs_debug("resp of kind %02x failed with err %d", kind, ctx->err);
+        return ctx->err;
+    }
+    return 0;
+}
+
+#define FINISH_RESP() { \
+        int err = finish_resp(skb, kind, &ctx); \
+        if (err != 0) { return err; } \
+    }
 
 static struct sk_buff* eggsfs_send_shard_req(struct eggsfs_fs_info* info, int shid, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
     struct msghdr msg;
@@ -110,26 +161,22 @@ static void eggsfs_read_cdc_header(struct eggsfs_bincode_get_ctx* ctx, u64 req_i
     }; \
     eggsfs_put_cdc_header(&ctx, req_id, kind)
 
+static void prepare_cdc_resp_ctx(struct sk_buff* skb, u64 req_id, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
+    prepare_resp_ctx(skb, ctx);
+    if (likely(ctx->err == 0)) {
+        eggsfs_read_cdc_header(ctx, req_id, kind);
+    }
+}
+
 #define PREPARE_CDC_RESP_CTX() \
-    struct eggsfs_bincode_get_ctx ctx = { \
-        .buf = skb->data, \
-        .end = skb->data + skb->len, \
-        .err = 0, \
-    }; \
-    eggsfs_read_cdc_header(&ctx, req_id, kind)
+    struct eggsfs_bincode_get_ctx ctx; \
+    prepare_cdc_resp_ctx(skb, req_id, kind, &ctx);
 
 static struct sk_buff* eggsfs_send_cdc_req(struct eggsfs_fs_info* info, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
     struct msghdr msg;
     memcpy(&msg, &info->cdc_msghdr, sizeof(msg));
     return eggsfs_metadata_request(&info->sock, -1, &msg, req_id, ctx->start, ctx->cursor-ctx->start, attempts);
 }
-
-#define FINISH_RESP() \
-    consume_skb(skb); \
-    if (unlikely(ctx.err != 0)) { \
-        eggsfs_debug("resp of kind %02x failed with err %d", kind, ctx.err); \
-        return ctx.err; \
-    }
 
 int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time) {
     eggsfs_debug("dir=0x%016llx, name=%*pE", dir, name_len, name);
@@ -175,7 +222,7 @@ int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, vo
         eggsfs_read_dir_req_put_start(&ctx, start);
         eggsfs_read_dir_req_put_dir_id(&ctx, start, dir_id, dir);
         eggsfs_read_dir_req_put_start_hash(&ctx, dir_id, start_hash, start_pos);
-        eggsfs_read_dir_req_put_mtu(&ctx, start_hash, mtu, 0);
+        eggsfs_read_dir_req_put_mtu(&ctx, start_hash, mtu, eggsfs_mtu);
         eggsfs_read_dir_req_put_end(ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(dir), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
@@ -228,7 +275,7 @@ static bool check_deleted_edge(
         eggsfs_full_read_dir_req_put_start_name(&ctx, flags, name_req, name, name_len);
         eggsfs_full_read_dir_req_put_start_time(&ctx, name_req, start_time, 0);
         eggsfs_full_read_dir_req_put_limit(&ctx, start_time, limit, 2);
-        eggsfs_full_read_dir_req_put_mtu(&ctx, limit, mtu, 0);
+        eggsfs_full_read_dir_req_put_mtu(&ctx, limit, mtu, eggsfs_mtu);
         eggsfs_full_read_dir_req_put_end(&ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(dir), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return false; }
@@ -780,7 +827,7 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
         eggsfs_file_spans_req_put_file_id(&ctx, start, file_id, file);
         eggsfs_file_spans_req_put_byte_offset(&ctx, file_id, byte_offset, offset);
         eggsfs_file_spans_req_put_limit(&ctx, byte_offset, limit, 0);
-        eggsfs_file_spans_req_put_mtu(&ctx, limit, mtu, 0);
+        eggsfs_file_spans_req_put_mtu(&ctx, limit, mtu, eggsfs_mtu);
         eggsfs_file_spans_req_put_end(&ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }

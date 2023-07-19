@@ -457,6 +457,33 @@ func (r *RunTests) run(
 		},
 	)
 
+	runTest(
+		log,
+		r.acceptGcFailures,
+		shuckleAddress,
+		r.filter,
+		"bigdir",
+		"",
+		func(counters *lib.ClientCounters) {
+			numFiles := 10000
+			for i := 0; i < numFiles; i++ {
+				if i%100 == 0 {
+					log.Info("%v dirs created", i)
+				}
+				if err := ioutil.WriteFile(path.Join(r.mountPoint, fmt.Sprintf("%v", i)), []byte{}, 0644); err != nil {
+					panic(err)
+				}
+			}
+			files, err := ioutil.ReadDir(r.mountPoint)
+			if err != nil {
+				panic(err)
+			}
+			if numFiles != len(files) {
+				panic(fmt.Errorf("expecting %v files, got %v", numFiles, len(files)))
+			}
+		},
+	)
+
 	terminateChan <- nil
 }
 

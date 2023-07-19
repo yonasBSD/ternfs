@@ -5,6 +5,7 @@
 #include "log.h"
 #include "trace.h"
 #include "err.h"
+#include "metadata.h"
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
@@ -30,6 +31,7 @@ static void sock_readable(struct sock* sk) {
     struct eggsfs_shard_socket* s;
     struct sk_buff* skb;
     int err;
+    __le64 request_id_le;
     u64 request_id;
 
     read_lock_bh(&sk->sk_callback_lock);
@@ -42,21 +44,23 @@ static void sock_readable(struct sock* sk) {
             return;
         }
                               
-        if (unlikely(skb_is_nonlinear(skb))) {
-            // TODO: need top handle this
-            eggsfs_warn("dropping nonlinear request");
-            goto drop_skb;
-        } else if (unlikely(skb_checksum_complete(skb))) {
+        if (unlikely(skb_checksum_complete(skb))) {
             eggsfs_warn("dropping request with bad checksum");
             goto drop_skb;
         }
 
-        // u32 protocol + u64 req_id
+        // u32 protocol + u64 req_id. Note that we check the protocol later on.
+        // We just need the request id here.
         if (unlikely(skb->len < 12)) {
             eggsfs_warn("dropping runt eggsfs request");
             goto drop_skb;
         }
-        request_id = get_unaligned_le64(skb->data + 4);
+        if (unlikely(skb->len > EGGSFS_MAX_MTU)) {
+            eggsfs_warn("dropping overlong eggsfs request");
+            goto drop_skb;
+        }
+        BUG_ON(skb_copy_bits(skb, 4, &request_id_le, 8) != 0);
+        request_id = le64_to_cpu(request_id_le);
 
         struct eggsfs_shard_request* req;
         spin_lock_bh(&s->lock); {
@@ -241,9 +245,12 @@ struct sk_buff* eggsfs_metadata_request(
             // extract the the error for the benefit of logging
             int bincode_err = 0;
             if (req.skb->len >= (4 + 8 + 1)) {
-                uint8_t kind = *(u8*)(req.skb->data + 4 + 8);
+                uint8_t kind;
+                BUG_ON(skb_copy_bits(req.skb, 4 + 8, &kind, 1) != 0);
                 if (kind == 0 && req.skb->len >= (4 + 8 + 1 + 2)) {
-                    bincode_err = get_unaligned_le16(req.skb->data + 4 + 8 + 1);
+                    __le16 err;
+                    BUG_ON(skb_copy_bits(req.skb, 4 + 8 + 1, &err, 2) != 0);
+                    bincode_err = le16_to_cpu(err);
                 }
             }
             if (bincode_err && eggsfs_unexpected_error(bincode_err)) {

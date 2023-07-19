@@ -10,7 +10,8 @@
 
 struct eggsfs_bincode_put_ctx { char* start; char* cursor; char* end; };
 
-struct eggsfs_bincode_get_ctx { char* buf; char* end; u16 err; };
+// If owned is not null, we need to free this buf when done.
+struct eggsfs_bincode_get_ctx { char* owned; char* buf; char* end; u16 err;};
 
 struct eggsfs_bincode_bytes { char* buf; u8 len; };
 

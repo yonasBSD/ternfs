@@ -34,7 +34,7 @@ done
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
-make KDIR=$SCRIPT_DIR/linux-5.4.237 -j kmod
+make KDIR=$SCRIPT_DIR/linux -j kmod
 
 pkill qemu || true
 tmux kill-session -t uovo || true

@@ -169,7 +169,8 @@
     
             // now draw the divs
             chartsEl.innerHTML = '';
-            for (const [group, groupData] of Object.entries(data)) {
+            Object.keys(data).sort().forEach(group => {
+                groupData = data[group];
                 const groupEl = document.createElement('h2');
                 groupEl.innerHTML = group;
                 chartsEl.appendChild(groupEl);
@@ -177,13 +178,14 @@
                 chartsEl.appendChild(reqsEl);
                 reqsEl.style.display = 'grid';
                 reqsEl.style.gridTemplateColumns = '33% 33% 33%';
-                for (const [req, reqData] of Object.entries(groupData)) {
+                Object.keys(groupData).sort().forEach(req => {
+                    reqData = groupData[req];
                     const chartContainerEl = document.createElement('div');
                     reqsEl.appendChild(chartContainerEl);
                     chartContainerEl.style.width = '100%';
                     drawChart(chartContainerEl, req, reqData);
-                }
-            }
+                });
+            });
     
             console.log('done loading');
         }

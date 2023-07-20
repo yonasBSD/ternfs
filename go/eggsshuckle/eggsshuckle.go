@@ -1593,12 +1593,29 @@ func metricWriter(ll *lib.Logger, st *state) error {
 	}
 }
 
-func statsWriter(ll *lib.Logger, st *state) error {
+func deleteOldStats(ll *lib.Logger, st *state) error {
+	ll.Info("clearing out old stats")
+	n := sql.Named
+
+	st.mutex.Lock()
+	defer st.mutex.Unlock()
+
+	_, err := st.db.Exec(
+		"DELETE FROM stats WHERE time < :time",
+		n("time", time.Now().Add(-time.Hour*24*7).UnixNano()),
+	)
+	return err
+}
+
+func statsWriter(ll *lib.Logger, st *state) {
 	for {
 		stats := lib.TimingsToStats("shuckle", msgs.AllShuckleMessageKind[:], st.counters[:])
 		st.resetTimings()
 		ll.Info("writing %v stats to database", len(stats))
 		if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {
+			panic(err)
+		}
+		if err := deleteOldStats(ll, st); err != nil {
 			panic(err)
 		}
 		time.Sleep(time.Hour)

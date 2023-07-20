@@ -46,6 +46,7 @@ A multitude of directories to persist the whole thing will appear in `<data-dir>
 % ./fetchlinux.sh # fetch linux sources
 % (cd linux && make oldconfig && make prepare && make -j) # build Linux
 % make KDIR=linux -j kmod
+```
 
 ## Playing with the Kernel module
 

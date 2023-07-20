@@ -108,7 +108,9 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
     uint32_t protocol;
     READ_IN(&protocol, sizeof(protocol));
     if (protocol != SHUCKLE_RESP_PROTOCOL_VERSION) {
-        throw BINCODE_EXCEPTION("bad shuckle protocol (expected %s, got %s)", SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
+        std::ostringstream ss;
+        ss << "bad shuckle protocol (expected " << SHUCKLE_RESP_PROTOCOL_VERSION << ", got " << protocol << ")";
+        return ss.str();
     }
     uint32_t len;
     READ_IN(&len, sizeof(len));

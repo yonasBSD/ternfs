@@ -219,9 +219,9 @@ func (c *Client) ShardRequest(
 		r.Mtu = mtu
 	}
 	respBuf := make([]byte, mtu)
-	requestIds := make([]uint64, shardTimeout.Overall/shardTimeout.Initial)
 	attempts := 0
 	startedAt := time.Now()
+	requestId := newRequestId()
 	// will keep trying as long as we get timeouts
 	for {
 		elapsed := time.Since(startedAt)
@@ -232,8 +232,6 @@ func (c *Client) ShardRequest(
 		if c.counters != nil {
 			atomic.AddUint64(&c.counters.Shard[msgKind].Attempts, 1)
 		}
-		requestId := newRequestId()
-		requestIds[attempts] = requestId
 		req := shardRequest{
 			requestId: requestId,
 			body:      reqBody,
@@ -285,24 +283,9 @@ func (c *Client) ShardRequest(
 				logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				continue
 			}
-			// Check if we're interested in the request id we got -- accept any we've sent
-			// so far
-			goodRequestId := false
-			for _, requestId := range requestIds {
-				if uint64(respRequestId) == requestId {
-					goodRequestId = true
-					break
-				}
-			}
-			if !goodRequestId {
-				prefix := []uint64{}
-				for _, req := range requestIds {
-					if req == 0 {
-						break
-					}
-					prefix = append(prefix, req)
-				}
-				logger.Info("dropping response %v from shard %v, since we expected one of %v", uint64(respRequestId), shid, prefix)
+			// Check if we're interested in the request id we got
+			if uint64(respRequestId) != requestId {
+				logger.Info("dropping response %v from shard %v, since we expected one of %v", uint64(respRequestId), shid, requestId)
 				continue
 			}
 			// We are interested, parse the kind

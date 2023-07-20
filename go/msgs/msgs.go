@@ -993,6 +993,16 @@ type MoveSpanReq struct {
 
 type MoveSpanResp struct{}
 
+// The most significant bit indicates whether we're setting
+// the time.
+type SetTimeReq struct {
+	Id    InodeId
+	Mtime uint64
+	Atime uint64
+}
+
+type SetTimeResp struct{}
+
 // --------------------------------------------------------------------
 // CDC requests/responses
 
@@ -1474,6 +1484,12 @@ type MoveSpanEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	Cookie2     [8]byte
+}
+
+type SetTimeEntry struct {
+	Id    InodeId
+	Mtime uint64
+	Atime uint64
 }
 
 // --------------------------------------------------------------------

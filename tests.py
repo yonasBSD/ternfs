@@ -82,7 +82,7 @@ wait_cmds(
     quiet=tests_quiet,
 )
 
-fuse_tests = 'history|direct|mounted'
+fuse_tests = 'history|direct|mounted|bigdir|utime'
 
 bold_print('integration tests')
 tests = [

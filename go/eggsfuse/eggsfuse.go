@@ -12,6 +12,7 @@ import (
 	"runtime/pprof"
 	"sync"
 	"syscall"
+	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
@@ -402,6 +403,34 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 func (n *eggsNode) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	logger.Debug("setattr inode=%v, in=%+v", n.id, in)
 
+	if n.id.Type() == msgs.DIRECTORY {
+		return syscall.EPERM
+	}
+
+	if in.Valid&^(fuse.FATTR_ATIME|fuse.FATTR_MTIME) != 0 {
+		return syscall.EPERM
+	}
+
+	req := &msgs.SetTimeReq{
+		Id: n.id,
+	}
+	if atime, ok := in.GetATime(); ok {
+		nanos := atime.UnixNano()
+		req.Atime = uint64(nanos) | (uint64(1) << 63)
+		out.Atime = uint64(nanos / 1000000000)
+		out.Atimensec = uint32(nanos % 1000000000)
+	}
+	if mtime, ok := in.GetMTime(); ok {
+		nanos := mtime.UnixNano()
+		req.Mtime = uint64(nanos) | (uint64(1) << 63)
+		out.Mtime = uint64(nanos / 1000000000)
+		out.Mtimensec = uint32(nanos % 1000000000)
+	}
+
+	if err := shardRequest(n.id.Shard(), req, &msgs.SetTimeResp{}); err != 0 {
+		return err
+	}
+
 	return 0
 }
 
@@ -492,6 +521,11 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	}
 	bufData := buf.Bytes()
 	data = &bufData
+
+	client.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
+		Id:    n.id,
+		Atime: uint64(time.Now().UnixNano()) | (uint64(1) << 63),
+	})
 
 	of := openFile{data: data}
 	return &of, 0, 0

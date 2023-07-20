@@ -79,6 +79,7 @@ enum class ShardMessageKind : uint8_t {
     FILE_SPANS = 11,
     SAME_DIRECTORY_RENAME = 12,
     ADD_INLINE_SPAN = 16,
+    SET_TIME = 17,
     FULL_READ_DIR = 115,
     MOVE_SPAN = 123,
     REMOVE_NON_OWNED_EDGE = 116,
@@ -117,6 +118,7 @@ const std::vector<ShardMessageKind> allShardMessageKind {
     ShardMessageKind::FILE_SPANS,
     ShardMessageKind::SAME_DIRECTORY_RENAME,
     ShardMessageKind::ADD_INLINE_SPAN,
+    ShardMessageKind::SET_TIME,
     ShardMessageKind::FULL_READ_DIR,
     ShardMessageKind::MOVE_SPAN,
     ShardMessageKind::REMOVE_NON_OWNED_EDGE,
@@ -1488,6 +1490,46 @@ struct AddInlineSpanResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanResp& x);
+
+struct SetTimeReq {
+    InodeId id;
+    uint64_t mtime;
+    uint64_t atime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // id + mtime + atime
+
+    SetTimeReq() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += 8; // mtime
+        _size += 8; // atime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetTimeReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetTimeReq& x);
+
+struct SetTimeResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    SetTimeResp() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetTimeResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetTimeResp& x);
 
 struct FullReadDirReq {
     InodeId dirId;
@@ -3348,7 +3390,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupReq& getLookup() const;
@@ -3375,6 +3417,8 @@ public:
     SameDirectoryRenameReq& setSameDirectoryRename();
     const AddInlineSpanReq& getAddInlineSpan() const;
     AddInlineSpanReq& setAddInlineSpan();
+    const SetTimeReq& getSetTime() const;
+    SetTimeReq& setSetTime();
     const FullReadDirReq& getFullReadDir() const;
     FullReadDirReq& setFullReadDir();
     const MoveSpanReq& getMoveSpan() const;
@@ -3434,7 +3478,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardMessageKind kind() const { return _kind; }
     const LookupResp& getLookup() const;
@@ -3461,6 +3505,8 @@ public:
     SameDirectoryRenameResp& setSameDirectoryRename();
     const AddInlineSpanResp& getAddInlineSpan() const;
     AddInlineSpanResp& setAddInlineSpan();
+    const SetTimeResp& getSetTime() const;
+    SetTimeResp& setSetTime();
     const FullReadDirResp& getFullReadDir() const;
     FullReadDirResp& setFullReadDir();
     const MoveSpanResp& getMoveSpan() const;
@@ -3679,6 +3725,7 @@ enum class ShardLogEntryKind : uint16_t {
     SWAP_BLOCKS = 23,
     EXPIRE_TRANSIENT_FILE = 24,
     MOVE_SPAN = 25,
+    SET_TIME = 26,
 };
 
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
@@ -4288,10 +4335,33 @@ struct MoveSpanEntry {
 
 std::ostream& operator<<(std::ostream& out, const MoveSpanEntry& x);
 
+struct SetTimeEntry {
+    InodeId id;
+    uint64_t mtime;
+    uint64_t atime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // id + mtime + atime
+
+    SetTimeEntry() { clear(); }
+    uint16_t packedSize() const {
+        uint16_t _size = 0;
+        _size += 8; // id
+        _size += 8; // mtime
+        _size += 8; // atime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SetTimeEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SetTimeEntry& x);
+
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, ExpireTransientFileEntry, MoveSpanEntry> _data;
+    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, ExpireTransientFileEntry, MoveSpanEntry, SetTimeEntry> _data;
 public:
     ShardLogEntryKind kind() const { return _kind; }
     const ConstructFileEntry& getConstructFile() const;
@@ -4344,6 +4414,8 @@ public:
     ExpireTransientFileEntry& setExpireTransientFile();
     const MoveSpanEntry& getMoveSpan() const;
     MoveSpanEntry& setMoveSpan();
+    const SetTimeEntry& getSetTime() const;
+    SetTimeEntry& setSetTime();
 
     void clear() { _kind = (ShardLogEntryKind)0; };
 

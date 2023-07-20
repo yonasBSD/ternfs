@@ -2,6 +2,9 @@
     <script src="/chart-4.3.0.js"></script>
     <div>
         <input type="datetime-local" id="time-from" required> — <input type="datetime-local" id="time-to" required>
+        <p>
+            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response.
+        </p>
         <div id="charts"></div>
     </div>
     <script>(() => {

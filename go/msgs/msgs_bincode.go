@@ -321,6 +321,8 @@ func (k ShardMessageKind) String() string {
 		return "SAME_DIRECTORY_RENAME"
 	case 16:
 		return "ADD_INLINE_SPAN"
+	case 17:
+		return "SET_TIME"
 	case 115:
 		return "FULL_READ_DIR"
 	case 123:
@@ -386,6 +388,7 @@ const (
 	FILE_SPANS ShardMessageKind = 0xB
 	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
 	ADD_INLINE_SPAN ShardMessageKind = 0x10
+	SET_TIME ShardMessageKind = 0x11
 	FULL_READ_DIR ShardMessageKind = 0x73
 	MOVE_SPAN ShardMessageKind = 0x7B
 	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
@@ -424,6 +427,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	FILE_SPANS,
 	SAME_DIRECTORY_RENAME,
 	ADD_INLINE_SPAN,
+	SET_TIME,
 	FULL_READ_DIR,
 	MOVE_SPAN,
 	REMOVE_NON_OWNED_EDGE,
@@ -477,6 +481,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &SameDirectoryRenameReq{}, &SameDirectoryRenameResp{}, nil
 	case k == "ADD_INLINE_SPAN":
 		return &AddInlineSpanReq{}, &AddInlineSpanResp{}, nil
+	case k == "SET_TIME":
+		return &SetTimeReq{}, &SetTimeResp{}, nil
 	case k == "FULL_READ_DIR":
 		return &FullReadDirReq{}, &FullReadDirResp{}, nil
 	case k == "MOVE_SPAN":
@@ -1507,6 +1513,48 @@ func (v *AddInlineSpanResp) Pack(w io.Writer) error {
 }
 
 func (v *AddInlineSpanResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *SetTimeReq) ShardRequestKind() ShardMessageKind {
+	return SET_TIME
+}
+
+func (v *SetTimeReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Mtime)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Atime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SetTimeReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Mtime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Atime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SetTimeResp) ShardResponseKind() ShardMessageKind {
+	return SET_TIME
+}
+
+func (v *SetTimeResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *SetTimeResp) Unpack(r io.Reader) error {
 	return nil
 }
 

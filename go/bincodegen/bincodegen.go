@@ -1244,6 +1244,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
 			reflect.TypeOf(msgs.ExpireTransientFileEntry{}),
 			reflect.TypeOf(msgs.MoveSpanEntry{}),
+			reflect.TypeOf(msgs.SetTimeEntry{}),
 		},
 	)
 
@@ -1376,6 +1377,11 @@ func main() {
 			0x10,
 			reflect.TypeOf(msgs.AddInlineSpanReq{}),
 			reflect.TypeOf(msgs.AddInlineSpanResp{}),
+		},
+		{
+			0x11,
+			reflect.TypeOf(msgs.SetTimeReq{}),
+			reflect.TypeOf(msgs.SetTimeResp{}),
 		},
 		// this was marked as a "private" operation, but we now use it in
 		// the client (to check deleted edges)

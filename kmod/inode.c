@@ -88,6 +88,8 @@ again: // progress: whoever wins the lock won't try again
 
         u64 mtime;
         u64 expiry;
+        bool has_atime = false;
+        u64 atime;
         if (S_ISDIR(enode->inode.i_mode)) {
             struct eggsfs_block_policies block_policies;
             struct eggsfs_span_policies span_policies;
@@ -124,15 +126,17 @@ again: // progress: whoever wins the lock won't try again
                     (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
                     enode->inode.i_ino,
                     &mtime,
+                    &atime,
                     &size
                 );
+                has_atime = true;
                 if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
                     enode->inode.i_size = 0;
                     expiry = 0;
                     mtime = 0;
                 } else if (err == 0) {
                     enode->inode.i_size = size;
-                    expiry = ~(uint64_t)0;
+                    expiry = ts + eggsfs_file_refresh_time_jiffies;
                 }
             } else {
                 BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
@@ -144,8 +148,14 @@ again: // progress: whoever wins the lock won't try again
         if (err) { err = eggsfs_error_to_linux(err); goto out; }
         else {
             WRITE_ONCE(enode->mtime, mtime);
+            eggsfs_debug("got mtime %llu", mtime);
             enode->inode.i_mtime.tv_sec = mtime / 1000000000;
             enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
+            if (has_atime) {
+                eggsfs_debug("got atime %llu", mtime);
+                enode->inode.i_atime.tv_sec = atime / 1000000000;
+                enode->inode.i_atime.tv_nsec = atime % 1000000000;
+            }
         }
 
         smp_store_release(&enode->mtime_expiry, expiry);
@@ -245,6 +255,49 @@ done:
     return 0;
 }
 
+static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
+    // ATTR_TIMES_SET/ATTR_TOUCH is just to distinguish between a touch
+    // and an explicit time set
+    // Note that `utimes_common` unconditionally sets ATTR_CTIME, but we
+    // can't do much with it.
+    if (attr->ia_valid & ~(ATTR_ATIME|ATTR_ATIME_SET|ATTR_MTIME|ATTR_MTIME_SET|ATTR_TIMES_SET|ATTR_CTIME|ATTR_TOUCH)) {
+        eggsfs_debug("skipping setattr, ia_valid=%08x", attr->ia_valid);
+        return -EPERM;
+    }
+
+    uint64_t now = ktime_get_real_ns();
+
+    uint64_t atime = 0;
+    if (attr->ia_valid & ATTR_ATIME) {
+        if (attr->ia_valid & ATTR_ATIME_SET) {
+            atime = (attr->ia_atime.tv_sec * 1000000000ll) + attr->ia_atime.tv_nsec;
+        } else {
+            atime = now;
+        }
+        eggsfs_debug("setting atime to %llu", atime);
+        atime |= 1ull << 63;
+    }
+
+    uint64_t mtime = 0;
+    if (attr->ia_valid & ATTR_MTIME) {
+        if (attr->ia_valid & ATTR_MTIME_SET) {
+            mtime = (attr->ia_mtime.tv_sec * 1000000000ll) + attr->ia_mtime.tv_nsec;
+        } else {
+            mtime = now;
+        }
+        eggsfs_debug("setting mtime to %llu", mtime);
+        mtime |= 1ull << 63;
+    }
+
+    int err = eggsfs_shard_set_time((struct eggsfs_fs_info*)dentry->d_inode->i_sb->s_fs_info, dentry->d_inode->i_ino, mtime, atime);
+    if (err) { return err; }
+
+    // could copy out attributes instead?
+    smp_store_release(&EGGSFS_I(dentry->d_inode)->mtime_expiry, 0);
+
+    return 0;
+}
+
 static int eggsfs_symlink(struct inode* dir, struct dentry* dentry, const char* path) {
     struct eggsfs_inode* enode = eggsfs_create_internal(dir, EGGSFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
@@ -302,10 +355,12 @@ static const struct inode_operations eggsfs_dir_inode_ops = {
 
 static const struct inode_operations eggsfs_file_inode_ops = {
     .getattr = eggsfs_getattr,
+    .setattr = eggsfs_setattr,
 };
 
 static const struct inode_operations eggsfs_symlink_inode_ops = {
     .getattr = eggsfs_getattr,
+    .setattr = eggsfs_setattr,
     .get_link = eggsfs_get_link,
 };
 

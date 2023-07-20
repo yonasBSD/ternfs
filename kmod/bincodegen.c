@@ -75,6 +75,7 @@ const char* eggsfs_shard_kind_str(int kind) {
     case 11: return "FILE_SPANS";
     case 12: return "SAME_DIRECTORY_RENAME";
     case 16: return "ADD_INLINE_SPAN";
+    case 17: return "SET_TIME";
     case 115: return "FULL_READ_DIR";
     case 123: return "MOVE_SPAN";
     case 116: return "REMOVE_NON_OWNED_EDGE";

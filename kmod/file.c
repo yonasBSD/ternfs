@@ -18,6 +18,8 @@
 
 unsigned eggsfs_max_write_span_attempts = 5;
 
+int eggsfs_file_refresh_time_jiffies = 0;
+
 static struct kmem_cache* eggsfs_transient_span_cachep;
 
 struct eggsfs_transient_span {
@@ -53,39 +55,34 @@ static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
 // open_mutex held here
 // really want atomic open for this
 static int file_open(struct inode* inode, struct file* filp) {
-    int err = 0;
-    inode_lock(inode);
+    inode_lock(inode); // for the .status modification below
 
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     eggsfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
 
-    if (filp->f_mode & FMODE_WRITE) {
-        eggsfs_debug("opening file for writing");
-        if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
-            // We could switch file owner, but that comes with its own annoyances (we'd
-            // have to transfer the MM_ counters over). This is the common case anyway.
-            // we switch the current process to be the one that matter
-            if (current->group_leader != enode->file.owner) {
-                err = -EROFS;
-                eggsfs_debug("trying to open for write non-writeable file");
-            }
-            goto out;
-        }
+    if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == EGGSFS_FILE_STATUS_WRITING)) {
+        // this is the "common" writing case, we've just created a file to write it.
+        // note that we never change the file owner, which might lead to confusing behavior
+        // but is probably the only sensible thing to do.
     } else {
-        if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-            // we can't read and write at the same time
-            err = -EPERM;
-            goto out;
-        }
-        // start reading if we haven't already
+        // otherwise, the file must be already there, we're very relaxed in what we allow
+        // in f_mode here and we just fail when operations that can't be done (e.g. writing
+        // to files) are attempted. the reason is that some workflows (such as open write +
+        // setattr) _will_ work.
         enode->file.status = EGGSFS_FILE_STATUS_READING;
-        goto out;
+        smp_store_release(&enode->mtime_expiry, 0);
+        // also, set atime
+        int err = eggsfs_shard_set_atime_nowait((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, ktime_get_real_ns());
+        if (err) {
+            inode_unlock(inode);
+            return err;
+        }
     }
 
-out:
     inode_unlock(inode);
-    return err;
+
+    return 0;
 }
 
 static void init_transient_span(void* p) {
@@ -836,6 +833,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
 
     // Switch the file to a normal file
     enode->file.status = EGGSFS_FILE_STATUS_READING;
+    enode->mtime_expiry = 0;
 
 out:
     if (err) {

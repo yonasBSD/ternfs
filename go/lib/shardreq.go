@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
+	"xtx/ecninfra/log"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
@@ -180,17 +181,17 @@ func (c *Client) checkRepeatedShardRequestError(
 	return &respErr
 }
 
-// This function will set the mtu field for requests that have it with whatever is in `SetMTU`
-func (c *Client) ShardRequest(
+func (c *Client) shardRequestInternal(
 	logger *Logger,
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.
 	respBody msgs.ShardResponse,
+	dontWait bool,
 ) error {
 	msgKind := reqBody.ShardRequestKind()
-	if msgKind != respBody.ShardResponseKind() {
+	if !dontWait && msgKind != respBody.ShardResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
 	sock, err := c.GetUDPSocket()
@@ -246,6 +247,10 @@ func (c *Client) ShardRequest(
 		}
 		if written < len(reqBytes) {
 			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
+		}
+		if dontWait {
+			log.Debug("dontWait is on, we've sent the request, goodbye")
+			return nil
 		}
 		// Keep going until we found the right request id -- we can't assume that what we get isn't
 		// some other request we thought was timed out.
@@ -346,6 +351,26 @@ func (c *Client) ShardRequest(
 		// We got through the loop busily consuming responses, now try again by sending a new request
 		attempts++
 	}
+}
+
+func (c *Client) ShardRequestDontWait(
+	logger *Logger,
+	shid msgs.ShardId,
+	reqBody msgs.ShardRequest,
+) error {
+	return c.shardRequestInternal(logger, shid, reqBody, nil, true)
+}
+
+// This function will set the mtu field for requests that have it with whatever is in `SetMTU`
+func (c *Client) ShardRequest(
+	logger *Logger,
+	shid msgs.ShardId,
+	reqBody msgs.ShardRequest,
+	// Result will be written in here. If an error is returned, no guarantees
+	// are made regarding the contents of `respBody`.
+	respBody msgs.ShardResponse,
+) error {
+	return c.shardRequestInternal(logger, shid, reqBody, respBody, false)
 }
 
 func CreateShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {

@@ -545,7 +545,7 @@ int eggsfs_shard_getattr_dir(
     return 0;    
 }
 
-int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime, u64* size) {
+int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime, u64* atime, u64* size) {
     struct sk_buff* skb;
     u32 attempts;
 
@@ -570,6 +570,7 @@ int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime,
         eggsfs_stat_file_resp_get_finish(&ctx, end);
         FINISH_RESP();
         *mtime = resp_mtime.x;
+        *atime = resp_atime.x;
         *size = resp_size.x;
     }
 
@@ -640,6 +641,57 @@ int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cook
     }
 
     return 0;    
+}
+
+int eggsfs_shard_set_time(struct eggsfs_fs_info* info, u64 file, u64 mtime, u64 atime) {
+    struct sk_buff* skb;
+    u32 attempts;
+    u64 req_id = alloc_request_id();
+    u8 kind = EGGSFS_SHARD_SET_TIME;
+    {
+        PREPARE_SHARD_REQ_CTX(EGGSFS_SET_TIME_REQ_SIZE);
+        eggsfs_set_time_req_put_start(&ctx, start);
+        eggsfs_set_time_req_put_id(&ctx, start, file_id, file);
+        eggsfs_set_time_req_put_mtime(&ctx, file_id, mtime_req, mtime);
+        eggsfs_set_time_req_put_atime(&ctx, mtime_req, atime_req, atime);
+        eggsfs_set_time_req_put_end(&ctx, atime_req, end);
+        skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
+        if (IS_ERR(skb)) { return PTR_ERR(skb); }
+    }
+
+    {
+        PREPARE_SHARD_RESP_CTX();
+        eggsfs_set_time_resp_get_start(&ctx, start);
+        eggsfs_set_time_resp_get_end(&ctx, start, end);
+        eggsfs_set_time_resp_get_finish(&ctx, end);
+        FINISH_RESP();
+    }
+
+    return 0;    
+}
+
+int eggsfs_shard_set_atime_nowait(struct eggsfs_fs_info* info, u64 file, u64 atime) {
+    u64 req_id = alloc_request_id();
+    u8 kind = EGGSFS_SHARD_SET_TIME;
+
+    PREPARE_SHARD_REQ_CTX(EGGSFS_SET_TIME_REQ_SIZE);
+    eggsfs_set_time_req_put_start(&ctx, start);
+    eggsfs_set_time_req_put_id(&ctx, start, file_id, file);
+    eggsfs_set_time_req_put_mtime(&ctx, file_id, mtime_req, 0);
+    eggsfs_set_time_req_put_atime(&ctx, mtime_req, atime_req, atime | (1ull<<63));
+    eggsfs_set_time_req_put_end(&ctx, atime_req, end);
+    struct msghdr msg;
+    memcpy(&msg, &info->shards_msghdrs[eggsfs_inode_shard(file)], sizeof(msg));
+    struct kvec vec;
+    vec.iov_base = ctx.start;
+    vec.iov_len = ctx.cursor-ctx.start;
+    int err = kernel_sendmsg(info->sock.sock, &msg, &vec, 1, vec.iov_len);
+    if (err < 0) {
+        eggsfs_info("could not send, err=%d", err);
+        return err;
+    }
+
+    return 0;
 }
 
 int eggsfs_shard_add_span_initiate(

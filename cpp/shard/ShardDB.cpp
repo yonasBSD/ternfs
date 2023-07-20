@@ -1666,6 +1666,9 @@ struct ShardDBImpl {
         if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
+        if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
         EggsError err = _checkTransientFileCookie(req.fileId1, req.cookie1.data);
         if (err != NO_ERROR) {
             return err;
@@ -1681,6 +1684,19 @@ struct ShardDBImpl {
         entry.cookie2 = req.cookie2;
         entry.byteOffset2 = req.byteOffset2;
         entry.spanSize = req.spanSize;
+        return NO_ERROR;
+    }
+
+    EggsError _prepareSetTime(EggsTime time, const SetTimeReq& req, SetTimeEntry& entry) {
+        if (req.id.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.id.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        entry.id = req.id;
+        entry.atime = req.atime;
+        entry.mtime = req.mtime;
         return NO_ERROR;
     }
 
@@ -1765,6 +1781,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::MOVE_SPAN:
             err = _prepareMoveSpan(time, req.getMoveSpan(), logEntryBody.setMoveSpan());
+            break;
+        case ShardMessageKind::SET_TIME:
+            err = _prepareSetTime(time, req.getSetTime(), logEntryBody.setSetTime());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -3414,6 +3433,28 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _applySetTime(EggsTime time, rocksdb::WriteBatch& batch, const SetTimeEntry& entry, SetTimeResp& resp) {
+        std::string fileValue;
+        ExternalValue<FileBody> file;
+        EggsError err = _getFile({}, entry.id, fileValue, file);
+        if (err != NO_ERROR) {
+            return err;
+        }
+        const auto set = [&file](uint64_t entryT, void (FileBody::*setTime)(EggsTime t)) {
+            if (entryT & (1ull<<63)) {
+                EggsTime t = entryT & ~(1ull<<63);
+                (file().*setTime)(t);
+            }
+        };
+        set(entry.atime, &FileBody::setAtime);
+        set(entry.mtime, &FileBody::setMtime);
+        {
+            auto fileKey = InodeIdKey::Static(entry.id);
+            ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
+        }
+        return NO_ERROR;
+    }
+
     EggsError applyLogEntry(bool sync, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
@@ -3515,6 +3556,9 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::MOVE_SPAN:
             err = _applyMoveSpan(time, batch, logEntryBody.getMoveSpan(), resp.setMoveSpan());
+            break;
+        case ShardLogEntryKind::SET_TIME:
+            err = _applySetTime(time, batch, logEntryBody.getSetTime(), resp.setSetTime());
             break;
         default:
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
@@ -3737,6 +3781,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
     case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
     case ShardMessageKind::MOVE_SPAN:
+    case ShardMessageKind::SET_TIME:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

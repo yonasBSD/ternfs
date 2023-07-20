@@ -484,6 +484,58 @@ func (r *RunTests) run(
 		},
 	)
 
+	runTest(
+		log,
+		r.acceptGcFailures,
+		shuckleAddress,
+		r.filter,
+		"utime",
+		"",
+		func(counters *lib.ClientCounters) {
+			fn := path.Join(r.mountPoint, "test")
+			if err := ioutil.WriteFile(fn, []byte{}, 0644); err != nil {
+				panic(err)
+			}
+			time1 := time.Now()
+			time2 := time.Now()
+			if time1 == time2 {
+				panic(fmt.Errorf("same times"))
+			}
+			if err := syscall.UtimesNano(fn, []syscall.Timespec{syscall.NsecToTimespec(time1.UnixNano()), syscall.NsecToTimespec(time2.UnixNano())}); err != nil {
+				panic(err)
+			}
+			info, err := os.Stat(fn)
+			if err != nil {
+				panic(err)
+			}
+			stat_t := info.Sys().(*syscall.Stat_t)
+			atime := time.Unix(int64(stat_t.Atim.Sec), int64(stat_t.Atim.Nsec))
+			if atime.UnixNano() != time1.UnixNano() {
+				panic(fmt.Errorf("expected atime %v, got %v", time1, atime))
+			}
+			mtime := time.Unix(int64(stat_t.Mtim.Sec), int64(stat_t.Mtim.Nsec))
+			if mtime.UnixNano() != time2.UnixNano() {
+				panic(fmt.Errorf("expected mtime %v, got %v", time2, mtime))
+			}
+			// atime is updated when opened
+			time.Sleep(time.Millisecond)
+			now := time.Now()
+			time.Sleep(time.Millisecond)
+			if _, err := ioutil.ReadFile(fn); err != nil {
+				panic(err)
+			}
+			info, err = os.Stat(fn)
+			if err != nil {
+				panic(err)
+			}
+			stat_t = info.Sys().(*syscall.Stat_t)
+			atime = time.Unix(int64(stat_t.Atim.Sec), int64(stat_t.Atim.Nsec))
+			if now.UnixNano() > atime.UnixNano() {
+				panic(fmt.Errorf("atime didn't update, %v > %v", now, atime))
+			}
+		},
+	)
+
 	terminateChan <- nil
 }
 

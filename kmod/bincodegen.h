@@ -74,11 +74,12 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_FILE_SPANS 0xB
 #define EGGSFS_SHARD_SAME_DIRECTORY_RENAME 0xC
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
+#define EGGSFS_SHARD_SET_TIME 0x11
 #define EGGSFS_SHARD_FULL_READ_DIR 0x73
 #define EGGSFS_SHARD_MOVE_SPAN 0x7B
 #define EGGSFS_SHARD_REMOVE_NON_OWNED_EDGE 0x74
 #define EGGSFS_SHARD_SAME_SHARD_HARD_FILE_UNLINK 0x75
-#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" }, { 116, "REMOVE_NON_OWNED_EDGE" }, { 117, "SAME_SHARD_HARD_FILE_UNLINK" })
+#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 17, "SET_TIME" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" }, { 116, "REMOVE_NON_OWNED_EDGE" }, { 117, "SAME_SHARD_HARD_FILE_UNLINK" })
 const char* eggsfs_shard_kind_str(int kind);
 
 #define EGGSFS_CDC_MAKE_DIRECTORY 0x1
@@ -4088,6 +4089,123 @@ static inline void eggsfs_add_inline_span_resp_get_finish(struct eggsfs_bincode_
 #define eggsfs_add_inline_span_resp_put_end(ctx, prev, next) \
     { struct eggsfs_add_inline_span_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_add_inline_span_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SET_TIME_REQ_SIZE 24
+struct eggsfs_set_time_req_start;
+#define eggsfs_set_time_req_get_start(ctx, start) struct eggsfs_set_time_req_start* start = NULL
+
+struct eggsfs_set_time_req_id { u64 x; };
+static inline void _eggsfs_set_time_req_get_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_set_time_req_start** prev, struct eggsfs_set_time_req_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_set_time_req_get_id(ctx, prev, next) \
+    struct eggsfs_set_time_req_id next; \
+    _eggsfs_set_time_req_get_id(ctx, &(prev), &(next))
+
+struct eggsfs_set_time_req_mtime { u64 x; };
+static inline void _eggsfs_set_time_req_get_mtime(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_set_time_req_id* prev, struct eggsfs_set_time_req_mtime* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_set_time_req_get_mtime(ctx, prev, next) \
+    struct eggsfs_set_time_req_mtime next; \
+    _eggsfs_set_time_req_get_mtime(ctx, &(prev), &(next))
+
+struct eggsfs_set_time_req_atime { u64 x; };
+static inline void _eggsfs_set_time_req_get_atime(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_set_time_req_mtime* prev, struct eggsfs_set_time_req_atime* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_set_time_req_get_atime(ctx, prev, next) \
+    struct eggsfs_set_time_req_atime next; \
+    _eggsfs_set_time_req_get_atime(ctx, &(prev), &(next))
+
+struct eggsfs_set_time_req_end;
+#define eggsfs_set_time_req_get_end(ctx, prev, next) \
+    { struct eggsfs_set_time_req_atime* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_set_time_req_end* next = NULL
+
+static inline void eggsfs_set_time_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_set_time_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_set_time_req_put_start(ctx, start) struct eggsfs_set_time_req_start* start = NULL
+
+static inline void _eggsfs_set_time_req_put_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_set_time_req_start** prev, struct eggsfs_set_time_req_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_set_time_req_put_id(ctx, prev, next, x) \
+    struct eggsfs_set_time_req_id next; \
+    _eggsfs_set_time_req_put_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_set_time_req_put_mtime(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_set_time_req_id* prev, struct eggsfs_set_time_req_mtime* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_set_time_req_put_mtime(ctx, prev, next, x) \
+    struct eggsfs_set_time_req_mtime next; \
+    _eggsfs_set_time_req_put_mtime(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_set_time_req_put_atime(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_set_time_req_mtime* prev, struct eggsfs_set_time_req_atime* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_set_time_req_put_atime(ctx, prev, next, x) \
+    struct eggsfs_set_time_req_atime next; \
+    _eggsfs_set_time_req_put_atime(ctx, &(prev), &(next), x)
+
+#define eggsfs_set_time_req_put_end(ctx, prev, next) \
+    { struct eggsfs_set_time_req_atime* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_set_time_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SET_TIME_RESP_SIZE 0
+struct eggsfs_set_time_resp_start;
+#define eggsfs_set_time_resp_get_start(ctx, start) struct eggsfs_set_time_resp_start* start = NULL
+
+struct eggsfs_set_time_resp_end;
+#define eggsfs_set_time_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_set_time_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_set_time_resp_end* next = NULL
+
+static inline void eggsfs_set_time_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_set_time_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_set_time_resp_put_start(ctx, start) struct eggsfs_set_time_resp_start* start = NULL
+
+#define eggsfs_set_time_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_set_time_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_set_time_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FULL_READ_DIR_REQ_MAX_SIZE 277
 struct eggsfs_full_read_dir_req_start;

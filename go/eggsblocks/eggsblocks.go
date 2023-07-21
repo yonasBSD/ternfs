@@ -406,6 +406,17 @@ NextRequest:
 				continue
 			}
 		}
+		if connectionTimeout != 0 {
+			// Reset timeout, with default settings this will give
+			// the request a minute to complete, given that the max
+			// block size is 10MiB, that is ~0.17MiB/s, so it should
+			// be plenty of time unless something is wrong.
+			//
+			// If we didn't reset this (or just remove the timeout)
+			// the previous timeout might very well trip the request
+			// because it might have been almost expired.
+			conn.SetDeadline(time.Now().Add(connectionTimeout))
+		}
 		blockService, found := blockServices[blockServiceId]
 		if !found {
 			log.RaiseAlert(fmt.Errorf("received unknown block service id %v", blockServiceId))

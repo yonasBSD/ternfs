@@ -125,8 +125,7 @@
                     return;
                 }
                 const stats = parseStats(respBuf);
-                let numStats;
-                for (numStats = 0;; numStats++) {
+                for (;;) {
                     const n = stats.next();
                     if (n.done) {
                         startName = n.value.nextName;

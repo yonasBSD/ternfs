@@ -72,11 +72,13 @@ static int file_open(struct inode* inode, struct file* filp) {
         // setattr) _will_ work.
         enode->file.status = EGGSFS_FILE_STATUS_READING;
         smp_store_release(&enode->mtime_expiry, 0);
-        // also, set atime
-        int err = eggsfs_shard_set_atime_nowait((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, ktime_get_real_ns());
-        if (err) {
-            inode_unlock(inode);
-            return err;
+        // also, set atime, if requested
+        if (!(filp->f_flags&O_NOATIME)) {
+            int err = eggsfs_shard_set_atime_nowait((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, ktime_get_real_ns());
+            if (err) {
+                inode_unlock(inode);
+                return err;
+            }
         }
     }
 

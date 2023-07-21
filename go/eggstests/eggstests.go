@@ -533,6 +533,24 @@ func (r *RunTests) run(
 			if now.UnixNano() > atime.UnixNano() {
 				panic(fmt.Errorf("atime didn't update, %v > %v", now, atime))
 			}
+			// make sure O_NOATIME is respected
+			file, err := os.OpenFile(fn, syscall.O_RDONLY|syscall.O_NOATIME, 0)
+			if err != nil {
+				panic(err)
+			}
+			defer file.Close()
+			if _, err := ioutil.ReadAll(file); err != nil {
+				panic(err)
+			}
+			info, err = os.Stat(fn)
+			if err != nil {
+				panic(err)
+			}
+			stat_t = info.Sys().(*syscall.Stat_t)
+			newAtime := time.Unix(int64(stat_t.Atim.Sec), int64(stat_t.Atim.Nsec))
+			if atime != newAtime {
+				panic(fmt.Errorf("expected atime to be still %v, but got %v", atime, newAtime))
+			}
 		},
 	)
 

@@ -119,7 +119,7 @@ func main() {
 	}
 
 	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
-	migrateBlockService := migrateCmd.Uint64("blockservice", 0, "Block service to migrate from.")
+	migrateBlockService := migrateCmd.Uint64("bs", 0, "Block service to migrate from.")
 	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
 	migrateRun := func() {
 		if *migrateBlockService == 0 {
@@ -439,28 +439,34 @@ func main() {
 		run:   testBlockWriteRun,
 	}
 
-	setBlockserviceFlagsCmd := flag.NewFlagSet("set-blockservice-flags", flag.ExitOnError)
-	setBlockserviceFlagsId := setBlockserviceFlagsCmd.Int64("id", 0, "Block service id")
-	setBlockserviceFlagsFlag := setBlockserviceFlagsCmd.String("flag", "", "Block service flag name")
-	setBlockserviceFlagsMode := setBlockserviceFlagsCmd.String("mode", "", "mode")
-	setBlockserviceFlagsRun := func() {
-		flag, err := msgs.BlockServiceFlagFromName(*setBlockserviceFlagsFlag)
-		if err != nil {
-			panic(err)
-		}
-		mask := uint8(flag)
-		switch *setBlockserviceFlagsMode {
-		case "set":
-			break
-		case "unset":
-			flag = msgs.BlockServiceFlags(0)
-		default:
-			fmt.Fprintf(os.Stderr, "Invalid mode %s\n", *setBlockserviceFlagsMode)
+	blockserviceFlagsCmd := flag.NewFlagSet("blockservice-flags", flag.ExitOnError)
+	blockserviceFlagsId := blockserviceFlagsCmd.Int64("id", 0, "Block service id")
+	blockserviceFlagsSet := blockserviceFlagsCmd.String("set", "", "Flag to set")
+	blockserviceFlagsUnset := blockserviceFlagsCmd.String("unset", "", "Flag to unset")
+	blockserviceFlagsRun := func() {
+		if *blockserviceFlagsSet != "" && *blockserviceFlagsUnset != "" {
+			fmt.Fprintf(os.Stderr, "cannot use -set and -unset at the same time\n")
 			os.Exit(2)
 		}
-
-		_, err = lib.ShuckleRequest(log, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
-			Id:        msgs.BlockServiceId(*setBlockserviceFlagsId),
+		var flag msgs.BlockServiceFlags
+		var mask uint8
+		if *blockserviceFlagsSet != "" {
+			var err error
+			flag, err = msgs.BlockServiceFlagFromName(*blockserviceFlagsSet)
+			if err != nil {
+				panic(err)
+			}
+			mask = uint8(flag)
+		}
+		if *blockserviceFlagsSet != "" {
+			flagMask, err := msgs.BlockServiceFlagFromName(*blockserviceFlagsSet)
+			if err != nil {
+				panic(err)
+			}
+			mask = uint8(flagMask)
+		}
+		_, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
+			Id:        msgs.BlockServiceId(*blockserviceFlagsId),
 			Flags:     flag,
 			FlagsMask: mask,
 		})
@@ -468,9 +474,9 @@ func main() {
 			panic(err)
 		}
 	}
-	commands["set-blockservice-flags"] = commandSpec{
-		flags: setBlockserviceFlagsCmd,
-		run:   setBlockserviceFlagsRun,
+	commands["blockservice-flags"] = commandSpec{
+		flags: blockserviceFlagsCmd,
+		run:   blockserviceFlagsRun,
 	}
 
 	flag.Parse()

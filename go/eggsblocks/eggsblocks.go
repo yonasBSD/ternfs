@@ -344,19 +344,41 @@ const FUTURE_CUTOFF time.Duration = 1 * time.Hour
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
 
+// returns whether the connection should be terminated
 func handleError(
 	log *lib.Logger,
 	conn *net.TCPConn,
 	err error,
-) {
+) bool {
+	if err == io.EOF {
+		log.Debug("got EOF, terminating")
+		return true
+	}
+
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
+		return true
+	}
+
+	if opErr, ok := err.(*net.OpError); ok {
+		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if sysErr.Err == syscall.EPIPE {
+				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
+				return true
+			}
+		}
+	}
+
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlert(err)
-	eggsErr, isEggsErr := err.(msgs.ErrCode)
-	if isEggsErr {
+	log.RaiseAlertStack(1, fmt.Errorf("got unexpected error %v from %v", err, conn.RemoteAddr()))
+
+	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
+		return false
 	} else {
-		// attempt to say goodbye
+		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+		return true
 	}
 }
 
@@ -378,21 +400,10 @@ NextRequest:
 		}
 		blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 		if err != nil {
-			switch v := err.(type) {
-			case msgs.ErrCode:
-				lib.WriteBlocksResponseError(log, conn, v)
+			if handleError(log, conn, err) {
 				return
-			default:
-				if err == io.EOF {
-					log.Debug("got EOF, terminating")
-					return
-				} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					log.Debug("got timeout, terminating")
-					return
-				} else {
-					log.RaiseAlert(fmt.Errorf("got error %w when reading request, terminating", err))
-					return
-				}
+			} else {
+				continue
 			}
 		}
 		blockService, found := blockServices[blockServiceId]
@@ -417,24 +428,32 @@ NextRequest:
 				continue NextRequest
 			}
 			if err := eraseBlock(log, blockService.path, whichReq.BlockId); err != nil {
-				handleError(log, conn, err)
-				return
+				if handleError(log, conn, err) {
+					return
+				} else {
+					continue NextRequest
+				}
 			}
 
 			resp := msgs.EraseBlockResp{
 				Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 			}
 			if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
-				handleError(log, conn, fmt.Errorf("could not send blocks response to %v: %w", conn.RemoteAddr(), err))
-				return
+				log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
+				if handleError(log, conn, err) {
+					return
+				} else {
+					continue NextRequest
+				}
 			}
 		case *msgs.FetchBlockReq:
 			if err := sendFetchBlock(log, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
-				if _, isEggsErr := err.(msgs.ErrCode); !isEggsErr {
-					err = fmt.Errorf("could not send block response to %v: %w", conn.RemoteAddr(), err)
+				log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
+				if handleError(log, conn, err) {
+					return
+				} else {
+					continue NextRequest
 				}
-				handleError(log, conn, err)
-				return
 			}
 		case *msgs.WriteBlockReq:
 			pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
@@ -447,7 +466,12 @@ NextRequest:
 			}
 			if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != 0 {
 				if err := consumeBlock(whichReq.Size, conn); err != nil {
-					handleError(log, conn, fmt.Errorf("could not consume block from %v: %w", conn.RemoteAddr(), err))
+					log.Info("could not consume block from %v: %v", conn.RemoteAddr(), err)
+					if handleError(log, conn, err) {
+						return
+					} else {
+						continue NextRequest
+					}
 				}
 				lib.WriteBlocksResponseError(log, conn, err)
 				continue NextRequest
@@ -455,19 +479,32 @@ NextRequest:
 			if whichReq.Size > MAX_OBJECT_SIZE {
 				log.RaiseAlert(fmt.Errorf("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE))
 				if err := consumeBlock(whichReq.Size, conn); err != nil {
-					handleError(log, conn, fmt.Errorf("could not consume block from %v: %w", conn.RemoteAddr(), err))
+					log.Info("could not consume block from %v: %v", conn.RemoteAddr(), err)
+					if handleError(log, conn, err) {
+						return
+					} else {
+						continue NextRequest
+					}
 				}
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_BIG)
 				continue NextRequest
 			}
 			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
-				handleError(log, conn, fmt.Errorf("could not write block: %w", err))
-				return
+				log.Info("could not write block: %v", err)
+				if handleError(log, conn, err) {
+					return
+				} else {
+					continue NextRequest
+				}
 			}
 		case *msgs.TestWriteReq:
 			if err := testWrite(log, bufPool, blockService.path, whichReq.Size, conn); err != nil {
-				handleError(log, conn, fmt.Errorf("could not perform test write: %w", err))
-				return
+				log.Info("could not perform test write: %v", err)
+				if handleError(log, conn, err) {
+					return
+				} else {
+					continue NextRequest
+				}
 			}
 		default:
 			handleError(log, conn, fmt.Errorf("bad request type %T", req))

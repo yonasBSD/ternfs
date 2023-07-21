@@ -109,19 +109,22 @@ func ReadBlocksResponse(
 ) error {
 	var protocol uint32
 	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
-		return fmt.Errorf("could not read protocol: %w", err)
+		log.Info("could not read protocol: %v", err)
+		return err
 	}
 	if protocol != msgs.BLOCKS_RESP_PROTOCOL_VERSION {
 		return fmt.Errorf("bad blocks protocol, expected %v, got %v", msgs.BLOCKS_RESP_PROTOCOL_VERSION, protocol)
 	}
 	var kindByte [1]byte
 	if _, err := io.ReadFull(r, kindByte[:]); err != nil {
-		return fmt.Errorf("could not read kind: %w", err)
+		log.Info("could not read kind: %v", err)
+		return err
 	}
 	if kindByte[0] == msgs.ERROR {
 		var err uint16
 		if err := binary.Read(r, binary.LittleEndian, &err); err != nil {
-			return fmt.Errorf("could not read error: %w", err)
+			log.Info("could not read error: %v", err)
+			return err
 		}
 		return msgs.ErrCode(err)
 	}
@@ -130,7 +133,8 @@ func ReadBlocksResponse(
 		return fmt.Errorf("bad blocks response kind %v, expected %v", kind, resp.BlocksResponseKind())
 	}
 	if err := resp.Unpack(r); err != nil {
-		return fmt.Errorf("could not unpack response: %w", err)
+		log.Info("could not unpack response: %v", err)
+		return err
 	}
 	return nil
 }
@@ -196,7 +200,8 @@ func WriteBlock(
 		N: int64(size),
 	}
 	if _, err := conn.ReadFrom(&lr); err != nil {
-		return proof, fmt.Errorf("could not write block data to: %w", err)
+		logger.Info("could not write block data to: %w", err)
+		return proof, err
 	}
 	logger.Debug("data written, getting proof")
 	resp := msgs.WriteBlockResp{}
@@ -285,7 +290,8 @@ func TestWrite(
 		N: int64(size),
 	}
 	if _, err := conn.ReadFrom(&lr); err != nil {
-		return fmt.Errorf("could not write test data to: %w", err)
+		logger.Info("could not write test data to: %w", err)
+		return err
 	}
 	logger.Debug("data written, getting response")
 	resp := msgs.TestWriteResp{}

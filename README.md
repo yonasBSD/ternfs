@@ -22,7 +22,7 @@ EggsFS is a collection of binaries starting with `eggs`, plus a kernel module, `
 % ./build.sh alpine
 ```
 
-Will build all the artifacts apart from the Kernel module. Things will be built in an Alpine Linux container, so that everything will be fully statically linked. `./build.sh release` will build outside the container, everything will still be linked statically apart from glibc, which cannot be reliably linked statically.
+Will build all the artifacts apart from the Kernel module. The output will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked. `./build.sh release` will build outside the container, everything will still be linked statically apart from glibc, which cannot be reliably linked statically.
 
 ## Playing with a local EggsFS instance
 

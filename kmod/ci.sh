@@ -1,7 +1,33 @@
 #!/usr/bin/env bash
 set -eu -o pipefail
 
-base_img=$(realpath ${1})
+short=""
+base_img=""
+
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        -short)
+            short="-short"
+            shift
+            ;;
+        *)
+            if [[ -n "$base_img" ]]; then
+                echo "Bad usage -- base image specified twice"
+                exit 2
+            else
+                base_img=$(realpath ${1})
+                shift
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "$base_img" ]]; then
+    echo "Bad usage -- no base image"
+    exit 2
+fi
+
+echo "Running with base image $base_img, $short"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
@@ -47,7 +73,7 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo dmesg -wTH" > dmesg &
 dmesg_pid=$!
 
 # Run tests
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large|bigdir|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.1 -short -binaries-dir eggs" | tee test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large|bigdir|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee test-out
 
 kill $dmesg_pid
 

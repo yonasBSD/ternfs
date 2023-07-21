@@ -522,10 +522,12 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	bufData := buf.Bytes()
 	data = &bufData
 
-	client.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
-		Id:    n.id,
-		Atime: uint64(time.Now().UnixNano()) | (uint64(1) << 63),
-	})
+	if flags|syscall.O_NOATIME != 0 {
+		client.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
+			Id:    n.id,
+			Atime: uint64(time.Now().UnixNano()) | (uint64(1) << 63),
+		})
+	}
 
 	of := openFile{data: data}
 	return &of, 0, 0

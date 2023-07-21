@@ -200,7 +200,7 @@ func WriteBlock(
 		N: int64(size),
 	}
 	if _, err := conn.ReadFrom(&lr); err != nil {
-		logger.Info("could not write block data to: %w", err)
+		logger.Info("could not write block data to: %v", err)
 		return proof, err
 	}
 	logger.Debug("data written, getting proof")
@@ -290,7 +290,7 @@ func TestWrite(
 		N: int64(size),
 	}
 	if _, err := conn.ReadFrom(&lr); err != nil {
-		logger.Info("could not write test data to: %w", err)
+		logger.Info("could not write test data to: %v", err)
 		return err
 	}
 	logger.Debug("data written, getting response")

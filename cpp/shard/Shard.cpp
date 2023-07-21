@@ -114,7 +114,7 @@ public:
         _ipPortIx(ipPortIx),
         _ownIp(options.ipPorts[ipPortIx].ip),
         _desiredPort(options.ipPorts[ipPortIx].port),
-        _packetDropRand((int)shid.u8 + 1), // CDC is 0
+        _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
     {

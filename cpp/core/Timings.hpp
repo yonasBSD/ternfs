@@ -76,7 +76,7 @@ public:
         }
     }
 
-    void toStats(const std::string& prefix, std::vector<Stat>& stats) const {
+    void toStats(const std::string& prefix, std::vector<Stat>& stats) {
         static_assert(std::endian::native == std::endian::little);
         auto now = eggsNow();
         {
@@ -93,6 +93,21 @@ public:
                 memcpy(histStat.value.els.data() + i*2*elSz + elSz, &x, elSz);
                 upperBound *= _growth;
             }
+        }
+        {
+            std::lock_guard<std::mutex> guard(_mu);
+            auto& countStat = stats.emplace_back();
+            countStat.time = now;
+            countStat.name = BincodeBytes(prefix + ".count");
+            // count, mean, stddev
+            constexpr auto elSz = sizeof(uint64_t);
+            countStat.value.els.resize(elSz*3);
+            uint8_t* data = countStat.value.els.data();
+            Duration m = mean();
+            Duration s = stddev();
+            memcpy(data+elSz*0, &_count, elSz);
+            memcpy(data+elSz*1, &m, elSz);
+            memcpy(data+elSz*2, &s, elSz);
         }
     }
 

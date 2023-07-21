@@ -117,23 +117,19 @@ func (t *Timings) Add(d time.Duration) {
 }
 
 func (t *Timings) ToStats(time msgs.EggsTime, prefix string) []msgs.Stat {
-	stats := make([]msgs.Stat, 0, 3)
-	// mean
-	var meanBuf [8]byte
-	binary.LittleEndian.PutUint64(meanBuf[:], uint64(t.Mean().Nanoseconds()))
+	stats := make([]msgs.Stat, 0, 2)
+	// count/mean/stddev
+	t.mu.Lock()
+	var countBuf [8 * 3]byte
+	binary.LittleEndian.PutUint64(countBuf[8*0:8*1], t.TotalCount())
+	binary.LittleEndian.PutUint64(countBuf[8*1:8*2], uint64(t.Mean().Nanoseconds()))
+	binary.LittleEndian.PutUint64(countBuf[8*2:8*3], uint64(t.Stddev().Nanoseconds()))
 	stats = append(stats, msgs.Stat{
-		Name:  prefix + ".mean",
+		Name:  prefix + ".count",
 		Time:  time,
-		Value: meanBuf[:],
+		Value: countBuf[:],
 	})
-	// stddev
-	var stddevBuf [8]byte
-	binary.LittleEndian.PutUint64(stddevBuf[:], uint64(t.Stddev().Nanoseconds()))
-	stats = append(stats, msgs.Stat{
-		Name:  prefix + ".stddev",
-		Time:  time,
-		Value: stddevBuf[:],
-	})
+	t.mu.Unlock()
 	// hist
 	hist := t.Histogram()
 	histBuf := bytes.NewBuffer(make([]byte, 0, len(hist)*8*2))

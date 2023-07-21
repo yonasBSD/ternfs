@@ -235,22 +235,28 @@ func (l *Logger) Log(level LogLevel, format string, v ...any) {
 	l.LogStack(1, level, format, v...)
 }
 
+func getFileLine(calldepth int) (string, int) {
+	// get file
+	_, file, line, ok := runtime.Caller(1 + calldepth)
+	if !ok {
+		file = "???"
+		line = 0
+	}
+	short := file
+	for i := len(file) - 1; i > 0; i-- {
+		if file[i] == '/' {
+			short = file[i+1:]
+			break
+		}
+	}
+	file = short
+
+	return file, line
+}
+
 func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any) {
 	if l.shouldLog(level) {
-		// get file
-		_, file, line, ok := runtime.Caller(1 + calldepth)
-		if !ok {
-			file = "???"
-			line = 0
-		}
-		short := file
-		for i := len(file) - 1; i > 0; i-- {
-			if file[i] == '/' {
-				short = file[i+1:]
-				break
-			}
-		}
-		file = short
+		file, line := getFileLine(1 + calldepth)
 
 		// write out
 		e := log.WithFields(logrus.Fields{
@@ -320,13 +326,15 @@ func (l *Logger) Error(format string, v ...any) {
 }
 
 func (l *Logger) RaiseAlert(err any) {
-	msg := fmt.Sprintf("ALERT %v", err)
+	file, line := getFileLine(1)
+	msg := fmt.Sprintf("%s:%d %v", file, line, err)
 	l.alert(msg)
 	l.LogStack(1, ERROR, msg)
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, err any) {
-	msg := fmt.Sprintf("ALERT %v", err)
+	file, line := getFileLine(1 + calldepth)
+	msg := fmt.Sprintf("%s:%d %v", file, line, err)
 	l.alert(msg)
 	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
 }
@@ -357,12 +365,13 @@ func (l *Logger) NewNCAlert() NCAlert {
 }
 
 func (nc *NCAlert) Alert(f string, v ...any) {
-	nc.l.LogStack(1, ERROR, "nc alert: "+f, v...)
+	nc.l.LogStack(1, ERROR, "nc alert "+f, v...)
 	nc.lastAlert = fmt.Sprintf(f, v...)
 	if nc.alert == nil {
 		return
 	}
-	nc.alert.Alertf(f, v...)
+	file, line := getFileLine(1)
+	nc.alert.Alertf(fmt.Sprintf("%s:%d ", file, line)+f, v...)
 }
 
 func (nc *NCAlert) Clear() {

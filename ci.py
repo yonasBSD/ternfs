@@ -103,13 +103,14 @@ if args.integration:
     short = ['-short'] if args.short else []
     tests = [
         ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short,
-        # valgrind tests are just too slow for now -- a shame because their extreme slowness actually
-        # surfaced a bug in the past.
-        # ['./go/eggstests/eggstests', '-build-type', 'valgrind', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests] + short,
         # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
         # of the child processes confuse the FUSE driver)
         ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
     ]
+    if not args.short:
+        # valgrind is super slow, it still surfaced bugs in the past but run the short
+        # versions only in the long tests.
+        tests.append(['./go/eggstests/eggstests', '-build-type', 'valgrind', '-binaries-dir', 'build/valgrind', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests])
     # we need three free ports, we get them here upfront rather than in shuckle to reduce
     # the chance of races -- if we got it from the integration tests it'll be while
     # tons of things are started in another integration test

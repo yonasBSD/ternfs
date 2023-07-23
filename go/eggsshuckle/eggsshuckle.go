@@ -67,7 +67,7 @@ type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
 	mutex    sync.Mutex
 	db       *sql.DB
-	counters [msgs.MaxShuckleMessageKind + 1]lib.Timings
+	counters map[msgs.ShuckleMessageKind]*lib.Timings
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -194,13 +194,16 @@ func newState(db *sql.DB) *state {
 		db:    db,
 		mutex: sync.Mutex{},
 	}
-	st.resetTimings()
+	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
+	for _, k := range msgs.AllShuckleMessageKind {
+		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
+	}
 	return st
 }
 
 func (st *state) resetTimings() {
-	for i := 0; i < len(st.counters); i++ {
-		st.counters[i] = *lib.NewTimings(40, 10*time.Microsecond, 1.5)
+	for _, t := range st.counters {
+		t.Reset()
 	}
 }
 
@@ -487,7 +490,7 @@ func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.Get
 func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
-		s.counters[int(req.ShuckleRequestKind())].Add(time.Since(t0))
+		s.counters[req.ShuckleRequestKind()].Add(time.Since(t0))
 	}()
 	log.Debug("handling request %T %+v", req, req)
 	var err error
@@ -1578,17 +1581,16 @@ func metricWriter(ll *lib.Logger, st *state) error {
 	defer ticker.Stop()
 	for {
 		<-ticker.C
-		for i := 0; i < len(st.counters[:]); i++ {
-			totalCount := st.counters[i].TotalCount()
+		for k, t := range st.counters {
+			totalCount := t.TotalCount()
 			if totalCount == 0 {
 				continue
 			}
-			t := msgs.ShuckleMessageKind(i)
-			for _, bin := range st.counters[i].Histogram() {
-				el := map[string]string{"ub": fmt.Sprintf("%d", bin.UpperBound), "type": t.String()}
+			for _, bin := range t.Histogram() {
+				el := map[string]string{"ub": fmt.Sprintf("%d", bin.UpperBound), "type": k.String()}
 				ll.Metric("request", "duration_bucket", "request duration", bin.Count, el)
 			}
-			ll.Metric("request", "duration_count", "request count", totalCount, map[string]string{"type": t.String()})
+			ll.Metric("request", "duration_count", "request count", totalCount, map[string]string{"type": k.String()})
 		}
 	}
 }
@@ -1609,7 +1611,7 @@ func deleteOldStats(ll *lib.Logger, st *state) error {
 
 func statsWriter(ll *lib.Logger, st *state) {
 	for {
-		stats := lib.TimingsToStats("shuckle", msgs.AllShuckleMessageKind[:], st.counters[:])
+		stats := lib.TimingsToStats("shuckle", st.counters)
 		st.resetTimings()
 		ll.Info("writing %v stats to database", len(stats))
 		if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {

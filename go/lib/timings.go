@@ -18,8 +18,9 @@ type Timings struct {
 	firstUpperBound     uint64  // the upper bound of the first bin of the histogram
 	growthDivUpperBound float64 // growth/firstUpperBound
 	// Actual data
-	hist  []uint64
-	total uint64
+	startedAt uint64
+	hist      []uint64
+	total     uint64
 	// To compute mean/variance
 	mu     sync.Mutex
 	count  int64
@@ -73,13 +74,25 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 		panic(fmt.Errorf("growth %v <= 1.0", growth))
 	}
 	timings := Timings{
+		hist:                make([]uint64, bins),
 		growth:              growth,
 		invLogGrowth:        1.0 / math.Log(growth),
 		firstUpperBound:     uint64(firstUpperBound.Nanoseconds()),
 		growthDivUpperBound: growth / float64(firstUpperBound.Nanoseconds()),
-		hist:                make([]uint64, bins),
 	}
+	timings.reset()
 	return &timings
+}
+
+func (t *Timings) reset() {
+	for i := range t.hist {
+		t.hist[i] = 0
+	}
+	t.startedAt = uint64(msgs.Now())
+	t.meanMs = 0
+	t.m2MsSq = 0
+	t.total = 0
+	t.count = 0
 }
 
 func (t *Timings) Add(d time.Duration) {
@@ -118,12 +131,13 @@ func (t *Timings) Add(d time.Duration) {
 
 func (t *Timings) ToStats(time msgs.EggsTime, prefix string) []msgs.Stat {
 	stats := make([]msgs.Stat, 0, 2)
-	// count/mean/stddev
+	// duration/count/mean/stddev
 	t.mu.Lock()
-	var countBuf [8 * 3]byte
-	binary.LittleEndian.PutUint64(countBuf[8*0:8*1], t.TotalCount())
-	binary.LittleEndian.PutUint64(countBuf[8*1:8*2], uint64(t.Mean().Nanoseconds()))
-	binary.LittleEndian.PutUint64(countBuf[8*2:8*3], uint64(t.Stddev().Nanoseconds()))
+	var countBuf [8 * 4]byte
+	binary.LittleEndian.PutUint64(countBuf[8*0:8*1], uint64(msgs.Now())-t.startedAt)
+	binary.LittleEndian.PutUint64(countBuf[8*1:8*2], uint64(t.count))
+	binary.LittleEndian.PutUint64(countBuf[8*2:8*3], uint64(t.Mean().Nanoseconds()))
+	binary.LittleEndian.PutUint64(countBuf[8*3:8*4], uint64(t.Stddev().Nanoseconds()))
 	stats = append(stats, msgs.Stat{
 		Name:  prefix + ".count",
 		Time:  time,
@@ -143,6 +157,12 @@ func (t *Timings) ToStats(time msgs.EggsTime, prefix string) []msgs.Stat {
 		Value: histBuf.Bytes(),
 	})
 	return stats
+}
+
+func (t *Timings) Reset() {
+	t.mu.Lock()
+	t.reset()
+	t.mu.Unlock()
 }
 
 func UnpackHistogram(data []byte) ([]HistogramBin, error) {
@@ -168,11 +188,11 @@ func UnpackHistogram(data []byte) ([]HistogramBin, error) {
 func TimingsToStats[K interface {
 	~uint8
 	fmt.Stringer
-}](prefix string, allKeys []K, timings []Timings) []msgs.Stat {
-	stats := make([]msgs.Stat, 0, len(allKeys)*3) // mean, stddev, histogram
+}](prefix string, timings map[K]*Timings) []msgs.Stat {
+	stats := make([]msgs.Stat, 0, len(timings)*2) // count, histogram
 	now := msgs.Now()
-	for _, k := range allKeys {
-		stats = append(stats, timings[int(k)].ToStats(now, fmt.Sprintf("%s.%s", prefix, k.String()))...)
+	for k, t := range timings {
+		stats = append(stats, t.ToStats(now, fmt.Sprintf("%s.%s", prefix, k.String()))...)
 	}
 	return stats
 }

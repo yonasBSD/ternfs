@@ -19,6 +19,7 @@ private:
     uint64_t _firstUpperBound;
     double _growthDivUpperBound;
 
+    EggsTime _startedAt;
     std::array<std::atomic<uint64_t>, BINS> _hist;
     // mean/variance
     std::mutex _mu;
@@ -31,6 +32,7 @@ public:
         _invLogGrowth(1.0/log(growth)),
         _firstUpperBound(firstUpperBound.ns),
         _growthDivUpperBound(growth / (double)firstUpperBound.ns),
+        _startedAt(eggsNow()),
         _count(0),
         _meanMs(0),
         _m2MsSq(0)
@@ -50,7 +52,7 @@ public:
         return Duration(_meanMs*1e6);
     }
 
-    Duration stddev() const {
+    Duration stddev() {
         if (_count == 0) { return 0; }
         return Duration(1e6 * sqrt(_m2MsSq/_count));
     }
@@ -83,14 +85,13 @@ public:
             auto& histStat = stats.emplace_back();
             histStat.time = now;
             histStat.name = BincodeBytes(prefix + ".histogram");
-            constexpr auto elSz = sizeof(uint64_t);
-            histStat.value.els.resize(elSz*BINS*2);
+            histStat.value.els.resize(8*BINS*2);
             double upperBound = _firstUpperBound;
             for (int i = 0; i < BINS; i++) {
                 uint64_t x = upperBound;
-                memcpy(histStat.value.els.data() + i*2*elSz, &x, elSz);
+                memcpy(histStat.value.els.data() + i*2*8, &x, 8);
                 x = _hist[i].load();
-                memcpy(histStat.value.els.data() + i*2*elSz + elSz, &x, elSz);
+                memcpy(histStat.value.els.data() + i*2*8 + 8, &x, 8);
                 upperBound *= _growth;
             }
         }
@@ -99,23 +100,25 @@ public:
             auto& countStat = stats.emplace_back();
             countStat.time = now;
             countStat.name = BincodeBytes(prefix + ".count");
-            // count, mean, stddev
-            constexpr auto elSz = sizeof(uint64_t);
-            countStat.value.els.resize(elSz*3);
+            // duration, count, mean, stddev
+            countStat.value.els.resize(8*4);
             uint8_t* data = countStat.value.els.data();
+            Duration d = eggsNow() - _startedAt;
             Duration m = mean();
             Duration s = stddev();
-            memcpy(data+elSz*0, &_count, elSz);
-            memcpy(data+elSz*1, &m, elSz);
-            memcpy(data+elSz*2, &s, elSz);
+            memcpy(data+8*0, &d, 8);
+            memcpy(data+8*1, &_count, 8);
+            memcpy(data+8*2, &m, 8);
+            memcpy(data+8*3, &s, 8);
         }
     }
 
     void reset() {
+        std::lock_guard<std::mutex> guard(_mu);
+        _startedAt = eggsNow();
         for (int i = 0; i < BINS; i++) {
             _hist[i].store(0);
         }
-        std::lock_guard<std::mutex> guard(_mu);
         _count = 0;
         _meanMs = 0;
         _m2MsSq = 0;

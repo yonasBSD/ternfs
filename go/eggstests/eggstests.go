@@ -383,7 +383,7 @@ func (r *RunTests) run(
 		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
-		"rsync large files",
+		"rsync large",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
 			rsyncTest(log, &rsyncOpts, r.mountPoint)
@@ -404,7 +404,7 @@ func (r *RunTests) run(
 		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
-		"rsync small files",
+		"rsync small",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
 			rsyncTest(log, &rsyncOpts, r.mountPoint)

@@ -7,7 +7,10 @@
 //
 // TODO the other problem is that we don't preserve the property that files only have
 // one set of blocks when swapping blocks in. We should use some "whitelist" thing
-// to enforce that.
+// to enforce that. Edit: I actually don't think it's true, since we migrate spans
+// left to right, which means that the first span will be migrated first, and the shard
+// currently uses the first span to pick up block services. So things should actually
+// work out most of the times.
 package lib
 
 import (

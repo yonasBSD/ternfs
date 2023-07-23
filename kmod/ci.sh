@@ -72,8 +72,10 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"
 ssh -p 2222 -i image-key fmazzol@localhost "sudo dmesg -wTH" > dmesg &
 dmesg_pid=$!
 
-# Run tests
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted|rsync|large|bigdir|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee test-out
+# Run tests (split in multiple executions so that tmp dir doesn't get too large)
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'large file|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'rsync' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 
 kill $dmesg_pid
 

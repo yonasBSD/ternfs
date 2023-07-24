@@ -382,12 +382,16 @@ func handleError(
 	}
 }
 
+type deadBlockService struct {
+	cipher cipher.Block
+}
+
 func handleRequest(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]blockService,
-	deadBlockServices map[msgs.BlockServiceId]struct{},
+	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
 	timeCheck bool,
 	connectionTimeout time.Duration,
@@ -423,10 +427,10 @@ NextRequest:
 			// Special case: we're erasing a block in a dead block service. Always
 			// succeeds.
 			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
-				if _, isDead := deadBlockServices[blockServiceId]; isDead {
+				if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
 					log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
 					resp := msgs.EraseBlockResp{
-						Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
+						Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
 					}
 					if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 						log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
@@ -765,7 +769,7 @@ func main() {
 
 	// Now ask shuckle for block services we _had_ before. We need to know this to honor
 	// erase block requests for old block services safely.
-	deadBlockServices := make(map[msgs.BlockServiceId]struct{})
+	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
 		resp, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
@@ -789,7 +793,13 @@ func main() {
 				if !isDecommissioned {
 					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Id, failureDomain))
 				}
-				deadBlockServices[bs.Id] = struct{}{}
+				cipher, err := aes.NewCipher(bs.SecretKey[:])
+				if err != nil {
+					panic(fmt.Errorf("could not create AES-128 key: %w", err))
+				}
+				deadBlockServices[bs.Id] = deadBlockService{
+					cipher: cipher,
+				}
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {

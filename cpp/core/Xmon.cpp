@@ -251,7 +251,7 @@ reconnect:
             bool success = false;
             do {
                 errString.clear();
-                success = buf.readIn(sock, 4, errString);
+                success = buf.readIn(sock, 8, errString);
                 CHECK_ERR_STRING("reading alert binned id");
             } while (!success);
             break; }

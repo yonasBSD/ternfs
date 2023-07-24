@@ -47,7 +47,10 @@ func (requestId *unpackedCDCRequestId) Unpack(r io.Reader) error {
 		return err
 	}
 	if ver != msgs.CDC_RESP_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", msgs.CDC_RESP_PROTOCOL_VERSION, ver)
+		return &badRespProtocol{
+			expectedProtocol: msgs.CDC_RESP_PROTOCOL_VERSION,
+			receivedProtocol: ver,
+		}
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(requestId)); err != nil {
 		return err
@@ -195,7 +198,11 @@ func (c *Client) CDCRequest(
 			respReader := bytes.NewReader(respBytes)
 			var respRequestId unpackedCDCRequestId
 			if err := (&respRequestId).Unpack(respReader); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode CDC response header for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
+				if protocolError, ok := err.(*badRespProtocol); ok && protocolError.receivedProtocol == msgs.SHARD_RESP_PROTOCOL_VERSION {
+					logger.Info("received CDC protocol, probably a late shard request: %v", err)
+				} else {
+					logger.RaiseAlert(fmt.Errorf("could not decode CDC response header for request %v (%T), will continue waiting for responses: %w", req.requestId, req.body, err))
+				}
 				continue
 			}
 			// Check if we're interested in the request id we got

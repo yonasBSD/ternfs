@@ -60,13 +60,25 @@ type ShardResponse struct {
 
 type unpackedShardRequestId uint64
 
+type badRespProtocol struct {
+	expectedProtocol uint32
+	receivedProtocol uint32
+}
+
+func (e *badRespProtocol) Error() string {
+	return fmt.Sprintf("expected protocol version %v, but got %v", e.expectedProtocol, e.receivedProtocol)
+}
+
 func (requestId *unpackedShardRequestId) Unpack(r io.Reader) error {
 	var ver uint32
 	if err := bincode.UnpackScalar(r, &ver); err != nil {
 		return err
 	}
 	if ver != msgs.SHARD_RESP_PROTOCOL_VERSION {
-		return fmt.Errorf("expected protocol version %v, but got %v", msgs.SHARD_RESP_PROTOCOL_VERSION, ver)
+		return &badRespProtocol{
+			expectedProtocol: msgs.SHARD_RESP_PROTOCOL_VERSION,
+			receivedProtocol: ver,
+		}
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(requestId)); err != nil {
 		return err
@@ -285,7 +297,11 @@ func (c *Client) shardRequestInternal(
 			respReader := bytes.NewReader(respBytes)
 			var respRequestId unpackedShardRequestId
 			if err := (&respRequestId).Unpack(respReader); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+				if protocolError, ok := err.(*badRespProtocol); ok && protocolError.receivedProtocol == msgs.CDC_RESP_PROTOCOL_VERSION {
+					logger.Info("received CDC protocol, probably a late CDC request: %v", err)
+				} else {
+					logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+				}
 				continue
 			}
 			// Check if we're interested in the request id we got

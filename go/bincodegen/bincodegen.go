@@ -1315,6 +1315,8 @@ func main() {
 		"BAD_BLOCK_CRC",
 		"BLOCK_TOO_BIG",
 		"BLOCK_NOT_FOUND",
+		"CANNOT_UNSET_DECOMMISSIONED",
+		"CANNOT_REGISTER_DECOMMISSIONED",
 	}
 
 	kernelShardReqResps := []reqRespType{

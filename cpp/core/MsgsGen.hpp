@@ -61,6 +61,8 @@ enum class EggsError : uint16_t {
     BAD_BLOCK_CRC = 64,
     BLOCK_TOO_BIG = 65,
     BLOCK_NOT_FOUND = 66,
+    CANNOT_UNSET_DECOMMISSIONED = 67,
+    CANNOT_REGISTER_DECOMMISSIONED = 68,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);

@@ -172,6 +172,8 @@ const (
 	BAD_BLOCK_CRC ErrCode = 64
 	BLOCK_TOO_BIG ErrCode = 65
 	BLOCK_NOT_FOUND ErrCode = 66
+	CANNOT_UNSET_DECOMMISSIONED ErrCode = 67
+	CANNOT_REGISTER_DECOMMISSIONED ErrCode = 68
 )
 
 func (err ErrCode) String() string {
@@ -290,6 +292,10 @@ func (err ErrCode) String() string {
 		return "BLOCK_TOO_BIG"
 	case 66:
 		return "BLOCK_NOT_FOUND"
+	case 67:
+		return "CANNOT_UNSET_DECOMMISSIONED"
+	case 68:
+		return "CANNOT_REGISTER_DECOMMISSIONED"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}

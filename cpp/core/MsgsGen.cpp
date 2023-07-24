@@ -175,6 +175,12 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::BLOCK_NOT_FOUND:
         out << "BLOCK_NOT_FOUND";
         break;
+    case EggsError::CANNOT_UNSET_DECOMMISSIONED:
+        out << "CANNOT_UNSET_DECOMMISSIONED";
+        break;
+    case EggsError::CANNOT_REGISTER_DECOMMISSIONED:
+        out << "CANNOT_REGISTER_DECOMMISSIONED";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

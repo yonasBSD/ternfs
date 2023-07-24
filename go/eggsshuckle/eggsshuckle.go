@@ -256,6 +256,9 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	values = values[:0]
 	for i := range req.BlockServices {
 		bs := req.BlockServices[i]
+		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
+			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED
+		}
 		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
 		values = append(
 			values,
@@ -303,6 +306,12 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 }
 
 func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
+	// Special case: the DECOMMISSIONED flag can never be unset, we assume that in
+	// a couple of cases (e.g. when fetching block services in shuckle)
+	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0 {
+		return nil, msgs.CANNOT_UNSET_DECOMMISSIONED
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -1644,15 +1653,23 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		var id uint64
 		var ts msgs.EggsTime
 
-		_, err := st.db.Exec("UPDATE block_services SET flags = ((flags & ~:flag) | :flag) WHERE last_seen < :thresh",
-			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE), n("thresh", thresh))
+		_, err := st.db.Exec(
+			"UPDATE block_services SET flags = ((flags & ~:flag) | :flag) WHERE last_seen < :thresh",
+			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
+			n("thresh", thresh),
+		)
 		if err != nil {
 			ll.Error("error setting block services stale: %s", err)
 		}
 
 		// Wrap the following select statements in func() to make defer work properly.
 		func() {
-			rows, err := st.db.Query("SELECT id, failure_domain, last_seen FROM block_services where last_seen < :thresh", n("thresh", thresh))
+			rows, err := st.db.Query(
+				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & ~:flag) != 0",
+				n("thresh", thresh),
+				// we already know that decommissioned block services are gone
+				n("flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+			)
 			if err != nil {
 				ll.Error("error selecting blockServices: %s", err)
 				return

@@ -387,6 +387,7 @@ func handleRequest(
 	bufPool *lib.BufPool,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]blockService,
+	deadBlockServices map[msgs.BlockServiceId]struct{},
 	conn *net.TCPConn,
 	timeCheck bool,
 	connectionTimeout time.Duration,
@@ -419,6 +420,25 @@ NextRequest:
 		}
 		blockService, found := blockServices[blockServiceId]
 		if !found {
+			// Special case: we're erasing a block in a dead block service. Always
+			// succeeds.
+			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
+				if _, isDead := deadBlockServices[blockServiceId]; isDead {
+					resp := msgs.EraseBlockResp{
+						Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
+					}
+					if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+						log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
+						if handleError(log, conn, err) {
+							return
+						} else {
+							continue NextRequest
+						}
+					}
+				}
+			}
+			// In general, refuse to service requests for block services that we
+			// don't have.
 			log.RaiseAlert(fmt.Errorf("received unknown block service id %v", blockServiceId))
 			lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_SERVICE_NOT_FOUND)
 			continue
@@ -743,6 +763,41 @@ func main() {
 		panic(fmt.Errorf("duplicate block services"))
 	}
 
+	// Now ask shuckle for block services we _had_ before. We need to know this to honor
+	// erase block requests for old block services safely.
+	deadBlockServices := make(map[msgs.BlockServiceId]struct{})
+	{
+		resp, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			panic(fmt.Errorf("could not request block services from shuckle: %v", err))
+		}
+		shuckleBlockServices := resp.(*msgs.AllBlockServicesResp).BlockServices
+		for i := range shuckleBlockServices {
+			bs := &shuckleBlockServices[i]
+			_, weHaveBs := blockServices[bs.Id]
+			sameFailureDomain := bs.FailureDomain == failureDomain
+			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+			// No disagreement on failure domain with shuckle (otherwise we could end up with
+			// a split brain scenario where two eggsblocks processes assume control of two dead
+			// block services)
+			if weHaveBs && !sameFailureDomain {
+				panic(fmt.Errorf("We have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle.", bs.Id, failureDomain, bs.FailureDomain))
+			}
+			// block services in the same failure domain, which we do not have, must be
+			// decommissioned
+			if !weHaveBs && sameFailureDomain {
+				if !isDecommissioned {
+					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Id, failureDomain))
+				}
+				deadBlockServices[bs.Id] = struct{}{}
+			}
+			// we can't have a decommissioned block service
+			if weHaveBs && isDecommissioned {
+				panic(fmt.Errorf("We have block service %v, which is decommissioned according to shuckle. Once a block service is marked as decommissioned, it should be gone forever.", bs.Id))
+			}
+		}
+	}
+
 	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *port1))
 	if err != nil {
 		panic(err)
@@ -784,7 +839,7 @@ func main() {
 			}
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+				handleRequest(log, bufPool, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 			}()
 		}
 	}()
@@ -800,7 +855,7 @@ func main() {
 				}
 				go func() {
 					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					handleRequest(log, bufPool, terminateChan, blockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+					handleRequest(log, bufPool, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 				}()
 			}
 		}()

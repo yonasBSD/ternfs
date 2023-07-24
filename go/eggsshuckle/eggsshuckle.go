@@ -1665,7 +1665,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		// Wrap the following select statements in func() to make defer work properly.
 		func() {
 			rows, err := st.db.Query(
-				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & ~:flag) != 0",
+				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & ~:flag) == 0",
 				n("thresh", thresh),
 				// we already know that decommissioned block services are gone
 				n("flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
@@ -1683,7 +1683,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 					ll.Error("error decoding blockService row: %s", err)
 					return
 				}
-				alerts = append(alerts, fmt.Sprintf("stale blockservice %d, fd %s (seen %s ago)", id, fd, formatLastSeen(ts)))
+				alerts = append(alerts, fmt.Sprintf("stale blockservice %v, fd %s (seen %s ago)", id, fd, formatLastSeen(ts)))
 			}
 		}()
 

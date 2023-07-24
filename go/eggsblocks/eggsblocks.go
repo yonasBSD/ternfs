@@ -424,6 +424,7 @@ NextRequest:
 			// succeeds.
 			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
 				if _, isDead := deadBlockServices[blockServiceId]; isDead {
+					log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
 					resp := msgs.EraseBlockResp{
 						Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 					}
@@ -431,10 +432,9 @@ NextRequest:
 						log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
 						if handleError(log, conn, err) {
 							return
-						} else {
-							continue NextRequest
 						}
 					}
+					continue NextRequest
 				}
 			}
 			// In general, refuse to service requests for block services that we

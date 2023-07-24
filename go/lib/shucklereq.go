@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"syscall"
+	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
@@ -194,8 +197,22 @@ func ShuckleRequest(
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
+	start := time.Now()
+Reconnect:
 	conn, err := net.Dial("tcp", shuckleAddress)
 	if err != nil {
+		if opErr, ok := err.(*net.OpError); ok {
+			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
+				if errno, ok := syscallErr.Err.(syscall.Errno); ok && errno == syscall.ECONNREFUSED {
+					if time.Since(start) > 10*time.Second {
+						return nil, err
+					}
+					log.Info("connection to shuckle refused, trying again in 250ms")
+					time.Sleep(250 * time.Millisecond)
+					goto Reconnect
+				}
+			}
+		}
 		return nil, err
 	}
 	defer conn.Close()

@@ -47,7 +47,13 @@ make "KDIR=${SCRIPT_DIR}/linux" -j kmod
 ./createimg.sh "$base_img"
 
 # start VM in the background
-trap "echo 'Terminating QEMU'; pkill qemu" EXIT
+function cleanup {
+    echo 'Syncing logs'
+    rsync -e "ssh -p 2222 -i image-key" -avm --include='*/' --include='*integrationtest*' --exclude='*' ./ fmazzol@localhost:/tmp/ || echo 'Could not sync logs'
+    echo 'Terminating QEMU'
+    pkill qemu    
+}
+trap cleanup EXIT
 ./startvm.sh &>vm-out &
 
 # Wait for VM to go up by trying to copy the kernel module to it
@@ -73,9 +79,9 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo dmesg -wTH" > dmesg &
 dmesg_pid=$!
 
 # Run tests (split in multiple executions so that tmp dir doesn't get too large)
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'large file|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'mounted' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -kmod -filter 'rsync' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'large file|cp|utime' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'mounted' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'rsync' -block-service-killer -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 
 kill $dmesg_pid
 

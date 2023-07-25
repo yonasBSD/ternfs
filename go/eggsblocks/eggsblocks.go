@@ -797,6 +797,7 @@ func main() {
 				if err != nil {
 					panic(fmt.Errorf("could not create AES-128 key: %w", err))
 				}
+				log.Info("will service erase block requests for decommissioned block service %v", bs.Id)
 				deadBlockServices[bs.Id] = deadBlockService{
 					cipher: cipher,
 				}

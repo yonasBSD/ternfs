@@ -385,7 +385,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		"-bincode-port", fmt.Sprintf("%d", opts.BincodePort),
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-db-file", path.Join(opts.Dir, "shuckle.db"),
+		"-data-dir", opts.Dir,
 	}
 	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")

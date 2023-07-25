@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -1741,7 +1740,7 @@ func main() {
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
 	metrics := flag.Bool("metrics", false, "")
-	dbFile := flag.String("db-file", "", "file path of the sqlite database file")
+	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	flag.Parse()
@@ -1765,6 +1764,11 @@ func main() {
 	}
 	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle", Metrics: *metrics})
 
+	if *dataDir == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
+		os.Exit(2)
+	}
+
 	ll.Info("Running shuckle with options:")
 	ll.Info("  bincodePort = %v", *bincodePort)
 	ll.Info("  httpPort = %v", *httpPort)
@@ -1772,18 +1776,17 @@ func main() {
 	ll.Info("  logLevel = %v", level)
 	ll.Info("  mtu = %v", *mtu)
 	ll.Info("  stale = '%v'", *stale)
+	ll.Info("  dataDir = %s", *dataDir)
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
 	}
 
-	if len(*dbFile) == 0 {
-		log.Fatalf("db-file flag is required")
-	}
-	if err := os.Mkdir(filepath.Dir(*dbFile), 0777); err != nil && !os.IsExist(err) {
+	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
 		panic(err)
 	}
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", *dbFile))
+	dbFile := path.Join(*dataDir, "shuckle.db")
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", dbFile))
 	if err != nil {
 		panic(err)
 	}

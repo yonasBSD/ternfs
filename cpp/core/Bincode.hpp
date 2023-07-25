@@ -122,7 +122,7 @@ public:
         other._data = 0;
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         return 1 + size();
     }
 
@@ -148,8 +148,8 @@ struct BincodeList {
 
     void clear() { els.resize(0); }
 
-    uint16_t packedSize() const {
-        uint16_t sz = 2;
+    size_t packedSize() const {
+        size_t sz = 2;
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             sz += els.size()*sizeof(A);
         } else {
@@ -196,7 +196,7 @@ struct BincodeFixedBytes {
 
     void clear() { memset(data.data(), 0, SZ); }
 
-    constexpr uint16_t packedSize() const {
+    constexpr size_t packedSize() const {
         return SZ;
     }
 
@@ -278,7 +278,7 @@ struct BincodeBuf {
     }
 
     void ensureSizeOrPanic(size_t sz) const {
-        ALWAYS_ASSERT(remaining() >= sz);
+        ALWAYS_ASSERT(remaining() >= sz, "expecting at least %s remaining bytes, got %s", sz, remaining());
     }
 
     template<typename A>

@@ -97,7 +97,7 @@ struct InodeId {
         }
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         return sizeof(*this);
     }
 };
@@ -218,7 +218,7 @@ struct Crc {
         u32 = buf.unpackScalar<uint32_t>();
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         return sizeof(u32);
     }
 
@@ -243,7 +243,7 @@ struct BlockServiceId {
         u64 = buf.unpackScalar<uint64_t>();
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         return sizeof(u64);
     }
 

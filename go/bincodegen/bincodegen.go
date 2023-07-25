@@ -913,8 +913,8 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    %s() { clear(); }\n", t.Name())
 
-	fmt.Fprintf(hpp, "    uint16_t packedSize() const {\n")
-	fmt.Fprintf(hpp, "        uint16_t _size = 0;\n")
+	fmt.Fprintf(hpp, "    size_t packedSize() const {\n")
+	fmt.Fprintf(hpp, "        size_t _size = 0;\n")
 	hpp.Write(cg.size.Bytes())
 	fmt.Fprintf(hpp, "        return _size;\n")
 	fmt.Fprintf(hpp, "    }\n")

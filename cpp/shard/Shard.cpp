@@ -38,13 +38,13 @@ public:
     std::atomic<uint16_t> port1;
     std::atomic<uint32_t> ip2;
     std::atomic<uint16_t> port2;
-    std::array<std::unique_ptr<Timings<40>>, maxShardMessageKind+1> timings;
+    std::array<Timings, maxShardMessageKind+1> timings;
 
     ShardShared() = delete;
     ShardShared(ShardDB& db_): db(db_), stop(false), ip1(0), port1(0), ip2(0), port2(0) {
         _currentLogIndex = db.lastAppliedLogEntry();
         for (ShardMessageKind kind : allShardMessageKind) {
-            timings[(int)kind] = std::make_unique<Timings<40>>(10_us, 1.5);
+            timings[(int)kind] = Timings::Standard();
         }
     }
 
@@ -298,7 +298,7 @@ public:
 
             Duration elapsed = eggsNow() - t0;
 
-            _shared.timings[(int)reqHeader.kind]->add(elapsed);
+            _shared.timings[(int)reqHeader.kind].add(elapsed);
 
             if (wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
                 LOG_DEBUG(_env, "artificially dropping response %s", reqHeader.requestId);
@@ -524,13 +524,13 @@ public:
             for (ShardMessageKind kind : allShardMessageKind) {
                 std::ostringstream prefix;
                 prefix << "shard." << std::setw(3) << std::setfill('0') << _shid << "." << kind;
-                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+                _shared.timings[(int)kind].toStats(prefix.str(), stats);
             }
             err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
             stats.clear();
             if (err.empty()) {
                 for (ShardMessageKind kind : allShardMessageKind) {
-                    _shared.timings[(int)kind]->reset();
+                    _shared.timings[(int)kind].reset();
                 }
             }
             return err;

@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"sync"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/msgs"
@@ -18,33 +17,8 @@ type Timings struct {
 	firstUpperBound     uint64  // the upper bound of the first bin of the histogram
 	growthDivUpperBound float64 // growth/firstUpperBound
 	// Actual data
-	startedAt uint64
-	hist      []uint64
-	total     uint64
-	// To compute mean/variance
-	mu     sync.Mutex
-	count  int64
-	meanMs float64
-	m2MsSq float64
-}
-
-func (t *Timings) Mean() time.Duration {
-	return time.Duration(t.meanMs * 1e6)
-}
-
-func (t *Timings) Stddev() time.Duration {
-	if t.count == 0 {
-		return 0
-	}
-	return time.Duration(1e6 * float64(math.Sqrt(float64(t.m2MsSq/float64(t.count)))))
-}
-
-func (t *Timings) TotalTime() time.Duration {
-	return time.Duration(t.total)
-}
-
-func (t *Timings) TotalCount() uint64 {
-	return uint64(t.count)
+	startedAt time.Time
+	bins      []uint64
 }
 
 type HistogramBin struct {
@@ -53,10 +27,10 @@ type HistogramBin struct {
 }
 
 func (t *Timings) Histogram() []HistogramBin {
-	bins := make([]HistogramBin, len(t.hist))
+	bins := make([]HistogramBin, len(t.bins))
 	upperBound := float64(t.firstUpperBound)
-	for i := 0; i < len(t.hist); i++ {
-		bins[i].Count = t.hist[i]
+	for i := 0; i < len(t.bins); i++ {
+		bins[i].Count = t.bins[i]
 		bins[i].UpperBound = time.Duration(upperBound)
 		upperBound *= t.growth
 	}
@@ -74,115 +48,106 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 		panic(fmt.Errorf("growth %v <= 1.0", growth))
 	}
 	timings := Timings{
-		hist:                make([]uint64, bins),
+		bins:                make([]uint64, bins),
 		growth:              growth,
 		invLogGrowth:        1.0 / math.Log(growth),
 		firstUpperBound:     uint64(firstUpperBound.Nanoseconds()),
 		growthDivUpperBound: growth / float64(firstUpperBound.Nanoseconds()),
 	}
-	timings.reset()
+	timings.Reset()
 	return &timings
 }
 
-func (t *Timings) reset() {
-	for i := range t.hist {
-		t.hist[i] = 0
+func (t *Timings) Reset() {
+	for i := range t.bins {
+		atomic.StoreUint64(&t.bins[i], 0)
 	}
-	t.startedAt = uint64(msgs.Now())
-	t.meanMs = 0
-	t.m2MsSq = 0
-	t.total = 0
-	t.count = 0
+	t.startedAt = time.Now()
 }
 
 func (t *Timings) Add(d time.Duration) {
 	inanos := d.Nanoseconds()
-	if inanos < 0 { // error?
+	if inanos < 0 {
 		return
 	}
 	nanos := uint64(inanos)
-	// update bin/count
 	{
-		atomic.AddUint64(&t.total, nanos)
 		// bin = floor(log_growth(t*growth/firstUpperBound))
 		//     = floor(log(t*growthDivUpperBound) * invLogGrowth)
 		bin := int(math.Log(float64(nanos)*t.growthDivUpperBound) * t.invLogGrowth)
 		if bin < 0 {
 			bin = 0
 		}
-		if bin >= len(t.hist) {
-			bin = len(t.hist) - 1
+		if bin >= len(t.bins) {
+			bin = len(t.bins) - 1
 		}
-		atomic.AddUint64(&t.hist[bin], 1)
-	}
-	// update mean/stddev, see
-	// <https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm>
-	{
-		t.mu.Lock()
-		t.count++
-		nanosMs := float64(inanos/1000000) + float64(inanos%1000000)/1e6
-		delta := nanosMs - t.meanMs
-		t.meanMs += delta / float64(t.count)
-		delta2 := nanosMs - t.meanMs
-		t.m2MsSq += delta * delta2
-		t.mu.Unlock()
+		atomic.AddUint64(&t.bins[bin], 1)
 	}
 }
 
-func (t *Timings) ToStats(time msgs.EggsTime, prefix string) []msgs.Stat {
-	stats := make([]msgs.Stat, 0, 2)
-	// duration/count/mean/stddev
-	t.mu.Lock()
-	var countBuf [8 * 4]byte
-	binary.LittleEndian.PutUint64(countBuf[8*0:8*1], uint64(msgs.Now())-t.startedAt)
-	binary.LittleEndian.PutUint64(countBuf[8*1:8*2], uint64(t.count))
-	binary.LittleEndian.PutUint64(countBuf[8*2:8*3], uint64(t.Mean().Nanoseconds()))
-	binary.LittleEndian.PutUint64(countBuf[8*3:8*4], uint64(t.Stddev().Nanoseconds()))
-	stats = append(stats, msgs.Stat{
-		Name:  prefix + ".count",
-		Time:  time,
-		Value: countBuf[:],
-	})
-	t.mu.Unlock()
+// In these aggregates we're conservative (pick the upper bound)
+
+func (t *Timings) TotalTime() time.Duration {
+	d := time.Duration(0)
+	for _, bin := range t.Histogram() {
+		d += bin.UpperBound * time.Duration(bin.Count)
+	}
+	return d
+}
+
+func (t *Timings) Count() uint64 {
+	x := uint64(0)
+	for _, bin := range t.Histogram() {
+		x += bin.Count
+	}
+	return x
+}
+
+func (t *Timings) Mean() time.Duration {
+	bins := t.Histogram()
+	totalCount := uint64(0)
+	for _, bin := range bins {
+		totalCount += bin.Count
+	}
+	x := float64(0)
+	for _, bin := range bins {
+		x += float64(bin.UpperBound) * (float64(bin.Count) / float64(totalCount))
+	}
+	return time.Duration(x)
+}
+
+func (t *Timings) Median() time.Duration {
+	bins := t.Histogram()
+	totalCount := uint64(0)
+	for _, bin := range bins {
+		totalCount += bin.Count
+	}
+	p := float64(0)
+	for _, bin := range bins {
+		p += float64(bin.Count) / float64(totalCount)
+		if p >= 0.5 {
+			return bin.UpperBound
+		}
+	}
+	panic("impossible")
+}
+
+func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
+	stats := make([]msgs.Stat, 0, 1)
 	// hist
 	hist := t.Histogram()
-	histBuf := bytes.NewBuffer(make([]byte, 0, len(hist)*8*2))
+	histBuf := bytes.NewBuffer(make([]byte, 0, 8+len(hist)*8*2))
+	binary.Write(histBuf, binary.LittleEndian, time.Since(t.startedAt))
 	for _, bin := range hist {
 		binary.Write(histBuf, binary.LittleEndian, bin.UpperBound.Nanoseconds())
 		binary.Write(histBuf, binary.LittleEndian, bin.Count)
 	}
 	stats = append(stats, msgs.Stat{
-		Name:  prefix + ".histogram",
-		Time:  time,
+		Name:  prefix,
+		Time:  statTime,
 		Value: histBuf.Bytes(),
 	})
 	return stats
-}
-
-func (t *Timings) Reset() {
-	t.mu.Lock()
-	t.reset()
-	t.mu.Unlock()
-}
-
-func UnpackHistogram(data []byte) ([]HistogramBin, error) {
-	if len(data)%(8+8) != 0 {
-		return nil, fmt.Errorf("bad size %v, expected a multiple of %v", len(data), 8+8)
-	}
-	l := len(data) / 16
-	bins := make([]HistogramBin, l)
-	r := bytes.NewReader(data)
-	for i := 0; i < l; i++ {
-		var upperBound uint64
-		if err := binary.Read(r, binary.LittleEndian, &upperBound); err != nil {
-			return nil, err
-		}
-		bins[i].UpperBound = time.Duration(upperBound)
-		if err := binary.Read(r, binary.LittleEndian, &bins[i].Count); err != nil {
-			return nil, err
-		}
-	}
-	return bins, nil
 }
 
 func TimingsToStats[K interface {

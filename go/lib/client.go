@@ -60,7 +60,7 @@ func (counters *ClientCounters) Log(log *Logger) {
 		}
 		log.Info("    total time: %v", c.Timings.TotalTime())
 		log.Info("    avg time: %v", c.Timings.Mean())
-		log.Info("    stddev time: %v", c.Timings.Stddev())
+		log.Info("    median time: %v", c.Timings.Median())
 		hist := bytes.NewBuffer([]byte{})
 		first := true
 		countSoFar := uint64(0)

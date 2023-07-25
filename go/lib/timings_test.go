@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 	"xtx/eggsfs/assert"
-	"xtx/eggsfs/wyhash"
 )
 
 func TestTimingsBins(t *testing.T) {
@@ -36,35 +35,4 @@ func TestTimingsBins(t *testing.T) {
 
 func checkDurations(d1 time.Duration, d2 time.Duration) bool {
 	return math.Abs(float64(d1-d2)/float64(d1+d2)) < 0.0001
-}
-
-func TestTimingsMeanStddev(t *testing.T) {
-	// use the same stuff we use in prod
-	timings := NewTimings(40, 10*time.Microsecond, 1.5)
-	ts := []time.Duration{}
-	rand := wyhash.New(42)
-	computedMean := uint64(0)
-	numTimings := 100
-	for i := 0; i < numTimings; i++ {
-		t := rand.Uint64() % uint64(time.Second.Nanoseconds())
-		computedMean += t
-		td := time.Duration(t)
-		timings.Add(td)
-		ts = append(ts, td)
-	}
-
-	computedMean /= uint64(numTimings)
-	assert.True(t, checkDurations(time.Duration(computedMean), timings.Mean()), "mean matches")
-
-	{
-		computedStddev := uint64(0)
-		for _, td := range ts {
-			diff := time.Duration(computedMean) - td
-			diff *= diff
-			computedStddev += uint64(diff)
-		}
-		computedStddev /= uint64(numTimings)
-		computedStddev = uint64(math.Sqrt(float64(computedStddev)))
-		assert.True(t, checkDurations(time.Duration(computedStddev), timings.Stddev()), "stddev matches")
-	}
 }

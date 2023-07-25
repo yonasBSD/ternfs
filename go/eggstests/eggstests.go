@@ -49,19 +49,19 @@ func formatNanos(nanos uint64) string {
 }
 
 func formatCounters[K ~uint8](what string, counters map[K]*lib.ReqCounters) {
-	fmt.Printf("    %s reqs count/attempts/avg/stddev/total:\n", what)
+	fmt.Printf("    %s reqs count/attempts/avg/median/total:\n", what)
 	for k, count := range counters {
 		if count.Attempts == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %6.2f %7s %7s %7s\n", k, count.Timings.TotalCount(), float64(count.Attempts)/float64(count.Timings.TotalCount()), formatNanos(uint64(count.Timings.Mean().Nanoseconds())), formatNanos(uint64(count.Timings.Stddev().Nanoseconds())), formatNanos(uint64(count.Timings.TotalTime())))
+		fmt.Printf("      %-30v %10v %6.2f %7s %7s %7s\n", k, count.Timings.Count(), float64(count.Attempts)/float64(count.Timings.Count()), formatNanos(uint64(count.Timings.Mean().Nanoseconds())), formatNanos(uint64(count.Timings.Median().Nanoseconds())), formatNanos(uint64(count.Timings.TotalTime())))
 	}
 }
 
 func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
 	total := uint64(0)
 	for _, c := range cs {
-		total += c.Timings.TotalCount()
+		total += c.Timings.Count()
 	}
 	return total
 }

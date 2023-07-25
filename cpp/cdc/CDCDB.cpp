@@ -1187,7 +1187,7 @@ struct PackCDCReq {
         req.pack(buf);
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         return 1 + req.packedSize();
     }
 };

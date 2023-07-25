@@ -36,7 +36,7 @@ struct CDCShared {
     std::array<std::atomic<uint16_t>, 2> ownPorts;
     std::mutex shardsMutex;
     std::array<ShardInfo, 256> shards;
-    std::array<std::unique_ptr<Timings<40>>, maxCDCMessageKind+1> timings;
+    std::array<Timings, maxCDCMessageKind+1> timings;
 
     CDCShared(CDCDB& db_) :
         db(db_),
@@ -48,7 +48,7 @@ struct CDCShared {
         ownPorts[0].store(0);
         ownPorts[1].store(0);
         for (CDCMessageKind kind : allCDCMessageKind) {
-            timings[(int)kind] = std::make_unique<Timings<40>>(10_us, 1.5);
+            timings[(int)kind] = Timings::Standard();
         }
     }
 };
@@ -409,7 +409,7 @@ private:
             if (inFlight == _inFlightTxns.end()) {
                 RAISE_ALERT(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
             } else {
-                _shared.timings[(int)inFlight->second.kind]->add(eggsNow() - inFlight->second.receivedAt);
+                _shared.timings[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
                 if (step.err != NO_ERROR) {
                     RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
                     _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, step.err, inFlight->second.clientAddr);
@@ -678,13 +678,13 @@ public:
             for (CDCMessageKind kind : allCDCMessageKind) {
                 std::ostringstream prefix;
                 prefix << "cdc." << kind;
-                _shared.timings[(int)kind]->toStats(prefix.str(), stats);
+                _shared.timings[(int)kind].toStats(prefix.str(), stats);
             }
             err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
             stats.clear();
             if (err.empty()) {
                 for (CDCMessageKind kind : allCDCMessageKind) {
-                    _shared.timings[(int)kind]->reset();
+                    _shared.timings[(int)kind].reset();
                 }
             }
             return err;

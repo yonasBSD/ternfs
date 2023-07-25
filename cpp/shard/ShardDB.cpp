@@ -536,7 +536,7 @@ struct ShardDBImpl {
                 respEdge.nameHash = key().nameHash();
                 respEdge.name = key().name();
                 respEdge.creationTime = edge().creationTime();
-                budget -= respEdge.packedSize();
+                budget -= (int)respEdge.packedSize();
                 if (budget < 0) {
                     resp.nextHash = key().nameHash();
                     // remove the current element, and also, do not have straddling hashes
@@ -584,19 +584,19 @@ struct ShardDBImpl {
             return true;
         }
         // mtu limit
-        budget -= respEdge.packedSize();
+        budget -= (int)respEdge.packedSize();
         if (budget < 0) {
             int prevCursorSize = FullReadDirCursor::STATIC_SIZE;
             while (budget < 0) {
                 auto& last = resp.results.els.back();
                 LOG_TRACE(_env, "fullReadDir: removing last %s", last);
-                budget += last.packedSize();
+                budget += (int)last.packedSize();
                 resp.next.current = last.current;
                 resp.next.startName = last.name;
                 resp.next.startTime = last.current ? 0 : last.creationTime;
                 resp.results.els.pop_back();
                 budget += prevCursorSize;
-                budget -= resp.next.packedSize();
+                budget -= (int)resp.next.packedSize();
                 prevCursorSize = resp.next.packedSize();
             }
             LOG_TRACE(_env, "fullReadDir: out of budget/limit");
@@ -821,7 +821,7 @@ struct ShardDBImpl {
                 respFile.cookie.data = _calcCookie(respFile.id);
                 respFile.deadlineTime = file().deadline();
 
-                budget -= respFile.packedSize();
+                budget -= (int)respFile.packedSize();
                 if (budget <= 0) {
                     resp.nextId = resp.files.els.back().id;
                     resp.files.els.pop_back();
@@ -895,7 +895,7 @@ struct ShardDBImpl {
                 }
             }
             // If not, we need to make space for it
-            budget -= BlockService::STATIC_SIZE;
+            budget -= (int)BlockService::STATIC_SIZE;
             if (budget < 0) {
                 return -1;
             }
@@ -960,7 +960,7 @@ struct ShardDBImpl {
                         respSpanBlock.stripesCrc.els[i] = spanBlock.stripeCrc(i);
                     }
                 }
-                budget -= respSpan.packedSize();
+                budget -= (int)respSpan.packedSize();
                 if (budget < 0) {
                     resp.nextOffset = respSpan.header.byteOffset;
                     resp.spans.els.pop_back();

@@ -1590,7 +1590,7 @@ func metricWriter(ll *lib.Logger, st *state) error {
 	for {
 		<-ticker.C
 		for k, t := range st.counters {
-			totalCount := t.TotalCount()
+			totalCount := t.Count()
 			if totalCount == 0 {
 				continue
 			}

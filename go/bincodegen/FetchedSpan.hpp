@@ -44,9 +44,9 @@ public:
         destructBody();
     }
 
-    uint16_t packedSize() const {
+    size_t packedSize() const {
         ALWAYS_ASSERT(header.storageClass != 0);
-        uint16_t size = STATIC_SIZE;
+        size_t size = STATIC_SIZE;
         if (header.storageClass == INLINE_STORAGE) {
             size += getInlineSpan().packedSize();
         } else if (header.storageClass > INLINE_STORAGE) {

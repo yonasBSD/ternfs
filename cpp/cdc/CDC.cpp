@@ -29,19 +29,16 @@
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
+#include "Stopper.hpp"
 
 struct CDCShared {
     CDCDB& db;
-    std::atomic<bool> stop;
     std::array<std::atomic<uint16_t>, 2> ownPorts;
     std::mutex shardsMutex;
     std::array<ShardInfo, 256> shards;
     std::array<Timings, maxCDCMessageKind+1> timings;
 
-    CDCShared(CDCDB& db_) :
-        db(db_),
-        stop(false)
-    {
+    CDCShared(CDCDB& db_) : db(db_) {
         for (auto& shard: shards) {
             memset(&shard, 0, sizeof(shard));
         }
@@ -72,6 +69,7 @@ struct CDCServer : Undertaker::Reapable {
 private:
     Env _env;
     CDCShared& _shared;
+    Stopper _stopper;
     std::array<IpPort, 2> _ipPorts;
     uint64_t _currentLogIndex;
     std::vector<char> _recvBuf;
@@ -108,7 +106,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -189,8 +187,8 @@ public:
 
         // Start processing CDC requests and shard responses
         for (;;) {
-            if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
                 break;
             }
 
@@ -220,6 +218,7 @@ public:
         }
 
         _shared.db.close();
+        _stopper.stopDone();
     }
 
 private:
@@ -228,7 +227,8 @@ private:
         EggsTime t0 = eggsNow();
         Duration maxWait = 1_mins;
         for (;;) {
-            if (_shared.stop.load()) {
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
                 return;
             }
             if (eggsNow() - t0 > maxWait) {
@@ -490,11 +490,23 @@ private:
     }
 
     void _send(int sock, struct sockaddr_in& dest, const char* data, size_t len) {
-        // TODO we might very well get EAGAIN here since these are non-blocking sockets.
-        // We should probably come up with a better strategy regarding writing stuff out,
-        // but, being a bit lazy for now.
-        if (sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) != len) {
-            throw SYSCALL_EXCEPTION("sendto");
+        // We need to handle EAGAIN/EPERM when trying to send. Here we take a ...
+        // lazy approach and just loop with a delay. This seems to happen when
+        // we restart everything while under load, it's not great to block here
+        // but it's probably OK to do so in those cases. We should also automatically
+        // clear the alert when done with this.
+        for (;;) {
+            if (sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len) {
+                break;
+            }
+            int err = errno;
+            // Note that we get EPERM on `sendto` when nf drops packets.
+            if (err == EAGAIN || err == EPERM) {
+                RAISE_ALERT(_env, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
+                sleepFor(100_ms);
+            } else {
+                throw EXPLICIT_SYSCALL_EXCEPTION(err, "sendto");
+            }
         }
     }
 
@@ -511,6 +523,7 @@ static void* runCDCServer(void* server) {
 struct CDCShardUpdater : Undertaker::Reapable {
     Env _env;
     CDCShared& _shared;
+    Stopper _stopper;
     std::string _shuckleHost;
     uint16_t _shucklePort;
 public:
@@ -525,7 +538,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -537,7 +550,9 @@ public:
         auto shards = std::make_unique<std::array<ShardInfo, 256>>();
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            if (_shared.stop.load()) {
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
+                _stopper.stopDone();
                 return;
             }
             auto now = eggsNow();
@@ -582,6 +597,7 @@ static void* runCDCShardUpdater(void* server) {
 struct CDCRegisterer : Undertaker::Reapable {
     Env _env;
     CDCShared& _shared;
+    Stopper _stopper;
     uint32_t _ownIp1;
     uint32_t _ownIp2;
     std::string _shuckleHost;
@@ -602,7 +618,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -614,7 +630,9 @@ public:
         EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
-            if (_shared.stop.load()) {
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
+                _stopper.stopDone();
                 return;
             }
             if (eggsNow() < nextRegister) {
@@ -654,6 +672,7 @@ struct CDCStatsInserter : Undertaker::Reapable {
 private:
     Env _env;
     CDCShared& _shared;
+    Stopper _stopper;
     std::string _shuckleHost;
     uint16_t _shucklePort;
 public:
@@ -668,7 +687,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -704,11 +723,12 @@ public:
             continue; \
 
         for (;;) {
-            if (_shared.stop.load()) {
+            if (_stopper.shouldStop()) {
                 LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
                 insertCDCStats();
                 LOG_INFO(_env, "done, goodbye.");
-                break;
+                _stopper.stopDone();
+                return;
             }
 
             EggsTime t = eggsNow();
@@ -827,7 +847,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     if (xmon) {
         XmonConfig config;
         config.appInstance = "cdc";
-        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config, shared->stop);
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");

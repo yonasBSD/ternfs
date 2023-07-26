@@ -11,6 +11,7 @@
 #include "Env.hpp"
 #include "XmonAgent.hpp"
 #include "Undertaker.hpp"
+#include "Stopper.hpp"
 
 struct XmonConfig {
     bool prod = false;
@@ -105,7 +106,7 @@ enum struct XmonMood : int32_t {
 struct Xmon : Undertaker::Reapable {
 private:
     Env _env;
-    std::atomic<bool>& _stop;
+    Stopper _stopper;
     std::shared_ptr<XmonAgent> _agent;
     std::string _hostname;
     std::string _appType;
@@ -120,15 +121,14 @@ public:
     Xmon(
         Logger& logger,
         std::shared_ptr<XmonAgent>& agent,
-        const XmonConfig& config,
-        std::atomic<bool>& stop
+        const XmonConfig& config
     );
 
     virtual ~Xmon() = default;
 
     virtual void terminate() override {
         _env.flush();
-        _stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {

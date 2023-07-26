@@ -19,11 +19,9 @@ static std::string generateErrString(const std::string& what, int err) {
 Xmon::Xmon(
     Logger& logger,
     std::shared_ptr<XmonAgent>& agent,
-    const XmonConfig& config,
-    std::atomic<bool>& stop
+    const XmonConfig& config
 ) :
     _env(logger, agent, "xmon"),
-    _stop(stop),
     _agent(agent),
     _appType("restech.info"),
     _xmonHost(config.prod ? "REDACTED" : "REDACTED"),
@@ -196,7 +194,7 @@ reconnect:
     // Start recv loop
     bool gotHeartbeat = false;
     for (;;) {
-        bool shutDown = _stop.load();
+        bool shutDown = _stopper.shouldStop();
     
         // send all requests
         if (gotHeartbeat) {
@@ -230,6 +228,7 @@ reconnect:
         if (shutDown) {
             LOG_DEBUG(_env, "got told to stop, stopping");
             close(sock);
+            _stopper.stopDone();
             return;
         }
 

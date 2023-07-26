@@ -25,6 +25,7 @@
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
+#include "Stopper.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -33,7 +34,6 @@ private:
     std::mutex _applyLock;
 public:
     ShardDB& db;
-    std::atomic<bool> stop;
     std::atomic<uint32_t> ip1;
     std::atomic<uint16_t> port1;
     std::atomic<uint32_t> ip2;
@@ -41,7 +41,7 @@ public:
     std::array<Timings, maxShardMessageKind+1> timings;
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_), stop(false), ip1(0), port1(0), ip2(0), port2(0) {
+    ShardShared(ShardDB& db_): db(db_), ip1(0), port1(0), ip2(0), port2(0) {
         _currentLogIndex = db.lastAppliedLogEntry();
         for (ShardMessageKind kind : allShardMessageKind) {
             timings[(int)kind] = Timings::Standard();
@@ -99,6 +99,7 @@ struct ShardServer : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
+    Stopper _stopper;
     ShardId _shid;
     int _ipPortIx;
     uint32_t _ownIp;
@@ -133,7 +134,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -190,8 +191,8 @@ public:
         auto logEntry = std::make_unique<ShardLogEntry>();
 
         for (;;) {
-            if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
                 break;
             }
 
@@ -315,6 +316,7 @@ public:
         if (_ipPortIx == 0) {
             _shared.db.close();
         }
+        _stopper.stopDone();
     }
 };
 
@@ -327,6 +329,7 @@ struct ShardRegisterer : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
+    Stopper _stopper;
     ShardId _shid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
@@ -345,7 +348,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -357,9 +360,10 @@ public:
         EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
-            if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
-                break;
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
+                _stopper.stopDone();
+                return;
             }
             if (eggsNow() < nextRegister) {
                 continue;                
@@ -401,6 +405,7 @@ struct ShardBlockServiceUpdater : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
+    Stopper _stopper;
     ShardId _shid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
@@ -417,7 +422,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -436,9 +441,10 @@ public:
             continue; \
 
         for (;;) {
-            if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
-                break;
+            if (_stopper.shouldStop()) {
+                LOG_INFO(_env, "got told to stop, stopping");
+                _stopper.stopDone();
+                return;
             }
 
             EggsTime t = eggsNow();
@@ -490,6 +496,7 @@ struct ShardStatsInserter : Undertaker::Reapable {
 private:
     Env _env;
     ShardShared& _shared;
+    Stopper _stopper;
     ShardId _shid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
@@ -506,7 +513,7 @@ public:
 
     virtual void terminate() override {
         _env.flush();
-        _shared.stop.store(true);
+        _stopper.stop();
     }
 
     virtual void onAbort() override {
@@ -541,11 +548,12 @@ public:
             continue; \
 
         for (;;) {
-            if (_shared.stop.load()) {
+            if (_stopper.shouldStop()) {
                 LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
                 insertShardStats();
                 LOG_INFO(_env, "done, goodbye.");
-                break;
+                _stopper.stopDone();
+                return;
             }
 
             EggsTime t = eggsNow();
@@ -679,7 +687,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             ss << std::setw(3) << std::setfill('0') << shid;
             config.appInstance = "shard:" + ss.str();
         }
-        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config, shared.stop);
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
         pthread_t tid;
         if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
             throw SYSCALL_EXCEPTION("pthread_create");

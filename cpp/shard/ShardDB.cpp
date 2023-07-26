@@ -319,6 +319,8 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
         ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_blockServicesToFilesCf));
         ROCKS_DB_CHECKED(_db->Close());
+
+        LOG_INFO(_env, "database closed");
     }
 
     ~ShardDBImpl() {

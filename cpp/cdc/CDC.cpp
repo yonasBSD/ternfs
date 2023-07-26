@@ -394,11 +394,15 @@ private:
         if (err == EggsError::NAME_NOT_FOUND) {
             // these can happen through normal user interaction
             LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
-        } else if (err == EggsError::DIRECTORY_HAS_OWNER) {
+        } else if (err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME) {
             // These can happen but should be rare.
             //
             // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
             // it, but somebody else might have created stuff in it in the meantime)
+            //
+            // TIMEOUT/MISMATCHING_CREATION_TIME are actually concerning, but right
+            // now they happen often and I need a better story for timeouts in general.
+            // In the meantime let's not spam a gazillion alerts.
             LOG_INFO(_env, "got innocuous shard error %s from shard %s", err, shid);
         } else {
             RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);

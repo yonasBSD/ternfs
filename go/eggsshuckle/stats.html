@@ -13,7 +13,16 @@
             </div>
         </form>
         <p>
-            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response. For the CDC this includes the time the request was queued behind requests that were not completed yet. For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure). In shuckle requests might get blocked on the write lock, and that time is measured here.
+            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response.
+        </p>
+        <p>
+            For the CDC this includes the time the request was queued behind requests that were not completed yet.
+        </p>
+        <p>
+            For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure), but there are two sockets reading the requests, and they compete for the write lock. The time spent waiting for the write lock is measured here.
+        </p>
+        <p>
+            In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.
         </p>
         <div id="charts"></div>
     </div>

@@ -16,6 +16,10 @@ static std::string explicitGenerateErrString(const std::string& what, int err, c
     return ss.str();
 }
 
+static std::string generateErrString(const std::string& what, int err) {
+    return explicitGenerateErrString(what, err, (std::string(translateErrno(err)) + "=" + safe_strerror(err)).c_str());
+}
+
 int connectToHost(
     const std::string& host,
     uint16_t port,
@@ -52,11 +56,15 @@ int connectToHost(
             throw SYSCALL_EXCEPTION("socket");
         }
 
-        if (synRetries >= 0) {
-            setsockopt(infoSock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries));
+        if (synRetries > 0) {
+            if (setsockopt(infoSock, IPPROTO_TCP, TCP_SYNCNT, &synRetries, sizeof(synRetries)) < 0) {
+                errString = generateErrString("setsockopt", errno);
+                continue;
+            }
         }
 
         if (connect(infoSock, info->ai_addr, info->ai_addrlen) < 0) {
+            errString = generateErrString("connect", errno);
             close(infoSock);
         } else {
             fd = infoSock;
@@ -64,5 +72,9 @@ int connectToHost(
         }
     }
 
+    // we've managed to connect, clear earlier errors
+    if (fd != -1) {
+        errString = "";
+    }
     return fd;
 }

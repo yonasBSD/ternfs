@@ -778,7 +778,7 @@ func main() {
 		shuckleBlockServices := resp.(*msgs.AllBlockServicesResp).BlockServices
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]
-			_, weHaveBs := blockServices[bs.Id]
+			ourBs, weHaveBs := blockServices[bs.Id]
 			sameFailureDomain := bs.FailureDomain == failureDomain
 			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
 			// No disagreement on failure domain with shuckle (otherwise we could end up with
@@ -804,7 +804,11 @@ func main() {
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				panic(fmt.Errorf("We have block service %v, which is decommissioned according to shuckle. Once a block service is marked as decommissioned, it should be gone forever.", bs.Id))
+				log.RaiseAlert(fmt.Errorf("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id))
+				delete(blockServices, bs.Id)
+				deadBlockServices[bs.Id] = deadBlockService{
+					cipher: ourBs.cipher,
+				}
 			}
 		}
 	}

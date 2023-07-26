@@ -156,6 +156,14 @@ func main() {
 		}
 		procs.StartBlockService(log, &opts)
 	}
+
+	waitShuckleFor := 5 * time.Second
+	if *buildType == "valgrind" || *profile {
+		waitShuckleFor = 30 * time.Second
+	}
+	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
+	lib.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
+
 	// Start CDC
 	{
 		opts := managedprocess.CDCOpts{
@@ -192,12 +200,8 @@ func main() {
 		procs.StartShard(log, *repoDir, &opts)
 	}
 
-	waitShuckleFor := 5 * time.Second
-	if *buildType == "valgrind" || *profile {
-		waitShuckleFor = 30 * time.Second
-	}
-	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	lib.WaitForShuckle(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
+	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
+	lib.WaitForShardsCDC(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,

@@ -849,6 +849,25 @@ func main() {
 		}
 	}
 
+	waitShuckleFor := 10 * time.Second
+	if *buildType == "valgrind" || *profile {
+		waitShuckleFor = 60 * time.Second
+	}
+
+	// wait for block services first, so we know that shards will immediately have all of them
+	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
+	blockServices := lib.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	blockServicesPorts := make(map[[16]byte]struct {
+		_1 uint16
+		_2 uint16
+	})
+	for _, bs := range blockServices {
+		blockServicesPorts[bs.FailureDomain] = struct {
+			_1 uint16
+			_2 uint16
+		}{bs.Port1, bs.Port2}
+	}
+
 	if *outgoingPacketDrop > 0 {
 		fmt.Printf("will drop %0.2f%% of packets after executing requests\n", *outgoingPacketDrop*100.0)
 	}
@@ -893,22 +912,9 @@ func main() {
 		procs.StartShard(log, *repoDir, &shopts)
 	}
 
-	waitShuckleFor := 10 * time.Second
-	if *buildType == "valgrind" || *profile {
-		waitShuckleFor = 60 * time.Second
-	}
-	fmt.Printf("waiting for shuckle for %v...\n", waitShuckleFor)
-	shuckleInfo := lib.WaitForShuckle(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
-	blockServicesPorts := make(map[[16]byte]struct {
-		_1 uint16
-		_2 uint16
-	})
-	for _, bs := range shuckleInfo.BlockServices {
-		blockServicesPorts[bs.FailureDomain] = struct {
-			_1 uint16
-			_2 uint16
-		}{bs.Port1, bs.Port2}
-	}
+	// now wait for shards/cdc
+	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
+	lib.WaitForShardsCDC(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
 
 	var stopBlockServiceKiller chan struct{}
 	if *blockServiceKiller {

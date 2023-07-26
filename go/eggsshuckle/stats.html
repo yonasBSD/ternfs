@@ -1,9 +1,19 @@
 {{define "body"}}
     <script src="/chart-4.3.0.js"></script>
     <div>
-        <input type="datetime-local" id="time-from" required> — <input type="datetime-local" id="time-to" required>
+        <form id="time-selection" class="row row-cols-lg-auto g-3 align-items-center my-2">
+            <div class="col">
+                <input id="time-from" type="datetime-local" class="form-control" required>
+            </div>
+            <div class="col">
+                <input id="time-to" type="datetime-local" class="form-control" required>
+            </div>
+            <div class="col">
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </div>
+        </form>
         <p>
-            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response.
+            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response. For the CDC this includes the time the request was queued behind requests that were not completed yet. For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure). In shuckle requests might get blocked on the write lock, and that time is measured here.
         </p>
         <div id="charts"></div>
     </div>
@@ -19,19 +29,31 @@
         }
         
         const chartsEl = document.getElementById('charts');
+    
+        const twoDec = (x) => (Math.round(x*100) / 100).toFixed(2);
         
         function formatNs(ns) {
-            const twoDec = (x) => (Math.round(x*100) / 100).toFixed(2);
-            if (ns < BigInt(1000)) {
-                return ns.toString() + 'ns';
+            let scale = 1n;
+            const next = (unit, scaleFactor) => {
+                if (ns < scale*scaleFactor) {
+                    return twoDec(Number(ns)/Number(scale)) + unit;
+                }
+                scale *= scaleFactor;
+                return null;
+            };
+            let units = [
+                ['ns', 1000n],
+                ['us', 1000n],
+                ['ms', 1000n],
+                ['s',  60n],
+                ['m',  60n],
+                ['h',  100000000000n],
+            ]
+            for (const [unit, factor] of units) {
+                const res = next(unit, factor);
+                if (res) { return res; }
             }
-            if (ns < BigInt(1000000)) {
-                return twoDec(Number(ns)/1000) + 'us';
-            }
-            if (ns < BigInt(1000000000))  {
-                return twoDec(Number(ns/BigInt(1000))/1000) + 'ms';
-            }
-            return twoDec(Number(ns/BigInt(1000000))/1000) + 's';
+            throw 'Impossible';
         }
         
         function drawChart(el, req, timings) {
@@ -47,21 +69,12 @@
         }
     
         function nsToRFC3339Nano(ns) {
-            // Convert BigInt nanoseconds to Number milliseconds
             const msBigInt = ns / BigInt(1000000);
             const msNumber = Number(msBigInt);
-            const date = new Date(msNumber);
-        
-            // Get the nanosecond part
-            const nanoSeconds = Number(ns % BigInt(1000000)).toString().padStart(6, '0');
-        
-            // Format the date and time parts
+            const date = new Date(msNumber);    
+            const nsStr = Number(ns % BigInt(1000000)).toString().padStart(6, '0');
             const dateStr = date.toISOString().replace('Z', '');
-        
-            // Construct the final string
-            const finalStr = `${dateStr}${nanoSeconds}Z`;
-        
-            return finalStr;
+            return `${dateStr}${nsStr}Z`;
         }
     
         async function getStats(startName, startTime, endTime) {
@@ -103,6 +116,9 @@
             return { nextName, nextTime };
         }
     
+        const timeFromEl = document.getElementById('time-from');
+        const timeToEl = document.getElementById('time-to');
+    
         async function reload() {
             // erase 
             chartsEl.innerHTML = 'Loading...';
@@ -133,19 +149,27 @@
                         break;
                     }
                     const stat = n.value;
-                    if (!stat.name.endsWith('histogram')) { continue; }
                     const segments = stat.name.split('.');
                     const group = segments[0];
                     let req = segments[1];
                     if (group === 'shard') { // group all shards into one bunch
                         req = segments[2];
+                        if (segments.length !== 3) {
+                            throw `Unexpected stat name ${stat.name}`;
+                        }
+                    } else if (segments.length !== 2) {
+                        throw `Unexpected stat name ${stat.name}`;
                     }
                     data[group] = data[group] || {};
-                    data[group][req] = data[group][req] || { histogram: [] }
-                    histogram = data[group][req].histogram;
+                    data[group][req] = data[group][req] || { histogram: [], elapsedNs: BigInt(0) }
                     // parse histo
                     const valueView = new DataView(stat.value.buffer, stat.value.byteOffset, stat.value.byteLength);
-                    for (let i = 0, bin = 0; i < stat.value.length; i += 8+8, bin++) {
+                    if (stat.value.length < 8 || (stat.value.length-8)%16 !== 0) {
+                        throw `Unexpected histo length ${stat.value.length}`;
+                    }
+                    data[group][req].elapsedNs += valueView.getBigUint64(0, true);
+                    histogram = data[group][req].histogram;
+                    for (let i = 8, bin = 0; i < stat.value.length; i += 8+8, bin++) {
                         const upperBoundNs = valueView.getBigUint64(i, true);
                         const count = valueView.getBigUint64(i+8, true);
                         histogram[bin] = histogram[bin] || { upperBoundNs, count: BigInt(0) };
@@ -163,8 +187,10 @@
                 for (const reqData of Object.values(groupData)) {
                     let skipStart = 0;
                     for (; skipStart < reqData.histogram.length && !reqData.histogram[skipStart].count; skipStart++) {}
+                    skipStart = skipStart == 0 ? 0 : skipStart-1;
                     let skipEnd = 0;
                     for (; skipEnd < reqData.histogram.length && !reqData.histogram[reqData.histogram.length-skipEnd-1].count; skipEnd++) {}
+                    skipEnd = skipEnd == 0 ? 0 : skipEnd-1;
                     reqData.histogram = reqData.histogram.slice(skipStart, reqData.histogram.length-skipEnd);
                 }
             }
@@ -186,22 +212,31 @@
                     reqsEl.appendChild(chartContainerEl);
                     chartContainerEl.style.width = '100%';
                     drawChart(chartContainerEl, req, reqData);
+                    /*
+                    const countEl = document.createElement('div');
+                    chartContainerEl.appendChild(countEl);
+                    countEl.innerHTML = `count: ${reqData.count}, duration: ${formatNs(reqData.duration)}, ~${twoDec(Number((reqData.count*1000000000000n)/reqData.duration)/1000)}reqs/s`;
+                    if (reqData.mean !== 0n) {
+                        countEl.innerHTML += `, mean: ${formatNs(reqData.mean)}, computed mean: ${formatNs(reqData.computedMean)}, stddev: ${formatNs(reqData.stddev)}`;
+                    }
+                    countEl.innerHTML = `<small>${countEl.innerHTML}</small>`;
+                    */
                 });
             });
     
             console.log('done loading');
         }
-        
-        const timeFromEl = document.getElementById('time-from');
-        const timeToEl = document.getElementById('time-to');
-        
+            
         // set initial times (now-24hrs and now)
         timeFromEl.value = formatLocalDate(new Date(new Date().getTime() - 24 * 60 * 60 * 1000));
         timeToEl.value = formatLocalDate(new Date());
         
-        // redraw when changed
-        timeFromEl.addEventListener('change', reload);
-        timeToEl.addEventListener('change', reload);
+        // redraw on submit
+        const formEl = document.getElementById('time-selection');
+        formEl.addEventListener('submit', (el) => {
+            el.preventDefault();
+            reload();
+        })
         
         reload();
     })();</script>

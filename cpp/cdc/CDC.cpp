@@ -418,7 +418,7 @@ private:
             // we need to send the response back to the client
             auto inFlight = _inFlightTxns.find(step.txnFinished);
             if (inFlight == _inFlightTxns.end()) {
-                RAISE_ALERT(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
+                LOG_INFO(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
             } else {
                 _shared.timings[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
                 if (step.err != NO_ERROR) {

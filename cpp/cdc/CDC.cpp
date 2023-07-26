@@ -705,7 +705,9 @@ public:
 
         for (;;) {
             if (_shared.stop.load()) {
-                LOG_DEBUG(_env, "got told to stop, stopping");
+                LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
+                insertCDCStats();
+                LOG_INFO(_env, "done, goodbye.");
                 break;
             }
 

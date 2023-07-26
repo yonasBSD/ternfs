@@ -544,6 +544,7 @@ public:
             if (_shared.stop.load()) {
                 LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
                 insertShardStats();
+                LOG_INFO(_env, "done, goodbye.");
                 break;
             }
 

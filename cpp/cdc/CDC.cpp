@@ -391,8 +391,15 @@ private:
     }
 
     void _handleShardError(ShardId shid, EggsError err) {
-        if (err == EggsError::NAME_NOT_FOUND) { // this is expected in a few cases
+        if (err == EggsError::NAME_NOT_FOUND) {
+            // these can happen through normal user interaction
             LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
+        } else if (err == EggsError::DIRECTORY_HAS_OWNER) {
+            // These can happen but should be rare.
+            //
+            // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
+            // it, but somebody else might have created stuff in it in the meantime)
+            LOG_INFO(_env, "got innocuous shard error %s from shard %s", err, shid);
         } else {
             RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);
         }

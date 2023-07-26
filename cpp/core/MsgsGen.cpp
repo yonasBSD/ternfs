@@ -3259,40 +3259,28 @@ void RegisterCdcReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint16_t>(port1);
     buf.packFixedBytes<4>(ip2);
     buf.packScalar<uint16_t>(port2);
-    buf.packScalar<CDCMessageKind>(currentTransactionKind);
-    buf.packScalar<uint8_t>(currentTransactionStep);
-    buf.packScalar<uint64_t>(queuedTransactions);
 }
 void RegisterCdcReq::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(ip1);
     port1 = buf.unpackScalar<uint16_t>();
     buf.unpackFixedBytes<4>(ip2);
     port2 = buf.unpackScalar<uint16_t>();
-    currentTransactionKind = buf.unpackScalar<CDCMessageKind>();
-    currentTransactionStep = buf.unpackScalar<uint8_t>();
-    queuedTransactions = buf.unpackScalar<uint64_t>();
 }
 void RegisterCdcReq::clear() {
     ip1.clear();
     port1 = uint16_t(0);
     ip2.clear();
     port2 = uint16_t(0);
-    currentTransactionKind = CDCMessageKind(0);
-    currentTransactionStep = uint8_t(0);
-    queuedTransactions = uint64_t(0);
 }
 bool RegisterCdcReq::operator==(const RegisterCdcReq& rhs) const {
     if (ip1 != rhs.ip1) { return false; };
     if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
     if (ip2 != rhs.ip2) { return false; };
     if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
-    if ((CDCMessageKind)this->currentTransactionKind != (CDCMessageKind)rhs.currentTransactionKind) { return false; };
-    if ((uint8_t)this->currentTransactionStep != (uint8_t)rhs.currentTransactionStep) { return false; };
-    if ((uint64_t)this->queuedTransactions != (uint64_t)rhs.queuedTransactions) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x) {
-    out << "RegisterCdcReq(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "CurrentTransactionKind=" << x.currentTransactionKind << ", " << "CurrentTransactionStep=" << (int)x.currentTransactionStep << ", " << "QueuedTransactions=" << x.queuedTransactions << ")";
+    out << "RegisterCdcReq(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ")";
     return out;
 }
 

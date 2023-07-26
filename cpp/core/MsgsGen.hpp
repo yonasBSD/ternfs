@@ -2988,11 +2988,8 @@ struct RegisterCdcReq {
     uint16_t port1;
     BincodeFixedBytes<4> ip2;
     uint16_t port2;
-    CDCMessageKind currentTransactionKind;
-    uint8_t currentTransactionStep;
-    uint64_t queuedTransactions;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + 1 + 8; // ip1 + port1 + ip2 + port2 + currentTransactionKind + currentTransactionStep + queuedTransactions
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
 
     RegisterCdcReq() { clear(); }
     size_t packedSize() const {
@@ -3001,9 +2998,6 @@ struct RegisterCdcReq {
         _size += 2; // port1
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
         _size += 2; // port2
-        _size += 1; // currentTransactionKind
-        _size += 1; // currentTransactionStep
-        _size += 8; // queuedTransactions
         return _size;
     }
     void pack(BincodeBuf& buf) const;

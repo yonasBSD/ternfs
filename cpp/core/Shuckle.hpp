@@ -28,13 +28,6 @@ std::string registerShard(
     uint16_t port2
 );
 
-struct CDCStatus {
-    uint64_t queuedTxns;
-    // if non-zero, the following field is set too
-    CDCMessageKind executingTxnKind;
-    uint8_t executingTxnStep;
-};
-
 std::string registerCDC(
     const std::string& shuckleHost,
     uint16_t shucklePort,
@@ -42,8 +35,7 @@ std::string registerCDC(
     uint32_t ip1,
     uint16_t port1,
     uint32_t ip2,
-    uint16_t port2,
-    const CDCStatus& status
+    uint16_t port2
 );
 
 std::string fetchShards(

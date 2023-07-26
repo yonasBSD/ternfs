@@ -55,14 +55,11 @@ func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
 }
 
 type cdcState struct {
-	ip1            [4]byte
-	port1          uint16
-	ip2            [4]byte
-	port2          uint16
-	lastSeen       msgs.EggsTime
-	queuedTxns     uint64
-	currentTxnKind msgs.CDCMessageKind
-	currentTxnStep uint8
+	ip1      [4]byte
+	port1    uint16
+	ip2      [4]byte
+	port2    uint16
+	lastSeen msgs.EggsTime
 }
 
 type state struct {
@@ -74,7 +71,7 @@ type state struct {
 
 func (s *state) selectCDC() (*cdcState, error) {
 	var cdc cdcState
-	rows, err := s.db.Query("SELECT * FROM cdc")
+	rows, err := s.db.Query("SELECT id, ip1, port1, ip2, port2, last_seen FROM cdc")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc: %s", err)
 	}
@@ -87,7 +84,7 @@ func (s *state) selectCDC() (*cdcState, error) {
 		}
 		var id int
 		var ip1, ip2 []byte
-		err = rows.Scan(&id, &ip1, &cdc.port1, &ip2, &cdc.port2, &cdc.queuedTxns, &cdc.currentTxnKind, &cdc.currentTxnStep, &cdc.lastSeen)
+		err = rows.Scan(&id, &ip1, &cdc.port1, &ip2, &cdc.port2, &cdc.lastSeen)
 		if id != 0 {
 			return nil, fmt.Errorf("unexpected id %v for cdc (expected 0)", id)
 		}
@@ -404,7 +401,7 @@ func handleRegisterCdc(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*ms
 		"REPLACE INTO cdc(id, ip1, port1, ip2, port2, queued_txns, current_txn_kind, current_txn_step, last_seen) VALUES (0, :ip1, :port1, :ip2, :port2, :queued_txns, :current_txn_kind, :current_txn_step, :last_seen)",
 		n("ip1", req.Ip1[:]), n("port1", req.Port1),
 		n("ip2", req.Ip2[:]), n("port2", req.Port2),
-		n("queued_txns", req.QueuedTransactions), n("current_txn_kind", req.CurrentTransactionKind), n("current_txn_step", req.CurrentTransactionStep),
+		n("queued_txns", 0), n("current_txn_kind", 0), n("current_txn_step", 0), // unused now TODO remove
 		n("last_seen", msgs.Now()),
 	)
 	if err != nil {
@@ -709,20 +706,17 @@ type indexShard struct {
 }
 
 type indexData struct {
-	NumBlockServices          int
-	NumFailureDomains         int
-	TotalCapacity             string
-	TotalUsed                 string
-	TotalUsedPercentage       string
-	CDCAddr1                  string
-	CDCAddr2                  string
-	CDCLastSeen               string
-	CDCCurrentTransactionKind string
-	CDCCurrentTransactionStep string
-	CDCQueuedTransactions     uint64
-	BlockServices             []indexBlockService
-	ShardsAddrs               []indexShard
-	Blocks                    uint64
+	NumBlockServices    int
+	NumFailureDomains   int
+	TotalCapacity       string
+	TotalUsed           string
+	TotalUsedPercentage string
+	CDCAddr1            string
+	CDCAddr2            string
+	CDCLastSeen         string
+	BlockServices       []indexBlockService
+	ShardsAddrs         []indexShard
+	Blocks              uint64
 }
 
 //go:embed index.html
@@ -873,11 +867,6 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 			data.CDCAddr1 = fmt.Sprintf("%v:%v", net.IP(cdc.ip1[:]), cdc.port1)
 			data.CDCAddr2 = fmt.Sprintf("%v:%v", net.IP(cdc.ip2[:]), cdc.port2)
 			data.CDCLastSeen = formatLastSeen(cdc.lastSeen)
-			data.CDCQueuedTransactions = cdc.queuedTxns
-			if cdc.currentTxnKind != 0 {
-				data.CDCCurrentTransactionKind = cdc.currentTxnKind.String()
-				data.CDCCurrentTransactionStep = fmt.Sprintf("%v", cdc.currentTxnStep)
-			}
 
 			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
 			data.TotalCapacity = formatSize(totalAvailableBytes)

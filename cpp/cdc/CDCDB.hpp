@@ -111,6 +111,4 @@ public:
 
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
-
-    void status(CDCStatus& resp);
 };

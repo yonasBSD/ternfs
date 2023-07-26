@@ -4126,15 +4126,6 @@ func (v *RegisterCdcReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint8(v.CurrentTransactionKind)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint8(v.CurrentTransactionStep)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.QueuedTransactions)); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -4149,15 +4140,6 @@ func (v *RegisterCdcReq) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.CurrentTransactionKind)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.CurrentTransactionStep)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.QueuedTransactions)); err != nil {
 		return err
 	}
 	return nil

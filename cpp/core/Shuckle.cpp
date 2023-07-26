@@ -193,7 +193,7 @@ std::string registerShard(
     return {};
 }
 
-std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2, const CDCStatus& status) {
+std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2) {
     std::string errString;
     auto sock = shuckleSock(host, port, timeout, errString);
     if (sock.fd < 0) {
@@ -212,9 +212,6 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
         memcpy(req.ip2.data.data(), &ip, 4);
     }
     req.port2 = port2;
-    req.currentTransactionKind = status.executingTxnKind;
-    req.currentTransactionStep = status.executingTxnStep;
-    req.queuedTransactions = status.queuedTxns;
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;

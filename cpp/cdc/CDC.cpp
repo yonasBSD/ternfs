@@ -617,9 +617,7 @@ public:
                 continue;
             }
             LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
-            CDCStatus status;
-            _shared.db.status(status);
-            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2, status);
+            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
             if (!err.empty()) {
                 if (nextRegister == 0) { // only one alert
                     RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);

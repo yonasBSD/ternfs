@@ -1596,30 +1596,6 @@ struct CDCDBImpl {
          
         dbTxn->Commit();
     }
-
-    void status(CDCStatus& resp) {
-        memset(&resp, 0, sizeof(resp));
-        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction({}));
-        uint64_t txnId = _executingTxn(*dbTxn);
-        if (txnId != 0) {
-            // Get the req kind
-            {
-                auto k = U64Key::Static(txnId);
-                std::string reqV;
-                ROCKS_DB_CHECKED(dbTxn->Get({}, _reqQueueCf, k.toSlice(), &reqV));
-                BincodeBuf bbuf(reqV);
-                resp.executingTxnKind = (CDCMessageKind)bbuf.unpackScalar<uint8_t>();
-            }
-            // Get the step
-            {
-                std::string txnStateV;
-                ROCKS_DB_CHECKED(dbTxn->Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
-                ExternalValue<TxnState> txnState(txnStateV);
-                resp.executingTxnStep = txnState().step();
-            }
-        }
-        resp.queuedTxns = _lastTxnInQueue(*dbTxn) - _firstTxnInQueue(*dbTxn);
-    }
 };
 
 CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
@@ -1648,8 +1624,4 @@ void CDCDB::startNextTransaction(bool sync, EggsTime time, uint64_t logIndex, CD
 
 uint64_t CDCDB::lastAppliedLogEntry() {
     return ((CDCDBImpl*)_impl)->_lastAppliedLogEntry();
-}
-
-void CDCDB::status(CDCStatus& resp) {
-    return ((CDCDBImpl*)_impl)->status(resp);
 }

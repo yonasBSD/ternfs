@@ -16,12 +16,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -1617,17 +1620,21 @@ func deleteOldStats(ll *lib.Logger, st *state) error {
 	return err
 }
 
+func writeStats(ll *lib.Logger, st *state) {
+	stats := lib.TimingsToStats("shuckle", st.counters)
+	st.resetTimings()
+	ll.Info("writing %v stats to database", len(stats))
+	if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {
+		panic(err)
+	}
+	if err := deleteOldStats(ll, st); err != nil {
+		panic(err)
+	}
+}
+
 func statsWriter(ll *lib.Logger, st *state) {
 	for {
-		stats := lib.TimingsToStats("shuckle", st.counters)
-		st.resetTimings()
-		ll.Info("writing %v stats to database", len(stats))
-		if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {
-			panic(err)
-		}
-		if err := deleteOldStats(ll, st); err != nil {
-			panic(err)
-		}
+		writeStats(ll, st)
 		time.Sleep(time.Hour)
 	}
 }
@@ -1876,6 +1883,22 @@ func main() {
 	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
 	state := newState(db)
+
+	statsWrittenBeforeQuitting := int32(0)
+	writeStatsBeforeQuitting := func() {
+		if atomic.CompareAndSwapInt32(&statsWrittenBeforeQuitting, 0, 1) {
+			writeStats(ll, state)
+		}
+	}
+	defer writeStatsBeforeQuitting()
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
+	go func() {
+		sig := <-signalChan
+		signal.Stop(signalChan)
+		writeStatsBeforeQuitting()
+		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
+	}()
 
 	setupRouting(ll, state)
 

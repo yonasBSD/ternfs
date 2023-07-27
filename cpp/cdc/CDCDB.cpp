@@ -1457,7 +1457,7 @@ struct CDCDBImpl {
     // Starts executing the next transaction in line, if possible. If it managed
     // to start something, it immediately advances it as well (no point delaying
     // that). Returns the txn id that was started, if any.
-    uint64_t _startExecuting(EggsTime time, rocksdb::Transaction& dbTxn, CDCStep& step) {
+    uint64_t _startExecuting(EggsTime time, rocksdb::Transaction& dbTxn, CDCStep& step, CDCStatus& status) {
         uint64_t executingTxn = _executingTxn(dbTxn);
         if (executingTxn != 0) {
             LOG_DEBUG(_env, "another transaction %s is already executing, can't start", executingTxn);
@@ -1475,6 +1475,10 @@ struct CDCDBImpl {
         StaticValue<TxnState> txnState;
         txnState().start(_cdcReq.kind());
         _advance(time, dbTxn, txnToExecute, _cdcReq, NO_ERROR, nullptr, txnState, step);
+
+        status.runningTxn = txnToExecute;
+        status.runningTxnKind = _cdcReq.kind();
+
         return txnToExecute;
     }
 
@@ -1483,8 +1487,11 @@ struct CDCDBImpl {
         EggsTime time,
         uint64_t logIndex,
         const CDCReqContainer& req,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     ) {
+        status.reset();
+    
         auto locked = _processLock.lock();
 
         rocksdb::WriteOptions options;
@@ -1507,7 +1514,7 @@ struct CDCDBImpl {
         }
 
         // Start executing, if we can
-        _startExecuting(time, *dbTxn, step);
+        _startExecuting(time, *dbTxn, step, status);
 
         LOG_DEBUG(_env, "committing transaction");
         dbTxn->Commit();
@@ -1521,8 +1528,11 @@ struct CDCDBImpl {
         uint64_t logIndex,
         EggsError respError,
         const ShardRespContainer* resp,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     ) {
+        status.reset();
+    
         auto locked = _processLock.lock();
 
         rocksdb::WriteOptions options;
@@ -1546,6 +1556,10 @@ struct CDCDBImpl {
             bincodeFromRocksValue(reqV, ureq);
         }
 
+        // Store status
+        status.runningTxn = txnId;
+        status.runningTxnKind = _cdcReq.kind();
+
         // Get the state
         std::string txnStateV;
         ROCKS_DB_CHECKED(dbTxn->Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
@@ -1561,8 +1575,11 @@ struct CDCDBImpl {
         bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
         uint64_t logIndex,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     ) {
+        status.reset();
+    
         auto locked = _processLock.lock();
 
         rocksdb::WriteOptions options;
@@ -1572,7 +1589,7 @@ struct CDCDBImpl {
         step.clear();
 
         _advanceLastAppliedLogEntry(*dbTxn, logIndex);
-        uint64_t txnId = _startExecuting(time, *dbTxn, step);
+        uint64_t txnId = _startExecuting(time, *dbTxn, step, status);
         if (txnId == 0) {
             // no txn could be started, see if one is executing already to fill in the `step`
             txnId = _executingTxn(*dbTxn);
@@ -1586,6 +1603,9 @@ struct CDCDBImpl {
                     UnpackCDCReq ureq(_cdcReq);
                     bincodeFromRocksValue(reqV, ureq);
                 }
+                // Store status
+                status.runningTxn = txnId;
+                status.runningTxnKind = _cdcReq.kind();
                 // Get the state
                 std::string txnStateV;
                 ROCKS_DB_CHECKED(dbTxn->Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
@@ -1611,16 +1631,16 @@ CDCDB::~CDCDB() {
     delete ((CDCDBImpl*)_impl);
 }
 
-uint64_t CDCDB::processCDCReq(bool sync, EggsTime time, uint64_t logIndex, const CDCReqContainer& req, CDCStep& step) {
-    return ((CDCDBImpl*)_impl)->processCDCReq(sync, time, logIndex, req, step);
+uint64_t CDCDB::processCDCReq(bool sync, EggsTime time, uint64_t logIndex, const CDCReqContainer& req, CDCStep& step, CDCStatus& status) {
+    return ((CDCDBImpl*)_impl)->processCDCReq(sync, time, logIndex, req, step, status);
 }
 
-void CDCDB::processShardResp(bool sync, EggsTime time, uint64_t logIndex, EggsError respError, const ShardRespContainer* resp, CDCStep& step) {
-    return ((CDCDBImpl*)_impl)->processShardResp(sync, time, logIndex, respError, resp, step);
+void CDCDB::processShardResp(bool sync, EggsTime time, uint64_t logIndex, EggsError respError, const ShardRespContainer* resp, CDCStep& step, CDCStatus& status) {
+    return ((CDCDBImpl*)_impl)->processShardResp(sync, time, logIndex, respError, resp, step, status);
 }
 
-void CDCDB::startNextTransaction(bool sync, EggsTime time, uint64_t logIndex, CDCStep& step) {
-    return ((CDCDBImpl*)_impl)->startNextTransaction(sync, time, logIndex, step);
+void CDCDB::startNextTransaction(bool sync, EggsTime time, uint64_t logIndex, CDCStep& step, CDCStatus& status) {
+    return ((CDCDBImpl*)_impl)->startNextTransaction(sync, time, logIndex, step, status);
 }
 
 uint64_t CDCDB::lastAppliedLogEntry() {

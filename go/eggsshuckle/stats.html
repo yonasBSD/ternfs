@@ -160,14 +160,9 @@
                     const stat = n.value;
                     const segments = stat.name.split('.');
                     const group = segments[0];
-                    let req = segments[1];
+                    let req = segments.slice(1).join('.');
                     if (group === 'shard') { // group all shards into one bunch
-                        req = segments[2];
-                        if (segments.length !== 3) {
-                            throw `Unexpected stat name ${stat.name}`;
-                        }
-                    } else if (segments.length !== 2) {
-                        throw `Unexpected stat name ${stat.name}`;
+                        req = segments.slice(2).join('.');
                     }
                     data[group] = data[group] || {};
                     data[group][req] = data[group][req] || { histogram: [], elapsedNs: BigInt(0) }
@@ -214,7 +209,7 @@
                 const reqsEl = document.createElement('div');
                 chartsEl.appendChild(reqsEl);
                 reqsEl.style.display = 'grid';
-                reqsEl.style.gridTemplateColumns = '33% 33% 33%';
+                reqsEl.style.gridTemplateColumns = '50% 50%';
                 Object.keys(groupData).sort().forEach(req => {
                     reqData = groupData[req];
                     const chartContainerEl = document.createElement('div');

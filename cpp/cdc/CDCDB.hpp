@@ -47,6 +47,19 @@ struct CDCStep {
     }
 };
 
+// Only used for timing purposes, there is some overlap with CDCStep,
+// but we separate it out for code robustness (we just get this info
+// every time we touch the db).
+struct CDCStatus {
+    uint64_t runningTxn; // 0 if nothing
+    CDCMessageKind runningTxnKind; // only relevant if it's running
+
+    void reset() {
+        runningTxn = 0;
+        runningTxnKind = (CDCMessageKind)0;
+    }
+};
+
 std::ostream& operator<<(std::ostream& out, const CDCStep& x);
 
 struct CDCDB {
@@ -74,13 +87,14 @@ public:
     // imprudent. So we'd like some function returning the length of the queue.
 
     // Enqueues a cdc request, and immediately starts it if the system is currently
-    // idle.
+    // idle. Returns the txn id that got assigned to the txn.
     uint64_t processCDCReq(
         bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
         uint64_t logIndex,
         const CDCReqContainer& req,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     );
 
     // Advances the CDC state using the given shard response.
@@ -94,7 +108,8 @@ public:
         // (err == NO_ERROR) == (req != nullptr)
         EggsError err,
         const ShardRespContainer* req,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     );
 
     // Does what it can to advance the state of the system, by starting the next
@@ -108,7 +123,8 @@ public:
         bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
         EggsTime time,
         uint64_t logIndex,
-        CDCStep& step
+        CDCStep& step,
+        CDCStatus& status
     );
 
     // The index of the last log entry persisted to the DB

@@ -23,10 +23,10 @@ static std::string generateErrString(const std::string& what, int err) {
 int connectToHost(
     const std::string& host,
     uint16_t port,
-    int synRetries,
     std::string& errString
 ) {
     int fd = -1;
+    int synRetries = 3;
     std::unique_ptr<struct addrinfo, decltype(&freeaddrinfo)> infos(nullptr, &freeaddrinfo);
     {
         char portStr[10];

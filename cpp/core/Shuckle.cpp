@@ -38,10 +38,7 @@ struct ShuckleSock {
 
 static ShuckleSock shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
     ShuckleSock sock;
-    // We retry upstream anyway, and we want prompt termination of `connect`.
-    // If we don't do this, mistakenly trying to connect to an iceland shuckle (currently
-    // the default) will hang for a long time.
-    sock.fd = connectToHost(host, port, 1, errString);
+    sock.fd = connectToHost(host, port, errString);
 
     if (sock.fd >= 0) {
         struct timeval tv;

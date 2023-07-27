@@ -108,7 +108,7 @@ func main() {
 			func() {
 				client, err := lib.NewClient(log, *shuckleAddress, 1)
 				if err != nil {
-					log.RaiseAlert(err)
+					panic(err)
 				}
 				client.SetCounters(counters)
 				defer client.Close()

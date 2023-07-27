@@ -8,6 +8,5 @@
 int connectToHost(
     const std::string& host,
     uint16_t port,
-    int synRetries,
     std::string& errString
 );

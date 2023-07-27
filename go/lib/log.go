@@ -361,13 +361,13 @@ func (l *Logger) NewNCAlert() *NCAlert {
 }
 
 func (nc *NCAlert) Alert(f string, v ...any) {
-	if nc.alert == nil && nc.l.troll != nil {
-		nc.alert = nc.l.troll.NewUnbinnableAlertStatus()
-	}
 	nc.l.LogStack(1, ERROR, "nc alert "+f, v...)
 	nc.lastAlert = fmt.Sprintf(f, v...)
-	if nc.alert == nil {
+	if nc.l.troll == nil {
 		return
+	}
+	if nc.alert == nil {
+		nc.alert = nc.l.troll.NewUnbinnableAlertStatus()
 	}
 	file, line := getFileLine(1)
 	nc.alert.Alertf(fmt.Sprintf("%s:%d ", file, line)+f, v...)
@@ -378,12 +378,14 @@ func (nc *NCAlert) Clear() {
 		nc.l.LogStack(1, INFO, "cleared nc alert: %s", nc.lastAlert)
 		nc.lastAlert = ""
 	}
+	if nc.l.troll == nil {
+		return
+	}
 	if nc.alert == nil {
 		return
 	}
-	if nc.alert.IsRaised() {
-		nc.alert.Clear()
-	}
+	nc.alert.Clear()
+	nc.alert = nil
 }
 
 type loggerSink struct {

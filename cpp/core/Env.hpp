@@ -103,7 +103,7 @@ public:
     }
 
     template<typename ...Args>
-    XmonAlert raiseAlert(XmonAlert alert, bool binnable, const char* fmt, Args&&... args) {
+    void raiseAlert(XmonAlert& alert, bool binnable, const char* fmt, Args&&... args) {
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
@@ -116,11 +116,11 @@ public:
                 _xmon->updateAlert(alert, binnable, s);
             }
         }
-        return alert;
     }
 
-    void clearAlert(XmonAlert alert) {
+    void clearAlert(XmonAlert& alert) {
         if (_xmon && alert >= 0) { _xmon->clearAlert(alert); }
+        alert = -1;
     }
 
     bool _shouldLog(LogLevel level) {
@@ -166,5 +166,6 @@ public:
 
 #define RAISE_ALERT(env, ...) \
     do { \
-        (env).raiseAlert(-1, true, VALIDATE_FORMAT(__VA_ARGS__)); \
+        XmonAlert alert = -1; \
+        (env).raiseAlert(alert, true, VALIDATE_FORMAT(__VA_ARGS__)); \
     } while (false)

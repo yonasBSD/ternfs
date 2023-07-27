@@ -540,7 +540,7 @@ private:
             int err = errno;
             // Note that we get EPERM on `sendto` when nf drops packets.
             if (err == EAGAIN || err == EPERM) {
-                alert = _env.raiseAlert(alert, false, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
+                _env.raiseAlert(alert, false, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
                 sleepFor(100_ms);
             } else {
                 throw EXPLICIT_SYSCALL_EXCEPTION(err, "sendto");
@@ -587,6 +587,8 @@ public:
     void run() {
         EggsTime successfulIterationAt = 0;
         auto shards = std::make_unique<std::array<ShardInfo, 256>>();
+        XmonAlert alert = -1;
+        _env.raiseAlert(alert, false, "Waiting to get shards");
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (_stopper.shouldStop()) {
@@ -601,7 +603,7 @@ public:
             LOG_INFO(_env, "Last successful shard fetch was at %s, now we're at %s, fetching again", successfulIterationAt, now);
             std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, *shards);
             if (!err.empty()) {
-                LOG_INFO(_env, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
+                _env.raiseAlert(alert, false, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
                 EggsTime successfulIterationAt = 0;
                 continue;
             }
@@ -614,6 +616,7 @@ public:
             }
             if (badShard) {
                 EggsTime successfulIterationAt = 0;
+                _env.raiseAlert(alert, false, "Shard info is still not present in shuckle, will keep trying");
                 continue;
             }
             {
@@ -622,6 +625,7 @@ public:
                     _shared.shards[i] = shards->at(i);
                 }
             }
+            _env.clearAlert(alert);
             LOG_INFO(_env, "successfully fetched all shards from shuckle, will wait one minute");
             successfulIterationAt = eggsNow();
         }
@@ -667,6 +671,8 @@ public:
     void run() {
         uint64_t rand = eggsNow().ns;
         EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
+        XmonAlert alert = -1;
+        _env.raiseAlert(alert, false, "Waiting to register ourselves for the first time");
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
             if (_stopper.shouldStop()) {
@@ -687,14 +693,11 @@ public:
             LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
             std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
             if (!err.empty()) {
-                if (nextRegister == 0) { // only one alert
-                    RAISE_ALERT(_env, "Couldn't register ourselves with shuckle: %s", err);
-                } else {
-                    LOG_DEBUG(_env, "Couldn't register ourselves with shuckle: %s", err);
-                }
+                _env.raiseAlert(alert, false, "Couldn't register ourselves with shuckle: %s", err);
                 nextRegister = 0;
                 continue;
             }
+            _env.clearAlert(alert);
             Duration nextRegisterD(wyhash64(&rand) % (2_mins).ns); // fuzz the successful loop
             nextRegister = eggsNow() + nextRegisterD;
             LOG_INFO(_env, "Successfully registered with shuckle (CDC, %s:%s, %s:%s), will register again in %s", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2, nextRegisterD);
@@ -739,8 +742,10 @@ public:
         bool lastRequestSuccessful = false;
         std::vector<Stat> stats;
         std::string prefix = "cdc";
+        XmonAlert alert = -1;
+        _env.raiseAlert(alert, false, "Waiting to insert stats for the first time");
 
-        const auto insertCDCStats = [this, &stats]() {
+        const auto insertCDCStats = [this, &stats, &alert]() {
             std::string err;
             for (CDCMessageKind kind : allCDCMessageKind) {
                 {
@@ -757,10 +762,13 @@ public:
             err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
             stats.clear();
             if (err.empty()) {
+                _env.clearAlert(alert);
                 for (CDCMessageKind kind : allCDCMessageKind) {
                     _shared.timingsTotal[(int)kind].reset();
                     _shared.timingsProcess[(int)kind].reset();
                 }
+            } else {
+                _env.raiseAlert(alert, false, "Could not insert stats: %s", err);
             }
             return err;
         };

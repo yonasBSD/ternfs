@@ -198,17 +198,38 @@ func ShuckleRequest(
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
 	start := time.Now()
+
+	// we want at least a few attempts because if we fail with ETIMEDOUT we're probably already
+	// past the maximum delay.
+	attempts := 0
+	minAttempts := 3
+	delay := time.Millisecond * 250
+	maxWait := time.Second * 10
+
+	var err error
+	var conn net.Conn
+
+	goto ReconnectBegin
+
 Reconnect:
-	conn, err := net.Dial("tcp", shuckleAddress)
+	log.Info("could not connect to shuckle, might try again in %v: %v", delay, err)
+	attempts++
+	if time.Since(start) > maxWait && attempts > minAttempts {
+		return nil, err
+	}
+	time.Sleep(delay)
+
+ReconnectBegin:
+	conn, err = net.Dial("tcp", shuckleAddress)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
-				if errno, ok := syscallErr.Err.(syscall.Errno); ok && errno == syscall.ECONNREFUSED {
-					if time.Since(start) > 10*time.Second {
-						return nil, err
-					}
-					log.Info("connection to shuckle refused, trying again in 250ms")
-					time.Sleep(250 * time.Millisecond)
+				if errno, ok := syscallErr.Err.(syscall.Errno); ok && (errno == syscall.ECONNREFUSED || errno == syscall.ETIMEDOUT) {
+					goto Reconnect
+				}
+			}
+			if opErr, ok := err.(*net.OpError); ok {
+				if dnsErr, ok := opErr.Err.(*net.DNSError); ok && (dnsErr.IsTemporary || dnsErr.IsTimeout) {
 					goto Reconnect
 				}
 			}

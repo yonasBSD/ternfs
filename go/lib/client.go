@@ -213,16 +213,20 @@ func (c *Client) SetCDCKey(cdcKey cipher.Block) {
 	c.cdcKey = cdcKey
 }
 
+// The absurd upper bound is to not cause spurious alerts on restarts.
+// We might want a better system for this, but for now we rely on the
+// /stats histograms to spot-check bad latency.
+
 var shardTimeout = ReqTimeouts{
 	Initial: 100 * time.Millisecond,
 	Max:     2 * time.Second,
-	Overall: 10 * time.Second,
+	Overall: time.Minute,
 }
 
 var cdcTimeout = ReqTimeouts{
 	Initial: 200 * time.Millisecond,
 	Max:     2 * time.Second,
-	Overall: 10 * time.Second,
+	Overall: time.Minute,
 }
 
 func SetShardTimeouts(t *ReqTimeouts) {

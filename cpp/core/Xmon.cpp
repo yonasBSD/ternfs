@@ -168,7 +168,7 @@ void Xmon::run() {
 
 reconnect:
     errString.clear();
-    sock = connectToHost(_xmonHost, _xmonPort, 3, errString);
+    sock = connectToHost(_xmonHost, _xmonPort, errString);
     CHECK_ERR_STRING(errString);
     LOG_INFO(_env, "connected to xmon %s:%s", _xmonHost, _xmonPort);
 

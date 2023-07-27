@@ -140,6 +140,8 @@ func (c *Client) metadataRequestInternal(
 	requestId := newRequestId()
 	// will keep trying as long as we get timeouts
 	epermAlert := log.NewNCAlert()
+	// We return the error anyway, so once we exit this function this alert must be gone
+	defer epermAlert.Clear()
 	timeouts := shardTimeout
 	if shid < 0 {
 		timeouts = cdcTimeout
@@ -175,12 +177,9 @@ func (c *Client) metadataRequestInternal(
 					attempts++
 					continue
 				}
-			} else {
-				return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
 			}
-		} else {
-			epermAlert.Clear()
 		}
+		epermAlert.Clear()
 		if written < len(reqBytes) {
 			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
 		}

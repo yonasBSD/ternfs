@@ -1017,7 +1017,10 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	}
 	fmt.Fprintf(hpp, "> _data;\n")
 	fmt.Fprintf(hpp, "public:\n")
-	fmt.Fprintf(hpp, "    %s kind() const { return _kind; }\n", kindTypeName)
+	fmt.Fprintf(hpp, "    %s();\n", name)
+	fmt.Fprintf(hpp, "    %s(const %s& other);\n", name, name)
+	fmt.Fprintf(hpp, "    void operator=(const %s& other);\n\n", name)
+	fmt.Fprintf(hpp, "    %s kind() const { return _kind; }\n\n", kindTypeName)
 	for i, typ := range types {
 		fmt.Fprintf(hpp, "    const %s& get%s() const;\n", cppType(typ.typ), typ.name)
 		fmt.Fprintf(hpp, "    %s& set%s();\n", cppType(typ.typ), typ.name)
@@ -1037,9 +1040,31 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(hpp, "    size_t packedSize() const;\n")
 	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
 	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf, %s kind);\n", kindTypeName)
+	fmt.Fprintf(hpp, "    bool operator==(const %s& other) const;\n", name)
 	fmt.Fprintf(hpp, "};\n\n")
 
 	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, const %s& x);\n\n", name)
+
+	fmt.Fprintf(cpp, "%s::%s() {\n", name, name)
+	fmt.Fprintf(cpp, "    clear();\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
+	fmt.Fprintf(cpp, "%s::%s(const %s& other) {\n", name, name, name)
+	fmt.Fprintf(cpp, "    *this = other;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
+	fmt.Fprintf(cpp, "void %s::operator=(const %s& other) {\n", name, name)
+	fmt.Fprintf(cpp, "    if (other.kind() == (%s)0) { clear(); return; }\n", kindTypeName)
+	fmt.Fprintf(cpp, "    switch (other.kind()) {\n")
+	for _, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        set%s() = other.get%s();\n", typ.name, typ.name)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", other.kind());\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "size_t %s::packedSize() const {\n", name)
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
@@ -1051,6 +1076,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
+
 	fmt.Fprintf(cpp, "void %s::pack(BincodeBuf& buf) const {\n", name)
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
@@ -1062,6 +1088,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
+
 	fmt.Fprintf(cpp, "void %s::unpack(BincodeBuf& buf, %s kind) {\n", name, kindTypeName)
 	fmt.Fprintf(cpp, "    _kind = kind;\n")
 	fmt.Fprintf(cpp, "    switch (kind) {\n")
@@ -1074,6 +1101,20 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "        throw BINCODE_EXCEPTION(\"bad %s kind %%s\", kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
+
+	fmt.Fprintf(cpp, "bool %s::operator==(const %s& other) const {\n", name, name)
+	fmt.Fprintf(cpp, "    if (_kind != other.kind()) { return false; }\n")
+	fmt.Fprintf(cpp, "    if (_kind == (%s)0) { return true; }\n", kindTypeName) // empty container
+	fmt.Fprintf(cpp, "    switch (_kind) {\n")
+	for _, typ := range types {
+		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
+		fmt.Fprintf(cpp, "        return get%s() == other.get%s();\n", typ.name, typ.name)
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        throw BINCODE_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
 	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, const %s& x) {\n", name)
 	fmt.Fprintf(cpp, "    switch (x.kind()) {\n")
 	for _, typ := range types {

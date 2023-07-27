@@ -415,9 +415,8 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
             init_waitqueue_head(&enode->file.in_flight_wq);
         }
 
-        // FIXME
-        inode->i_uid = make_kuid(&init_user_ns, 1000);//65534);
-        inode->i_gid = make_kgid(&init_user_ns, 1000);//65534);
+        inode->i_uid = make_kuid(&init_user_ns, 1000);
+        inode->i_gid = make_kgid(&init_user_ns, 1000);
 
         // Only == NULL when we're getting the root inode    
         if (parent) {

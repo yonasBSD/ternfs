@@ -4014,6 +4014,130 @@ MakeFileTransientReq& ShardReqContainer::setMakeFileTransient() {
     x.clear();
     return x;
 }
+ShardReqContainer::ShardReqContainer() {
+    clear();
+}
+
+ShardReqContainer::ShardReqContainer(const ShardReqContainer& other) {
+    *this = other;
+}
+
+void ShardReqContainer::operator=(const ShardReqContainer& other) {
+    if (other.kind() == (ShardMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case ShardMessageKind::LOOKUP:
+        setLookup() = other.getLookup();
+        break;
+    case ShardMessageKind::STAT_FILE:
+        setStatFile() = other.getStatFile();
+        break;
+    case ShardMessageKind::STAT_DIRECTORY:
+        setStatDirectory() = other.getStatDirectory();
+        break;
+    case ShardMessageKind::READ_DIR:
+        setReadDir() = other.getReadDir();
+        break;
+    case ShardMessageKind::CONSTRUCT_FILE:
+        setConstructFile() = other.getConstructFile();
+        break;
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        setAddSpanInitiate() = other.getAddSpanInitiate();
+        break;
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        setAddSpanCertify() = other.getAddSpanCertify();
+        break;
+    case ShardMessageKind::LINK_FILE:
+        setLinkFile() = other.getLinkFile();
+        break;
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        setSoftUnlinkFile() = other.getSoftUnlinkFile();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        setFileSpans() = other.getFileSpans();
+        break;
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        setSameDirectoryRename() = other.getSameDirectoryRename();
+        break;
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        setAddInlineSpan() = other.getAddInlineSpan();
+        break;
+    case ShardMessageKind::SET_TIME:
+        setSetTime() = other.getSetTime();
+        break;
+    case ShardMessageKind::FULL_READ_DIR:
+        setFullReadDir() = other.getFullReadDir();
+        break;
+    case ShardMessageKind::MOVE_SPAN:
+        setMoveSpan() = other.getMoveSpan();
+        break;
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        setRemoveNonOwnedEdge() = other.getRemoveNonOwnedEdge();
+        break;
+    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
+        setSameShardHardFileUnlink() = other.getSameShardHardFileUnlink();
+        break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        setStatTransientFile() = other.getStatTransientFile();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        setSetDirectoryInfo() = other.getSetDirectoryInfo();
+        break;
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+        setExpireTransientFile() = other.getExpireTransientFile();
+        break;
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        setVisitDirectories() = other.getVisitDirectories();
+        break;
+    case ShardMessageKind::VISIT_FILES:
+        setVisitFiles() = other.getVisitFiles();
+        break;
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        setVisitTransientFiles() = other.getVisitTransientFiles();
+        break;
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        setRemoveSpanInitiate() = other.getRemoveSpanInitiate();
+        break;
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        setRemoveSpanCertify() = other.getRemoveSpanCertify();
+        break;
+    case ShardMessageKind::SWAP_BLOCKS:
+        setSwapBlocks() = other.getSwapBlocks();
+        break;
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        setBlockServiceFiles() = other.getBlockServiceFiles();
+        break;
+    case ShardMessageKind::REMOVE_INODE:
+        setRemoveInode() = other.getRemoveInode();
+        break;
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        setCreateDirectoryInode() = other.getCreateDirectoryInode();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        setSetDirectoryOwner() = other.getSetDirectoryOwner();
+        break;
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        setRemoveDirectoryOwner() = other.getRemoveDirectoryOwner();
+        break;
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        setCreateLockedCurrentEdge() = other.getCreateLockedCurrentEdge();
+        break;
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        setLockCurrentEdge() = other.getLockCurrentEdge();
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        setUnlockCurrentEdge() = other.getUnlockCurrentEdge();
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        setRemoveOwnedSnapshotFileEdge() = other.getRemoveOwnedSnapshotFileEdge();
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        setMakeFileTransient() = other.getMakeFileTransient();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
+    }
+}
+
 size_t ShardReqContainer::packedSize() const {
     switch (_kind) {
     case ShardMessageKind::LOOKUP:
@@ -4321,6 +4445,87 @@ void ShardReqContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", kind);
+    }
+}
+
+bool ShardReqContainer::operator==(const ShardReqContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (ShardMessageKind)0) { return true; }
+    switch (_kind) {
+    case ShardMessageKind::LOOKUP:
+        return getLookup() == other.getLookup();
+    case ShardMessageKind::STAT_FILE:
+        return getStatFile() == other.getStatFile();
+    case ShardMessageKind::STAT_DIRECTORY:
+        return getStatDirectory() == other.getStatDirectory();
+    case ShardMessageKind::READ_DIR:
+        return getReadDir() == other.getReadDir();
+    case ShardMessageKind::CONSTRUCT_FILE:
+        return getConstructFile() == other.getConstructFile();
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        return getAddSpanInitiate() == other.getAddSpanInitiate();
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        return getAddSpanCertify() == other.getAddSpanCertify();
+    case ShardMessageKind::LINK_FILE:
+        return getLinkFile() == other.getLinkFile();
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        return getSoftUnlinkFile() == other.getSoftUnlinkFile();
+    case ShardMessageKind::FILE_SPANS:
+        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        return getSameDirectoryRename() == other.getSameDirectoryRename();
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        return getAddInlineSpan() == other.getAddInlineSpan();
+    case ShardMessageKind::SET_TIME:
+        return getSetTime() == other.getSetTime();
+    case ShardMessageKind::FULL_READ_DIR:
+        return getFullReadDir() == other.getFullReadDir();
+    case ShardMessageKind::MOVE_SPAN:
+        return getMoveSpan() == other.getMoveSpan();
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        return getRemoveNonOwnedEdge() == other.getRemoveNonOwnedEdge();
+    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
+        return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return getStatTransientFile() == other.getStatTransientFile();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return getSetDirectoryInfo() == other.getSetDirectoryInfo();
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+        return getExpireTransientFile() == other.getExpireTransientFile();
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        return getVisitDirectories() == other.getVisitDirectories();
+    case ShardMessageKind::VISIT_FILES:
+        return getVisitFiles() == other.getVisitFiles();
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        return getVisitTransientFiles() == other.getVisitTransientFiles();
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        return getRemoveSpanInitiate() == other.getRemoveSpanInitiate();
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        return getRemoveSpanCertify() == other.getRemoveSpanCertify();
+    case ShardMessageKind::SWAP_BLOCKS:
+        return getSwapBlocks() == other.getSwapBlocks();
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        return getBlockServiceFiles() == other.getBlockServiceFiles();
+    case ShardMessageKind::REMOVE_INODE:
+        return getRemoveInode() == other.getRemoveInode();
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        return getCreateDirectoryInode() == other.getCreateDirectoryInode();
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        return getSetDirectoryOwner() == other.getSetDirectoryOwner();
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        return getRemoveDirectoryOwner() == other.getRemoveDirectoryOwner();
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        return getCreateLockedCurrentEdge() == other.getCreateLockedCurrentEdge();
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        return getLockCurrentEdge() == other.getLockCurrentEdge();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return getUnlockCurrentEdge() == other.getUnlockCurrentEdge();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return getRemoveOwnedSnapshotFileEdge() == other.getRemoveOwnedSnapshotFileEdge();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return getMakeFileTransient() == other.getMakeFileTransient();
+    default:
+        throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
 }
 
@@ -4800,6 +5005,130 @@ MakeFileTransientResp& ShardRespContainer::setMakeFileTransient() {
     x.clear();
     return x;
 }
+ShardRespContainer::ShardRespContainer() {
+    clear();
+}
+
+ShardRespContainer::ShardRespContainer(const ShardRespContainer& other) {
+    *this = other;
+}
+
+void ShardRespContainer::operator=(const ShardRespContainer& other) {
+    if (other.kind() == (ShardMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case ShardMessageKind::LOOKUP:
+        setLookup() = other.getLookup();
+        break;
+    case ShardMessageKind::STAT_FILE:
+        setStatFile() = other.getStatFile();
+        break;
+    case ShardMessageKind::STAT_DIRECTORY:
+        setStatDirectory() = other.getStatDirectory();
+        break;
+    case ShardMessageKind::READ_DIR:
+        setReadDir() = other.getReadDir();
+        break;
+    case ShardMessageKind::CONSTRUCT_FILE:
+        setConstructFile() = other.getConstructFile();
+        break;
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        setAddSpanInitiate() = other.getAddSpanInitiate();
+        break;
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        setAddSpanCertify() = other.getAddSpanCertify();
+        break;
+    case ShardMessageKind::LINK_FILE:
+        setLinkFile() = other.getLinkFile();
+        break;
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        setSoftUnlinkFile() = other.getSoftUnlinkFile();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        setFileSpans() = other.getFileSpans();
+        break;
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        setSameDirectoryRename() = other.getSameDirectoryRename();
+        break;
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        setAddInlineSpan() = other.getAddInlineSpan();
+        break;
+    case ShardMessageKind::SET_TIME:
+        setSetTime() = other.getSetTime();
+        break;
+    case ShardMessageKind::FULL_READ_DIR:
+        setFullReadDir() = other.getFullReadDir();
+        break;
+    case ShardMessageKind::MOVE_SPAN:
+        setMoveSpan() = other.getMoveSpan();
+        break;
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        setRemoveNonOwnedEdge() = other.getRemoveNonOwnedEdge();
+        break;
+    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
+        setSameShardHardFileUnlink() = other.getSameShardHardFileUnlink();
+        break;
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        setStatTransientFile() = other.getStatTransientFile();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        setSetDirectoryInfo() = other.getSetDirectoryInfo();
+        break;
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+        setExpireTransientFile() = other.getExpireTransientFile();
+        break;
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        setVisitDirectories() = other.getVisitDirectories();
+        break;
+    case ShardMessageKind::VISIT_FILES:
+        setVisitFiles() = other.getVisitFiles();
+        break;
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        setVisitTransientFiles() = other.getVisitTransientFiles();
+        break;
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        setRemoveSpanInitiate() = other.getRemoveSpanInitiate();
+        break;
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        setRemoveSpanCertify() = other.getRemoveSpanCertify();
+        break;
+    case ShardMessageKind::SWAP_BLOCKS:
+        setSwapBlocks() = other.getSwapBlocks();
+        break;
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        setBlockServiceFiles() = other.getBlockServiceFiles();
+        break;
+    case ShardMessageKind::REMOVE_INODE:
+        setRemoveInode() = other.getRemoveInode();
+        break;
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        setCreateDirectoryInode() = other.getCreateDirectoryInode();
+        break;
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        setSetDirectoryOwner() = other.getSetDirectoryOwner();
+        break;
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        setRemoveDirectoryOwner() = other.getRemoveDirectoryOwner();
+        break;
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        setCreateLockedCurrentEdge() = other.getCreateLockedCurrentEdge();
+        break;
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        setLockCurrentEdge() = other.getLockCurrentEdge();
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        setUnlockCurrentEdge() = other.getUnlockCurrentEdge();
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        setRemoveOwnedSnapshotFileEdge() = other.getRemoveOwnedSnapshotFileEdge();
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        setMakeFileTransient() = other.getMakeFileTransient();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
+    }
+}
+
 size_t ShardRespContainer::packedSize() const {
     switch (_kind) {
     case ShardMessageKind::LOOKUP:
@@ -5110,6 +5439,87 @@ void ShardRespContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
     }
 }
 
+bool ShardRespContainer::operator==(const ShardRespContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (ShardMessageKind)0) { return true; }
+    switch (_kind) {
+    case ShardMessageKind::LOOKUP:
+        return getLookup() == other.getLookup();
+    case ShardMessageKind::STAT_FILE:
+        return getStatFile() == other.getStatFile();
+    case ShardMessageKind::STAT_DIRECTORY:
+        return getStatDirectory() == other.getStatDirectory();
+    case ShardMessageKind::READ_DIR:
+        return getReadDir() == other.getReadDir();
+    case ShardMessageKind::CONSTRUCT_FILE:
+        return getConstructFile() == other.getConstructFile();
+    case ShardMessageKind::ADD_SPAN_INITIATE:
+        return getAddSpanInitiate() == other.getAddSpanInitiate();
+    case ShardMessageKind::ADD_SPAN_CERTIFY:
+        return getAddSpanCertify() == other.getAddSpanCertify();
+    case ShardMessageKind::LINK_FILE:
+        return getLinkFile() == other.getLinkFile();
+    case ShardMessageKind::SOFT_UNLINK_FILE:
+        return getSoftUnlinkFile() == other.getSoftUnlinkFile();
+    case ShardMessageKind::FILE_SPANS:
+        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::SAME_DIRECTORY_RENAME:
+        return getSameDirectoryRename() == other.getSameDirectoryRename();
+    case ShardMessageKind::ADD_INLINE_SPAN:
+        return getAddInlineSpan() == other.getAddInlineSpan();
+    case ShardMessageKind::SET_TIME:
+        return getSetTime() == other.getSetTime();
+    case ShardMessageKind::FULL_READ_DIR:
+        return getFullReadDir() == other.getFullReadDir();
+    case ShardMessageKind::MOVE_SPAN:
+        return getMoveSpan() == other.getMoveSpan();
+    case ShardMessageKind::REMOVE_NON_OWNED_EDGE:
+        return getRemoveNonOwnedEdge() == other.getRemoveNonOwnedEdge();
+    case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
+        return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
+    case ShardMessageKind::STAT_TRANSIENT_FILE:
+        return getStatTransientFile() == other.getStatTransientFile();
+    case ShardMessageKind::SET_DIRECTORY_INFO:
+        return getSetDirectoryInfo() == other.getSetDirectoryInfo();
+    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
+        return getExpireTransientFile() == other.getExpireTransientFile();
+    case ShardMessageKind::VISIT_DIRECTORIES:
+        return getVisitDirectories() == other.getVisitDirectories();
+    case ShardMessageKind::VISIT_FILES:
+        return getVisitFiles() == other.getVisitFiles();
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+        return getVisitTransientFiles() == other.getVisitTransientFiles();
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+        return getRemoveSpanInitiate() == other.getRemoveSpanInitiate();
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+        return getRemoveSpanCertify() == other.getRemoveSpanCertify();
+    case ShardMessageKind::SWAP_BLOCKS:
+        return getSwapBlocks() == other.getSwapBlocks();
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
+        return getBlockServiceFiles() == other.getBlockServiceFiles();
+    case ShardMessageKind::REMOVE_INODE:
+        return getRemoveInode() == other.getRemoveInode();
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+        return getCreateDirectoryInode() == other.getCreateDirectoryInode();
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
+        return getSetDirectoryOwner() == other.getSetDirectoryOwner();
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+        return getRemoveDirectoryOwner() == other.getRemoveDirectoryOwner();
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+        return getCreateLockedCurrentEdge() == other.getCreateLockedCurrentEdge();
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
+        return getLockCurrentEdge() == other.getLockCurrentEdge();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return getUnlockCurrentEdge() == other.getUnlockCurrentEdge();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return getRemoveOwnedSnapshotFileEdge() == other.getRemoveOwnedSnapshotFileEdge();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return getMakeFileTransient() == other.getMakeFileTransient();
+    default:
+        throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+    }
+}
+
 std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     switch (x.kind()) {
     case ShardMessageKind::LOOKUP:
@@ -5286,6 +5696,40 @@ CrossShardHardUnlinkFileReq& CDCReqContainer::setCrossShardHardUnlinkFile() {
     x.clear();
     return x;
 }
+CDCReqContainer::CDCReqContainer() {
+    clear();
+}
+
+CDCReqContainer::CDCReqContainer(const CDCReqContainer& other) {
+    *this = other;
+}
+
+void CDCReqContainer::operator=(const CDCReqContainer& other) {
+    if (other.kind() == (CDCMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        setMakeDirectory() = other.getMakeDirectory();
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        setRenameFile() = other.getRenameFile();
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        setSoftUnlinkDirectory() = other.getSoftUnlinkDirectory();
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        setRenameDirectory() = other.getRenameDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
+        break;
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
+    }
+}
+
 size_t CDCReqContainer::packedSize() const {
     switch (_kind) {
     case CDCMessageKind::MAKE_DIRECTORY:
@@ -5353,6 +5797,27 @@ void CDCReqContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
+    }
+}
+
+bool CDCReqContainer::operator==(const CDCReqContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (CDCMessageKind)0) { return true; }
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        return getMakeDirectory() == other.getMakeDirectory();
+    case CDCMessageKind::RENAME_FILE:
+        return getRenameFile() == other.getRenameFile();
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        return getSoftUnlinkDirectory() == other.getSoftUnlinkDirectory();
+    case CDCMessageKind::RENAME_DIRECTORY:
+        return getRenameDirectory() == other.getRenameDirectory();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    default:
+        throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -5442,6 +5907,40 @@ CrossShardHardUnlinkFileResp& CDCRespContainer::setCrossShardHardUnlinkFile() {
     x.clear();
     return x;
 }
+CDCRespContainer::CDCRespContainer() {
+    clear();
+}
+
+CDCRespContainer::CDCRespContainer(const CDCRespContainer& other) {
+    *this = other;
+}
+
+void CDCRespContainer::operator=(const CDCRespContainer& other) {
+    if (other.kind() == (CDCMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        setMakeDirectory() = other.getMakeDirectory();
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        setRenameFile() = other.getRenameFile();
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        setSoftUnlinkDirectory() = other.getSoftUnlinkDirectory();
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        setRenameDirectory() = other.getRenameDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
+        break;
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
+    }
+}
+
 size_t CDCRespContainer::packedSize() const {
     switch (_kind) {
     case CDCMessageKind::MAKE_DIRECTORY:
@@ -5509,6 +6008,27 @@ void CDCRespContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
+    }
+}
+
+bool CDCRespContainer::operator==(const CDCRespContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (CDCMessageKind)0) { return true; }
+    switch (_kind) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        return getMakeDirectory() == other.getMakeDirectory();
+    case CDCMessageKind::RENAME_FILE:
+        return getRenameFile() == other.getRenameFile();
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        return getSoftUnlinkDirectory() == other.getSoftUnlinkDirectory();
+    case CDCMessageKind::RENAME_DIRECTORY:
+        return getRenameDirectory() == other.getRenameDirectory();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    default:
+        throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -5658,6 +6178,58 @@ GetStatsReq& ShuckleReqContainer::setGetStats() {
     x.clear();
     return x;
 }
+ShuckleReqContainer::ShuckleReqContainer() {
+    clear();
+}
+
+ShuckleReqContainer::ShuckleReqContainer(const ShuckleReqContainer& other) {
+    *this = other;
+}
+
+void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
+    if (other.kind() == (ShuckleMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case ShuckleMessageKind::SHARDS:
+        setShards() = other.getShards();
+        break;
+    case ShuckleMessageKind::CDC:
+        setCdc() = other.getCdc();
+        break;
+    case ShuckleMessageKind::INFO:
+        setInfo() = other.getInfo();
+        break;
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        setRegisterBlockServices() = other.getRegisterBlockServices();
+        break;
+    case ShuckleMessageKind::REGISTER_SHARD:
+        setRegisterShard() = other.getRegisterShard();
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        setAllBlockServices() = other.getAllBlockServices();
+        break;
+    case ShuckleMessageKind::REGISTER_CDC:
+        setRegisterCdc() = other.getRegisterCdc();
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        setSetBlockServiceFlags() = other.getSetBlockServiceFlags();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        setBlockService() = other.getBlockService();
+        break;
+    case ShuckleMessageKind::INSERT_STATS:
+        setInsertStats() = other.getInsertStats();
+        break;
+    case ShuckleMessageKind::SHARD:
+        setShard() = other.getShard();
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        setGetStats() = other.getGetStats();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+    }
+}
+
 size_t ShuckleReqContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -5773,6 +6345,39 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
+    }
+}
+
+bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (ShuckleMessageKind)0) { return true; }
+    switch (_kind) {
+    case ShuckleMessageKind::SHARDS:
+        return getShards() == other.getShards();
+    case ShuckleMessageKind::CDC:
+        return getCdc() == other.getCdc();
+    case ShuckleMessageKind::INFO:
+        return getInfo() == other.getInfo();
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        return getRegisterBlockServices() == other.getRegisterBlockServices();
+    case ShuckleMessageKind::REGISTER_SHARD:
+        return getRegisterShard() == other.getRegisterShard();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::REGISTER_CDC:
+        return getRegisterCdc() == other.getRegisterCdc();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        return getSetBlockServiceFlags() == other.getSetBlockServiceFlags();
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        return getBlockService() == other.getBlockService();
+    case ShuckleMessageKind::INSERT_STATS:
+        return getInsertStats() == other.getInsertStats();
+    case ShuckleMessageKind::SHARD:
+        return getShard() == other.getShard();
+    case ShuckleMessageKind::GET_STATS:
+        return getGetStats() == other.getGetStats();
+    default:
+        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -5940,6 +6545,58 @@ GetStatsResp& ShuckleRespContainer::setGetStats() {
     x.clear();
     return x;
 }
+ShuckleRespContainer::ShuckleRespContainer() {
+    clear();
+}
+
+ShuckleRespContainer::ShuckleRespContainer(const ShuckleRespContainer& other) {
+    *this = other;
+}
+
+void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
+    if (other.kind() == (ShuckleMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case ShuckleMessageKind::SHARDS:
+        setShards() = other.getShards();
+        break;
+    case ShuckleMessageKind::CDC:
+        setCdc() = other.getCdc();
+        break;
+    case ShuckleMessageKind::INFO:
+        setInfo() = other.getInfo();
+        break;
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        setRegisterBlockServices() = other.getRegisterBlockServices();
+        break;
+    case ShuckleMessageKind::REGISTER_SHARD:
+        setRegisterShard() = other.getRegisterShard();
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        setAllBlockServices() = other.getAllBlockServices();
+        break;
+    case ShuckleMessageKind::REGISTER_CDC:
+        setRegisterCdc() = other.getRegisterCdc();
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        setSetBlockServiceFlags() = other.getSetBlockServiceFlags();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        setBlockService() = other.getBlockService();
+        break;
+    case ShuckleMessageKind::INSERT_STATS:
+        setInsertStats() = other.getInsertStats();
+        break;
+    case ShuckleMessageKind::SHARD:
+        setShard() = other.getShard();
+        break;
+    case ShuckleMessageKind::GET_STATS:
+        setGetStats() = other.getGetStats();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+    }
+}
+
 size_t ShuckleRespContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::SHARDS:
@@ -6055,6 +6712,39 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
+    }
+}
+
+bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (ShuckleMessageKind)0) { return true; }
+    switch (_kind) {
+    case ShuckleMessageKind::SHARDS:
+        return getShards() == other.getShards();
+    case ShuckleMessageKind::CDC:
+        return getCdc() == other.getCdc();
+    case ShuckleMessageKind::INFO:
+        return getInfo() == other.getInfo();
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+        return getRegisterBlockServices() == other.getRegisterBlockServices();
+    case ShuckleMessageKind::REGISTER_SHARD:
+        return getRegisterShard() == other.getRegisterShard();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::REGISTER_CDC:
+        return getRegisterCdc() == other.getRegisterCdc();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        return getSetBlockServiceFlags() == other.getSetBlockServiceFlags();
+    case ShuckleMessageKind::BLOCK_SERVICE:
+        return getBlockService() == other.getBlockService();
+    case ShuckleMessageKind::INSERT_STATS:
+        return getInsertStats() == other.getInsertStats();
+    case ShuckleMessageKind::SHARD:
+        return getShard() == other.getShard();
+    case ShuckleMessageKind::GET_STATS:
+        return getGetStats() == other.getGetStats();
+    default:
+        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -7185,6 +7875,100 @@ SetTimeEntry& ShardLogEntryContainer::setSetTime() {
     x.clear();
     return x;
 }
+ShardLogEntryContainer::ShardLogEntryContainer() {
+    clear();
+}
+
+ShardLogEntryContainer::ShardLogEntryContainer(const ShardLogEntryContainer& other) {
+    *this = other;
+}
+
+void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
+    if (other.kind() == (ShardLogEntryKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case ShardLogEntryKind::CONSTRUCT_FILE:
+        setConstructFile() = other.getConstructFile();
+        break;
+    case ShardLogEntryKind::LINK_FILE:
+        setLinkFile() = other.getLinkFile();
+        break;
+    case ShardLogEntryKind::SAME_DIRECTORY_RENAME:
+        setSameDirectoryRename() = other.getSameDirectoryRename();
+        break;
+    case ShardLogEntryKind::SOFT_UNLINK_FILE:
+        setSoftUnlinkFile() = other.getSoftUnlinkFile();
+        break;
+    case ShardLogEntryKind::CREATE_DIRECTORY_INODE:
+        setCreateDirectoryInode() = other.getCreateDirectoryInode();
+        break;
+    case ShardLogEntryKind::CREATE_LOCKED_CURRENT_EDGE:
+        setCreateLockedCurrentEdge() = other.getCreateLockedCurrentEdge();
+        break;
+    case ShardLogEntryKind::UNLOCK_CURRENT_EDGE:
+        setUnlockCurrentEdge() = other.getUnlockCurrentEdge();
+        break;
+    case ShardLogEntryKind::LOCK_CURRENT_EDGE:
+        setLockCurrentEdge() = other.getLockCurrentEdge();
+        break;
+    case ShardLogEntryKind::REMOVE_DIRECTORY_OWNER:
+        setRemoveDirectoryOwner() = other.getRemoveDirectoryOwner();
+        break;
+    case ShardLogEntryKind::REMOVE_INODE:
+        setRemoveInode() = other.getRemoveInode();
+        break;
+    case ShardLogEntryKind::SET_DIRECTORY_OWNER:
+        setSetDirectoryOwner() = other.getSetDirectoryOwner();
+        break;
+    case ShardLogEntryKind::SET_DIRECTORY_INFO:
+        setSetDirectoryInfo() = other.getSetDirectoryInfo();
+        break;
+    case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
+        setRemoveNonOwnedEdge() = other.getRemoveNonOwnedEdge();
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        setSameShardHardFileUnlink() = other.getSameShardHardFileUnlink();
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
+        setRemoveSpanInitiate() = other.getRemoveSpanInitiate();
+        break;
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        setUpdateBlockServices() = other.getUpdateBlockServices();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        setAddSpanInitiate() = other.getAddSpanInitiate();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        setAddSpanCertify() = other.getAddSpanCertify();
+        break;
+    case ShardLogEntryKind::ADD_INLINE_SPAN:
+        setAddInlineSpan() = other.getAddInlineSpan();
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        setMakeFileTransient() = other.getMakeFileTransient();
+        break;
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        setRemoveSpanCertify() = other.getRemoveSpanCertify();
+        break;
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        setRemoveOwnedSnapshotFileEdge() = other.getRemoveOwnedSnapshotFileEdge();
+        break;
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        setSwapBlocks() = other.getSwapBlocks();
+        break;
+    case ShardLogEntryKind::EXPIRE_TRANSIENT_FILE:
+        setExpireTransientFile() = other.getExpireTransientFile();
+        break;
+    case ShardLogEntryKind::MOVE_SPAN:
+        setMoveSpan() = other.getMoveSpan();
+        break;
+    case ShardLogEntryKind::SET_TIME:
+        setSetTime() = other.getSetTime();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
+    }
+}
+
 size_t ShardLogEntryContainer::packedSize() const {
     switch (_kind) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -7412,6 +8196,67 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf, ShardLogEntryKind kind) {
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", kind);
+    }
+}
+
+bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (ShardLogEntryKind)0) { return true; }
+    switch (_kind) {
+    case ShardLogEntryKind::CONSTRUCT_FILE:
+        return getConstructFile() == other.getConstructFile();
+    case ShardLogEntryKind::LINK_FILE:
+        return getLinkFile() == other.getLinkFile();
+    case ShardLogEntryKind::SAME_DIRECTORY_RENAME:
+        return getSameDirectoryRename() == other.getSameDirectoryRename();
+    case ShardLogEntryKind::SOFT_UNLINK_FILE:
+        return getSoftUnlinkFile() == other.getSoftUnlinkFile();
+    case ShardLogEntryKind::CREATE_DIRECTORY_INODE:
+        return getCreateDirectoryInode() == other.getCreateDirectoryInode();
+    case ShardLogEntryKind::CREATE_LOCKED_CURRENT_EDGE:
+        return getCreateLockedCurrentEdge() == other.getCreateLockedCurrentEdge();
+    case ShardLogEntryKind::UNLOCK_CURRENT_EDGE:
+        return getUnlockCurrentEdge() == other.getUnlockCurrentEdge();
+    case ShardLogEntryKind::LOCK_CURRENT_EDGE:
+        return getLockCurrentEdge() == other.getLockCurrentEdge();
+    case ShardLogEntryKind::REMOVE_DIRECTORY_OWNER:
+        return getRemoveDirectoryOwner() == other.getRemoveDirectoryOwner();
+    case ShardLogEntryKind::REMOVE_INODE:
+        return getRemoveInode() == other.getRemoveInode();
+    case ShardLogEntryKind::SET_DIRECTORY_OWNER:
+        return getSetDirectoryOwner() == other.getSetDirectoryOwner();
+    case ShardLogEntryKind::SET_DIRECTORY_INFO:
+        return getSetDirectoryInfo() == other.getSetDirectoryInfo();
+    case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
+        return getRemoveNonOwnedEdge() == other.getRemoveNonOwnedEdge();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
+    case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
+        return getRemoveSpanInitiate() == other.getRemoveSpanInitiate();
+    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+        return getUpdateBlockServices() == other.getUpdateBlockServices();
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+        return getAddSpanInitiate() == other.getAddSpanInitiate();
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+        return getAddSpanCertify() == other.getAddSpanCertify();
+    case ShardLogEntryKind::ADD_INLINE_SPAN:
+        return getAddInlineSpan() == other.getAddInlineSpan();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        return getMakeFileTransient() == other.getMakeFileTransient();
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+        return getRemoveSpanCertify() == other.getRemoveSpanCertify();
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return getRemoveOwnedSnapshotFileEdge() == other.getRemoveOwnedSnapshotFileEdge();
+    case ShardLogEntryKind::SWAP_BLOCKS:
+        return getSwapBlocks() == other.getSwapBlocks();
+    case ShardLogEntryKind::EXPIRE_TRANSIENT_FILE:
+        return getExpireTransientFile() == other.getExpireTransientFile();
+    case ShardLogEntryKind::MOVE_SPAN:
+        return getMoveSpan() == other.getMoveSpan();
+    case ShardLogEntryKind::SET_TIME:
+        return getSetTime() == other.getSetTime();
+    default:
+        throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
 }
 

@@ -7,10 +7,12 @@
 
 struct CDCShardReq {
     ShardId shid;
+    bool repeated; // This request is exactly the same as the previous one.
     ShardReqContainer req;
 
     void clear() {
         shid = ShardId(0);
+        repeated = false;
         req.clear();
     }
 };

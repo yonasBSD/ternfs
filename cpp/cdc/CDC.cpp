@@ -437,12 +437,17 @@ private:
             }
         }
         if (step.txnNeedsShard != 0) {
+            CDCShardReq prevReq;
             LOG_TRACE(_env, "txn %s needs shard %s, req %s", step.txnNeedsShard, step.shardReq.shid, step.shardReq.req);
             BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
             // Header
             ShardRequestHeader shardReqHeader;
+            // Do not allocate new req id for repeated requests, so that we'll just accept
+            // the first one that comes back.
+            if (!step.shardReq.repeated) {
+                _shardRequestIdCounter++;
+            }
             shardReqHeader.requestId = _shardRequestIdCounter;
-            _shardRequestIdCounter++;
             shardReqHeader.kind = step.shardReq.req.kind();
             shardReqHeader.pack(bbuf);
             // Body

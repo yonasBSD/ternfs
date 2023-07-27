@@ -3388,7 +3388,12 @@ private:
     ShardMessageKind _kind = (ShardMessageKind)0;
     std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
+    ShardReqContainer();
+    ShardReqContainer(const ShardReqContainer& other);
+    void operator=(const ShardReqContainer& other);
+
     ShardMessageKind kind() const { return _kind; }
+
     const LookupReq& getLookup() const;
     LookupReq& setLookup();
     const StatFileReq& getStatFile() const;
@@ -3467,6 +3472,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
+    bool operator==(const ShardReqContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
@@ -3476,7 +3482,12 @@ private:
     ShardMessageKind _kind = (ShardMessageKind)0;
     std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
+    ShardRespContainer();
+    ShardRespContainer(const ShardRespContainer& other);
+    void operator=(const ShardRespContainer& other);
+
     ShardMessageKind kind() const { return _kind; }
+
     const LookupResp& getLookup() const;
     LookupResp& setLookup();
     const StatFileResp& getStatFile() const;
@@ -3555,6 +3566,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
+    bool operator==(const ShardRespContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x);
@@ -3564,7 +3576,12 @@ private:
     CDCMessageKind _kind = (CDCMessageKind)0;
     std::tuple<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, CrossShardHardUnlinkFileReq> _data;
 public:
+    CDCReqContainer();
+    CDCReqContainer(const CDCReqContainer& other);
+    void operator=(const CDCReqContainer& other);
+
     CDCMessageKind kind() const { return _kind; }
+
     const MakeDirectoryReq& getMakeDirectory() const;
     MakeDirectoryReq& setMakeDirectory();
     const RenameFileReq& getRenameFile() const;
@@ -3583,6 +3600,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
+    bool operator==(const CDCReqContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
@@ -3592,7 +3610,12 @@ private:
     CDCMessageKind _kind = (CDCMessageKind)0;
     std::tuple<MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp> _data;
 public:
+    CDCRespContainer();
+    CDCRespContainer(const CDCRespContainer& other);
+    void operator=(const CDCRespContainer& other);
+
     CDCMessageKind kind() const { return _kind; }
+
     const MakeDirectoryResp& getMakeDirectory() const;
     MakeDirectoryResp& setMakeDirectory();
     const RenameFileResp& getRenameFile() const;
@@ -3611,6 +3634,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
+    bool operator==(const CDCRespContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
@@ -3620,7 +3644,12 @@ private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
     std::tuple<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq> _data;
 public:
+    ShuckleReqContainer();
+    ShuckleReqContainer(const ShuckleReqContainer& other);
+    void operator=(const ShuckleReqContainer& other);
+
     ShuckleMessageKind kind() const { return _kind; }
+
     const ShardsReq& getShards() const;
     ShardsReq& setShards();
     const CdcReq& getCdc() const;
@@ -3651,6 +3680,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShuckleMessageKind kind);
+    bool operator==(const ShuckleReqContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
@@ -3660,7 +3690,12 @@ private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
     std::tuple<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp> _data;
 public:
+    ShuckleRespContainer();
+    ShuckleRespContainer(const ShuckleRespContainer& other);
+    void operator=(const ShuckleRespContainer& other);
+
     ShuckleMessageKind kind() const { return _kind; }
+
     const ShardsResp& getShards() const;
     ShardsResp& setShards();
     const CdcResp& getCdc() const;
@@ -3691,6 +3726,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShuckleMessageKind kind);
+    bool operator==(const ShuckleRespContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x);
@@ -4359,7 +4395,12 @@ private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
     std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, ExpireTransientFileEntry, MoveSpanEntry, SetTimeEntry> _data;
 public:
+    ShardLogEntryContainer();
+    ShardLogEntryContainer(const ShardLogEntryContainer& other);
+    void operator=(const ShardLogEntryContainer& other);
+
     ShardLogEntryKind kind() const { return _kind; }
+
     const ConstructFileEntry& getConstructFile() const;
     ConstructFileEntry& setConstructFile();
     const LinkFileEntry& getLinkFile() const;
@@ -4418,6 +4459,7 @@ public:
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardLogEntryKind kind);
+    bool operator==(const ShardLogEntryContainer& other) const;
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x);

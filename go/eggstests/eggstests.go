@@ -850,7 +850,7 @@ func main() {
 	}
 
 	waitShuckleFor := 10 * time.Second
-	if *buildType == "valgrind" || *profile {
+	if *buildType == "valgrind" || *profile || *kmod { // kmod often runs in qemu, which is slower
 		waitShuckleFor = 60 * time.Second
 	}
 

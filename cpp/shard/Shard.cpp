@@ -307,7 +307,12 @@ public:
             }
 
             if (sendto(sock, respBbuf.data, respBbuf.len(), 0, (struct sockaddr*)&clientAddr, sizeof(clientAddr)) != respBbuf.len()) {
-                throw SYSCALL_EXCEPTION("sendto");
+                // we get this when nf drops packets
+                if (errno != EPERM) {
+                    throw SYSCALL_EXCEPTION("sendto");
+                } else {
+                    LOG_INFO(_env, "dropping response %s to %s because of EPERM", respContainer->kind(), clientAddr);
+                }
             }
             LOG_DEBUG(_env, "sent response %s to %s", respContainer->kind(), clientAddr);
         }

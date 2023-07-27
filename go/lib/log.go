@@ -361,7 +361,7 @@ func (l *Logger) NewNCAlert() *NCAlert {
 }
 
 func (nc *NCAlert) Alert(f string, v ...any) {
-	if nc.alert == nil {
+	if nc.alert == nil && nc.l.troll != nil {
 		nc.alert = nc.l.troll.NewUnbinnableAlertStatus()
 	}
 	nc.l.LogStack(1, ERROR, "nc alert "+f, v...)

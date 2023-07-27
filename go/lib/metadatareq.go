@@ -170,7 +170,7 @@ func (c *Client) metadataRequestInternal(
 				if dontWait {
 					log.Info("dontWait is on, we couldn't send the request due to EPERM %v, goodbye", err)
 				} else {
-					epermAlert.Alert("got possibly transient EPERM when sending to shard %v, might retry: %v", shid, err)
+					epermAlert.Alert("got possibly transient EPERM when sending to shard %v, might retry after waiting for %v: %v", shid, timeout, err)
 					time.Sleep(timeout)
 					attempts++
 					continue
@@ -178,6 +178,8 @@ func (c *Client) metadataRequestInternal(
 			} else {
 				return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
 			}
+		} else {
+			epermAlert.Clear()
 		}
 		if written < len(reqBytes) {
 			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))

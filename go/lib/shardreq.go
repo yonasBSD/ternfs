@@ -7,7 +7,9 @@ import (
 	"io"
 	"math"
 	"net"
+	"os"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"xtx/ecninfra/log"
 	"xtx/eggsfs/bincode"
@@ -193,6 +195,18 @@ func (c *Client) checkRepeatedShardRequestError(
 	return &respErr
 }
 
+// We get EPERMs when nf drops packets, we want to retry in those cases.
+func isSendToEPERM(err error) bool {
+	if opErr, ok := err.(*net.OpError); ok {
+		if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if errno, ok := syscallErr.Err.(syscall.Errno); ok && errno == syscall.EPERM {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *Client) shardRequestInternal(
 	logger *Logger,
 	shid msgs.ShardId,
@@ -236,6 +250,7 @@ func (c *Client) shardRequestInternal(
 	startedAt := time.Now()
 	requestId := newRequestId()
 	// will keep trying as long as we get timeouts
+	epermAlert := logger.NewNCAlert()
 	for {
 		elapsed := time.Since(startedAt)
 		if elapsed > shardTimeout.Overall {
@@ -253,9 +268,21 @@ func (c *Client) shardRequestInternal(
 		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp]
 		logger.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, sock.LocalAddr(), attempts)
 		logger.Trace("reqBody %+v", reqBody)
+		timeout := time.Duration(math.Min(float64(shardTimeout.Initial)*math.Pow(1.5, float64(attempts)), float64(shardTimeout.Max)))
 		written, err := sock.WriteTo(reqBytes, addr)
 		if err != nil {
-			return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
+			if isSendToEPERM(err) {
+				if dontWait {
+					log.Info("dontWait is on, we couldn't send the request due to EPERM %v, goodbye", err)
+				} else {
+					epermAlert.Alert("got possibly transient EPERM when sending to shard %v, might retry: %v", shid, err)
+					time.Sleep(timeout)
+					attempts++
+					continue
+				}
+			} else {
+				return fmt.Errorf("couldn't send request to shard %v: %w", shid, err)
+			}
 		}
 		if written < len(reqBytes) {
 			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
@@ -266,7 +293,6 @@ func (c *Client) shardRequestInternal(
 		}
 		// Keep going until we found the right request id -- we can't assume that what we get isn't
 		// some other request we thought was timed out.
-		timeout := time.Duration(math.Min(float64(shardTimeout.Initial)*math.Pow(1.5, float64(attempts)), float64(shardTimeout.Max)))
 		readLoopStart := time.Now()
 		readLoopDeadline := readLoopStart.Add(timeout)
 		sock.SetReadDeadline(readLoopDeadline)

@@ -103,15 +103,24 @@ public:
     }
 
     template<typename ...Args>
-    XmonAlert _raiseAlert(const char* fmt, Args&&... args) {
+    XmonAlert raiseAlert(XmonAlert alert, bool binnable, const char* fmt, Args&&... args) {
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
         std::string s = ss.str();
         _log(LogLevel::LOG_ERROR, s.c_str());
-        XmonAlert alert = -1;
-        if (_xmon) { return _xmon->createAlert(true, s); }
+        if (_xmon) {
+            if (alert < 0) {
+                alert = _xmon->createAlert(binnable, s);
+            } else {
+                _xmon->updateAlert(alert, binnable, s);
+            }
+        }
         return alert;
+    }
+
+    void clearAlert(XmonAlert alert) {
+        if (_xmon && alert >= 0) { _xmon->clearAlert(alert); }
     }
 
     bool _shouldLog(LogLevel level) {
@@ -155,10 +164,7 @@ public:
         } \
     } while (false)
 
-// The interface for this will be different -- we want some kind of alert object
-// like the rest of the C++ codebase. But for now use this as a marker to find
-// where alerts are needed.
 #define RAISE_ALERT(env, ...) \
     do { \
-        (env)._raiseAlert(VALIDATE_FORMAT(__VA_ARGS__)); \
+        (env).raiseAlert(-1, true, VALIDATE_FORMAT(__VA_ARGS__)); \
     } while (false)

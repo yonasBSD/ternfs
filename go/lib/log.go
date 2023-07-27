@@ -356,15 +356,14 @@ type NCAlert struct {
 	lastAlert string
 }
 
-func (l *Logger) NewNCAlert() NCAlert {
-	var a *monitor.AlertStatus
-	if l.troll != nil {
-		a = l.troll.NewUnbinnableAlertStatus()
-	}
-	return NCAlert{alert: a, l: l}
+func (l *Logger) NewNCAlert() *NCAlert {
+	return &NCAlert{l: l}
 }
 
 func (nc *NCAlert) Alert(f string, v ...any) {
+	if nc.alert == nil {
+		nc.alert = nc.l.troll.NewUnbinnableAlertStatus()
+	}
 	nc.l.LogStack(1, ERROR, "nc alert "+f, v...)
 	nc.lastAlert = fmt.Sprintf(f, v...)
 	if nc.alert == nil {

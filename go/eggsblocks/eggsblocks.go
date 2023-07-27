@@ -366,6 +366,10 @@ func handleError(
 				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
 				return true
 			}
+			if sysErr.Err == syscall.ECONNRESET {
+				log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
+				return true
+			}
 		}
 	}
 

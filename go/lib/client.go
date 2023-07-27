@@ -22,24 +22,24 @@ type ReqCounters struct {
 }
 
 type ClientCounters struct {
-	Shard map[msgs.ShardMessageKind]*ReqCounters
-	CDC   map[msgs.CDCMessageKind]*ReqCounters
+	Shard map[uint8]*ReqCounters
+	CDC   map[uint8]*ReqCounters
 }
 
 func NewClientCounters() *ClientCounters {
 	counters := ClientCounters{
-		Shard: make(map[msgs.ShardMessageKind]*ReqCounters),
-		CDC:   make(map[msgs.CDCMessageKind]*ReqCounters),
+		Shard: make(map[uint8]*ReqCounters),
+		CDC:   make(map[uint8]*ReqCounters),
 	}
 	for _, k := range msgs.AllShardMessageKind {
 		// max = ~1min
-		counters.Shard[k] = &ReqCounters{
+		counters.Shard[uint8(k)] = &ReqCounters{
 			Timings: *NewTimings(40, time.Microsecond*10, 1.5),
 		}
 	}
 	for _, k := range msgs.AllCDCMessageKind {
 		// max = ~2min
-		counters.CDC[k] = &ReqCounters{
+		counters.CDC[uint8(k)] = &ReqCounters{
 			Timings: *NewTimings(35, time.Millisecond, 1.5),
 		}
 	}
@@ -82,11 +82,11 @@ func (counters *ClientCounters) Log(log *Logger) {
 	}
 	var shardTime time.Duration
 	for _, k := range msgs.AllShardMessageKind {
-		shardTime += counters.Shard[k].Timings.TotalTime()
+		shardTime += counters.Shard[uint8(k)].Timings.TotalTime()
 	}
 	log.Info("Shard stats (total shard time %v):", shardTime)
 	for _, k := range msgs.AllShardMessageKind {
-		c := counters.Shard[k]
+		c := counters.Shard[uint8(k)]
 		if c.Attempts == 0 {
 			continue
 		}
@@ -95,11 +95,11 @@ func (counters *ClientCounters) Log(log *Logger) {
 	}
 	var cdcTime time.Duration
 	for _, k := range msgs.AllCDCMessageKind {
-		cdcTime += counters.CDC[k].Timings.TotalTime()
+		cdcTime += counters.CDC[uint8(k)].Timings.TotalTime()
 	}
 	log.Info("CDC stats (total CDC time %v):", cdcTime)
 	for _, k := range msgs.AllCDCMessageKind {
-		c := counters.CDC[k]
+		c := counters.CDC[uint8(k)]
 		if c.Attempts == 0 {
 			continue
 		}

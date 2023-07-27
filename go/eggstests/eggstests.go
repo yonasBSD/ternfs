@@ -48,13 +48,13 @@ func formatNanos(nanos uint64) string {
 	return fmt.Sprintf("%7.2f%s", amount, unit)
 }
 
-func formatCounters[K ~uint8](what string, counters map[K]*lib.ReqCounters) {
+func formatCounters[K ~uint8](what string, counters map[uint8]*lib.ReqCounters) {
 	fmt.Printf("    %s reqs count/attempts/avg/median/total:\n", what)
 	for k, count := range counters {
 		if count.Attempts == 0 {
 			continue
 		}
-		fmt.Printf("      %-30v %10v %6.2f %7s %7s %7s\n", k, count.Timings.Count(), float64(count.Attempts)/float64(count.Timings.Count()), formatNanos(uint64(count.Timings.Mean().Nanoseconds())), formatNanos(uint64(count.Timings.Median().Nanoseconds())), formatNanos(uint64(count.Timings.TotalTime())))
+		fmt.Printf("      %-30v %10v %6.2f %7s %7s %7s\n", K(k), count.Timings.Count(), float64(count.Attempts)/float64(count.Timings.Count()), formatNanos(uint64(count.Timings.Mean().Nanoseconds())), formatNanos(uint64(count.Timings.Median().Nanoseconds())), formatNanos(uint64(count.Timings.TotalTime())))
 	}
 }
 
@@ -92,10 +92,10 @@ func runTest(
 	totalCDCRequests := totalRequests(counters.CDC)
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", counters.Shard)
+		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard)
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", counters.CDC)
+		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC)
 	}
 
 	counters = lib.NewClientCounters()
@@ -106,10 +106,10 @@ func runTest(
 	totalCDCRequests = totalRequests(counters.CDC)
 	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters("shard", counters.Shard)
+		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard)
 	}
 	if totalCDCRequests > 0 {
-		formatCounters("CDC", counters.CDC)
+		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC)
 	}
 }
 

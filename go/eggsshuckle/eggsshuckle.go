@@ -535,33 +535,73 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	return resp, err
 }
 
+// returns whether the connection should be terminated
+func handleError(
+	log *lib.Logger,
+	conn *net.TCPConn,
+	err error,
+) bool {
+	if err == io.EOF {
+		log.Debug("got EOF, terminating")
+		return true
+	}
+
+	// we don't currently use timeouts here, but can't hurt
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
+		return true
+	}
+
+	if opErr, ok := err.(*net.OpError); ok {
+		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if sysErr.Err == syscall.EPIPE {
+				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
+				return true
+			}
+			if sysErr.Err == syscall.ECONNRESET {
+				log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
+				return true
+			}
+		}
+	}
+
+	// we always raise an alert since this is almost always bad news in shuckle
+	log.RaiseAlertStack(1, fmt.Errorf("got unexpected error %v from %v", err, conn.RemoteAddr()))
+
+	// attempt to say goodbye, ignore errors
+	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+		lib.WriteShuckleResponseError(log, conn, eggsErr)
+		return false
+	} else {
+		lib.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
+		return true
+	}
+}
+
 func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	defer conn.Close()
 
 	for {
 		req, err := lib.ReadShuckleRequest(log, conn)
-		if err == io.EOF {
-			return
-		}
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("could not decode request from %s: %w", conn.RemoteAddr(), err))
-			return
+			if handleError(log, conn, err) {
+				return
+			} else {
+				continue
+			}
 		}
 		log.Debug("handling request %T %+v from %s", req, req, conn.RemoteAddr())
 		resp, err := handleRequestParsed(log, s, req)
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("error processing request %+v from %s", req, conn.RemoteAddr()))
-			eggsErr, ok := err.(msgs.ErrCode)
-			if !ok {
-				eggsErr = msgs.INTERNAL_ERROR
-			}
-			if err := lib.WriteShuckleResponseError(log, conn, eggsErr); err != nil {
-				log.RaiseAlert(fmt.Errorf("could not send error: %w", err))
+			if handleError(log, conn, err) {
+				return
 			}
 		} else {
 			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
 			if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
-				log.RaiseAlert(fmt.Errorf("could not send response %T to %s: %w", resp, conn.RemoteAddr(), err))
+				if handleError(log, conn, err) {
+					return
+				}
 			}
 		}
 	}

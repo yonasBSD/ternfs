@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ecninfra/log"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
 )
@@ -116,7 +115,7 @@ func (requestId *unpackedMetadataRequestId) Unpack(r io.Reader) error {
 }
 
 func (c *Client) metadataRequestInternal(
-	logger *Logger,
+	log *Logger,
 	shid int16, // -1 for cdc
 	addrs *[2]net.UDPAddr,
 	msgKind uint8,
@@ -140,7 +139,7 @@ func (c *Client) metadataRequestInternal(
 	startedAt := time.Now()
 	requestId := newRequestId()
 	// will keep trying as long as we get timeouts
-	epermAlert := logger.NewNCAlert()
+	epermAlert := log.NewNCAlert()
 	timeouts := shardTimeout
 	if shid < 0 {
 		timeouts = cdcTimeout
@@ -148,7 +147,7 @@ func (c *Client) metadataRequestInternal(
 	for {
 		elapsed := time.Since(startedAt)
 		if elapsed > timeouts.Overall {
-			logger.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
+			log.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
 			return msgs.TIMEOUT
 		}
 		if counters != nil {
@@ -162,8 +161,8 @@ func (c *Client) metadataRequestInternal(
 		}
 		reqBytes := packMetadataRequest(&req, c.cdcKey)
 		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp]
-		logger.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, sock.LocalAddr(), attempts)
-		logger.Trace("reqBody %+v", reqBody)
+		log.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, sock.LocalAddr(), attempts)
+		log.Trace("reqBody %+v", reqBody)
 		timeout := time.Duration(math.Min(float64(timeouts.Initial)*math.Pow(1.5, float64(attempts)), float64(timeouts.Max)))
 		written, err := sock.WriteTo(reqBytes, addr)
 		if err != nil {
@@ -206,7 +205,7 @@ func (c *Client) metadataRequestInternal(
 					shouldRetry = true
 				}
 				if shouldRetry {
-					logger.Info("got network error %v to shard %v, will try to retry", err, shid)
+					log.Info("got network error %v to shard %v, will try to retry", err, shid)
 					// make sure we've waited as much as the expected timeout, otherwise we might
 					// call in a busy loop due to the server just not being up.
 					time.Sleep(time.Until(readLoopDeadline))
@@ -222,21 +221,21 @@ func (c *Client) metadataRequestInternal(
 			}
 			if err := (&respRequestId).Unpack(respReader); err != nil {
 				if protocolError, ok := err.(*badRespProtocol); ok && (protocolError.receivedProtocol == msgs.CDC_RESP_PROTOCOL_VERSION || protocolError.receivedProtocol == msgs.SHARD_RESP_PROTOCOL_VERSION) {
-					logger.Info("received shard/CDC protocol, probably a late shard/CDC request: %v", err)
+					log.Info("received shard/CDC protocol, probably a late shard/CDC request: %v", err)
 				} else {
-					logger.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+					log.RaiseAlert(fmt.Errorf("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				}
 				continue
 			}
 			// Check if we're interested in the request id we got
 			if respRequestId.requestId != requestId {
-				logger.Info("dropping response %v from shard %v, since we expected one of %v", respRequestId.requestId, shid, requestId)
+				log.Info("dropping response %v from shard %v, since we expected one of %v", respRequestId.requestId, shid, requestId)
 				continue
 			}
 			// We are interested, parse the kind
 			var kind uint8
 			if err := bincode.UnpackScalar(respReader, &kind); err != nil {
-				logger.RaiseAlert(fmt.Errorf("could not decode Shard response kind for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+				log.RaiseAlert(fmt.Errorf("could not decode Shard response kind for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 				continue
 			}
 			var eggsError *msgs.ErrCode
@@ -245,18 +244,18 @@ func (c *Client) metadataRequestInternal(
 				var eggsErrVal msgs.ErrCode
 				eggsError = &eggsErrVal
 				if err := eggsError.Unpack(respReader); err != nil {
-					logger.RaiseAlert(fmt.Errorf("could not decode Shard response error for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+					log.RaiseAlert(fmt.Errorf("could not decode Shard response error for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 					continue
 				}
 			} else {
 				// If the kind dosen't match, it's bad, since it's the same request id
 				if kind != msgKind {
-					logger.RaiseAlert(fmt.Errorf("dropping response %v from shard %v, since we it is of kind %v while we expected %v", respRequestId.requestId, shid, msgs.ShardMessageKind(kind), msgKind))
+					log.RaiseAlert(fmt.Errorf("dropping response %v from shard %v, since we it is of kind %v while we expected %v", respRequestId.requestId, shid, msgs.ShardMessageKind(kind), msgKind))
 					continue
 				}
 				// Otherwise, finally parse the body
 				if err := respBody.Unpack(respReader); err != nil {
-					logger.RaiseAlert(fmt.Errorf("could not decode Shard response body for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
+					log.RaiseAlert(fmt.Errorf("could not decode Shard response body for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err))
 					continue
 				}
 			}
@@ -266,7 +265,7 @@ func (c *Client) metadataRequestInternal(
 			}
 			// If we've got a timeout, keep trying
 			if eggsError != nil && *eggsError == msgs.TIMEOUT {
-				logger.Info("got resp timeout error %v from shard %v, will try to retry", err, shid)
+				log.Info("got resp timeout error %v from shard %v, will try to retry", err, shid)
 				break // keep trying
 			}
 			// At this point, we know we've got a response
@@ -277,19 +276,19 @@ func (c *Client) metadataRequestInternal(
 			// If we're past the first attempt, there are cases where errors are not what they seem.
 			if eggsError != nil && attempts > 0 {
 				if shid >= 0 {
-					eggsError = c.checkRepeatedShardRequestError(logger, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), *eggsError)
+					eggsError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), *eggsError)
 				} else {
-					eggsError = c.checkRepeatedCDCRequestError(logger, reqBody.(msgs.CDCRequest), respBody.(msgs.CDCResponse), *eggsError)
+					eggsError = c.checkRepeatedCDCRequestError(log, reqBody.(msgs.CDCRequest), respBody.(msgs.CDCResponse), *eggsError)
 				}
 			}
 			// Check if it's an error or not. We only use debug here because some errors are legitimate
 			// responses (e.g. FILE_EMPTY)
 			if eggsError != nil {
-				logger.Debug("got error %v for req %T id %v from shard %v (took %v)", *eggsError, req.body, req.requestId, shid, elapsed)
+				log.Debug("got error %v for req %T id %v from shard %v (took %v)", *eggsError, req.body, req.requestId, shid, elapsed)
 				return *eggsError
 			}
-			logger.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
-			logger.Trace("respBody %+v", respBody)
+			log.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
+			log.Trace("respBody %+v", respBody)
 			return nil
 		}
 		// We got through the loop busily consuming responses, now try again by sending a new request

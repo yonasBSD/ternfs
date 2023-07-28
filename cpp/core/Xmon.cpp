@@ -157,10 +157,7 @@ void Xmon::run() {
 
 #define CHECK_ERR_STRING(__what) \
     if (errString.size()) { \
-        if (numFailures >= maxFailures) { \
-            throw EGGS_EXCEPTION("could not %s: %s", __what, errString); \
-        } \
-        LOG_INFO(_env, "could not %s: %s, will reconnect", __what, errString); \
+        LOG_INFO(_env, "could not %s after %s attempts: %s, will reconnect", __what, numFailures, errString); \
         numFailures++; \
         sleepFor(1_sec); \
         goto reconnect; \

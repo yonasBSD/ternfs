@@ -82,62 +82,64 @@ func countBlocks(basePath string) (uint64, error) {
 	return blocks, nil
 }
 
-func prepareBlockServiceInfo(
+func updateBlockServiceInfo(
+	log *lib.Logger,
+	blockService *blockService,
+) error {
+	t := time.Now()
+	log.Info("starting to update block services info for %v", blockService.cachedInfo.Id)
+	var statfs unix.Statfs_t
+	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
+		return err
+	}
+	blockService.cachedInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
+	blockService.cachedInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
+	var err error
+	blockService.cachedInfo.Blocks, err = countBlocks(blockService.path)
+	if err != nil {
+		return err
+	}
+	log.Info("done updating block service info for %v in %v", blockService.cachedInfo.Id, time.Since(t))
+	return nil
+}
+
+func initBlockServicesInfo(
 	log *lib.Logger,
 	ip1 [4]byte,
 	port1 uint16,
 	ip2 [4]byte,
 	port2 uint16,
 	failureDomain [16]byte,
-	id msgs.BlockServiceId,
-	blockService *blockService,
-) (*msgs.BlockServiceInfo, error) {
-	bsInfo := &msgs.BlockServiceInfo{
-		Id:            id,
-		Ip1:           ip1,
-		Port1:         port1,
-		Ip2:           ip2,
-		Port2:         port2,
-		SecretKey:     blockService.key,
-		StorageClass:  blockService.storageClass,
-		FailureDomain: failureDomain,
-		Path:          blockService.path,
+	blockServices map[msgs.BlockServiceId]*blockService,
+) error {
+	log.Info("initializing block services info")
+	for id, bs := range blockServices {
+		bs.cachedInfo.Id = id
+		bs.cachedInfo.Ip1 = ip1
+		bs.cachedInfo.Port1 = port1
+		bs.cachedInfo.Ip2 = ip2
+		bs.cachedInfo.Port2 = port2
+		bs.cachedInfo.SecretKey = bs.key
+		bs.cachedInfo.StorageClass = bs.storageClass
+		bs.cachedInfo.FailureDomain = failureDomain
+		bs.cachedInfo.Path = bs.path
+		if err := updateBlockServiceInfo(log, bs); err != nil {
+			return err
+		}
 	}
-	var statfs unix.Statfs_t
-	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
-		return nil, err
-	}
-	bsInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
-	bsInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
-	var err error
-	bsInfo.Blocks, err = countBlocks(blockService.path)
-	if err != nil {
-		return nil, err
-	}
-	return bsInfo, nil
+	return nil
 }
 
 func registerPeriodically(
 	log *lib.Logger,
-	ip1 [4]byte,
-	port1 uint16,
-	ip2 [4]byte,
-	port2 uint16,
-	failureDomain [16]byte,
-	blockServices map[msgs.BlockServiceId]blockService,
+	blockServices map[msgs.BlockServiceId]*blockService,
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
 	for {
 		req.BlockServices = req.BlockServices[:0]
-		for id := range blockServices {
-			blockService := blockServices[id]
-			bsInfo, err := prepareBlockServiceInfo(log, ip1, port1, ip2, port2, failureDomain, id, &blockService)
-			if err != nil {
-				log.RaiseAlert(fmt.Errorf("could not count blocks for %v, will not register it: %v", id, err))
-				continue
-			}
-			req.BlockServices = append(req.BlockServices, *bsInfo)
+		for _, bs := range blockServices {
+			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
 		_, err := lib.ShuckleRequest(log, shuckleAddress, &req)
@@ -150,6 +152,18 @@ func registerPeriodically(
 		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
 		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
 		time.Sleep(waitFor)
+	}
+}
+
+func updateBlockServicesInfoForever(
+	log *lib.Logger,
+	blockServices map[msgs.BlockServiceId]*blockService,
+) {
+	for {
+		for _, bs := range blockServices {
+			updateBlockServiceInfo(log, bs)
+		}
+		time.Sleep(time.Minute) // so that we won't busy loop in tests etc
 	}
 }
 
@@ -394,7 +408,7 @@ func handleRequest(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
 	terminateChan chan any,
-	blockServices map[msgs.BlockServiceId]blockService,
+	blockServices map[msgs.BlockServiceId]*blockService,
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
 	timeCheck bool,
@@ -609,6 +623,7 @@ type blockService struct {
 	key          [16]byte
 	cipher       cipher.Block
 	storageClass msgs.StorageClass
+	cachedInfo   msgs.BlockServiceInfo
 }
 
 func main() {
@@ -742,7 +757,7 @@ func main() {
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
 	log.Info("  connectionTimeout = %v", *connectionTimeout)
 
-	blockServices := make(map[msgs.BlockServiceId]blockService)
+	blockServices := make(map[msgs.BlockServiceId]*blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
 		dir := flag.Args()[i]
 		storageClass := msgs.StorageClassFromString(flag.Args()[i+1])
@@ -756,7 +771,7 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
-		blockServices[id] = blockService{
+		blockServices[id] = &blockService{
 			path:         dir,
 			key:          key,
 			cipher:       cipher,
@@ -839,14 +854,22 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
+	initBlockServicesInfo(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices)
+
 	terminateChan := make(chan any)
 
 	bufPool := lib.NewBufPool()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		registerPeriodically(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices, *shuckleAddress)
+		registerPeriodically(log, blockServices, *shuckleAddress)
 	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		updateBlockServicesInfoForever(log, blockServices)
+	}()
+
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		for {

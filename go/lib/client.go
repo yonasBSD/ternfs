@@ -14,6 +14,7 @@ import (
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 )
 
 type ReqCounters struct {
@@ -146,8 +147,73 @@ func (cf *blocksConnFactory) close() {
 
 type ReqTimeouts struct {
 	Initial time.Duration // the first timeout
-	Max     time.Duration // the max timeout
+	Max     time.Duration // the max timeout -- 0 for never
 	Overall time.Duration // the max overall waiting time for a request
+	Growth  float64
+	Jitter  float64 // in percentage, e.g. 0.10 for a 10% jitter
+	rand    wyhash.Rand
+}
+
+func NewReqTimeouts(initial time.Duration, max time.Duration, overall time.Duration, growth float64, jitter float64) *ReqTimeouts {
+	if initial <= 0 {
+		panic(fmt.Errorf("initial (%v) <= 0", initial))
+	}
+	if max <= 0 {
+		panic(fmt.Errorf("max (%v) <= 0", max))
+	}
+	if overall < 0 {
+		panic(fmt.Errorf("overall (%v) < 0", overall))
+	}
+	if growth <= 1.0 {
+		panic(fmt.Errorf("growth (%v) <= 1.0", growth))
+	}
+	if jitter < 0.0 || jitter >= 1.0 {
+		panic(fmt.Errorf("jitter (%v) < 0.0 || jitter >= 1.0", jitter))
+	}
+	return &ReqTimeouts{
+		Initial: initial,
+		Max:     max,
+		Overall: overall,
+		Growth:  growth,
+		Jitter:  jitter,
+		rand:    *wyhash.New(rand.Uint64()),
+	}
+}
+
+// If 0, time's up.
+func (r *ReqTimeouts) NextNow(startedAt time.Time, now time.Time) time.Duration {
+	elapsed := now.Sub(startedAt)
+	if r.Overall > 0 && elapsed >= r.Overall {
+		return time.Duration(0)
+	}
+	g := r.Growth + r.Growth*r.Jitter*(r.rand.Float64()-0.5)
+	timeout := r.Initial + startedAt.Add(time.Duration(float64(elapsed/1000000)*g)*1000000).Sub(now) // compute in milliseconds to avoid inf
+	if timeout > r.Max {
+		timeout = r.Max
+	}
+	return timeout
+}
+
+func (r *ReqTimeouts) Next(startedAt time.Time) time.Duration {
+	return r.NextNow(startedAt, time.Now())
+}
+
+var DefaultShardTimeout = ReqTimeouts{
+	Initial: 100 * time.Millisecond,
+	Max:     2 * time.Second,
+	Overall: 10 * time.Second,
+	Growth:  1.5,
+	Jitter:  0.1,
+	rand:    wyhash.Rand{State: 0},
+}
+
+var DefaultCDCTimeout = ReqTimeouts{
+	Initial: 250 * time.Millisecond,
+	Max:     5 * time.Second,
+	Overall: 10 * time.Second,
+	Growth:  1.5,
+	Jitter:  0.1,
+	rand:    wyhash.Rand{State: 0},
 }
 
 type Client struct {
@@ -159,10 +225,13 @@ type Client struct {
 	cdcKey           cipher.Block
 	writeBlocksConns blocksConnFactory
 	readBlocksConns  blocksConnFactory
+	shardTimeout     *ReqTimeouts
+	cdcTimeout       *ReqTimeouts
 }
 
 func NewClient(
 	log *Logger,
+	shuckleTimeout *ReqTimeouts,
 	shuckleAddress string,
 	// How many sockets to use for cdc/shard communications, if there's not going
 	// to be contention just pick 1. If no sockets are available when `GetSocket`
@@ -175,7 +244,7 @@ func NewClient(
 	var cdcPorts [2]uint16
 	{
 		log.Info("Getting shard/CDC info from shuckle at '%v'", shuckleAddress)
-		resp, err := ShuckleRequest(log, shuckleAddress, &msgs.ShardsReq{})
+		resp, err := ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.ShardsReq{})
 		if err != nil {
 			return nil, fmt.Errorf("could not request shards from shuckle: %w", err)
 		}
@@ -189,7 +258,7 @@ func NewClient(
 			shardIps[i][1] = shard.Ip2
 			shardPorts[i][1] = shard.Port2
 		}
-		resp, err = ShuckleRequest(log, shuckleAddress, &msgs.CdcReq{})
+		resp, err = ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
 			return nil, fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
@@ -213,28 +282,12 @@ func (c *Client) SetCDCKey(cdcKey cipher.Block) {
 	c.cdcKey = cdcKey
 }
 
-// The absurd upper bound is to not cause spurious alerts on restarts.
-// We might want a better system for this, but for now we rely on the
-// /stats histograms to spot-check bad latency.
-
-var shardTimeout = ReqTimeouts{
-	Initial: 100 * time.Millisecond,
-	Max:     2 * time.Second,
-	Overall: time.Minute,
+func (c *Client) SetShardTimeouts(t *ReqTimeouts) {
+	c.shardTimeout = t
 }
 
-var cdcTimeout = ReqTimeouts{
-	Initial: 200 * time.Millisecond,
-	Max:     2 * time.Second,
-	Overall: time.Minute,
-}
-
-func SetShardTimeouts(t *ReqTimeouts) {
-	shardTimeout = *t
-}
-
-func SetCDCTimeouts(t *ReqTimeouts) {
-	cdcTimeout = *t
+func (c *Client) SetCDCTimeouts(t *ReqTimeouts) {
+	c.cdcTimeout = t
 }
 
 var clientMtu uint16 = 1472
@@ -283,6 +336,8 @@ func NewClientDirect(
 		}
 		c.udpSocks[i] = sock
 	}
+	c.shardTimeout = &DefaultShardTimeout
+	c.cdcTimeout = &DefaultCDCTimeout
 	return c, nil
 }
 

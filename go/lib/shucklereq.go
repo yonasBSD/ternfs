@@ -11,6 +11,7 @@ import (
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 )
 
 const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
@@ -192,31 +193,44 @@ func WriteShuckleResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error
 	return nil
 }
 
+var DefaultShuckleTimeout = ReqTimeouts{
+	Initial: 100 * time.Millisecond,
+	Max:     1 * time.Second,
+	Overall: 10 * time.Second,
+	Growth:  1.5,
+	Jitter:  0.1,
+	rand:    wyhash.Rand{State: 0},
+}
+
 func ShuckleRequest(
 	log *Logger,
+	timeout *ReqTimeouts,
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
 	start := time.Now()
 
-	// we want at least a few attempts because if we fail with ETIMEDOUT we're probably already
-	// past the maximum delay.
-	attempts := 0
-	minAttempts := 3
-	delay := time.Millisecond * 250
-	maxWait := time.Second * 10
+	if timeout == nil {
+		timeout = &DefaultShuckleTimeout
+	}
+
+	alert := log.NewNCAlert()
+	defer alert.Clear()
 
 	var err error
 	var conn net.Conn
+	var delay time.Duration
 
 	goto ReconnectBegin
 
 Reconnect:
-	log.Info("could not connect to shuckle, might try again in %v: %v", delay, err)
-	attempts++
-	if time.Since(start) > maxWait && attempts > minAttempts {
+
+	delay = timeout.Next(start)
+	if delay == 0 {
+		log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
 	}
+	alert.AlertStack(1, "could not connect to shuckle, will retry in %v: %v", delay, err)
 	time.Sleep(delay)
 
 ReconnectBegin:

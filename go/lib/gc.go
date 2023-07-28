@@ -1,10 +1,34 @@
 package lib
 
 import (
-	"crypto/cipher"
 	"fmt"
 	"xtx/eggsfs/msgs"
 )
+
+type GCOptions struct {
+	ShuckleTimeouts *ReqTimeouts
+	ShuckleAddress  string
+	ShardTimeouts   *ReqTimeouts
+	CDCTimeouts     *ReqTimeouts
+	Counters        *ClientCounters
+}
+
+func gcClient(log *Logger, options *GCOptions, udpSockets int) (*Client, error) {
+	client, err := NewClient(log, options.ShuckleTimeouts, options.ShuckleAddress, udpSockets)
+	if err != nil {
+		return nil, err
+	}
+	if options.ShardTimeouts != nil {
+		client.SetShardTimeouts(options.ShardTimeouts)
+	}
+	if options.CDCTimeouts != nil {
+		client.SetCDCTimeouts(options.CDCTimeouts)
+	}
+	if options.Counters != nil {
+		client.SetCounters(options.Counters)
+	}
+	return client, nil
+}
 
 type DestructionStats struct {
 	VisitedFiles     uint64
@@ -120,14 +144,15 @@ func destructFilesInternal(
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
 func destructFiles(
-	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockServiceKeys map[msgs.BlockServiceId]cipher.Block,
+	log *Logger,
+	options *GCOptions,
+	shid msgs.ShardId,
 ) error {
 	log.Info("starting to destruct files in shard %v", shid)
-	client, err := NewClient(log, shuckleAddress, 1)
+	client, err := gcClient(log, options, 1)
 	if err != nil {
 		return err
 	}
-	client.SetCounters(counters)
 	defer client.Close()
 	stats := DestructionStats{}
 	if err := destructFilesInternal(log, client, shid, &stats); err != nil {
@@ -138,27 +163,25 @@ func destructFiles(
 }
 
 func DestructFiles(
-	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId,
+	log *Logger, options *GCOptions, shid msgs.ShardId,
 ) error {
-	return destructFiles(log, shuckleAddress, counters, shid, nil)
+	return destructFiles(log, options, shid)
 }
 
 func DestructFilesMockedBlockServices(
-	log *Logger, shuckleAddress string, counters *ClientCounters, shid msgs.ShardId, blockServiceKeys map[msgs.BlockServiceId]cipher.Block,
+	log *Logger, options *GCOptions, shid msgs.ShardId,
 ) error {
-	return destructFiles(log, shuckleAddress, counters, shid, blockServiceKeys)
+	return destructFiles(log, options, shid)
 }
 
 func DestructFilesInAllShards(
 	log *Logger,
-	shuckleAddress string,
-	counters *ClientCounters,
+	options *GCOptions,
 ) error {
-	client, err := NewClient(log, shuckleAddress, 256)
+	client, err := gcClient(log, options, 256)
 	if err != nil {
 		return err
 	}
-	client.SetCounters(counters)
 	defer client.Close()
 	stats := DestructionStats{}
 	for i := 0; i < 256; i++ {
@@ -318,8 +341,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 	return nil
 }
 
-func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats, shid msgs.ShardId) error {
-	dirInfoCache := NewDirInfoCache()
+func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectStats, shid msgs.ShardId) error {
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
 	for {
@@ -346,25 +368,28 @@ func collectDirectoriesInternal(log *Logger, client *Client, stats *CollectStats
 	return nil
 }
 
-func CollectDirectories(log *Logger, shuckleAddress string, client *Client, shid msgs.ShardId) error {
+func CollectDirectories(log *Logger, options *GCOptions, dirInfoCache *DirInfoCache, shid msgs.ShardId) error {
+	client, err := gcClient(log, options, 1)
+	if err != nil {
+		return err
+	}
 	stats := CollectStats{}
-	if err := collectDirectoriesInternal(log, client, &stats, shid); err != nil {
+	if err := collectDirectoriesInternal(log, client, dirInfoCache, &stats, shid); err != nil {
 		return err
 	}
 	log.Info("stats after one collect directories iteration: %+v", stats)
 	return nil
 }
 
-func CollectDirectoriesInAllShards(log *Logger, shuckleAddress string, counters *ClientCounters) error {
-	client, err := NewClient(log, shuckleAddress, 256)
+func CollectDirectoriesInAllShards(log *Logger, options *GCOptions, dirInfoCache *DirInfoCache) error {
+	client, err := gcClient(log, options, 256)
 	if err != nil {
 		return err
 	}
-	client.SetCounters(counters)
 	defer client.Close()
 	stats := CollectStats{}
 	for i := 0; i < 256; i++ {
-		if err := collectDirectoriesInternal(log, client, &stats, msgs.ShardId(i)); err != nil {
+		if err := collectDirectoriesInternal(log, client, dirInfoCache, &stats, msgs.ShardId(i)); err != nil {
 			return err
 		}
 	}

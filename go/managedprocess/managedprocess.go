@@ -610,7 +610,7 @@ func WaitForShard(log *lib.Logger, shuckleAddress string, shid msgs.ShardId, tim
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
 		}
-		client, err = lib.NewClient(log, shuckleAddress, 1)
+		client, err = lib.NewClient(log, nil, shuckleAddress, 1)
 		if err != nil {
 			time.Sleep(10 * time.Millisecond)
 			continue

@@ -360,8 +360,8 @@ func (l *Logger) NewNCAlert() *NCAlert {
 	return &NCAlert{l: l}
 }
 
-func (nc *NCAlert) Alert(f string, v ...any) {
-	nc.l.LogStack(1, ERROR, "nc alert "+f, v...)
+func (nc *NCAlert) AlertStack(calldepth int, f string, v ...any) {
+	nc.l.LogStack(1+calldepth, ERROR, "nc alert "+f, v...)
 	nc.lastAlert = fmt.Sprintf(f, v...)
 	if nc.l.troll == nil {
 		return
@@ -371,6 +371,10 @@ func (nc *NCAlert) Alert(f string, v ...any) {
 	}
 	file, line := getFileLine(1)
 	nc.alert.Alertf(fmt.Sprintf("%s:%d ", file, line)+f, v...)
+}
+
+func (nc *NCAlert) Alert(f string, v ...any) {
+	nc.AlertStack(1, f, v...)
 }
 
 func (nc *NCAlert) Clear() {

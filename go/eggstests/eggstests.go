@@ -188,7 +188,7 @@ func (r *RunTests) run(
 ) {
 	shuckleAddress := fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, shuckleAddress, 1)
+	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
 	}

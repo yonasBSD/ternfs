@@ -5,16 +5,16 @@ package wyhash
 import "C"
 
 type Rand struct {
-	state uint64
+	State uint64
 }
 
 func New(seed uint64) *Rand {
-	rand := Rand{state: seed}
+	rand := Rand{State: seed}
 	return &rand
 }
 
 func (r *Rand) Uint64() uint64 {
-	return uint64(C.wyhash64((*C.ulong)(&r.state)))
+	return uint64(C.wyhash64((*C.ulong)(&r.State)))
 }
 
 func (r *Rand) Uint32() uint32 {
@@ -29,6 +29,6 @@ func (r *Rand) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	C.wyhash64_bytes((*C.ulong)(&r.state), (*C.uchar)(&p[0]), C.ulong(len(p)))
+	C.wyhash64_bytes((*C.ulong)(&r.State), (*C.uchar)(&p[0]), C.ulong(len(p)))
 	return len(p), nil
 }

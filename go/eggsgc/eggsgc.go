@@ -102,21 +102,25 @@ func main() {
 			finishedChan <- struct{}{}
 		},
 	)
+
+	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
+	options := &lib.GCOptions{
+		ShuckleTimeouts: lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
+		ShardTimeouts:   lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
+		CDCTimeouts:     lib.NewReqTimeouts(lib.DefaultCDCTimeout.Initial, lib.DefaultCDCTimeout.Max, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
+		ShuckleAddress:  *shuckleAddress,
+	}
+
 	for _, shard := range shards {
 		managedRoutines.Start(
 			fmt.Sprintf("GC %v", shard),
 			func() {
-				client, err := lib.NewClient(log, *shuckleAddress, 1)
-				if err != nil {
-					panic(err)
-				}
-				client.SetCounters(counters)
-				defer client.Close()
+				dirInfoCache := lib.NewDirInfoCache()
 				for {
-					if err := lib.CollectDirectories(log, *shuckleAddress, client, shard); err != nil {
+					if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
 						log.RaiseAlert(fmt.Errorf("could not collect directories: %v", err))
 					}
-					if err := lib.DestructFiles(log, *shuckleAddress, counters, shard); err != nil {
+					if err := lib.DestructFiles(log, options, shard); err != nil {
 						log.RaiseAlert(fmt.Errorf("could not destruct files: %v", err))
 					}
 					log.Info("waiting 1 minute before collecting again")

@@ -1566,19 +1566,16 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 		},
 	)
 
-	// If there is a stats.js available, serve that -- it's very useful
 	http.HandleFunc(
 		"/static/scripts.js",
 		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
 			if scriptsJsFile == "" {
-				w.Header().Set("Content-Type", "text/javascript")
-				w.Header().Set("Cache-Control", "max-age=31536000")
 				w.Write(scriptsJs)
 			} else {
-				w.Header().Set("Content-Type", "text/javascript")
-				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-				w.Header().Set("Pragma", "no-cache")
-				w.Header().Set("Expires", "0")
 				file, err := os.Open(scriptsJsFile)
 				if err != nil {
 					panic(err)

@@ -48,7 +48,7 @@ func cleanupAfterTest(
 	counters *lib.ClientCounters,
 	acceptGcFailures bool,
 ) {
-	client, err := lib.NewClient(log, shuckleAddress, 1)
+	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -58,10 +58,11 @@ func cleanupAfterTest(
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything -- this relies on the snapshot policy being immediate, which we do
 	// in eggstests.go
-	if err := lib.CollectDirectoriesInAllShards(log, shuckleAddress, counters); err != nil {
+	dirInfoCache := lib.NewDirInfoCache()
+	if err := lib.CollectDirectoriesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}, dirInfoCache); err != nil {
 		panic(err)
 	}
-	if err := lib.DestructFilesInAllShards(log, shuckleAddress, counters); err != nil {
+	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}); err != nil {
 		if acceptGcFailures {
 			log.Info("gc failed: %v, but acceptGcFailures is on, proceeding", err)
 		} else {

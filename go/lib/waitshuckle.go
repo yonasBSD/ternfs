@@ -11,7 +11,7 @@ func WaitForBlockServices(ll *Logger, shuckleAddress string, expectedBlockServic
 	for {
 		var resp msgs.ShuckleResponse
 		var bss []msgs.BlockServiceInfo
-		resp, err = ShuckleRequest(ll, shuckleAddress, &msgs.AllBlockServicesReq{})
+		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			ll.Debug("got error while getting block services from shuckle, will keep waiting: %v", err)
 			goto KeepChecking
@@ -41,7 +41,7 @@ func WaitForShardsCDC(ll *Logger, shuckleAddress string, expectedBlockServices i
 		var resp msgs.ShuckleResponse
 		// First check shards
 		{
-			resp, err = ShuckleRequest(ll, shuckleAddress, &msgs.ShardsReq{})
+			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardsReq{})
 			if err != nil {
 				ll.Debug("got error while getting shards from shuckle, will keep waiting: %v", err)
 				goto KeepChecking
@@ -56,7 +56,7 @@ func WaitForShardsCDC(ll *Logger, shuckleAddress string, expectedBlockServices i
 		}
 		// Then check CDC
 		{
-			resp, err = ShuckleRequest(ll, shuckleAddress, &msgs.CdcReq{})
+			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.CdcReq{})
 			if err != nil {
 				ll.Debug("got error while getting CDC from shuckle, will keep waiting: %v", err)
 				goto KeepChecking

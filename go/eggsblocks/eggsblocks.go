@@ -136,18 +136,20 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
+	alert := log.NewNCAlert()
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
-		_, err := lib.ShuckleRequest(log, shuckleAddress, &req)
+		_, err := lib.ShuckleRequest(log, nil, shuckleAddress, &req)
 		if err != nil {
-			log.RaiseAlert(fmt.Errorf("could not register block services with %+v: %w", shuckleAddress, err))
+			alert.Alert("could not register block services with %+v: %v", shuckleAddress, err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		alert.Clear()
 		waitForRange := time.Minute * 2
 		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
 		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
@@ -790,7 +792,8 @@ func main() {
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		resp, err := lib.ShuckleRequest(log, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		timeouts := lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter)
+		resp, err := lib.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 		}

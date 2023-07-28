@@ -1,6 +1,52 @@
 {{define "body"}}
-    <script src="/chart-4.3.0.js"></script>
     <div>
+        <p>
+            The CDC stats include both the end-to-end latency (from request parse to response sent), which includes the time the request spent in the CDC transaction queue; and the "process" time (<code>.process</code>), which is how long it took to process the request from transaction start to transaction finish.
+        </p>
+        <p>
+            For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure), but there are two sockets reading the requests, and they compete for the write lock. The time spent waiting for the write lock is measured here.
+        </p>
+        <p>
+            In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.
+        </p>
+        <form id="time-selection" class="row row-cols-lg-auto g-3 align-items-center my-2">
+            <div class="col">
+                <label for="time-from" class="form-label">From</label>
+            </div>
+            <div class="col">
+                <input id="time-from" type="datetime-local" class="form-control" required>
+            </div>
+            <div class="col">
+                <label for="time-to" class="form-label">To</label>
+            </div>
+            <div class="col">
+                <input id="time-to" type="datetime-local" class="form-control" required>
+            </div>
+            <div class="col">
+                <button type="submit" class="btn btn-primary">Load</button>
+            </div>
+        </form>
+        <div class="row row-cols-lg-auto g-3 align-items-center my-2"></form>
+            <div class="col">
+                <label for="stats-filter" class="form-label">Filter</label>
+            </div>
+            <div class="col">
+                <input type="text" class="form-control" id="stats-filter" placeholder="regex">
+            </div>
+            <div class="col">
+                <label for="sort-filter" class="form-label">Sort by</label>
+            </div>
+            <div class="col">
+                <select id="sort-select" class="form-select"></select>
+            </div>
+            <div class="col form-check">
+                <input class="form-check-input" type="checkbox" id="charts-check">
+                <label class="form-check-label" for="charts-check">
+                  Charts
+                </label>
+            </div>
+        </div>
+        <!--
         <form id="time-selection" class="row row-cols-lg-auto g-3 align-items-center my-2">
             <div class="col">
                 <input id="time-from" type="datetime-local" class="form-control" required>
@@ -9,239 +55,21 @@
                 <input id="time-to" type="datetime-local" class="form-control" required>
             </div>
             <div class="col">
-                <button type="submit" class="btn btn-primary">Filter</button>
+                <select id="sort-select" class="form-select"></select>
+            </div>
+            <div class="col form-check">
+                <input class="form-check-input" type="checkbox" id="charts-check">
+                <label class="form-check-label" for="charts-check">
+                  Histograms
+                </label>
             </div>
         </form>
-        <p>
-            These stats show the time it took to process the requests locally to what processed it, from parsing the request id to serializing the response.
-        </p>
-        <p>
-            For the CDC this includes the time the request was queued behind requests that were not completed yet.
-        </p>
-        <p>
-            For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure), but there are two sockets reading the requests, and they compete for the write lock. The time spent waiting for the write lock is measured here.
-        </p>
-        <p>
-            In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.
-        </p>
+        -->
         <div id="charts"></div>
     </div>
-    <script>(() => {
-        // Function to format a Date into the 'yyyy-mm-ddThh:mm' format required by datetime-local inputs
-        function formatLocalDate(date) {
-            const year = date.getFullYear();
-            const month = ('0' + (date.getMonth()+1)).slice(-2); // months are zero-based in JavaScript
-            const day = ('0' + date.getDate()).slice(-2);
-            const hours = ('0' + date.getHours()).slice(-2);
-            const minutes = ('0' + date.getMinutes()).slice(-2);
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
-        }
-        
-        const chartsEl = document.getElementById('charts');
-    
-        const twoDec = (x) => (Math.round(x*100) / 100).toFixed(2);
-        
-        function formatNs(ns) {
-            let scale = 1n;
-            const next = (unit, scaleFactor) => {
-                if (ns < scale*scaleFactor) {
-                    return twoDec(Number(ns)/Number(scale)) + unit;
-                }
-                scale *= scaleFactor;
-                return null;
-            };
-            let units = [
-                ['ns', 1000n],
-                ['us', 1000n],
-                ['ms', 1000n],
-                ['s',  60n],
-                ['m',  60n],
-                ['h',  100000000000n],
-            ]
-            for (const [unit, factor] of units) {
-                const res = next(unit, factor);
-                if (res) { return res; }
-            }
-            throw 'Impossible';
-        }
-        
-        function drawChart(el, req, timings) {
-            const chartEl = document.createElement('canvas');
-            el.appendChild(chartEl);
-            new Chart(chartEl, {
-                type: 'line',
-                data: {
-                    labels: timings.histogram.map(({upperBoundNs}) => `< ${formatNs(upperBoundNs)}`),
-                    datasets: [{ label: req, data: timings.histogram.map(({count}) => Number(count)) }],
-                },
-            });
-        }
-    
-        function nsToRFC3339Nano(ns) {
-            const msBigInt = ns / BigInt(1000000);
-            const msNumber = Number(msBigInt);
-            const date = new Date(msNumber);    
-            const nsStr = Number(ns % BigInt(1000000)).toString().padStart(6, '0');
-            const dateStr = date.toISOString().replace('Z', '');
-            return `${dateStr}${nsStr}Z`;
-        }
-    
-        async function getStats(startName, startTime, endTime) {
-            console.log(`fetching startName=${startName} startTime=${startTime} endTime=${endTime}`)
-            const response = await fetch('/api/GET_STATS', {
-                method: 'POST',
-                headers: { 'Accept': 'application/octet-stream' },
-                body: JSON.stringify({
-                    StartTime: nsToRFC3339Nano(startTime),
-                    StartName: startName,
-                    EndTime: nsToRFC3339Nano(endTime),
-                })
-            });
-            
-            if (!response.ok) {
-                throw new Error("HTTP error " + response.status);
-            }
-            
-            const buffer = await response.arrayBuffer();
-            return new Uint8Array(buffer);
-        }
-    
-        function* parseStats(buf) {
-            const decoder = new TextDecoder('ascii');
-            const view = new DataView(buf.buffer);
-            let cur = 0;
-            const nextTime = view.getBigUint64(cur, true); cur += 8;
-            const nextNameLen = buf[cur]; cur++;
-            const nextName = decoder.decode(buf.subarray(cur, cur+nextNameLen)); cur += nextNameLen;
-            let statsLen = view.getUint16(cur, true); cur += 2;
-            for (let i = 0; i < statsLen; i++) {
-                const nameLen = buf[cur]; cur++;
-                const name = decoder.decode(buf.subarray(cur, cur+nameLen)); cur += nameLen;
-                const time = view.getBigUint64(cur, true); cur += 8;
-                const valueLen = view.getUint16(cur, true); cur += 2;
-                const value = buf.subarray(cur, cur+valueLen); cur += valueLen;
-                yield { name, time, value };
-            }
-            return { nextName, nextTime };
-        }
-    
-        const timeFromEl = document.getElementById('time-from');
-        const timeToEl = document.getElementById('time-to');
-    
-        async function reload() {
-            // erase 
-            chartsEl.innerHTML = 'Loading...';
-            
-            // get current boundaries
-            const timeFrom = BigInt(new Date(timeFromEl.value)) * BigInt(1000000);
-            const timeTo = BigInt(new Date(timeToEl.value)) * BigInt(1000000);
-            
-            // fetch histos
-            let startTime = timeFrom;
-            let startName = "";
-            const endTime = timeTo;
-            const data = {}; // group -> req -> { histogram }
-            for (let i = 0; i < 10; i++) {
-                let respBuf;
-                try {
-                    respBuf = await getStats(startName, startTime, endTime);
-                } catch (error) {
-                    chartsEl.innerHTML = `Error fetching stats: ${error}`;
-                    return;
-                }
-                const stats = parseStats(respBuf);
-                for (;;) {
-                    const n = stats.next();
-                    if (n.done) {
-                        startName = n.value.nextName;
-                        startTime = n.value.nextTime;
-                        break;
-                    }
-                    const stat = n.value;
-                    const segments = stat.name.split('.');
-                    const group = segments[0];
-                    let req = segments.slice(1).join('.');
-                    if (group === 'shard') { // group all shards into one bunch
-                        req = segments.slice(2).join('.');
-                    }
-                    data[group] = data[group] || {};
-                    data[group][req] = data[group][req] || { histogram: [], elapsedNs: BigInt(0) }
-                    // parse histo
-                    const valueView = new DataView(stat.value.buffer, stat.value.byteOffset, stat.value.byteLength);
-                    if (stat.value.length < 8 || (stat.value.length-8)%16 !== 0) {
-                        throw `Unexpected histo length ${stat.value.length}`;
-                    }
-                    data[group][req].elapsedNs += valueView.getBigUint64(0, true);
-                    histogram = data[group][req].histogram;
-                    for (let i = 8, bin = 0; i < stat.value.length; i += 8+8, bin++) {
-                        const upperBoundNs = valueView.getBigUint64(i, true);
-                        const count = valueView.getBigUint64(i+8, true);
-                        histogram[bin] = histogram[bin] || { upperBoundNs, count: BigInt(0) };
-                        if (histogram[bin].upperBoundNs !== upperBoundNs) {
-                            throw `Differing upper bounds for ${stat.name} at ${bin}, ${histogram[bin].upperBoundNs} != ${upperBoundNs}`;
-                        }
-                        histogram[bin].count += count;
-                    }
-                }
-                if (startName === "") { break; }
-            }
-        
-            // trim histos, replace undefineds with zero
-            for (const groupData of Object.values(data)) {
-                for (const reqData of Object.values(groupData)) {
-                    let skipStart = 0;
-                    for (; skipStart < reqData.histogram.length && !reqData.histogram[skipStart].count; skipStart++) {}
-                    skipStart = skipStart == 0 ? 0 : skipStart-1;
-                    let skipEnd = 0;
-                    for (; skipEnd < reqData.histogram.length && !reqData.histogram[reqData.histogram.length-skipEnd-1].count; skipEnd++) {}
-                    skipEnd = skipEnd == 0 ? 0 : skipEnd-1;
-                    reqData.histogram = reqData.histogram.slice(skipStart, reqData.histogram.length-skipEnd);
-                }
-            }
-    
-            // now draw the divs
-            chartsEl.innerHTML = '';
-            Object.keys(data).sort().forEach(group => {
-                groupData = data[group];
-                const groupEl = document.createElement('h2');
-                groupEl.innerHTML = group;
-                chartsEl.appendChild(groupEl);
-                const reqsEl = document.createElement('div');
-                chartsEl.appendChild(reqsEl);
-                reqsEl.style.display = 'grid';
-                reqsEl.style.gridTemplateColumns = '50% 50%';
-                Object.keys(groupData).sort().forEach(req => {
-                    reqData = groupData[req];
-                    const chartContainerEl = document.createElement('div');
-                    reqsEl.appendChild(chartContainerEl);
-                    chartContainerEl.style.width = '100%';
-                    drawChart(chartContainerEl, req, reqData);
-                    /*
-                    const countEl = document.createElement('div');
-                    chartContainerEl.appendChild(countEl);
-                    countEl.innerHTML = `count: ${reqData.count}, duration: ${formatNs(reqData.duration)}, ~${twoDec(Number((reqData.count*1000000000000n)/reqData.duration)/1000)}reqs/s`;
-                    if (reqData.mean !== 0n) {
-                        countEl.innerHTML += `, mean: ${formatNs(reqData.mean)}, computed mean: ${formatNs(reqData.computedMean)}, stddev: ${formatNs(reqData.stddev)}`;
-                    }
-                    countEl.innerHTML = `<small>${countEl.innerHTML}</small>`;
-                    */
-                });
-            });
-    
-            console.log('done loading');
-        }
-            
-        // set initial times (now-24hrs and now)
-        timeFromEl.value = formatLocalDate(new Date(new Date().getTime() - 24 * 60 * 60 * 1000));
-        timeToEl.value = formatLocalDate(new Date());
-        
-        // redraw on submit
-        const formEl = document.getElementById('time-selection');
-        formEl.addEventListener('submit', (el) => {
-            el.preventDefault();
-            reload();
-        })
-        
-        reload();
-    })();</script>
+    <script src="/static/chart-4.3.0.js"></script>
+    <script type="module">
+        import { stats } from '/static/scripts.js';
+        stats();
+    </script>
 {{end}}

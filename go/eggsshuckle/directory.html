@@ -1,4 +1,8 @@
 {{define "body"}}
+    <script type="module">
+        import { snapshotEdges } from '/scripts/scripts.js';
+        snapshotEdges();
+    </script>
     <table class="table">
         <tbody>
             {{if .Path}}
@@ -129,24 +133,4 @@
             {{end}}
         </tbody>
     </table>
-    <script>
-        // snapshot edges
-        function toggleFullEdges(show) {
-            const els = document.getElementsByClassName('edges-full');
-            for (let i = 0; i < els.length; i++) {
-                els[i].style.display = show ? '' : 'none';
-            }
-            if (show) {
-                localStorage.setItem('edges-full', show);
-            } else {
-                localStorage.removeItem('edges-full');
-            }
-        }
-        window.addEventListener('DOMContentLoaded', () => {
-            const enabled = localStorage.getItem('edges-full');
-            toggleFullEdges(enabled);
-            const checkbox = document.getElementById('snapshot-edges-checkbox')
-            checkbox.checked = enabled;
-        });
-    </script>
 {{end}}

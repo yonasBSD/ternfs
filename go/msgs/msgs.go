@@ -2,6 +2,7 @@
 package msgs
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -473,6 +474,27 @@ type AddInlineSpanResp struct{}
 // in a separate type for the kernel to be able to define the decoding for this explicitly
 type FailureDomain struct {
 	Name [16]byte
+}
+
+func (fd *FailureDomain) MarshalJSON() ([]byte, error) {
+	str := string(bytes.TrimRightFunc(fd.Name[:], func(r rune) bool {
+		return r == 0
+	}))
+	return json.Marshal(str)
+}
+
+func (fd *FailureDomain) UnmarshalJSON(b []byte) error {
+	var str string
+	err := json.Unmarshal([]byte(b), &str)
+	if err != nil {
+		return err
+	}
+	if len(str) > 16 {
+		return fmt.Errorf("failure domain string too long (%v)", len(str))
+	}
+	fd.Name = [16]byte{}
+	copy(fd.Name[:], []byte(str))
+	return nil
 }
 
 // If any of these match, candidate block services will be excluded.

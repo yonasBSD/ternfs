@@ -466,7 +466,7 @@ func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.Get
 	if end == 0 {
 		end = msgs.EggsTime(^uint64(0) & ^(uint64(1) << 63)) // sqlite doesn't have full uint64
 	}
-	log.Info("start time %v", req.StartTime)
+	log.Debug("start time %v", req.StartTime)
 	// the limit is due to the max list size in bincode (but probably a good thing anyhow)
 	rowsLimit := 1 << 16
 	rows, err := s.db.Query(
@@ -535,6 +535,26 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	return resp, err
 }
 
+func isBenignConnTermination(err error) bool {
+	// we don't currently use timeouts here, but can't hurt
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+
+	if opErr, ok := err.(*net.OpError); ok {
+		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if sysErr.Err == syscall.EPIPE {
+				return true
+			}
+			if sysErr.Err == syscall.ECONNRESET {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // returns whether the connection should be terminated
 func handleError(
 	log *lib.Logger,
@@ -546,23 +566,9 @@ func handleError(
 		return true
 	}
 
-	// we don't currently use timeouts here, but can't hurt
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
+	if isBenignConnTermination(err) {
+		log.Info("got benign error %v for connection to %v, terminating", err, conn.RemoteAddr())
 		return true
-	}
-
-	if opErr, ok := err.(*net.OpError); ok {
-		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-			if sysErr.Err == syscall.EPIPE {
-				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
-				return true
-			}
-			if sysErr.Err == syscall.ECONNRESET {
-				log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
-				return true
-			}
-		}
 	}
 
 	// we always raise an alert since this is almost always bad news in shuckle
@@ -696,7 +702,9 @@ func handleWithRecover(
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(*statusPtr)
 		if written, err := io.CopyN(w, content, *sizePtr); err != nil {
-			log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+			if !isBenignConnTermination(err) {
+				log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+			}
 		}
 	}
 }
@@ -1516,7 +1524,10 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 	)
 }
 
-func setupRouting(log *lib.Logger, st *state) {
+//go:embed scripts.js
+var scriptsJs []byte
+
+func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 	errorTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "error", body: errorTemplateStr},
@@ -1531,7 +1542,7 @@ func setupRouting(log *lib.Logger, st *state) {
 
 	// Static assets
 	http.HandleFunc(
-		"/bootstrap.5.0.2.min.css",
+		"/static/bootstrap.5.0.2.min.css",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 			w.Header().Set("Cache-Control", "max-age=31536000")
@@ -1539,7 +1550,7 @@ func setupRouting(log *lib.Logger, st *state) {
 		},
 	)
 	http.HandleFunc(
-		"/shuckle-face.png",
+		"/static/shuckle-face.png",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
 			w.Header().Set("Cache-Control", "max-age=31536000")
@@ -1547,7 +1558,7 @@ func setupRouting(log *lib.Logger, st *state) {
 		},
 	)
 	http.HandleFunc(
-		"/chart-4.3.0.js",
+		"/static/chart-4.3.0.js",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/javascript")
 			w.Header().Set("Cache-Control", "max-age=31536000")
@@ -1555,24 +1566,30 @@ func setupRouting(log *lib.Logger, st *state) {
 		},
 	)
 
-	/* useful to experiment with the stats.html script
+	// If there is a stats.js available, serve that -- it's very useful
 	http.HandleFunc(
-		"/stats.js",
+		"/static/scripts.js",
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/javascript")
-			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-			w.Header().Set("Pragma", "no-cache")
-			w.Header().Set("Expires", "0")
-			file, err := os.Open("/home/fmazzol/src/eggsfs/go/eggsshuckle/stats.js")
-			if err != nil {
-				panic(err)
-			}
-			defer file.Close()
-			if _, err := io.Copy(w, file); err != nil {
-				panic(err)
+			if scriptsJsFile == "" {
+				w.Header().Set("Content-Type", "text/javascript")
+				w.Header().Set("Cache-Control", "max-age=31536000")
+				w.Write(scriptsJs)
+			} else {
+				w.Header().Set("Content-Type", "text/javascript")
+				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+				w.Header().Set("Pragma", "no-cache")
+				w.Header().Set("Expires", "0")
+				file, err := os.Open(scriptsJsFile)
+				if err != nil {
+					panic(err)
+				}
+				defer file.Close()
+				if _, err := io.Copy(w, file); err != nil {
+					panic(err)
+				}
 			}
 		},
-	)*/
+	)
 
 	// blocks serving
 	http.HandleFunc(
@@ -1779,6 +1796,7 @@ func main() {
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
+	scriptsJs := flag.String("scripts-js", "", "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -1929,7 +1947,7 @@ func main() {
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
 	}()
 
-	setupRouting(ll, state)
+	setupRouting(ll, state, *scriptsJs)
 
 	terminateChan := make(chan any)
 

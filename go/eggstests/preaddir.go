@@ -39,7 +39,7 @@ func preaddirCheck(
 		for i, b := range found {
 			if !b {
 				err := fmt.Sprintf("[%v] %v/%v", thread, dpath, i)
-				log.Error(err)
+				log.RaiseAlert(err)
 				errors = append(errors, err)
 			}
 		}

@@ -2,7 +2,6 @@ package lib
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,12 +9,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"xtx/ecninfra/hostmon"
 	"xtx/ecninfra/log"
-	"xtx/ecninfra/monitor"
-	xrt "xtx/ecninfra/runtime"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -125,12 +121,10 @@ type LoggerOptions struct {
 }
 
 type Logger struct {
-	level         LogLevel
-	troll         *monitor.ParentTroll
-	mw            *hostmon.MetricWriter
-	alertsLock    sync.RWMutex
-	raisedAlerts  map[string]*monitor.AlertStatus
-	droppedAlerts *monitor.AlertStatus
+	level      LogLevel
+	xmon       *Xmon
+	mw         *hostmon.MetricWriter
+	alertsLock sync.RWMutex
 }
 
 func isTerminal(f *os.File) bool {
@@ -150,10 +144,9 @@ func NewLogger(
 	out *os.File,
 	options *LoggerOptions,
 ) *Logger {
-	logger := Logger{
-		level:        options.Level,
-		alertsLock:   sync.RWMutex{},
-		raisedAlerts: make(map[string]*monitor.AlertStatus),
+	logger := &Logger{
+		level:      options.Level,
+		alertsLock: sync.RWMutex{},
 	}
 
 	if !atomic.CompareAndSwapInt32(&hasLogger, 0, 1) {
@@ -178,49 +171,44 @@ func NewLogger(
 	log.SetLevel(ll)
 	log.SetOutput(out)
 
+	/*
+		if options.Metrics {
+			xrt.ServiceInit(xrt.IsProd(), monitor.AppTypeNever)
+			mp := fmt.Sprintf("eggsfs_%s", options.AppName)
+			logger.mw = hostmon.NewMetricWriterWithLabels(
+				600*time.Second,
+				logger.troll,
+				mp,
+				xrt.HostTeam.InfluxOrg,
+				xrt.HostTeam.InfluxDBURL,
+				xrt.HostTeam.InfluxTokenProd,
+				map[string]string{"hostname": xrt.Hostname, "app": options.AppName, "instance": options.AppInstance},
+			)
+			go func() {
+				logger.mw.PushMetrics(context.Background())
+			}()
+		}
+	*/
+
 	if options.Xmon != "" {
 		if options.Xmon != "prod" && options.Xmon != "qa" {
 			panic(fmt.Errorf("invalid xmon environment %q", options.Xmon))
 		}
-		hn, err := os.Hostname()
-		if err != nil {
-			panic(err)
-		}
-		hostname := strings.Split(hn, ".")[0]
-
-		appType := "restech.info"
-		prod := options.Xmon == "prod"
 		ai := options.AppName
 		if len(options.AppInstance) > 0 {
 			ai = fmt.Sprintf("%s:%s", options.AppName, options.AppInstance)
 		}
-		appInstance := fmt.Sprintf("%s@%s", ai, hostname)
-		xh := monitor.XmonHost(prod)
-		troll := monitor.NewTroll(xh, hostname, appType, appInstance, 1000)
-		// The call below will log the info message once connected to xmon.
-		troll.Connect()
-		logger.troll = troll
-		logger.droppedAlerts = troll.NewAlertStatus()
+		var err error
+		logger.xmon, err = NewXmon(logger, &XmonConfig{
+			Prod:        options.Xmon == "prod",
+			AppInstance: ai,
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	if options.Metrics {
-		xrt.ServiceInit(xrt.IsProd(), monitor.AppTypeNever)
-		mp := fmt.Sprintf("eggsfs_%s", options.AppName)
-		logger.mw = hostmon.NewMetricWriterWithLabels(
-			600*time.Second,
-			logger.troll,
-			mp,
-			xrt.HostTeam.InfluxOrg,
-			xrt.HostTeam.InfluxDBURL,
-			xrt.HostTeam.InfluxTokenProd,
-			map[string]string{"hostname": xrt.Hostname, "app": options.AppName, "instance": options.AppInstance},
-		)
-		go func() {
-			logger.mw.PushMetrics(context.Background())
-		}()
-	}
-
-	return &logger
+	return logger
 }
 
 func (l *Logger) Level() LogLevel {
@@ -293,6 +281,7 @@ func (l *Logger) Info(format string, v ...any) {
 	l.LogStack(1, INFO, format, v...)
 }
 
+/*
 func (l *Logger) alert(msg string) {
 	if l.troll == nil {
 		return
@@ -319,24 +308,28 @@ func (l *Logger) alert(msg string) {
 	a := l.troll.Alert(msg, true, binCb)
 	l.raisedAlerts[msg] = a
 }
+*/
 
+// There should be very few times where you want an alert but
+// not an error.
+func (l *Logger) ErrorNoAlert(format string, v ...any) {
+	l.LogStack(1, ERROR, format, v...)
+}
+
+/*
 func (l *Logger) Error(format string, v ...any) {
 	l.alert(fmt.Sprintf(format, v...))
 	l.LogStack(1, ERROR, format, v...)
 }
+*/
 
-func (l *Logger) RaiseAlert(err any) {
-	file, line := getFileLine(1)
-	msg := fmt.Sprintf("%s:%d %v", file, line, err)
-	l.alert(msg)
-	l.LogStack(1, ERROR, msg)
+func (l *Logger) RaiseAlert(format string, v ...any) {
+	l.RaiseAlertStack(1, format, v...)
 }
 
-func (l *Logger) RaiseAlertStack(calldepth int, err any) {
-	file, line := getFileLine(1 + calldepth)
-	msg := fmt.Sprintf("%s:%d %v", file, line, err)
-	l.alert(msg)
-	l.LogStack(1+calldepth, ERROR, "ALERT %v", err)
+func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
+	alert := l.NewAlert()
+	l.RaiseStack(1, alert, true, format, v...)
 }
 
 func (l *Logger) Metric(category, name string, help string, value uint64, extralabels map[string]string) {
@@ -349,47 +342,34 @@ func (l *Logger) Metric(category, name string, help string, value uint64, extral
 	l.mw.AddMetric(hostmon.NewMetricNowWithLabels(category, name, help, float64(value), extralabels))
 }
 
-// NCAlert is a non binnable alert
-type NCAlert struct {
-	alert     *monitor.AlertStatus
-	l         *Logger
-	lastAlert string
+func (l *Logger) NewAlert() *XmonAlert {
+	if l.xmon == nil {
+		return &XmonAlert{}
+	} else {
+		return l.xmon.NewAlert()
+	}
 }
 
-func (l *Logger) NewNCAlert() *NCAlert {
-	return &NCAlert{l: l}
-}
-
-func (nc *NCAlert) AlertStack(calldepth int, f string, v ...any) {
-	nc.l.LogStack(1+calldepth, ERROR, "nc alert "+f, v...)
-	nc.lastAlert = fmt.Sprintf(f, v...)
-	if nc.l.troll == nil {
+func (l *Logger) RaiseStack(calldepth int, alert *XmonAlert, binnable bool, format string, v ...any) {
+	l.LogStack(1+calldepth, ERROR, "ALERT "+format, v...)
+	if l.xmon == nil {
 		return
 	}
-	if nc.alert == nil {
-		nc.alert = nc.l.troll.NewUnbinnableAlertStatus()
-	}
-	file, line := getFileLine(1)
-	nc.alert.Alertf(fmt.Sprintf("%s:%d ", file, line)+f, v...)
+	alert.RaiseStack(l, l.xmon, 1+calldepth, binnable, format, v...)
 }
 
-func (nc *NCAlert) Alert(f string, v ...any) {
-	nc.AlertStack(1, f, v...)
+func (l *Logger) Raise(alert *XmonAlert, binnable bool, format string, v ...any) {
+	l.RaiseStack(1, alert, binnable, format, v...)
 }
 
-func (nc *NCAlert) Clear() {
-	if len(nc.lastAlert) > 0 {
-		nc.l.LogStack(1, INFO, "cleared nc alert: %s", nc.lastAlert)
-		nc.lastAlert = ""
+func (l *Logger) Clear(alert *XmonAlert) {
+	if alert.lastMessage != "" {
+		l.LogStack(1, INFO, "clearing alert, last message %q", alert.lastMessage)
 	}
-	if nc.l.troll == nil {
+	if l.xmon == nil {
 		return
 	}
-	if nc.alert == nil {
-		return
-	}
-	nc.alert.Clear()
-	nc.alert = nil
+	alert.Clear(l, l.xmon)
 }
 
 type loggerSink struct {

@@ -6,6 +6,12 @@
 #include "Xmon.hpp"
 #include "Connect.hpp"
 
+enum struct XmonMood : int32_t {
+    Happy = 0,
+    Perturbed = 1,
+    Upset = 2,
+};
+
 static std::string explicitGenerateErrString(const std::string& what, int err, const char* str) {
     std::stringstream ss;
     ss << "could not " << what << ": " << err << "/" << str;
@@ -147,7 +153,6 @@ bool XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
 
 void Xmon::run() {
     int numFailures = 0;
-    int maxFailures = 3;
 
     XmonBuf buf;
     int sock = -1;
@@ -200,11 +205,11 @@ reconnect:
             while (!requests.empty()) {
                 const auto& req = requests.front();
                 if (req.msgType == XmonRequestType::CREATE) {
-                    LOG_DEBUG(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
+                    LOG_INFO(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::UPDATE) {
-                    LOG_DEBUG(_env, "updating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
+                    LOG_INFO(_env, "updating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::CLEAR) {
-                    LOG_DEBUG(_env, "clearing alert, aid=%s", req.alertId);
+                    LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
                 } else {
                     ALWAYS_ASSERT(false, "bad req type %s", (int)req.msgType);
                 }
@@ -231,14 +236,18 @@ reconnect:
         int32_t msgType = buf.unpackScalar<int32_t>();
         switch (msgType) {
         case 0x0: {
-            LOG_DEBUG(_env, "got xmon heartbeat");
+            if (!gotHeartbeat) {
+                LOG_INFO(_env, "got first xmon heartbeat, will start sending requests");
+            } else {
+                LOG_DEBUG(_env, "got xmon heartbeat");
+            }
             gotHeartbeat = true;
             packUpdate(buf);
             errString = buf.writeOut(sock);
             CHECK_ERR_STRING("send heartbeat");
             break; }
         case 0x1: {
-            LOG_DEBUG(_env, "got alert binned from UI, ignoring");
+            LOG_INFO(_env, "got alert binned from UI, ignoring");
             bool success = false;
             do {
                 errString.clear();

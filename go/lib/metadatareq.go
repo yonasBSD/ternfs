@@ -138,12 +138,12 @@ func (c *Client) metadataRequestInternal(
 	startedAt := time.Now()
 	requestId := newRequestId()
 	// will keep trying as long as we get timeouts
-	timeoutAlert := log.NewNCAlert()
+	timeoutAlert := log.NewAlert()
 	// We return the error anyway, so once we exit this function this alert must be gone
-	defer timeoutAlert.Clear()
+	defer log.Clear(timeoutAlert)
 	timeoutAlertAndStandalone := func(f string, v ...any) {
-		timeoutAlert.Alert(f, v...)
-		log.RaiseAlert(fmt.Errorf(f, v...))
+		log.Raise(timeoutAlert, false, f, v...)
+		log.RaiseAlert(f, v...)
 	}
 	timeouts := c.shardTimeout
 	if shid < 0 {
@@ -154,7 +154,7 @@ func (c *Client) metadataRequestInternal(
 		elapsed := now.Sub(now)
 		timeout := timeouts.NextNow(startedAt, now)
 		if timeout == 0 {
-			log.RaiseAlert(fmt.Errorf("giving up on request to shard %v after waiting for %v", shid, elapsed))
+			log.RaiseAlert("giving up on request to shard %v after waiting for %v", shid, elapsed)
 			return msgs.TIMEOUT
 		}
 		if counters != nil {
@@ -177,7 +177,7 @@ func (c *Client) metadataRequestInternal(
 					log.Info("dontWait is on, we couldn't send the request due to EPERM %v, goodbye", err)
 					return nil
 				} else {
-					timeoutAlert.Alert("got possibly transient EPERM when sending to shard %v, might retry after waiting for %v: %v", shid, timeout, err)
+					log.Raise(timeoutAlert, false, "got possibly transient EPERM when sending to shard %v, might retry after waiting for %v: %v", shid, timeout, err)
 					time.Sleep(timeout)
 					attempts++
 					continue
@@ -211,7 +211,7 @@ func (c *Client) metadataRequestInternal(
 					shouldRetry = true
 				}
 				if shouldRetry {
-					timeoutAlert.Alert("got network error %v to shard %v, will try to retry", err, shid)
+					log.Raise(timeoutAlert, false, "got network error %v to shard %v, will try to retry", err, shid)
 					// make sure we've waited as much as the expected timeout, otherwise we might
 					// call in a busy loop due to the server just not being up.
 					time.Sleep(time.Until(readLoopDeadline))
@@ -227,7 +227,7 @@ func (c *Client) metadataRequestInternal(
 			}
 			if err := (&respRequestId).Unpack(respReader); err != nil {
 				if protocolError, ok := err.(*badRespProtocol); ok && (protocolError.receivedProtocol == msgs.CDC_RESP_PROTOCOL_VERSION || protocolError.receivedProtocol == msgs.SHARD_RESP_PROTOCOL_VERSION) {
-					timeoutAlert.Alert("received shard/CDC protocol, probably a late shard/CDC request: %v", err)
+					log.Raise(timeoutAlert, false, "received shard/CDC protocol, probably a late shard/CDC request: %v", err)
 				} else {
 					timeoutAlertAndStandalone("could not decode Shard response header for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err)
 				}
@@ -235,7 +235,7 @@ func (c *Client) metadataRequestInternal(
 			}
 			// Check if we're interested in the request id we got
 			if respRequestId.requestId != requestId {
-				timeoutAlert.Alert("dropping response %v from shard %v, since we expected one of %v", respRequestId.requestId, shid, requestId)
+				log.Raise(timeoutAlert, false, "dropping response %v from shard %v, since we expected one of %v", respRequestId.requestId, shid, requestId)
 				continue
 			}
 			// We are interested, parse the kind
@@ -271,7 +271,7 @@ func (c *Client) metadataRequestInternal(
 			}
 			// If we've got a timeout, keep trying
 			if eggsError != nil && *eggsError == msgs.TIMEOUT {
-				timeoutAlert.Alert("got resp timeout error %v from shard %v, will try to retry", err, shid)
+				log.Raise(timeoutAlert, false, "got resp timeout error %v from shard %v, will try to retry", err, shid)
 				break // keep trying
 			}
 			// At this point, we know we've got a response

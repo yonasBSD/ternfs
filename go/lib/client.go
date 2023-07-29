@@ -659,7 +659,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 			return sock, nil
 		}
 		if errs[i&1] != nil {
-			log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1]))
+			log.RaiseAlert("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1])
 		}
 	}
 	// if we got two errors, return one of them
@@ -675,7 +675,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 		if errs[i&1] == nil {
 			return sock, nil
 		}
-		log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1]))
+		log.RaiseAlert("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i&1])
 	}
 	for _, err := range errs {
 		if err != nil {

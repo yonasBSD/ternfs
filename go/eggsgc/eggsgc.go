@@ -118,10 +118,10 @@ func main() {
 				dirInfoCache := lib.NewDirInfoCache()
 				for {
 					if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
-						log.RaiseAlert(fmt.Errorf("could not collect directories: %v", err))
+						log.RaiseAlert("could not collect directories: %v", err)
 					}
 					if err := lib.DestructFiles(log, options, shard); err != nil {
-						log.RaiseAlert(fmt.Errorf("could not destruct files: %v", err))
+						log.RaiseAlert("could not destruct files: %v", err)
 					}
 					log.Info("waiting 1 minute before collecting again")
 					time.Sleep(time.Minute)

@@ -477,7 +477,7 @@ func (c *Client) fetchMirroredStripe(
 		}
 		crc := msgs.Crc(crc32c.Sum(0, *buf))
 		if crc != body.StripesCrc[cell] {
-			log.RaiseAlert(fmt.Errorf("expected crc %v, got %v, for block %v in block service %v", body.StripesCrc[cell], crc, block.BlockId, blockService.Id))
+			log.RaiseAlert("expected crc %v, got %v, for block %v in block service %v", body.StripesCrc[cell], crc, block.BlockId, blockService.Id)
 			continue
 		}
 		found = true

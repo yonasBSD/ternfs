@@ -97,12 +97,6 @@ struct XmonBuf {
     bool readIn(int fd, size_t sz, std::string& errString);
 };
 
-enum struct XmonMood : int32_t {
-    Happy = 0,
-    Perturbed = 1,
-    Upset = 2,
-};
-
 struct Xmon : Undertaker::Reapable {
 private:
     Env _env;

@@ -293,7 +293,7 @@ func startToKeepScratchFileAlive(
 					StorageClass: msgs.EMPTY_STORAGE,
 				}
 				if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddInlineSpanResp{}); err != nil {
-					log.RaiseAlert(fmt.Errorf("could not bump scratch file deadline when migrating blocks: %w", err))
+					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %w", err)
 				}
 			}
 			go func() {
@@ -312,7 +312,7 @@ func startToKeepScratchFileAlive(
 					log.Info("expiring scratch file %v", scratchFile.id)
 					req := msgs.ExpireTransientFileReq{Id: scratchFile.id}
 					if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.ExpireTransientFileResp{}); err != nil {
-						log.RaiseAlert(fmt.Errorf("could not expire transient file %v: %w", scratchFile.id, err))
+						log.RaiseAlert("could not expire transient file %v: %w", scratchFile.id, err)
 					}
 				}
 				heartbeatStopped <- struct{}{}

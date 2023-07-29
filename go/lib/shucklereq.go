@@ -214,8 +214,8 @@ func ShuckleRequest(
 		timeout = &DefaultShuckleTimeout
 	}
 
-	alert := log.NewNCAlert()
-	defer alert.Clear()
+	alert := log.NewAlert()
+	defer log.Clear(alert)
 
 	var err error
 	var conn net.Conn
@@ -230,7 +230,7 @@ Reconnect:
 		log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
 	}
-	alert.AlertStack(1, "could not connect to shuckle, will retry in %v: %v", delay, err)
+	log.RaiseStack(1, alert, false, "could not connect to shuckle, will retry in %v: %v", delay, err)
 	time.Sleep(delay)
 
 ReconnectBegin:

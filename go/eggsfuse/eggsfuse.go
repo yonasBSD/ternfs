@@ -225,7 +225,7 @@ func (ds *dirStream) ensureNext() (bool, syscall.Errno) {
 func (ds *dirStream) HasNext() bool {
 	hasNext, err := ds.ensureNext()
 	if err != 0 {
-		logger.RaiseAlert(fmt.Errorf("dropping err in HasNext(): %v", err))
+		logger.RaiseAlert("dropping err in HasNext(): %v", err)
 	}
 	return hasNext
 }

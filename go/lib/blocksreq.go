@@ -33,7 +33,7 @@ func BlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte,
 		if errs[i%2] == nil {
 			return sock, nil
 		}
-		log.RaiseAlert(fmt.Errorf("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i%2]))
+		log.RaiseAlert("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i%2])
 	}
 	// return one of the two errors, we don't want to mess with them too much and they are alerts
 	for _, err := range errs {
@@ -53,7 +53,7 @@ func ReadBlocksRequest(
 		return 0, nil, err
 	}
 	if protocol != msgs.BLOCKS_REQ_PROTOCOL_VERSION {
-		log.RaiseAlert(fmt.Errorf("bad blocks protocol, expected %v, got %v", msgs.BLOCKS_REQ_PROTOCOL_VERSION, protocol))
+		log.RaiseAlert("bad blocks protocol, expected %v, got %v", msgs.BLOCKS_REQ_PROTOCOL_VERSION, protocol)
 		return 0, nil, msgs.MALFORMED_REQUEST
 	}
 	var blockServiceId uint64
@@ -76,7 +76,7 @@ func ReadBlocksRequest(
 	case msgs.TEST_WRITE:
 		req = &msgs.TestWriteReq{}
 	default:
-		log.RaiseAlert(fmt.Errorf("bad blocks request kind %v", kind))
+		log.RaiseAlert("bad blocks request kind %v", kind)
 		return 0, nil, msgs.MALFORMED_REQUEST
 	}
 	if err := req.Unpack(r); err != nil {

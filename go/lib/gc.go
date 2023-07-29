@@ -126,7 +126,7 @@ func destructFilesInternal(
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
 			if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				log.Error("%+v: error while destructing file: %v", file, err)
+				log.RaiseAlert("%+v: error while destructing file: %v", file, err)
 				someErrored = true
 			}
 		}

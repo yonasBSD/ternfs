@@ -136,7 +136,7 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
-	alert := log.NewNCAlert()
+	alert := log.NewAlert()
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
@@ -145,11 +145,11 @@ func registerPeriodically(
 		log.Trace("registering with %+v", req)
 		_, err := lib.ShuckleRequest(log, nil, shuckleAddress, &req)
 		if err != nil {
-			alert.Alert("could not register block services with %+v: %v", shuckleAddress, err)
+			log.Raise(alert, false, "could not register block services with %+v: %v", shuckleAddress, err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		alert.Clear()
+		log.Clear(alert)
 		waitForRange := time.Minute * 2
 		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
 		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
@@ -172,7 +172,7 @@ func updateBlockServicesInfoForever(
 func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) msgs.ErrCode {
 	expectedMac, good := lib.CheckBlockEraseCertificate(blockServiceId, cipher, req)
 	if !good {
-		log.RaiseAlert(fmt.Errorf("bad MAC, got %v, expected %v", req.Certificate, expectedMac))
+		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
 	}
 	return 0
@@ -201,7 +201,7 @@ func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) error {
 			// block but not certify the deletion in the shard.
 			return nil
 		}
-		log.RaiseAlert(fmt.Errorf("internal error deleting block at path %v: %v", blockPath, err))
+		log.RaiseAlert("internal error deleting block at path %v: %v", blockPath, err)
 		return msgs.INTERNAL_ERROR
 	}
 	return nil
@@ -212,7 +212,7 @@ func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePat
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
-		log.RaiseAlert(fmt.Errorf("could not find block to erase at path %v", blockPath))
+		log.RaiseAlert("could not find block to erase at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 	if err != nil {
@@ -224,12 +224,12 @@ func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePat
 	}
 	remainingSize := int(fi.Size()) - int(offset)
 	if int(count) > remainingSize {
-		log.RaiseAlert(fmt.Errorf("was requested %v bytes, but only got %v", count, remainingSize))
+		log.RaiseAlert("was requested %v bytes, but only got %v", count, remainingSize)
 		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
 	if remainingSize < 0 {
-		log.RaiseAlert(fmt.Errorf("trying to read beyond EOF"))
+		log.RaiseAlert("trying to read beyond EOF")
 		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
@@ -253,7 +253,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 	expectedMac, good := lib.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
 		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
-		log.RaiseAlert(fmt.Errorf("bad MAC, got %v, expected %v", req.Certificate, expectedMac))
+		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
 	}
 	return 0
@@ -319,7 +319,7 @@ func writeBlock(
 	}
 	if msgs.Crc(crc) != expectedCrc {
 		os.Remove(tmpName)
-		log.RaiseAlert(fmt.Errorf("bad crc for block %v, got %v in req, computed %v", blockId, msgs.Crc(crc), expectedCrc))
+		log.RaiseAlert("bad crc for block %v, got %v in req, computed %v", blockId, msgs.Crc(crc), expectedCrc)
 		lib.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 		return nil
 	}
@@ -390,7 +390,7 @@ func handleError(
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack(1, fmt.Errorf("got unexpected error %v from %v", err, conn.RemoteAddr()))
+	log.RaiseAlertStack(1, "got unexpected error %v from %v", err, conn.RemoteAddr())
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
@@ -463,7 +463,7 @@ NextRequest:
 			}
 			// In general, refuse to service requests for block services that we
 			// don't have.
-			log.RaiseAlert(fmt.Errorf("received unknown block service id %v", blockServiceId))
+			log.RaiseAlert("received unknown block service id %v", blockServiceId)
 			lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_SERVICE_NOT_FOUND)
 			continue
 		}
@@ -478,7 +478,7 @@ NextRequest:
 			cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
 			now := time.Now()
 			if timeCheck && now.Before(cutoffTime) {
-				log.RaiseAlert(fmt.Errorf("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime))
+				log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
@@ -515,7 +515,7 @@ NextRequest:
 			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
 			now := time.Now()
 			if timeCheck && (now.Before(pastCutoffTime) || now.After(futureCutoffTime)) {
-				log.RaiseAlert(fmt.Errorf("block %v is too old or too new to be deleted (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime))
+				log.RaiseAlert("block %v is too old or too new to be deleted (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime)
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
@@ -532,7 +532,7 @@ NextRequest:
 				continue NextRequest
 			}
 			if whichReq.Size > MAX_OBJECT_SIZE {
-				log.RaiseAlert(fmt.Errorf("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE))
+				log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
 				if err := consumeBlock(whichReq.Size, conn); err != nil {
 					log.Info("could not consume block from %v: %v", conn.RemoteAddr(), err)
 					if handleError(log, conn, err) {
@@ -826,7 +826,7 @@ func main() {
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				log.RaiseAlert(fmt.Errorf("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id))
+				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
 				delete(blockServices, bs.Id)
 				deadBlockServices[bs.Id] = deadBlockService{
 					cipher: ourBs.cipher,

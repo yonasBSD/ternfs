@@ -210,7 +210,7 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	resp := msgs.AllBlockServicesResp{}
 	blockServices, err := s.selectBlockServices(nil)
 	if err != nil {
-		ll.Error("error reading block services: %s", err)
+		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
 	}
 
@@ -297,7 +297,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	_, err := s.db.Exec(fmtBuilder.String(), values...)
 
 	if err != nil {
-		ll.Error("error registering block services: %s", err)
+		ll.RaiseAlert("error registering block services: %s", err)
 		return nil, err
 	}
 
@@ -320,16 +320,16 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 		n("flags", req.Flags), n("mask", req.FlagsMask), n("id", req.Id),
 	)
 	if err != nil {
-		ll.Error("error settings flags for blockservice %d: %s", req.Id, err)
+		ll.RaiseAlert("error settings flags for blockservice %d: %s", req.Id, err)
 		return nil, err
 	}
 	nrows, err := res.RowsAffected()
 	if err != nil {
-		ll.Error("error fetching the number of affected rows when setting flags for %d: %s", req.Id, err)
+		ll.RaiseAlert("error fetching the number of affected rows when setting flags for %d: %s", req.Id, err)
 		return nil, err
 	}
 	if nrows != 1 {
-		ll.Error("unexpected number of rows affected when setting flags for %d, got:%d, want:1", req.Id, nrows)
+		ll.RaiseAlert("unexpected number of rows affected when setting flags for %d, got:%d, want:1", req.Id, nrows)
 		return nil, err
 	}
 	return &msgs.SetBlockServiceFlagsResp{}, nil
@@ -340,7 +340,7 @@ func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsRe
 
 	shards, err := s.selectShards()
 	if err != nil {
-		ll.Error("error reading shards: %s", err)
+		ll.RaiseAlert("error reading shards: %s", err)
 		return nil, err
 	}
 
@@ -366,7 +366,7 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 		n("id", req.Id), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
-		ll.Error("error registering shard %d: %s", req.Id, err)
+		ll.RaiseAlert("error registering shard %d: %s", req.Id, err)
 		return nil, err
 	}
 
@@ -380,7 +380,7 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 	resp := msgs.CdcResp{}
 	cdc, err := s.selectCDC()
 	if err != nil {
-		log.Error("error reading cdc: %s", err)
+		log.RaiseAlert("error reading cdc: %s", err)
 		return nil, err
 	}
 	resp.Ip1 = cdc.ip1
@@ -405,7 +405,7 @@ func handleRegisterCdc(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*ms
 		n("last_seen", msgs.Now()),
 	)
 	if err != nil {
-		log.Error("error registering cdc: %s", err)
+		log.RaiseAlert("error registering cdc: %s", err)
 		return nil, err
 	}
 
@@ -420,7 +420,7 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 		"SELECT count(*), count(distinct failure_domain), sum(capacity_bytes), sum(available_bytes), sum(blocks) FROM block_services",
 	)
 	if err != nil {
-		log.Error("error getting info: %s", err)
+		log.RaiseAlert("error getting info: %s", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -428,7 +428,7 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 		return nil, fmt.Errorf("no row found in info query")
 	}
 	if err := rows.Scan(&resp.NumBlockServices, &resp.NumFailureDomains, &resp.Capacity, &resp.Available, &resp.Blocks); err != nil {
-		log.Error("error scanning info: %s", err)
+		log.RaiseAlert("error scanning info: %s", err)
 		return nil, err
 	}
 
@@ -453,7 +453,7 @@ func handleInsertStats(log *lib.Logger, s *state, req *msgs.InsertStatsReq) (*ms
 	_, err := s.db.Exec(fmtBuilder.String(), values...)
 
 	if err != nil {
-		log.Error("error inserting stats: %s", err)
+		log.RaiseAlert("error inserting stats: %s", err)
 		return nil, err
 	}
 
@@ -572,7 +572,7 @@ func handleError(
 	}
 
 	// we always raise an alert since this is almost always bad news in shuckle
-	log.RaiseAlertStack(1, fmt.Errorf("got unexpected error %v from %v", err, conn.RemoteAddr()))
+	log.RaiseAlertStack(1, "got unexpected error %v from %v", err, conn.RemoteAddr())
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
@@ -703,7 +703,7 @@ func handleWithRecover(
 		w.WriteHeader(*statusPtr)
 		if written, err := io.CopyN(w, content, *sizePtr); err != nil {
 			if !isBenignConnTermination(err) {
-				log.RaiseAlert(fmt.Errorf("could not send full response of size %v, %v written: %w", *sizePtr, written, err))
+				log.RaiseAlert("could not send full response of size %v, %v written: %w", *sizePtr, written, err)
 			}
 		}
 	}
@@ -843,7 +843,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 
 			blockServices, err := state.selectBlockServices(nil)
 			if err != nil {
-				ll.Error("error reading block services: %s", err)
+				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
 			}
 
@@ -896,7 +896,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 
 			shards, err := state.selectShards()
 			if err != nil {
-				ll.Error("error reading shards: %s", err)
+				ll.RaiseAlert("error reading shards: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading shards: %s", err))
 			}
 			for _, shard := range shards {
@@ -909,7 +909,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 
 			cdc, err := state.selectCDC()
 			if err != nil {
-				ll.Error("error reading cdc: %s", err)
+				ll.RaiseAlert("error reading cdc: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
 			}
 			data.CDCAddr1 = fmt.Sprintf("%v:%v", net.IP(cdc.ip1[:]), cdc.port1)
@@ -1337,7 +1337,7 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 			{
 				rows, err := st.db.Query("SELECT ip1, port1, ip2, port2, flags FROM block_services WHERE id = ?", blockServiceId)
 				if err != nil {
-					log.Error("Error reading block service: %s", err)
+					log.RaiseAlert("Error reading block service: %s", err)
 					return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Error reading block service: %s", err)))
 				}
 				defer rows.Close()
@@ -1685,7 +1685,7 @@ func statsWriter(ll *lib.Logger, st *state) {
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	staleAlert := ll.NewNCAlert()
+	staleAlert := ll.NewAlert()
 
 	for {
 		<-ticker.C
@@ -1708,7 +1708,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			n("thresh", thresh),
 		)
 		if err != nil {
-			ll.Error("error setting block services stale: %s", err)
+			ll.RaiseAlert("error setting block services stale: %s", err)
 		}
 
 		// Wrap the following select statements in func() to make defer work properly.
@@ -1720,7 +1720,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				n("flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
 			)
 			if err != nil {
-				ll.Error("error selecting blockServices: %s", err)
+				ll.RaiseAlert("error selecting blockServices: %s", err)
 				return
 			}
 			defer rows.Close()
@@ -1729,7 +1729,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				var fd []byte
 				err = rows.Scan(&id, &fd, &ts)
 				if err != nil {
-					ll.Error("error decoding blockService row: %s", err)
+					ll.RaiseAlert("error decoding blockService row: %s", err)
 					return
 				}
 				alerts = append(alerts, fmt.Sprintf("stale blockservice %v, fd %s (seen %s ago)", id, fd, formatLastSeen(ts)))
@@ -1739,7 +1739,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		func() {
 			rows, err := st.db.Query("SELECT id, last_seen FROM shards where last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
-				ll.Error("error selecting blockServices: %s", err)
+				ll.RaiseAlert("error selecting blockServices: %s", err)
 				return
 			}
 			defer rows.Close()
@@ -1747,7 +1747,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			for rows.Next() {
 				err = rows.Scan(&id, &ts)
 				if err != nil {
-					ll.Error("error decoding shard row: %s", err)
+					ll.RaiseAlert("error decoding shard row: %s", err)
 					return
 				}
 				alerts = append(alerts, fmt.Sprintf("stale shard %d (last seen %s ago)", id, formatLastSeen(ts)))
@@ -1757,7 +1757,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		func() {
 			rows, err := st.db.Query("SELECT last_seen FROM cdc where last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
-				ll.Error("error selecting blockServices: %s", err)
+				ll.RaiseAlert("error selecting blockServices: %s", err)
 				return
 			}
 			defer rows.Close()
@@ -1765,7 +1765,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			for rows.Next() {
 				err = rows.Scan(&ts)
 				if err != nil {
-					ll.Error("error decoding cdc row: %s", err)
+					ll.RaiseAlert("error decoding cdc row: %s", err)
 					return
 				}
 				alerts = append(alerts, fmt.Sprintf("stale cdc (last seen %s ago)", formatLastSeen(ts)))
@@ -1773,11 +1773,11 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		if len(alerts) == 0 {
-			staleAlert.Clear()
+			ll.Clear(staleAlert)
 			continue
 		}
 		msg := strings.Join(alerts, "\n")
-		staleAlert.Alert(msg)
+		ll.Raise(staleAlert, false, msg)
 	}
 }
 
@@ -1971,7 +1971,7 @@ func main() {
 	go func() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
 		err := serviceMonitor(ll, state, *stale)
-		ll.Error("serviceMonitor ended with error %s", err)
+		ll.RaiseAlert("serviceMonitor ended with error %s", err)
 	}()
 
 	go func() {

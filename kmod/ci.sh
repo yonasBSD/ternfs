@@ -49,7 +49,7 @@ make "KDIR=${SCRIPT_DIR}/linux" -j kmod
 # start VM in the background
 function cleanup {
     echo 'Syncing logs'
-    rsync -e "ssh -p 2222 -i image-key" -avm --include='/eggs-integrationtest.**/log' --include='/eggs-integrationtest.**/test-log' --include='/eggs-integrationtest.**/stdout' --include='/eggs-integrationtest.**/stderr' --exclude='/**' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
+    rsync -e "ssh -p 2222 -i image-key" -avm --include='/eggs-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
     echo 'Terminating QEMU'
     pkill qemu    
 }

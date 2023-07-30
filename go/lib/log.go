@@ -408,7 +408,7 @@ func (sink *loggerSink) Write(p []byte) (int, error) {
 	bytes := sink.buf.Bytes()
 	for lineEnd < len(bytes) {
 		if bytes[lineEnd] == '\n' {
-			sink.logger.LogStack(2, sink.level, string(bytes[lineBegin:lineEnd+1]))
+			sink.logger.LogStack(2, sink.level, string(bytes[lineBegin:lineEnd]))
 			lineBegin = lineEnd + 1
 		}
 		lineEnd++

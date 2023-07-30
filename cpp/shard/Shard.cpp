@@ -647,6 +647,22 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     ShardShared shared(db);
 
+    // xmon first, so that by the time it shuts down it'll have all the leftover requests
+    if (xmon) {
+        XmonConfig config;
+        {
+            std::ostringstream ss;
+            ss << std::setw(3) << std::setfill('0') << shid;
+            config.appInstance = "shard:" + ss.str();
+        }
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
+    }
+
     {
         auto server = std::make_unique<ShardServer>(logger, xmon, shid, options, 0, shared);
         pthread_t tid;
@@ -690,21 +706,6 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(statsInserter), tid, "stats_inserter");
-    }
-
-    if (xmon) {
-        XmonConfig config;
-        {
-            std::ostringstream ss;
-            ss << std::setw(3) << std::setfill('0') << shid;
-            config.appInstance = "shard:" + ss.str();
-        }
-        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
 
     undertaker->reap();

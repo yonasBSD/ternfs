@@ -863,6 +863,18 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     CDCDB db(logger, xmon, dbDir);
     auto shared = std::make_unique<CDCShared>(db);
 
+    // xmon first, so that by the time it shuts down it'll have all the leftover requests
+    if (xmon) {
+        XmonConfig config;
+        config.appInstance = "cdc";
+        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
+    }
+
     {
         auto server = std::make_unique<CDCServer>(logger, xmon, options, *shared);
         pthread_t tid;
@@ -897,17 +909,6 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
             throw SYSCALL_EXCEPTION("pthread_create");
         }
         undertaker->checkin(std::move(statsInserter), tid, "stats_inserter");
-    }
-
-    if (xmon) {
-        XmonConfig config;
-        config.appInstance = "cdc";
-        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
 
     undertaker->reap();

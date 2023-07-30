@@ -6,7 +6,7 @@
 #include <atomic>
 #include <vector>
 
-enum struct XmonRequestType {
+enum struct XmonRequestType : int32_t {
     CREATE = 0x4,
     UPDATE = 0x5,
     CLEAR  = 0x3,
@@ -65,7 +65,7 @@ public:
         addRequest(std::move(req));
     }
 
-    void getRequests(std::vector<XmonRequest>& reqs) {
+    void getRequests(std::deque<XmonRequest>& reqs) {
         std::lock_guard<std::mutex> lock(_mu);
         std::move(std::begin(_requests), std::end(_requests), std::back_inserter(reqs));
         _requests.clear();

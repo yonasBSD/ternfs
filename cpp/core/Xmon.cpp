@@ -151,7 +151,7 @@ void Xmon::run() {
 
     XmonBuf buf;
     int sock = -1;
-    std::vector<XmonRequest> requests;
+    std::deque<XmonRequest> requests;
 
     std::string errString;
 
@@ -191,13 +191,14 @@ reconnect:
     // Start recv loop
     bool gotHeartbeat = false;
     for (;;) {
+        // try to send all requests before shutting down
         bool shutDown = _stopper.shouldStop();
     
         // send all requests
         if (gotHeartbeat) {
             _agent->getRequests(requests);
-            for (int i = 0; i < requests.size(); i++) {
-                const auto& req = requests[i];
+            while (!requests.empty()) {
+                const auto& req = requests.front();
                 if (req.msgType == XmonRequestType::CREATE) {
                     LOG_DEBUG(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::UPDATE) {
@@ -209,16 +210,10 @@ reconnect:
                 }
                 packRequest(buf, req);
                 errString = buf.writeOut(sock);
-                if (unlikely(!errString.empty())) {
-                    // re-insert all the requests
-                    for (int j = i; j < requests.size(); j++) {
-                        _agent->addRequest(std::move(requests[j]));
-                    }
-                }
                 CHECK_ERR_STRING(errString);
+                requests.pop_front();
                 LOG_DEBUG(_env, "sent request to xmon");
             }
-            requests.clear();
         }
 
         // Check if we're done

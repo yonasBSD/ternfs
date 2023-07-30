@@ -10,7 +10,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-type Timings struct {
+type Histogram struct {
 	// parameters
 	growth              float64 // the growth factor for each histogram bin, must be > 1
 	invLogGrowth        float64 // 1/ln(factor)
@@ -26,7 +26,7 @@ type HistogramBin struct {
 	Count      uint64
 }
 
-func (t *Timings) Histogram() []HistogramBin {
+func (t *Histogram) Histogram() []HistogramBin {
 	bins := make([]HistogramBin, len(t.bins))
 	upperBound := float64(t.firstUpperBound)
 	for i := 0; i < len(t.bins); i++ {
@@ -37,7 +37,7 @@ func (t *Timings) Histogram() []HistogramBin {
 	return bins
 }
 
-func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timings {
+func HewHistogram(bins int, firstUpperBound time.Duration, growth float64) *Histogram {
 	if bins < 1 {
 		panic(fmt.Errorf("non-positive bins %d", bins))
 	}
@@ -47,7 +47,7 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 	if growth <= 1.0 {
 		panic(fmt.Errorf("growth %v <= 1.0", growth))
 	}
-	timings := Timings{
+	timings := Histogram{
 		bins:                make([]uint64, bins),
 		growth:              growth,
 		invLogGrowth:        1.0 / math.Log(growth),
@@ -58,14 +58,14 @@ func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timing
 	return &timings
 }
 
-func (t *Timings) Reset() {
+func (t *Histogram) Reset() {
 	for i := range t.bins {
 		atomic.StoreUint64(&t.bins[i], 0)
 	}
 	t.startedAt = time.Now()
 }
 
-func (t *Timings) Add(d time.Duration) {
+func (t *Histogram) Add(d time.Duration) {
 	inanos := d.Nanoseconds()
 	if inanos < 0 {
 		return
@@ -87,7 +87,7 @@ func (t *Timings) Add(d time.Duration) {
 
 // In these aggregates we're conservative (pick the upper bound)
 
-func (t *Timings) TotalTime() time.Duration {
+func (t *Histogram) TotalTime() time.Duration {
 	d := time.Duration(0)
 	for _, bin := range t.Histogram() {
 		d += bin.UpperBound * time.Duration(bin.Count)
@@ -95,7 +95,7 @@ func (t *Timings) TotalTime() time.Duration {
 	return d
 }
 
-func (t *Timings) Count() uint64 {
+func (t *Histogram) Count() uint64 {
 	x := uint64(0)
 	for _, bin := range t.Histogram() {
 		x += bin.Count
@@ -103,7 +103,7 @@ func (t *Timings) Count() uint64 {
 	return x
 }
 
-func (t *Timings) Mean() time.Duration {
+func (t *Histogram) Mean() time.Duration {
 	bins := t.Histogram()
 	totalCount := uint64(0)
 	for _, bin := range bins {
@@ -116,7 +116,7 @@ func (t *Timings) Mean() time.Duration {
 	return time.Duration(x)
 }
 
-func (t *Timings) Median() time.Duration {
+func (t *Histogram) Median() time.Duration {
 	bins := t.Histogram()
 	totalCount := uint64(0)
 	for _, bin := range bins {
@@ -132,7 +132,7 @@ func (t *Timings) Median() time.Duration {
 	panic("impossible")
 }
 
-func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
+func (t *Histogram) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
 	stats := make([]msgs.Stat, 0, 1)
 	// hist
 	hist := t.Histogram()
@@ -153,7 +153,7 @@ func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
 func TimingsToStats[K interface {
 	~uint8
 	fmt.Stringer
-}](prefix string, timings map[K]*Timings) []msgs.Stat {
+}](prefix string, timings map[K]*Histogram) []msgs.Stat {
 	stats := make([]msgs.Stat, 0, len(timings)*2) // count, histogram
 	now := msgs.Now()
 	for k, t := range timings {

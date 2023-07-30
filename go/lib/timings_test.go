@@ -9,7 +9,7 @@ import (
 
 func TestTimingsBins(t *testing.T) {
 	// use the same stuff we use in prod
-	timings := NewTimings(40, 10*time.Microsecond, 1.5)
+	timings := HewHistogram(40, 10*time.Microsecond, 1.5)
 	// bins should be:
 	// 0-10us           1.5^0
 	// 10us-15us        1.5^1

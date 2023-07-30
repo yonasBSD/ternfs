@@ -66,7 +66,7 @@ type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
 	mutex    sync.Mutex
 	db       *sql.DB
-	counters map[msgs.ShuckleMessageKind]*lib.Timings
+	counters map[msgs.ShuckleMessageKind]*lib.Histogram
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -193,9 +193,9 @@ func newState(db *sql.DB) *state {
 		db:    db,
 		mutex: sync.Mutex{},
 	}
-	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
+	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Histogram)
 	for _, k := range msgs.AllShuckleMessageKind {
-		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
+		st.counters[k] = lib.HewHistogram(40, 10*time.Microsecond, 1.5)
 	}
 	return st
 }

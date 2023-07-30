@@ -18,7 +18,7 @@ import (
 )
 
 type ReqCounters struct {
-	Timings  Timings
+	Timings  Histogram
 	Attempts uint64
 }
 
@@ -35,13 +35,13 @@ func NewClientCounters() *ClientCounters {
 	for _, k := range msgs.AllShardMessageKind {
 		// max = ~1min
 		counters.Shard[uint8(k)] = &ReqCounters{
-			Timings: *NewTimings(40, time.Microsecond*10, 1.5),
+			Timings: *HewHistogram(40, time.Microsecond*10, 1.5),
 		}
 	}
 	for _, k := range msgs.AllCDCMessageKind {
 		// max = ~2min
 		counters.CDC[uint8(k)] = &ReqCounters{
-			Timings: *NewTimings(35, time.Millisecond, 1.5),
+			Timings: *HewHistogram(35, time.Millisecond, 1.5),
 		}
 	}
 	return &counters

@@ -765,12 +765,15 @@ static void fetch_work(struct work_struct* work) {
 static int fetch_receive_single_req(
     struct block_request* breq,
     struct sk_buff* skb,
-    unsigned int offset, size_t len0
+    unsigned int offset,
+    size_t len
 ) {
     struct fetch_request* req = get_fetch_request(breq);
-    size_t len = len0;
+    size_t header_read;
+    {
+        size_t len0 = len;
 
-    BUG_ON(req->breq.left_to_read == 0);
+        BUG_ON(req->breq.left_to_read == 0);
 
 #define HEADER_COPY(buf, count) ({ \
         int read = count > 0 ? eggsfs_skb_copy(buf, skb, offset, count) : 0; \
@@ -780,32 +783,37 @@ static int fetch_receive_single_req(
         read; \
     })
 
-    // Header
-    {
-        int header_left = EGGSFS_BLOCKS_RESP_HEADER_SIZE - (int)req->header_read;
-        int read = HEADER_COPY(req->header.buf + req->header_read, header_left);
-        header_left -= read;
-        if (header_left > 0) { return len0-len; }
-    }
+        // Header
+        {
+            int header_left = EGGSFS_BLOCKS_RESP_HEADER_SIZE - (int)req->header_read;
+            int read = HEADER_COPY(req->header.buf + req->header_read, header_left);
+            header_left -= read;
+            if (header_left > 0) { return len0-len; }
+        }
 
-    // Protocol check
-    if (unlikely(le32_to_cpu(req->header.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
-        eggsfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
-        return eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE);
-    }
+        // Protocol check
+        if (unlikely(le32_to_cpu(req->header.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
+            eggsfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
+            return eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE);
+        }
 
-    // Error check
-    if (unlikely(req->header.data.kind == 0)) {
-        int error_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)req->header_read;
-        int read = HEADER_COPY(req->header.buf + req->header_read, error_left);
-        error_left -= read;
-        if (error_left > 0) { return len0-len; }
-        // we got an error "nicely", the socket can carry on living.
-        atomic_cmpxchg(&req->breq.err, 0, eggsfs_error_to_linux(le16_to_cpu(req->header.data.error)));
-        return len0-len;
-    }
+        // Error check
+        if (unlikely(req->header.data.kind == 0)) {
+            int error_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)req->header_read;
+            int read = HEADER_COPY(req->header.buf + req->header_read, error_left);
+            error_left -= read;
+            if (error_left > 0) { return len0-len; }
+            // we got an error "nicely", the socket can carry on living.
+            atomic_cmpxchg(&req->breq.err, 0, eggsfs_error_to_linux(le16_to_cpu(req->header.data.error)));
+            return len0-len;
+        }
+
+        header_read = len0-len;
+
+        BUG_ON(header_read > req->breq.left_to_read);
 
 #undef HEADER_COPY
+    }
 
     // Actual data copy
 
@@ -814,7 +822,7 @@ static int fetch_receive_single_req(
     char* page_ptr = kmap_atomic(page);
 
     struct skb_seq_state seq;
-    u32 read_len = min(req->breq.left_to_read, (u32)len);
+    u32 read_len = min(req->breq.left_to_read - (u32)header_read, (u32)len);
     skb_prepare_seq_read(skb, offset, offset + read_len, &seq);
 
     u32 block_bytes_read = 0;
@@ -847,18 +855,11 @@ static int fetch_receive_single_req(
     // We might have not terminated with avail == 0, but because we're done with this request
     skb_abort_seq_read(&seq);
 
-    BUG_ON(block_bytes_read > req->breq.left_to_read);
-
-    // The last page is partially filled, zero it and return to first page
-    if (!req->breq.left_to_read && req->page_offset) {
-        memset(page_ptr + req->page_offset, 0, PAGE_SIZE - req->page_offset);
-        list_rotate_left(&req->pages);
-        req->page_offset = 0;
-    }
+    BUG_ON(header_read + block_bytes_read > req->breq.left_to_read);
 
     kunmap_atomic(page_ptr);
 
-    return (len0-len) + block_bytes_read;
+    return header_read + block_bytes_read;
 }
 
 static int fetch_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
@@ -878,6 +879,13 @@ int eggsfs_fetch_block(
     u32 count
 ) {
     int err, i;
+
+    if (count%PAGE_SIZE) {
+        // we rely on the pages being filled neatly in the block fetch code
+        // (we could change this easily, but not needed for now)
+        eggsfs_warn("cannot read not page-sized block segment: %u", count);
+        return -EIO;
+    }
 
     // can't read
     if (unlikely(bs->flags & EGGSFS_BLOCK_SERVICE_DONT_READ)) {

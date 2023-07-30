@@ -4,7 +4,7 @@
             The CDC stats include both the end-to-end latency (from request parse to response sent), which includes the time the request spent in the CDC transaction queue; and the "process" time (<code>.process</code>), which is how long it took to process the request from transaction start to transaction finish.
         </p>
         <p>
-            For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure), but there are two sockets reading the requests, and they compete for the write lock. The time spent waiting for the write lock is measured here.
+            For the shards there is no such queue (apart from the socket receive buffer itself, which we don't measure), but there are two sockets reading the requests, and they compete for the write lock. The time spent waiting for the write lock is measured here. Also note that for shards the ops/s measure the ops/s _per shard_. Multiply by 256 to get the cumulative ops/s.
         </p>
         <p>
             In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.

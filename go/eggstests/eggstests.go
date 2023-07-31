@@ -765,34 +765,6 @@ func main() {
 	procs := managedprocess.New(terminateChan)
 	defer procs.Close()
 
-	// If we're running with kmod, set the timeout to be very high
-	// (in qemu things can be delayed massively). TODO it would be
-	// nice to understand the circumstances where the timeout
-	// is so high, even inside a very stressed QEMU.
-	if *kmod {
-		cmd := exec.Command("sudo", "dmidecode", "-s", "system-manufacturer")
-		dmiOut, err := cmd.Output()
-		if err != nil {
-			panic(err)
-		}
-		isQEMU := strings.TrimSpace(string(dmiOut)) == "QEMU"
-		if isQEMU {
-			log.Info("increasing metadata timeout since we're in QEMU")
-			cmd = exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.overall_shard_timeout_ms=60000")
-			cmd.Stdout = io.Discard
-			cmd.Stderr = io.Discard
-			if err := cmd.Run(); err != nil {
-				panic(err)
-			}
-			cmd = exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.overall_cdc_timeout_ms=60000")
-			cmd.Stdout = io.Discard
-			cmd.Stderr = io.Discard
-			if err := cmd.Run(); err != nil {
-				panic(err)
-			}
-		}
-	}
-
 	// Start cached spans dropper
 	if *dropCachedSpansEvery != time.Duration(0) {
 		if !*kmod {

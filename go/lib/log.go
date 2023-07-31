@@ -281,47 +281,11 @@ func (l *Logger) Info(format string, v ...any) {
 	l.LogStack(1, INFO, format, v...)
 }
 
-/*
-func (l *Logger) alert(msg string) {
-	if l.troll == nil {
-		return
-	}
-	l.alertsLock.Lock()
-	defer l.alertsLock.Unlock()
-	// Deduplicate by alert message
-	_, ok := l.raisedAlerts[msg]
-	if ok {
-		return
-	}
-
-	if len(l.raisedAlerts) > 10 {
-		l.droppedAlerts.Alert("Alert limit exceeded, some have been dropped")
-		return
-	}
-	l.droppedAlerts.Clear()
-
-	binCb := func(alertID int64) {
-		l.alertsLock.Lock()
-		defer l.alertsLock.Unlock()
-		delete(l.raisedAlerts, msg)
-	}
-	a := l.troll.Alert(msg, true, binCb)
-	l.raisedAlerts[msg] = a
-}
-*/
-
 // There should be very few times where you want an alert but
 // not an error.
 func (l *Logger) ErrorNoAlert(format string, v ...any) {
 	l.LogStack(1, ERROR, format, v...)
 }
-
-/*
-func (l *Logger) Error(format string, v ...any) {
-	l.alert(fmt.Sprintf(format, v...))
-	l.LogStack(1, ERROR, format, v...)
-}
-*/
 
 func (l *Logger) RaiseAlert(format string, v ...any) {
 	l.RaiseAlertStack(1, format, v...)

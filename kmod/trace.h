@@ -272,7 +272,7 @@ TRACE_EVENT(eggsfs_metadata_request,
         __entry->shard_id,
         __entry->shard_id >= 0 ?
             __print_eggsfs_shard_kind(__entry->kind) :
-            __print_eggsfs_shard_kind(__entry->kind),
+            __print_eggsfs_cdc_kind(__entry->kind),
         __entry->len, __entry->n_attempts, __entry->resp_len,
         __entry->error
     )

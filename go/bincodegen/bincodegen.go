@@ -961,6 +961,36 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	fmt.Fprintf(cpp, "}\n\n")
 }
 
+func generateCppErr(hpp io.Writer, cpp io.Writer, errors []string) {
+	fmt.Fprintf(hpp, "enum class EggsError : uint16_t {\n")
+	for i, err := range errors {
+		fmt.Fprintf(hpp, "    %s = %d,\n", err, errCodeOffset+i)
+	}
+	fmt.Fprintf(hpp, "};\n\n")
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, EggsError err);\n\n")
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, EggsError err) {\n")
+	fmt.Fprintf(cpp, "    switch (err) {\n")
+	for _, err := range errors {
+		fmt.Fprintf(cpp, "    case EggsError::%s:\n", err)
+		fmt.Fprintf(cpp, "        out << \"%s\";\n", err)
+		fmt.Fprintf(cpp, "        break;\n")
+	}
+	fmt.Fprintf(cpp, "    default:\n")
+	fmt.Fprintf(cpp, "        out << \"EggsError(\" << ((int)err) << \")\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
+	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "    return out;\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
+	fmt.Fprintf(hpp, "const std::vector<EggsError> allEggsErrors {\n")
+	for _, err := range errors {
+		fmt.Fprintf(hpp, "    EggsError::%s,\n", err)
+	}
+	fmt.Fprintf(hpp, "};\n\n")
+
+	fmt.Fprintf(hpp, "constexpr int maxEggsError = %d;\n\n", errCodeOffset+len(errors))
+}
+
 func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRespType) {
 	fmt.Fprintf(hpp, "enum class %sMessageKind : uint8_t {\n", name)
 	fmt.Fprintf(hpp, "    ERROR = 0,\n")
@@ -1202,25 +1232,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(cppOut, "#include \"Msgs.hpp\"")
 	fmt.Fprintln(cppOut)
 
-	fmt.Fprintf(hppOut, "enum class EggsError : uint16_t {\n")
-	for i, err := range errors {
-		fmt.Fprintf(hppOut, "    %s = %d,\n", err, errCodeOffset+i)
-	}
-	fmt.Fprintf(hppOut, "};\n\n")
-	fmt.Fprintf(hppOut, "std::ostream& operator<<(std::ostream& out, EggsError err);\n\n")
-	fmt.Fprintf(cppOut, "std::ostream& operator<<(std::ostream& out, EggsError err) {\n")
-	fmt.Fprintf(cppOut, "    switch (err) {\n")
-	for _, err := range errors {
-		fmt.Fprintf(cppOut, "    case EggsError::%s:\n", err)
-		fmt.Fprintf(cppOut, "        out << \"%s\";\n", err)
-		fmt.Fprintf(cppOut, "        break;\n")
-	}
-	fmt.Fprintf(cppOut, "    default:\n")
-	fmt.Fprintf(cppOut, "        out << \"EggsError(\" << ((int)err) << \")\";\n")
-	fmt.Fprintf(cppOut, "        break;\n")
-	fmt.Fprintf(cppOut, "    }\n")
-	fmt.Fprintf(cppOut, "    return out;\n")
-	fmt.Fprintf(cppOut, "}\n\n")
+	generateCppErr(hppOut, cppOut, errors)
 
 	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)

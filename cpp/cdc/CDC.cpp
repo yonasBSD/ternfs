@@ -32,6 +32,7 @@
 #include "Xmon.hpp"
 #include "Timings.hpp"
 #include "Stopper.hpp"
+#include "ErrorCount.hpp"
 
 struct CDCShared {
     CDCDB& db;
@@ -43,6 +44,7 @@ struct CDCShared {
     // How long it took to process the request, from when it exited the queue to
     // when it finished executing.
     std::array<Timings, maxCDCMessageKind+1> timingsProcess;
+    std::array<ErrorCount, maxCDCMessageKind+1> errors;
 
     CDCShared(CDCDB& db_) : db(db_) {
         for (auto& shard: shards) {
@@ -500,6 +502,7 @@ private:
                 LOG_INFO(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
             } else {
                 _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
+                _shared.errors[(int)inFlight->second.kind].add(_step.err);
                 if (step.err != NO_ERROR) {
                     if (!innocuousShardError(step.err)) {
                         RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
@@ -804,6 +807,7 @@ public:
                     std::ostringstream prefix;
                     prefix << "cdc." << kind;
                     _shared.timingsTotal[(int)kind].toStats(prefix.str(), stats);
+                    _shared.errors[(int)kind].toStats(prefix.str(), stats);
                 }
                 {
                     std::ostringstream prefix;
@@ -817,6 +821,7 @@ public:
                 _env.clearAlert(alert);
                 for (CDCMessageKind kind : allCDCMessageKind) {
                     _shared.timingsTotal[(int)kind].reset();
+                    _shared.errors[(int)kind].reset();
                     _shared.timingsProcess[(int)kind].reset();
                 }
             } else {

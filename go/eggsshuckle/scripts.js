@@ -95,7 +95,7 @@ export function stats() {
         throw 'Impossible';
     }
     
-    function drawChart(req, timings) {
+    function drawLatencyChart(req, timings) {
         const chartEl = document.createElement('canvas');
         new window.Chart(chartEl, {
             type: 'line',
@@ -222,38 +222,48 @@ export function stats() {
                     break;
                 }
                 const stat = n.value;
-                let name = stat.name;
                 const segments = stat.name.split('.');
-                if (segments[0] === 'shard') { // group all shards into one bunch
-                    name = segments[0] + '.' + segments.slice(2).join('.');
+                const whichStat = segments[segments.length-1];
+                let name;
+                if (segments[0] === 'shard') { // group all shards stats in one bunch
+                    name = segments[0] + '.' + segments.slice(2, segments.length-1).join('.');
+                } else {
+                    name = segments.slice(0, segments.length-1).join('.');
                 }
                 data.stats[name] = data.stats[name] || {
                     histogram: [],
                     elapsedNs: BigInt(0),
                     firstStat: 1n<<64n,
                     lastStat: 0n,
+                    errors: {},
                 };
-                if (stat.time > data.stats[name].lastStat) {
-                    data.stats[name].lastStat = stat.time;
-                }
-                if (stat.time < data.stats[name].firstStat) {
-                    data.stats[name].firstStat = stat.time;
-                }
-                // parse histo
-                const valueView = new DataView(stat.value.buffer, stat.value.byteOffset, stat.value.byteLength);
-                if (stat.value.length < 8 || (stat.value.length-8)%16 !== 0) {
-                    throw `Unexpected histo length ${stat.value.length}`;
-                }
-                data.stats[name].elapsedNs += valueView.getBigUint64(0, true);
-                const histogram = data.stats[name].histogram;
-                for (let i = 8, bin = 0; i < stat.value.length; i += 8+8, bin++) {
-                    const upperBoundNs = valueView.getBigUint64(i, true);
-                    const count = valueView.getBigUint64(i+8, true);
-                    histogram[bin] = histogram[bin] || { upperBoundNs, count: BigInt(0) };
-                    if (histogram[bin].upperBoundNs !== upperBoundNs) {
-                        throw `Differing upper bounds for ${stat.name} at ${bin}, ${histogram[bin].upperBoundNs} != ${upperBoundNs}`;
+                if (whichStat === 'latency') { // latency histo
+                    if (stat.time > data.stats[name].lastStat) {
+                        data.stats[name].lastStat = stat.time;
                     }
-                    histogram[bin].count += count;
+                    if (stat.time < data.stats[name].firstStat) {
+                        data.stats[name].firstStat = stat.time;
+                    }
+                    // parse histo
+                    const valueView = new DataView(stat.value.buffer, stat.value.byteOffset, stat.value.byteLength);
+                    if (stat.value.length < 8 || (stat.value.length-8)%16 !== 0) {
+                        throw `Unexpected histo length ${stat.value.length}`;
+                    }
+                    data.stats[name].elapsedNs += valueView.getBigUint64(0, true);
+                    const histogram = data.stats[name].histogram;
+                    for (let i = 8, bin = 0; i < stat.value.length; i += 8+8, bin++) {
+                        const upperBoundNs = valueView.getBigUint64(i, true);
+                        const count = valueView.getBigUint64(i+8, true);
+                        histogram[bin] = histogram[bin] || { upperBoundNs, count: BigInt(0) };
+                        if (histogram[bin].upperBoundNs !== upperBoundNs) {
+                            throw `Differing upper bounds for ${stat.name} at ${bin}, ${histogram[bin].upperBoundNs} != ${upperBoundNs}`;
+                        }
+                        histogram[bin].count += count;
+                    }    
+                } else if (whichStat === 'errors') { // errors stats
+                    // not parsed yet
+                } else {
+                    throw `Bad stat ${whichStat}`;
                 }
             }
             if (startName === "") { break; }
@@ -357,7 +367,7 @@ export function stats() {
         // Load data
         const data = await loadData(timeFrom, timeTo);
 
-        // now draw the divs
+        // now draw the latency divs
         chartsEl.innerHTML = '';
         const sortedData = Object.entries(data).filter(([k, _]) => k.match(k.match(statsFilter))).sort(sortBy);
         if (showCharts) {
@@ -374,7 +384,7 @@ export function stats() {
                         h('tr', {}, chartsFigures.map(figure => h('th', { className: 'px-1' }, figure))),
                         h('tr', {}, chartsFigures.map(figure => h('td', { className: 'px-1' }, statData.figures[figure].text))),
                     ),
-                    drawChart(stat, statData)
+                    drawLatencyChart(stat, statData)
                 )),
             ));    
         } else {

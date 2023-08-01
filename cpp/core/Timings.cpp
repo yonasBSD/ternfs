@@ -26,7 +26,7 @@ void Timings::toStats(const std::string& prefix, std::vector<Stat>& stats) {
     {
         auto& histStat = stats.emplace_back();
         histStat.time = now;
-        histStat.name = BincodeBytes(prefix);
+        histStat.name = BincodeBytes(prefix + ".latency");
         // elapsed, then upperbound+count
         histStat.value.els.resize(8 + 2*8*_bins.size());
         memcpy(histStat.value.els.data(), &elapsed, 8);

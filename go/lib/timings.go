@@ -143,7 +143,7 @@ func (t *Histogram) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
 		binary.Write(histBuf, binary.LittleEndian, bin.Count)
 	}
 	stats = append(stats, msgs.Stat{
-		Name:  prefix,
+		Name:  prefix + ".latency",
 		Time:  statTime,
 		Value: histBuf.Bytes(),
 	})

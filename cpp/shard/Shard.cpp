@@ -26,6 +26,7 @@
 #include "Xmon.hpp"
 #include "Timings.hpp"
 #include "Stopper.hpp"
+#include "ErrorCount.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -39,6 +40,7 @@ public:
     std::atomic<uint32_t> ip2;
     std::atomic<uint16_t> port2;
     std::array<Timings, maxShardMessageKind+1> timings;
+    std::array<ErrorCount, maxShardMessageKind+1> errors;
 
     ShardShared() = delete;
     ShardShared(ShardDB& db_): db(db_), ip1(0), port1(0), ip2(0), port2(0) {
@@ -300,6 +302,7 @@ public:
             Duration elapsed = eggsNow() - t0;
 
             _shared.timings[(int)reqHeader.kind].add(elapsed);
+            _shared.errors[(int)reqHeader.kind].add(err);
 
             if (wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability) {
                 LOG_DEBUG(_env, "artificially dropping response %s", reqHeader.requestId);
@@ -541,6 +544,7 @@ public:
                 std::ostringstream prefix;
                 prefix << "shard." << std::setw(3) << std::setfill('0') << _shid << "." << kind;
                 _shared.timings[(int)kind].toStats(prefix.str(), stats);
+                _shared.errors[(int)kind].toStats(prefix.str(), stats);
             }
             err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
             stats.clear();
@@ -548,6 +552,7 @@ public:
                 _env.clearAlert(alert);
                 for (ShardMessageKind kind : allShardMessageKind) {
                     _shared.timings[(int)kind].reset();
+                    _shared.errors[(int)kind].reset();
                 }
             } else {
                 _env.raiseAlert(alert, false, "Could not insert stats: %s", err);

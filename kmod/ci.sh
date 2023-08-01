@@ -81,6 +81,7 @@ dmesg_pid=$!
 # Trace metadata requests
 
 ssh -p 2222 -i image-key fmazzol@localhost "sudo sh -c 'echo 1 > /sys/kernel/tracing/events/eggsfs/eggsfs_metadata_request/enable'"
+ssh -p 2222 -i image-key fmazzol@localhost "sudo sh -c 'echo 1 > /sys/kernel/tracing/events/eggsfs/eggsfs_fetch_stripe/enable'"
 ssh -p 2222 -i image-key fmazzol@localhost "sudo cat /sys/kernel/tracing/trace_pipe" > trace &
 trace_pid=$!
 

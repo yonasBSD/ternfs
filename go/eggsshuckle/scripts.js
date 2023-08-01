@@ -391,7 +391,21 @@ export function stats() {
 
         console.log('done drawing');
     }
-    
+
+    // quick range change
+    const timeRangeChange = (id, msDiff) => {
+        const el = document.getElementById(id);
+        el.addEventListener('click', () => {
+            timeFromEl.value = formatLocalDate(new Date(new Date().getTime() - msDiff));
+            timeToEl.value = formatLocalDate(new Date());
+        });
+    }
+    timeRangeChange('load-3h',  1000 * 60 * 60 * 3);
+    timeRangeChange('load-6h',  1000 * 60 * 60 * 6);
+    timeRangeChange('load-12h', 1000 * 60 * 60 * 12);
+    timeRangeChange('load-1d',  1000 * 60 * 60 * 24);
+    timeRangeChange('load-7d',  1000 * 60 * 60 * 24 * 7);
+
     // redraw on submit
     const formEl = document.getElementById('time-selection');
     formEl.addEventListener('submit', (el) => {
@@ -399,7 +413,7 @@ export function stats() {
         reload();
     })
     for (const el of [statsFilterEl, sortSelectEl, chartsCheckedEl]) {
-        el.addEventListener('change', (el) => reload());
+        el.addEventListener('input', reload);
     }
 
     reload();

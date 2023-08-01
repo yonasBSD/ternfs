@@ -9,6 +9,9 @@
         <p>
             In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.
         </p>
+        <p>
+            We currently store a week of histograms.
+        </p>
         <form id="time-selection" class="row row-cols-lg-auto g-3 align-items-center my-2">
             <div class="col">
                 <label for="time-from" class="form-label">From</label>
@@ -21,6 +24,21 @@
             </div>
             <div class="col">
                 <input id="time-to" type="datetime-local" class="form-control" required>
+            </div>
+            <div class="col">
+                <button type="button" id="load-3h" class="btn btn-primary">-3h</button>
+            </div>
+            <div class="col">
+                <button type="button" id="load-6h" class="btn btn-primary">-6h</button>
+            </div>
+            <div class="col">
+                <button type="button" id="load-12h" class="btn btn-primary">-12h</button>
+            </div>
+            <div class="col">
+                <button type="button" id="load-1d" class="btn btn-primary">-1d</button>
+            </div>
+            <div class="col">
+                <button type="button" id="load-7d" class="btn btn-primary">-7d</button>
             </div>
             <div class="col">
                 <button type="submit" class="btn btn-primary">Load</button>

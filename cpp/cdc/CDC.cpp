@@ -114,6 +114,7 @@ private:
     std::array<int, 4> _socks;
     AES128Key _expandedCDCKey;
     Duration _shardTimeout;
+    uint64_t _maximumEnqueuedRequests;
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
     std::unordered_map<uint64_t, InFlightCDCRequest> _inFlightTxns;
@@ -156,6 +157,7 @@ public:
         _sendBuf(DEFAULT_UDP_MTU),
         _shardRequestIdCounter(0),
         _shardTimeout(options.shardTimeout),
+        _maximumEnqueuedRequests(options.maximumEnqueuedRequests),
         _runningTxn(0)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
@@ -334,6 +336,12 @@ private:
                 throw SYSCALL_EXCEPTION("recvfrom");
             }
             LOG_DEBUG(_env, "received CDC request from %s", clientAddr);
+
+            // If we're already past the maximum, drop immediately
+            if (_inFlightTxns.size() > _maximumEnqueuedRequests) {
+                LOG_DEBUG(_env, "dropping CDC request from %s, since we're past the maximum queue size %s", clientAddr, _maximumEnqueuedRequests);
+                continue;
+            }
 
             BincodeBuf reqBbuf(&_recvBuf[0], read);
             

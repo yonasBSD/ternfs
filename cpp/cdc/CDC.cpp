@@ -421,10 +421,10 @@ private:
     }
 
     void _handleShardError(ShardId shid, EggsError err) {
-        if (err == EggsError::NAME_NOT_FOUND) {
+        if (err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND) {
             // these can happen through normal user interaction
             LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
-        } else if (err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME) {
+        } else if (err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND) {
             // These can happen but should be rare.
             //
             // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove

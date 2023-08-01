@@ -24,12 +24,15 @@ EggsFS is a collection of binaries starting with `eggs`, plus a kernel module, `
 
 Will build all the artifacts apart from the Kernel module. The output will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked. `./build.sh release` will build outside the container, everything will still be linked statically apart from glibc, which cannot be reliably linked statically.
 
+If you want to build outside the Alpine container (e.g. if you wan to do `go run` as I suggest below), you need to have the right Go in your PATH. On ETD dev boxes this can be accomplished by adding `/opt/go1.18.4/bin` to your path.
+
 ## Playing with a local EggsFS instance
 
 ```
 % cd go/eggsrun
 % go run . -data-dir <data-dir>
 ```
+
 The above will run all the processes needed to run EggsFS. This includes:
 
 * 256 metadata shards;

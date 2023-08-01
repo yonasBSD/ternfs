@@ -28,7 +28,7 @@ Will build all the artifacts apart from the Kernel module. The output will be in
 
 ```
 % cd go/eggsrun
-% go run . -dir <data-dir>
+% go run . -data-dir <data-dir>
 ```
 The above will run all the processes needed to run EggsFS. This includes:
 

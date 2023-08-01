@@ -98,7 +98,7 @@ export function stats() {
             type: 'line',
             data: {
                 labels: timings.histogram.map(({upperBoundNs}) => `< ${formatNs(upperBoundNs)}`),
-                datasets: [{ label: req, data: timings.histogram.map(({count}) => Number(count)) }],
+                datasets: [{ label: req, data: timings.histogram.map(({count}) => Number(count)), tension: 0.2 }],
             },
             options: { plugins: { legend: { display: false } } },
         });

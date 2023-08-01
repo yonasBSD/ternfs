@@ -855,7 +855,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
             goto out;
         }
         if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
-            eggsfs_debug("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
+            eggsfs_info("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
             err = err ?: -EIO;
             goto out;
         }

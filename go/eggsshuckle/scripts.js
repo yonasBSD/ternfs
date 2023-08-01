@@ -18,6 +18,9 @@ export function snapshotEdges() {
         toggleFullEdges(enabled);
         const checkbox = document.getElementById('snapshot-edges-checkbox')
         checkbox.checked = enabled;
+        checkbox.addEventListener('change', (ev) => {
+            toggleFullEdges(ev.target.checked);
+        });
     });
 }
 

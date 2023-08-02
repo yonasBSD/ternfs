@@ -211,7 +211,7 @@ func (c *Client) metadataRequestInternal(
 					shouldRetry = true
 				}
 				if shouldRetry {
-					log.Raise(timeoutAlert, false, "got network error %v to shard %v, will try to retry", err, shid)
+					log.Raise(timeoutAlert, false, "got network error %v to shard %v for req id %v of type %T, will try to retry", err, shid, requestId, reqBody)
 					// make sure we've waited as much as the expected timeout, otherwise we might
 					// call in a busy loop due to the server just not being up.
 					time.Sleep(time.Until(readLoopDeadline))

@@ -64,6 +64,8 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_BLOCK_NOT_FOUND: return true;
     case -ERESTARTSYS: return false;
     case -ETIMEDOUT: return false;
+    case -ECONNREFUSED: return false;
+    case -ECONNRESET: return false;
     default: return true;
     }
 }

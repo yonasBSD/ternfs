@@ -14,11 +14,9 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-var requestIdGenerator = uint64(0)
-
 // Starts from 1, we use 0 as a placeholder in `requestIds`
-func newRequestId() uint64 {
-	return atomic.AddUint64(&requestIdGenerator, 1)
+func (c *Client) newRequestId() uint64 {
+	return atomic.AddUint64(&c.requestIdCounter, 1)
 }
 
 type metadataRequest struct {
@@ -136,7 +134,7 @@ func (c *Client) metadataRequestInternal(
 	respBuf := make([]byte, mtu)
 	attempts := 0
 	startedAt := time.Now()
-	requestId := newRequestId()
+	requestId := c.newRequestId()
 	// will keep trying as long as we get timeouts
 	timeoutAlert := log.NewAlert()
 	// We return the error anyway, so once we exit this function this alert must be gone

@@ -249,7 +249,7 @@ func EraseBlock(
 		io.Writer
 		io.Reader
 	},
-	block msgs.BlockInfo,
+	block *msgs.BlockInfo,
 ) ([8]byte, error) {
 	logger.Debug("erasing block %+v", block)
 	var proof [8]byte

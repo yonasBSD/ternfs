@@ -293,7 +293,7 @@ func (l *Logger) RaiseAlert(format string, v ...any) {
 
 func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
 	alert := l.NewAlert()
-	l.RaiseStack(1, alert, true, format, v...)
+	l.RaiseStack(1+calldepth, alert, true, format, v...)
 }
 
 func (l *Logger) Metric(category, name string, help string, value uint64, extralabels map[string]string) {

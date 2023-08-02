@@ -20,8 +20,8 @@
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
-int eggsfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(10 * 1000);
-int eggsfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(10 * 1000);
+int eggsfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
+int eggsfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 
 static u64 WHICH_BLOCK_IP = 0;
 

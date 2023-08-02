@@ -547,7 +547,7 @@ func (c *blockConn) refresh() bool {
 }
 
 // probably should be made configurable
-const blockConnDeadline time.Duration = 1 * time.Second
+const blockConnDeadline time.Duration = 1 * time.Minute
 
 func (c *blockConn) Read(p []byte) (int, error) {
 	c.conn.SetReadDeadline(time.Now().Add(blockConnDeadline))

@@ -1702,11 +1702,13 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		var id uint64
 		var ts msgs.EggsTime
 
+		st.mutex.Lock()
 		_, err := st.db.Exec(
 			"UPDATE block_services SET flags = ((flags & ~:flag) | :flag) WHERE last_seen < :thresh",
 			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
 			n("thresh", thresh),
 		)
+		st.mutex.Unlock()
 		if err != nil {
 			ll.RaiseAlert("error setting block services stale: %s", err)
 		}

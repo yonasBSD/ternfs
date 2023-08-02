@@ -14,7 +14,7 @@ unsigned eggsfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
 unsigned eggsfs_overall_shard_timeout_jiffies = MSECS_TO_JIFFIES(10000);
 unsigned eggsfs_initial_cdc_timeout_jiffies = MSECS_TO_JIFFIES(500);
 unsigned eggsfs_max_cdc_timeout_jiffies = MSECS_TO_JIFFIES(2000);
-unsigned eggsfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(10000);
+unsigned eggsfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(120000);
 
 static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket* s, u64 request_id) __must_hold(s->lock) {
     struct rb_node* node = s->requests.rb_node;

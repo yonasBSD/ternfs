@@ -102,7 +102,8 @@ func cleanupAfterTest(
 				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
 					panic(err)
 				}
-				if statResp.Size > 0 {
+				// when we have genuine retries when writing to spans they are not expired at this point.
+				if statResp.Size > 0 && statResp.Note != "bad_add_span_attempt" {
 					if acceptGcFailures {
 						log.Info("unexpected non-empty transient file %+v, %+v after cleanup, acceptGcFailures is on, proceeding", file, statResp)
 					} else {

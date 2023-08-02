@@ -617,8 +617,9 @@ struct fetch_stripe_state {
     // filled by fetching the blocks, the others might be filled in by the RS
     // recovery)
     struct list_head blocks_pages[EGGSFS_MAX_BLOCKS];
-    atomic_t refcount;      // to garbage collect
-    atomic_t err;           // the result of the stripe fetching
+    atomic_t refcount;       // to garbage collect
+    atomic_t err;            // the result of the stripe fetching
+    atomic_t last_block_err; // to return something vaguely connected to what happened
     static_assert(EGGSFS_MAX_BLOCKS <= 16);
     // 00-16: blocks which are downloading.
     // 16-32: blocks which have succeeded.
@@ -675,6 +676,7 @@ static struct fetch_stripe_state* new_fetch_stripe(
     st->span = span;
     atomic_set(&st->refcount, 1); // the caller
     atomic_set(&st->err, 0);
+    atomic_set(&st->last_block_err, 0);
     st->stripe = stripe;
     st->prefetching = prefetching;
     atomic64_set(&st->blocks, 0);
@@ -835,15 +837,14 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
 // Starts loading up D blocks as necessary.
 static int fetch_blocks(struct fetch_stripe_state* st) {
     int i;
-    int err = 0;
 
     struct eggsfs_block_span* span = st->span;
     int D = eggsfs_data_blocks(span->parity);
     int P = eggsfs_parity_blocks(span->parity);
     int B = eggsfs_blocks(span->parity);
 
-#define LOG_STR "file=%016llx span=%llu stripe=%u D=%d P=%d downloading=%04x(%llu) succeeded=%04x(%llu) failed=%04x(%llu) err=%d"
-#define LOG_ARGS span->span.ino, span->span.start, st->stripe, D, P, downloading, __builtin_popcountll(downloading), succeeded, __builtin_popcountll(succeeded), failed, __builtin_popcountll(failed), err
+#define LOG_STR "file=%016llx span=%llu stripe=%u D=%d P=%d downloading=%04x(%llu) succeeded=%04x(%llu) failed=%04x(%llu) last_block_err=%d"
+#define LOG_ARGS span->span.ino, span->span.start, st->stripe, D, P, downloading, __builtin_popcountll(downloading), succeeded, __builtin_popcountll(succeeded), failed, __builtin_popcountll(failed), atomic_read(&st->last_block_err)
 
     for (;;) {
         s64 blocks = atomic64_read(&st->blocks);
@@ -852,12 +853,13 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         u16 failed = FAILED_GET(blocks);
         if (__builtin_popcountll(downloading)+__builtin_popcountll(succeeded) >= D) { // we managed to get out of the woods
             eggsfs_debug("we have enough blocks, terminating " LOG_STR, LOG_ARGS);
-            goto out;
+            return 0;
         }
         if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
             eggsfs_info("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
-            err = err ?: -EIO;
-            goto out;
+            int err = atomic_read(&st->last_block_err);
+            BUG_ON(err == 0);
+            return err;
         }
 
         // find the next block to download
@@ -887,7 +889,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
             &block->bs, block->id, block_offset, span->cell_size
         );
         if (block_err) {
-            err = block_err; // store the latest error, pretty arbitrary anyhow
+            atomic_set(&st->last_block_err, block_err);
             put_fetch_stripe(st);
             eggsfs_debug("loading block failed %d " LOG_STR, i, LOG_ARGS);
             fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, block_err);
@@ -898,9 +900,6 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
             eggsfs_debug("loading block %d " LOG_STR, i, LOG_ARGS);
         }
     }
-
-out:
-    return err;
 
 #undef LOG_STR
 #undef LOG_ARGS
@@ -932,6 +931,7 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
 
     bool finished = false;
     if (err) {
+        atomic_set(&st->last_block_err, err);
         // it failed, try to restore order
         eggsfs_debug("block %016llx ix %d failed with %d", block_id, i, err);
         // mark it as failed and not downloading

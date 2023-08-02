@@ -60,8 +60,8 @@
 //
 // * Files:
 //     - Lots of point queries, we actually never do iteration of any kind here.
-//     - InodeId (8 bytes): FileBody (16 bytes)
-//     - Total size: 1e12 files / 256 shards * 24 bytes = ~100GiB
+//     - InodeId (8 bytes): FileBody (25 bytes)
+//     - Total size: 1e12 files / 256 shards * 33 bytes = ~120GiB
 //
 // * Spans:
 //     - Lots of range queries, mostly with SeekForPrev
@@ -69,14 +69,16 @@
 //         sense to have a different column family: otherwise we couldn't easily
 //         traverse the transient files with them without stepping over spans.
 //     - { id: InodeId, byte_offset: uint64_t } (16 bytes): SpanBody
-//         * SpanBody is 7 bytes + 10*(4+20) = 256bytes
-//         * SpanBody is 22 bytes of header, plus 0-255 inline body, or ~(10+4)*12 = 168 bytes for blocks
-//         * Say an average of 300 bytes for key + body, being a bit conservative
-//         * Let's also say that the max span size is 100MiB
-//         * Total size: 10EiB / 100MiB / 256 shards * 200 bytes ~ 130GiB
-//         * However the above is quite optimistic, assuming no fragmentation -- the average file will probably
-//             be something like 10MiB. So the total dataset for spans will probably be around 1TiB in
-//             reality.
+//         * SpanBody is common header + blocks/inline stuff
+//         * Common header is 1 + 4 + 4 + 1 = 10 bytes
+//         * SpanBlocksBody worst case is is 1 + 1 + 4 + (8 + 8 + 4)*14 (blocks) + 4*15 (crcs) = 346 bytes
+//         * Inline blocks bodies are always smaller than the above
+//         * Worst case ~400bytes key + value
+//         * The max span size is 100MiB
+//         * We store at least one span per file, so the lower bound on the number of spans is 1e12
+//         * Moreover, if we add on top the number of spans to store all the data we have 10EiB/100MiB
+//         * Total size: (1e12 + 10EiB/100MiB) * 400byte / 256 ~= 1.5TiB
+//         * The above is kind of an upper bound, since we're double counting the first spans for many files
 //
 // * TransientFiles:
 //     - Should use bloom filter here, lots of point queries
@@ -127,7 +129,7 @@
 // Note that the block services might be out of date, especially those not referred to by
 // CURRENT_BLOCK_SERVICES_KEY.
 //
-// Total data for the shard will be 1-2TiB. The big ones are `Spans` and `Edges`, which are also
+// Total data for the shard will be 1-3TiB. The big ones are `Spans` and `Edges`, which are also
 // the ones requiring range queries.
 //
 // Does this sit well with RocksDB? Their own benchmarks use 900M keys, 20 byte key, 400 byte value,

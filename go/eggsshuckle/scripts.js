@@ -413,7 +413,7 @@ export function stats() {
         reload();
     })
     for (const el of [statsFilterEl, sortSelectEl, chartsCheckedEl]) {
-        el.addEventListener('input', reload);
+        el.addEventListener('change', reload);
     }
 
     reload();

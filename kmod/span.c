@@ -881,15 +881,16 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_START, i, 0);
         hold_fetch_stripe(st);
         eggsfs_debug("block start st=%p block_service=%016llx block_id=%016llx", st, block->bs.id, block->id);
-        int err = eggsfs_fetch_block(
+        int block_err = eggsfs_fetch_block(
             &block_done,
             (void*)st,
             &block->bs, block->id, block_offset, span->cell_size
         );
-        if (err) {
+        if (block_err) {
+            err = block_err; // store the latest error, pretty arbitrary anyhow
             put_fetch_stripe(st);
             eggsfs_debug("loading block failed %d " LOG_STR, i, LOG_ARGS);
-            fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, err);
+            fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, block_err);
             // mark it as failed and not downloading
             blocks = atomic64_read(&st->blocks);
             while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
@@ -1236,7 +1237,7 @@ out:
     GET_PAGE_EXIT(err == 0 ? page : ERR_PTR(err));
 
 out_err:
-    eggsfs_debug("getting span page failed, err=%d", err);
+    eggsfs_info("getting span page failed, err=%d", err);
     goto out;
 
 #undef GET_PAGE_EXIT

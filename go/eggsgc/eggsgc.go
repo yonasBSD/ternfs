@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedroutine"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 )
 
 func main() {
@@ -116,6 +118,7 @@ func main() {
 			fmt.Sprintf("GC %v", shard),
 			func() {
 				dirInfoCache := lib.NewDirInfoCache()
+				rand := wyhash.New(rand.Uint64())
 				for {
 					if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
 						log.RaiseAlert("could not collect directories: %v", err)
@@ -123,8 +126,9 @@ func main() {
 					if err := lib.DestructFiles(log, options, shard); err != nil {
 						log.RaiseAlert("could not destruct files: %v", err)
 					}
-					log.Info("waiting 1 minute before collecting again")
-					time.Sleep(time.Minute)
+					waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+					log.Info("waiting %v before collecting again", waitFor)
+					time.Sleep(waitFor)
 					if *singleIteration {
 						break
 					}

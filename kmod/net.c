@@ -83,7 +83,7 @@ static void sock_readable(struct sock* sk) {
             }
         } spin_unlock_bh(&s->lock);
         if (!req) {
-            eggsfs_info("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
+            eggsfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
         }
 
         if (skb) {
@@ -214,7 +214,7 @@ struct sk_buff* eggsfs_metadata_request(
 
 #define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
 #define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, jiffies64_to_msecs(elapsed)
-#define WARN_LATE if (elapsed > MSECS_TO_JIFFIES(1000)) { eggsfs_warn("late request: " LOG_STR, LOG_ARGS); }
+#define WARN_LATE if (elapsed > MSECS_TO_JIFFIES(1000)) { eggsfs_info("late request: " LOG_STR, LOG_ARGS); }
 
     for (;;) {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
@@ -264,7 +264,7 @@ struct sk_buff* eggsfs_metadata_request(
         eggsfs_debug("err=%d", err);
         if (err != -ETIMEDOUT || elapsed >= overall_timeout) {
             if (err != -ERESTARTSYS) {
-                eggsfs_info("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
+                eggsfs_warn("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
             }
             goto out_err;
         }

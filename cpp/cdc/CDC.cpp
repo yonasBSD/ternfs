@@ -594,6 +594,7 @@ private:
                 _env.raiseAlert(alert, false, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
                 sleepFor(100_ms);
             } else {
+                _env.clearAlert(alert);
                 throw EXPLICIT_SYSCALL_EXCEPTION(err, "sendto");
             }
         }

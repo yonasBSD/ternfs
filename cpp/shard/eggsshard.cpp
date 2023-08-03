@@ -36,6 +36,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
     fprintf(stderr, " -xmon\n");
     fprintf(stderr, "    	Enable Xmon alerts.\n");
+    fprintf(stderr, " -metrics\n");
+    fprintf(stderr, "    	Enable metrics.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -140,6 +142,8 @@ int main(int argc, char** argv) {
             options.syslog = true;
         } else if (arg == "-xmon") {
             options.xmon = true;
+        } else if (arg == "-metrics") {
+            options.metrics = true;
         } else {
             args.emplace_back(std::move(arg));
         }

@@ -5,8 +5,8 @@ void ErrorCount::toStats(const std::string& prefix, std::vector<Stat>& stats) {
     auto now = eggsNow();
     {
         std::vector<std::pair<EggsError, uint64_t>> seen;
-        for (int i = 0; i < _count.size(); i++) {
-            uint64_t c = _count[i].load();
+        for (int i = 0; i < count.size(); i++) {
+            uint64_t c = count[i].load();
             if (c == 0) { continue; }
             seen.push_back({ (EggsError)i, c });
         }
@@ -24,7 +24,7 @@ void ErrorCount::toStats(const std::string& prefix, std::vector<Stat>& stats) {
 }
 
 void ErrorCount::reset() {
-    for (int i = 0; i < _count.size(); i++) {
-        _count[i].store(0);
+    for (int i = 0; i < count.size(); i++) {
+        count[i].store(0);
     }
 }

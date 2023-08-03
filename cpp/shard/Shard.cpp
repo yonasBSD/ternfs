@@ -27,6 +27,7 @@
 #include "Timings.hpp"
 #include "ErrorCount.hpp"
 #include "Loop.hpp"
+#include "Metrics.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -462,6 +463,53 @@ public:
     }
 };
 
+struct ShardMetricsInserter : PeriodicLoop {
+private:
+    ShardShared& _shared;
+    ShardId _shid;
+    XmonAlert _alert;
+    MetricsBuilder _metricsBuilder;
+public:
+    ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
+        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
+        _shared(shared),
+        _shid(shid),
+        _alert(-1)
+    {}
+
+    virtual bool periodicStep() {
+        auto now = eggsNow();
+        for (ShardMessageKind kind : allShardMessageKind) {
+            const ErrorCount& errs = _shared.errors[(int)kind];
+            for (int i = 0; i < errs.count.size(); i++) {
+                uint64_t count = errs.count[i].load();
+                if (count == 0) { continue; }
+                _metricsBuilder.measurement("eggsfs_shard_requests");
+                _metricsBuilder.tag("shard", _shid);
+                _metricsBuilder.tag("kind", kind);
+                _metricsBuilder.tag("write", !readOnlyShardReq(kind));
+                if (i == 0) {
+                    _metricsBuilder.tag("error", "NO_ERROR");
+                } else {
+                    _metricsBuilder.tag("error", (EggsError)i);
+                }
+                _metricsBuilder.fieldU64("count", count);
+                _metricsBuilder.timestamp(now);
+            }
+        }
+        std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
+        _metricsBuilder.reset();
+        if (err.empty()) {
+            LOG_INFO(_env, "Sent metrics to influxdb");
+            _env.clearAlert(_alert);
+            return true;
+        } else {
+            _env.raiseAlert(_alert, false, "Could not insert metrics: %s", err);
+            return false;
+        }
+    }
+};
+
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
 
@@ -528,6 +576,9 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     Loop::spawn(*undertaker, std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared));
     Loop::spawn(*undertaker, std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared));
     Loop::spawn(*undertaker, std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared));
+    if (options.metrics) {
+        Loop::spawn(*undertaker, std::make_unique<ShardMetricsInserter>(logger, xmon, shid, shared));
+    }
 
     undertaker->reap();
 }

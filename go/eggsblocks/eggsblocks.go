@@ -28,6 +28,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type env struct {
+	bufPool *lib.BufPool
+}
+
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
 	buf := bytes.NewBuffer([]byte{})
 	// struct.pack_into('<QcQ', b, 0,  block_service_id, b'W', block_id)
@@ -207,7 +211,7 @@ func blockIdToPath(basePath string, blockId msgs.BlockId) string {
 	return path.Join(path.Join(basePath, dir), hex)
 }
 
-func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) error {
+func eraseBlock(log *lib.Logger, env *env, basePath string, blockId msgs.BlockId) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
@@ -224,7 +228,7 @@ func eraseBlock(log *lib.Logger, basePath string, blockId msgs.BlockId) error {
 	return nil
 }
 
-func sendFetchBlock(log *lib.Logger, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
+func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
@@ -277,7 +281,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 }
 
 func writeToTemp(
-	log *lib.Logger, bufPool *lib.BufPool, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, env *env, basePath string, size uint64, conn *net.TCPConn,
 ) (tmpName string, crc uint32, err error) {
 	var f *os.File
 	f, err = os.CreateTemp(basePath, "tmp.")
@@ -291,8 +295,8 @@ func writeToTemp(
 			os.Remove(tmpName)
 		}
 	}()
-	bufPtr := bufPool.Get(1 << 20)
-	defer bufPool.Put(bufPtr)
+	bufPtr := env.bufPool.Get(1 << 20)
+	defer env.bufPool.Put(bufPtr)
 	readSoFar := uint64(0)
 	for {
 		log.Debug("size=%v readSoFar=%v", size, readSoFar)
@@ -321,7 +325,8 @@ func writeToTemp(
 }
 
 func writeBlock(
-	log *lib.Logger, bufPool *lib.BufPool,
+	log *lib.Logger,
+	env *env,
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
@@ -330,7 +335,7 @@ func writeBlock(
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err
 	}
-	tmpName, crc, err := writeToTemp(log, bufPool, basePath, uint64(size), conn)
+	tmpName, crc, err := writeToTemp(log, env, basePath, uint64(size), conn)
 	if err != nil {
 		return err
 	}
@@ -359,9 +364,9 @@ func consumeBlock(size uint32, conn *net.TCPConn) error {
 }
 
 func testWrite(
-	log *lib.Logger, bufPool *lib.BufPool, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, env *env, basePath string, size uint64, conn *net.TCPConn,
 ) error {
-	tmpName, _, err := writeToTemp(log, bufPool, basePath, size, conn)
+	tmpName, _, err := writeToTemp(log, env, basePath, size, conn)
 	if err != nil {
 		return err
 	}
@@ -425,7 +430,7 @@ type deadBlockService struct {
 
 func handleRequest(
 	log *lib.Logger,
-	bufPool *lib.BufPool,
+	env *env,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
@@ -499,7 +504,7 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
-			if err := eraseBlock(log, blockService.path, whichReq.BlockId); err != nil {
+			if err := eraseBlock(log, env, blockService.path, whichReq.BlockId); err != nil {
 				if handleError(log, conn, err) {
 					return
 				} else {
@@ -519,7 +524,7 @@ NextRequest:
 				}
 			}
 		case *msgs.FetchBlockReq:
-			if err := sendFetchBlock(log, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
+			if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
 				log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 				if handleError(log, conn, err) {
 					return
@@ -561,7 +566,7 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_BIG)
 				continue NextRequest
 			}
-			if err := writeBlock(log, bufPool, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
+			if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 				log.Info("could not write block: %v", err)
 				if handleError(log, conn, err) {
 					return
@@ -570,7 +575,7 @@ NextRequest:
 				}
 			}
 		case *msgs.TestWriteReq:
-			if err := testWrite(log, bufPool, blockService.path, whichReq.Size, conn); err != nil {
+			if err := testWrite(log, env, blockService.path, whichReq.Size, conn); err != nil {
 				log.Info("could not perform test write: %v", err)
 				if handleError(log, conn, err) {
 					return
@@ -881,6 +886,10 @@ func main() {
 
 	bufPool := lib.NewBufPool()
 
+	env := &env{
+		bufPool: bufPool,
+	}
+
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		registerPeriodically(log, blockServices, *shuckleAddress)
@@ -902,7 +911,7 @@ func main() {
 			}
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				handleRequest(log, bufPool, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+				handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 			}()
 		}
 	}()
@@ -918,7 +927,7 @@ func main() {
 				}
 				go func() {
 					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					handleRequest(log, bufPool, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+					handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
 				}()
 			}
 		}()

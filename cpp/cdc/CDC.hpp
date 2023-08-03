@@ -17,6 +17,7 @@ struct CDCOptions {
     bool xmon = false;
     // at 1ms per request it's 10 seconds worth of requests.
     uint64_t maximumEnqueuedRequests = 10000;
+    bool metrics = false;
 };
 
 void runCDC(const std::string& dbDir, const CDCOptions& options);

@@ -4,20 +4,19 @@
 #include <vector>
 
 #include "Msgs.hpp"
+#include "Metrics.hpp"
 
 struct ErrorCount {
-private:
-    std::vector<std::atomic<uint64_t>> _count;
+    std::vector<std::atomic<uint64_t>> count;
 
-public:
-    ErrorCount() : _count(maxEggsError) {
-        for (int i = 0; i < _count.size(); i++) {
-            _count[i].store(0);
+    ErrorCount() : count(maxEggsError) {
+        for (int i = 0; i < count.size(); i++) {
+            count[i].store(0);
         }
     }
 
     void add(EggsError err) {
-        _count[(int)err]++;
+        count[(int)err]++;
     }
 
     void toStats(const std::string& prefix, std::vector<Stat>& stats);

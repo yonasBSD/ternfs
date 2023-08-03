@@ -732,6 +732,50 @@ public:
     }
 };
 
+struct CDCMetricsInserter : PeriodicLoop {
+private:
+    CDCShared& _shared;
+    XmonAlert _alert;
+    MetricsBuilder _metricsBuilder;
+public:
+    CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
+        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
+        _shared(shared),
+        _alert(-1)
+    {}
+
+    virtual bool periodicStep() {
+        auto now = eggsNow();
+        for (ShardMessageKind kind : allShardMessageKind) {
+            const ErrorCount& errs = _shared.errors[(int)kind];
+            for (int i = 0; i < errs.count.size(); i++) {
+                uint64_t count = errs.count[i].load();
+                if (count == 0) { continue; }
+                _metricsBuilder.measurement("eggsfs_shard_requests");
+                _metricsBuilder.tag("kind", kind);
+                if (i == 0) {
+                    _metricsBuilder.tag("error", "NO_ERROR");
+                } else {
+                    _metricsBuilder.tag("error", (EggsError)i);
+                }
+                _metricsBuilder.fieldU64("count", count);
+                _metricsBuilder.timestamp(now);
+            }
+        }
+        std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
+        _metricsBuilder.reset();
+        if (err.empty()) {
+            LOG_INFO(_env, "Sent metrics to influxdb");
+            _env.clearAlert(_alert);
+            return true;
+        } else {
+            _env.raiseAlert(_alert, false, "Could not insert metrics: %s", err);
+            return false;
+        }
+    }
+};
+
+
 void runCDC(const std::string& dbDir, const CDCOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
 
@@ -785,6 +829,9 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     Loop::spawn(*undertaker, std::make_unique<CDCShardUpdater>(logger, xmon, options, *shared));
     Loop::spawn(*undertaker, std::make_unique<CDCRegisterer>(logger, xmon, options, *shared));
     Loop::spawn(*undertaker, std::make_unique<CDCStatsInserter>(logger, xmon, options, *shared));
+    if (options.metrics) {
+        Loop::spawn(*undertaker, std::make_unique<CDCMetricsInserter>(logger, xmon, *shared));
+    }
 
     undertaker->reap();
 }

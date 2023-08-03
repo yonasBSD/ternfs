@@ -16,8 +16,8 @@ if(NOT CMAKE_BUILD_TYPE)
     )
 endif()
 
-if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|alpine-debug|sanitized|valgrind)$"))
-    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, alpine-debug got ${CMAKE_BUILD_TYPE}")
+if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|alpinedebug|sanitized|valgrind)$"))
+    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, alpinedebug got ${CMAKE_BUILD_TYPE}")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -33,13 +33,13 @@ add_compile_options("$<$<CONFIG:valgrind>:-march=haswell;-maes;-mgfni>")
 add_compile_options("$<$<NOT:$<CONFIG:valgrind>>:-march=skylake;-mgfni>")
 
 # performance/debug stuff
-add_compile_options("$<$<NOT:$<CONFIG:debug,alpine-debug>>:-O3>")
-add_compile_options("$<$<CONFIG:debug,alpine-debug>:-O;-DEGGS_DEBUG>")
+add_compile_options("$<$<NOT:$<CONFIG:debug,alpinedebug>>:-O3>")
+add_compile_options("$<$<CONFIG:debug,alpinedebug>:-O;-DEGGS_DEBUG>")
 
 # We build the release build statically in Alpine
-add_compile_options("$<$<CONFIG:alpine,alpine-debug>:-DEGGS_ALPINE>")
-add_link_options("$<$<CONFIG:alpine,alpine-debug>:-static>")
-add_link_options("$<$<NOT:$<CONFIG:alpine,alpine-debug>>:-no-pie>")
+add_compile_options("$<$<CONFIG:alpine,alpinedebug>:-DEGGS_ALPINE>")
+add_link_options("$<$<CONFIG:alpine,alpinedebug>:-static>")
+add_link_options("$<$<NOT:$<CONFIG:alpine,alpinedebug>>:-no-pie>")
 
 # sanitizer options
 set(SANITIZE_OPTIONS "-fsanitize=undefined,address,integer,function;-fno-sanitize-recover=all;-fsanitize-blacklist=${CMAKE_SOURCE_DIR}/ubsan-ignorelist")

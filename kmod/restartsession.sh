@@ -4,7 +4,7 @@ set -eu -o pipefail
 
 run=false
 deploy=false
-build_type='alpine-debug'
+build_type='alpinedebug'
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in

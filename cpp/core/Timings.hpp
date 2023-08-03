@@ -31,7 +31,7 @@ public:
         int64_t inanos = d.ns;
         if (unlikely(inanos <= 0)) { return; }
         uint64_t nanos = inanos;
-        int bin = std::min<int>(_bins.size(), std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
+        int bin = std::min<int>(_bins.size()-1, std::max<int>(0, log((double)nanos * _growthDivUpperBound) * _invLogGrowth));
         _bins[bin]++;
     }
 

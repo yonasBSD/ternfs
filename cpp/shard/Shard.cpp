@@ -459,6 +459,12 @@ public:
 
     virtual void finish() override {
         periodicStep();
+        for (ShardMessageKind kind : allShardMessageKind) {
+            const auto& timings = _shared.timings[(int)kind];
+            uint64_t count = timings.count();
+            if (count == 0) { continue; }
+            LOG_INFO(_env, "%s: count=%s mean=%s p50=%s p90=%s p99=%s", kind, count, timings.mean(), timings.percentile(0.5), timings.percentile(0.9), timings.percentile(0.99));
+        }
     }
 };
 

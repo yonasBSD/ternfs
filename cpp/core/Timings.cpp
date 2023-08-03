@@ -47,3 +47,26 @@ void Timings::reset() {
         bin.store(0);
     }
 }
+
+Duration Timings::mean() const {
+    double m = 0;
+    double c = count();
+    double upperBound = _firstUpperBound;
+    for (const auto& bin : _bins) {
+        m += (double)bin.load() * (upperBound / c);
+        upperBound *= _growth;
+    }
+    return Duration(m);
+}
+
+Duration Timings::percentile(double p) const {
+    uint64_t countSoFar = 0;
+    uint64_t toReach = count()*p;
+    double upperBound = _firstUpperBound;
+    for (const auto& bin: _bins) {
+        countSoFar += bin.load();
+        if (countSoFar >= toReach) { break; }
+        upperBound *= _growth;
+    }
+    return Duration(upperBound);
+}

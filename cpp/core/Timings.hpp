@@ -35,6 +35,17 @@ public:
         _bins[bin]++;
     }
 
+    uint64_t count() const {
+        uint64_t total = 0;
+        for (const auto& bin : _bins) {
+            total += bin.load();
+        }
+        return total;
+    }
+
+    Duration mean() const;
+    Duration percentile(double p) const;
+
     void toStats(const std::string& prefix, std::vector<Stat>& stats);
     void reset();
 };

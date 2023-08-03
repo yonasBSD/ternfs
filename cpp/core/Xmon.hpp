@@ -97,6 +97,8 @@ struct XmonBuf {
     bool readIn(int fd, size_t sz, std::string& errString);
 };
 
+void* runXmon(void*);
+
 struct Xmon : Undertaker::Reapable {
 private:
     Env _env;
@@ -130,4 +132,12 @@ public:
     }
 
     void run();
+
+    static void spawn(Undertaker& undertaker, std::unique_ptr<Xmon> xmon) {
+        pthread_t tid;
+        if (pthread_create(&tid, nullptr, &runXmon, &*xmon) != 0) {
+            throw SYSCALL_EXCEPTION("pthread_create");
+        }
+        undertaker.checkin(std::move(xmon), tid, "xmon");
+    }
 };

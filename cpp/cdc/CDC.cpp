@@ -31,7 +31,7 @@
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
-#include "Stopper.hpp"
+#include "Loop.hpp"
 #include "ErrorCount.hpp"
 
 struct CDCShared {
@@ -100,11 +100,10 @@ struct std::hash<InFlightCDCRequestKey> {
     }
 };
 
-struct CDCServer : Undertaker::Reapable {
+struct CDCServer : Loop {
 private:
-    Env _env;
     CDCShared& _shared;
-    Stopper _stopper;
+    bool _seenShards;
     std::array<IpPort, 2> _ipPorts;
     uint64_t _currentLogIndex;
     std::vector<char> _recvBuf;
@@ -113,7 +112,9 @@ private:
     ShardRespContainer _shardRespContainer;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
+    int _epoll;
     std::array<int, 4> _socks;
+    struct epoll_event _events[4];
     AES128Key _expandedCDCKey;
     Duration _shardTimeout;
     uint64_t _maximumEnqueuedRequests;
@@ -152,8 +153,9 @@ private:
 
 public:
     CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared) :
-        _env(logger, xmon, "req_server"),
+        Loop(logger, xmon, "req_server"),
         _shared(shared),
+        _seenShards(false),
         _ipPorts(options.ipPorts),
         _recvBuf(DEFAULT_UDP_MTU),
         _sendBuf(DEFAULT_UDP_MTU),
@@ -167,20 +169,74 @@ public:
         expandKey(CDCKey, _expandedCDCKey);
     }
 
-    virtual ~CDCServer() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
+    virtual void init() override {
+        LOG_INFO(_env, "Waiting for shard info to be filled in");
     }
 
-    virtual void onAbort() override {
-        _env.flush();
+    virtual void step() override {
+        if (!_seenShards) {
+            if (!_waitForShards()) {
+                return;
+            }
+            _seenShards = true;
+            _initAfterShardsSeen();
+        }
+
+        // Process CDC requests and shard responses
+        {
+            auto now = eggsNow();
+            if (_inFlightShardReq && (now - _inFlightShardReq->sentAt) > _shardTimeout) {
+                _inFlightShardReq.reset();
+                LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, timing out (%s > %s)", _inFlightShardReq->shardRequestId, _inFlightShardReq->sentAt, now, (now - _inFlightShardReq->sentAt), _shardTimeout);
+                _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
+            }
+        }
+
+        // 10ms timeout for prompt termination and for shard resps timeouts
+        int nfds = epoll_wait(_epoll, _events, _socks.size(), 10 /*milliseconds*/);
+        if (nfds < 0) {
+            throw SYSCALL_EXCEPTION("epoll_wait");
+        }
+
+        for (int i = 0; i < nfds; i++) {
+            const auto& event = _events[i];
+            if (event.data.u64%2 == 0) {
+                _drainCDCSock(_socks[event.data.u64]);
+            } else {
+                _drainShardSock(_socks[event.data.u64]);
+            }
+        }
     }
 
-    void run() {
-        _waitForShards();
+    virtual void finish() override {
+        _shared.db.close();
+    }
 
+private:
+    bool _waitForShards() {
+        bool badShard = false;
+        {
+            const std::lock_guard<std::mutex> lock(_shared.shardsMutex);
+            for (int i = 0; i < _shared.shards.size(); i++) {
+                const auto sh = _shared.shards[i];
+                if (sh.port1 == 0) {
+                    LOG_DEBUG(_env, "Shard %s isn't ready yet", i);
+                    badShard = true;
+                    break;
+                }
+            }
+        }
+        if (badShard) {
+            sleepFor(10_ms);
+            return false;
+        }
+
+        LOG_INFO(_env, "shards found, proceeding");
+        return true;
+    }
+
+    void _initAfterShardsSeen() {
+        // initialize everything after having seen the shards
         // Create sockets. We create one socket for listening to client requests and one for listening
         // the the shard's responses. If we have two IPs we do this twice.
         for (int i = 0; i < _socks.size(); i++) {
@@ -227,19 +283,18 @@ public:
         // create epoll structure
         // TODO I did this when I had more sockets, we could just use select now that it's 4
         // of them...
-        int epoll = epoll_create1(0);
-        if (epoll < 0) {
+        _epoll = epoll_create1(0);
+        if (_epoll < 0) {
             throw SYSCALL_EXCEPTION("epoll");
         }
-        struct epoll_event events[_socks.size()];
         for (int i = 0; i < _socks.size(); i++) {
             if (i > 1 && _ipPorts[1].ip == 0) { // we don't have a second IP
                 break;
             }
-            auto& event = events[i];
+            auto& event = _events[i];
             event.data.u64 = i;
             event.events = EPOLLIN | EPOLLET;
-            if (epoll_ctl(epoll, EPOLL_CTL_ADD, _socks[i], &event) == -1) {
+            if (epoll_ctl(_epoll, EPOLL_CTL_ADD, _socks[i], &event) == -1) {
                 throw SYSCALL_EXCEPTION("epoll_ctl");
             }
         }
@@ -250,77 +305,6 @@ public:
         _shared.db.startNextTransaction(true, eggsNow(), _advanceLogIndex(), _step, _status);
         _updateProcessTimings();
         _processStep(_step);
-
-        // Start processing CDC requests and shard responses
-        for (;;) {
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, stopping");
-                break;
-            }
-
-            {
-                auto now = eggsNow();
-                if (_inFlightShardReq && (now - _inFlightShardReq->sentAt) > _shardTimeout) {
-                    _inFlightShardReq.reset();
-                    LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, timing out (%s > %s)", _inFlightShardReq->shardRequestId, _inFlightShardReq->sentAt, now, (now - _inFlightShardReq->sentAt), _shardTimeout);
-                    _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
-                }
-            }
-
-            // 10ms timeout for prompt termination and for shard resps timeouts
-            int nfds = epoll_wait(epoll, events, _socks.size(), 10 /*milliseconds*/);
-            if (nfds < 0) {
-                throw SYSCALL_EXCEPTION("epoll_wait");
-            }
-
-            for (int i = 0; i < nfds; i++) {
-                const auto& event = events[i];
-                if (event.data.u64%2 == 0) {
-                    _drainCDCSock(_socks[event.data.u64]);
-                } else {
-                    _drainShardSock(_socks[event.data.u64]);
-                }
-            }
-        }
-
-        _shared.db.close();
-        _stopper.stopDone();
-    }
-
-private:
-    void _waitForShards() {
-        LOG_INFO(_env, "Waiting for shard info to be filled in");
-        EggsTime t0 = eggsNow();
-        Duration maxWait = 1_mins;
-        for (;;) {
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, stopping");
-                return;
-            }
-            if (eggsNow() - t0 > maxWait) {
-                throw EGGS_EXCEPTION("could not reach shuckle to get shards after %s, giving up", maxWait);
-            }
-
-            bool badShard = false;
-            {
-                const std::lock_guard<std::mutex> lock(_shared.shardsMutex);
-                for (int i = 0; i < _shared.shards.size(); i++) {
-                    const auto sh = _shared.shards[i];
-                    if (sh.port1 == 0) {
-                        LOG_DEBUG(_env, "Shard %s isn't ready yet", i);
-                        badShard = true;
-                        break;
-                    }
-                }
-            }
-            if (badShard) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-
-            LOG_INFO(_env, "shards found, proceeding");
-            return;
-        }
     }
 
     void _drainCDCSock(int sock) {
@@ -609,101 +593,68 @@ private:
     }
 };
 
-static void* runCDCServer(void* server) {
-    ((CDCServer*)server)->run();
-    return nullptr;
-}
-
-struct CDCShardUpdater : Undertaker::Reapable {
-    Env _env;
+struct CDCShardUpdater : PeriodicLoop {
     CDCShared& _shared;
-    Stopper _stopper;
     std::string _shuckleHost;
     uint16_t _shucklePort;
+
+    // loop data
+    std::array<ShardInfo, 256> _shards;
+    XmonNCAlert _alert;
 public:
     CDCShardUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
-        _env(logger, xmon, "shard_updater"),
+        PeriodicLoop(logger, xmon, "shard_updater", {1_sec, 1_mins}),
         _shared(shared),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
     {}
 
-    virtual ~CDCShardUpdater() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
+    virtual void init() override {
+        _env.updateAlert(_alert, "Waiting to get shards");
     }
 
-    virtual void onAbort() override {
-        _env.flush();
-    }
-
-    void run() {
-        EggsTime successfulIterationAt = 0;
-        auto shards = std::make_unique<std::array<ShardInfo, 256>>();
-        XmonNCAlert alert;
-        _env.updateAlert(alert, "Waiting to get shards");
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, stopping");
-                _stopper.stopDone();
-                return;
-            }
-            auto now = eggsNow();
-            if (now - successfulIterationAt < 1_mins) {
-                continue;
-            }
-            LOG_INFO(_env, "Last successful shard fetch was at %s, now we're at %s, fetching again", successfulIterationAt, now);
-            std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, *shards);
-            if (!err.empty()) {
-                _env.updateAlert(alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
-                EggsTime successfulIterationAt = 0;
-                continue;
-            }
-            bool badShard = false;
-            for (int i = 0; i < shards->size(); i++) {
-                if (shards->at(i).port1 == 0) {
-                    badShard = true;
-                    break;
-                }
-            }
-            if (badShard) {
-                EggsTime successfulIterationAt = 0;
-                _env.updateAlert(alert, "Shard info is still not present in shuckle, will keep trying");
-                continue;
-            }
-            {
-                const std::lock_guard<std::mutex> lock(_shared.shardsMutex);
-                for (int i = 0; i < shards->size(); i++) {
-                    _shared.shards[i] = shards->at(i);
-                }
-            }
-            _env.clearAlert(alert);
-            LOG_INFO(_env, "successfully fetched all shards from shuckle, will wait one minute");
-            successfulIterationAt = eggsNow();
+    virtual bool periodicStep() override {
+        LOG_INFO(_env, "Fetching shards");
+        std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, _shards);
+        if (!err.empty()) {
+            _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
+            return false;
         }
+        bool badShard = false;
+        for (int i = 0; i < _shards.size(); i++) {
+            if (_shards[i].port1 == 0) {
+                badShard = true;
+                break;
+            }
+        }
+        if (badShard) {
+            EggsTime successfulIterationAt = 0;
+            _env.updateAlert(_alert, "Shard info is still not present in shuckle, will keep trying");
+            return false;
+        }
+        {
+            const std::lock_guard<std::mutex> lock(_shared.shardsMutex);
+            for (int i = 0; i < _shards.size(); i++) {
+                _shared.shards[i] = _shards[i];
+            }
+        }
+        _env.clearAlert(_alert);
+        LOG_INFO(_env, "successfully fetched all shards from shuckle, will wait one minute");
+        return true;
     }
 };
 
-static void* runCDCShardUpdater(void* server) {
-    ((CDCShardUpdater*)server)->run();
-    return nullptr;
-}
-
-struct CDCRegisterer : Undertaker::Reapable {
-    Env _env;
+struct CDCRegisterer : PeriodicLoop {
     CDCShared& _shared;
-    Stopper _stopper;
     uint32_t _ownIp1;
     uint32_t _ownIp2;
     std::string _shuckleHost;
     uint16_t _shucklePort;
     bool _hasSecondIp;
+    XmonNCAlert _alert;
 public:
     CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
-        _env(logger, xmon, "registerer"),
+        PeriodicLoop(logger, xmon, "registerer", { 100_ms, 1_mins }),
         _shared(shared),
         _ownIp1(options.ipPorts[0].ip),
         _ownIp2(options.ipPorts[1].ip),
@@ -712,172 +663,74 @@ public:
         _hasSecondIp(options.ipPorts[1].ip != 0)
     {}
 
-    virtual ~CDCRegisterer() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
-    }
-
-    virtual void onAbort() override {
-        _env.flush();
-    }
-
-    void run() {
-        uint64_t rand = eggsNow().ns;
-        EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
-        XmonNCAlert alert;
-        _env.updateAlert(alert, "Waiting to register ourselves for the first time");
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, stopping");
-                _stopper.stopDone();
-                return;
-            }
-            if (eggsNow() < nextRegister) {
-                continue;                
-            }
-            uint16_t port1 = _shared.ownPorts[0].load();
-            uint16_t port2 = _shared.ownPorts[1].load();
-            if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
-                // server isn't up yet
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-            LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
-            std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
-            if (!err.empty()) {
-                _env.updateAlert(alert, "Couldn't register ourselves with shuckle: %s", err);
-                nextRegister = 0;
-                continue;
-            }
-            _env.clearAlert(alert);
-            Duration nextRegisterD(wyhash64(&rand) % (2_mins).ns); // fuzz the successful loop
-            nextRegister = eggsNow() + nextRegisterD;
-            LOG_INFO(_env, "Successfully registered with shuckle (CDC, %s:%s, %s:%s), will register again in %s", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2, nextRegisterD);
+    virtual bool periodicStep() override {
+        uint16_t port1 = _shared.ownPorts[0].load();
+        uint16_t port2 = _shared.ownPorts[1].load();
+        if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
+            return false;
         }
+        LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
+        std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
+        if (!err.empty()) {
+            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
+            return false;
+        }
+        _env.clearAlert(_alert);
+        return true;
     }
 };
 
-static void* runCDCRegisterer(void* server) {
-    ((CDCRegisterer*)server)->run();
-    return nullptr;
-}
-
-struct CDCStatsInserter : Undertaker::Reapable {
+struct CDCStatsInserter : PeriodicLoop {
 private:
-    Env _env;
     CDCShared& _shared;
-    Stopper _stopper;
     std::string _shuckleHost;
     uint16_t _shucklePort;
+    XmonNCAlert _alert;
+    std::vector<Stat> _stats;
+
 public:
     CDCStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
-        _env(logger, xmon, "stats_inserter"),
+        PeriodicLoop(logger, xmon, "stats_inserter", {1_sec, 1_hours}),
         _shared(shared),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
     {}
 
-    virtual ~CDCStatsInserter() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
-    }
-
-    virtual void onAbort() override {
-        _env.flush();
-    }
-
-    void run() {
-        EggsTime t0 = eggsNow();
-        EggsTime lastRequestT = 0;
-        bool lastRequestSuccessful = false;
-        std::vector<Stat> stats;
-        std::string prefix = "cdc";
-        XmonNCAlert alert;
-        _env.updateAlert(alert, "Waiting to insert stats for the first time");
-
-        const auto insertCDCStats = [this, &stats, &alert]() {
-            std::string err;
-            for (CDCMessageKind kind : allCDCMessageKind) {
-                {
-                    std::ostringstream prefix;
-                    prefix << "cdc." << kind;
-                    _shared.timingsTotal[(int)kind].toStats(prefix.str(), stats);
-                    _shared.errors[(int)kind].toStats(prefix.str(), stats);
-                }
-                {
-                    std::ostringstream prefix;
-                    prefix << "cdc." << kind << ".process";
-                    _shared.timingsProcess[(int)kind].toStats(prefix.str(), stats);
-                }
+    virtual bool periodicStep() override {
+        std::string err;
+        for (CDCMessageKind kind : allCDCMessageKind) {
+            {
+                std::ostringstream prefix;
+                prefix << "cdc." << kind;
+                _shared.timingsTotal[(int)kind].toStats(prefix.str(), _stats);
+                _shared.errors[(int)kind].toStats(prefix.str(), _stats);
             }
-            err = insertStats(_shuckleHost, _shucklePort, 10_sec, stats);
-            stats.clear();
-            if (err.empty()) {
-                _env.clearAlert(alert);
-                for (CDCMessageKind kind : allCDCMessageKind) {
-                    _shared.timingsTotal[(int)kind].reset();
-                    _shared.errors[(int)kind].reset();
-                    _shared.timingsProcess[(int)kind].reset();
-                }
-            } else {
-                _env.updateAlert(alert, "Could not insert stats: %s", err);
+            {
+                std::ostringstream prefix;
+                prefix << "cdc." << kind << ".process";
+                _shared.timingsProcess[(int)kind].toStats(prefix.str(), _stats);
             }
-            return err;
-        };
-
-        #define GO_TO_NEXT_ITERATION \
-            sleepFor(10_ms); \
-            continue; \
-
-        for (;;) {
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, trying to insert stats before stopping");
-                insertCDCStats();
-                LOG_INFO(_env, "done, goodbye.");
-                _stopper.stopDone();
-                return;
-            }
-
-            EggsTime t = eggsNow();
-            if (lastRequestSuccessful && (t - lastRequestT) < 1_hours) {
-                GO_TO_NEXT_ITERATION
-            }
-            if (!lastRequestSuccessful && (t - lastRequestT) < 100_ms) {
-                // if the last request failed, wait at least 100ms before retrying
-                GO_TO_NEXT_ITERATION
-            }
-
-            LOG_INFO(_env, "about to insert stats to %s:%s", _shuckleHost, _shucklePort);
-            std::string err;
-
-            err = insertCDCStats();
-            lastRequestSuccessful = err.empty();
-            lastRequestT = t;
-            if (!lastRequestSuccessful) {
-                RAISE_ALERT(_env, "could not reach shuckle: %s", err);
-                GO_TO_NEXT_ITERATION
-            }
-            LOG_INFO(_env, "stats inserted, will wait one hour");
         }
+        err = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
+        _stats.clear();
+        if (err.empty()) {
+            _env.clearAlert(_alert);
+            for (CDCMessageKind kind : allCDCMessageKind) {
+                _shared.timingsTotal[(int)kind].reset();
+                _shared.errors[(int)kind].reset();
+                _shared.timingsProcess[(int)kind].reset();
+            }
+            return true;
+        } else {
+            _env.updateAlert(_alert, "Could not insert stats: %s", err);
+            return false;
+        }
+    }
 
-        #undef GO_TO_NEXT_ITERATION
+    virtual void finish() override {
+        periodicStep();
     }
 };
-
-static void* runCDCStatsInserter(void* server) {
-    ((CDCStatsInserter*)server)->run();
-    return nullptr;
-}
-
-static void* runXmon(void* server) {
-    ((Xmon*)server)->run();
-    return nullptr;
-}
 
 void runCDC(const std::string& dbDir, const CDCOptions& options) {
     auto undertaker = Undertaker::acquireUndertaker();
@@ -921,52 +774,17 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     if (xmon) {
         XmonConfig config;
         config.appInstance = "cdc";
-        auto xmonRunner = std::make_unique<Xmon>(logger, xmon, config);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runXmon, &*xmonRunner) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(xmonRunner), tid, "xmon");
+        Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
     }
 
     CDCDB db(logger, xmon, dbDir);
     auto shared = std::make_unique<CDCShared>(db);
 
-    {
-        auto server = std::make_unique<CDCServer>(logger, xmon, options, *shared);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runCDCServer, &*server) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(server), tid, "server");
-    }
+    Loop::spawn(*undertaker, std::make_unique<CDCServer>(logger, xmon, options, *shared));
 
-    {
-        auto server = std::make_unique<CDCShardUpdater>(logger, xmon, options, *shared);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runCDCShardUpdater, &*server) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(server), tid, "shard_updater");
-    }
-
-    {
-        auto server = std::make_unique<CDCRegisterer>(logger, xmon, options, *shared);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runCDCRegisterer, &*server) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(server), tid, "registerer");
-    }
-
-    {
-        auto statsInserter = std::make_unique<CDCStatsInserter>(logger, xmon, options, *shared);
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runCDCStatsInserter, &*statsInserter) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker->checkin(std::move(statsInserter), tid, "stats_inserter");
-    }
+    Loop::spawn(*undertaker, std::make_unique<CDCShardUpdater>(logger, xmon, options, *shared));
+    Loop::spawn(*undertaker, std::make_unique<CDCRegisterer>(logger, xmon, options, *shared));
+    Loop::spawn(*undertaker, std::make_unique<CDCStatsInserter>(logger, xmon, options, *shared));
 
     undertaker->reap();
 }

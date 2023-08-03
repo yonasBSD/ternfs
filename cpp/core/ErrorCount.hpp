@@ -21,5 +21,6 @@ public:
     }
 
     void toStats(const std::string& prefix, std::vector<Stat>& stats);
+    // void toMetrics(const MetricsBuilder& builder); // will add tags and then fields
     void reset();
 };

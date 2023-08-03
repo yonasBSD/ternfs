@@ -27,7 +27,7 @@ public:
         return Timings(100_ns, 1.2, 128);
     }
 
-    inline void add(Duration d) {
+    void add(Duration d) {
         int64_t inanos = d.ns;
         if (unlikely(inanos <= 0)) { return; }
         uint64_t nanos = inanos;

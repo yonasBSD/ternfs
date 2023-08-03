@@ -297,3 +297,8 @@ reconnect:
         }
     }
 }
+
+void* runXmon(void* server) {
+    ((Xmon*)server)->run();
+    return nullptr;
+}

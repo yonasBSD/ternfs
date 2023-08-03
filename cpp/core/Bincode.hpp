@@ -308,6 +308,9 @@ struct BincodeBuf {
     void packList(const BincodeList<A>& xs) {
         ALWAYS_ASSERT(xs.els.size() < (1<<16));
         packScalar<uint16_t>(xs.els.size());
+        if (unlikely(xs.els.size() == 0)) {
+            return;
+        }
         // If it's a number of some sorts, just memcpy it
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             static_assert(std::endian::native == std::endian::little);

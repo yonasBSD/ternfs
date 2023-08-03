@@ -356,7 +356,7 @@ public:
         }
         uint32_t ip1 = _shared.ip1.load();
         uint32_t ip2 = _shared.ip2.load();
-        LOG_DEBUG(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
+        LOG_INFO(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
         std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
         if (!err.empty()) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
@@ -392,9 +392,7 @@ public:
     virtual bool periodicStep() override {
         _logEntry.time = eggsNow();
         LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
-        std::string err;
-
-        err = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shid, _logEntry.body.setUpdateBlockServices());
+        std::string err = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shid, _logEntry.body.setUpdateBlockServices());
         if (!err.empty()) {
             _env.updateAlert(_alert, "could not reach shuckle: %s", err);
             return false;
@@ -443,6 +441,7 @@ public:
             _shared.timings[(int)kind].toStats(prefix.str(), _stats);
             _shared.errors[(int)kind].toStats(prefix.str(), _stats);
         }
+        LOG_INFO(_env, "inserting stats");
         std::string err = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
         _stats.clear();
         if (err.empty()) {

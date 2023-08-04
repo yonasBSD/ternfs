@@ -114,13 +114,13 @@ func main() {
 			if err := lib.DestructFiles(log, options, shard); err != nil {
 				log.RaiseAlert("could not destruct files: %v", err)
 			}
-			waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
-			log.Info("waiting %v before collecting again", waitFor)
-			time.Sleep(waitFor)
-			if *singleIteration {
-				goto Finish
-			}
 		}
+		if *singleIteration {
+			goto Finish
+		}
+		waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+		log.Info("waiting %v before collecting again", waitFor)
+		time.Sleep(waitFor)
 	}
 Finish:
 }

@@ -8,11 +8,9 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
-	"xtx/eggsfs/managedroutine"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
 )
@@ -28,12 +26,15 @@ func main() {
 	mtu := flag.Uint64("mtu", 0, "")
 	flag.Parse()
 
-	if flag.NArg() < 1 {
-		fmt.Fprintf(os.Stderr, "Please specify at least one shard to run with using positional arguments.")
-		os.Exit(2)
+	shards := []msgs.ShardId{}
+	var appInstance string
+
+	if flag.NArg() < 1 { // all shards
+		for i := 0; i < 256; i++ {
+			shards = append(shards, msgs.ShardId(i))
+		}
 	}
 
-	shards := []msgs.ShardId{}
 	for _, shardStr := range flag.Args() {
 		shardI, err := strconv.Atoi(shardStr)
 		if err != nil {
@@ -45,6 +46,14 @@ func main() {
 			os.Exit(2)
 		}
 		shards = append(shards, msgs.ShardId(shardI))
+	}
+
+	shardsStrs := []string{}
+	for _, shard := range shards {
+		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
+	}
+	if flag.NArg() >= 1 { // only have instance when shards are provided (otherwise for all shards it's huge)
+		appInstance = strings.Join(shardsStrs, ",")
 	}
 
 	logOut := os.Stdout
@@ -64,23 +73,14 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	shardsStrs := []string{}
-	for _, shard := range shards {
-		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
-	}
 
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppInstance: strings.Join(shardsStrs, ",")})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppInstance: appInstance})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
 	}
 
 	log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
-
-	panicChan := make(chan error)
-	finishedChan := make(chan struct{})
-	var wait sync.WaitGroup
-	wait.Add(len(shards))
 
 	counters := lib.NewClientCounters()
 
@@ -96,15 +96,6 @@ func main() {
 		}()
 	}
 
-	managedRoutines := managedroutine.New(panicChan)
-	managedRoutines.Start(
-		"waiter",
-		func() {
-			wait.Wait()
-			finishedChan <- struct{}{}
-		},
-	)
-
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
 	options := &lib.GCOptions{
 		ShuckleTimeouts: lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
@@ -113,35 +104,23 @@ func main() {
 		ShuckleAddress:  *shuckleAddress,
 	}
 
-	for _, shard := range shards {
-		managedRoutines.Start(
-			fmt.Sprintf("GC %v", shard),
-			func() {
-				dirInfoCache := lib.NewDirInfoCache()
-				rand := wyhash.New(rand.Uint64())
-				for {
-					if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
-						log.RaiseAlert("could not collect directories: %v", err)
-					}
-					if err := lib.DestructFiles(log, options, shard); err != nil {
-						log.RaiseAlert("could not destruct files: %v", err)
-					}
-					waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
-					log.Info("waiting %v before collecting again", waitFor)
-					time.Sleep(waitFor)
-					if *singleIteration {
-						break
-					}
-				}
-				wait.Done()
-			},
-		)
+	dirInfoCache := lib.NewDirInfoCache()
+	rand := wyhash.New(rand.Uint64())
+	for {
+		for _, shard := range shards {
+			if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
+				log.RaiseAlert("could not collect directories: %v", err)
+			}
+			if err := lib.DestructFiles(log, options, shard); err != nil {
+				log.RaiseAlert("could not destruct files: %v", err)
+			}
+			waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+			log.Info("waiting %v before collecting again", waitFor)
+			time.Sleep(waitFor)
+			if *singleIteration {
+				goto Finish
+			}
+		}
 	}
-
-	select {
-	case err := <-panicChan:
-		panic(err)
-	case <-finishedChan:
-		log.Info("finished collecting on all shards, terminating")
-	}
+Finish:
 }

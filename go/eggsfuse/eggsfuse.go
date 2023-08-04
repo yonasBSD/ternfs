@@ -132,9 +132,10 @@ func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 type eggsNode struct {
 	fs.Inode
 	id msgs.InodeId
+	tf *transientFile
 }
 
-func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
+func getattr(id msgs.InodeId, tf *transientFile, out *fuse.Attr) syscall.Errno {
 	logger.Debug("getattr inode=%v", id)
 
 	out.Ino = uint64(id)
@@ -145,6 +146,17 @@ func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
 			return err
 		}
 	} else {
+		if tf != nil {
+			out.Size = tf.size
+			out.Ctime = 0
+			out.Ctimensec = 0
+			out.Mtime = 0
+			out.Mtimensec = 0
+			out.Atime = 0
+			out.Atimensec = 0
+			return 0
+		}
+
 		resp := msgs.StatFileResp{}
 		if err := shardRequest(id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != 0 {
 			return err
@@ -166,7 +178,7 @@ func getattr(id msgs.InodeId, out *fuse.Attr) syscall.Errno {
 }
 
 func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattr(n.id, &out.Attr)
+	return getattr(n.id, n.tf, &out.Attr)
 }
 
 func (n *eggsNode) Lookup(
@@ -188,7 +200,7 @@ func (n *eggsNode) Lookup(
 	default:
 		panic(fmt.Errorf("bad type %v", resp.TargetId.Type()))
 	}
-	if err := getattr(resp.TargetId, &out.Attr); err != 0 {
+	if err := getattr(resp.TargetId, nil, &out.Attr); err != 0 {
 		return nil, err
 	}
 	return n.NewInode(ctx, &eggsNode{id: resp.TargetId}, fs.StableAttr{Ino: uint64(resp.TargetId), Mode: mode}), 0
@@ -266,6 +278,7 @@ type transientFile struct {
 	dir      msgs.InodeId
 	name     string
 	data     *[]byte // null if it has been flushed
+	size     uint64
 	writeErr syscall.Errno
 }
 
@@ -304,6 +317,7 @@ func (n *eggsNode) Create(
 	}
 	fileNode := eggsNode{
 		id: tf.id,
+		tf: tf,
 	}
 
 	logger.Debug("created id=%v", tf.id)
@@ -356,6 +370,7 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 	}
 
 	*f.data = append(*f.data, data...)
+	f.size += uint64(len(data))
 
 	return uint32(len(data)), 0
 }

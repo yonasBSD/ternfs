@@ -93,7 +93,7 @@ struct XmonBuf {
 
     // returns an error string if it failed
     std::string writeOut(int fd);
-    // if false, we got EAGAIN immediately.
+    // if false with empty error string, we got EAGAIN immediately.
     bool readIn(int fd, size_t sz, std::string& errString);
 };
 

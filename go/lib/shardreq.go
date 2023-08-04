@@ -138,7 +138,7 @@ func (c *Client) shardRequestInternal(
 	if c.counters != nil {
 		counters = c.counters.Shard
 	}
-	return c.metadataRequestInternal(logger, int16(shid), c.ShardAddrs(shid), uint8(msgKind), reqBody, respBody, counters, dontWait)
+	return c.metadataRequest(logger, int16(shid), c.ShardAddrs(shid), uint8(msgKind), reqBody, respBody, counters, dontWait)
 }
 
 func (c *Client) ShardRequestDontWait(

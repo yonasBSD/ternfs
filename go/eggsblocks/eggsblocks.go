@@ -118,8 +118,8 @@ func initBlockServicesInfo(
 	var wg sync.WaitGroup
 	wg.Add(len(blockServices))
 	failed := int32(0)
-	alert := log.NewAlert()
-	log.Raise(alert, false, "getting info for %v block services", len(blockServices))
+	alert := log.NewNCAlert()
+	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
 		bs.cachedInfo.Id = id
 		bs.cachedInfo.Ip1 = ip1
@@ -143,7 +143,7 @@ func initBlockServicesInfo(
 	if failed == 1 {
 		return fmt.Errorf("some block service infos failed to update")
 	}
-	log.Clear(alert)
+	log.ClearNC(alert)
 	return nil
 }
 
@@ -153,7 +153,7 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
-	alert := log.NewAlert()
+	alert := log.NewNCAlert()
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
@@ -162,11 +162,11 @@ func registerPeriodically(
 		log.Trace("registering with %+v", req)
 		_, err := lib.ShuckleRequest(log, nil, shuckleAddress, &req)
 		if err != nil {
-			log.Raise(alert, false, "could not register block services with %+v: %v", shuckleAddress, err)
+			log.RaiseNC(alert, "could not register block services with %+v: %v", shuckleAddress, err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		log.Clear(alert)
+		log.ClearNC(alert)
 		waitForRange := time.Minute * 2
 		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
 		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
@@ -532,7 +532,7 @@ NextRequest:
 			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
 			now := time.Now()
 			if timeCheck && (now.Before(pastCutoffTime) || now.After(futureCutoffTime)) {
-				log.RaiseAlert("block %v is too old or too new to be deleted (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime)
+				log.RaiseAlert("block %v is too old or too new to be written (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime)
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}

@@ -103,24 +103,31 @@ public:
     }
 
     template<typename ...Args>
-    void raiseAlert(XmonAlert& alert, bool binnable, const char* fmt, Args&&... args) {
+    void raiseAlert(const char* fmt, Args&&... args) {
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
         std::string s = ss.str();
         _log(LogLevel::LOG_ERROR, s.c_str());
         if (_xmon) {
-            if (alert < 0) {
-                alert = _xmon->createAlert(binnable, s);
-            } else {
-                _xmon->updateAlert(alert, binnable, s);
-            }
+            _xmon->raiseAlert(s);
         }
     }
 
-    void clearAlert(XmonAlert& alert) {
-        if (_xmon && alert >= 0) { _xmon->clearAlert(alert); }
-        alert = -1;
+    template<typename ...Args>
+    void updateAlert(XmonNCAlert& alert, const char* fmt, Args&&... args) {
+        std::stringstream ss;
+        format_pack(ss, fmt, args...);
+        std::string line;
+        std::string s = ss.str();
+        _log(LogLevel::LOG_ERROR, s.c_str());
+        if (_xmon) {
+            _xmon->updateAlert(alert, s);
+        }
+    }
+
+    void clearAlert(XmonNCAlert& alert) {
+        if (_xmon) { _xmon->clearAlert(alert); }
     }
 
     bool _shouldLog(LogLevel level) {
@@ -166,6 +173,5 @@ public:
 
 #define RAISE_ALERT(env, ...) \
     do { \
-        XmonAlert alert = -1; \
-        (env).raiseAlert(alert, true, VALIDATE_FORMAT(__VA_ARGS__)); \
+        (env).raiseAlert(VALIDATE_FORMAT(__VA_ARGS__)); \
     } while (false)

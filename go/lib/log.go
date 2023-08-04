@@ -287,15 +287,6 @@ func (l *Logger) ErrorNoAlert(format string, v ...any) {
 	l.LogStack(1, ERROR, format, v...)
 }
 
-func (l *Logger) RaiseAlert(format string, v ...any) {
-	l.RaiseAlertStack(1, format, v...)
-}
-
-func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
-	alert := l.NewAlert()
-	l.RaiseStack(1+calldepth, alert, true, format, v...)
-}
-
 func (l *Logger) Metric(category, name string, help string, value uint64, extralabels map[string]string) {
 	if l.mw == nil {
 		return
@@ -306,27 +297,39 @@ func (l *Logger) Metric(category, name string, help string, value uint64, extral
 	l.mw.AddMetric(hostmon.NewMetricNowWithLabels(category, name, help, float64(value), extralabels))
 }
 
-func (l *Logger) NewAlert() *XmonAlert {
+func (l *Logger) NewNCAlert() *XmonNCAlert {
 	if l.xmon == nil {
-		return &XmonAlert{}
+		return &XmonNCAlert{}
 	} else {
-		return l.xmon.NewAlert()
+		return l.xmon.NewNCAlert()
 	}
 }
 
-func (l *Logger) RaiseStack(calldepth int, alert *XmonAlert, binnable bool, format string, v ...any) {
+func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
 	l.LogStack(1+calldepth, ERROR, "ALERT "+format, v...)
 	if l.xmon == nil {
 		return
 	}
-	alert.RaiseStack(l, l.xmon, 1+calldepth, binnable, format, v...)
+	l.xmon.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
 }
 
-func (l *Logger) Raise(alert *XmonAlert, binnable bool, format string, v ...any) {
-	l.RaiseStack(1, alert, binnable, format, v...)
+func (l *Logger) RaiseAlert(format string, v ...any) {
+	l.RaiseAlertStack(1, format, v...)
 }
 
-func (l *Logger) Clear(alert *XmonAlert) {
+func (l *Logger) RaiseNCStack(alert *XmonNCAlert, calldepth int, format string, v ...any) {
+	l.LogStack(1+calldepth, ERROR, "ALERT "+format, v...)
+	if l.xmon == nil {
+		return
+	}
+	alert.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
+}
+
+func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
+	l.RaiseNCStack(alert, 1, format, v...)
+}
+
+func (l *Logger) ClearNC(alert *XmonNCAlert) {
 	if alert.lastMessage != "" {
 		l.LogStack(1, INFO, "clearing alert, last message %q", alert.lastMessage)
 	}

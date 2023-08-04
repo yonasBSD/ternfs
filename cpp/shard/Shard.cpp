@@ -366,8 +366,8 @@ public:
     void run() {
         uint64_t rand = eggsNow().ns;
         EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
-        XmonAlert alert = -1;
-        _env.raiseAlert(alert, false, "Waiting to register ourselves for the first time");
+        XmonNCAlert alert;
+        _env.updateAlert(alert, "Waiting to register ourselves for the first time");
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
             if (_stopper.shouldStop()) {
@@ -391,7 +391,7 @@ public:
             LOG_DEBUG(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
             std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
             if (!err.empty()) {
-                _env.raiseAlert(alert, false, "Couldn't register ourselves with shuckle: %s", err);
+                _env.updateAlert(alert, "Couldn't register ourselves with shuckle: %s", err);
                 continue;
             }
             _env.clearAlert(alert);
@@ -441,8 +441,8 @@ public:
         bool lastRequestSuccessful = false;
         auto respContainer = std::make_unique<ShardRespContainer>();
         auto logEntry = std::make_unique<ShardLogEntry>();
-        XmonAlert shuckleAlert = -1;
-        _env.raiseAlert(shuckleAlert, false, "Waiting to fetch block services for the first time");
+        XmonNCAlert shuckleAlert;
+        _env.updateAlert(shuckleAlert, "Waiting to fetch block services for the first time");
 
         #define GO_TO_NEXT_ITERATION \
             std::this_thread::sleep_for(std::chrono::milliseconds(10)); \
@@ -477,7 +477,7 @@ public:
             }
             lastRequestT = t;
             if (!lastRequestSuccessful) {
-                _env.raiseAlert(shuckleAlert, false, "could not reach shuckle: %s", err);
+                _env.updateAlert(shuckleAlert, "could not reach shuckle: %s", err);
                 GO_TO_NEXT_ITERATION
             }
 
@@ -536,7 +536,7 @@ public:
         EggsTime lastRequestT = 0;
         bool lastRequestSuccessful = false;
         std::vector<Stat> stats;
-        XmonAlert alert = -1;
+        XmonNCAlert alert;
 
         const auto insertShardStats = [this, &stats, &alert]() {
             std::string err;
@@ -555,7 +555,7 @@ public:
                     _shared.errors[(int)kind].reset();
                 }
             } else {
-                _env.raiseAlert(alert, false, "Could not insert stats: %s", err);
+                _env.updateAlert(alert, "Could not insert stats: %s", err);
             }
             return err;
         };

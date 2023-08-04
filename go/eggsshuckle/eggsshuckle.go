@@ -1747,7 +1747,7 @@ func statsWriter(ll *lib.Logger, st *state) {
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	staleAlert := ll.NewAlert()
+	staleAlert := ll.NewNCAlert()
 
 	for {
 		<-ticker.C
@@ -1837,11 +1837,11 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		if len(alerts) == 0 {
-			ll.Clear(staleAlert)
+			ll.ClearNC(staleAlert)
 			continue
 		}
 		msg := strings.Join(alerts, "\n")
-		ll.Raise(staleAlert, false, msg)
+		ll.RaiseNC(staleAlert, msg)
 	}
 }
 

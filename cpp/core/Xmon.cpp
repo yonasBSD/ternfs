@@ -1,10 +1,12 @@
 #include <unistd.h>
 #include <bit>
 #include <sys/socket.h>
+#include <unordered_set>
 
 #include "Exception.hpp"
 #include "Xmon.hpp"
 #include "Connect.hpp"
+#include "XmonAgent.hpp"
 
 enum struct XmonMood : int32_t {
     Happy = 0,
@@ -148,8 +150,10 @@ bool XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
         readSoFar += r;
     }
     len += sz;
-    return readSoFar;
+    return true;
 }
+
+constexpr int MAX_BINNABLE_ALERTS = 20;
 
 void Xmon::run() {
     int numFailures = 0;
@@ -157,6 +161,7 @@ void Xmon::run() {
     XmonBuf buf;
     int sock = -1;
     std::deque<XmonRequest> requests;
+    std::unordered_set<int64_t> binnableAlerts;
 
     std::string errString;
 
@@ -177,11 +182,11 @@ reconnect:
     // We've got a socket, reset conn failures
     numFailures = 0;
 
-    // 10ms timeout for prompt termination/processing
+    // 100ms timeout for prompt termination/processing
     {
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 10'000;
+        tv.tv_usec = 100'000;
         if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
             throw SYSCALL_EXCEPTION("setsockopt");
         }
@@ -204,20 +209,46 @@ reconnect:
             _agent->getRequests(requests);
             while (!requests.empty()) {
                 const auto& req = requests.front();
+                int64_t alertIdToInsert = -1;
                 if (req.msgType == XmonRequestType::CREATE) {
+                    if (req.binnable) {
+                        alertIdToInsert = req.alertId;
+                        if (binnableAlerts.size() > MAX_BINNABLE_ALERTS) {
+                            LOG_ERROR(_env, "not creating alert, aid=%s binnable=%s message=%s, we're full", req.alertId, req.binnable, req.message);
+                            if (binnableAlerts.count(XmonAgent::TOO_MANY_ALERTS_ALERT_ID) == 0) {
+                                XmonRequest req;
+                                req.msgType = XmonRequestType::CREATE;
+                                req.alertId = XmonAgent::TOO_MANY_ALERTS_ALERT_ID;
+                                req.message = "too many alerts, alerts dropped";
+                                req.binnable = true;
+                                packRequest(buf, req);
+                                alertIdToInsert = XmonAgent::TOO_MANY_ALERTS_ALERT_ID;
+                                goto write_request;
+                            } else {
+                                goto skip_request;
+                            }
+                        }
+                    }
                     LOG_INFO(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::UPDATE) {
+                    ALWAYS_ASSERT(!req.binnable);
                     LOG_INFO(_env, "updating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::CLEAR) {
+                    ALWAYS_ASSERT(!req.binnable);
                     LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
                 } else {
                     ALWAYS_ASSERT(false, "bad req type %s", (int)req.msgType);
                 }
                 packRequest(buf, req);
+            write_request:
                 errString = buf.writeOut(sock);
                 CHECK_ERR_STRING(errString);
-                requests.pop_front();
                 LOG_DEBUG(_env, "sent request to xmon");
+                if (alertIdToInsert >= 0) {
+                    binnableAlerts.insert(alertIdToInsert);
+                }
+            skip_request:
+                requests.pop_front();
             }
         }
 
@@ -247,13 +278,15 @@ reconnect:
             CHECK_ERR_STRING("send heartbeat");
             break; }
         case 0x1: {
-            LOG_INFO(_env, "got alert binned from UI, ignoring");
             bool success = false;
             do {
                 errString.clear();
                 success = buf.readIn(sock, 8, errString);
                 CHECK_ERR_STRING("reading alert binned id");
             } while (!success);
+            int64_t alertId = buf.unpackScalar<int64_t>();
+            LOG_INFO(_env, "got alert %s binned from UI", alertId);
+            binnableAlerts.erase(alertId);
             break; }
         default:
             throw EGGS_EXCEPTION("unknown message type %s", msgType);

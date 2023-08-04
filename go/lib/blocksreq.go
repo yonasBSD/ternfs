@@ -33,7 +33,7 @@ func BlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte,
 		if errs[i%2] == nil {
 			return sock, nil
 		}
-		log.RaiseAlert("could not connect to block service %v:%v: %w, might try other ip/port", ip, port, errs[i%2])
+		log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i%2])
 	}
 	// return one of the two errors, we don't want to mess with them too much and they are alerts
 	for _, err := range errs {

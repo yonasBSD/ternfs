@@ -19,8 +19,11 @@ struct XmonRequest {
     std::string message;
 };
 
-// We use -1 for "nothing" sometimes.
-using XmonAlert = int64_t;
+struct XmonNCAlert {
+    int64_t alertId;
+
+    XmonNCAlert() : alertId(-1) {}
+};
 
 struct XmonAgent {
 private:
@@ -28,41 +31,53 @@ private:
     std::deque<XmonRequest> _requests;
     std::atomic<int64_t> _alertId;
 
-public:
-    XmonAgent() : _alertId(0) {}
-
-    void addRequest(XmonRequest&& req) {
+    void _addRequest(XmonRequest&& req) {
         std::lock_guard<std::mutex> lock(_mu);
         _requests.emplace_back(req);
     }
 
-    XmonAlert createAlert(bool binnable, const std::string& message) {
-        XmonAlert aid = _alertId.fetch_add(1);
+    int64_t _createAlert(bool binnable, const std::string& message) {
+        int64_t aid = _alertId.fetch_add(1);
         XmonRequest req;
         req.msgType = XmonRequestType::CREATE;
         req.alertId = aid;
         req.binnable = binnable;
         req.message = message;
-        addRequest(std::move(req));
+        _addRequest(std::move(req));
         return aid;
     }
 
-    void updateAlert(XmonAlert aid, bool binnable, const std::string& message) {
-        XmonRequest req;
-        req.msgType = XmonRequestType::UPDATE;
-        req.alertId = aid;
-        req.binnable = binnable;
-        req.message = message;
-        addRequest(std::move(req));
+public:
+    static constexpr int64_t TOO_MANY_ALERTS_ALERT_ID = 0;
+
+    XmonAgent() : _alertId(1) {}
+
+    void raiseAlert(const std::string& message) {
+        _createAlert(true, message);
     }
 
-    void clearAlert(XmonAlert aid) {
+    void updateAlert(XmonNCAlert& aid, const std::string& message) {
+        if (aid.alertId < 0) {
+            aid.alertId = _createAlert(false, message);
+        } else {
+            XmonRequest req;
+            req.msgType = XmonRequestType::UPDATE;
+            req.alertId = aid.alertId;
+            req.binnable = false;
+            req.message = message;
+            _addRequest(std::move(req));
+        }
+    }
+
+    void clearAlert(XmonNCAlert& aid) {
+        if (aid.alertId < 0) { return; }
         XmonRequest req;
         req.msgType = XmonRequestType::CLEAR;
-        req.alertId = aid;
+        req.alertId = aid.alertId;
         req.binnable = false;
         req.message = {};
-        addRequest(std::move(req));
+        _addRequest(std::move(req));
+        aid.alertId = -1;
     }
 
     void getRequests(std::deque<XmonRequest>& reqs) {

@@ -586,7 +586,7 @@ private:
         // we restart everything while under load, it's not great to block here
         // but it's probably OK to do so in those cases. We should also automatically
         // clear the alert when done with this.
-        XmonAlert alert = -1;
+        XmonNCAlert alert;
         for (;;) {
             if (sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len) {
                 break;
@@ -594,7 +594,7 @@ private:
             int err = errno;
             // Note that we get EPERM on `sendto` when nf drops packets.
             if (err == EAGAIN || err == EPERM) {
-                _env.raiseAlert(alert, false, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
+                _env.updateAlert(alert, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
                 sleepFor(100_ms);
             } else {
                 _env.clearAlert(alert);
@@ -642,8 +642,8 @@ public:
     void run() {
         EggsTime successfulIterationAt = 0;
         auto shards = std::make_unique<std::array<ShardInfo, 256>>();
-        XmonAlert alert = -1;
-        _env.raiseAlert(alert, false, "Waiting to get shards");
+        XmonNCAlert alert;
+        _env.updateAlert(alert, "Waiting to get shards");
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             if (_stopper.shouldStop()) {
@@ -658,7 +658,7 @@ public:
             LOG_INFO(_env, "Last successful shard fetch was at %s, now we're at %s, fetching again", successfulIterationAt, now);
             std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, *shards);
             if (!err.empty()) {
-                _env.raiseAlert(alert, false, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
+                _env.updateAlert(alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
                 EggsTime successfulIterationAt = 0;
                 continue;
             }
@@ -671,7 +671,7 @@ public:
             }
             if (badShard) {
                 EggsTime successfulIterationAt = 0;
-                _env.raiseAlert(alert, false, "Shard info is still not present in shuckle, will keep trying");
+                _env.updateAlert(alert, "Shard info is still not present in shuckle, will keep trying");
                 continue;
             }
             {
@@ -726,8 +726,8 @@ public:
     void run() {
         uint64_t rand = eggsNow().ns;
         EggsTime nextRegister = 0; // when 0, it means that the last one wasn't successful
-        XmonAlert alert = -1;
-        _env.raiseAlert(alert, false, "Waiting to register ourselves for the first time");
+        XmonNCAlert alert;
+        _env.updateAlert(alert, "Waiting to register ourselves for the first time");
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100 + (wyhash64(&rand)%100))); // fuzz the startup busy loop
             if (_stopper.shouldStop()) {
@@ -748,7 +748,7 @@ public:
             LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
             std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
             if (!err.empty()) {
-                _env.raiseAlert(alert, false, "Couldn't register ourselves with shuckle: %s", err);
+                _env.updateAlert(alert, "Couldn't register ourselves with shuckle: %s", err);
                 nextRegister = 0;
                 continue;
             }
@@ -797,8 +797,8 @@ public:
         bool lastRequestSuccessful = false;
         std::vector<Stat> stats;
         std::string prefix = "cdc";
-        XmonAlert alert = -1;
-        _env.raiseAlert(alert, false, "Waiting to insert stats for the first time");
+        XmonNCAlert alert;
+        _env.updateAlert(alert, "Waiting to insert stats for the first time");
 
         const auto insertCDCStats = [this, &stats, &alert]() {
             std::string err;
@@ -825,7 +825,7 @@ public:
                     _shared.timingsProcess[(int)kind].reset();
                 }
             } else {
-                _env.raiseAlert(alert, false, "Could not insert stats: %s", err);
+                _env.updateAlert(alert, "Could not insert stats: %s", err);
             }
             return err;
         };

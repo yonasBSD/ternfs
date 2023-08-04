@@ -875,6 +875,7 @@ func main() {
 	}
 
 	initBlockServicesInfo(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices)
+	log.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
 

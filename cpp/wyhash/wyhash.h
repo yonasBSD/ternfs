@@ -27,6 +27,11 @@ inline uint64_t wyhash64(uint64_t* state) {
 }
 
 __attribute__((unused))
+inline double wyhash64_double(uint64_t* state) {
+    return ((double)(wyhash64(state) >> 11) * 0x1.0p-53);
+}
+
+__attribute__((unused))
 static void wyhash64_bytes(uint64_t* state, uint8_t* bytes, size_t len) {
     uint8_t* end = bytes+len;
     uint8_t* unaligned_end = (uint8_t*)(((uintptr_t)bytes - 1 + 8) & ~7u);

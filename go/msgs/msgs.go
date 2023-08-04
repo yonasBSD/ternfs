@@ -1529,10 +1529,6 @@ type ShuckleResponse interface {
 	ShuckleResponseKind() ShuckleMessageKind
 }
 
-type BlockServicesForShardResp struct {
-	BlockServices []BlockServiceInfo
-}
-
 type SetBlockServiceFlagsReq struct {
 	Id        BlockServiceId
 	Flags     BlockServiceFlags

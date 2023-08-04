@@ -572,12 +572,12 @@ private:
         // clear the alert when done with this.
         XmonNCAlert alert;
         for (;;) {
-            if (sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len) {
+            if (likely(sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len)) {
                 break;
             }
             int err = errno;
             // Note that we get EPERM on `sendto` when nf drops packets.
-            if (err == EAGAIN || err == EPERM) {
+            if (likely(err == EAGAIN || err == EPERM)) {
                 _env.updateAlert(alert, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
                 sleepFor(100_ms);
             } else {
@@ -615,7 +615,7 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
-        std::string err = fetchShards(_shuckleHost, _shucklePort, 100_ms, _shards);
+        std::string err = fetchShards(_shuckleHost, _shucklePort, 10_sec, _shards);
         if (!err.empty()) {
             _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
             return false;
@@ -654,7 +654,7 @@ struct CDCRegisterer : PeriodicLoop {
     XmonNCAlert _alert;
 public:
     CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
-        PeriodicLoop(logger, xmon, "registerer", { 100_ms, 1_mins }),
+        PeriodicLoop(logger, xmon, "registerer", { 1_sec, 1_mins }),
         _shared(shared),
         _ownIp1(options.ipPorts[0].ip),
         _ownIp2(options.ipPorts[1].ip),
@@ -670,7 +670,7 @@ public:
             return false;
         }
         LOG_DEBUG(_env, "Registering ourselves (CDC, %s:%s, %s:%s) with shuckle", in_addr{htonl(_ownIp1)}, port1, in_addr{htonl(_ownIp2)}, port2);
-        std::string err = registerCDC(_shuckleHost, _shucklePort, 100_ms, _ownIp1, port1, _ownIp2, port2);
+        std::string err = registerCDC(_shuckleHost, _shucklePort, 10_sec, _ownIp1, port1, _ownIp2, port2);
         if (!err.empty()) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
             return false;
@@ -735,13 +735,12 @@ public:
 struct CDCMetricsInserter : PeriodicLoop {
 private:
     CDCShared& _shared;
-    XmonAlert _alert;
+    XmonNCAlert _alert;
     MetricsBuilder _metricsBuilder;
 public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
-        _shared(shared),
-        _alert(-1)
+        _shared(shared)
     {}
 
     virtual bool periodicStep() {
@@ -769,7 +768,7 @@ public:
             _env.clearAlert(_alert);
             return true;
         } else {
-            _env.raiseAlert(_alert, false, "Could not insert metrics: %s", err);
+            _env.updateAlert(_alert, "Could not insert metrics: %s", err);
             return false;
         }
     }

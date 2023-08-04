@@ -333,7 +333,7 @@ private:
     XmonNCAlert _alert;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared) :
-        PeriodicLoop(logger, xmon, "registerer", {100_ms, 1_mins}),
+        PeriodicLoop(logger, xmon, "registerer", {1_sec, 1_mins}),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -357,7 +357,7 @@ public:
         uint32_t ip1 = _shared.ip1.load();
         uint32_t ip2 = _shared.ip2.load();
         LOG_INFO(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
-        std::string err = registerShard(_shuckleHost, _shucklePort, 100_ms, _shid, ip1, port1, ip2, port2);
+        std::string err = registerShard(_shuckleHost, _shucklePort, 10_sec, _shid, ip1, port1, ip2, port2);
         if (!err.empty()) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
             return false;
@@ -378,7 +378,7 @@ private:
     ShardLogEntry _logEntry;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "block_service_updater", {100_ms, 1_mins}),
+        PeriodicLoop(logger, xmon, "block_service_updater", {1_sec, 1_mins}),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -427,7 +427,7 @@ private:
     std::vector<Stat> _stats;
 public:
     ShardStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "stats_inserter", {1_sec, 1_hours}),
+        PeriodicLoop(logger, xmon, "stats_inserter", {1_mins, 1_hours}),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -472,14 +472,13 @@ struct ShardMetricsInserter : PeriodicLoop {
 private:
     ShardShared& _shared;
     ShardId _shid;
-    XmonAlert _alert;
+    XmonNCAlert _alert;
     MetricsBuilder _metricsBuilder;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
         _shared(shared),
-        _shid(shid),
-        _alert(-1)
+        _shid(shid)
     {}
 
     virtual bool periodicStep() {
@@ -509,7 +508,7 @@ public:
             _env.clearAlert(_alert);
             return true;
         } else {
-            _env.raiseAlert(_alert, false, "Could not insert metrics: %s", err);
+            _env.updateAlert(_alert, "Could not insert metrics: %s", err);
             return false;
         }
     }

@@ -3,6 +3,7 @@
 #include "Undertaker.hpp"
 #include "Stopper.hpp"
 #include "Env.hpp"
+#include "wyhash.h"
 
 void* runLoop(void*);
 
@@ -56,11 +57,11 @@ public:
 };
 
 struct PeriodicLoopConfig {
-    Duration quantum = 50_ms;
+    Duration quantum = 10_ms;
     Duration failureInterval; // waiting between failures
-    double failureIntervalJitter = 0.2;
+    double failureIntervalJitter = 1.0;
     Duration successInterval; // waiting between successes
-    double successIntervalJitter = 0.2;
+    double successIntervalJitter = 1.0;
 
     PeriodicLoopConfig(Duration failureInterval_, Duration successInterval_) : failureInterval(failureInterval_), successInterval(successInterval_) {}
 };
@@ -92,10 +93,10 @@ public:
 
         bool success = periodicStep();
         if (success) {
-            _nextStepAt = t + _config.successInterval + Duration((double)_config.successInterval.ns * _config.successIntervalJitter);
+            _nextStepAt = t + _config.successInterval + Duration((double)_config.successInterval.ns * (_config.successIntervalJitter * wyhash64_double(&_rand)));
             LOG_DEBUG(_env, "periodic step succeeded, next step at %s", _nextStepAt);
         } else {
-            _nextStepAt = t + _config.failureInterval + Duration((double)_config.failureInterval.ns * _config.failureIntervalJitter);
+            _nextStepAt = t + _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * wyhash64_double(&_rand)));
             LOG_DEBUG(_env, "periodic step failed, next step at %s", _nextStepAt);
         }
     }

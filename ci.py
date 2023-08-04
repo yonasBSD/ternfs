@@ -93,11 +93,11 @@ if args.functional:
 
 if args.integration:
     if args.short:
-        fuse_tests = 'history|direct|mounted'
+        fuse_tests = 'history|direct|mounted|cp'
     else:
         # The mounted ones are long, and we don't rely on the FUSE driver critically,
         # but we still want to test it in the short run.
-        fuse_tests = 'history|direct'
+        fuse_tests = 'history|direct|cp'
 
     bold_print('integration tests')
     short = ['-short'] if args.short else []

@@ -132,10 +132,9 @@ func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 type eggsNode struct {
 	fs.Inode
 	id msgs.InodeId
-	tf *transientFile
 }
 
-func getattr(id msgs.InodeId, tf *transientFile, out *fuse.Attr) syscall.Errno {
+func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno {
 	logger.Debug("getattr inode=%v", id)
 
 	out.Ino = uint64(id)
@@ -146,20 +145,29 @@ func getattr(id msgs.InodeId, tf *transientFile, out *fuse.Attr) syscall.Errno {
 			return err
 		}
 	} else {
-		if tf != nil {
-			out.Size = tf.size
-			out.Ctime = 0
-			out.Ctimensec = 0
-			out.Mtime = 0
-			out.Mtimensec = 0
-			out.Atime = 0
-			out.Atimensec = 0
+		resp := msgs.StatFileResp{}
+		err := client.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
+
+		// if we tolerate transient files, try that
+		if eggsErr, ok := err.(msgs.ErrCode); ok && eggsErr == msgs.FILE_NOT_FOUND && allowTransient {
+			resp := msgs.StatTransientFileResp{}
+			if newErr := client.ShardRequest(logger, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &resp); newErr != nil {
+				logger.Debug("ignoring transient stat error %v", newErr)
+				return eggsErrToErrno(err) // use original error
+			}
+			out.Size = resp.Size
+			mtime := uint64(resp.Mtime)
+			mtimesec := mtime / 1000000000
+			mtimens := uint32(mtime % 1000000000)
+			out.Mtime = mtimesec
+			out.Mtimensec = mtimens
+			out.Atime = mtimesec
+			out.Atimensec = mtimens
 			return 0
 		}
 
-		resp := msgs.StatFileResp{}
-		if err := shardRequest(id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != 0 {
-			return err
+		if err != nil {
+			return eggsErrToErrno(err)
 		}
 
 		out.Size = resp.Size
@@ -178,7 +186,7 @@ func getattr(id msgs.InodeId, tf *transientFile, out *fuse.Attr) syscall.Errno {
 }
 
 func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattr(n.id, n.tf, &out.Attr)
+	return getattr(n.id, true, &out.Attr)
 }
 
 func (n *eggsNode) Lookup(
@@ -200,7 +208,7 @@ func (n *eggsNode) Lookup(
 	default:
 		panic(fmt.Errorf("bad type %v", resp.TargetId.Type()))
 	}
-	if err := getattr(resp.TargetId, nil, &out.Attr); err != 0 {
+	if err := getattr(resp.TargetId, false, &out.Attr); err != 0 {
 		return nil, err
 	}
 	return n.NewInode(ctx, &eggsNode{id: resp.TargetId}, fs.StableAttr{Ino: uint64(resp.TargetId), Mode: mode}), 0
@@ -317,7 +325,6 @@ func (n *eggsNode) Create(
 	}
 	fileNode := eggsNode{
 		id: tf.id,
-		tf: tf,
 	}
 
 	logger.Debug("created id=%v", tf.id)

@@ -17,6 +17,8 @@ import (
 	"path"
 	"runtime/pprof"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"xtx/eggsfs/crc32c"
@@ -113,6 +115,11 @@ func initBlockServicesInfo(
 	blockServices map[msgs.BlockServiceId]*blockService,
 ) error {
 	log.Info("initializing block services info")
+	var wg sync.WaitGroup
+	wg.Add(len(blockServices))
+	failed := int32(0)
+	alert := log.NewAlert()
+	log.Raise(alert, false, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
 		bs.cachedInfo.Id = id
 		bs.cachedInfo.Ip1 = ip1
@@ -123,10 +130,20 @@ func initBlockServicesInfo(
 		bs.cachedInfo.StorageClass = bs.storageClass
 		bs.cachedInfo.FailureDomain.Name = failureDomain
 		bs.cachedInfo.Path = bs.path
-		if err := updateBlockServiceInfo(log, bs); err != nil {
-			return err
-		}
+		closureBs := bs
+		go func() {
+			if err := updateBlockServiceInfo(log, closureBs); err != nil {
+				log.Info("failed to update block service info: %v", err)
+				atomic.StoreInt32(&failed, 1)
+			}
+			wg.Done()
+		}()
 	}
+	wg.Wait()
+	if failed == 1 {
+		return fmt.Errorf("some block service infos failed to update")
+	}
+	log.Clear(alert)
 	return nil
 }
 

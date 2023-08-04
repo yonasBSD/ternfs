@@ -933,7 +933,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(ip2);
     buf.packScalar<uint16_t>(port2);
     buf.packScalar<uint8_t>(storageClass);
-    buf.packFixedBytes<16>(failureDomain);
+    failureDomain.pack(buf);
     buf.packFixedBytes<16>(secretKey);
     buf.packScalar<uint8_t>(flags);
     buf.packScalar<uint64_t>(capacityBytes);
@@ -949,7 +949,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(ip2);
     port2 = buf.unpackScalar<uint16_t>();
     storageClass = buf.unpackScalar<uint8_t>();
-    buf.unpackFixedBytes<16>(failureDomain);
+    failureDomain.unpack(buf);
     buf.unpackFixedBytes<16>(secretKey);
     flags = buf.unpackScalar<uint8_t>();
     capacityBytes = buf.unpackScalar<uint64_t>();

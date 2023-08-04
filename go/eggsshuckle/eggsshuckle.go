@@ -181,7 +181,7 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServ
 
 		copy(bs.Ip1[:], ip1)
 		copy(bs.Ip2[:], ip2)
-		copy(bs.FailureDomain[:], fd)
+		copy(bs.FailureDomain.Name[:], fd)
 		copy(bs.SecretKey[:], sk)
 		ret[bs.Id] = bs
 	}
@@ -262,7 +262,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 		values = append(
 			values,
 			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
-			bs.StorageClass, bs.FailureDomain[:],
+			bs.StorageClass, bs.FailureDomain.Name[:],
 			bs.SecretKey[:], bs.Flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
 			bs.Path, now,
@@ -864,14 +864,14 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
 					StorageClass:   bs.StorageClass,
 					Flags:          bs.Flags.String(),
-					FailureDomain:  string(bs.FailureDomain[:bytes.Index(bs.FailureDomain[:], []byte{0})]),
+					FailureDomain:  string(bs.FailureDomain.Name[:bytes.Index(bs.FailureDomain.Name[:], []byte{0})]),
 					CapacityBytes:  formatSize(bs.CapacityBytes),
 					AvailableBytes: formatSize(bs.AvailableBytes),
 					Path:           bs.Path,
 					Blocks:         bs.Blocks,
 					LastSeen:       formatLastSeen(bs.LastSeen),
 				})
-				failureDomainsBytes[string(bs.FailureDomain[:])] = struct{}{}
+				failureDomainsBytes[string(bs.FailureDomain.Name[:])] = struct{}{}
 				totalAvailableBytes += bs.AvailableBytes
 				totalCapacityBytes += bs.CapacityBytes
 				data.Blocks += bs.Blocks

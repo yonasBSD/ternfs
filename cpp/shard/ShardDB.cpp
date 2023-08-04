@@ -2732,7 +2732,7 @@ struct ShardDBImpl {
             blockBody().setIp2(entryBlock.ip2.data);
             blockBody().setPort2(entryBlock.port2);
             blockBody().setStorageClass(entryBlock.storageClass);
-            blockBody().setFailureDomain(entryBlock.failureDomain.data);
+            blockBody().setFailureDomain(entryBlock.failureDomain.name.data);
             blockBody().setSecretKey(entryBlock.secretKey.data);
             blockBody().setFlags(entryBlock.flags);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
@@ -2743,7 +2743,7 @@ struct ShardDBImpl {
             cache.ip2 = entryBlock.ip2.data;
             cache.port2 = entryBlock.port2;
             cache.storageClass = entryBlock.storageClass;
-            cache.failureDomain = entryBlock.failureDomain.data;
+            cache.failureDomain = entryBlock.failureDomain.name.data;
             cache.flags = entryBlock.flags;
         }
         _updateCurrentBlockServices(time, batch);

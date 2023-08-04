@@ -3631,7 +3631,7 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
 		return err
 	}
-	if err := bincode.PackFixedBytes(w, 16, v.FailureDomain[:]); err != nil {
+	if err := v.FailureDomain.Pack(w); err != nil {
 		return err
 	}
 	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
@@ -3677,7 +3677,7 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
 		return err
 	}
-	if err := bincode.UnpackFixedBytes(r, 16, v.FailureDomain[:]); err != nil {
+	if err := v.FailureDomain.Unpack(r); err != nil {
 		return err
 	}
 	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {

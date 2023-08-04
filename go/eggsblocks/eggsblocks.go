@@ -121,7 +121,7 @@ func initBlockServicesInfo(
 		bs.cachedInfo.Port2 = port2
 		bs.cachedInfo.SecretKey = bs.key
 		bs.cachedInfo.StorageClass = bs.storageClass
-		bs.cachedInfo.FailureDomain = failureDomain
+		bs.cachedInfo.FailureDomain.Name = failureDomain
 		bs.cachedInfo.Path = bs.path
 		if err := updateBlockServiceInfo(log, bs); err != nil {
 			return err
@@ -801,7 +801,7 @@ func main() {
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]
 			ourBs, weHaveBs := blockServices[bs.Id]
-			sameFailureDomain := bs.FailureDomain == failureDomain
+			sameFailureDomain := bs.FailureDomain.Name == failureDomain
 			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
 			// No disagreement on failure domain with shuckle (otherwise we could end up with
 			// a split brain scenario where two eggsblocks processes assume control of two dead

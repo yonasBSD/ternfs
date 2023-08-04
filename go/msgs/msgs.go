@@ -1429,7 +1429,7 @@ type BlockServiceInfo struct {
 	Ip2            [4]byte
 	Port2          uint16
 	StorageClass   StorageClass
-	FailureDomain  [16]byte
+	FailureDomain  FailureDomain
 	SecretKey      [16]byte
 	Flags          BlockServiceFlags
 	CapacityBytes  uint64

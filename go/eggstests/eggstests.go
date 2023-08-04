@@ -576,7 +576,7 @@ func killBlockServices(
 	profile bool,
 	procs *managedprocess.ManagedProcesses,
 	bsProcs map[managedprocess.ManagedProcessId]blockServiceVictim,
-	bsPorts map[[16]byte]struct {
+	bsPorts map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
 	},
@@ -626,8 +626,8 @@ func killBlockServices(
 			// to be refreshed for the tests to work)
 			{
 				log.Info("reviving %v", victim.path)
-				var failureDomain [16]byte
-				copy(failureDomain[:], victim.failureDomain)
+				var failureDomain msgs.FailureDomain
+				copy(failureDomain.Name[:], victim.failureDomain)
 				ports := bsPorts[failureDomain]
 				procId := victim.start(
 					log,
@@ -885,7 +885,7 @@ func main() {
 	// wait for block services first, so we know that shards will immediately have all of them
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
 	blockServices := lib.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
-	blockServicesPorts := make(map[[16]byte]struct {
+	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
 	})

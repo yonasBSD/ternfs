@@ -870,7 +870,7 @@ struct BlockServiceInfo {
     BincodeFixedBytes<4> ip2;
     uint16_t port2;
     uint8_t storageClass;
-    BincodeFixedBytes<16> failureDomain;
+    FailureDomain failureDomain;
     BincodeFixedBytes<16> secretKey;
     uint8_t flags;
     uint64_t capacityBytes;
@@ -879,7 +879,7 @@ struct BlockServiceInfo {
     BincodeBytes path;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + BincodeFixedBytes<16>::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen
 
     BlockServiceInfo() { clear(); }
     size_t packedSize() const {
@@ -890,7 +890,7 @@ struct BlockServiceInfo {
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
         _size += 2; // port2
         _size += 1; // storageClass
-        _size += BincodeFixedBytes<16>::STATIC_SIZE; // failureDomain
+        _size += failureDomain.packedSize(); // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
         _size += 1; // flags
         _size += 8; // capacityBytes

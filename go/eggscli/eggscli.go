@@ -129,7 +129,7 @@ func main() {
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		stats := lib.MigrateStats{}
 		if *migrateFileIdU64 == 0 {
-			client, err := lib.NewClient(log, nil, *shuckleAddress, 1)
+			client, err := lib.NewClient(log, nil, *shuckleAddress, 256)
 			if err != nil {
 				panic(err)
 			}

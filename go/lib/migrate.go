@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
@@ -333,20 +334,19 @@ func (k *keepScratchFileAlive) stop() {
 }
 
 type timeStats struct {
-	startedAt       time.Time
-	lastReportAt    time.Time
+	startedAt       int64 // unix nanos
+	lastReportAt    int64 // unix nanos
 	lastReportBytes uint64
 }
 
 func newTimeStats() *timeStats {
-	now := time.Now()
+	now := time.Now().UnixNano()
 	return &timeStats{startedAt: now, lastReportAt: now}
 }
 
-func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *timeStats) {
-	now := time.Now()
-	timeSinceLastReport := now.Sub(timeStats.lastReportAt)
-	timeSinceStart := now.Sub(timeStats.startedAt)
+func printStatsLastReport(log *Logger, client *Client, stats *MigrateStats, timeStats *timeStats, lastReport int64, now int64) {
+	timeSinceLastReport := time.Duration(now - lastReport)
+	timeSinceStart := time.Duration(now - atomic.LoadInt64(&timeStats.startedAt))
 	overallMiB := float64(stats.MigratedBytes) / float64(uint64(1)<<20)
 	overallMiBs := 1000.0 * overallMiB / float64(timeSinceStart.Milliseconds())
 	recentMiB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / float64(uint64(1)<<20)
@@ -354,6 +354,10 @@ func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *tim
 	log.Info("migrated %0.2fMiB in %v blocks in %v files, at %.2fMiB/s (recent), %0.2fMiB/s (overall)", overallMiB, stats.MigratedBlocks, stats.MigratedFiles, recentMiBs, overallMiBs)
 	timeStats.lastReportAt = now
 	timeStats.lastReportBytes = stats.MigratedBytes
+}
+
+func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *timeStats) {
+	printStatsLastReport(log, client, stats, timeStats, atomic.LoadInt64(&timeStats.lastReportAt), time.Now().UnixNano())
 }
 
 func migrateBlocksInFileInternal(
@@ -367,8 +371,12 @@ func migrateBlocksInFileInternal(
 	fileId msgs.InodeId,
 ) error {
 	defer func() {
-		if time.Since(timeStats.lastReportAt) > time.Minute {
-			printStats(log, client, stats, timeStats)
+		lastReportAt := atomic.LoadInt64(&timeStats.lastReportAt)
+		now := time.Now().UnixNano()
+		if (now - lastReportAt) > time.Minute.Nanoseconds() {
+			if atomic.CompareAndSwapInt64(&timeStats.lastReportAt, lastReportAt, now) {
+				printStatsLastReport(log, client, stats, timeStats, lastReportAt, now)
+			}
 		}
 	}()
 	// do not migrate transient files -- they might have spans not fully written yet
@@ -482,8 +490,8 @@ func migrateBlocksInFileInternal(
 				if err := client.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
 					return err
 				}
-				stats.MigratedBlocks++
-				stats.MigratedBytes += uint64(D * int(body.CellSize))
+				atomic.AddUint64(&stats.MigratedBlocks, 1)
+				atomic.AddUint64(&stats.MigratedBytes, uint64(D*int(body.CellSize)))
 			}
 		}
 		if fileSpansResp.NextOffset == 0 {
@@ -491,7 +499,7 @@ func migrateBlocksInFileInternal(
 		}
 		fileSpansReq.ByteOffset = fileSpansResp.NextOffset
 	}
-	stats.MigratedFiles++
+	atomic.AddUint64(&stats.MigratedFiles, 1)
 	log.Debug("finished migrating file %v, %v files migrated so far", fileId, stats.MigratedFiles)
 	return nil
 }
@@ -591,14 +599,25 @@ func MigrateBlocksInAllShards(
 ) error {
 	timeStats := newTimeStats()
 	bufPool := newBufPool()
+	var wg sync.WaitGroup
+	wg.Add(256)
+	failed := int32(0)
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		log.Info("migrating blocks in shard %v", shid)
-		if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, shid, blockServiceId); err != nil {
-			return err
-		}
+		go func() {
+			if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, shid, blockServiceId); err != nil {
+				log.Info("could not migrate block service %v in shard %v: %v", blockServiceId, shid, err)
+				atomic.StoreInt32(&failed, 1)
+			}
+			log.Info("finished migrating blocks out of shard %v", shid)
+			wg.Done()
+		}()
 	}
+	wg.Wait()
 	printStats(log, client, stats, timeStats)
 	log.Info("finished migrating blocks out of %v in all shards, stats: %+v", blockServiceId, stats)
+	if atomic.LoadInt32(&failed) == 1 {
+		return fmt.Errorf("some shards failed to migrate, check logs")
+	}
 	return nil
 }

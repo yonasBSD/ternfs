@@ -149,10 +149,9 @@ func (c *Client) metadataRequestInternal(
 	}
 	for {
 		now := time.Now()
-		elapsed := now.Sub(now)
 		timeout := timeouts.NextNow(startedAt, now)
 		if timeout == 0 {
-			log.RaiseAlert("giving up on request to shard %v after waiting for %v", shid, elapsed)
+			log.RaiseAlert("giving up on request to shard %v after waiting for %v", shid, now.Sub(startedAt))
 			return msgs.TIMEOUT
 		}
 		if counters != nil {

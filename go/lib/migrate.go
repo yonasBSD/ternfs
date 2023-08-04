@@ -232,7 +232,7 @@ func reconstructBlock(
 	haveBlocks := [][]byte{}
 	haveBlocksIxs := []uint8{}
 	blockToMigrate := blocks[blockToMigrateIx]
-	blockServiceId := blockToMigrate.BlockId
+	blockServiceId := blockServices[blockToMigrate.BlockServiceIx].Id
 	for blockIx := range blocks {
 		block := &blocks[blockIx]
 		blockService := blockServices[block.BlockServiceIx]

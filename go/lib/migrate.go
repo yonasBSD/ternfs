@@ -31,17 +31,17 @@ type scratchFile struct {
 	size   uint64
 }
 
-func ensureScratchFile(log *Logger, client *Client, migratingIn msgs.InodeId, file *scratchFile) error {
+func ensureScratchFile(log *Logger, client *Client, shard msgs.ShardId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
 	resp := msgs.ConstructFileResp{}
 	err := client.ShardRequest(
 		log,
-		migratingIn.Shard(),
+		shard,
 		&msgs.ConstructFileReq{
 			Type: msgs.FILE,
-			Note: fmt.Sprintf("migrate (file %v)", migratingIn),
+			Note: "migrate",
 		},
 		&resp,
 	)
@@ -226,7 +226,7 @@ func reconstructBlock(
 	blocks []msgs.FetchedBlock,
 	blockToMigrateIx uint8,
 ) (msgs.BlockId, error) {
-	if err := ensureScratchFile(log, client, fileId, scratchFile); err != nil {
+	if err := ensureScratchFile(log, client, fileId.Shard(), scratchFile); err != nil {
 		return 0, err
 	}
 	D := parity.DataBlocks()
@@ -440,7 +440,7 @@ func migrateBlocksInFileInternal(
 					block := &body.Blocks[blockIx]
 					blockService := fileSpansResp.BlockServices[block.BlockServiceIx]
 					if blockIx != blockToMigrateIx && blockService.Id != blockServiceId && blockService.Flags.CanRead() {
-						if err := ensureScratchFile(log, client, fileId, scratchFile); err != nil {
+						if err := ensureScratchFile(log, client, fileId.Shard(), scratchFile); err != nil {
 							return err
 						}
 						var err error

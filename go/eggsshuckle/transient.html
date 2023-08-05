@@ -6,6 +6,7 @@
                 <th>Shard</th>
                 <th>Id</th>
                 <th>Deadline</th>
+                <th>Cookie</th>
             </tr>
         </thead>
         <tbody>
@@ -14,6 +15,7 @@
                     <td><code>{{printf "%03v" $file.Shard}}</code></td>
                     <td><a href="/browse?id={{$file.Id}}"><code>{{$file.Id}}</code></a></td>
                     <td>{{$file.Deadline}}</td>
+                    <td><code>{{$file.Cookie}}</code></td>
                 </tr>
             {{end}}
         </tbody>

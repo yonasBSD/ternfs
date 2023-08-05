@@ -1241,7 +1241,7 @@ func handleInode(
 						transErr := client.ShardRequest(log, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &transResp)
 						if transErr == nil {
 							data.Mtime = transResp.Mtime.String()
-							data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
+							data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(transResp.Size), transResp.Size)
 							data.TransientNote = transResp.Note
 						} else {
 							panic(err)

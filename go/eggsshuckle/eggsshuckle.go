@@ -1464,6 +1464,59 @@ func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 	)
 }
 
+//go:embed transient.html
+var transientTemplateStr string
+
+var transientTemplate *template.Template
+
+type transientFile struct {
+	Shard    int
+	Id       string
+	Deadline string
+}
+
+type transientData struct {
+	Files []transientFile
+}
+
+func handleTransient(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+	handlePage(
+		log, w, r,
+		func(query url.Values) (*template.Template, *pageData, int) {
+			data := &transientData{Files: []transientFile{}}
+			client, err := newClient(log, st)
+			if err != nil {
+				panic(err)
+			}
+			for i := 0; i < 256; i++ {
+				req := msgs.VisitTransientFilesReq{}
+				resp := msgs.VisitTransientFilesResp{}
+				for {
+					if err := client.ShardRequest(log, msgs.ShardId(i), &req, &resp); err != nil {
+						panic(err)
+					}
+					for _, f := range resp.Files {
+						data.Files = append(data.Files, transientFile{
+							Shard:    i,
+							Id:       f.Id.String(),
+							Deadline: f.DeadlineTime.String(),
+						})
+					}
+					if resp.NextId == msgs.NULL_INODE_ID {
+						break
+					}
+					req.BeginId = resp.NextId
+				}
+			}
+			pd := pageData{
+				Title: "transient",
+				Body:  data,
+			}
+			return transientTemplate, &pd, http.StatusOK
+		},
+	)
+}
+
 func sendJson(w http.ResponseWriter, out []byte) (io.ReadCloser, int64, int) {
 	w.Header().Set("Content-Type", "application/json")
 	return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
@@ -1627,6 +1680,12 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 		namedTemplate{name: "file", body: statsTemplateStr},
 	)
 	setupPage("/stats", handleStats)
+
+	transientTemplate = parseTemplates(
+		namedTemplate{name: "base", body: baseTemplateStr},
+		namedTemplate{name: "transient", body: transientTemplateStr},
+	)
+	setupPage("/transient", handleTransient)
 }
 
 // Writes stats to influx db.

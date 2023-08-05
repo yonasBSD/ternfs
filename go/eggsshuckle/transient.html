@@ -1,0 +1,21 @@
+{{define "body"}}
+    <h2>Transient files</h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Shard</th>
+                <th>Id</th>
+                <th>Deadline</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range $file := .Files}}
+                <tr>
+                    <td><code>{{printf "%03v" $file.Shard}}</code></td>
+                    <td><a href="/browse?id={{$file.Id}}"><code>{{$file.Id}}</code></a></td>
+                    <td>{{$file.Deadline}}</td>
+                </tr>
+            {{end}}
+        </tbody>
+    </table>
+{{end}}

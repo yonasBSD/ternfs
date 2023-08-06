@@ -1502,7 +1502,7 @@ func handleTransient(log *lib.Logger, st *state, w http.ResponseWriter, r *http.
 							Shard:    i,
 							Id:       f.Id.String(),
 							Deadline: f.DeadlineTime.String(),
-							Cookie:   fmt.Sprintf("%016x", binary.LittleEndian.Uint64(f.Cookie[:])),
+							Cookie:   fmt.Sprintf("0x%016x", binary.LittleEndian.Uint64(f.Cookie[:])),
 						})
 					}
 					if resp.NextId == msgs.NULL_INODE_ID {

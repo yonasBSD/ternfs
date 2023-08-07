@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
@@ -43,6 +44,129 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %v %v\n\n", os.Args[0], strings.Join(commandsStrs, "|"))
 	fmt.Fprintf(os.Stderr, "Global options:\n\n")
 	flag.PrintDefaults()
+}
+
+type fileSizesReq struct {
+	id   msgs.InodeId
+	path string
+}
+
+type fileSizesEnv struct {
+	wg            sync.WaitGroup
+	chans         []chan fileSizesReq
+	examinedDirs  uint64
+	examinedFiles uint64
+}
+
+func (env *fileSizesEnv) sendReq(log *lib.Logger, req *fileSizesReq) {
+	env.wg.Add(1)
+	env.chans[req.id.Shard()] <- *req
+	if req.id.Type() == msgs.DIRECTORY {
+		if atomic.AddUint64(&env.examinedDirs, 1)%1000000 == 0 {
+			log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
+		}
+	} else {
+		if atomic.AddUint64(&env.examinedFiles, 1)%1000000 == 0 {
+			log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
+		}
+	}
+}
+
+func (env *fileSizesEnv) dir(log *lib.Logger, client *lib.Client, id msgs.InodeId, path string) {
+	readReq := &msgs.ReadDirReq{
+		DirId: id,
+	}
+	readResp := &msgs.ReadDirResp{}
+	for {
+		if err := client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
+			log.ErrorNoAlert("failed to read dir %v: %v", id, err)
+			return
+		}
+		for _, e := range readResp.Results {
+			newPath := path + "/" + e.Name
+			if e.TargetId.Shard() != id.Shard() {
+				env.sendReq(log, &fileSizesReq{
+					id:   e.TargetId,
+					path: newPath,
+				})
+			} else {
+				if e.TargetId.Type() == msgs.DIRECTORY {
+					env.dir(log, client, e.TargetId, newPath)
+				} else {
+					env.file(log, client, e.TargetId, newPath)
+				}
+			}
+		}
+		if readResp.NextHash == 0 {
+			break
+		}
+		readReq.StartHash = readResp.NextHash
+	}
+}
+
+func (env *fileSizesEnv) file(log *lib.Logger, client *lib.Client, id msgs.InodeId, path string) {
+	logicalSize := uint64(0)
+	physicalSize := uint64(0)
+	spansReq := &msgs.FileSpansReq{
+		FileId: id,
+	}
+	spansResp := &msgs.FileSpansResp{}
+	for {
+		if err := client.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
+			log.ErrorNoAlert("could not read spans for %v: %v", id, err)
+			return
+		}
+		for _, s := range spansResp.Spans {
+			logicalSize += uint64(s.Header.Size)
+			if s.Header.StorageClass != msgs.INLINE_STORAGE {
+				body := s.Body.(*msgs.FetchedBlocksSpan)
+				physicalSize += uint64(body.CellSize) * uint64(body.Parity.Blocks()) * uint64(body.Stripes)
+			}
+		}
+		if spansResp.NextOffset == 0 {
+			break
+		}
+		spansReq.ByteOffset = spansResp.NextOffset
+	}
+	fmt.Printf("%v,%q,%v,%v\n", id, path, logicalSize, physicalSize)
+}
+
+func outputFileSizes(log *lib.Logger, shuckleAddress string) {
+	// never timeout
+	timeout := lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter)
+	// max mtu
+	lib.SetMTU(msgs.MAX_UDP_MTU)
+	// compute
+	env := fileSizesEnv{
+		chans: make([]chan fileSizesReq, 256),
+	}
+	for i := 0; i < 256; i++ {
+		env.chans[i] = make(chan fileSizesReq, 100000)
+	}
+	for i := 0; i < 256; i++ {
+		ch := env.chans[i]
+		client, err := lib.NewClient(log, timeout, shuckleAddress, 1)
+		if err != nil {
+			panic(err)
+		}
+		go func() {
+			for {
+				req := <-ch
+				if req.id.Type() == msgs.DIRECTORY {
+					env.dir(log, client, req.id, req.path)
+				} else {
+					env.file(log, client, req.id, req.path)
+				}
+				env.wg.Done()
+			}
+		}()
+	}
+	env.sendReq(log, &fileSizesReq{
+		id:   msgs.ROOT_DIR_INODE_ID,
+		path: "",
+	})
+	env.wg.Wait()
+	log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
 }
 
 func main() {
@@ -479,6 +603,13 @@ func main() {
 		run:   blockserviceFlagsRun,
 	}
 
+	fileSizesCmd := flag.NewFlagSet("file-sizes", flag.ExitOnError)
+	fileSizesRun := func() { outputFileSizes(log, *shuckleAddress) }
+	commands["file-sizes"] = commandSpec{
+		flags: fileSizesCmd,
+		run:   fileSizesRun,
+	}
+
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -494,7 +625,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log = lib.NewLogger(os.Stdout, &lib.LoggerOptions{Level: level})
+	log = lib.NewLogger(os.Stderr, &lib.LoggerOptions{Level: level})
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {

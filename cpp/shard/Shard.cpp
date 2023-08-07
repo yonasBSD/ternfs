@@ -628,8 +628,9 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         xmon = std::make_shared<XmonAgent>();
     }
 
+    Env env(logger, xmon, "startup");
+
     {
-        Env env(logger, xmon, "startup");
         LOG_INFO(env, "Running shard %s with options:", shid);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
@@ -648,10 +649,6 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
-    ShardDB db(logger, xmon, shid, dbDir);
-
-    ShardShared shared(db);
-
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
     if (xmon) {
         XmonConfig config;
@@ -667,6 +664,13 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
+
+    XmonNCAlert dbInitAlert;
+    env.updateAlert(dbInitAlert, "initializing database");
+    ShardDB db(logger, xmon, shid, dbDir);
+    env.clearAlert(dbInitAlert);
+
+    ShardShared shared(db);
 
     {
         auto server = std::make_unique<ShardServer>(logger, xmon, shid, options, 0, shared);

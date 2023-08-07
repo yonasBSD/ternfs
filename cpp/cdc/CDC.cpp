@@ -917,9 +917,6 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
-    CDCDB db(logger, xmon, dbDir);
-    auto shared = std::make_unique<CDCShared>(db);
-
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
     if (xmon) {
         XmonConfig config;
@@ -931,6 +928,9 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         }
         undertaker->checkin(std::move(xmonRunner), tid, "xmon");
     }
+
+    CDCDB db(logger, xmon, dbDir);
+    auto shared = std::make_unique<CDCShared>(db);
 
     {
         auto server = std::make_unique<CDCServer>(logger, xmon, options, *shared);

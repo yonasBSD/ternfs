@@ -32,7 +32,8 @@ static void validMetricsName(const std::string& name) {
         ALWAYS_ASSERT(
             (ch >= 'a' && ch <= 'z') ||
             (ch >= 'A' && ch <= 'Z') ||
-            ch == '-' || ch == '_'
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.'
         );
     }
 }
@@ -66,6 +67,8 @@ void MetricsBuilder::fieldRaw(const std::string& name, const std::string& value)
     } else {
         _payload += ',';
     }
+    _payload += name;
+    _payload += '=';
     _payload += value;
     _state = State::FIELDS;
 }
@@ -87,9 +90,9 @@ std::string sendMetrics(Duration timeout, const std::string& payload) {
     httplib::Client cli(influxDBUrl);
     time_t ds = timeout.ns / 1'000'000'000ull;
     time_t dus = (timeout.ns % 1'000'000'000ull) / 1'000ull;
-    cli.set_connection_timeout(ds, dus); // 300 milliseconds
-    cli.set_read_timeout(ds, dus); // 5 seconds
-    cli.set_write_timeout(ds, dus); // 5 seconds
+    cli.set_connection_timeout(ds, dus);
+    cli.set_read_timeout(ds, dus);
+    cli.set_write_timeout(ds, dus);
 
     std::string path = "/api/v2/write?org=" + influxDBOrg + "&bucket=" + influxDBBucket + "&precision=ns";
     const auto res = cli.Post(path, payload, "text/plain");

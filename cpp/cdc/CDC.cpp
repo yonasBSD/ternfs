@@ -745,7 +745,7 @@ public:
 
     virtual bool periodicStep() {
         auto now = eggsNow();
-        for (ShardMessageKind kind : allShardMessageKind) {
+        for (CDCMessageKind kind : allCDCMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];
             for (int i = 0; i < errs.count.size(); i++) {
                 uint64_t count = errs.count[i].load();

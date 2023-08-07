@@ -4,6 +4,7 @@
 #include <unordered_set>
 
 #include "Exception.hpp"
+#include "Time.hpp"
 #include "Xmon.hpp"
 #include "Connect.hpp"
 #include "XmonAgent.hpp"
@@ -50,6 +51,8 @@ Xmon::Xmon(
     _appInstance = config.appInstance + "@" + _hostname;
 }
 
+const uint8_t HEARTBEAT_INTERVAL_SECS = 5; // 5 seconds
+
 void Xmon::packLogon(XmonBuf& buf) {
     // <https://REDACTED>
     // Name 	Type 	Description
@@ -74,7 +77,7 @@ void Xmon::packLogon(XmonBuf& buf) {
     buf.packScalar<int32_t>(0x0); // message type
     buf.packScalar<int32_t>(0x0); // unused
     buf.packString(_hostname); // hostname
-    buf.packScalar<uint8_t>(0); // default interval
+    buf.packScalar<uint8_t>(HEARTBEAT_INTERVAL_SECS); // default interval
     buf.packScalar<uint8_t>(0); // unused
     buf.packScalar<int16_t>(0); // unused
     buf.packString(_appType); // app type
@@ -156,8 +159,6 @@ bool XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
 constexpr int MAX_BINNABLE_ALERTS = 20;
 
 void Xmon::run() {
-    int numFailures = 0;
-
     XmonBuf buf;
     int sock = -1;
     std::deque<XmonRequest> requests;
@@ -167,8 +168,7 @@ void Xmon::run() {
 
 #define CHECK_ERR_STRING(__what) \
     if (errString.size()) { \
-        LOG_INFO(_env, "could not %s after %s attempts: %s, will reconnect", __what, numFailures, errString); \
-        numFailures++; \
+        LOG_INFO(_env, "could not %s: %s, will reconnect", __what, errString); \
         sleepFor(1_sec); \
         goto reconnect; \
     }
@@ -178,9 +178,6 @@ reconnect:
     sock = connectToHost(_xmonHost, _xmonPort, errString);
     CHECK_ERR_STRING(errString);
     LOG_INFO(_env, "connected to xmon %s:%s", _xmonHost, _xmonPort);
-
-    // We've got a socket, reset conn failures
-    numFailures = 0;
 
     // 100ms timeout for prompt termination/processing
     {
@@ -199,13 +196,20 @@ reconnect:
     LOG_INFO(_env, "sent logon to xmon, appType=%s appInstance=%s", _appType, _appInstance);
 
     // Start recv loop
-    bool gotHeartbeat = false;
+    EggsTime gotHeartbeatAt = 0;
     for (;;) {
         // try to send all requests before shutting down
         bool shutDown = _stopper.shouldStop();
     
+        // shut down if too much time has passed
+        if (gotHeartbeatAt > 0 && (eggsNow() - gotHeartbeatAt > (uint64_t)HEARTBEAT_INTERVAL_SECS * 2 * 1'000'000'000ull)) {
+            LOG_INFO(_env, "heartbeat deadline has passed, will reconnect");
+            gotHeartbeatAt = 0;
+            goto reconnect;
+        }
+
         // send all requests
-        if (gotHeartbeat) {
+        if (gotHeartbeatAt > 0) {
             _agent->getRequests(requests);
             while (!requests.empty()) {
                 const auto& req = requests.front();
@@ -267,12 +271,12 @@ reconnect:
         int32_t msgType = buf.unpackScalar<int32_t>();
         switch (msgType) {
         case 0x0: {
-            if (!gotHeartbeat) {
+            if (gotHeartbeatAt == 0) {
                 LOG_INFO(_env, "got first xmon heartbeat, will start sending requests");
             } else {
                 LOG_DEBUG(_env, "got xmon heartbeat");
             }
-            gotHeartbeat = true;
+            gotHeartbeatAt = eggsNow();
             packUpdate(buf);
             errString = buf.writeOut(sock);
             CHECK_ERR_STRING("send heartbeat");

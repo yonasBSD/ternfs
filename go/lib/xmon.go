@@ -45,6 +45,8 @@ func (x *Xmon) packString(buf *bytes.Buffer, s string) {
 	buf.Write([]byte(s))
 }
 
+const heartbeatIntervalSecs uint8 = 5
+
 func (x *Xmon) packLogon(buf *bytes.Buffer) {
 	// <https://REDACTED>
 	// Name 	Type 	Description
@@ -69,7 +71,7 @@ func (x *Xmon) packLogon(buf *bytes.Buffer) {
 	binary.Write(buf, binary.BigEndian, int32(0x0)) // message type
 	binary.Write(buf, binary.BigEndian, int32(0x0)) // unused
 	x.packString(buf, x.hostname)                   // hostname
-	buf.Write([]byte{0})                            // default interval
+	buf.Write([]byte{heartbeatIntervalSecs})        // interval
 	buf.Write([]byte{0})                            // unused
 	binary.Write(buf, binary.BigEndian, int16(0))   // unused
 	x.packString(buf, x.appType)                    // app type
@@ -158,10 +160,17 @@ Reconnect:
 	}
 	log.Info("connected to xmon, logon sent")
 	// we're in, start loop
-	gotHeartbeat := false
+	gotHeartbeatAt := time.Time{}
 	for {
+		// reconnect when too much time has passed
+		if !gotHeartbeatAt.Equal(time.Time{}) && time.Since(gotHeartbeatAt) > time.Second*2*time.Duration(heartbeatIntervalSecs) {
+			log.Info("heartbeat deadline has passed, will reconnect")
+			gotHeartbeatAt = time.Time{}
+			goto Reconnect
+		}
+
 		// fetch a bunch of requests and then send them out
-		if gotHeartbeat {
+		if !gotHeartbeatAt.Equal(time.Time{}) {
 			// fill in requests
 			for requestsTail-requestsHead < requestsCap {
 				select {
@@ -238,10 +247,10 @@ Reconnect:
 			}
 			switch respType {
 			case 0x0:
-				if !gotHeartbeat {
+				if gotHeartbeatAt.Equal(time.Time{}) {
 					log.Info("got first xmon heartbeat, we're in")
 				}
-				gotHeartbeat = true
+				gotHeartbeatAt = time.Now()
 				x.packUpdate(buffer)
 				if _, err = buffer.WriteTo(conn); err != nil {
 					log.ErrorNoAlert("cold not send update to xmon: %v", err)

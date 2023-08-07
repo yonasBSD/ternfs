@@ -115,32 +115,57 @@ int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
         fun; \
     })
 
-// Right now we don't need anything else, let's not needlessly generate tons of code
+// Right now we always do quadruple resilience
+rs_gen( 2, 4)
+rs_gen( 3, 4)
 rs_gen( 4, 4)
+rs_gen( 5, 4)
+rs_gen( 6, 4)
+rs_gen( 7, 4)
+rs_gen( 8, 4)
+rs_gen( 9, 4)
 rs_gen(10, 4)
 
 int eggsfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out) {
-    if (eggsfs_parity_blocks(parity) == 0) { // nothing to do
+    int D = eggsfs_data_blocks(parity);
+    int P = eggsfs_parity_blocks(parity);
+
+    if (P == 0) { // nothing to do
         return 0;
     }
-    if (eggsfs_data_blocks(parity) == 1) { // mirroring
+    if (D == 1) { // mirroring
         int i;
-        for (i = 0; i < eggsfs_parity_blocks(parity); i++) {
+        for (i = 0; i < P; i++) {
             memcpy(out[i], data[0], size);
         }
         return 0;
     }
 
-    int err;
-    if (parity == eggsfs_mk_parity(4, 4)) {
-        err = rs_compute_parity_4_4(size, (const u8**)data, (u8**)out);
-    } else if (parity == eggsfs_mk_parity(10, 4)) {
-        err = rs_compute_parity_10_4(size, (const u8**)data, (u8**)out);
-    } else {
-        rs_warn("cannot compute with RS(%d,%d)", eggsfs_data_blocks(parity), eggsfs_parity_blocks(parity));
-        err = -EINVAL;
+    if (P == 4) {
+        switch (D) {
+            case 2:
+                return rs_compute_parity_2_4 (size, (const u8**)data, (u8**)out);
+            case 3:
+                return rs_compute_parity_3_4 (size, (const u8**)data, (u8**)out);
+            case 4:
+                return rs_compute_parity_4_4 (size, (const u8**)data, (u8**)out);
+            case 5:
+                return rs_compute_parity_5_4 (size, (const u8**)data, (u8**)out);
+            case 6:
+                return rs_compute_parity_6_4 (size, (const u8**)data, (u8**)out);
+            case 7:
+                return rs_compute_parity_7_4 (size, (const u8**)data, (u8**)out);
+            case 8:
+                return rs_compute_parity_8_4 (size, (const u8**)data, (u8**)out);
+            case 9:
+                return rs_compute_parity_9_4 (size, (const u8**)data, (u8**)out);
+            case 10:
+                return rs_compute_parity_10_4(size, (const u8**)data, (u8**)out);
+        }
     }
-    return err;
+
+    rs_warn("cannot compute with RS(%d,%d)", D, P);
+    return -EINVAL;
 }
 
 int eggsfs_recover(
@@ -174,18 +199,49 @@ int eggsfs_recover(
 
     // decide which one to do
     struct rs* rs;
-    void (*recover_matmul)(u64 size, const u8** have, u8* want, const u8* mat);
-    if (parity == eggsfs_mk_parity(4, 4)) {
-        rs = rs_4_4;
-        recover_matmul = rs_recover_matmul(4);
-    } else if (parity == eggsfs_mk_parity(10, 4)) {
-        rs = rs_10_4;
-        recover_matmul = rs_recover_matmul(10);
-    } else {
-        eggsfs_error("cannot compute with RS(%d,%d)", D, P);
-        return -EIO;
+    void (*recover_matmul)(u64 size, const u8** have, u8* want, const u8* mat) = NULL; 
+    if (P == 4) {
+        switch (D) {
+            case 2:
+                rs = rs_2_4;
+                recover_matmul = rs_recover_matmul(2);
+                break;
+            case 3:
+                rs = rs_3_4;
+                recover_matmul = rs_recover_matmul(3);
+                break;
+            case 4:
+                rs = rs_4_4;
+                recover_matmul = rs_recover_matmul(4);
+                break;
+            case 5:
+                rs = rs_5_4;
+                recover_matmul = rs_recover_matmul(5);
+                break;
+            case 6:
+                rs = rs_6_4;
+                recover_matmul = rs_recover_matmul(6);
+                break;
+            case 7:
+                rs = rs_7_4;
+                recover_matmul = rs_recover_matmul(7);
+                break;
+            case 8:
+                rs = rs_8_4;
+                recover_matmul = rs_recover_matmul(8);
+                break;
+            case 9:
+                rs = rs_9_4;
+                recover_matmul = rs_recover_matmul(9);
+                break;
+            case 10:
+                rs = rs_10_4;
+                recover_matmul = rs_recover_matmul(10);
+                break;
+        }
     }
     if (recover_matmul == NULL) {
+        eggsfs_error("cannot compute with RS(%d,%d)", D, P);
         return -EIO;
     }
 
@@ -242,7 +298,14 @@ int __init eggsfs_rs_init(void) {
         eggsfs_rs_cpu_level = RS_CPU_SCALAR;
     }
 
+    rs_init_2_4();
+    rs_init_3_4();
     rs_init_4_4();
+    rs_init_5_4();
+    rs_init_6_4();
+    rs_init_7_4();
+    rs_init_8_4();
+    rs_init_9_4();
     rs_init_10_4();
 
     return 0;

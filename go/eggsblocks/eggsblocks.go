@@ -370,7 +370,7 @@ func writeBlock(
 	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
-	atomic.AddUint64(&env.stats[blockServiceId].blocksFetched, 1)
+	atomic.AddUint64(&env.stats[blockServiceId].blocksWritten, 1)
 	return nil
 }
 

@@ -8,3 +8,4 @@ modules.order
 *.ko
 *.mod
 *.mod.c
+eggsfs-client-*

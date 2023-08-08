@@ -22,6 +22,7 @@ public:
     }
 
     const std::string& payload() const {
+        ALWAYS_ASSERT(_state == State::INIT || _state == State::TIMESTAMP);
         return _payload;
     }
 

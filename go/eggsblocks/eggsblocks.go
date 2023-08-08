@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	mrand "math/rand"
 	"net"
 	"os"
@@ -24,12 +25,22 @@ import (
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 
 	"golang.org/x/sys/unix"
 )
 
+type blockServiceStats struct {
+	blocksWritten uint64
+	bytesWritten  uint64
+	blocksErased  uint64
+	blocksFetched uint64
+	bytesFetched  uint64
+}
+
 type env struct {
 	bufPool *lib.BufPool
+	stats   map[msgs.BlockServiceId]*blockServiceStats
 }
 
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
@@ -211,7 +222,7 @@ func blockIdToPath(basePath string, blockId msgs.BlockId) string {
 	return path.Join(path.Join(basePath, dir), hex)
 }
 
-func eraseBlock(log *lib.Logger, env *env, basePath string, blockId msgs.BlockId) error {
+func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
 	blockPath := blockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
@@ -225,6 +236,7 @@ func eraseBlock(log *lib.Logger, env *env, basePath string, blockId msgs.BlockId
 		log.RaiseAlert("internal error deleting block at path %v: %v", blockPath, err)
 		return msgs.INTERNAL_ERROR
 	}
+	atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 	return nil
 }
 
@@ -267,6 +279,9 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	if _, err := conn.ReadFrom(&lf); err != nil {
 		return err
 	}
+	s := env.stats[blockServiceId]
+	atomic.AddUint64(&s.blocksFetched, 1)
+	atomic.AddUint64(&s.bytesFetched, uint64(count))
 	return nil
 }
 
@@ -281,7 +296,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 }
 
 func writeToTemp(
-	log *lib.Logger, env *env, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
 ) (tmpName string, crc uint32, err error) {
 	var f *os.File
 	f, err = os.CreateTemp(basePath, "tmp.")
@@ -321,6 +336,7 @@ func writeToTemp(
 	if err = f.Sync(); err != nil {
 		return tmpName, crc, err
 	}
+	atomic.AddUint64(&env.stats[blockServiceId].bytesWritten, size)
 	return tmpName, crc, err
 }
 
@@ -335,7 +351,7 @@ func writeBlock(
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err
 	}
-	tmpName, crc, err := writeToTemp(log, env, basePath, uint64(size), conn)
+	tmpName, crc, err := writeToTemp(log, env, blockServiceId, basePath, uint64(size), conn)
 	if err != nil {
 		return err
 	}
@@ -354,6 +370,7 @@ func writeBlock(
 	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
+	atomic.AddUint64(&env.stats[blockServiceId].blocksFetched, 1)
 	return nil
 }
 
@@ -364,9 +381,9 @@ func consumeBlock(size uint32, conn *net.TCPConn) error {
 }
 
 func testWrite(
-	log *lib.Logger, env *env, basePath string, size uint64, conn *net.TCPConn,
+	log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
 ) error {
-	tmpName, _, err := writeToTemp(log, env, basePath, size, conn)
+	tmpName, _, err := writeToTemp(log, env, blockServiceId, basePath, size, conn)
 	if err != nil {
 		return err
 	}
@@ -480,6 +497,7 @@ NextRequest:
 							return
 						}
 					}
+					atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 					continue NextRequest
 				}
 			}
@@ -504,7 +522,7 @@ NextRequest:
 				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 				continue NextRequest
 			}
-			if err := eraseBlock(log, env, blockService.path, whichReq.BlockId); err != nil {
+			if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
 				if handleError(log, conn, err) {
 					return
 				} else {
@@ -575,7 +593,7 @@ NextRequest:
 				}
 			}
 		case *msgs.TestWriteReq:
-			if err := testWrite(log, env, blockService.path, whichReq.Size, conn); err != nil {
+			if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 				log.Info("could not perform test write: %v", err)
 				if handleError(log, conn, err) {
 					return
@@ -642,6 +660,48 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 	return key
 }
 
+func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
+	metrics := lib.MetricsBuilder{}
+	rand := wyhash.New(rand.Uint64())
+	alert := log.NewNCAlert()
+	for {
+		log.Info("sending metrics")
+		metrics.Reset()
+		now := time.Now()
+		for bsId, bsStats := range env.stats {
+			metrics.Measurement("eggsfs_blocks_write")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("bytes", bsStats.bytesWritten)
+			metrics.FieldU64("blocks", bsStats.blocksWritten)
+			metrics.Timestamp(now)
+
+			metrics.Measurement("eggsfs_blocks_read")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("bytes", bsStats.bytesFetched)
+			metrics.FieldU64("blocks", bsStats.blocksFetched)
+			metrics.Timestamp(now)
+
+			metrics.Measurement("eggsfs_blocks_erase")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("blocks", bsStats.blocksErased)
+			metrics.Timestamp(now)
+		}
+		err := lib.SendMetrics(metrics.Payload())
+		if err == nil {
+			log.ClearNC(alert)
+			sleepFor := time.Duration(rand.Uint64() & ^(uint64(1)<<63)) % (2 * time.Minute)
+			log.Info("metrics sent, sleeping for %v", sleepFor)
+			time.Sleep(sleepFor)
+		} else {
+			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
+			time.Sleep(time.Second)
+		}
+	}
+}
+
 type blockService struct {
 	path         string
 	key          [16]byte
@@ -666,6 +726,7 @@ func main() {
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", time.Minute, "")
+	metrics := flag.Bool("metrics", false, "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
@@ -888,6 +949,13 @@ func main() {
 
 	env := &env{
 		bufPool: bufPool,
+		stats:   make(map[msgs.BlockServiceId]*blockServiceStats),
+	}
+	for bsId := range blockServices {
+		env.stats[bsId] = &blockServiceStats{}
+	}
+	for bsId := range deadBlockServices {
+		env.stats[bsId] = &blockServiceStats{}
 	}
 
 	go func() {
@@ -899,6 +967,13 @@ func main() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		updateBlockServicesInfoForever(log, blockServices)
 	}()
+
+	if *metrics {
+		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			sendMetrics(log, env, *failureDomainStr)
+		}()
+	}
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

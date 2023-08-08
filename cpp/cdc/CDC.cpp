@@ -750,7 +750,7 @@ public:
             for (int i = 0; i < errs.count.size(); i++) {
                 uint64_t count = errs.count[i].load();
                 if (count == 0) { continue; }
-                _metricsBuilder.measurement("eggsfs_shard_requests");
+                _metricsBuilder.measurement("eggsfs_cdc_requests");
                 _metricsBuilder.tag("kind", kind);
                 if (i == 0) {
                     _metricsBuilder.tag("error", "NO_ERROR");

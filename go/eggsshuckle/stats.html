@@ -1,6 +1,9 @@
 {{define "body"}}
     <div>
         <p>
+            This page contains latency histograms, for other live stats, head to <a href="https://REDACTED">Grafana</a>.
+        </p>
+        <p>
             The CDC stats include both the end-to-end latency (from request parse to response sent), which includes the time the request spent in the CDC transaction queue; and the "process" time (<code>.process</code>), which is how long it took to process the request from transaction start to transaction finish.
         </p>
         <p>

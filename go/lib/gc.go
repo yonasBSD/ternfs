@@ -2,15 +2,17 @@ package lib
 
 import (
 	"fmt"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
 type GCOptions struct {
-	ShuckleTimeouts *ReqTimeouts
-	ShuckleAddress  string
-	ShardTimeouts   *ReqTimeouts
-	CDCTimeouts     *ReqTimeouts
-	Counters        *ClientCounters
+	ShuckleTimeouts        *ReqTimeouts
+	ShuckleAddress         string
+	ShardTimeouts          *ReqTimeouts
+	CDCTimeouts            *ReqTimeouts
+	Counters               *ClientCounters
+	RetryOnDestructFailure bool
 }
 
 func gcClient(log *Logger, options *GCOptions, udpSockets int) (*Client, error) {
@@ -111,9 +113,12 @@ func DestructFile(
 func destructFilesInternal(
 	log *Logger,
 	client *Client,
+	retryOnFailure bool,
 	shid msgs.ShardId,
 	stats *DestructionStats,
 ) error {
+	alert := log.NewNCAlert()
+	timeouts := NewReqTimeouts(time.Second, 10*time.Second, 0, 1.5, 0.2)
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}
 	someErrored := false
@@ -125,9 +130,22 @@ func destructFilesInternal(
 		}
 		for ix := range resp.Files {
 			file := &resp.Files[ix]
-			if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-				log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-				someErrored = true
+			if !retryOnFailure {
+				if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+					log.RaiseAlert("%+v: error while destructing file: %v", file, err)
+					someErrored = true
+				}
+			} else {
+				startedAt := time.Now()
+				for {
+					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+						log.RaiseNC(alert, "%+v: error while destructing file, will retry: %v", file, err)
+						time.Sleep(timeouts.Next(startedAt))
+					} else {
+						log.ClearNC(alert)
+						break
+					}
+				}
 			}
 		}
 		req.BeginId = resp.NextId
@@ -155,7 +173,7 @@ func destructFiles(
 	}
 	defer client.Close()
 	stats := DestructionStats{}
-	if err := destructFilesInternal(log, client, shid, &stats); err != nil {
+	if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
@@ -186,7 +204,7 @@ func DestructFilesInAllShards(
 	stats := DestructionStats{}
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		if err := destructFilesInternal(log, client, shid, &stats); err != nil {
+		if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
 			return err
 		}
 	}

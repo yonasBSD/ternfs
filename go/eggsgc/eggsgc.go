@@ -24,6 +24,7 @@ func main() {
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
+	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
 	flag.Parse()
 
 	shards := []msgs.ShardId{}
@@ -98,10 +99,11 @@ func main() {
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
 	options := &lib.GCOptions{
-		ShuckleTimeouts: lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
-		ShardTimeouts:   lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
-		CDCTimeouts:     lib.NewReqTimeouts(lib.DefaultCDCTimeout.Initial, lib.DefaultCDCTimeout.Max, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
-		ShuckleAddress:  *shuckleAddress,
+		ShuckleTimeouts:        lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
+		ShardTimeouts:          lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
+		CDCTimeouts:            lib.NewReqTimeouts(lib.DefaultCDCTimeout.Initial, lib.DefaultCDCTimeout.Max, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
+		ShuckleAddress:         *shuckleAddress,
+		RetryOnDestructFailure: *retryOnDestructFailure,
 	}
 
 	dirInfoCache := lib.NewDirInfoCache()

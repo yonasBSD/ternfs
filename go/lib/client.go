@@ -167,8 +167,8 @@ func NewReqTimeouts(initial time.Duration, max time.Duration, overall time.Durat
 	if growth <= 1.0 {
 		panic(fmt.Errorf("growth (%v) <= 1.0", growth))
 	}
-	if jitter < 0.0 || jitter >= 1.0 {
-		panic(fmt.Errorf("jitter (%v) < 0.0 || jitter >= 1.0", jitter))
+	if jitter < 0.0 {
+		panic(fmt.Errorf("jitter (%v) < 0.0", jitter))
 	}
 	return &ReqTimeouts{
 		Initial: initial,

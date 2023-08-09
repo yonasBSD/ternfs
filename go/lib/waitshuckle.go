@@ -31,45 +31,23 @@ func WaitForBlockServices(ll *Logger, shuckleAddress string, expectedBlockServic
 	}
 }
 
-func WaitForShardsCDC(ll *Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) {
+// getting a client implies having all shards and cdc.
+func WaitForClient(log *Logger, shuckleAddress string, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
+	var client *Client
 	for {
-		if time.Since(t0) > timeout {
-			panic(fmt.Errorf("giving up waiting for shuckle, last error: %v", err))
+		t := time.Now()
+		if t.Sub(t0) > timeout {
+			panic(fmt.Errorf("giving up waiting for client, last error: %w", err))
 		}
-		var resp msgs.ShuckleResponse
-		// First check shards
-		{
-			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardsReq{})
-			if err != nil {
-				ll.Debug("got error while getting shards from shuckle, will keep waiting: %v", err)
-				goto KeepChecking
-			}
-			for i, shard := range resp.(*msgs.ShardsResp).Shards {
-				if shard.Port1 == 0 {
-					err = fmt.Errorf("shard %v isn't up yet, will keep waiting", i)
-					ll.Debug("%v", err)
-					goto KeepChecking
-				}
-			}
+		client, err = NewClient(log, nil, shuckleAddress, 1)
+		if err != nil {
+			log.Info("getting shuckle client failed, waiting: %v", err)
+			time.Sleep(time.Second)
+			continue
 		}
-		// Then check CDC
-		{
-			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.CdcReq{})
-			if err != nil {
-				ll.Debug("got error while getting CDC from shuckle, will keep waiting: %v", err)
-				goto KeepChecking
-			}
-			cdc := resp.(*msgs.CdcResp)
-			if cdc.Port1 == 0 {
-				err = fmt.Errorf("CDC isn't up yet, will keep waiting")
-				ll.Debug("%v", err)
-				goto KeepChecking
-			}
-		}
-		return
-	KeepChecking:
-		time.Sleep(10 * time.Millisecond)
+		client.Close()
+		break
 	}
 }

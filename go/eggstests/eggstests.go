@@ -942,7 +942,7 @@ func main() {
 
 	// now wait for shards/cdc
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	lib.WaitForShardsCDC(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	lib.WaitForClient(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
 
 	var stopBlockServiceKiller chan struct{}
 	if *blockServiceKiller {

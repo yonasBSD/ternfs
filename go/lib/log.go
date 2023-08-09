@@ -90,8 +90,16 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 		panic(fmt.Errorf("bad loglevel %v", level))
 	}
 
+	cs := ""
+	ce := ""
+	if log.hasColors {
+		cs = fmt.Sprintf("\x1b[%dm", levelColor)
+		ce = "\x1b[0m"
+	}
+
 	log.mu.Lock()
 	defer log.mu.Unlock()
+
 	log.buf.Reset()
 
 	if log.syslog {
@@ -99,13 +107,6 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 		fmt.Fprintf(log.buf, format, v...)
 		fmt.Fprintln(log.buf)
 	} else {
-		cs := ""
-		ce := ""
-		if log.hasColors {
-			cs = fmt.Sprintf("\x1b[%dm", levelColor)
-			ce = "\x1b[0m"
-		}
-
 		fmt.Fprintf(log.buf, "%-26s %s:%d [%s%s%s] ", time.Format("2006-01-02T15:04:05.999999"), file, line, cs, level.String(), ce)
 		fmt.Fprintf(log.buf, format, v...)
 		fmt.Fprintln(log.buf)

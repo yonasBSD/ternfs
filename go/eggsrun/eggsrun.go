@@ -201,7 +201,7 @@ func main() {
 	}
 
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	lib.WaitForShardsCDC(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
+	lib.WaitForClient(log, shuckleAddress, waitShuckleFor)
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
 		Exe:            goExes.FuseExe,

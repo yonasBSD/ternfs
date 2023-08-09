@@ -601,35 +601,6 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	procs.Start(ll, &mpArgs)
 }
 
-func WaitForShard(log *lib.Logger, shuckleAddress string, shid msgs.ShardId, timeout time.Duration) {
-	t0 := time.Now()
-	var err error
-	var client *lib.Client
-	for {
-		t := time.Now()
-		if t.Sub(t0) > timeout {
-			panic(fmt.Errorf("giving up waiting for shard %v, last error: %w", shid, err))
-		}
-		client, err = lib.NewClient(log, nil, shuckleAddress, 1)
-		if err != nil {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		err = client.ShardRequest(
-			log,
-			shid,
-			&msgs.VisitDirectoriesReq{},
-			&msgs.VisitDirectoriesResp{},
-		)
-		client.Close()
-		if err != nil {
-			time.Sleep(10 * time.Millisecond)
-			continue
-		}
-		break
-	}
-}
-
 type BuildCppOpts struct {
 	Valgrind bool
 	Sanitize bool

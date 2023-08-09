@@ -186,9 +186,10 @@ public:
         {
             auto now = eggsNow();
             if (_inFlightShardReq && (now - _inFlightShardReq->sentAt) > _shardTimeout) {
-                _inFlightShardReq.reset();
                 LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, timing out (%s > %s)", _inFlightShardReq->shardRequestId, _inFlightShardReq->sentAt, now, (now - _inFlightShardReq->sentAt), _shardTimeout);
-                _handleShardError(_inFlightShardReq->shid, EggsError::TIMEOUT);
+                auto shid = _inFlightShardReq->shid;
+                _inFlightShardReq.reset();
+                _handleShardError(shid, EggsError::TIMEOUT);
             }
         }
 

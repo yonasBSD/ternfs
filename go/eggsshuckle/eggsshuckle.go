@@ -503,7 +503,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	defer func() {
 		s.counters[req.ShuckleRequestKind()].Add(time.Since(t0))
 	}()
-	log.Debug("handling request %T %+v", req, req)
+	log.Debug("handling request %T", req)
+	log.Trace("request body %+v", req)
 	var err error
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
@@ -599,7 +600,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 				continue
 			}
 		}
-		log.Debug("handling request %T %+v from %s", req, req, conn.RemoteAddr())
+		log.Debug("handling request %T from %s", req, conn.RemoteAddr())
 		resp, err := handleRequestParsed(log, s, req)
 		if err != nil {
 			if handleError(log, conn, err) {

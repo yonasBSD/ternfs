@@ -26,6 +26,20 @@ Will build all the artifacts apart from the Kernel module. The output will be in
 
 If you want to build outside the Alpine container (e.g. if you wan to do `go run` as I suggest below), you need to have the right Go in your PATH. On ETD dev boxes this can be accomplished by adding `/opt/go1.18.4/bin` to your path.
 
+## Testing
+
+CI is currently very long (~40 mins for the "quick" tests, ~3h for the full tests). Therefore you might have to wait a while for it.
+
+If you have a small fix and want to push to `main`, run at least
+
+```
+% go run . -filter 'direct' -short -build-type sanitized
+```
+
+In `go/eggstests`. This takes around 3 minutes, and will surface gross mistakes. Note that this does _not_ test the kernel module (CI does).
+
+TODO easy way to run kmod tests locally (just requires a bit of reworking of ci.sh, plus pushing Ubuntu base image to artifactory).
+
 ## Playing with a local EggsFS instance
 
 ```

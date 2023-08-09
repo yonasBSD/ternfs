@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"xtx/ecninfra/hostmon"
 	"xtx/ecninfra/log"
 
 	"github.com/sirupsen/logrus"
@@ -117,13 +115,11 @@ type LoggerOptions struct {
 	AppName     string
 	AppInstance string
 	Xmon        string // "dev", "qa", empty string for no xmon
-	Metrics     bool
 }
 
 type Logger struct {
 	level      LogLevel
 	xmon       *Xmon
-	mw         *hostmon.MetricWriter
 	alertsLock sync.RWMutex
 }
 
@@ -170,25 +166,6 @@ func NewLogger(
 	log.SetFormatter(&f)
 	log.SetLevel(ll)
 	log.SetOutput(out)
-
-	/*
-		if options.Metrics {
-			xrt.ServiceInit(xrt.IsProd(), monitor.AppTypeNever)
-			mp := fmt.Sprintf("eggsfs_%s", options.AppName)
-			logger.mw = hostmon.NewMetricWriterWithLabels(
-				600*time.Second,
-				logger.troll,
-				mp,
-				xrt.HostTeam.InfluxOrg,
-				xrt.HostTeam.InfluxDBURL,
-				xrt.HostTeam.InfluxTokenProd,
-				map[string]string{"hostname": xrt.Hostname, "app": options.AppName, "instance": options.AppInstance},
-			)
-			go func() {
-				logger.mw.PushMetrics(context.Background())
-			}()
-		}
-	*/
 
 	if options.Xmon != "" {
 		if options.Xmon != "prod" && options.Xmon != "qa" {
@@ -285,16 +262,6 @@ func (l *Logger) Info(format string, v ...any) {
 // not an error.
 func (l *Logger) ErrorNoAlert(format string, v ...any) {
 	l.LogStack(1, ERROR, format, v...)
-}
-
-func (l *Logger) Metric(category, name string, help string, value uint64, extralabels map[string]string) {
-	if l.mw == nil {
-		return
-	}
-	if extralabels == nil {
-		extralabels = make(map[string]string)
-	}
-	l.mw.AddMetric(hostmon.NewMetricNowWithLabels(category, name, help, float64(value), extralabels))
 }
 
 func (l *Logger) NewNCAlert() *XmonNCAlert {

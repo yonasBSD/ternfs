@@ -692,7 +692,7 @@ func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
 		err := lib.SendMetrics(metrics.Payload())
 		if err == nil {
 			log.ClearNC(alert)
-			sleepFor := time.Duration(rand.Uint64() & ^(uint64(1)<<63)) % (2 * time.Minute)
+			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
 			log.Info("metrics sent, sleeping for %v", sleepFor)
 			time.Sleep(sleepFor)
 		} else {

@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"mime"
 	"net"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/wyhash"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -1692,21 +1694,30 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 }
 
 // Writes stats to influx db.
-func metricWriter(ll *lib.Logger, st *state) error {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+func sendMetrics(log *lib.Logger, st *state) error {
+	metrics := lib.MetricsBuilder{}
+	rand := wyhash.New(rand.Uint64())
+	alert := log.NewNCAlert()
 	for {
-		<-ticker.C
-		for k, t := range st.counters {
-			totalCount := t.Count()
-			if totalCount == 0 {
-				continue
-			}
-			for _, bin := range t.Histogram() {
-				el := map[string]string{"ub": fmt.Sprintf("%d", bin.UpperBound), "type": k.String()}
-				ll.Metric("request", "duration_bucket", "request duration", bin.Count, el)
-			}
-			ll.Metric("request", "duration_count", "request count", totalCount, map[string]string{"type": k.String()})
+		log.Info("sending metrics")
+		metrics.Reset()
+		now := time.Now()
+		for _, req := range msgs.AllShuckleMessageKind {
+			t := st.counters[req]
+			metrics.Measurement("eggsfs_shuckle_requests")
+			metrics.Tag("kind", req.String())
+			metrics.FieldU64("count", t.Count())
+			metrics.Timestamp(now)
+		}
+		err := lib.SendMetrics(metrics.Payload())
+		if err == nil {
+			log.ClearNC(alert)
+			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
+			log.Info("metrics sent, sleeping for %v", sleepFor)
+			time.Sleep(sleepFor)
+		} else {
+			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
+			time.Sleep(time.Second)
 		}
 	}
 }
@@ -1877,7 +1888,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle", Metrics: *metrics})
+	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle"})
 
 	if *dataDir == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
@@ -2051,8 +2062,7 @@ func main() {
 	if *metrics {
 		go func() {
 			defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-			metricWriter(ll, state)
-			panic("metricWriter has terminated")
+			sendMetrics(ll, state)
 		}()
 	}
 

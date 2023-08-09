@@ -6,12 +6,9 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
-	"sync/atomic"
-	"xtx/ecninfra/log"
+	"time"
 
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
@@ -38,76 +35,16 @@ func (ll LogLevel) String() string {
 
 }
 
-type logFormatter struct {
-	syslog    bool
-	hasColors bool
-	logrus.Formatter
-}
-
 const (
 	red    = 31
 	yellow = 33
 	blue   = 36
-	gray   = 37
 
 	syslogDebug = 7
 	syslogInfo  = 6
 	syslogWarn  = 4
 	syslogError = 3
 )
-
-func (lf *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
-	f, fe := entry.Data["file"]
-	n, ne := entry.Data["line"]
-	caller := "???:0 "
-	if fe && ne {
-		caller = fmt.Sprintf("%s:%d ", f, n)
-	}
-
-	var b *bytes.Buffer
-	if entry.Buffer != nil {
-		b = entry.Buffer
-	} else {
-		b = &bytes.Buffer{}
-	}
-
-	var levelColor int
-	var syslogPrio int
-	switch entry.Level {
-	case logrus.DebugLevel, logrus.TraceLevel:
-		levelColor = gray
-		syslogPrio = syslogDebug
-	case logrus.WarnLevel:
-		levelColor = yellow
-		syslogPrio = syslogWarn
-	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
-		levelColor = red
-		syslogPrio = syslogError
-	case logrus.InfoLevel:
-		levelColor = blue
-		syslogPrio = syslogInfo
-	default:
-		levelColor = blue
-		syslogPrio = syslogInfo
-	}
-
-	levelText := strings.ToUpper(entry.Level.String())
-
-	if lf.syslog {
-		fmt.Fprintf(b, "<%d>%s", syslogPrio, entry.Message)
-	} else {
-		cs := ""
-		ce := ""
-		if lf.hasColors {
-			cs = fmt.Sprintf("\x1b[%dm", levelColor)
-			ce = "\x1b[0m"
-		}
-
-		fmt.Fprintf(b, "%-26s %s[%s%s%s] %s ", entry.Time.Format("2006-01-02T15:04:05.999999"), caller, cs, levelText, ce, entry.Message)
-	}
-	b.WriteByte('\n')
-	return b.Bytes(), nil
-}
 
 type LoggerOptions struct {
 	Level       LogLevel
@@ -118,9 +55,13 @@ type LoggerOptions struct {
 }
 
 type Logger struct {
-	level      LogLevel
-	xmon       *Xmon
-	alertsLock sync.RWMutex
+	level     LogLevel
+	hasColors bool
+	syslog    bool
+	xmon      *Xmon
+	mu        sync.Mutex
+	buf       *bytes.Buffer
+	out       io.Writer
 }
 
 func isTerminal(f *os.File) bool {
@@ -132,40 +73,58 @@ func isTerminal(f *os.File) bool {
 	return err == nil
 }
 
-var hasLogger int32
+func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line int, format string, v ...any) {
+	var levelColor int
+	var syslogPrio int
+	switch level {
+	case DEBUG, TRACE:
+		levelColor = 0 // reset
+		syslogPrio = syslogDebug
+	case ERROR:
+		levelColor = red
+		syslogPrio = syslogError
+	case INFO:
+		levelColor = blue
+		syslogPrio = syslogInfo
+	default:
+		panic(fmt.Errorf("bad loglevel %v", level))
+	}
 
-// Note: this will really use the global logger in `xtx/ecninfra/log`, so
-// this function can only be called once.
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	log.buf.Reset()
+
+	if log.syslog {
+		fmt.Fprintf(log.buf, "<%d>", syslogPrio)
+		fmt.Fprintf(log.buf, format, v...)
+		fmt.Fprintln(log.buf)
+	} else {
+		cs := ""
+		ce := ""
+		if log.hasColors {
+			cs = fmt.Sprintf("\x1b[%dm", levelColor)
+			ce = "\x1b[0m"
+		}
+
+		fmt.Fprintf(log.buf, "%-26s %s:%d [%s%s%s] ", time.Format("2006-01-02T15:04:05.999999"), file, line, cs, level.String(), ce)
+		fmt.Fprintf(log.buf, format, v...)
+		fmt.Fprintln(log.buf)
+	}
+
+	log.out.Write(log.buf.Bytes())
+}
+
 func NewLogger(
 	out *os.File,
 	options *LoggerOptions,
 ) *Logger {
 	logger := &Logger{
-		level:      options.Level,
-		alertsLock: sync.RWMutex{},
-	}
-
-	if !atomic.CompareAndSwapInt32(&hasLogger, 0, 1) {
-		panic(fmt.Errorf("NewLogger called twice"))
-	}
-
-	ll := logrus.InfoLevel
-	switch options.Level {
-	case ERROR:
-		ll = logrus.ErrorLevel
-	case DEBUG:
-		ll = logrus.DebugLevel
-	case TRACE:
-		ll = logrus.TraceLevel
-	}
-	f := logFormatter{
-		Formatter: &logrus.TextFormatter{},
+		level:     options.Level,
 		hasColors: isTerminal(out),
 		syslog:    options.Syslog,
+		buf:       bytes.NewBuffer([]byte{}),
+		out:       out,
 	}
-	log.SetFormatter(&f)
-	log.SetLevel(ll)
-	log.SetOutput(out)
 
 	if options.Xmon != "" {
 		if options.Xmon != "prod" && options.Xmon != "qa" {
@@ -222,23 +181,7 @@ func getFileLine(calldepth int) (string, int) {
 func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any) {
 	if l.shouldLog(level) {
 		file, line := getFileLine(1 + calldepth)
-
-		// write out
-		e := log.WithFields(logrus.Fields{
-			"file": file,
-			"line": line,
-		})
-		switch level {
-		case INFO:
-			e.Infof(format, v...)
-		case ERROR:
-			e.Errorf(format, v...)
-		case DEBUG:
-			e.Debugf(format, v...)
-		case TRACE:
-			e.Tracef(format, v...)
-		}
-
+		l.formatLog(level, time.Now(), file, line, format, v...)
 	}
 }
 

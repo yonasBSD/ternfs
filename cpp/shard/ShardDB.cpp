@@ -200,8 +200,6 @@ static int pickMtu(uint16_t mtu) {
     return mtu;
 }
 
-constexpr uint64_t DEADLINE_INTERVAL = (120ull /*mins*/ * 60 /*secs*/ * 1'000'000'000 /*ns*/); // 2 hr
-
 void ShardLogEntry::pack(BincodeBuf& buf) const {
     time.pack(buf);
     buf.packScalar<uint16_t>((uint16_t)body.kind());
@@ -236,6 +234,7 @@ struct ShardDBImpl {
     Env _env;
 
     ShardId _shid;
+    Duration _transientDeadlineInterval;
     std::array<uint8_t, 16> _secretKey;
     AES128Key _expandedSecretKey;
     
@@ -268,7 +267,11 @@ struct ShardDBImpl {
 
     ShardDBImpl() = delete;
 
-    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const std::string& path) : _env(logger, xmon, "shard_db"), _shid(shid) {
+    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path) :
+        _env(logger, xmon, "shard_db"),
+        _shid(shid),
+        _transientDeadlineInterval(deadlineInterval)
+    {
         LOG_INFO(_env, "will run shard %s in db dir %s", shid, path);
 
         // TODO actually figure out the best strategy for each family, including the default
@@ -1081,7 +1084,7 @@ struct ShardDBImpl {
         }
         entry.type = req.type;
         entry.note = req.note;
-        entry.deadlineTime = time + DEADLINE_INTERVAL;
+        entry.deadlineTime = time + _transientDeadlineInterval;
 
         return NO_ERROR;
     }
@@ -1655,17 +1658,6 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareExpireTransientFile(EggsTime time, const ExpireTransientFileReq& req, ExpireTransientFileEntry& entry) {
-        if (req.id.type() == InodeType::DIRECTORY) {
-            return EggsError::TYPE_IS_DIRECTORY;
-        }
-        if (req.id.shard() != _shid) {
-            return EggsError::BAD_SHARD;
-        }
-        entry.id = req.id;
-        return NO_ERROR;
-    }
-
     EggsError _prepareMoveSpan(EggsTime time, const MoveSpanReq& req, MoveSpanEntry& entry) {
         if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_DIRECTORY;
@@ -1779,9 +1771,6 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::SWAP_BLOCKS:
             err = _prepareSwapBlocks(time, req.getSwapBlocks(), logEntryBody.setSwapBlocks());
-            break;
-        case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
-            err = _prepareExpireTransientFile(time, req.getExpireTransientFile(), logEntryBody.setExpireTransientFile());
             break;
         case ShardMessageKind::MOVE_SPAN:
             err = _prepareMoveSpan(time, req.getMoveSpan(), logEntryBody.setMoveSpan());
@@ -3338,23 +3327,6 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _applyExpireTransientFile(EggsTime time, rocksdb::WriteBatch& batch, const ExpireTransientFileEntry& entry, ExpireTransientFileResp& resp) {
-        std::string value;
-        ExternalValue<TransientFileBody> transientFile;
-        {
-            EggsError err = _getTransientFile({}, time, true, entry.id, value, transientFile);
-            if (err != NO_ERROR) {
-                return err;
-            }
-        }
-        transientFile().setDeadline(0);
-        {
-            auto k = InodeIdKey::Static(entry.id);
-            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
-        }
-        return NO_ERROR;
-    }
-
     EggsError _applyMoveSpan(EggsTime time, rocksdb::WriteBatch& batch, const MoveSpanEntry& entry, MoveSpanResp& resp) {
         // fetch files
         std::string transientValue1;
@@ -3555,9 +3527,6 @@ struct ShardDBImpl {
         case ShardLogEntryKind::SWAP_BLOCKS:
             err = _applySwapBlocks(time, batch, logEntryBody.getSwapBlocks(), resp.setSwapBlocks());
             break;
-        case ShardLogEntryKind::EXPIRE_TRANSIENT_FILE:
-            err = _applyExpireTransientFile(time, batch, logEntryBody.getExpireTransientFile(), resp.setExpireTransientFile());
-            break;
         case ShardLogEntryKind::MOVE_SPAN:
             err = _applyMoveSpan(time, batch, logEntryBody.getMoveSpan(), resp.setMoveSpan());
             break;
@@ -3679,7 +3648,7 @@ struct ShardDBImpl {
 
         tmpTf().setMtime(time);
         if (!allowPastDeadline) {
-            tmpTf().setDeadline(time + DEADLINE_INTERVAL);
+            tmpTf().setDeadline(time + _transientDeadlineInterval);
         }
         {
             auto k = InodeIdKey::Static(id);
@@ -3783,7 +3752,6 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::REMOVE_INODE:
     case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
-    case ShardMessageKind::EXPIRE_TRANSIENT_FILE:
     case ShardMessageKind::MOVE_SPAN:
     case ShardMessageKind::SET_TIME:
         return false;
@@ -3793,8 +3761,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, const std::string& path) {
-    _impl = new ShardDBImpl(logger, agent, shid, path);
+ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const std::string& path) {
+    _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, path);
 }
 
 void ShardDB::close() {

@@ -201,13 +201,13 @@ func updateBlockServicesInfoForever(
 	}
 }
 
-func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) msgs.ErrCode {
+func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) error {
 	expectedMac, good := lib.CheckBlockEraseCertificate(blockServiceId, cipher, req)
 	if !good {
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
 	}
-	return 0
+	return nil
 }
 
 func blockIdToPath(basePath string, blockId msgs.BlockId) string {
@@ -285,14 +285,14 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	return nil
 }
 
-func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) msgs.ErrCode {
+func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
 	expectedMac, good := lib.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
 		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
 	}
-	return 0
+	return nil
 }
 
 func writeToTemp(
@@ -395,54 +395,174 @@ func testWrite(
 }
 
 const PAST_CUTOFF time.Duration = 22 * time.Hour
-const FUTURE_CUTOFF time.Duration = 1 * time.Hour
+const DEFAULT_FUTURE_CUTOFF time.Duration = 1 * time.Hour
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
 
-// returns whether the connection should be terminated
-func handleError(
+// The bool is whether we should keep going
+func handleRequestError(
 	log *lib.Logger,
 	conn *net.TCPConn,
+	req msgs.BlocksMessageKind,
 	err error,
 ) bool {
 	if err == io.EOF {
 		log.Debug("got EOF, terminating")
-		return true
+		return false
 	}
 
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
-		return true
+		return false
 	}
 
 	if opErr, ok := err.(*net.OpError); ok {
 		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
 			if sysErr.Err == syscall.EPIPE {
 				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
-				return true
+				return false
 			}
 			if sysErr.Err == syscall.ECONNRESET {
 				log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
-				return true
+				return false
 			}
 		}
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack(1, "got unexpected error %v from %v", err, conn.RemoteAddr())
+	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v", err, conn.RemoteAddr(), req)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
-		return false
+		// For failed write requests we terminate, since the block will still
+		// go down the pipe. We either need to consume it anyway, or kill the
+		// connection, and we choose the latter to minimize wasted traffic.
+		return req != msgs.WRITE_BLOCK && req != msgs.TEST_WRITE
 	} else {
 		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
-		return true
+		return false
 	}
 }
 
 type deadBlockService struct {
 	cipher cipher.Block
+}
+
+// The bool tells us whether we should keep going
+func handleSingleRequest(
+	log *lib.Logger,
+	env *env,
+	terminateChan chan any,
+	blockServices map[msgs.BlockServiceId]*blockService,
+	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
+	conn *net.TCPConn,
+	futureCutoff time.Duration,
+	connectionTimeout time.Duration,
+) bool {
+	if connectionTimeout != 0 {
+		conn.SetReadDeadline(time.Now().Add(connectionTimeout))
+	}
+	blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
+	if err != nil {
+		return handleRequestError(log, conn, 0, err)
+	}
+	kind := req.BlocksRequestKind()
+	log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
+	log.Trace("req %+v", req)
+	defer log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())
+	if connectionTimeout != 0 {
+		// Reset timeout, with default settings this will give
+		// the request a minute to complete, given that the max
+		// block size is 10MiB, that is ~0.17MiB/s, so it should
+		// be plenty of time unless something is wrong.
+		//
+		// If we didn't reset this (or just remove the timeout)
+		// the previous timeout might very well trip the request
+		// because it might have been almost expired.
+		conn.SetDeadline(time.Now().Add(connectionTimeout))
+	}
+	blockService, found := blockServices[blockServiceId]
+	if !found {
+		// Special case: we're erasing a block in a dead block service. Always
+		// succeeds.
+		if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
+			if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
+				log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
+				resp := msgs.EraseBlockResp{
+					Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
+				}
+				if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
+					return handleRequestError(log, conn, kind, err)
+				}
+				atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
+				return true
+			}
+		}
+		// In general, refuse to service requests for block services that we
+		// don't have.
+		log.RaiseAlert("received unknown block service id %v", blockServiceId)
+		return handleRequestError(log, conn, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
+	}
+	switch whichReq := req.(type) {
+	case *msgs.EraseBlockReq:
+		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != nil {
+			return handleRequestError(log, conn, kind, err)
+		}
+		cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
+		now := time.Now()
+		if now.Before(cutoffTime) {
+			log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
+			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+		}
+		if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
+			return handleRequestError(log, conn, kind, err)
+		}
+
+		resp := msgs.EraseBlockResp{
+			Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
+		}
+		if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
+			return handleRequestError(log, conn, kind, err)
+		}
+	case *msgs.FetchBlockReq:
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
+			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
+			return handleRequestError(log, conn, kind, err)
+		}
+	case *msgs.WriteBlockReq:
+		pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
+		futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
+		now := time.Now()
+		if now.Before(pastCutoffTime) {
+			panic(fmt.Errorf("block %v is in the future! (now=%v, pastCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime))
+		}
+		if now.After(futureCutoffTime) {
+			log.RaiseAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
+			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
+		}
+		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != nil {
+			return handleRequestError(log, conn, kind, err)
+		}
+		if whichReq.Size > MAX_OBJECT_SIZE {
+			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
+			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_BIG)
+		}
+		if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
+			log.Info("could not write block: %v", err)
+			return handleRequestError(log, conn, kind, err)
+		}
+	case *msgs.TestWriteReq:
+		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
+			log.Info("could not perform test write: %v", err)
+			return handleRequestError(log, conn, kind, err)
+		}
+	default:
+		return handleRequestError(log, conn, kind, fmt.Errorf("bad request type %T", req))
+	}
+	return true
 }
 
 func handleRequest(
@@ -452,160 +572,16 @@ func handleRequest(
 	blockServices map[msgs.BlockServiceId]*blockService,
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
-	timeCheck bool,
+	futureCutoff time.Duration,
 	connectionTimeout time.Duration,
 ) {
 	defer conn.Close()
 
-NextRequest:
 	for {
-		if connectionTimeout != 0 {
-			conn.SetReadDeadline(time.Now().Add(connectionTimeout))
-		}
-		blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
-		if err != nil {
-			if handleError(log, conn, err) {
-				return
-			} else {
-				continue
-			}
-		}
-		if connectionTimeout != 0 {
-			// Reset timeout, with default settings this will give
-			// the request a minute to complete, given that the max
-			// block size is 10MiB, that is ~0.17MiB/s, so it should
-			// be plenty of time unless something is wrong.
-			//
-			// If we didn't reset this (or just remove the timeout)
-			// the previous timeout might very well trip the request
-			// because it might have been almost expired.
-			conn.SetDeadline(time.Now().Add(connectionTimeout))
-		}
-		blockService, found := blockServices[blockServiceId]
-		if !found {
-			// Special case: we're erasing a block in a dead block service. Always
-			// succeeds.
-			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
-				if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
-					log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
-					resp := msgs.EraseBlockResp{
-						Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
-					}
-					if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
-						log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-						if handleError(log, conn, err) {
-							return
-						}
-					}
-					atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
-					continue NextRequest
-				}
-			}
-			// In general, refuse to service requests for block services that we
-			// don't have.
-			log.RaiseAlert("received unknown block service id %v", blockServiceId)
-			lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_SERVICE_NOT_FOUND)
-			continue
-		}
-		log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
-		log.Trace("req %+v", req)
-		switch whichReq := req.(type) {
-		case *msgs.EraseBlockReq:
-			if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != 0 {
-				lib.WriteBlocksResponseError(log, conn, err)
-				continue NextRequest
-			}
-			cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
-			now := time.Now()
-			if timeCheck && now.Before(cutoffTime) {
-				log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
-				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
-				continue NextRequest
-			}
-			if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
-				if handleError(log, conn, err) {
-					return
-				} else {
-					continue NextRequest
-				}
-			}
-
-			resp := msgs.EraseBlockResp{
-				Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
-			}
-			if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
-				log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-				if handleError(log, conn, err) {
-					return
-				} else {
-					continue NextRequest
-				}
-			}
-		case *msgs.FetchBlockReq:
-			if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
-				log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
-				if handleError(log, conn, err) {
-					return
-				} else {
-					continue NextRequest
-				}
-			}
-		case *msgs.WriteBlockReq:
-			pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
-			futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(FUTURE_CUTOFF)
-			now := time.Now()
-			if timeCheck && (now.Before(pastCutoffTime) || now.After(futureCutoffTime)) {
-				log.RaiseAlert("block %v is too old or too new to be written (now=%v, pastCutoffTime=%v, futureCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime, futureCutoffTime)
-				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
-				continue NextRequest
-			}
-			if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != 0 {
-				if err := consumeBlock(whichReq.Size, conn); err != nil {
-					log.Info("could not consume block from %v: %v", conn.RemoteAddr(), err)
-					if handleError(log, conn, err) {
-						return
-					} else {
-						continue NextRequest
-					}
-				}
-				lib.WriteBlocksResponseError(log, conn, err)
-				continue NextRequest
-			}
-			if whichReq.Size > MAX_OBJECT_SIZE {
-				log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
-				if err := consumeBlock(whichReq.Size, conn); err != nil {
-					log.Info("could not consume block from %v: %v", conn.RemoteAddr(), err)
-					if handleError(log, conn, err) {
-						return
-					} else {
-						continue NextRequest
-					}
-				}
-				lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_TOO_BIG)
-				continue NextRequest
-			}
-			if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
-				log.Info("could not write block: %v", err)
-				if handleError(log, conn, err) {
-					return
-				} else {
-					continue NextRequest
-				}
-			}
-		case *msgs.TestWriteReq:
-			if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
-				log.Info("could not perform test write: %v", err)
-				if handleError(log, conn, err) {
-					return
-				} else {
-					continue NextRequest
-				}
-			}
-		default:
-			handleError(log, conn, fmt.Errorf("bad request type %T", req))
+		keepGoing := handleSingleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn, futureCutoff, connectionTimeout)
+		if !keepGoing {
 			return
 		}
-		log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())
 	}
 }
 
@@ -713,7 +689,7 @@ type blockService struct {
 func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
-	noTimeCheck := flag.Bool("no-time-check", false, "Do not perform block deletion time check (to prevent replay attacks). Useful for testing.")
+	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
 	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to, and that we'll advertise to shuckle.")
 	port1 := flag.Uint("port-1", 0, "First port on which to run on. By default it will be picked automatically.")
 	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll advertise to shuckle. If it is not provided, we will only bind to the first IP.")
@@ -832,7 +808,7 @@ func main() {
 
 	log.Info("Running block service with options:")
 	log.Info("  failureDomain = %v", *failureDomainStr)
-	log.Info("  noTimeCheck = %v", *noTimeCheck)
+	log.Info("  futureCutoff = %v", *futureCutoff)
 	log.Info("  ownIp1 = '%v'", *ownIp1Str)
 	log.Info("  port1 = %v", *port1)
 	log.Info("  ownIp2 = %v", *ownIp2Str)
@@ -986,7 +962,7 @@ func main() {
 			}
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+				handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
 			}()
 		}
 	}()
@@ -1002,7 +978,7 @@ func main() {
 				}
 				go func() {
 					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), !*noTimeCheck, *connectionTimeout)
+					handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
 				}()
 			}
 		}()

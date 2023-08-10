@@ -567,7 +567,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
-    ShardDB db(logger, xmon, shid, dbDir);
+    ShardDB db(logger, xmon, shid, options.transientDeadlineInterval, dbDir);
     env.clearAlert(dbInitAlert);
 
     ShardShared shared(db);

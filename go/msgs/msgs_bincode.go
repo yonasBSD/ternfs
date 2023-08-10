@@ -174,6 +174,7 @@ const (
 	BLOCK_NOT_FOUND ErrCode = 66
 	CANNOT_UNSET_DECOMMISSIONED ErrCode = 67
 	CANNOT_REGISTER_DECOMMISSIONED ErrCode = 68
+	BLOCK_TOO_OLD_FOR_WRITE ErrCode = 69
 )
 
 func (err ErrCode) String() string {
@@ -296,6 +297,8 @@ func (err ErrCode) String() string {
 		return "CANNOT_UNSET_DECOMMISSIONED"
 	case 68:
 		return "CANNOT_REGISTER_DECOMMISSIONED"
+	case 69:
+		return "BLOCK_TOO_OLD_FOR_WRITE"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -341,8 +344,6 @@ func (k ShardMessageKind) String() string {
 		return "STAT_TRANSIENT_FILE"
 	case 13:
 		return "SET_DIRECTORY_INFO"
-	case 15:
-		return "EXPIRE_TRANSIENT_FILE"
 	case 112:
 		return "VISIT_DIRECTORIES"
 	case 113:
@@ -401,7 +402,6 @@ const (
 	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
-	EXPIRE_TRANSIENT_FILE ShardMessageKind = 0xF
 	VISIT_DIRECTORIES ShardMessageKind = 0x70
 	VISIT_FILES ShardMessageKind = 0x71
 	VISIT_TRANSIENT_FILES ShardMessageKind = 0x72
@@ -440,7 +440,6 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	SAME_SHARD_HARD_FILE_UNLINK,
 	STAT_TRANSIENT_FILE,
 	SET_DIRECTORY_INFO,
-	EXPIRE_TRANSIENT_FILE,
 	VISIT_DIRECTORIES,
 	VISIT_FILES,
 	VISIT_TRANSIENT_FILES,
@@ -501,8 +500,6 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &StatTransientFileReq{}, &StatTransientFileResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
 		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}, nil
-	case k == "EXPIRE_TRANSIENT_FILE":
-		return &ExpireTransientFileReq{}, &ExpireTransientFileResp{}, nil
 	case k == "VISIT_DIRECTORIES":
 		return &VisitDirectoriesReq{}, &VisitDirectoriesResp{}, nil
 	case k == "VISIT_FILES":
@@ -1892,36 +1889,6 @@ func (v *SetDirectoryInfoResp) Pack(w io.Writer) error {
 }
 
 func (v *SetDirectoryInfoResp) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *ExpireTransientFileReq) ShardRequestKind() ShardMessageKind {
-	return EXPIRE_TRANSIENT_FILE
-}
-
-func (v *ExpireTransientFileReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ExpireTransientFileReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ExpireTransientFileResp) ShardResponseKind() ShardMessageKind {
-	return EXPIRE_TRANSIENT_FILE
-}
-
-func (v *ExpireTransientFileResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *ExpireTransientFileResp) Unpack(r io.Reader) error {
 	return nil
 }
 

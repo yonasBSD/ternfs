@@ -249,6 +249,7 @@ func (l *Logger) ClearNC(alert *XmonNCAlert) {
 	if alert.lastMessage != "" {
 		l.LogStack(1, INFO, "clearing alert, last message %q", alert.lastMessage)
 	}
+	alert.lastMessage = ""
 	if l.xmon == nil {
 		return
 	}

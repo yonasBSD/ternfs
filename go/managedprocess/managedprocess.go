@@ -269,7 +269,7 @@ type BlockServiceOpts struct {
 	Port2          uint16
 	StorageClasses []msgs.StorageClass
 	FailureDomain  string
-	NoTimeCheck    bool
+	FutureCutoff   *time.Duration
 	LogLevel       lib.LogLevel
 	ShuckleAddress string
 	Profile        bool
@@ -293,8 +293,8 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 		"-port-2", fmt.Sprintf("%d", opts.Port2),
 		"-log-file", path.Join(opts.Path, "log"),
 	}
-	if opts.NoTimeCheck {
-		args = append(args, "-no-time-check")
+	if opts.FutureCutoff != nil {
+		args = append(args, "-future-cutoff", opts.FutureCutoff.String())
 	}
 	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")
@@ -433,19 +433,20 @@ func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
 }
 
 type ShardOpts struct {
-	Exe                string
-	Dir                string
-	LogLevel           lib.LogLevel
-	Shid               msgs.ShardId
-	Valgrind           bool
-	Perf               bool
-	IncomingPacketDrop float64
-	OutgoingPacketDrop float64
-	ShuckleAddress     string
-	OwnIp1             string
-	Port1              uint16
-	OwnIp2             string
-	Port2              uint16
+	Exe                       string
+	Dir                       string
+	LogLevel                  lib.LogLevel
+	Shid                      msgs.ShardId
+	Valgrind                  bool
+	Perf                      bool
+	IncomingPacketDrop        float64
+	OutgoingPacketDrop        float64
+	ShuckleAddress            string
+	OwnIp1                    string
+	Port1                     uint16
+	OwnIp2                    string
+	Port2                     uint16
+	TransientDeadlineInterval *time.Duration
 }
 
 func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
@@ -464,6 +465,9 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	}
 	if opts.OwnIp2 != "" {
 		args = append(args, "-own-ip-2", opts.OwnIp2)
+	}
+	if opts.TransientDeadlineInterval != nil {
+		args = append(args, "-transient-deadline-interval", fmt.Sprintf("%dns", opts.TransientDeadlineInterval.Nanoseconds()))
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:

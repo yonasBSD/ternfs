@@ -63,6 +63,7 @@ enum class EggsError : uint16_t {
     BLOCK_NOT_FOUND = 66,
     CANNOT_UNSET_DECOMMISSIONED = 67,
     CANNOT_REGISTER_DECOMMISSIONED = 68,
+    BLOCK_TOO_OLD_FOR_WRITE = 69,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -127,9 +128,10 @@ const std::vector<EggsError> allEggsErrors {
     EggsError::BLOCK_NOT_FOUND,
     EggsError::CANNOT_UNSET_DECOMMISSIONED,
     EggsError::CANNOT_REGISTER_DECOMMISSIONED,
+    EggsError::BLOCK_TOO_OLD_FOR_WRITE,
 };
 
-constexpr int maxEggsError = 69;
+constexpr int maxEggsError = 70;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,
@@ -152,7 +154,6 @@ enum class ShardMessageKind : uint8_t {
     SAME_SHARD_HARD_FILE_UNLINK = 117,
     STAT_TRANSIENT_FILE = 3,
     SET_DIRECTORY_INFO = 13,
-    EXPIRE_TRANSIENT_FILE = 15,
     VISIT_DIRECTORIES = 112,
     VISIT_FILES = 113,
     VISIT_TRANSIENT_FILES = 114,
@@ -191,7 +192,6 @@ const std::vector<ShardMessageKind> allShardMessageKind {
     ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK,
     ShardMessageKind::STAT_TRANSIENT_FILE,
     ShardMessageKind::SET_DIRECTORY_INFO,
-    ShardMessageKind::EXPIRE_TRANSIENT_FILE,
     ShardMessageKind::VISIT_DIRECTORIES,
     ShardMessageKind::VISIT_FILES,
     ShardMessageKind::VISIT_TRANSIENT_FILES,
@@ -1859,42 +1859,6 @@ struct SetDirectoryInfoResp {
 
 std::ostream& operator<<(std::ostream& out, const SetDirectoryInfoResp& x);
 
-struct ExpireTransientFileReq {
-    InodeId id;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // id
-
-    ExpireTransientFileReq() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += 8; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ExpireTransientFileReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileReq& x);
-
-struct ExpireTransientFileResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    ExpireTransientFileResp() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ExpireTransientFileResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileResp& x);
-
 struct VisitDirectoriesReq {
     InodeId beginId;
     uint16_t mtu;
@@ -3450,7 +3414,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, ExpireTransientFileReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardReqContainer();
     ShardReqContainer(const ShardReqContainer& other);
@@ -3496,8 +3460,6 @@ public:
     StatTransientFileReq& setStatTransientFile();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
     SetDirectoryInfoReq& setSetDirectoryInfo();
-    const ExpireTransientFileReq& getExpireTransientFile() const;
-    ExpireTransientFileReq& setExpireTransientFile();
     const VisitDirectoriesReq& getVisitDirectories() const;
     VisitDirectoriesReq& setVisitDirectories();
     const VisitFilesReq& getVisitFiles() const;
@@ -3544,7 +3506,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, ExpireTransientFileResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardRespContainer();
     ShardRespContainer(const ShardRespContainer& other);
@@ -3590,8 +3552,6 @@ public:
     StatTransientFileResp& setStatTransientFile();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
     SetDirectoryInfoResp& setSetDirectoryInfo();
-    const ExpireTransientFileResp& getExpireTransientFile() const;
-    ExpireTransientFileResp& setExpireTransientFile();
     const VisitDirectoriesResp& getVisitDirectories() const;
     VisitDirectoriesResp& setVisitDirectories();
     const VisitFilesResp& getVisitFiles() const;
@@ -3819,9 +3779,8 @@ enum class ShardLogEntryKind : uint16_t {
     REMOVE_SPAN_CERTIFY = 21,
     REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 22,
     SWAP_BLOCKS = 23,
-    EXPIRE_TRANSIENT_FILE = 24,
-    MOVE_SPAN = 25,
-    SET_TIME = 26,
+    MOVE_SPAN = 24,
+    SET_TIME = 25,
 };
 
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
@@ -4381,25 +4340,6 @@ struct SwapBlocksEntry {
 
 std::ostream& operator<<(std::ostream& out, const SwapBlocksEntry& x);
 
-struct ExpireTransientFileEntry {
-    InodeId id;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // id
-
-    ExpireTransientFileEntry() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += 8; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ExpireTransientFileEntry&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ExpireTransientFileEntry& x);
-
 struct MoveSpanEntry {
     uint32_t spanSize;
     InodeId fileId1;
@@ -4457,7 +4397,7 @@ std::ostream& operator<<(std::ostream& out, const SetTimeEntry& x);
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, ExpireTransientFileEntry, MoveSpanEntry, SetTimeEntry> _data;
+    std::tuple<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry> _data;
 public:
     ShardLogEntryContainer();
     ShardLogEntryContainer(const ShardLogEntryContainer& other);
@@ -4511,8 +4451,6 @@ public:
     RemoveOwnedSnapshotFileEdgeEntry& setRemoveOwnedSnapshotFileEdge();
     const SwapBlocksEntry& getSwapBlocks() const;
     SwapBlocksEntry& setSwapBlocks();
-    const ExpireTransientFileEntry& getExpireTransientFile() const;
-    ExpireTransientFileEntry& setExpireTransientFile();
     const MoveSpanEntry& getMoveSpan() const;
     MoveSpanEntry& setMoveSpan();
     const SetTimeEntry& getSetTime() const;

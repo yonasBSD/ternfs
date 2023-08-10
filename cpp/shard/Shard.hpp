@@ -2,6 +2,7 @@
 
 #include "Msgs.hpp"
 #include "Env.hpp"
+#include "ShardDB.hpp"
 
 struct IpPort {
     uint32_t ip;
@@ -25,6 +26,7 @@ struct ShardOptions {
     bool syslog = false;
     bool xmon = false;
     bool metrics = false;
+    Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 };
 
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);

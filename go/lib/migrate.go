@@ -306,16 +306,6 @@ func startToKeepScratchFileAlive(
 			}()
 			select {
 			case <-stopHeartbeat:
-				// allow GC to immediately collect this, this is mostly useful for
-				// integration tests right now, since they check that everything
-				// has been cleaned up.
-				if scratchFile.id != msgs.NULL_INODE_ID {
-					log.Info("expiring scratch file %v", scratchFile.id)
-					req := msgs.ExpireTransientFileReq{Id: scratchFile.id}
-					if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.ExpireTransientFileResp{}); err != nil {
-						log.RaiseAlert("could not expire transient file %v: %w", scratchFile.id, err)
-					}
-				}
 				heartbeatStopped <- struct{}{}
 				return
 			case <-timerExpired:

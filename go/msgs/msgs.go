@@ -995,12 +995,6 @@ type BlockServiceFilesResp struct {
 	FileIds []InodeId
 }
 
-type ExpireTransientFileReq struct {
-	Id InodeId
-}
-
-type ExpireTransientFileResp struct{}
-
 // Moves a span (possibly dirty) from the end of a file onto another file
 // (last span must be clean). Useful to get rid of bad under construction spans.
 type MoveSpanReq struct {
@@ -1492,10 +1486,6 @@ type SwapBlocksEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	BlockId2    BlockId
-}
-
-type ExpireTransientFileEntry struct {
-	Id InodeId
 }
 
 type MoveSpanEntry struct {

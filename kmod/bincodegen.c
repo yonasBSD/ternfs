@@ -59,6 +59,7 @@ const char* eggsfs_err_str(int err) {
     case 66: return "BLOCK_NOT_FOUND";
     case 67: return "CANNOT_UNSET_DECOMMISSIONED";
     case 68: return "CANNOT_REGISTER_DECOMMISSIONED";
+    case 69: return "BLOCK_TOO_OLD_FOR_WRITE";
     default: return "UNKNOWN";
     }
 }

@@ -395,14 +395,14 @@ struct TempShardDB {
             throw SYSCALL_EXCEPTION("mkdtemp");
         }
         std::shared_ptr<XmonAgent> xmon;
-        db = std::make_unique<ShardDB>(logger, xmon, shid, dbDir);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, dbDir);
     }
 
     // useful to test recovery
     void restart() {
         db->close();
         std::shared_ptr<XmonAgent> xmon;
-        db = std::make_unique<ShardDB>(logger, xmon, shid, dbDir);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, dbDir);
     }
 
     ~TempShardDB() {

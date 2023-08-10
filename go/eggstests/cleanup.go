@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -46,8 +47,8 @@ func cleanupAfterTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	counters *lib.ClientCounters,
-	acceptGcFailures bool,
 ) {
+	cleanupStartedAt := time.Now()
 	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
@@ -56,18 +57,16 @@ func cleanupAfterTest(
 	defer client.Close()
 	// Delete all current things
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
-	// Collect everything -- this relies on the snapshot policy being immediate, which we do
-	// in eggstests.go
+	// Collect everything, making sure that all the deadlines will have passed
 	dirInfoCache := lib.NewDirInfoCache()
-	if err := lib.CollectDirectoriesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}, dirInfoCache); err != nil {
+	if err := lib.CollectDirectoriesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters, RetryOnDestructFailure: true}, dirInfoCache); err != nil {
 		panic(err)
 	}
-	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}); err != nil {
-		if acceptGcFailures {
-			log.Info("gc failed: %v, but acceptGcFailures is on, proceeding", err)
-		} else {
-			panic(err)
-		}
+	log.Info("waiting for transient deadlines to have passed")
+	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
+	log.Info("deadlines passed, collecting")
+	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters, RetryOnDestructFailure: true}); err != nil {
+		panic(err)
 	}
 	// Make sure nothing is left
 	for i := 0; i < 256; i++ {
@@ -102,13 +101,8 @@ func cleanupAfterTest(
 				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
 					panic(err)
 				}
-				// when we have genuine retries when writing to spans they are not expired at this point.
-				if statResp.Size > 0 && statResp.Note != "bad_add_span_attempt" {
-					if acceptGcFailures {
-						log.Info("unexpected non-empty transient file %+v, %+v after cleanup, acceptGcFailures is on, proceeding", file, statResp)
-					} else {
-						panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))
-					}
+				if statResp.Size > 0 {
+					panic(fmt.Errorf("unexpected non-empty transient file %+v, %+v after cleanup", file, statResp))
 				}
 			}
 			if visitTransientFilesResp.NextId == 0 {

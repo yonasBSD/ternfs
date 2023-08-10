@@ -1295,7 +1295,6 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
-			reflect.TypeOf(msgs.ExpireTransientFileEntry{}),
 			reflect.TypeOf(msgs.MoveSpanEntry{}),
 			reflect.TypeOf(msgs.SetTimeEntry{}),
 		},
@@ -1370,6 +1369,7 @@ func main() {
 		"BLOCK_NOT_FOUND",
 		"CANNOT_UNSET_DECOMMISSIONED",
 		"CANNOT_REGISTER_DECOMMISSIONED",
+		"BLOCK_TOO_OLD_FOR_WRITE",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1476,11 +1476,6 @@ func main() {
 			0x0D,
 			reflect.TypeOf(msgs.SetDirectoryInfoReq{}),
 			reflect.TypeOf(msgs.SetDirectoryInfoResp{}),
-		},
-		{
-			0x0F,
-			reflect.TypeOf(msgs.ExpireTransientFileReq{}),
-			reflect.TypeOf(msgs.ExpireTransientFileResp{}),
 		},
 		// PRIVATE OPERATIONS -- These are safe operations, but we don't want the FS client itself
 		// to perform them. TODO make privileged?

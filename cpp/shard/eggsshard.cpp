@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 
 #include "Exception.hpp"
 #include "Shard.hpp"
@@ -38,6 +39,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
+    fprintf(stderr, " -transient-deadline-interval\n");
+    fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -81,6 +84,23 @@ static uint16_t parsePort(const std::string& arg) {
         die("Bad port %s", arg.c_str());
     }
     return port;
+}
+
+const std::unordered_map<std::string, uint64_t> durationUnitMap = {
+	{"ns", 1ull},
+	{"us", 1'000ull},
+	{"µs", 1'000ull},  // U+00B5 = micro symbol
+	{"μs", 1'000ull},  // U+03BC = Greek letter mu
+	{"ms", 1'000'000ull},
+	{"s",  1'000'000'000ull},
+	{"m",  1'000'000'000ull*60},
+	{"h",  1'000'000'000ull*60*60},
+};
+
+static Duration parseDuration(const std::string& arg) {
+    size_t idx;
+    uint64_t x = std::stoull(arg, &idx);
+    return x * durationUnitMap.at(arg.substr(idx));
 }
 
 int main(int argc, char** argv) {
@@ -144,6 +164,8 @@ int main(int argc, char** argv) {
             options.xmon = true;
         } else if (arg == "-metrics") {
             options.metrics = true;
+        } else if (arg == "-transient-deadline-interval") {
+            options.transientDeadlineInterval = parseDuration(getNextArg());
         } else {
             args.emplace_back(std::move(arg));
         }

@@ -68,7 +68,6 @@ func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
 
 func runTest(
 	log *lib.Logger,
-	acceptGcFailures bool,
 	shuckleAddress string,
 	filter *regexp.Regexp,
 	name string,
@@ -100,7 +99,7 @@ func runTest(
 
 	counters = lib.NewClientCounters()
 	t0 = time.Now()
-	cleanupAfterTest(log, shuckleAddress, counters, acceptGcFailures)
+	cleanupAfterTest(log, shuckleAddress, counters)
 	elapsed = time.Since(t0)
 	totalShardRequests = totalRequests(counters.Shard)
 	totalCDCRequests = totalRequests(counters.CDC)
@@ -171,15 +170,14 @@ func (i *cfgOverrides) int(k string, def int) int {
 }
 
 type RunTests struct {
-	acceptGcFailures bool
-	overrides        *cfgOverrides
-	shuckleIp        string
-	shucklePort      uint16
-	mountPoint       string
-	fuseMountPoint   string
-	kmod             bool
-	short            bool
-	filter           *regexp.Regexp
+	overrides      *cfgOverrides
+	shuckleIp      string
+	shucklePort    uint16
+	mountPoint     string
+	fuseMountPoint string
+	kmod           bool
+	short          bool
+	filter         *regexp.Regexp
 }
 
 func (r *RunTests) run(
@@ -261,7 +259,6 @@ func (r *RunTests) run(
 	}
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"file history",
@@ -293,7 +290,6 @@ func (r *RunTests) run(
 
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"direct fs",
@@ -313,7 +309,7 @@ func (r *RunTests) run(
 			}
 			runTest(
 				log,
-				r.acceptGcFailures,
+
 				shuckleAddress,
 				r.filter,
 				"parallel readdir",
@@ -327,7 +323,6 @@ func (r *RunTests) run(
 
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"mounted fs",
@@ -359,7 +354,6 @@ func (r *RunTests) run(
 	}
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"large file",
@@ -380,7 +374,6 @@ func (r *RunTests) run(
 	}
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"rsync large",
@@ -401,7 +394,6 @@ func (r *RunTests) run(
 	}
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"rsync small",
@@ -413,7 +405,6 @@ func (r *RunTests) run(
 
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"cp",
@@ -461,7 +452,6 @@ func (r *RunTests) run(
 
 	runTest(
 		log,
-		r.acceptGcFailures,
 		shuckleAddress,
 		r.filter,
 		"utime",
@@ -558,7 +548,7 @@ func (bsv *blockServiceVictim) start(
 		FailureDomain:  bsv.failureDomain,
 		LogLevel:       log.Level(),
 		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
-		NoTimeCheck:    true,
+		FutureCutoff:   &testBlockFutureCutoff,
 		OwnIp1:         "127.0.0.1",
 		OwnIp2:         "127.0.0.1",
 		Profile:        profile,
@@ -643,6 +633,11 @@ func killBlockServices(
 		}
 	}()
 }
+
+// 0 interval won't do, because otherwise transient files will immediately be
+// expired and not picked.
+var testTransientDeadlineInterval = 10 * time.Second
+var testBlockFutureCutoff = testTransientDeadlineInterval / 2
 
 func main() {
 	overrides := make(cfgOverrides)
@@ -925,17 +920,18 @@ func main() {
 	for i := 0; i < numShards; i++ {
 		shid := msgs.ShardId(i)
 		shopts := managedprocess.ShardOpts{
-			Exe:                cppExes.ShardExe,
-			Dir:                path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			LogLevel:           level,
-			Shid:               shid,
-			Valgrind:           *buildType == "valgrind",
-			Perf:               *profile,
-			IncomingPacketDrop: *incomingPacketDrop,
-			OutgoingPacketDrop: *outgoingPacketDrop,
-			ShuckleAddress:     shuckleAddress,
-			OwnIp1:             "127.0.0.1",
-			OwnIp2:             "127.0.0.1",
+			Exe:                       cppExes.ShardExe,
+			Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+			LogLevel:                  level,
+			Shid:                      shid,
+			Valgrind:                  *buildType == "valgrind",
+			Perf:                      *profile,
+			IncomingPacketDrop:        *incomingPacketDrop,
+			OutgoingPacketDrop:        *outgoingPacketDrop,
+			ShuckleAddress:            shuckleAddress,
+			OwnIp1:                    "127.0.0.1",
+			OwnIp2:                    "127.0.0.1",
+			TransientDeadlineInterval: &testTransientDeadlineInterval,
 		}
 		procs.StartShard(log, *repoDir, &shopts)
 	}
@@ -987,18 +983,15 @@ func main() {
 
 	// start tests
 	go func() {
-		// if the block service killer is on, we just can't reliably GC,
-		// because some of the block services might be down.
 		r := RunTests{
-			acceptGcFailures: *blockServiceKiller,
-			overrides:        &overrides,
-			shuckleIp:        "127.0.0.1",
-			shucklePort:      shucklePort,
-			mountPoint:       mountPoint,
-			fuseMountPoint:   fuseMountPoint,
-			kmod:             *kmod,
-			short:            *short,
-			filter:           filterRe,
+			overrides:      &overrides,
+			shuckleIp:      "127.0.0.1",
+			shucklePort:    shucklePort,
+			mountPoint:     mountPoint,
+			fuseMountPoint: fuseMountPoint,
+			kmod:           *kmod,
+			short:          *short,
+			filter:         filterRe,
 		}
 		r.run(terminateChan, log)
 	}()

@@ -146,7 +146,6 @@ func main() {
 			FailureDomain:  fmt.Sprintf("%d", i),
 			LogLevel:       level,
 			ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
-			NoTimeCheck:    true,
 			OwnIp1:         "127.0.0.1",
 			OwnIp2:         "127.0.0.1",
 			Profile:        *profile,

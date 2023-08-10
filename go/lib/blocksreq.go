@@ -194,7 +194,7 @@ func WriteBlock(
 	if err != nil {
 		return proof, err
 	}
-	logger.Debug("got blocks response, starting to write data")
+	logger.Debug("sent block request, starting to write data")
 	lr := io.LimitedReader{
 		R: r,
 		N: int64(size),

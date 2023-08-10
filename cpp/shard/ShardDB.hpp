@@ -24,6 +24,8 @@ DirectoryInfo defaultDirectoryInfo();
 // 100MiB. Important to enforce this since we often need to fetch the span upfront.
 constexpr uint32_t MAXIMUM_SPAN_SIZE = 100 << 20;
 
+constexpr Duration DEFAULT_DEADLINE_INTERVAL = 2_hours;
+
 struct ShardDB {
 private:
     void* _impl;
@@ -32,7 +34,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const std::string& path);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path);
     ~ShardDB();
 
     // Stuff which might throw, and therefore not well suited to destructor.

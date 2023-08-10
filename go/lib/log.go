@@ -60,7 +60,7 @@ type Logger struct {
 	syslog    bool
 	xmon      *Xmon
 	mu        sync.Mutex
-	buf       *bytes.Buffer
+	bufPool   sync.Pool
 	out       io.Writer
 }
 
@@ -97,22 +97,23 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 		ce = "\x1b[0m"
 	}
 
-	log.mu.Lock()
-	defer log.mu.Unlock()
-
-	log.buf.Reset()
-
+	buf := log.bufPool.Get().(*bytes.Buffer)
 	if log.syslog {
-		fmt.Fprintf(log.buf, "<%d>", syslogPrio)
-		fmt.Fprintf(log.buf, format, v...)
-		fmt.Fprintln(log.buf)
+		fmt.Fprintf(buf, "<%d>", syslogPrio)
+		fmt.Fprintf(buf, format, v...)
+		fmt.Fprintln(buf)
 	} else {
-		fmt.Fprintf(log.buf, "%-26s %s:%d [%s%s%s] ", time.Format("2006-01-02T15:04:05.999999"), file, line, cs, level.String(), ce)
-		fmt.Fprintf(log.buf, format, v...)
-		fmt.Fprintln(log.buf)
+		fmt.Fprintf(buf, "%-26s %s:%d [%s%s%s] ", time.Format("2006-01-02T15:04:05.999999"), file, line, cs, level.String(), ce)
+		fmt.Fprintf(buf, format, v...)
+		fmt.Fprintln(buf)
 	}
 
-	log.out.Write(log.buf.Bytes())
+	log.mu.Lock()
+	log.out.Write(buf.Bytes())
+	log.mu.Unlock()
+
+	buf.Reset()
+	log.bufPool.Put(buf)
 }
 
 func NewLogger(
@@ -123,8 +124,12 @@ func NewLogger(
 		level:     options.Level,
 		hasColors: isTerminal(out),
 		syslog:    options.Syslog,
-		buf:       bytes.NewBuffer([]byte{}),
-		out:       out,
+		bufPool: sync.Pool{
+			New: func() any {
+				return bytes.NewBuffer([]byte{})
+			},
+		},
+		out: out,
 	}
 
 	if options.Xmon != "" {

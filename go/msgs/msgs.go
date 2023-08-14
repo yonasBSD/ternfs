@@ -551,6 +551,20 @@ type AddSpanInitiateResp struct {
 	Blocks []BlockInfo
 }
 
+// The only reason why this isn't the same as AddSpanInitiateReq is
+// that we added it after we had deployed many clients.
+type AddSpanInitiateWithReferenceReq struct {
+	Req AddSpanInitiateReq
+	// What inode to use to compute what block services to pick. If NULL, FileId
+	// will be used. This is useful when migrating or defragmenting, where we're
+	// adding a span to a file but we plan to merge it into another file.
+	Reference InodeId
+}
+
+type AddSpanInitiateWithReferenceResp struct {
+	Resp AddSpanInitiateResp
+}
+
 type BlockProof struct {
 	BlockId BlockId
 	Proof   [8]byte

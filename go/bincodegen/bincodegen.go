@@ -1519,6 +1519,11 @@ func main() {
 			reflect.TypeOf(msgs.RemoveInodeReq{}),
 			reflect.TypeOf(msgs.RemoveInodeResp{}),
 		},
+		{
+			0x7C,
+			reflect.TypeOf(msgs.AddSpanInitiateWithReferenceReq{}),
+			reflect.TypeOf(msgs.AddSpanInitiateWithReferenceResp{}),
+		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
 			0x80,

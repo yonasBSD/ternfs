@@ -360,6 +360,8 @@ func (k ShardMessageKind) String() string {
 		return "BLOCK_SERVICE_FILES"
 	case 122:
 		return "REMOVE_INODE"
+	case 124:
+		return "ADD_SPAN_INITIATE_WITH_REFERENCE"
 	case 128:
 		return "CREATE_DIRECTORY_INODE"
 	case 129:
@@ -410,6 +412,7 @@ const (
 	SWAP_BLOCKS ShardMessageKind = 0x78
 	BLOCK_SERVICE_FILES ShardMessageKind = 0x79
 	REMOVE_INODE ShardMessageKind = 0x7A
+	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -448,6 +451,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	SWAP_BLOCKS,
 	BLOCK_SERVICE_FILES,
 	REMOVE_INODE,
+	ADD_SPAN_INITIATE_WITH_REFERENCE,
 	CREATE_DIRECTORY_INODE,
 	SET_DIRECTORY_OWNER,
 	REMOVE_DIRECTORY_OWNER,
@@ -516,6 +520,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &BlockServiceFilesReq{}, &BlockServiceFilesResp{}, nil
 	case k == "REMOVE_INODE":
 		return &RemoveInodeReq{}, &RemoveInodeResp{}, nil
+	case k == "ADD_SPAN_INITIATE_WITH_REFERENCE":
+		return &AddSpanInitiateWithReferenceReq{}, &AddSpanInitiateWithReferenceResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
 		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
@@ -2339,6 +2345,48 @@ func (v *RemoveInodeResp) Pack(w io.Writer) error {
 }
 
 func (v *RemoveInodeResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *AddSpanInitiateWithReferenceReq) ShardRequestKind() ShardMessageKind {
+	return ADD_SPAN_INITIATE_WITH_REFERENCE
+}
+
+func (v *AddSpanInitiateWithReferenceReq) Pack(w io.Writer) error {
+	if err := v.Req.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Reference)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanInitiateWithReferenceReq) Unpack(r io.Reader) error {
+	if err := v.Req.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Reference)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanInitiateWithReferenceResp) ShardResponseKind() ShardMessageKind {
+	return ADD_SPAN_INITIATE_WITH_REFERENCE
+}
+
+func (v *AddSpanInitiateWithReferenceResp) Pack(w io.Writer) error {
+	if err := v.Resp.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanInitiateWithReferenceResp) Unpack(r io.Reader) error {
+	if err := v.Resp.Unpack(r); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -91,7 +91,7 @@ public:
     // not be necessary. If it is not, then it is certainly necessary.
     //
     // As usual, if an error is returned, the contents of `resp` should be ignored.
-    EggsError applyLogEntry(bool sync, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
+    EggsError applyLogEntry(bool sync, ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
 
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;

@@ -68,7 +68,7 @@ func cleanupAfterTest(
 	}
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
-	log.Info("all done, destructing files")
+	log.Info("deadlines passed, collecting")
 	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}); err != nil {
 		panic(err)
 	}

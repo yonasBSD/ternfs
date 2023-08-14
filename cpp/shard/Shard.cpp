@@ -52,16 +52,16 @@ public:
     }
 
 private:
-    EggsError _applyLogEntryLocked(const ShardLogEntry& logEntry, ShardRespContainer& resp) {
-        EggsError err = db.applyLogEntry(true, _currentLogIndex+1, logEntry, resp);
+    EggsError _applyLogEntryLocked(ShardMessageKind reqKind, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+        EggsError err = db.applyLogEntry(true, reqKind, _currentLogIndex+1, logEntry, resp);
         _currentLogIndex++;
         return err;
     }
 
 public:    
-    EggsError applyLogEntry(const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    EggsError applyLogEntry(ShardMessageKind reqKind, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         std::lock_guard<std::mutex> lock(_applyLock);
-        return _applyLogEntryLocked(logEntry, resp);
+        return _applyLogEntryLocked(reqKind, logEntry, resp);
     }
 
     EggsError prepareAndApplyLogEntry(ShardReqContainer& req, ShardLogEntry& logEntry, ShardRespContainer& resp) {
@@ -72,7 +72,7 @@ public:
         std::lock_guard<std::mutex> lock(_applyLock);
         EggsError err = db.prepareLogEntry(req, logEntry);
         if (err == NO_ERROR) {
-            err = _applyLogEntryLocked(logEntry, resp);
+            err = _applyLogEntryLocked(req.kind(), logEntry, resp);
         }
         return err;
     }
@@ -406,7 +406,7 @@ public:
         _env.clearAlert(_alert);
 
         {
-            EggsError err = _shared.applyLogEntry(_logEntry, _respContainer);
+            EggsError err = _shared.applyLogEntry((ShardMessageKind)0, _logEntry, _respContainer);
             if (err != NO_ERROR) {
                 RAISE_ALERT(_env, "unexpected failure when trying to update block services: %s", err);
                 return false;

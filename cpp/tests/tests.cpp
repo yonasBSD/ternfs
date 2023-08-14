@@ -446,7 +446,7 @@ TEST_CASE("touch file") {
         req.note = "test note";
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         constructTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ShardMessageKind::CONSTRUCT_FILE, ++logEntryIndex, *logEntry, *respContainer));
         auto& resp = respContainer->getConstructFile();
         id = resp.id;
         cookie = resp.cookie;
@@ -468,7 +468,7 @@ TEST_CASE("touch file") {
         req.name = name;
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         linkTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ShardMessageKind::LINK_FILE, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
         auto& req = reqContainer->setReadDir();
@@ -517,7 +517,7 @@ TEST_CASE("override") {
             req.type = (uint8_t)InodeType::FILE;
             req.note = "test note";
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ShardMessageKind::CONSTRUCT_FILE, ++logEntryIndex, *logEntry, *respContainer));
             auto& resp = respContainer->getConstructFile();
             id = resp.id;
             cookie = resp.cookie;
@@ -534,7 +534,7 @@ TEST_CASE("override") {
             req.ownerId = ROOT_DIR_INODE_ID;
             req.name = name;
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(true, ShardMessageKind::LINK_FILE, ++logEntryIndex, *logEntry, *respContainer));
             creationTime = respContainer->getLinkFile().creationTime;
         }
         return {id, creationTime};
@@ -551,7 +551,7 @@ TEST_CASE("override") {
         req.oldCreationTime = fooCreationTime;
         req.newName = "bar";
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(true, ShardMessageKind::SAME_DIRECTORY_RENAME, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
         auto& req = reqContainer->setFullReadDir();

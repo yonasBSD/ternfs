@@ -25,35 +25,6 @@ import (
 	"xtx/eggsfs/rs"
 )
 
-type scratchFile struct {
-	id     msgs.InodeId
-	cookie [8]byte
-	size   uint64
-}
-
-func ensureScratchFile(log *Logger, client *Client, shard msgs.ShardId, file *scratchFile) error {
-	if file.id != msgs.NULL_INODE_ID {
-		return nil
-	}
-	resp := msgs.ConstructFileResp{}
-	err := client.ShardRequest(
-		log,
-		shard,
-		&msgs.ConstructFileReq{
-			Type: msgs.FILE,
-			Note: "migrate",
-		},
-		&resp,
-	)
-	if err != nil {
-		return err
-	}
-	file.id = resp.Id
-	file.cookie = resp.Cookie
-	file.size = 0
-	return nil
-}
-
 func fetchBlock(
 	log *Logger,
 	client *Client,
@@ -96,7 +67,8 @@ func fetchBlock(
 func writeBlock(
 	log *Logger,
 	client *Client,
-	file *scratchFile,
+	scratch *scratchFile,
+	file msgs.InodeId,
 	blacklist []msgs.BlockServiceId,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
@@ -108,28 +80,31 @@ func writeBlock(
 		blacklistEntries[i].BlockService = blacklist[i]
 	}
 
-	initiateSpanReq := msgs.AddSpanInitiateReq{
-		FileId:       file.id,
-		Cookie:       file.cookie,
-		ByteOffset:   file.size,
-		Size:         blockSize,
-		Crc:          block.Crc,
-		StorageClass: storageClass,
-		Blacklist:    blacklistEntries,
-		Parity:       rs.MkParity(1, 0),
-		Stripes:      1,
-		CellSize:     blockSize,
-		Crcs:         []msgs.Crc{block.Crc},
+	initiateSpanReq := msgs.AddSpanInitiateWithReferenceReq{
+		Req: msgs.AddSpanInitiateReq{
+			FileId:       scratch.id,
+			Cookie:       scratch.cookie,
+			ByteOffset:   scratch.size,
+			Size:         blockSize,
+			Crc:          block.Crc,
+			StorageClass: storageClass,
+			Blacklist:    blacklistEntries,
+			Parity:       rs.MkParity(1, 0),
+			Stripes:      1,
+			CellSize:     blockSize,
+			Crcs:         []msgs.Crc{block.Crc},
+		},
+		Reference: file,
 	}
 
 	maxAttempts := 4 // 4 = block services we currently kill in testing
 	for attempt := 0; ; attempt++ {
 		var err error
-		initiateSpanResp := msgs.AddSpanInitiateResp{}
-		if err := client.ShardRequest(log, file.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
+		initiateSpanResp := msgs.AddSpanInitiateWithReferenceResp{}
+		if err := client.ShardRequest(log, scratch.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
 			return 0, err
 		}
-		dstBlock := &initiateSpanResp.Blocks[0]
+		dstBlock := &initiateSpanResp.Resp.Blocks[0]
 		var dstConn BlocksConn
 		certifySpanResp := msgs.AddSpanCertifyResp{}
 		var writeProof [8]byte
@@ -148,16 +123,16 @@ func writeBlock(
 		}
 		err = client.ShardRequest(
 			log,
-			file.id.Shard(),
+			scratch.id.Shard(),
 			&msgs.AddSpanCertifyReq{
-				FileId:     file.id,
-				Cookie:     file.cookie,
-				ByteOffset: file.size,
+				FileId:     scratch.id,
+				Cookie:     scratch.cookie,
+				ByteOffset: scratch.size,
 				Proofs:     []msgs.BlockProof{{BlockId: dstBlock.BlockId, Proof: writeProof}},
 			},
 			&certifySpanResp,
 		)
-		file.size += uint64(blockSize)
+		scratch.size += uint64(blockSize)
 		if err != nil {
 			return 0, err
 		}
@@ -170,19 +145,19 @@ func writeBlock(
 		err = nil
 		// create temp file, move the bad span there, then we can restart
 		constructResp := &msgs.ConstructFileResp{}
-		if err := client.ShardRequest(log, file.id.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE, Note: "bad_write_block_attempt"}, constructResp); err != nil {
+		if err := client.ShardRequest(log, scratch.id.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE, Note: "bad_write_block_attempt"}, constructResp); err != nil {
 			return 0, err
 		}
 		moveSpanReq := &msgs.MoveSpanReq{
-			FileId1:     file.id,
-			ByteOffset1: initiateSpanReq.ByteOffset,
-			Cookie1:     file.cookie,
+			FileId1:     scratch.id,
+			ByteOffset1: initiateSpanReq.Req.ByteOffset,
+			Cookie1:     scratch.cookie,
 			FileId2:     constructResp.Id,
 			ByteOffset2: 0,
 			Cookie2:     constructResp.Cookie,
 			SpanSize:    blockSize,
 		}
-		if err := client.ShardRequest(log, file.id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
+		if err := client.ShardRequest(log, scratch.id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
 			return 0, err
 		}
 
@@ -195,7 +170,8 @@ func copyBlock(
 	log *Logger,
 	client *Client,
 	bufPool *sync.Pool,
-	file *scratchFile,
+	scratch *scratchFile,
+	file msgs.InodeId,
 	blockServices []msgs.BlockService,
 	blacklist []msgs.BlockServiceId,
 	blockSize uint32,
@@ -208,7 +184,7 @@ func copyBlock(
 	if err := fetchBlock(log, client, blockServices, blockSize, block, buf); err != nil {
 		return 0, true, nil // might find other block services
 	}
-	blockId, err := writeBlock(log, client, file, blacklist, blockSize, storageClass, block, buf)
+	blockId, err := writeBlock(log, client, scratch, file, blacklist, blockSize, storageClass, block, buf)
 	return blockId, false, err
 }
 
@@ -266,61 +242,7 @@ func reconstructBlock(
 	wantBuf.Grow(int(blockSize))
 	wantBytes := wantBuf.Bytes()[:blockSize]
 	rs.RecoverInto(haveBlocksIxs, haveBlocks, uint8(blockToMigrateIx), wantBytes)
-	return writeBlock(log, client, scratchFile, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes))
-}
-
-type keepScratchFileAlive struct {
-	stopHeartbeat    chan struct{}
-	heartbeatStopped chan struct{}
-}
-
-func startToKeepScratchFileAlive(
-	log *Logger,
-	client *Client,
-	scratchFile *scratchFile,
-) keepScratchFileAlive {
-	stopHeartbeat := make(chan struct{})
-	heartbeatStopped := make(chan struct{})
-	timerExpired := make(chan struct{}, 1)
-	go func() {
-		for {
-			if scratchFile.id != msgs.NULL_INODE_ID {
-				// bump the deadline, makes sure the file stays alive for
-				// the duration of this function
-				log.Debug("bumping deadline for scratch file %v", scratchFile.id)
-				req := msgs.AddInlineSpanReq{
-					FileId:       scratchFile.id,
-					Cookie:       scratchFile.cookie,
-					StorageClass: msgs.EMPTY_STORAGE,
-				}
-				if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddInlineSpanResp{}); err != nil {
-					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %w", err)
-				}
-			}
-			go func() {
-				time.Sleep(time.Minute)
-				select {
-				case timerExpired <- struct{}{}:
-				default:
-				}
-			}()
-			select {
-			case <-stopHeartbeat:
-				heartbeatStopped <- struct{}{}
-				return
-			case <-timerExpired:
-			}
-		}
-	}()
-	return keepScratchFileAlive{
-		stopHeartbeat:    stopHeartbeat,
-		heartbeatStopped: heartbeatStopped,
-	}
-}
-
-func (k *keepScratchFileAlive) stop() {
-	k.stopHeartbeat <- struct{}{}
-	<-k.heartbeatStopped
+	return writeBlock(log, client, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes))
 }
 
 type timeStats struct {
@@ -435,7 +357,7 @@ func migrateBlocksInFileInternal(
 						}
 						var err error
 						var canRetry bool
-						newBlock, canRetry, err = copyBlock(log, client, bufPool, scratchFile, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
+						newBlock, canRetry, err = copyBlock(log, client, bufPool, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
 						if err != nil && !canRetry {
 							return err
 						}

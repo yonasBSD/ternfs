@@ -287,7 +287,7 @@ func (c *Client) metadataRequest(
 			// Check if it's an error or not. We only use debug here because some errors are legitimate
 			// responses (e.g. FILE_EMPTY)
 			if eggsError != nil {
-				log.Debug("got error %v for req %T id %v from shard %v (took %v)", *eggsError, req.body, req.requestId, shid, elapsed)
+				log.DebugStack(1, "got error %v for req %T id %v from shard %v (took %v)", *eggsError, req.body, req.requestId, shid, elapsed)
 				return *eggsError
 			}
 			log.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)

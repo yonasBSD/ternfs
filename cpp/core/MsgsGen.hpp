@@ -162,6 +162,7 @@ enum class ShardMessageKind : uint8_t {
     SWAP_BLOCKS = 120,
     BLOCK_SERVICE_FILES = 121,
     REMOVE_INODE = 122,
+    ADD_SPAN_INITIATE_WITH_REFERENCE = 124,
     CREATE_DIRECTORY_INODE = 128,
     SET_DIRECTORY_OWNER = 129,
     REMOVE_DIRECTORY_OWNER = 137,
@@ -200,6 +201,7 @@ const std::vector<ShardMessageKind> allShardMessageKind {
     ShardMessageKind::SWAP_BLOCKS,
     ShardMessageKind::BLOCK_SERVICE_FILES,
     ShardMessageKind::REMOVE_INODE,
+    ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE,
     ShardMessageKind::CREATE_DIRECTORY_INODE,
     ShardMessageKind::SET_DIRECTORY_OWNER,
     ShardMessageKind::REMOVE_DIRECTORY_OWNER,
@@ -2191,6 +2193,46 @@ struct RemoveInodeResp {
 
 std::ostream& operator<<(std::ostream& out, const RemoveInodeResp& x);
 
+struct AddSpanInitiateWithReferenceReq {
+    AddSpanInitiateReq req;
+    InodeId reference;
+
+    static constexpr uint16_t STATIC_SIZE = AddSpanInitiateReq::STATIC_SIZE + 8; // req + reference
+
+    AddSpanInitiateWithReferenceReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += req.packedSize(); // req
+        _size += 8; // reference
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AddSpanInitiateWithReferenceReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateWithReferenceReq& x);
+
+struct AddSpanInitiateWithReferenceResp {
+    AddSpanInitiateResp resp;
+
+    static constexpr uint16_t STATIC_SIZE = AddSpanInitiateResp::STATIC_SIZE; // resp
+
+    AddSpanInitiateWithReferenceResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += resp.packedSize(); // resp
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AddSpanInitiateWithReferenceResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateWithReferenceResp& x);
+
 struct CreateDirectoryInodeReq {
     InodeId id;
     InodeId ownerId;
@@ -3414,7 +3456,7 @@ std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::tuple<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, AddSpanInitiateWithReferenceReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardReqContainer();
     ShardReqContainer(const ShardReqContainer& other);
@@ -3476,6 +3518,8 @@ public:
     BlockServiceFilesReq& setBlockServiceFiles();
     const RemoveInodeReq& getRemoveInode() const;
     RemoveInodeReq& setRemoveInode();
+    const AddSpanInitiateWithReferenceReq& getAddSpanInitiateWithReference() const;
+    AddSpanInitiateWithReferenceReq& setAddSpanInitiateWithReference();
     const CreateDirectoryInodeReq& getCreateDirectoryInode() const;
     CreateDirectoryInodeReq& setCreateDirectoryInode();
     const SetDirectoryOwnerReq& getSetDirectoryOwner() const;
@@ -3506,7 +3550,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 struct ShardRespContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
-    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::tuple<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardRespContainer();
     ShardRespContainer(const ShardRespContainer& other);
@@ -3568,6 +3612,8 @@ public:
     BlockServiceFilesResp& setBlockServiceFiles();
     const RemoveInodeResp& getRemoveInode() const;
     RemoveInodeResp& setRemoveInode();
+    const AddSpanInitiateWithReferenceResp& getAddSpanInitiateWithReference() const;
+    AddSpanInitiateWithReferenceResp& setAddSpanInitiateWithReference();
     const CreateDirectoryInodeResp& getCreateDirectoryInode() const;
     CreateDirectoryInodeResp& setCreateDirectoryInode();
     const SetDirectoryOwnerResp& getSetDirectoryOwner() const;

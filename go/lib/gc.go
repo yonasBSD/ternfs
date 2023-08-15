@@ -37,6 +37,7 @@ type DestructionStats struct {
 	DestructedFiles  uint64
 	DestructedSpans  uint64
 	DestructedBlocks uint64
+	FailedFiles      uint64
 }
 
 func DestructFile(
@@ -133,6 +134,7 @@ func destructFilesInternal(
 			if !retryOnFailure {
 				if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 					log.RaiseAlert("%+v: error while destructing file: %v", file, err)
+					stats.FailedFiles++
 					someErrored = true
 				}
 			} else {
@@ -202,11 +204,17 @@ func DestructFilesInAllShards(
 	}
 	defer client.Close()
 	stats := DestructionStats{}
+	someErrored := false
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
-			return err
+			// `destructFilesInternal` itself raises an alert, no need to raise two.
+			log.Info("destructing files in shard %v failed: %v", shid, err)
+			someErrored = true
 		}
+	}
+	if someErrored {
+		return fmt.Errorf("failed to destruct %v files, see logs", stats.FailedFiles)
 	}
 	log.Info("stats after one destruct files iteration in all shards: %+v", stats)
 	return nil

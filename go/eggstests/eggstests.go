@@ -66,15 +66,29 @@ func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
 	return total
 }
 
-func runTest(
+type RunTests struct {
+	overrides             *cfgOverrides
+	shuckleIp             string
+	shucklePort           uint16
+	mountPoint            string
+	fuseMountPoint        string
+	kmod                  bool
+	short                 bool
+	filter                *regexp.Regexp
+	hasBlockServiceKiller bool
+}
+
+func (r *RunTests) shuckleAddress() string {
+	return fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
+}
+
+func (r *RunTests) test(
 	log *lib.Logger,
-	shuckleAddress string,
-	filter *regexp.Regexp,
 	name string,
 	extra string,
 	run func(counters *lib.ClientCounters),
 ) {
-	if !filter.Match([]byte(name)) {
+	if !r.filter.Match([]byte(name)) {
 		fmt.Printf("skipping test %s\n", name)
 		return
 	}
@@ -99,7 +113,7 @@ func runTest(
 
 	counters = lib.NewClientCounters()
 	t0 = time.Now()
-	cleanupAfterTest(log, shuckleAddress, counters)
+	cleanupAfterTest(log, r.shuckleAddress(), counters, r.hasBlockServiceKiller)
 	elapsed = time.Since(t0)
 	totalShardRequests = totalRequests(counters.Shard)
 	totalCDCRequests = totalRequests(counters.CDC)
@@ -169,24 +183,12 @@ func (i *cfgOverrides) int(k string, def int) int {
 	return n
 }
 
-type RunTests struct {
-	overrides      *cfgOverrides
-	shuckleIp      string
-	shucklePort    uint16
-	mountPoint     string
-	fuseMountPoint string
-	kmod           bool
-	short          bool
-	filter         *regexp.Regexp
-}
-
 func (r *RunTests) run(
 	terminateChan chan any,
 	log *lib.Logger,
 ) {
-	shuckleAddress := fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+	client, err := lib.NewClient(log, nil, r.shuckleAddress(), 1)
 	if err != nil {
 		panic(err)
 	}
@@ -257,14 +259,12 @@ func (r *RunTests) run(
 		fileHistoryOpts.lowFiles = 50
 		fileHistoryOpts.steps = r.overrides.int("fileHistory.steps", 1000)
 	}
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(counters *lib.ClientCounters) {
-			fileHistoryTest(log, shuckleAddress, &fileHistoryOpts, counters)
+			fileHistoryTest(log, r.shuckleAddress(), &fileHistoryOpts, counters)
 		},
 	)
 
@@ -288,14 +288,12 @@ func (r *RunTests) run(
 		fsTestOpts.inlineFileProb = 0.3
 	}
 
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, "")
+			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, "")
 		},
 	)
 
@@ -307,7 +305,7 @@ func (r *RunTests) run(
 				loops:       1000,
 				threads:     10,
 			}
-			runTest(
+			r.test(
 				log,
 
 				shuckleAddress,
@@ -321,14 +319,12 @@ func (r *RunTests) run(
 		}
 	*/
 
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *lib.ClientCounters) {
-			fsTest(log, shuckleAddress, &fsTestOpts, counters, r.mountPoint)
+			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, r.mountPoint)
 		},
 	)
 
@@ -352,10 +348,8 @@ func (r *RunTests) run(
 	largeFileOpts := largeFileTestOpts{
 		fileSize: 1 << 30, // 1GiB
 	}
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"large file",
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
 		func(counters *lib.ClientCounters) {
@@ -372,10 +366,8 @@ func (r *RunTests) run(
 		rsyncOpts.numFiles = 10
 		rsyncOpts.numDirs = 1
 	}
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"rsync large",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
@@ -392,10 +384,8 @@ func (r *RunTests) run(
 		rsyncOpts.numFiles /= 10
 		rsyncOpts.numDirs /= 10
 	}
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"rsync small",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
 		func(counters *lib.ClientCounters) {
@@ -403,10 +393,8 @@ func (r *RunTests) run(
 		},
 	)
 
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"cp",
 		"",
 		func(counters *lib.ClientCounters) {
@@ -450,10 +438,8 @@ func (r *RunTests) run(
 		},
 	)
 
-	runTest(
+	r.test(
 		log,
-		shuckleAddress,
-		r.filter,
 		"utime",
 		"",
 		func(counters *lib.ClientCounters) {
@@ -984,14 +970,15 @@ func main() {
 	// start tests
 	go func() {
 		r := RunTests{
-			overrides:      &overrides,
-			shuckleIp:      "127.0.0.1",
-			shucklePort:    shucklePort,
-			mountPoint:     mountPoint,
-			fuseMountPoint: fuseMountPoint,
-			kmod:           *kmod,
-			short:          *short,
-			filter:         filterRe,
+			overrides:             &overrides,
+			shuckleIp:             "127.0.0.1",
+			shucklePort:           shucklePort,
+			mountPoint:            mountPoint,
+			fuseMountPoint:        fuseMountPoint,
+			kmod:                  *kmod,
+			short:                 *short,
+			filter:                filterRe,
+			hasBlockServiceKiller: *blockServiceKiller,
 		}
 		r.run(terminateChan, log)
 	}()

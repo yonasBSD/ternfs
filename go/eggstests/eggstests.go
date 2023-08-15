@@ -14,6 +14,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
@@ -67,15 +68,15 @@ func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
 }
 
 type RunTests struct {
-	overrides             *cfgOverrides
-	shuckleIp             string
-	shucklePort           uint16
-	mountPoint            string
-	fuseMountPoint        string
-	kmod                  bool
-	short                 bool
-	filter                *regexp.Regexp
-	hasBlockServiceKiller bool
+	overrides               *cfgOverrides
+	shuckleIp               string
+	shucklePort             uint16
+	mountPoint              string
+	fuseMountPoint          string
+	kmod                    bool
+	short                   bool
+	filter                  *regexp.Regexp
+	pauseBlockServiceKiller *sync.Mutex
 }
 
 func (r *RunTests) shuckleAddress() string {
@@ -113,7 +114,7 @@ func (r *RunTests) test(
 
 	counters = lib.NewClientCounters()
 	t0 = time.Now()
-	cleanupAfterTest(log, r.shuckleAddress(), counters, r.hasBlockServiceKiller)
+	cleanupAfterTest(log, r.shuckleAddress(), counters, r.pauseBlockServiceKiller)
 	elapsed = time.Since(t0)
 	totalShardRequests = totalRequests(counters.Shard)
 	totalCDCRequests = totalRequests(counters.CDC)
@@ -547,6 +548,7 @@ func killBlockServices(
 	log *lib.Logger,
 	terminateChan chan any,
 	stopChan chan struct{},
+	pause *sync.Mutex,
 	blocksExe string,
 	shucklePort uint16,
 	profile bool,
@@ -568,6 +570,7 @@ func killBlockServices(
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		for {
 			// pick and kill the victim
+			pause.Lock()
 			var victim blockServiceVictim
 			{
 				ix := int(rand.Uint64()) % len(bsProcs)
@@ -584,6 +587,7 @@ func killBlockServices(
 					j++
 				}
 			}
+			pause.Unlock()
 			// wait
 			sleepChan := make(chan struct{}, 1)
 			go func() {
@@ -927,10 +931,11 @@ func main() {
 	lib.WaitForClient(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
 
 	var stopBlockServiceKiller chan struct{}
+	var pauseBlockServiceKiller sync.Mutex
 	if *blockServiceKiller {
 		fmt.Printf("will kill block services\n")
 		stopBlockServiceKiller = make(chan struct{}, 1)
-		killBlockServices(log, terminateChan, stopBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
+		killBlockServices(log, terminateChan, stopBlockServiceKiller, &pauseBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
 		// stop before trying to clean up data dir etc.
 		defer func() {
 			stopBlockServiceKiller <- struct{}{}
@@ -970,15 +975,15 @@ func main() {
 	// start tests
 	go func() {
 		r := RunTests{
-			overrides:             &overrides,
-			shuckleIp:             "127.0.0.1",
-			shucklePort:           shucklePort,
-			mountPoint:            mountPoint,
-			fuseMountPoint:        fuseMountPoint,
-			kmod:                  *kmod,
-			short:                 *short,
-			filter:                filterRe,
-			hasBlockServiceKiller: *blockServiceKiller,
+			overrides:               &overrides,
+			shuckleIp:               "127.0.0.1",
+			shucklePort:             shucklePort,
+			mountPoint:              mountPoint,
+			fuseMountPoint:          fuseMountPoint,
+			kmod:                    *kmod,
+			short:                   *short,
+			filter:                  filterRe,
+			pauseBlockServiceKiller: &pauseBlockServiceKiller,
 		}
 		r.run(terminateChan, log)
 	}()

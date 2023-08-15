@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -47,8 +48,11 @@ func cleanupAfterTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	counters *lib.ClientCounters,
-	hasBlockServiceKiller bool,
+	pauseBlockServiceKiller *sync.Mutex,
 ) {
+	pauseBlockServiceKiller.Lock()
+	defer pauseBlockServiceKiller.Unlock() // otherwise we won't be able to collect
+	cleanupStartedAt := time.Now()
 	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
 	if err != nil {
 		panic(err)
@@ -62,26 +66,11 @@ func cleanupAfterTest(
 	if err := lib.CollectDirectoriesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}, dirInfoCache); err != nil {
 		panic(err)
 	}
-	maxFailedDestructAttempts := 1
-	maxFailedDestructAttemptsWait := 10 * time.Minute
-	maxFailedDestructAttemptsDelay := time.Second
-	if hasBlockServiceKiller {
-		maxFailedDestructAttempts = int(maxFailedDestructAttemptsWait / maxFailedDestructAttemptsDelay)
-	}
-	destructAttempts := 0
-	for {
-		// destruct everything repeatedly, we might fail to do so because of the block service killer
-		err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters})
-		if err == nil {
-			break
-		}
-		destructAttempts++
-		if destructAttempts > maxFailedDestructAttempts {
-			panic(fmt.Errorf("could not destruct files after %v attempts: %v", destructAttempts, err))
-		} else {
-			log.Info("failed to destruct after %v attempts, will try again: %v", destructAttempts, err)
-		}
-		time.Sleep(maxFailedDestructAttemptsDelay)
+	log.Info("waiting for transient deadlines to have passed")
+	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
+	log.Info("all done, destructing files")
+	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}); err != nil {
+		panic(err)
 	}
 	// Make sure nothing is left after collection
 	for i := 0; i < 256; i++ {

@@ -91,7 +91,7 @@
 //     - Unordered traversal for garbage collection
 //     - InodeId (8 bytes): DirectoryBody (18-273 bytes)
 //     - Unclear how many directories we have, but it's probably going to have a few order of magnitude less
-//         than files, e.g. 1e8 directories / 256 shards * 200 bytes = ~80MiB, tiny dataset.
+//         than files, e.g. 10e9 directories / 256 shards * 200 bytes = ~7GiB, relatively small dataset.
 //
 // * Edges:
 //     - Lots of range queries

@@ -46,127 +46,115 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-type fileSizesReq struct {
-	id   msgs.InodeId
-	path string
-}
-
-type fileSizesEnv struct {
-	wg            sync.WaitGroup
-	chans         []chan fileSizesReq
-	examinedDirs  uint64
-	examinedFiles uint64
-}
-
-func (env *fileSizesEnv) sendReq(log *lib.Logger, req *fileSizesReq) {
-	env.wg.Add(1)
-	env.chans[req.id.Shard()] <- *req
-	if req.id.Type() == msgs.DIRECTORY {
-		if atomic.AddUint64(&env.examinedDirs, 1)%1000000 == 0 {
-			log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
-		}
-	} else {
-		if atomic.AddUint64(&env.examinedFiles, 1)%1000000 == 0 {
-			log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
-		}
-	}
-}
-
-func (env *fileSizesEnv) dir(log *lib.Logger, client *lib.Client, id msgs.InodeId, path string) {
-	readReq := &msgs.ReadDirReq{
-		DirId: id,
-	}
-	readResp := &msgs.ReadDirResp{}
-	for {
-		if err := client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
-			log.ErrorNoAlert("failed to read dir %v: %v", id, err)
-			return
-		}
-		for _, e := range readResp.Results {
-			newPath := path + "/" + e.Name
-			if e.TargetId.Shard() != id.Shard() {
-				env.sendReq(log, &fileSizesReq{
-					id:   e.TargetId,
-					path: newPath,
-				})
-			} else {
-				if e.TargetId.Type() == msgs.DIRECTORY {
-					env.dir(log, client, e.TargetId, newPath)
-				} else {
-					env.file(log, client, e.TargetId, newPath)
-				}
-			}
-		}
-		if readResp.NextHash == 0 {
-			break
-		}
-		readReq.StartHash = readResp.NextHash
-	}
-}
-
-func (env *fileSizesEnv) file(log *lib.Logger, client *lib.Client, id msgs.InodeId, path string) {
-	logicalSize := uint64(0)
-	physicalSize := uint64(0)
-	spansReq := &msgs.FileSpansReq{
-		FileId: id,
-	}
-	spansResp := &msgs.FileSpansResp{}
-	for {
-		if err := client.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
-			log.ErrorNoAlert("could not read spans for %v: %v", id, err)
-			return
-		}
-		for _, s := range spansResp.Spans {
-			logicalSize += uint64(s.Header.Size)
-			if s.Header.StorageClass != msgs.INLINE_STORAGE {
-				body := s.Body.(*msgs.FetchedBlocksSpan)
-				physicalSize += uint64(body.CellSize) * uint64(body.Parity.Blocks()) * uint64(body.Stripes)
-			}
-		}
-		if spansResp.NextOffset == 0 {
-			break
-		}
-		spansReq.ByteOffset = spansResp.NextOffset
-	}
-	fmt.Printf("%v,%q,%v,%v\n", id, path, logicalSize, physicalSize)
-}
-
-func outputFileSizes(log *lib.Logger, shuckleAddress string) {
-	// never timeout
-	timeout := lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter)
+func outputFullFileSizes(log *lib.Logger, shuckleAddress string) {
 	// max mtu
 	lib.SetMTU(msgs.MAX_UDP_MTU)
-	// compute
-	env := fileSizesEnv{
-		chans: make([]chan fileSizesReq, 256),
+	var examinedDirs uint64
+	var examinedFiles uint64
+	err := lib.Parwalk(
+		log,
+		shuckleAddress,
+		func(client *lib.Client, parent msgs.InodeId, id msgs.InodeId, path string) error {
+			if id.Type() == msgs.DIRECTORY {
+				if atomic.AddUint64(&examinedDirs, 1)%1000000 == 0 {
+					log.Info("examined %v dirs, %v files", examinedDirs, examinedFiles)
+				}
+			} else {
+				if atomic.AddUint64(&examinedFiles, 1)%1000000 == 0 {
+					log.Info("examined %v dirs, %v files", examinedDirs, examinedFiles)
+				}
+			}
+
+			if id.Type() == msgs.DIRECTORY {
+				return nil
+			}
+
+			logicalSize := uint64(0)
+			physicalSize := uint64(0)
+			spansReq := &msgs.FileSpansReq{
+				FileId: id,
+			}
+			spansResp := &msgs.FileSpansResp{}
+			for {
+				if err := client.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
+					log.ErrorNoAlert("could not read spans for %v: %v", id, err)
+					return err
+				}
+				for _, s := range spansResp.Spans {
+					logicalSize += uint64(s.Header.Size)
+					if s.Header.StorageClass != msgs.INLINE_STORAGE {
+						body := s.Body.(*msgs.FetchedBlocksSpan)
+						physicalSize += uint64(body.CellSize) * uint64(body.Parity.Blocks()) * uint64(body.Stripes)
+					}
+				}
+				if spansResp.NextOffset == 0 {
+					break
+				}
+				spansReq.ByteOffset = spansResp.NextOffset
+			}
+			fmt.Printf("%v,%q,%v,%v\n", id, path, logicalSize, physicalSize)
+			return nil
+		},
+	)
+	if err != nil {
+		panic(err)
 	}
+}
+
+func outputBriefFileSizes(log *lib.Logger, shuckleAddress string) {
+	// max mtu
+	lib.SetMTU(msgs.MAX_UDP_MTU)
+	// histogram
+	histoBins := 256
+	histo := lib.NewHistogram(histoBins, 1024, 1.1)
+	var histoSizes [256][]uint64
+	var wg sync.WaitGroup
+	wg.Add(256)
 	for i := 0; i < 256; i++ {
-		env.chans[i] = make(chan fileSizesReq, 100000)
-	}
-	for i := 0; i < 256; i++ {
-		ch := env.chans[i]
-		client, err := lib.NewClient(log, timeout, shuckleAddress, 1)
+		shid := msgs.ShardId(i)
+		client, err := lib.NewClient(log, nil, shuckleAddress, 1)
 		if err != nil {
 			panic(err)
 		}
+		histoSizes[i] = make([]uint64, histoBins)
 		go func() {
+			filesReq := msgs.VisitFilesReq{}
+			filesResp := msgs.VisitFilesResp{}
 			for {
-				req := <-ch
-				if req.id.Type() == msgs.DIRECTORY {
-					env.dir(log, client, req.id, req.path)
-				} else {
-					env.file(log, client, req.id, req.path)
+				if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+					log.ErrorNoAlert("could not get files in shard %v: %v, terminating this shard, results will be incomplete", shid, err)
+					return
 				}
-				env.wg.Done()
+				for _, file := range filesResp.Ids {
+					statResp := msgs.StatFileResp{}
+					if err := client.ShardRequest(log, shid, &msgs.StatFileReq{Id: file}, &statResp); err != nil {
+						log.ErrorNoAlert("could not stat file %v in shard %v: %v, results will be incomplete", file, shid, err)
+						continue
+					}
+					bin := histo.WhichBin(statResp.Size)
+					histoSizes[shid][bin] += statResp.Size
+				}
+				log.Info("finished with shard %v", shid)
+				break
+				/*
+					if filesResp.NextId == msgs.NULL_INODE_ID {
+							log.Info("finished with shard %v", shid)
+							break
+						}
+						filesReq.BeginId = filesResp.NextId
+				*/
 			}
+			wg.Done()
 		}()
 	}
-	env.sendReq(log, &fileSizesReq{
-		id:   msgs.ROOT_DIR_INODE_ID,
-		path: "",
-	})
-	env.wg.Wait()
-	log.Info("examined %v dirs, %v files", env.examinedDirs, env.examinedFiles)
+	wg.Wait()
+	for i, upperBound := range histo.Bins() {
+		size := uint64(0)
+		for j := 0; j < 256; j++ {
+			size += histoSizes[j][i]
+		}
+		fmt.Printf("%v,%v\n", upperBound, size)
+	}
 }
 
 func main() {
@@ -622,7 +610,14 @@ func main() {
 	}
 
 	fileSizesCmd := flag.NewFlagSet("file-sizes", flag.ExitOnError)
-	fileSizesRun := func() { outputFileSizes(log, *shuckleAddress) }
+	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
+	fileSizesRun := func() {
+		if *fileSizesBrief {
+			outputBriefFileSizes(log, *shuckleAddress)
+		} else {
+			outputFullFileSizes(log, *shuckleAddress)
+		}
+	}
 	commands["file-sizes"] = commandSpec{
 		flags: fileSizesCmd,
 		run:   fileSizesRun,

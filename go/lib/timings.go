@@ -4,18 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/msgs"
 )
 
-type Histogram struct {
-	// parameters
-	growth              float64 // the growth factor for each histogram bin, must be > 1
-	invLogGrowth        float64 // 1/ln(factor)
-	firstUpperBound     uint64  // the upper bound of the first bin of the histogram
-	growthDivUpperBound float64 // growth/firstUpperBound
+type Timings struct {
+	histo Histogram
 	// Actual data
 	startedAt time.Time
 	bins      []uint64
@@ -26,68 +21,45 @@ type HistogramBin struct {
 	Count      uint64
 }
 
-func (t *Histogram) Histogram() []HistogramBin {
+func (t *Timings) Histogram() []HistogramBin {
 	bins := make([]HistogramBin, len(t.bins))
-	upperBound := float64(t.firstUpperBound)
-	for i := 0; i < len(t.bins); i++ {
+	for i, upperBound := range t.histo.Bins() {
 		bins[i].Count = t.bins[i]
 		bins[i].UpperBound = time.Duration(upperBound)
-		upperBound *= t.growth
 	}
 	return bins
 }
 
-func HewHistogram(bins int, firstUpperBound time.Duration, growth float64) *Histogram {
-	if bins < 1 {
-		panic(fmt.Errorf("non-positive bins %d", bins))
-	}
+func NewTimings(bins int, firstUpperBound time.Duration, growth float64) *Timings {
 	if firstUpperBound < 1 {
 		panic(fmt.Errorf("non-positive first upper bound %d", firstUpperBound))
 	}
-	if growth <= 1.0 {
-		panic(fmt.Errorf("growth %v <= 1.0", growth))
-	}
-	timings := Histogram{
-		bins:                make([]uint64, bins),
-		growth:              growth,
-		invLogGrowth:        1.0 / math.Log(growth),
-		firstUpperBound:     uint64(firstUpperBound.Nanoseconds()),
-		growthDivUpperBound: growth / float64(firstUpperBound.Nanoseconds()),
+	timings := Timings{
+		bins:  make([]uint64, bins),
+		histo: *NewHistogram(bins, uint64(firstUpperBound), growth),
 	}
 	timings.Reset()
 	return &timings
 }
 
-func (t *Histogram) Reset() {
+func (t *Timings) Reset() {
 	for i := range t.bins {
 		atomic.StoreUint64(&t.bins[i], 0)
 	}
 	t.startedAt = time.Now()
 }
 
-func (t *Histogram) Add(d time.Duration) {
+func (t *Timings) Add(d time.Duration) {
 	inanos := d.Nanoseconds()
 	if inanos < 0 {
 		return
 	}
-	nanos := uint64(inanos)
-	{
-		// bin = floor(log_growth(t*growth/firstUpperBound))
-		//     = floor(log(t*growthDivUpperBound) * invLogGrowth)
-		bin := int(math.Log(float64(nanos)*t.growthDivUpperBound) * t.invLogGrowth)
-		if bin < 0 {
-			bin = 0
-		}
-		if bin >= len(t.bins) {
-			bin = len(t.bins) - 1
-		}
-		atomic.AddUint64(&t.bins[bin], 1)
-	}
+	atomic.AddUint64(&t.bins[t.histo.WhichBin(uint64(d))], 1)
 }
 
 // In these aggregates we're conservative (pick the upper bound)
 
-func (t *Histogram) TotalTime() time.Duration {
+func (t *Timings) TotalTime() time.Duration {
 	d := time.Duration(0)
 	for _, bin := range t.Histogram() {
 		d += bin.UpperBound * time.Duration(bin.Count)
@@ -95,7 +67,7 @@ func (t *Histogram) TotalTime() time.Duration {
 	return d
 }
 
-func (t *Histogram) Count() uint64 {
+func (t *Timings) Count() uint64 {
 	x := uint64(0)
 	for _, bin := range t.Histogram() {
 		x += bin.Count
@@ -103,7 +75,7 @@ func (t *Histogram) Count() uint64 {
 	return x
 }
 
-func (t *Histogram) Mean() time.Duration {
+func (t *Timings) Mean() time.Duration {
 	bins := t.Histogram()
 	totalCount := uint64(0)
 	for _, bin := range bins {
@@ -116,7 +88,7 @@ func (t *Histogram) Mean() time.Duration {
 	return time.Duration(x)
 }
 
-func (t *Histogram) Median() time.Duration {
+func (t *Timings) Median() time.Duration {
 	bins := t.Histogram()
 	totalCount := uint64(0)
 	for _, bin := range bins {
@@ -132,7 +104,7 @@ func (t *Histogram) Median() time.Duration {
 	panic("impossible")
 }
 
-func (t *Histogram) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
+func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
 	stats := make([]msgs.Stat, 0, 1)
 	// hist
 	hist := t.Histogram()
@@ -153,7 +125,7 @@ func (t *Histogram) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
 func TimingsToStats[K interface {
 	~uint8
 	fmt.Stringer
-}](prefix string, timings map[K]*Histogram) []msgs.Stat {
+}](prefix string, timings map[K]*Timings) []msgs.Stat {
 	stats := make([]msgs.Stat, 0, len(timings)*2) // count, histogram
 	now := msgs.Now()
 	for k, t := range timings {

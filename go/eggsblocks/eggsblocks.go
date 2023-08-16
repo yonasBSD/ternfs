@@ -7,6 +7,7 @@ import (
 	crand "crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -374,12 +375,6 @@ func writeBlock(
 	return nil
 }
 
-func consumeBlock(size uint32, conn *net.TCPConn) error {
-	lr := io.LimitReader(conn, int64(size))
-	_, err := io.Copy(io.Discard, lr)
-	return err
-}
-
 func testWrite(
 	log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
 ) error {
@@ -403,41 +398,54 @@ const MAX_OBJECT_SIZE uint32 = 100 << 20
 func handleRequestError(
 	log *lib.Logger,
 	conn *net.TCPConn,
+	lastError *error,
 	req msgs.BlocksMessageKind,
 	err error,
 ) bool {
+	defer func() {
+		*lastError = err
+	}()
+
 	if err == io.EOF {
 		log.Debug("got EOF, terminating")
 		return false
 	}
 
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+	rootErr := err
+	for {
+		unwrapped := errors.Unwrap(rootErr)
+		if unwrapped == nil {
+			break
+		}
+		rootErr = unwrapped
+	}
+
+	if netErr, ok := rootErr.(net.Error); ok && netErr.Timeout() {
 		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
 		return false
 	}
-
-	if opErr, ok := err.(*net.OpError); ok {
-		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-			if sysErr.Err == syscall.EPIPE {
-				log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
-				return false
-			}
-			if sysErr.Err == syscall.ECONNRESET {
-				log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
-				return false
-			}
+	if sysErr, ok := rootErr.(syscall.Errno); ok {
+		if sysErr == syscall.EPIPE {
+			log.Info("got broken pipe error from %v, terminating", conn.RemoteAddr())
+			return false
+		}
+		if sysErr == syscall.ECONNRESET {
+			log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
+			return false
 		}
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v", err, conn.RemoteAddr(), req)
+	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v, previous error %v", err, conn.RemoteAddr(), req, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
-		// For failed write requests we terminate, since the block will still
-		// go down the pipe. We either need to consume it anyway, or kill the
-		// connection, and we choose the latter to minimize wasted traffic.
-		return req != msgs.WRITE_BLOCK && req != msgs.TEST_WRITE
+		// Always terminate connections for now as I debug
+		// <internal-repo/issues/45>
+		// Eventually we probably want a whitelist here of req +
+		// error combinations that we know are fine. Some errors
+		// will never be fined, e.g. MALFORMED_REQUEST.
+		return false
 	} else {
 		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
@@ -454,6 +462,7 @@ func handleSingleRequest(
 	log *lib.Logger,
 	env *env,
 	terminateChan chan any,
+	lastError *error,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
@@ -465,7 +474,7 @@ func handleSingleRequest(
 	}
 	blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 	if err != nil {
-		return handleRequestError(log, conn, 0, err)
+		return handleRequestError(log, conn, lastError, 0, err)
 	}
 	kind := req.BlocksRequestKind()
 	log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
@@ -494,7 +503,7 @@ func handleSingleRequest(
 				}
 				if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-					return handleRequestError(log, conn, kind, err)
+					return handleRequestError(log, conn, lastError, kind, err)
 				}
 				atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 				return true
@@ -503,21 +512,21 @@ func handleSingleRequest(
 		// In general, refuse to service requests for block services that we
 		// don't have.
 		log.RaiseAlert("received unknown block service id %v", blockServiceId)
-		return handleRequestError(log, conn, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
+		return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
 	}
 	switch whichReq := req.(type) {
 	case *msgs.EraseBlockReq:
 		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != nil {
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 		cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
 		now := time.Now()
 		if now.Before(cutoffTime) {
 			log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
-			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 		}
 		if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 
 		resp := msgs.EraseBlockResp{
@@ -525,12 +534,12 @@ func handleSingleRequest(
 		}
 		if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 	case *msgs.FetchBlockReq:
 		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 	case *msgs.WriteBlockReq:
 		pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
@@ -541,26 +550,26 @@ func handleSingleRequest(
 		}
 		if now.After(futureCutoffTime) {
 			log.RaiseAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
-			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
+			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
 		}
 		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != nil {
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 		if whichReq.Size > MAX_OBJECT_SIZE {
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
-			return handleRequestError(log, conn, kind, msgs.BLOCK_TOO_BIG)
+			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_BIG)
 		}
 		if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 			log.Info("could not write block: %v", err)
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 	case *msgs.TestWriteReq:
 		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 			log.Info("could not perform test write: %v", err)
-			return handleRequestError(log, conn, kind, err)
+			return handleRequestError(log, conn, lastError, kind, err)
 		}
 	default:
-		return handleRequestError(log, conn, kind, fmt.Errorf("bad request type %T", req))
+		return handleRequestError(log, conn, lastError, kind, fmt.Errorf("bad request type %T", req))
 	}
 	return true
 }
@@ -577,8 +586,10 @@ func handleRequest(
 ) {
 	defer conn.Close()
 
+	var lastError error
+
 	for {
-		keepGoing := handleSingleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn, futureCutoff, connectionTimeout)
+		keepGoing := handleSingleRequest(log, env, terminateChan, &lastError, blockServices, deadBlockServices, conn, futureCutoff, connectionTimeout)
 		if !keepGoing {
 			return
 		}

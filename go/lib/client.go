@@ -124,7 +124,9 @@ type blockConn struct {
 }
 
 type blocksConnFactory struct {
-	mu     sync.RWMutex // to access the map
+	mu sync.RWMutex // to access the map
+	// keys are never deleted apart from when we close the factory, when closing the connection
+	// we just set the `.conn` to nil
 	cached map[blockConnKey]*blockConn
 }
 
@@ -592,11 +594,13 @@ func (c *blockConn) Put() {
 func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]byte, port uint16) (*blockConn, error) {
 	key := newBlockConnKey(ip, port)
 
+	// get the connection slot
 	f.mu.RLock()
 	conn, found := f.cached[key]
 	f.mu.RUnlock()
 
 	if found {
+		// lock the connection slot
 		if block {
 			conn.mu.Lock()
 		} else {
@@ -605,15 +609,16 @@ func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]by
 				return nil, nil
 			}
 		}
+		// if we couldn't return a connection, release the connection slot
 		var err error
 		defer func() {
 			if err != nil {
 				conn.mu.Unlock()
 			}
 		}()
-		if conn.conn != nil {
+		if conn.conn != nil { // a connection is already there, just return it
 			return conn, nil
-		} else {
+		} else { // a connection is _not_ there, try to connect to it
 			var sock *net.TCPConn
 			sock, err = dialBlockService(&net.TCPAddr{IP: net.IP(ip[:]), Port: int(port)})
 			if err != nil {
@@ -625,6 +630,8 @@ func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]by
 			}
 		}
 	} else {
+		// if the connection slot does not exist yet, create it
+		// and restart.
 		f.mu.Lock()
 		_, found = f.cached[key]
 		if !found {
@@ -687,6 +694,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 	panic("impossible")
 }
 
+// just so that Close/Put is idempotent.
 type wrappedBlockConn struct {
 	conn *blockConn
 }

@@ -245,6 +245,7 @@ func main() {
 	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
 	migrateBlockService := migrateCmd.Uint64("bs", 0, "Block service to migrate from.")
 	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
+	migrateShard := migrateCmd.Int("shard", -1, "Shard to migrate into. If not present, all shards will be migrated")
 	migrateRun := func() {
 		if *migrateBlockService == 0 {
 			migrateCmd.Usage()
@@ -252,7 +253,15 @@ func main() {
 		}
 		blockServiceId := msgs.BlockServiceId(*migrateBlockService)
 		stats := lib.MigrateStats{}
-		if *migrateFileIdU64 == 0 {
+		if *migrateShard != -1 && *migrateFileIdU64 != 0 {
+			fmt.Fprintf(os.Stderr, "You passed in both -shard and -file, not sure what to do.\n")
+			os.Exit(2)
+		}
+		if *migrateShard > 255 {
+			fmt.Fprintf(os.Stderr, "Invalid shard %v.\n", *migrateShard)
+			os.Exit(2)
+		}
+		if *migrateFileIdU64 == 0 && *migrateShard < 0 {
 			client, err := lib.NewClient(log, nil, *shuckleAddress, 256)
 			if err != nil {
 				panic(err)
@@ -260,7 +269,7 @@ func main() {
 			if err := lib.MigrateBlocksInAllShards(log, client, &stats, blockServiceId); err != nil {
 				panic(err)
 			}
-		} else {
+		} else if *migrateFileIdU64 != 0 {
 			fileId := msgs.InodeId(*migrateFileIdU64)
 			client, err := lib.NewClient(log, nil, *shuckleAddress, 1)
 			if err != nil {
@@ -272,6 +281,15 @@ func main() {
 				panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 			}
 			log.Info("finished migrating %v away from block service %v, stats: %+v", fileId, blockServiceId, stats)
+		} else {
+			shid := msgs.ShardId(*migrateShard)
+			client, err := lib.NewClient(log, nil, *shuckleAddress, 1)
+			if err != nil {
+				panic(err)
+			}
+			if err := lib.MigrateBlocks(log, client, &stats, shid, blockServiceId); err != nil {
+				panic(err)
+			}
 		}
 	}
 	commands["migrate"] = commandSpec{

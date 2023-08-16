@@ -47,7 +47,7 @@ func fetchBlock(
 		}
 	}()
 	if err := FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
-		log.Info("couldn't fetch block: %v", err)
+		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
 		return err
 	}
 	readBytes, err := buf.ReadFrom(io.LimitReader(srcConn, int64(blockSize)))

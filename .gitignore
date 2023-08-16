@@ -1,3 +1,6 @@
 __pycache__/
 .mypy_cache/
+.cache/
+build/
 vgcore.*
+compile_commands.json

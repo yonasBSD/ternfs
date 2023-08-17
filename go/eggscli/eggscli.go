@@ -134,15 +134,11 @@ func outputBriefFileSizes(log *lib.Logger, shuckleAddress string) {
 					bin := histo.WhichBin(statResp.Size)
 					histoSizes[shid][bin] += statResp.Size
 				}
-				log.Info("finished with shard %v", shid)
-				break
-				/*
-					if filesResp.NextId == msgs.NULL_INODE_ID {
-							log.Info("finished with shard %v", shid)
-							break
-						}
-						filesReq.BeginId = filesResp.NextId
-				*/
+				if filesResp.NextId == msgs.NULL_INODE_ID {
+					log.Info("finished with shard %v", shid)
+					break
+				}
+				filesReq.BeginId = filesResp.NextId
 			}
 			wg.Done()
 		}()

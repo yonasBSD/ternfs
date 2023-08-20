@@ -26,9 +26,9 @@ int eggsfs_shard_getattr_dir(
     struct eggsfs_fs_info* info,
     u64 file,
     u64* mtime,
-    struct eggsfs_block_policies* block_policies,
-    struct eggsfs_span_policies* span_policies,
-    u32* target_stripe_size
+    struct eggsfs_policy_body* block_policies,
+    struct eggsfs_policy_body* span_policies,
+    struct eggsfs_policy_body* stripe_policy
 );
 int eggsfs_shard_getattr(struct eggsfs_fs_info* info, u64 id);
 int eggsfs_shard_create_file(struct eggsfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie);

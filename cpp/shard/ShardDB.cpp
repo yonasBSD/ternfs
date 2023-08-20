@@ -3709,32 +3709,30 @@ DirectoryInfo defaultDirectoryInfo() {
     snapshot.deleteAfterVersions = 0;
     addSegment(SNAPSHOT_POLICY_TAG, snapshot);
 
-    // Block policy: up to 5MiB: FLASH. Up to 100MiB: HDD. This is the maximum block size.
+    // For reasonining of the values here, see docs/parity.md
+
+    // Block policy: up to 2.5MB: FLASH. Up to 100MiB: HDD. This is the maximum block size.
     BlockPolicy blockPolicy;
     auto& flashBlocks = blockPolicy.entries.els.emplace_back();
     flashBlocks.minSize = 0;
     flashBlocks.storageClass = storageClassByName("FLASH");
     auto& hddBlocks = blockPolicy.entries.els.emplace_back();
-    hddBlocks.minSize = 5 << 20;
+    hddBlocks.minSize = 610 << 12; // roughly 2.5MB, page aligned
     hddBlocks.storageClass = storageClassByName("HDD");
     addSegment(BLOCK_POLICY_TAG, blockPolicy);
 
-    // Span policy:
-    // * up to 64KiB: RS(1,4). This mirroring span simplifies things in the kernel (so that we
-    //     we never have cell sizes that are not multiple of span sizes). We still set things
-    //     up so that we can lose 4 copies and still be fine.
-    // * up to 10MiB: RS(4,4).
-    // * up to 100MiB (max span size): RS(10,4).
+    // Span policy -- see docs/parity.md
     SpanPolicy spanPolicy;
-    auto& tinySpans = spanPolicy.entries.els.emplace_back();
-    tinySpans.maxSize = 1 << 16;
-    tinySpans.parity = Parity(1, 4);
-    auto& smallSpans = spanPolicy.entries.els.emplace_back();
-    smallSpans.maxSize = 10 << 20;
-    smallSpans.parity = Parity(4, 4);
-    auto& bigSpans = spanPolicy.entries.els.emplace_back();
-    bigSpans.maxSize = 100 << 20;
-    bigSpans.parity = Parity(10, 4);
+    {
+        auto& flashSpans = spanPolicy.entries.els.emplace_back();
+        flashSpans.maxSize = (2*610) << 12; // roughly 5MB, page aligned
+        flashSpans.parity = Parity(10, 4);
+    }
+    for (int i = 1; i < 10; i++) {
+        auto& spans = spanPolicy.entries.els.emplace_back();
+        spans.maxSize = spanPolicy.entries.els.back().maxSize + (610 << 12);
+        spans.parity = Parity(i+1, 4);
+    }
     addSegment(SPAN_POLICY_TAG, spanPolicy);
 
     // Stripe policy: try to have 1MiB stripes (they'll be larger the vast majority

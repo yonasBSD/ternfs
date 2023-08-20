@@ -91,26 +91,26 @@ again: // progress: whoever wins the lock won't try again
         bool has_atime = false;
         u64 atime;
         if (S_ISDIR(enode->inode.i_mode)) {
-            struct eggsfs_block_policies block_policies;
-            struct eggsfs_span_policies span_policies;
-            u32 target_stripe_size;
+            struct eggsfs_policy_body block_policy;
+            struct eggsfs_policy_body span_policy;
+            struct eggsfs_policy_body stripe_policy;
             err = eggsfs_shard_getattr_dir(
                 (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
                 enode->inode.i_ino,
                 &mtime,
-                &block_policies,
-                &span_policies,
-                &target_stripe_size
+                &block_policy,
+                &span_policy,
+                &stripe_policy
             );
             if (err == 0) {
-                if (block_policies.len) {
-                    memcpy(&enode->block_policies, &block_policies, sizeof(block_policies));
+                if (block_policy.len) {
+                    enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
                 }
-                if (span_policies.len) {
-                    memcpy(&enode->span_policies, &span_policies, sizeof(span_policies));
+                if (span_policy.len) {
+                    enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
                 }
-                if (target_stripe_size) {
-                    enode->target_stripe_size = target_stripe_size;
+                if (stripe_policy.len) {
+                    enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
                 }
                 expiry = ts + eggsfs_dir_refresh_time_jiffies;
             }
@@ -420,12 +420,14 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
 
         // Only == NULL when we're getting the root inode    
         if (parent) {
-            memcpy(&enode->block_policies, &parent->block_policies, sizeof(parent->block_policies));
-            memcpy(&enode->span_policies, &parent->span_policies, sizeof(parent->span_policies));
-            enode->target_stripe_size = parent->target_stripe_size;
-            BUG_ON(!enode->block_policies.len || !enode->span_policies.len || !enode->target_stripe_size);
+            enode->block_policy = parent->block_policy;
+            enode->span_policy = parent->span_policy;
+            enode->stripe_policy = parent->stripe_policy;
         } else {
             BUG_ON(ino != EGGSFS_ROOT_INODE);
+            enode->block_policy = NULL;
+            enode->span_policy = NULL;
+            enode->stripe_policy = NULL;
         }
 
         unlock_new_inode(inode);

@@ -350,7 +350,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     err = eggsfs_do_getattr(root_enode);
     if (err) { goto out_sb; }
 
-    if (!root_enode->block_policies.len || !root_enode->span_policies.len || !root_enode->target_stripe_size) {
+    if (!root_enode->block_policy || !root_enode->span_policy || !root_enode->stripe_policy) {
         eggsfs_warn("no policies for root directory!");
         err = -EIO;
         goto out_sb;

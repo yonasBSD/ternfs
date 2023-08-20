@@ -392,9 +392,9 @@ static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
 }
 
 static void compute_span_parameters(
-    struct eggsfs_block_policies* block_policies,
-    struct eggsfs_span_policies* span_policies,
-    u32 target_stripe_size,
+    struct eggsfs_policy* block_policy_p,
+    struct eggsfs_policy* span_policy_p,
+    struct eggsfs_policy* stripe_policy_p,
     struct eggsfs_transient_span* span
 ) {
     u32 span_size = span->written;
@@ -409,25 +409,33 @@ static void compute_span_parameters(
         return;
     }
 
+    // fetch the bodies of the policies
+    struct eggsfs_policy_body block_policy;
+    eggsfs_get_policy_body(block_policy_p, &block_policy);
+    struct eggsfs_policy_body span_policy;
+    eggsfs_get_policy_body(span_policy_p, &span_policy);
+    struct eggsfs_policy_body stripe_policy;
+    eggsfs_get_policy_body(stripe_policy_p, &stripe_policy);
+
     // Pick parity
-    int num_span_policies = eggsfs_span_policies_len(span_policies);
+    int num_span_policies = eggsfs_span_policy_len(span_policy.body, span_policy.len);
     BUG_ON(num_span_policies == 0);
     int i;
     u8 parity = 0;
     for (i = num_span_policies - 2; i >= 0; i--) {
         u32 max_size;
         u8 this_parity;
-        eggsfs_span_policies_get(span_policies, i, &max_size, &this_parity);
+        eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &this_parity);
         if (span_size > max_size) {
             i++;
-            eggsfs_span_policies_get(span_policies, i, &max_size, &parity);
+            eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
             break;
         }
     }
     if (parity == 0) {
         i = 0;
         u32 max_size;
-        eggsfs_span_policies_get(span_policies, i, &max_size, &parity);
+        eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
         BUG_ON(span_size > max_size);
     }
 
@@ -435,6 +443,7 @@ static void compute_span_parameters(
     // blocks/stripes/spans are multiples of PAGE_SIZE. We might also have some extra pages
     // at the end to have things to line up correctly. This should only happens for big spans
     // anyway (small spans will just use mirroring).
+    u32 target_stripe_size = eggsfs_stripe_policy(stripe_policy.body, stripe_policy.len);
     int S;
     if (eggsfs_data_blocks(parity) == 1) {
         // If we only have one data block, things are also pretty simple (just mirroring).
@@ -455,12 +464,12 @@ static void compute_span_parameters(
 
     // Pick storage class
     BUG_ON(span_size > EGGSFS_MAX_BLOCK_SIZE);
-    int num_block_policies = eggsfs_block_policies_len(block_policies);
+    int num_block_policies = eggsfs_block_policy_len(block_policy.body, block_policy.len);
     BUG_ON(num_block_policies == 0);
     u8 storage_class;
     for (i = num_block_policies-1; i >= 0; i--) {
         u32 min_size;
-        eggsfs_block_policies_get(block_policies, i, &storage_class, &min_size);
+        eggsfs_block_policy_get(block_policy.body, block_policy.len, i, &storage_class, &min_size);
         if (block_size > min_size) {
             break;
         }
@@ -621,7 +630,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     }
 
     compute_span_parameters(
-        &enode->block_policies, &enode->span_policies, enode->target_stripe_size, span
+        enode->block_policy, enode->span_policy, enode->stripe_policy, span
     );
 
     // Here (and in `write_blocks`) we might block even if we're non
@@ -693,8 +702,10 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
     // Precompute the bound for spans
     u32 max_span_size;
     {
+        struct eggsfs_policy_body span_policy;
+        eggsfs_get_policy_body(enode->span_policy, &span_policy);
         u8 p;
-        eggsfs_span_policies_last(&enode->span_policies, &max_span_size, &p);
+        eggsfs_span_policy_last(span_policy.body, span_policy.len, &max_span_size, &p);
     }
     BUG_ON(max_span_size%PAGE_SIZE != 0); // needed for "new span" logic paired with page copying below, we could avoid it
 

@@ -482,13 +482,13 @@ int eggsfs_shard_getattr_dir(
     struct eggsfs_fs_info* info,
     u64 dir,
     u64* mtime,
-    struct eggsfs_block_policies* block_policies,
-    struct eggsfs_span_policies* span_policies,
-    u32* target_stripe_size
+    struct eggsfs_policy_body* block_policies,
+    struct eggsfs_policy_body* span_policies,
+    struct eggsfs_policy_body* stripe_policy
 ) {
     block_policies->len = 0;
     span_policies->len = 0;
-    *target_stripe_size = 0;
+    stripe_policy->len = 0;
 
     struct sk_buff* skb;
     u32 attempts;
@@ -519,20 +519,16 @@ int eggsfs_shard_getattr_dir(
             eggsfs_directory_info_entry_get_end(&ctx, body, entry_end);
             eggsfs_bincode_get_finish_list_el(entry_end);
             if (tag.x == BLOCK_POLICY_TAG) {
-                BUG_ON(body.str.len < 2);
-                BUG_ON(body.str.len > 2+sizeof(block_policies->body));
                 block_policies->len = body.str.len;
-                memcpy(block_policies->body, body.str.buf+2, body.str.len-2);
+                memcpy(block_policies->body, body.str.buf, body.str.len);
             }
             if (tag.x == SPAN_POLICY_TAG) {
-                BUG_ON(body.str.len < 2);
-                BUG_ON(body.str.len > 2+sizeof(span_policies->body));
                 span_policies->len = body.str.len;
-                memcpy(span_policies->body, body.str.buf+2, body.str.len-2);
+                memcpy(span_policies->body, body.str.buf, body.str.len);
             }
             if (tag.x == STRIPE_POLICY_TAG) {
-                BUG_ON(body.str.len != sizeof(*target_stripe_size));
-                *target_stripe_size = get_unaligned_le32(body.str.buf);
+                stripe_policy->len = body.str.len;
+                memcpy(stripe_policy->body, body.str.buf, body.str.len);
             }
         }
         eggsfs_directory_info_get_end(&ctx, entries, info_end);

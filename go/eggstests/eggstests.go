@@ -298,28 +298,6 @@ func (r *RunTests) run(
 		},
 	)
 
-	/*
-		if r.kmod {
-			preadddirOpts := preadddirOpts{
-				numDirs:     1000,
-				filesPerDir: 100,
-				loops:       1000,
-				threads:     10,
-			}
-			r.test(
-				log,
-
-				shuckleAddress,
-				r.filter,
-				"parallel readdir",
-				fmt.Sprintf("%v dirs, %v files per dir, %v loops, %v threads", preadddirOpts.numDirs, preadddirOpts.filesPerDir, preadddirOpts.loops, preadddirOpts.threads),
-				func(counters *lib.ClientCounters) {
-					preaddirTest(log, r.mountPoint, &preadddirOpts)
-				},
-			)
-		}
-	*/
-
 	r.test(
 		log,
 		"mounted fs",
@@ -648,6 +626,7 @@ func main() {
 	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
 	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
 	dropFetchBlockSocketsEvery := flag.Duration("drop-fetch-block-sockets-every", 0, "")
+	changeBlockPolicyEvery := flag.Duration("change-block-policy-every", 0, "")
 	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
 	tmpDir := flag.String("tmp-dir", "", "")
@@ -971,6 +950,40 @@ func main() {
 	}
 
 	fmt.Printf("operational 🤖\n")
+
+	// Start block policy changer -- this is useful to test kmod/policy.c machinery
+	if *changeBlockPolicyEvery != time.Duration(0) {
+		fmt.Printf("will change block policy every %v\n", *dropFetchBlockSocketsEvery)
+		client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+		if err != nil {
+			panic(err)
+		}
+		defer client.Close()
+		blockPolicy := &msgs.BlockPolicy{}
+		if _, err := client.ResolveDirectoryInfoEntry(log, lib.NewDirInfoCache(), msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+			panic(err)
+		}
+		if len(blockPolicy.Entries) != 2 || blockPolicy.Entries[0].MinSize != 0 {
+			panic(fmt.Errorf("bad block policy %+v", blockPolicy))
+		}
+		go func() {
+			i := 0
+			// ./eggs/eggstests -kmod -binaries-dir eggs -filter 'direct' -short -change-block-policy-every 1s
+			for {
+				d := 1
+				if (i & 1) != 0 {
+					d = -1
+				}
+				i++
+				blockPolicy.Entries[1].MinSize = uint32(int(blockPolicy.Entries[1].MinSize) + d) // flip flop between + and -
+				if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+					terminateChan <- err
+					return
+				}
+				time.Sleep(*dropFetchBlockSocketsEvery)
+			}
+		}()
+	}
 
 	// start tests
 	go func() {

@@ -8,51 +8,49 @@
 #include "latch.h"
 #include "bincode.h"
 #include "rs.h"
+#include "policy.h"
+#include "log.h"
 
 #define EGGSFS_ROOT_INODE 0x2000000000000000ull
 
 struct eggsfs_file_span;
 
-// These two influence the size of eggsfs_inode, currently
-#define EGGSFS_MAX_BLOCK_POLICIES 2 // one for flash, one for hdd
-#define EGGSFS_MAX_SPAN_POLICIES 3 // we happen to have three for now
-
-struct eggsfs_block_policies {
-    u8 len;
-    char body[EGGSFS_MAX_BLOCK_POLICIES*EGGSFS_BLOCK_POLICY_ENTRY_SIZE];
+struct eggsfs_inode_policy {
+    u64 fetched_at_jiffies;
+    struct eggsfs_policy* policy;
 };
 
-static inline int eggsfs_block_policies_len(struct eggsfs_block_policies* policies) {
-    BUG_ON(policies->len == 0);
-    return (int)policies->len / EGGSFS_BLOCK_POLICY_ENTRY_SIZE;
+static inline u8 eggsfs_block_policy_len(const char* body, u8 len) {
+    BUG_ON(len == 0);
+    return *(u8*)body;
 }
 
-static inline void eggsfs_block_policies_get(struct eggsfs_block_policies* policies, int ix, u8* storage_class, u32* min_size) {
-    BUG_ON(ix < 0 || ix >= EGGSFS_MAX_BLOCK_POLICIES);
-    char* b = policies->body + ix*EGGSFS_BLOCK_POLICY_ENTRY_SIZE;
+static inline void eggsfs_block_policy_get(const char* body, u8 len, int ix, u8* storage_class, u32* min_size) {
+    BUG_ON(ix < 0 || ix >= eggsfs_block_policy_len(body, len));
+    const char* b = body + 2 + ix*EGGSFS_BLOCK_POLICY_ENTRY_SIZE;
     *storage_class = *(u8*)b; b += 1;
     *min_size = get_unaligned_le32(b); b += 4;
 }
 
-struct eggsfs_span_policies {
-    u8 len;
-    char body[EGGSFS_MAX_SPAN_POLICIES*EGGSFS_SPAN_POLICY_ENTRY_SIZE];
-};
-
-static inline int eggsfs_span_policies_len(struct eggsfs_span_policies* policies) {
-    BUG_ON(policies->len == 0);
-    return (int)policies->len / EGGSFS_SPAN_POLICY_ENTRY_SIZE;
+static inline u8 eggsfs_span_policy_len(const char* body, u8 len) {
+    BUG_ON(len == 0);
+    return *(u8*)body;
 }
 
-static inline void eggsfs_span_policies_get(struct eggsfs_span_policies* policies, int ix, u32* max_size, u8* parity) {
-    BUG_ON(ix < 0 || ix >= EGGSFS_MAX_SPAN_POLICIES);
-    char* b = policies->body + ix*EGGSFS_BLOCK_POLICY_ENTRY_SIZE;
+static inline void eggsfs_span_policy_get(const char* body, u8 len, int ix, u32* max_size, u8* parity) {
+    BUG_ON(ix < 0 || ix >= eggsfs_span_policy_len(body, len));
+    const char* b = body + 2 + ix*EGGSFS_BLOCK_POLICY_ENTRY_SIZE;
     *max_size = get_unaligned_le32(b); b += 4;
     *parity = *(u8*)b; b += 1;
 }
 
-static inline void eggsfs_span_policies_last(struct eggsfs_span_policies* policies, u32* max_size, u8* parity) {
-    eggsfs_span_policies_get(policies, eggsfs_span_policies_len(policies)-1, max_size, parity);
+static inline void eggsfs_span_policy_last(const char* body, u8 len, u32* max_size, u8* parity) {
+    eggsfs_span_policy_get(body, len, eggsfs_span_policy_len(body, len)-1, max_size, parity);
+}
+
+static inline u32 eggsfs_stripe_policy(const char* body, u8 len) {
+    BUG_ON(len != 4);
+    return get_unaligned_le32(body);
 }
 
 struct eggsfs_transient_span;
@@ -129,10 +127,9 @@ struct eggsfs_inode {
 
     // These are relevant for directoriese (obviously), but we also use them for transient
     // files when we create them, since we need it in many places.
-    // TODO consider refreshing it for directories, right now we never do.
-    struct eggsfs_block_policies block_policies;
-    struct eggsfs_span_policies span_policies;
-    u32 target_stripe_size;
+    struct eggsfs_policy* block_policy;
+    struct eggsfs_policy* span_policy;
+    struct eggsfs_policy* stripe_policy;
 
     union {
         struct eggsfs_inode_file file;

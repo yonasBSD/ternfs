@@ -131,7 +131,7 @@ CI is currently very long (~40 mins for the "quick" tests, ~3h for the full test
 If you have a small fix and want to push to `main`, run at least
 
 ```
-% go run . -filter 'direct' -short -build-type sanitized
+% go run . -filter 'mounted' -short -build-type sanitized
 ```
 
 In `go/eggstests`. This takes around 3 minutes, and will surface gross mistakes. Note that this does _not_ test the kernel module (CI does).

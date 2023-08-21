@@ -87,6 +87,9 @@ int eggsfs_error_to_linux(int err) {
     case EGGSFS_ERR_FILE_NOT_FOUND: return -ENOENT;
     case EGGSFS_ERR_DIRECTORY_NOT_FOUND: return -ENOENT;
     case EGGSFS_ERR_NAME_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_EDGE_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_OLD_DIRECTORY_NOT_FOUND: return -ENOENT;
+    case EGGSFS_ERR_NEW_DIRECTORY_NOT_FOUND: return -ENOENT;
     case EGGSFS_ERR_TYPE_IS_DIRECTORY: return -EISDIR;
     case EGGSFS_ERR_TYPE_IS_NOT_DIRECTORY: return -ENOTDIR;
     case EGGSFS_ERR_BAD_COOKIE: return -EBADCOOKIE;
@@ -105,8 +108,6 @@ int eggsfs_error_to_linux(int err) {
     case EGGSFS_ERR_MISMATCHING_OWNER: return -EIO;
     case EGGSFS_ERR_DIRECTORY_NOT_EMPTY: return -ENOTEMPTY;
     case EGGSFS_ERR_FILE_IS_TRANSIENT: return -EIO;
-    case EGGSFS_ERR_OLD_DIRECTORY_NOT_FOUND: return -ENOENT;
-    case EGGSFS_ERR_NEW_DIRECTORY_NOT_FOUND: return -ENOENT;
     case EGGSFS_ERR_LOOP_IN_DIRECTORY_RENAME: return -ELOOP;
     case EGGSFS_ERR_MALFORMED_REQUEST: return -EIO;
     case EGGSFS_ERR_MALFORMED_RESPONSE: return -EIO;

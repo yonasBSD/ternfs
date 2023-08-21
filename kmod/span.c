@@ -259,7 +259,7 @@ void eggsfs_put_span(struct eggsfs_span* span, bool was_read) {
     BUG_ON(block_span->refcount < 1);
     block_span->refcount--;
     block_span->touched = block_span->touched || was_read;
-    if (block_span->refcount == 0) { // we need to put it back into the LRU, or free it
+    if (block_span->refcount == 0) { // we need to put it back into the LRU
         if (block_span->touched) {
             list_add_tail(&span->lru, &lru->lru);
         } else {
@@ -345,6 +345,7 @@ retry:
             eggsfs_debug("failed to get file spans at %llu err=%d", spans_offset, err);
             for (;;) {
                 struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
+                if (span == NULL) { break; }
                 list_del(&span->lru);
                 free_span(span, NULL);
             }
@@ -561,6 +562,93 @@ static struct shrinker eggsfs_span_shrinker = {
     .flags = SHRINKER_NONSLAB, // what's this?
 };
 
+#define DROP_FILE_SPAN_SUCCESS 0
+#define DROP_FILE_SPAN_BEING_RECLAIMED 1
+#define DROP_FILE_SPAN_HAS_READERS 2
+static int drop_file_span(struct eggsfs_inode* enode, struct eggsfs_span* span, bool allow_readers) {
+    struct eggsfs_block_span* block_span = NULL;
+    bool can_free_span = true;
+    if (span->storage_class != EGGSFS_INLINE_STORAGE) {
+        block_span = EGGSFS_BLOCK_SPAN(span);
+        struct eggsfs_span_lru* lru = get_span_lru(span);
+        spin_lock_bh(&lru->lock);
+        if (unlikely(block_span->refcount < 0)) {
+            // This is being reclaimed, we wait until the reclaimer cleans
+            // it up for us. This only happens if the reclaimer started
+            // before linux decides to evict.
+            spin_unlock_bh(&lru->lock);
+            return DROP_FILE_SPAN_BEING_RECLAIMED;
+        } else if (unlikely(block_span->refcount > 0)) {
+            if (!allow_readers) {
+                spin_unlock_bh(&lru->lock);
+                return DROP_FILE_SPAN_HAS_READERS;
+            }
+            // Note that the assumption here is that the reader will correctly put
+            // the span back in the LRU once done, so this should not happen.
+            eggsfs_warn("span at %llu for inode %016lx still has %d readers, will linger on until next reclaim", span->start, enode->inode.i_ino, block_span->refcount);
+            can_free_span = false;
+        } else {
+            // Make ourselves the reclaimer. Note that we could just let the
+            // reclaimer take care of it eventually, but this is the very
+            // common case and it'll be faster.
+            list_del(&span->lru);
+            block_span->refcount = -1;
+        }
+        block_span->enode = NULL;
+        spin_unlock_bh(&lru->lock);
+    }
+
+    rb_erase(&span->node, &enode->file.spans);
+
+    if (can_free_span) { free_span(span, NULL); }
+
+    return DROP_FILE_SPAN_SUCCESS;
+}
+
+int eggsfs_drop_file_span(struct eggsfs_inode* enode, u64 offset) {
+    int err = 0;
+
+again:
+    err = down_write_killable(&enode->file.spans_lock);
+    if (err) { return err; }
+
+    // Did somebody already clear this? In that case we're done.
+    struct eggsfs_span* span = lookup_span(&enode->file.spans, offset);
+    if (span == NULL) {
+        goto out;
+    }
+
+    // Don't want to clear the enode since the span might very well
+    // be in use, and things that use it might need the enode.
+    //
+    // Here we don't allow readers since otherwise there isn't much to
+    // do: we can't remove the span from the RB tree and not set the
+    // ->enode to NULL, since otherwise we'll have a dangling reference
+    // to the enode which might go stale, since it won't be cleared
+    // anymore on inode eviction.
+    //
+    // Since the use-case for this function is pretty exotic anyway,
+    // this is hopefully fine.
+    int res = drop_file_span(enode, span, false);
+    if (unlikely(res == DROP_FILE_SPAN_HAS_READERS)) {
+        eggsfs_warn("gave up on dropping span for %016lx because it has readers", enode->inode.i_ino);
+        err = -EBUSY;
+        goto out;
+    }
+    if (unlikely(res == DROP_FILE_SPAN_BEING_RECLAIMED)) {
+        eggsfs_info("span for %016lx is already being reclaimed, will retry", enode->inode.i_ino);
+        up_write(&enode->file.spans_lock);
+        goto again;
+    }
+    BUG_ON(res != DROP_FILE_SPAN_SUCCESS);
+
+    eggsfs_debug("span for %016lx has been reclaimed", enode->inode.i_ino);
+
+out:
+    up_write(&enode->file.spans_lock);
+    return err;
+}
+
 void eggsfs_drop_file_spans(struct eggsfs_inode* enode) {
 again:
     down_write(&enode->file.spans_lock);
@@ -570,38 +658,12 @@ again:
         if (node == NULL) { break; }
     
         struct eggsfs_span* span = rb_entry(node, struct eggsfs_span, node);
-        struct eggsfs_block_span* block_span = NULL;
-        bool can_free_span = true;
-        if (span->storage_class != EGGSFS_INLINE_STORAGE) {
-            block_span = EGGSFS_BLOCK_SPAN(span);
-            struct eggsfs_span_lru* lru = get_span_lru(span);
-            spin_lock_bh(&lru->lock);
-            if (unlikely(block_span->refcount < 0)) {
-                // This is being reclaimed, we wait until the reclaimer cleans
-                // it up for us. This only happens if the reclaimer started
-                // before linux decides to evict.
-                spin_unlock_bh(&lru->lock);
-                up_write(&enode->file.spans_lock);
-                goto again;
-            } else if (unlikely(block_span->refcount > 0)) {
-                // Note that the assumption here is that the reader will correctly put
-                // the span back in the LRU once done, so this should not happen.
-                eggsfs_warn("span at %llu for inode %016lx still has %d readers, will linger on until next reclaim", span->start, enode->inode.i_ino, block_span->refcount);
-                can_free_span = false;
-            } else {
-                // Make ourselves the reclaimer. Note that we could just let the
-                // reclaimer take care of it eventually, but this is the very
-                // common case and it'll be faster.
-                list_del(&span->lru);
-                block_span->refcount = -1;
-            }
-            block_span->enode = NULL;
-            spin_unlock_bh(&lru->lock);
-        }
-    
-        rb_erase(node, &enode->file.spans);
-
-        if (can_free_span) { free_span(span, NULL); }
+        int res = drop_file_span(enode, span, true);
+        if (unlikely(res != DROP_FILE_SPAN_SUCCESS)) {
+            BUG_ON(res != DROP_FILE_SPAN_BEING_RECLAIMED);
+            up_write(&enode->file.spans_lock);
+            goto again;
+        }    
     }
 
     up_write(&enode->file.spans_lock);

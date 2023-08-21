@@ -64,6 +64,9 @@ struct eggsfs_inode_file {
 
     // Normal file stuff
 
+    // Spans manipulation could be done in a lockless way on the read-side, but
+    // as of now we use a read/write semaphore for simplicity (we'd need to
+    // be careful when freeing spans).
     struct rb_root spans;
     struct rw_semaphore spans_lock;
     // low 32 bits: section start. high 32 bits: section end. Rouded up to
@@ -111,6 +114,8 @@ struct eggsfs_inode_dir {
     //     and a reference count with how many people need the cache (low 32 bits).
     //     The reference count is only stored in the "head" page.
     // ->rcu_head to synchronize between modifications to the reference count.
+    // ->index in the first page to store the dir mtime we've tagged the dir with
+    //     (used to invalidate the dir contents).
     struct page __rcu * pages;
     struct eggsfs_latch pages_latch;
 };

@@ -45,6 +45,8 @@ struct eggsfs_block {
 
 struct eggsfs_block_span {
     struct eggsfs_span span;
+    // When this span was fetched. We use this to expire the
+    // span. Remember that the file _contents_
     struct xarray pages;       // indexed by page number
     struct eggsfs_block blocks[EGGSFS_MAX_BLOCKS];
     struct eggsfs_latch stripe_latches[EGGSFS_MAX_STRIPES];
@@ -60,13 +62,15 @@ struct eggsfs_block_span {
     // When refcount = 0, this might still be alive, but in an LRU.
     // When refcount < 0, we're currently reclaiming this span.
     // Going from 0 to 1, and from 0 to -1 involves taking the respective
-    // LRU lock. This is not atomic because _all changes to this
+    // LRU lock. This field is not atomic_t because _all changes to this
     // value go through the LRU lock_, since they must be paired with
     // manipulating the LRU list.
     int refcount;
     u32 cell_size;
     u32 stripes_crc[EGGSFS_MAX_STRIPES];
-    bool touched; // wether somebody actually read this span (will determine where it ends up in the LRU)
+    // wether somebody actually read this span (will determine if it ends
+    // up at the front or at the back of the LRU)
+    bool touched;
     u8 stripes;
     u8 parity;    
 };
@@ -96,7 +100,16 @@ struct page* eggsfs_get_span_page(struct eggsfs_block_span* span, u32 page_ix);
 //
 // This function _must_ be called before inode is evicted! Otherwise we'll have
 // dangling references to the enode in the spans.
+//
+// In fact this function can only really be called right before eviction, since
+// it sets `span->enode = NULL`, which means that many functions on the spans
+// will fail after calling this function.
 void eggsfs_drop_file_spans(struct eggsfs_inode* enode);
+
+// Drops a single span from a file. Might not succeed because we can't
+// lock the spans tree for writing, and also because the span still has
+// readers.
+int eggsfs_drop_file_span(struct eggsfs_inode* enode, u64 offset);
 
 // Drops all cached spans not being currently used. Returns number of
 // freed pages.

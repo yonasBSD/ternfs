@@ -101,9 +101,8 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
 void eggsfs_get_policy_body(struct eggsfs_policy* policy, struct eggsfs_policy_body* body_struct) {
     rcu_read_lock();
     char* body = rcu_dereference(policy->body);
-    int len = *(u8*)body;
-    body_struct->len = len;
-    memcpy(body_struct->body, body+1, len);
+    body_struct->len = *(u8*)body;
+    memcpy(body_struct->body, body+1, body_struct->len);
     rcu_read_unlock();
 }
 

@@ -34,7 +34,7 @@ add_compile_options("$<$<NOT:$<CONFIG:valgrind>>:-march=skylake;-mgfni>")
 
 # performance/debug stuff
 add_compile_options("$<$<NOT:$<CONFIG:debug,alpinedebug>>:-O3>")
-add_compile_options("$<$<CONFIG:debug,alpinedebug>:-O;-DEGGS_DEBUG>")
+add_compile_options("$<$<CONFIG:debug,alpinedebug>:-Og;-DEGGS_DEBUG>")
 
 # We build the release build statically in Alpine
 add_compile_options("$<$<CONFIG:alpine,alpinedebug>:-DEGGS_ALPINE>")

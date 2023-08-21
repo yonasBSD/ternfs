@@ -893,7 +893,9 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
 
     eggsfs_debug("start of read loop, *ppos=%llu", *ppos);
     struct eggsfs_span* span = NULL;
+    int span_read_attempts = 0;
     while (*ppos < inode->i_size && iov_iter_count(to)) {
+    retry:
         if (span) { eggsfs_put_span(span, true); }
         span = eggsfs_get_span(enode, *ppos);
         if (IS_ERR(span)) {
@@ -940,7 +942,29 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
             eggsfs_debug("span_data_end=%llu", span_data_end);
             while (*ppos < span_data_end && iov_iter_count(to)) {
                 struct page* page = eggsfs_get_span_page(block_span, page_ix);
-                if (IS_ERR(page)) { written = PTR_ERR(page); goto out; }
+                if (IS_ERR(page)) {
+                    if (span_read_attempts == 0) {
+                        // The idea behind this is that span structure changes extremely rarely: currently only
+                        // when we "defrag" files into a new span structure (note that span boundary never changes).
+                        // That's only needed when we change the block storage (e.g. HDD to FLASH) or when we tune
+                        // the parity/block sizes/etc.
+                        // A "proper" solution to this would probably to store a revision number or mtime for the
+                        // span itself. If this coarse solution ever becomes problematic we can change to that, which
+                        // requires a fairly annoying schema change.
+                        eggsfs_warn("reading page %lld in file %016lx failed with error %ld, retrying since it's the first attempt, and the span structure might have changed in the meantime", *ppos, enode->inode.i_ino, PTR_ERR(page));
+                        u64 span_offset = span->start;
+                        eggsfs_put_span(span, false);
+                        span = NULL;
+                        int err = eggsfs_drop_file_span(enode, span_offset);
+                        if (err == 0) {
+                            span_read_attempts++;
+                            goto retry;
+                        }
+                        eggsfs_warn("dropping span failed: %d", err);
+                    }
+                    written = PTR_ERR(page);
+                    goto out;
+                }
                 size_t to_copy = min((u64)PAGE_SIZE - (*ppos % PAGE_SIZE), span_data_end - *ppos);
                 eggsfs_debug("(block) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
                 size_t copied = copy_page_to_iter(page, *ppos % PAGE_SIZE, to_copy, to);
@@ -960,6 +984,7 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
                 *ppos += copied;
             }
         }
+        span_read_attempts = 0;
         eggsfs_debug("before loop end, remaining %lu", iov_iter_count(to));
     }
 out:

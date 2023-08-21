@@ -144,6 +144,11 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 		if err := shardRequest(id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != 0 {
 			return err
 		}
+		mtime := uint64(resp.Mtime)
+		mtimesec := mtime / 1000000000
+		mtimens := uint32(mtime % 1000000000)
+		out.Mtime = mtimesec
+		out.Mtimensec = mtimens
 	} else {
 		resp := msgs.StatFileResp{}
 		err := client.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)

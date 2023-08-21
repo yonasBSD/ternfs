@@ -2210,7 +2210,7 @@ struct ShardDBImpl {
             std::string dirValue;
             ExternalValue<DirectoryBody> dir;
             // allowSnaphsot=false since no current edges in snapshot dirs
-            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
+            EggsError err = _initiateDirectoryModification(time, false, batch, entry.dirId, dirValue, dir);
             if (err != NO_ERROR) {
                 return err;
             }
@@ -2266,7 +2266,7 @@ struct ShardDBImpl {
             std::string dirValue;
             ExternalValue<DirectoryBody> dir;
             // allowSnaphsot=false since no current edges in snapshot dirs
-            EggsError err = _getDirectory({}, entry.dirId, false, dirValue, dir);
+            EggsError err = _initiateDirectoryModification(time, false, batch, entry.dirId, dirValue, dir);
             if (err != NO_ERROR) {
                 return err;
             }
@@ -2353,7 +2353,7 @@ struct ShardDBImpl {
         std::string dirValue;
         ExternalValue<DirectoryBody> dir;
         {
-            EggsError err = _getDirectory({}, entry.id, true, dirValue, dir);
+            EggsError err = _initiateDirectoryModification(time, true, batch, entry.id, dirValue, dir);
             if (err == EggsError::DIRECTORY_NOT_FOUND) {
                 return NO_ERROR; // we're already done
             }

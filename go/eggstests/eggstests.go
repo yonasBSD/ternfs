@@ -157,10 +157,17 @@ type cfgOverrides map[string]string
 
 func (i *cfgOverrides) Set(value string) error {
 	parts := strings.Split(value, "=")
-	if len(parts) != 2 {
+	var k, v string
+	if len(parts) == 1 {
+		k = value
+		v = ""
+	} else if len(parts) == 2 {
+		k = parts[0]
+		v = parts[1]
+	} else {
 		return fmt.Errorf("invalid cfg override %q", value)
 	}
-	(*i)[parts[0]] = parts[1]
+	(*i)[k] = v
 	return nil
 }
 
@@ -182,6 +189,17 @@ func (i *cfgOverrides) int(k string, def int) int {
 		panic(err)
 	}
 	return n
+}
+
+func (i *cfgOverrides) flag(k string) bool {
+	s, present := (*i)[k]
+	if !present {
+		return false
+	}
+	if s != "" {
+		panic(fmt.Errorf("unexpected bool value %q", s))
+	}
+	return true
 }
 
 func (r *RunTests) run(

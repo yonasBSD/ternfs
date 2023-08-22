@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -630,6 +631,7 @@ func fsTestInternal[Id comparable](
 	if opts.checkThreads == 0 {
 		panic(fmt.Errorf("must specify at least one check thread"))
 	}
+	t0 := time.Now()
 	branching := int(math.Log(float64(opts.numDirs)) / math.Log(float64(opts.depth)))
 	rand := wyhash.New(42)
 	// Create directories by first creating the first n-1 levels according to branching above
@@ -672,6 +674,8 @@ func fsTestInternal[Id comparable](
 			state.makeDir(log, harness, opts, parentPath, state.totalDirs)
 		}
 	}
+	log.Info("created directories in %s", time.Since(t0))
+	t0 = time.Now()
 	// now create files, random locations
 	log.Info("creating files")
 	for state.totalFiles < opts.numFiles {
@@ -683,6 +687,8 @@ func fsTestInternal[Id comparable](
 			state.makeFile(log, harness, opts, rand, dir, state.totalDirs+state.totalFiles)
 		}
 	}
+	log.Info("created files in %s", time.Since(t0))
+	t0 = time.Now()
 	// finally, check that our view of the world is the real view of the world
 	log.Info("checking directories/files")
 	errsChans := make([](chan any), opts.checkThreads)
@@ -711,6 +717,8 @@ func fsTestInternal[Id comparable](
 		}
 	}
 	state.rootDir.check(log, harness)
+	log.Info("checked files in %s", time.Since(t0))
+	t0 = time.Now()
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
 	if opts.maxFileSize > 0 {
@@ -731,10 +739,16 @@ func fsTestInternal[Id comparable](
 			panic(fmt.Errorf("migrate didn't migrate any blocks"))
 		}
 	}
+	log.Info("migrated files in %s", time.Since(t0))
+	t0 = time.Now()
 	// And check the state again, don't bother with multiple threads thoush
 	state.rootDir.check(log, harness)
+	log.Info("checked files in %s", time.Since(t0))
+	t0 = time.Now()
 	// Now, remove everything -- the cleanup would do this anyway, but we want to stimulate
 	// the removal paths in the filesystem tests.
+	log.Info("cleaned files in %s", time.Since(t0))
+	t0 = time.Now()
 	state.rootDir.clean(log, harness)
 }
 

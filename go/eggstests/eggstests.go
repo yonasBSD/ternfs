@@ -20,7 +20,6 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/rs"
 	"xtx/eggsfs/wyhash"
 )
 
@@ -213,8 +212,6 @@ func (r *RunTests) run(
 	}
 	defer client.Close()
 
-	defaultSpanPolicy := &msgs.SpanPolicy{}
-	defaultStripePolicy := &msgs.StripePolicy{}
 	{
 		// We want to immediately clean up everything when we run the GC manually
 		if err != nil {
@@ -224,44 +221,6 @@ func (r *RunTests) run(
 			DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0),
 		}
 		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
-			panic(err)
-		}
-		dirInfoCache := lib.NewDirInfoCache()
-		_, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, defaultSpanPolicy)
-		if err != nil {
-			panic(err)
-		}
-		// We also want to stimulate many spans while not writing huge files.
-		// This is the same as the default but the second and third policy are
-		/// 500KiB and 1MiB
-		spanPolicy := &msgs.SpanPolicy{
-			Entries: []msgs.SpanPolicyEntry{
-				{
-					MaxSize: 64 << 10, // 64KiB
-					Parity:  rs.MkParity(1, 4),
-				},
-				{
-					MaxSize: 500 << 10, // 500KiB
-					Parity:  rs.MkParity(4, 4),
-				},
-				{
-					MaxSize: 1 << 20, // 1MiB
-					Parity:  rs.MkParity(10, 4),
-				},
-			},
-		}
-		// Also reduce stripe size to get many stripes
-		_, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, defaultStripePolicy)
-		if err != nil {
-			panic(err)
-		}
-		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, spanPolicy); err != nil {
-			panic(err)
-		}
-		stripePolicy := &msgs.StripePolicy{
-			TargetStripeSize: 4096 * 5,
-		}
-		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, stripePolicy); err != nil {
 			panic(err)
 		}
 	}
@@ -324,23 +283,6 @@ func (r *RunTests) run(
 			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, r.mountPoint)
 		},
 	)
-
-	// Restore default values for policies, otherwise things will be unduly slow below
-	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultSpanPolicy); err != nil {
-		panic(err)
-	}
-	if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, defaultStripePolicy); err != nil {
-		panic(err)
-	}
-
-	// remount kmod to ensure that policies are refreshed
-	if r.kmod {
-		out, err := exec.Command("sudo", "umount", r.mountPoint).CombinedOutput()
-		if err != nil {
-			panic(fmt.Errorf("could not umount fs (%w): %s", err, out))
-		}
-		mountKmod(r.shucklePort, r.mountPoint)
-	}
 
 	largeFileOpts := largeFileTestOpts{
 		fileSize: 1 << 30, // 1GiB

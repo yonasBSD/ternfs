@@ -86,6 +86,7 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
         }
         break;
     case EGGSFS_ERR_MISMATCHING_TARGET:
+    case EGGSFS_ERR_MISMATCHING_CREATION_TIME:
         WARN_ON(!dentry->d_inode);
         if (dentry->d_inode) {
             trace_eggsfs_dcache_invalidate_entry(dir, dentry, dentry->d_inode);
@@ -198,8 +199,7 @@ int eggsfs_rmdir(struct inode* dir, struct dentry* dentry) {
     BUG_ON(!dentry->d_inode);
 
     if (unlikely(dentry->d_name.len > EGGSFS_MAX_FILENAME)) {
-        pr_err("eggsfs: eggsfs_rmdir dir=%lu dentry=%pd exceed max filename length %d\n",
-                dir->i_ino, dentry, EGGSFS_MAX_FILENAME);
+        pr_err("eggsfs: eggsfs_rmdir dir=%lu dentry=%pd exceed max filename length %d\n", dir->i_ino, dentry, EGGSFS_MAX_FILENAME);
         err = -ENAMETOOLONG;
         goto out_err;
     }
@@ -228,8 +228,7 @@ int eggsfs_unlink(struct inode* dir, struct dentry* dentry) {
     BUG_ON(!dentry->d_inode);
 
     if (unlikely(dentry->d_name.len > EGGSFS_MAX_FILENAME)) {
-        pr_err("eggsfs: eggsfs_unlink dir=%lu dentry=%pd exceed max filename length %d\n",
-                dir->i_ino, dentry, EGGSFS_MAX_FILENAME);
+        pr_err("eggsfs: eggsfs_unlink dir=%lu dentry=%pd exceed max filename length %d\n", dir->i_ino, dentry, EGGSFS_MAX_FILENAME);
         err = -ENAMETOOLONG;
         goto out_err;
     }

@@ -81,18 +81,18 @@ func DestructFile(
 				var proof [8]byte
 				conn, err := client.GetWriteBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 				if err != nil {
+					// Check if the block was stale/decommissioned, in which case
+					// there might be nothing we can do here.
+					if block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
+						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v", block.BlockServiceId, id)
+						stats.SkippedSpans++
+						return nil
+					}
 					return err
 				}
 				defer conn.Close()
 				proof, err = EraseBlock(log, conn, &block)
 				if err != nil {
-					// Check if the block was stale/decommissioned, in which case
-					// there might be nothing we can do here.
-					if block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
-						log.Debug("could not destruct file %v which contains references to stale/decommissioned block service", id)
-						stats.SkippedSpans++
-						return nil
-					}
 					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 				} else {
 					conn.Put()

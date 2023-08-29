@@ -489,7 +489,7 @@ std::ostream& operator<<(std::ostream& out, const CurrentEdge& x) {
     return out;
 }
 
-void BlockInfo::pack(BincodeBuf& buf) const {
+void AddSpanInitiateBlockInfo::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<4>(blockServiceIp1);
     buf.packScalar<uint16_t>(blockServicePort1);
     buf.packFixedBytes<4>(blockServiceIp2);
@@ -499,7 +499,7 @@ void BlockInfo::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packFixedBytes<8>(certificate);
 }
-void BlockInfo::unpack(BincodeBuf& buf) {
+void AddSpanInitiateBlockInfo::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<4>(blockServiceIp1);
     blockServicePort1 = buf.unpackScalar<uint16_t>();
     buf.unpackFixedBytes<4>(blockServiceIp2);
@@ -509,7 +509,7 @@ void BlockInfo::unpack(BincodeBuf& buf) {
     blockId = buf.unpackScalar<uint64_t>();
     buf.unpackFixedBytes<8>(certificate);
 }
-void BlockInfo::clear() {
+void AddSpanInitiateBlockInfo::clear() {
     blockServiceIp1.clear();
     blockServicePort1 = uint16_t(0);
     blockServiceIp2.clear();
@@ -519,7 +519,7 @@ void BlockInfo::clear() {
     blockId = uint64_t(0);
     certificate.clear();
 }
-bool BlockInfo::operator==(const BlockInfo& rhs) const {
+bool AddSpanInitiateBlockInfo::operator==(const AddSpanInitiateBlockInfo& rhs) const {
     if (blockServiceIp1 != rhs.blockServiceIp1) { return false; };
     if ((uint16_t)this->blockServicePort1 != (uint16_t)rhs.blockServicePort1) { return false; };
     if (blockServiceIp2 != rhs.blockServiceIp2) { return false; };
@@ -530,8 +530,58 @@ bool BlockInfo::operator==(const BlockInfo& rhs) const {
     if (certificate != rhs.certificate) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockInfo& x) {
-    out << "BlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateBlockInfo& x) {
+    out << "AddSpanInitiateBlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+    return out;
+}
+
+void RemoveSpanInitiateBlockInfo::pack(BincodeBuf& buf) const {
+    buf.packFixedBytes<4>(blockServiceIp1);
+    buf.packScalar<uint16_t>(blockServicePort1);
+    buf.packFixedBytes<4>(blockServiceIp2);
+    buf.packScalar<uint16_t>(blockServicePort2);
+    blockServiceId.pack(buf);
+    blockServiceFailureDomain.pack(buf);
+    buf.packScalar<uint8_t>(blockServiceFlags);
+    buf.packScalar<uint64_t>(blockId);
+    buf.packFixedBytes<8>(certificate);
+}
+void RemoveSpanInitiateBlockInfo::unpack(BincodeBuf& buf) {
+    buf.unpackFixedBytes<4>(blockServiceIp1);
+    blockServicePort1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(blockServiceIp2);
+    blockServicePort2 = buf.unpackScalar<uint16_t>();
+    blockServiceId.unpack(buf);
+    blockServiceFailureDomain.unpack(buf);
+    blockServiceFlags = buf.unpackScalar<uint8_t>();
+    blockId = buf.unpackScalar<uint64_t>();
+    buf.unpackFixedBytes<8>(certificate);
+}
+void RemoveSpanInitiateBlockInfo::clear() {
+    blockServiceIp1.clear();
+    blockServicePort1 = uint16_t(0);
+    blockServiceIp2.clear();
+    blockServicePort2 = uint16_t(0);
+    blockServiceId = BlockServiceId(0);
+    blockServiceFailureDomain.clear();
+    blockServiceFlags = uint8_t(0);
+    blockId = uint64_t(0);
+    certificate.clear();
+}
+bool RemoveSpanInitiateBlockInfo::operator==(const RemoveSpanInitiateBlockInfo& rhs) const {
+    if (blockServiceIp1 != rhs.blockServiceIp1) { return false; };
+    if ((uint16_t)this->blockServicePort1 != (uint16_t)rhs.blockServicePort1) { return false; };
+    if (blockServiceIp2 != rhs.blockServiceIp2) { return false; };
+    if ((uint16_t)this->blockServicePort2 != (uint16_t)rhs.blockServicePort2) { return false; };
+    if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
+    if (blockServiceFailureDomain != rhs.blockServiceFailureDomain) { return false; };
+    if ((uint8_t)this->blockServiceFlags != (uint8_t)rhs.blockServiceFlags) { return false; };
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if (certificate != rhs.certificate) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateBlockInfo& x) {
+    out << "RemoveSpanInitiateBlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockServiceFlags=" << (int)x.blockServiceFlags << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
     return out;
 }
 
@@ -1396,10 +1446,10 @@ std::ostream& operator<<(std::ostream& out, const AddSpanInitiateReq& x) {
 }
 
 void AddSpanInitiateResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockInfo>(blocks);
+    buf.packList<AddSpanInitiateBlockInfo>(blocks);
 }
 void AddSpanInitiateResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockInfo>(blocks);
+    buf.unpackList<AddSpanInitiateBlockInfo>(blocks);
 }
 void AddSpanInitiateResp::clear() {
     blocks.clear();
@@ -2197,11 +2247,11 @@ std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateReq& x) {
 
 void RemoveSpanInitiateResp::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(byteOffset);
-    buf.packList<BlockInfo>(blocks);
+    buf.packList<RemoveSpanInitiateBlockInfo>(blocks);
 }
 void RemoveSpanInitiateResp::unpack(BincodeBuf& buf) {
     byteOffset = buf.unpackScalar<uint64_t>();
-    buf.unpackList<BlockInfo>(blocks);
+    buf.unpackList<RemoveSpanInitiateBlockInfo>(blocks);
 }
 void RemoveSpanInitiateResp::clear() {
     byteOffset = uint64_t(0);

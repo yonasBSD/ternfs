@@ -360,11 +360,11 @@ static inline void _eggsfs_current_edge_put_creation_time(struct eggsfs_bincode_
     { struct eggsfs_current_edge_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_current_edge_end* next __attribute__((unused)) = NULL
 
-struct eggsfs_block_info_start;
-#define eggsfs_block_info_get_start(ctx, start) struct eggsfs_block_info_start* start = NULL
+struct eggsfs_add_span_initiate_block_info_start;
+#define eggsfs_add_span_initiate_block_info_get_start(ctx, start) struct eggsfs_add_span_initiate_block_info_start* start = NULL
 
-struct eggsfs_block_info_block_service_ip1 { u32 x; };
-static inline void _eggsfs_block_info_get_block_service_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_start** prev, struct eggsfs_block_info_block_service_ip1* next) {
+struct eggsfs_add_span_initiate_block_info_block_service_ip1 { u32 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_service_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_start** prev, struct eggsfs_add_span_initiate_block_info_block_service_ip1* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 4)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -374,12 +374,12 @@ static inline void _eggsfs_block_info_get_block_service_ip1(struct eggsfs_bincod
         }
     }
 }
-#define eggsfs_block_info_get_block_service_ip1(ctx, prev, next) \
-    struct eggsfs_block_info_block_service_ip1 next; \
-    _eggsfs_block_info_get_block_service_ip1(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_service_ip1(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_service_ip1 next; \
+    _eggsfs_add_span_initiate_block_info_get_block_service_ip1(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_block_service_port1 { u16 x; };
-static inline void _eggsfs_block_info_get_block_service_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_service_ip1* prev, struct eggsfs_block_info_block_service_port1* next) {
+struct eggsfs_add_span_initiate_block_info_block_service_port1 { u16 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_service_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_ip1* prev, struct eggsfs_add_span_initiate_block_info_block_service_port1* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -389,12 +389,12 @@ static inline void _eggsfs_block_info_get_block_service_port1(struct eggsfs_binc
         }
     }
 }
-#define eggsfs_block_info_get_block_service_port1(ctx, prev, next) \
-    struct eggsfs_block_info_block_service_port1 next; \
-    _eggsfs_block_info_get_block_service_port1(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_service_port1(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_service_port1 next; \
+    _eggsfs_add_span_initiate_block_info_get_block_service_port1(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_block_service_ip2 { u32 x; };
-static inline void _eggsfs_block_info_get_block_service_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_service_port1* prev, struct eggsfs_block_info_block_service_ip2* next) {
+struct eggsfs_add_span_initiate_block_info_block_service_ip2 { u32 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_service_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_port1* prev, struct eggsfs_add_span_initiate_block_info_block_service_ip2* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 4)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -404,12 +404,12 @@ static inline void _eggsfs_block_info_get_block_service_ip2(struct eggsfs_bincod
         }
     }
 }
-#define eggsfs_block_info_get_block_service_ip2(ctx, prev, next) \
-    struct eggsfs_block_info_block_service_ip2 next; \
-    _eggsfs_block_info_get_block_service_ip2(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_service_ip2(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_service_ip2 next; \
+    _eggsfs_add_span_initiate_block_info_get_block_service_ip2(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_block_service_port2 { u16 x; };
-static inline void _eggsfs_block_info_get_block_service_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_service_ip2* prev, struct eggsfs_block_info_block_service_port2* next) {
+struct eggsfs_add_span_initiate_block_info_block_service_port2 { u16 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_service_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_ip2* prev, struct eggsfs_add_span_initiate_block_info_block_service_port2* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -419,12 +419,12 @@ static inline void _eggsfs_block_info_get_block_service_port2(struct eggsfs_binc
         }
     }
 }
-#define eggsfs_block_info_get_block_service_port2(ctx, prev, next) \
-    struct eggsfs_block_info_block_service_port2 next; \
-    _eggsfs_block_info_get_block_service_port2(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_service_port2(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_service_port2 next; \
+    _eggsfs_add_span_initiate_block_info_get_block_service_port2(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_block_service_id { u64 x; };
-static inline void _eggsfs_block_info_get_block_service_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_service_port2* prev, struct eggsfs_block_info_block_service_id* next) {
+struct eggsfs_add_span_initiate_block_info_block_service_id { u64 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_service_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_port2* prev, struct eggsfs_add_span_initiate_block_info_block_service_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -434,16 +434,16 @@ static inline void _eggsfs_block_info_get_block_service_id(struct eggsfs_bincode
         }
     }
 }
-#define eggsfs_block_info_get_block_service_id(ctx, prev, next) \
-    struct eggsfs_block_info_block_service_id next; \
-    _eggsfs_block_info_get_block_service_id(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_service_id(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_service_id next; \
+    _eggsfs_add_span_initiate_block_info_get_block_service_id(ctx, &(prev), &(next))
 
-#define eggsfs_block_info_get_block_service_failure_domain(ctx, prev, next) \
-    { struct eggsfs_block_info_block_service_id* __dummy __attribute__((unused)) = &(prev); }; \
+#define eggsfs_add_span_initiate_block_info_get_block_service_failure_domain(ctx, prev, next) \
+    { struct eggsfs_add_span_initiate_block_info_block_service_id* __dummy __attribute__((unused)) = &(prev); }; \
     struct eggsfs_failure_domain_start* next = NULL
 
-struct eggsfs_block_info_block_id { u64 x; };
-static inline void _eggsfs_block_info_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_end** prev, struct eggsfs_block_info_block_id* next) {
+struct eggsfs_add_span_initiate_block_info_block_id { u64 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_end** prev, struct eggsfs_add_span_initiate_block_info_block_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -453,12 +453,12 @@ static inline void _eggsfs_block_info_get_block_id(struct eggsfs_bincode_get_ctx
         }
     }
 }
-#define eggsfs_block_info_get_block_id(ctx, prev, next) \
-    struct eggsfs_block_info_block_id next; \
-    _eggsfs_block_info_get_block_id(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_block_id(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_block_id next; \
+    _eggsfs_add_span_initiate_block_info_get_block_id(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_certificate { u64 x; };
-static inline void _eggsfs_block_info_get_certificate(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_block_id* prev, struct eggsfs_block_info_certificate* next) {
+struct eggsfs_add_span_initiate_block_info_certificate { u64 x; };
+static inline void _eggsfs_add_span_initiate_block_info_get_certificate(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_id* prev, struct eggsfs_add_span_initiate_block_info_certificate* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -468,96 +468,320 @@ static inline void _eggsfs_block_info_get_certificate(struct eggsfs_bincode_get_
         }
     }
 }
-#define eggsfs_block_info_get_certificate(ctx, prev, next) \
-    struct eggsfs_block_info_certificate next; \
-    _eggsfs_block_info_get_certificate(ctx, &(prev), &(next))
+#define eggsfs_add_span_initiate_block_info_get_certificate(ctx, prev, next) \
+    struct eggsfs_add_span_initiate_block_info_certificate next; \
+    _eggsfs_add_span_initiate_block_info_get_certificate(ctx, &(prev), &(next))
 
-struct eggsfs_block_info_end;
-#define eggsfs_block_info_get_end(ctx, prev, next) \
-    { struct eggsfs_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_info_end* next = NULL
+struct eggsfs_add_span_initiate_block_info_end;
+#define eggsfs_add_span_initiate_block_info_get_end(ctx, prev, next) \
+    { struct eggsfs_add_span_initiate_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_add_span_initiate_block_info_end* next = NULL
 
-static inline void eggsfs_block_info_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_info_end* end) {
+static inline void eggsfs_add_span_initiate_block_info_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_add_span_initiate_block_info_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_block_info_put_start(ctx, start) struct eggsfs_block_info_start* start = NULL
+#define eggsfs_add_span_initiate_block_info_put_start(ctx, start) struct eggsfs_add_span_initiate_block_info_start* start = NULL
 
-static inline void _eggsfs_block_info_put_block_service_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_start** prev, struct eggsfs_block_info_block_service_ip1* next, u32 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_service_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_start** prev, struct eggsfs_add_span_initiate_block_info_block_service_ip1* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_be32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define eggsfs_block_info_put_block_service_ip1(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_service_ip1 next; \
-    _eggsfs_block_info_put_block_service_ip1(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_service_ip1(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_service_ip1 next; \
+    _eggsfs_add_span_initiate_block_info_put_block_service_ip1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_block_service_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_service_ip1* prev, struct eggsfs_block_info_block_service_port1* next, u16 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_service_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_ip1* prev, struct eggsfs_add_span_initiate_block_info_block_service_port1* next, u16 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(x, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_block_info_put_block_service_port1(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_service_port1 next; \
-    _eggsfs_block_info_put_block_service_port1(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_service_port1(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_service_port1 next; \
+    _eggsfs_add_span_initiate_block_info_put_block_service_port1(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_block_service_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_service_port1* prev, struct eggsfs_block_info_block_service_ip2* next, u32 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_service_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_port1* prev, struct eggsfs_add_span_initiate_block_info_block_service_ip2* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_be32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define eggsfs_block_info_put_block_service_ip2(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_service_ip2 next; \
-    _eggsfs_block_info_put_block_service_ip2(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_service_ip2(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_service_ip2 next; \
+    _eggsfs_add_span_initiate_block_info_put_block_service_ip2(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_block_service_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_service_ip2* prev, struct eggsfs_block_info_block_service_port2* next, u16 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_service_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_ip2* prev, struct eggsfs_add_span_initiate_block_info_block_service_port2* next, u16 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(x, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_block_info_put_block_service_port2(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_service_port2 next; \
-    _eggsfs_block_info_put_block_service_port2(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_service_port2(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_service_port2 next; \
+    _eggsfs_add_span_initiate_block_info_put_block_service_port2(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_block_service_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_service_port2* prev, struct eggsfs_block_info_block_service_id* next, u64 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_service_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_port2* prev, struct eggsfs_add_span_initiate_block_info_block_service_id* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_info_put_block_service_id(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_service_id next; \
-    _eggsfs_block_info_put_block_service_id(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_service_id(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_service_id next; \
+    _eggsfs_add_span_initiate_block_info_put_block_service_id(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_service_id* prev, struct eggsfs_block_info_block_id* next, u64 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_service_id* prev, struct eggsfs_add_span_initiate_block_info_block_id* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_info_put_block_id(ctx, prev, next, x) \
-    struct eggsfs_block_info_block_id next; \
-    _eggsfs_block_info_put_block_id(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_block_id(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_block_id next; \
+    _eggsfs_add_span_initiate_block_info_put_block_id(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_info_put_certificate(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_info_block_id* prev, struct eggsfs_block_info_certificate* next, u64 x) {
+static inline void _eggsfs_add_span_initiate_block_info_put_certificate(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_add_span_initiate_block_info_block_id* prev, struct eggsfs_add_span_initiate_block_info_certificate* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_be64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_info_put_certificate(ctx, prev, next, x) \
-    struct eggsfs_block_info_certificate next; \
-    _eggsfs_block_info_put_certificate(ctx, &(prev), &(next), x)
+#define eggsfs_add_span_initiate_block_info_put_certificate(ctx, prev, next, x) \
+    struct eggsfs_add_span_initiate_block_info_certificate next; \
+    _eggsfs_add_span_initiate_block_info_put_certificate(ctx, &(prev), &(next), x)
 
-#define eggsfs_block_info_put_end(ctx, prev, next) \
-    { struct eggsfs_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_info_end* next __attribute__((unused)) = NULL
+#define eggsfs_add_span_initiate_block_info_put_end(ctx, prev, next) \
+    { struct eggsfs_add_span_initiate_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_add_span_initiate_block_info_end* next __attribute__((unused)) = NULL
+
+struct eggsfs_remove_span_initiate_block_info_start;
+#define eggsfs_remove_span_initiate_block_info_get_start(ctx, start) struct eggsfs_remove_span_initiate_block_info_start* start = NULL
+
+struct eggsfs_remove_span_initiate_block_info_block_service_ip1 { u32 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_start** prev, struct eggsfs_remove_span_initiate_block_info_block_service_ip1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_ip1(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_ip1 next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_ip1(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_block_service_port1 { u16 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_ip1* prev, struct eggsfs_remove_span_initiate_block_info_block_service_port1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_port1(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_port1 next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_port1(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_block_service_ip2 { u32 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_port1* prev, struct eggsfs_remove_span_initiate_block_info_block_service_ip2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_ip2(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_ip2 next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_ip2(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_block_service_port2 { u16 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_ip2* prev, struct eggsfs_remove_span_initiate_block_info_block_service_port2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_port2(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_port2 next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_port2(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_block_service_id { u64 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_port2* prev, struct eggsfs_remove_span_initiate_block_info_block_service_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_id(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_id next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_id(ctx, &(prev), &(next))
+
+#define eggsfs_remove_span_initiate_block_info_get_block_service_failure_domain(ctx, prev, next) \
+    { struct eggsfs_remove_span_initiate_block_info_block_service_id* __dummy __attribute__((unused)) = &(prev); }; \
+    struct eggsfs_failure_domain_start* next = NULL
+
+struct eggsfs_remove_span_initiate_block_info_block_service_flags { u8 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_service_flags(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_failure_domain_end** prev, struct eggsfs_remove_span_initiate_block_info_block_service_flags* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(u8*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_service_flags(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_flags next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_service_flags(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_block_id { u64 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_flags* prev, struct eggsfs_remove_span_initiate_block_info_block_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_block_id(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_block_id next; \
+    _eggsfs_remove_span_initiate_block_info_get_block_id(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_certificate { u64 x; };
+static inline void _eggsfs_remove_span_initiate_block_info_get_certificate(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_id* prev, struct eggsfs_remove_span_initiate_block_info_certificate* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_remove_span_initiate_block_info_get_certificate(ctx, prev, next) \
+    struct eggsfs_remove_span_initiate_block_info_certificate next; \
+    _eggsfs_remove_span_initiate_block_info_get_certificate(ctx, &(prev), &(next))
+
+struct eggsfs_remove_span_initiate_block_info_end;
+#define eggsfs_remove_span_initiate_block_info_get_end(ctx, prev, next) \
+    { struct eggsfs_remove_span_initiate_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_span_initiate_block_info_end* next = NULL
+
+static inline void eggsfs_remove_span_initiate_block_info_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_remove_span_initiate_block_info_put_start(ctx, start) struct eggsfs_remove_span_initiate_block_info_start* start = NULL
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_start** prev, struct eggsfs_remove_span_initiate_block_info_block_service_ip1* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_ip1(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_ip1 next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_ip1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_ip1* prev, struct eggsfs_remove_span_initiate_block_info_block_service_port1* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_port1(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_port1 next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_port1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_port1* prev, struct eggsfs_remove_span_initiate_block_info_block_service_ip2* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_ip2(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_ip2 next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_ip2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_ip2* prev, struct eggsfs_remove_span_initiate_block_info_block_service_port2* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_port2(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_port2 next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_port2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_port2* prev, struct eggsfs_remove_span_initiate_block_info_block_service_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_id(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_id next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_service_flags(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_id* prev, struct eggsfs_remove_span_initiate_block_info_block_service_flags* next, u8 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(u8*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_service_flags(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_service_flags next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_service_flags(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_service_flags* prev, struct eggsfs_remove_span_initiate_block_info_block_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_span_initiate_block_info_put_block_id(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_block_id next; \
+    _eggsfs_remove_span_initiate_block_info_put_block_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_remove_span_initiate_block_info_put_certificate(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_remove_span_initiate_block_info_block_id* prev, struct eggsfs_remove_span_initiate_block_info_certificate* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_be64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_remove_span_initiate_block_info_put_certificate(ctx, prev, next, x) \
+    struct eggsfs_remove_span_initiate_block_info_certificate next; \
+    _eggsfs_remove_span_initiate_block_info_put_certificate(ctx, &(prev), &(next), x)
+
+#define eggsfs_remove_span_initiate_block_info_put_end(ctx, prev, next) \
+    { struct eggsfs_remove_span_initiate_block_info_certificate* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_remove_span_initiate_block_info_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_BLOCK_PROOF_SIZE 16
 struct eggsfs_block_proof_start;

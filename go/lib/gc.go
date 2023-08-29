@@ -36,6 +36,7 @@ type DestructionStats struct {
 	VisitedFiles     uint64
 	DestructedFiles  uint64
 	DestructedSpans  uint64
+	SkippedSpans     uint64
 	DestructedBlocks uint64
 	FailedFiles      uint64
 }
@@ -85,6 +86,13 @@ func DestructFile(
 				defer conn.Close()
 				proof, err = EraseBlock(log, conn, &block)
 				if err != nil {
+					// Check if the block was stale/decommissioned, in which case
+					// there might be nothing we can do here.
+					if block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
+						log.Debug("could not destruct file %v which contains references to stale/decommissioned block service", id)
+						stats.SkippedSpans++
+						return nil
+					}
 					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 				} else {
 					conn.Put()
@@ -215,6 +223,9 @@ func DestructFilesInAllShards(
 	}
 	if someErrored {
 		return fmt.Errorf("failed to destruct %v files, see logs", stats.FailedFiles)
+	}
+	if stats.SkippedSpans > 0 {
+		log.RaiseAlert("skipped over %v spans, this is normal if some servers are (or were) down while garbage collecting", stats.SkippedSpans)
 	}
 	log.Info("stats after one destruct files iteration in all shards: %+v", stats)
 	return nil

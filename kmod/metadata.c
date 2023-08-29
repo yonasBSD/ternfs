@@ -773,16 +773,16 @@ int eggsfs_shard_add_span_initiate(
         }
         int i;
         for (i = 0; i < B; i++) {
-            eggsfs_block_info_get_start(&ctx, start);
-            eggsfs_block_info_get_block_service_ip1(&ctx, start, bs_ip1);
-            eggsfs_block_info_get_block_service_port1(&ctx, bs_ip1, bs_port1);
-            eggsfs_block_info_get_block_service_ip2(&ctx, bs_port1, bs_ip2);
-            eggsfs_block_info_get_block_service_port2(&ctx, bs_ip2, bs_port2);
-            eggsfs_block_info_get_block_service_id(&ctx, bs_port2, bs_id);
-            eggsfs_block_info_get_block_service_failure_domain(&ctx, bs_id, failure_domain_start);
+            eggsfs_add_span_initiate_block_info_get_start(&ctx, start);
+            eggsfs_add_span_initiate_block_info_get_block_service_ip1(&ctx, start, bs_ip1);
+            eggsfs_add_span_initiate_block_info_get_block_service_port1(&ctx, bs_ip1, bs_port1);
+            eggsfs_add_span_initiate_block_info_get_block_service_ip2(&ctx, bs_port1, bs_ip2);
+            eggsfs_add_span_initiate_block_info_get_block_service_port2(&ctx, bs_ip2, bs_port2);
+            eggsfs_add_span_initiate_block_info_get_block_service_id(&ctx, bs_port2, bs_id);
+            eggsfs_add_span_initiate_block_info_get_block_service_failure_domain(&ctx, bs_id, failure_domain_start);
             eggsfs_failure_domain_get(&ctx, failure_domain_start, failure_domain_end, failure_domain);
-            eggsfs_block_info_get_block_id(&ctx, failure_domain_end, block_id);
-            eggsfs_block_info_get_certificate(&ctx, block_id, certificate);
+            eggsfs_add_span_initiate_block_info_get_block_id(&ctx, failure_domain_end, block_id);
+            eggsfs_add_span_initiate_block_info_get_certificate(&ctx, block_id, certificate);
             if (likely(ctx.err == 0)) {
                 blocks_out[i].ip1 = bs_ip1.x;
                 blocks_out[i].port1 = bs_port1.x;

@@ -377,7 +377,7 @@ struct CurrentEdge {
 
 std::ostream& operator<<(std::ostream& out, const CurrentEdge& x);
 
-struct BlockInfo {
+struct AddSpanInitiateBlockInfo {
     BincodeFixedBytes<4> blockServiceIp1;
     uint16_t blockServicePort1;
     BincodeFixedBytes<4> blockServiceIp2;
@@ -389,7 +389,7 @@ struct BlockInfo {
 
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + FailureDomain::STATIC_SIZE + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockServiceFailureDomain + blockId + certificate
 
-    BlockInfo() { clear(); }
+    AddSpanInitiateBlockInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp1
@@ -405,10 +405,45 @@ struct BlockInfo {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockInfo&rhs) const;
+    bool operator==(const AddSpanInitiateBlockInfo&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockInfo& x);
+std::ostream& operator<<(std::ostream& out, const AddSpanInitiateBlockInfo& x);
+
+struct RemoveSpanInitiateBlockInfo {
+    BincodeFixedBytes<4> blockServiceIp1;
+    uint16_t blockServicePort1;
+    BincodeFixedBytes<4> blockServiceIp2;
+    uint16_t blockServicePort2;
+    BlockServiceId blockServiceId;
+    FailureDomain blockServiceFailureDomain;
+    uint8_t blockServiceFlags;
+    uint64_t blockId;
+    BincodeFixedBytes<8> certificate;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + FailureDomain::STATIC_SIZE + 1 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockServiceFailureDomain + blockServiceFlags + blockId + certificate
+
+    RemoveSpanInitiateBlockInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp1
+        _size += 2; // blockServicePort1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp2
+        _size += 2; // blockServicePort2
+        _size += 8; // blockServiceId
+        _size += blockServiceFailureDomain.packedSize(); // blockServiceFailureDomain
+        _size += 1; // blockServiceFlags
+        _size += 8; // blockId
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // certificate
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RemoveSpanInitiateBlockInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateBlockInfo& x);
 
 struct BlockProof {
     uint64_t blockId;
@@ -1269,9 +1304,9 @@ struct AddSpanInitiateReq {
 std::ostream& operator<<(std::ostream& out, const AddSpanInitiateReq& x);
 
 struct AddSpanInitiateResp {
-    BincodeList<BlockInfo> blocks;
+    BincodeList<AddSpanInitiateBlockInfo> blocks;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockInfo>::STATIC_SIZE; // blocks
+    static constexpr uint16_t STATIC_SIZE = BincodeList<AddSpanInitiateBlockInfo>::STATIC_SIZE; // blocks
 
     AddSpanInitiateResp() { clear(); }
     size_t packedSize() const {
@@ -2010,9 +2045,9 @@ std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateReq& x);
 
 struct RemoveSpanInitiateResp {
     uint64_t byteOffset;
-    BincodeList<BlockInfo> blocks;
+    BincodeList<RemoveSpanInitiateBlockInfo> blocks;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockInfo>::STATIC_SIZE; // byteOffset + blocks
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<RemoveSpanInitiateBlockInfo>::STATIC_SIZE; // byteOffset + blocks
 
     RemoveSpanInitiateResp() { clear(); }
     size_t packedSize() const {

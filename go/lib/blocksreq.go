@@ -178,7 +178,7 @@ func WriteBlock(
 		io.Reader
 		io.Writer
 	},
-	block *msgs.BlockInfo,
+	block *msgs.AddSpanInitiateBlockInfo,
 	r io.Reader, // only `size` bytes will be read
 	size uint32,
 	crc msgs.Crc,
@@ -249,7 +249,7 @@ func EraseBlock(
 		io.Writer
 		io.Reader
 	},
-	block *msgs.BlockInfo,
+	block *msgs.RemoveSpanInitiateBlockInfo,
 ) ([8]byte, error) {
 	logger.Debug("erasing block %+v", block)
 	var proof [8]byte

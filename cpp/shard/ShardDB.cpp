@@ -2690,6 +2690,7 @@ struct ShardDBImpl {
             respBlock.blockServicePort2 = cache.port2;
             respBlock.blockServiceId = block.blockService();
             respBlock.blockId = block.blockId();
+            respBlock.blockServiceFlags = cache.flags;
             respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
         }
 

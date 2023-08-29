@@ -534,7 +534,7 @@ type AddSpanInitiateReq struct {
 	Crcs []Crc
 }
 
-type BlockInfo struct {
+type AddSpanInitiateBlockInfo struct {
 	BlockServiceIp1           [4]byte
 	BlockServicePort1         uint16
 	BlockServiceIp2           [4]byte
@@ -548,7 +548,7 @@ type BlockInfo struct {
 
 type AddSpanInitiateResp struct {
 	// Left empty for inline/zero-filled spans
-	Blocks []BlockInfo
+	Blocks []AddSpanInitiateBlockInfo
 }
 
 // The only reason why this isn't the same as AddSpanInitiateReq is
@@ -585,10 +585,23 @@ type RemoveSpanInitiateReq struct {
 	Cookie [8]byte
 }
 
+type RemoveSpanInitiateBlockInfo struct {
+	BlockServiceIp1           [4]byte
+	BlockServicePort1         uint16
+	BlockServiceIp2           [4]byte
+	BlockServicePort2         uint16
+	BlockServiceId            BlockServiceId
+	BlockServiceFailureDomain FailureDomain
+	BlockServiceFlags         BlockServiceFlags
+	BlockId                   BlockId
+	// certificate := MAC(b'w' + block_id + crc + size)[:8] (for creation)
+	Certificate [8]byte
+}
+
 type RemoveSpanInitiateResp struct {
 	ByteOffset uint64
 	// If empty, this is a blockless span, and no certification is required
-	Blocks []BlockInfo
+	Blocks []RemoveSpanInitiateBlockInfo
 }
 
 type RemoveSpanCertifyReq struct {

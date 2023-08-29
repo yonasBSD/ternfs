@@ -3149,7 +3149,7 @@ func (v *CurrentEdge) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *BlockInfo) Pack(w io.Writer) error {
+func (v *AddSpanInitiateBlockInfo) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 4, v.BlockServiceIp1[:]); err != nil {
 		return err
 	}
@@ -3177,7 +3177,7 @@ func (v *BlockInfo) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *BlockInfo) Unpack(r io.Reader) error {
+func (v *AddSpanInitiateBlockInfo) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 4, v.BlockServiceIp1[:]); err != nil {
 		return err
 	}
@@ -3194,6 +3194,68 @@ func (v *BlockInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := v.BlockServiceFailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.Certificate[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveSpanInitiateBlockInfo) Pack(w io.Writer) error {
+	if err := bincode.PackFixedBytes(w, 4, v.BlockServiceIp1[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.BlockServicePort1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.BlockServiceIp2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.BlockServicePort2)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := v.BlockServiceFailureDomain.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.BlockServiceFlags)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.Certificate[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveSpanInitiateBlockInfo) Unpack(r io.Reader) error {
+	if err := bincode.UnpackFixedBytes(r, 4, v.BlockServiceIp1[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.BlockServicePort1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.BlockServiceIp2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.BlockServicePort2)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := v.BlockServiceFailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.BlockServiceFlags)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {

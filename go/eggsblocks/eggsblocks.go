@@ -444,7 +444,7 @@ func handleRequestError(
 		// <internal-repo/issues/45>
 		// Eventually we probably want a whitelist here of req +
 		// error combinations that we know are fine. Some errors
-		// will never be fined, e.g. MALFORMED_REQUEST.
+		// will never be fine, e.g. MALFORMED_REQUEST.
 		return false
 	} else {
 		// attempt to say goodbye, ignore errors

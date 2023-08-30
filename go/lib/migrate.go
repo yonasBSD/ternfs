@@ -34,23 +34,23 @@ func fetchBlock(
 	buf *bytes.Buffer,
 ) error {
 	blockService := &blockServices[block.BlockServiceIx]
-	var err error
+	var srcConn BlocksConn
 	srcConn, err := client.GetReadBlocksConn(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 	if err != nil {
 		return err
 	}
+	defer srcConn.Close()
 	defer func() {
 		if err == nil {
 			srcConn.Put()
-		} else {
-			srcConn.Close()
 		}
 	}()
-	if err := FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
+	if err = FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
 		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
 		return err
 	}
-	readBytes, err := buf.ReadFrom(io.LimitReader(srcConn, int64(blockSize)))
+	var readBytes int64
+	readBytes, err = buf.ReadFrom(io.LimitReader(srcConn, int64(blockSize)))
 	if err != nil {
 		return err
 	}
@@ -116,6 +116,7 @@ func writeBlock(
 		defer dstConn.Close()
 		writeProof, err = WriteBlock(log, dstConn, dstBlock, newContents, blockSize, block.Crc)
 		if err != nil {
+			dstConn.Close()
 			log.Info("could not write to block service, might retry")
 			goto FailedAttempt
 		} else {

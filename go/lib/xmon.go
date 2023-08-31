@@ -366,4 +366,5 @@ func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {
 		msgType: XMON_CLEAR,
 		alertId: a.alertId,
 	}
+	a.alertId = -1
 }

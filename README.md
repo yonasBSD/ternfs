@@ -166,3 +166,24 @@ A multitude of directories to persist the whole thing will appear in `<data-dir>
 ## Playing with the Kernel module
 
 There's infrastructure to spin up a minimal QEMU image with `eggsfs.ko` inserted, see `kmod/restartsession.sh`.
+
+## VS Code
+
+Most of the codebase is understandable by VS Code/LSP:
+
+* Code in `go/` just works out of the box with the [Go extension](https://code.visualstudio.com/docs/languages/go). I (fmazzol) open a separate VS Code window which specifically has the `eggsfs/go` directory open, since the Go extension doesn't seem to like working from a subdirectory.
+* Code in `cpp/`:
+    - Disable existing C++ integrations for VS Code (I don't remember which exact C++ extension caused me trouble -- something by Microsoft itself).
+    - Install the [clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd).
+    - Generate `compile_commands.json` with
+        
+        ```
+        % cd cpp
+        % ./build.py debug
+        % cp ./build/debug/compile_commands.json .
+        ```
+        
+        If you change the build process (i.e. if you change CMake files) you'll need to generate and copy `compile_commands.json` again.
+* Code in `kmod/`:
+    - Build the module (see instructions earlier on in this document).
+    - Then generate `compile_command.json` with `./kmod/gen_compile_commands.sh`.

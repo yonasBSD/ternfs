@@ -185,5 +185,6 @@ Most of the codebase is understandable by VS Code/LSP:
         
         If you change the build process (i.e. if you change CMake files) you'll need to generate and copy `compile_commands.json` again.
 * Code in `kmod/`:
-    - Build the module (see instructions earlier on in this document).
-    - Then generate `compile_command.json` with `./kmod/gen_compile_commands.sh`.
+    - [Build the module](#building-the-kernel-module).
+    - Generate `compile_commands.json` with `./kmod/gen_compile_commands.sh`.
+    - New files should work automatically, but if things stop working, just re-bulid and re-generate `compile_commands.json`.

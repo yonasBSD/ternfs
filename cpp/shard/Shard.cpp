@@ -562,6 +562,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             ss << std::setw(3) << std::setfill('0') << shid;
             config.appInstance = "shard:" + ss.str();
         }
+        config.prod = options.xmonProd;
         Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
     }
 

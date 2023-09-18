@@ -25,6 +25,7 @@ struct ShardOptions {
     double simulateOutgoingPacketDrop = 0.0;
     bool syslog = false;
     bool xmon = false;
+    bool xmonProd = false;
     bool metrics = false;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 };

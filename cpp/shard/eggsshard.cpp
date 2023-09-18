@@ -35,7 +35,7 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Drop given ratio of packets on arrival.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
-    fprintf(stderr, " -xmon\n");
+    fprintf(stderr, " -xmon qa|prod\n");
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
@@ -162,6 +162,15 @@ int main(int argc, char** argv) {
             options.syslog = true;
         } else if (arg == "-xmon") {
             options.xmon = true;
+            std::string xmonEnv = getNextArg();
+            if (xmonEnv == "qa") {
+                options.xmonProd = false;
+            } else if (xmonEnv == "prod") {
+                options.xmonProd = true;
+            } else {
+                fprintf(stderr, "Invalid xmon env %s", xmonEnv.c_str());
+                dieWithUsage();
+            }
         } else if (arg == "-metrics") {
             options.metrics = true;
         } else if (arg == "-transient-deadline-interval") {

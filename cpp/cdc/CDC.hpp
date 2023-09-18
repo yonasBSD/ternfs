@@ -15,6 +15,7 @@ struct CDCOptions {
     bool syslog = false;
     Duration shardTimeout = 100_ms;
     bool xmon = false;
+    bool xmonProd = false;
     // at 1ms per request it's 10 seconds worth of requests.
     uint64_t maximumEnqueuedRequests = 10000;
     bool metrics = false;

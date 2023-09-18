@@ -124,6 +124,15 @@ int main(int argc, char** argv) {
             options.shardTimeout = Duration(ms * 1'000'000);
         } else if (arg == "-xmon") {
             options.xmon = true;
+            std::string xmonEnv = getNextArg();
+            if (xmonEnv == "qa") {
+                options.xmonProd = false;
+            } else if (xmonEnv == "prod") {
+                options.xmonProd = true;
+            } else {
+                fprintf(stderr, "Invalid xmon env %s", xmonEnv.c_str());
+                dieWithUsage();
+            }
         } else if (arg == "-metrics") {
             options.metrics = true;
         } else {

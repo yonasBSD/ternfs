@@ -29,7 +29,7 @@ void usage(const char* binary) {
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -shard-timeout-ms milliseconds\n");
     fprintf(stderr, "    	How much to wait for shard responses. Right now this is a simple loop.\n");
-    fprintf(stderr, " -xmon\n");
+    fprintf(stderr, " -xmon qa|prod\n");
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");

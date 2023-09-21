@@ -144,6 +144,7 @@ func outputBriefFileSizes(log *lib.Logger, shuckleAddress string) {
 		}()
 	}
 	wg.Wait()
+	log.Info("finished with all shards, will now output")
 	for i, upperBound := range histo.Bins() {
 		size := uint64(0)
 		for j := 0; j < 256; j++ {

@@ -424,9 +424,17 @@ func handleRegisterCdc(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*ms
 func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
 	resp := msgs.InfoResp{}
 
-	// TODO remove decommissioned block services, probably.
 	rows, err := s.db.Query(
-		"SELECT count(*), count(distinct failure_domain), sum(capacity_bytes), sum(available_bytes), sum(blocks) FROM block_services",
+		`
+		SELECT
+			count(*),
+			count(distinct failure_domain),
+			sum(CASE WHEN (flags&:decommissioned) = 0 THEN capacity_bytes ELSE 0 END),
+			sum(CASE WHEN (flags&:decommissioned) = 0 THEN available_bytes ELSE 0 END),
+			sum(CASE WHEN (flags&:decommissioned) = 0 THEN blocks ELSE 0 END)
+		FROM block_services
+		`,
+		sql.Named("decommissioned", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
 	)
 	if err != nil {
 		log.RaiseAlert("error getting info: %s", err)
@@ -882,9 +890,11 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 					LastSeen:       formatLastSeen(bs.LastSeen),
 				})
 				failureDomainsBytes[string(bs.FailureDomain.Name[:])] = struct{}{}
-				totalAvailableBytes += bs.AvailableBytes
-				totalCapacityBytes += bs.CapacityBytes
-				data.Blocks += bs.Blocks
+				if (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0 {
+					totalAvailableBytes += bs.AvailableBytes
+					totalCapacityBytes += bs.CapacityBytes
+					data.Blocks += bs.Blocks
+				}
 			}
 			sort.Slice(
 				data.BlockServices,

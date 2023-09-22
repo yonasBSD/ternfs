@@ -881,7 +881,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port1),
 					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
 					StorageClass:   bs.StorageClass,
-					Flags:          bs.Flags.String(),
+					Flags:          bs.Flags.ShortString(),
 					FailureDomain:  string(bs.FailureDomain.Name[:bytes.Index(bs.FailureDomain.Name[:], []byte{0})]),
 					CapacityBytes:  formatSize(bs.CapacityBytes),
 					AvailableBytes: formatSize(bs.AvailableBytes),

@@ -114,6 +114,23 @@ func (flags BlockServiceFlags) String() string {
 	return strings.Join(ret, "|")
 }
 
+func (flags BlockServiceFlags) ShortString() string {
+	var ret []string
+	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
+		ret = append(ret, "S")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_NO_READ != 0 {
+		ret = append(ret, "NR")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_NO_WRITE != 0 {
+		ret = append(ret, "NW")
+	}
+	if flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
+		ret = append(ret, "D")
+	}
+	return strings.Join(ret, "|")
+}
+
 func (flags BlockServiceFlags) CanRead() bool {
 	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_READ | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
 }

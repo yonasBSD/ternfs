@@ -764,6 +764,7 @@ func main() {
 		Exe:         goExes.ShuckleExe,
 		BincodePort: shucklePort,
 		LogLevel:    level,
+		BlockserviceMinBytes: 10 << (10 * 3),
 		Dir:         path.Join(*dataDir, "shuckle"),
 	}
 	if *blockServiceKiller {

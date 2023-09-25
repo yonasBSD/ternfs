@@ -371,12 +371,13 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 }
 
 type ShuckleOpts struct {
-	Exe         string
-	Dir         string
-	LogLevel    lib.LogLevel
-	BincodePort uint16
-	HttpPort    uint16
-	Stale       time.Duration
+	Exe                  string
+	Dir                  string
+	LogLevel             lib.LogLevel
+	BincodePort          uint16
+	HttpPort             uint16
+	BlockserviceMinBytes uint64
+	Stale                time.Duration
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -385,6 +386,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		"-bincode-port", fmt.Sprintf("%d", opts.BincodePort),
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
+		"-bs-min-bytes", fmt.Sprintf("%d", opts.BlockserviceMinBytes),
 		"-data-dir", opts.Dir,
 	}
 	if opts.LogLevel == lib.DEBUG {

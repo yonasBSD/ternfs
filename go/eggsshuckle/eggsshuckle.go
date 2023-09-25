@@ -67,9 +67,10 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex    sync.Mutex
-	db       *sql.DB
-	counters map[msgs.ShuckleMessageKind]*lib.Timings
+	mutex                    sync.Mutex
+	db                       *sql.DB
+	counters                 map[msgs.ShuckleMessageKind]*lib.Timings
+	blockServiceMinFreeBytes uint64
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -191,10 +192,11 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServ
 	return ret, nil
 }
 
-func newState(db *sql.DB) *state {
+func newState(db *sql.DB, minBytes uint64) *state {
 	st := &state{
-		db:    db,
-		mutex: sync.Mutex{},
+		db:                       db,
+		mutex:                    sync.Mutex{},
+		blockServiceMinFreeBytes: minBytes,
 	}
 	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
@@ -261,12 +263,16 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
 			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED
 		}
+		flags := bs.Flags
+		if bs.AvailableBytes < s.blockServiceMinFreeBytes {
+			flags = flags | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE
+		}
 		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
 		values = append(
 			values,
 			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
 			bs.StorageClass, bs.FailureDomain.Name[:],
-			bs.SecretKey[:], bs.Flags,
+			bs.SecretKey[:], flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
 			bs.Path, now,
 		)
@@ -1867,6 +1873,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	metrics := flag.Bool("metrics", false, "")
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
+	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	scriptsJs := flag.String("scripts-js", "", "")
@@ -2002,7 +2009,7 @@ func main() {
 
 	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
-	state := newState(db)
+	state := newState(db, *bsMinBytes)
 
 	statsWrittenBeforeQuitting := int32(0)
 	writeStatsBeforeQuitting := func() {

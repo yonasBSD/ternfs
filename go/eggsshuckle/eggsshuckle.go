@@ -1873,6 +1873,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	metrics := flag.Bool("metrics", false, "")
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
+	// See internal-repo/issues/69 for more info on the default value below.
 	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")

@@ -807,6 +807,7 @@ func main() {
 		Syslog:  *syslog,
 		Xmon:    *xmon,
 		AppName: "blockservice",
+		AppType: "restech.critical",
 	})
 
 	if *profileFile != "" {

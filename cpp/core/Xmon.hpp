@@ -16,6 +16,7 @@
 struct XmonConfig {
     bool prod = false;
     std::string appInstance = "";
+    std::string appType = "restech.never";
 };
 
 struct XmonBuf {

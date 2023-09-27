@@ -1907,7 +1907,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle"})
+	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "shuckle", AppType: "restech.critical"})
 
 	if *dataDir == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")

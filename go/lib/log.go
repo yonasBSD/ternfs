@@ -52,6 +52,7 @@ type LoggerOptions struct {
 	AppName     string
 	AppInstance string
 	Xmon        string // "dev", "qa", empty string for no xmon
+	AppType     string // only used for xmon
 }
 
 type Logger struct {
@@ -144,6 +145,7 @@ func NewLogger(
 		logger.xmon, err = NewXmon(logger, &XmonConfig{
 			Prod:        options.Xmon == "prod",
 			AppInstance: ai,
+			AppType:     options.AppType,
 		})
 		if err != nil {
 			panic(err)

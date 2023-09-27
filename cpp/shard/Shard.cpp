@@ -563,6 +563,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             config.appInstance = "shard:" + ss.str();
         }
         config.prod = options.xmonProd;
+        config.appType = "restech.critical";
         Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
     }
 

@@ -32,7 +32,7 @@ Xmon::Xmon(
 ) :
     _env(logger, agent, "xmon"),
     _agent(agent),
-    _appType("restech.info"),
+    _appType(config.appType),
     _xmonHost(config.prod ? "REDACTED" : "REDACTED"),
     _xmonPort(5004)
 {

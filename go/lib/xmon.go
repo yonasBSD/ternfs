@@ -35,6 +35,7 @@ type Xmon struct {
 type XmonConfig struct {
 	Prod        bool
 	AppInstance string
+	AppType     string
 }
 
 func (x *Xmon) packString(buf *bytes.Buffer, s string) {
@@ -286,7 +287,7 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 	}
 	hostname = strings.Split(hostname, ".")[0]
 	x := &Xmon{
-		appType:     "restech.info",
+		appType:     config.AppType,
 		appInstance: config.AppInstance + "@" + hostname,
 		hostname:    hostname,
 		requests:    make(chan xmonRequest, 4096),

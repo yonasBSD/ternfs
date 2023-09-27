@@ -818,6 +818,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     if (xmon) {
         XmonConfig config;
         config.appInstance = "cdc";
+        config.appType = "restech.critical";
         config.prod = options.xmonProd;
         Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
     }

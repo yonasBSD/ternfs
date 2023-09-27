@@ -93,11 +93,14 @@ func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
 	case "DECOMMISSIONED":
 		return EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, nil
 	default:
-		panic(fmt.Errorf("unknown blockservice flag %s", n))
+		panic(fmt.Errorf("unknown blockservice flag %q", n))
 	}
 }
 
 func (flags BlockServiceFlags) String() string {
+	if flags == 0 {
+		return "0"
+	}
 	var ret []string
 	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
 		ret = append(ret, "STALE")
@@ -115,6 +118,9 @@ func (flags BlockServiceFlags) String() string {
 }
 
 func (flags BlockServiceFlags) ShortString() string {
+	if flags == 0 {
+		return "0"
+	}
 	var ret []string
 	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
 		ret = append(ret, "S")
@@ -493,11 +499,14 @@ type FailureDomain struct {
 	Name [16]byte
 }
 
-func (fd *FailureDomain) MarshalJSON() ([]byte, error) {
-	str := string(bytes.TrimRightFunc(fd.Name[:], func(r rune) bool {
+func (fd *FailureDomain) String() string {
+	return string(bytes.TrimRightFunc(fd.Name[:], func(r rune) bool {
 		return r == 0
 	}))
-	return json.Marshal(str)
+}
+
+func (fd *FailureDomain) MarshalJSON() ([]byte, error) {
+	return json.Marshal(fd.String())
 }
 
 func (fd *FailureDomain) UnmarshalJSON(b []byte) error {

@@ -568,12 +568,41 @@ func main() {
 
 	blockserviceFlagsCmd := flag.NewFlagSet("blockservice-flags", flag.ExitOnError)
 	blockserviceFlagsId := blockserviceFlagsCmd.Int64("id", 0, "Block service id")
+	blockserviceFlagsFailureDomain := blockserviceFlagsCmd.String("failure-domain", "", "Failure domain -- if this is used all block services in a given failure domain will be affected.")
 	blockserviceFlagsSet := blockserviceFlagsCmd.String("set", "", "Flag to set")
 	blockserviceFlagsUnset := blockserviceFlagsCmd.String("unset", "", "Flag to unset")
 	blockserviceFlagsRun := func() {
 		if *blockserviceFlagsSet != "" && *blockserviceFlagsUnset != "" {
 			fmt.Fprintf(os.Stderr, "cannot use -set and -unset at the same time\n")
 			os.Exit(2)
+		}
+		if *blockserviceFlagsId != 0 && *blockserviceFlagsFailureDomain != "" {
+			fmt.Fprintf(os.Stderr, "cannot use -id and -failure-domain at the same time\n")
+			os.Exit(2)
+		}
+		if *blockserviceFlagsId == 0 && *blockserviceFlagsFailureDomain == "" {
+			fmt.Fprintf(os.Stderr, "must provide one of -id and -failure-domain\n")
+			os.Exit(2)
+		}
+		blockServiceIds := []msgs.BlockServiceId{}
+		if *blockserviceFlagsId != 0 {
+			blockServiceIds = append(blockServiceIds, msgs.BlockServiceId(*blockserviceFlagsId))
+		}
+		if *blockserviceFlagsFailureDomain != "" {
+			log.Info("requesting block services")
+			blockServicesResp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+			if err != nil {
+				panic(err)
+			}
+			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+			for _, bs := range blockServices.BlockServices {
+				if bs.FailureDomain.String() == *blockserviceFlagsFailureDomain {
+					blockServiceIds = append(blockServiceIds, bs.Id)
+				}
+			}
+			if len(blockServiceIds) == 0 {
+				panic(fmt.Errorf("could not get any block service ids for failure domain %v", blockserviceFlagsFailureDomain))
+			}
 		}
 		var flag msgs.BlockServiceFlags
 		var mask uint8
@@ -585,20 +614,23 @@ func main() {
 			}
 			mask = uint8(flag)
 		}
-		if *blockserviceFlagsSet != "" {
-			flagMask, err := msgs.BlockServiceFlagFromName(*blockserviceFlagsSet)
+		if *blockserviceFlagsUnset != "" {
+			flagMask, err := msgs.BlockServiceFlagFromName(*blockserviceFlagsUnset)
 			if err != nil {
 				panic(err)
 			}
 			mask = uint8(flagMask)
 		}
-		_, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
-			Id:        msgs.BlockServiceId(*blockserviceFlagsId),
-			Flags:     flag,
-			FlagsMask: mask,
-		})
-		if err != nil {
-			panic(err)
+		for _, bsId := range blockServiceIds {
+			log.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
+			_, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
+				Id:        bsId,
+				Flags:     flag,
+				FlagsMask: mask,
+			})
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 	commands["blockservice-flags"] = commandSpec{

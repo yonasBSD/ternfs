@@ -100,7 +100,8 @@ func countBlocks(basePath string) (uint64, error) {
 	return blocks, nil
 }
 
-func updateBlockServiceInfo(
+// either updates `blockService`, or returns an error.
+func updateBlockServiceInfoOrError(
 	log *lib.Logger,
 	blockService *blockService,
 ) error {
@@ -110,15 +111,31 @@ func updateBlockServiceInfo(
 	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
 		return err
 	}
-	blockService.cachedInfo.CapacityBytes = statfs.Blocks * uint64(statfs.Bsize)
-	blockService.cachedInfo.AvailableBytes = statfs.Bavail * uint64(statfs.Bsize)
+	capacityBytes := statfs.Blocks * uint64(statfs.Bsize)
+	availableBytes := statfs.Bavail * uint64(statfs.Bsize)
 	var err error
-	blockService.cachedInfo.Blocks, err = countBlocks(blockService.path)
+	blocks, err := countBlocks(blockService.path)
 	if err != nil {
 		return err
 	}
+	blockService.cachedInfo.CapacityBytes = capacityBytes
+	blockService.cachedInfo.AvailableBytes = availableBytes
+	blockService.cachedInfo.Blocks = blocks
 	log.Info("done updating block service info for %v in %v", blockService.cachedInfo.Id, time.Since(t))
 	return nil
+}
+
+func updateBlockServiceInfo(
+	log *lib.Logger,
+	blockService *blockService,
+) {
+	if err := updateBlockServiceInfoOrError(log, blockService); err != nil {
+		blockService.couldNotUpdateInfo = true
+		log.RaiseNC(&blockService.couldNotUpdateInfoAlert, "could not update block service info for block service %v: %v", blockService.cachedInfo.Id, err)
+	} else {
+		blockService.couldNotUpdateInfo = false
+		log.ClearNC(&blockService.couldNotUpdateInfoAlert)
+	}
 }
 
 func initBlockServicesInfo(
@@ -133,7 +150,6 @@ func initBlockServicesInfo(
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
 	wg.Add(len(blockServices))
-	failed := int32(0)
 	alert := log.NewNCAlert()
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
@@ -148,17 +164,11 @@ func initBlockServicesInfo(
 		bs.cachedInfo.Path = bs.path
 		closureBs := bs
 		go func() {
-			if err := updateBlockServiceInfo(log, closureBs); err != nil {
-				log.Info("failed to update block service info: %v", err)
-				atomic.StoreInt32(&failed, 1)
-			}
+			updateBlockServiceInfo(log, closureBs)
 			wg.Done()
 		}()
 	}
 	wg.Wait()
-	if failed == 1 {
-		return fmt.Errorf("some block service infos failed to update")
-	}
 	log.ClearNC(alert)
 	return nil
 }
@@ -173,6 +183,9 @@ func registerPeriodically(
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
+			if bs.couldNotUpdateInfo {
+				continue
+			}
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
@@ -690,11 +703,13 @@ func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
 }
 
 type blockService struct {
-	path         string
-	key          [16]byte
-	cipher       cipher.Block
-	storageClass msgs.StorageClass
-	cachedInfo   msgs.BlockServiceInfo
+	path                    string
+	key                     [16]byte
+	cipher                  cipher.Block
+	storageClass            msgs.StorageClass
+	cachedInfo              msgs.BlockServiceInfo
+	couldNotUpdateInfo      bool
+	couldNotUpdateInfoAlert lib.XmonNCAlert
 }
 
 func main() {
@@ -844,10 +859,11 @@ func main() {
 			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
 		blockServices[id] = &blockService{
-			path:         dir,
-			key:          key,
-			cipher:       cipher,
-			storageClass: storageClass,
+			path:                    dir,
+			key:                     key,
+			cipher:                  cipher,
+			storageClass:            storageClass,
+			couldNotUpdateInfoAlert: *log.NewNCAlert(),
 		}
 	}
 	for id, blockService := range blockServices {

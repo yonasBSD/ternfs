@@ -259,7 +259,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
-		log.RaiseAlert("could not find block to erase at path %v", blockPath)
+		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 	if err != nil {

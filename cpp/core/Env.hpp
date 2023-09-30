@@ -109,7 +109,7 @@ public:
         std::string line;
         std::string s = ss.str();
         _log(LogLevel::LOG_ERROR, s.c_str());
-        if (_xmon) {
+        if (likely(_xmon)) {
             _xmon->raiseAlert(s);
         }
     }
@@ -121,13 +121,15 @@ public:
         std::string line;
         std::string s = ss.str();
         _log(LogLevel::LOG_ERROR, s.c_str());
-        if (_xmon) {
+        if (likely(_xmon)) {
             _xmon->updateAlert(alert, s);
         }
     }
 
     void clearAlert(XmonNCAlert& alert) {
-        if (_xmon) { _xmon->clearAlert(alert); }
+        if (likely(_xmon)) {
+            _xmon->clearAlert(alert);
+        }
     }
 
     bool _shouldLog(LogLevel level) {

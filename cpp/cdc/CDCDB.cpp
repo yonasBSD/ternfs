@@ -1,6 +1,7 @@
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
 
@@ -14,6 +15,8 @@
 #include "Msgs.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
+#include "Time.hpp"
+#include "XmonAgent.hpp"
 
 // The CDC needs to remember about multi-step transactions which it executes by
 // talking to the shards. So essentially we need to store a bunch of queued
@@ -1320,6 +1323,37 @@ struct CDCDBImpl {
         initZeroValue("last applied log index", LAST_APPLIED_LOG_ENTRY_KEY);
     }
 
+    // ----------------------------------------------------------------
+    // retrying txns
+
+    void commitTransaction(rocksdb::Transaction& txn) {
+        XmonNCAlert alert;
+        for (;;) {
+            auto status = txn.Commit();
+            if (likely(status.ok())) {
+                _env.clearAlert(alert);
+                return;
+            }
+            if (likely(status.IsTryAgain())) {
+                _env.updateAlert(alert, "got try again in CDC transaction, will sleep for a second and try again");
+                sleepFor(1_sec);
+                continue;
+            }
+            // We don't expect any other kind of error. The docs state:
+            //
+            //     If this transaction was created by an OptimisticTransactionDB(),
+            //     Status::Busy() may be returned if the transaction could not guarantee
+            //     that there are no write conflicts.  Status::TryAgain() may be returned
+            //     if the memtable history size is not large enough
+            //      (See max_write_buffer_size_to_maintain).
+            //
+            // However we never run transactions concurrently. So we should never get busy.
+            //
+            // This is just a way to throw the right exception.
+            ROCKS_DB_CHECKED(status);
+        }
+    }
+
     // Processing
     // ----------------------------------------------------------------
 
@@ -1521,7 +1555,7 @@ struct CDCDBImpl {
         _startExecuting(time, *dbTxn, step, status);
 
         LOG_DEBUG(_env, "committing transaction");
-        ROCKS_DB_CHECKED(dbTxn->Commit());
+        commitTransaction(*dbTxn);
 
         return txnId;
     }
@@ -1574,7 +1608,7 @@ struct CDCDBImpl {
             status.runningTxnKind = _cdcReq.kind();
         }
 
-        ROCKS_DB_CHECKED(dbTxn->Commit());
+        commitTransaction(*dbTxn);
     }
 
     void startNextTransaction(
@@ -1621,7 +1655,7 @@ struct CDCDBImpl {
             }
         }
          
-        ROCKS_DB_CHECKED(dbTxn->Commit());
+        commitTransaction(*dbTxn);
     }
 };
 

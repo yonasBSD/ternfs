@@ -6,6 +6,8 @@
 #include <atomic>
 #include <vector>
 
+#include "Common.hpp"
+
 enum struct XmonRequestType : int32_t {
     CREATE = 0x4,
     UPDATE = 0x5,
@@ -70,7 +72,7 @@ public:
     }
 
     void clearAlert(XmonNCAlert& aid) {
-        if (aid.alertId < 0) { return; }
+        if (likely(aid.alertId < 0)) { return; }
         XmonRequest req;
         req.msgType = XmonRequestType::CLEAR;
         req.alertId = aid.alertId;

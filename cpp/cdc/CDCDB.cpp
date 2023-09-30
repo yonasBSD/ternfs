@@ -1234,6 +1234,9 @@ struct CDCDBImpl {
         options.create_if_missing = true;
         options.create_missing_column_families = true;
         options.compression = rocksdb::kLZ4Compression;
+        // In the shards we set this given that 1000*256 = 256k, doing it here also
+        // for symmetry although it's probably not needed.
+        options.max_open_files = 1000;
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
             {rocksdb::kDefaultColumnFamilyName, {}},
             {"reqQueue", {}},

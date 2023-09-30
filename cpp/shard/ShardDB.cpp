@@ -282,6 +282,9 @@ struct ShardDBImpl {
         options.create_missing_column_families = true;
         options.compression = rocksdb::kLZ4Compression;
         options.bottommost_compression = rocksdb::kZSTD;
+        // 1000*256 = 256k open files at once, given that we currently run on a
+        // single machine this is appropriate.
+        options.max_open_files = 1000;
 
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();

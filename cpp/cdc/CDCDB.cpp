@@ -1521,7 +1521,7 @@ struct CDCDBImpl {
         _startExecuting(time, *dbTxn, step, status);
 
         LOG_DEBUG(_env, "committing transaction");
-        dbTxn->Commit();
+        ROCKS_DB_CHECKED(dbTxn->Commit());
 
         return txnId;
     }
@@ -1574,7 +1574,7 @@ struct CDCDBImpl {
             status.runningTxnKind = _cdcReq.kind();
         }
 
-        dbTxn->Commit();
+        ROCKS_DB_CHECKED(dbTxn->Commit());
     }
 
     void startNextTransaction(
@@ -1621,7 +1621,7 @@ struct CDCDBImpl {
             }
         }
          
-        dbTxn->Commit();
+        ROCKS_DB_CHECKED(dbTxn->Commit());
     }
 };
 

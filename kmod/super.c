@@ -341,6 +341,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     sb->s_time_gran = 1;
     sb->s_time_min = 0;
     sb->s_time_max = U64_MAX/1000000000ull;
+    sb->s_maxbytes= MAX_LFS_FILESIZE;
 
     struct inode* root = eggsfs_get_inode(sb,  NULL, EGGSFS_ROOT_INODE);
     if (IS_ERR(root)) { err = PTR_ERR(root); goto out_sb; }

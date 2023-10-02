@@ -1330,7 +1330,7 @@ struct CDCDBImpl {
     // retrying txns
 
     void commitTransaction(rocksdb::Transaction& txn) {
-        XmonNCAlert alert;
+        XmonNCAlert alert(10_sec);
         for (;;) {
             auto status = txn.Commit();
             if (likely(status.ok())) {

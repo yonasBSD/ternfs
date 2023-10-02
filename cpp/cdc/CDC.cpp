@@ -571,7 +571,7 @@ private:
         // we restart everything while under load, it's not great to block here
         // but it's probably OK to do so in those cases. We should also automatically
         // clear the alert when done with this.
-        XmonNCAlert alert;
+        XmonNCAlert alert(1_sec);
         for (;;) {
             if (likely(sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len)) {
                 break;
@@ -607,7 +607,8 @@ public:
         PeriodicLoop(logger, xmon, "shard_updater", {1_sec, 1_mins}),
         _shared(shared),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shucklePort(options.shucklePort),
+        _alert(10_sec)
     {}
 
     virtual void init() override {
@@ -661,7 +662,8 @@ public:
         _ownIp2(options.ipPorts[1].ip),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
-        _hasSecondIp(options.ipPorts[1].ip != 0)
+        _hasSecondIp(options.ipPorts[1].ip != 0),
+        _alert(10_sec)
     {}
 
     virtual bool periodicStep() override {
@@ -694,7 +696,8 @@ public:
         PeriodicLoop(logger, xmon, "stats_inserter", {1_sec, 1_hours}),
         _shared(shared),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shucklePort(options.shucklePort),
+        _alert(10_sec)
     {}
 
     virtual bool periodicStep() override {
@@ -741,7 +744,8 @@ private:
 public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
-        _shared(shared)
+        _shared(shared),
+        _alert(10_sec)
     {}
 
     virtual bool periodicStep() {

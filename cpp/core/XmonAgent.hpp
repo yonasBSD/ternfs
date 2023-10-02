@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Common.hpp"
+#include "Time.hpp"
 
 enum struct XmonRequestType : int32_t {
     CREATE = 0x4,
@@ -17,14 +18,17 @@ enum struct XmonRequestType : int32_t {
 struct XmonRequest {
     XmonRequestType msgType;
     int64_t alertId;
+    Duration quietPeriod;
     bool binnable;
     std::string message;
 };
 
 struct XmonNCAlert {
     int64_t alertId;
+    Duration quietPeriod;
 
-    XmonNCAlert() : alertId(-1) {}
+    XmonNCAlert() : alertId(-1), quietPeriod(0) {}
+    XmonNCAlert(Duration quietPeriod_) : alertId(-1), quietPeriod(quietPeriod_) {}
 };
 
 struct XmonAgent {
@@ -38,13 +42,14 @@ private:
         _requests.emplace_back(req);
     }
 
-    int64_t _createAlert(bool binnable, const std::string& message) {
+    int64_t _createAlert(bool binnable, Duration quietPeriod, const std::string& message) {
         int64_t aid = _alertId.fetch_add(1);
         XmonRequest req;
         req.msgType = XmonRequestType::CREATE;
         req.alertId = aid;
         req.binnable = binnable;
         req.message = message;
+        req.quietPeriod = quietPeriod;
         _addRequest(std::move(req));
         return aid;
     }
@@ -55,18 +60,19 @@ public:
     XmonAgent() : _alertId(1) {}
 
     void raiseAlert(const std::string& message) {
-        _createAlert(true, message);
+        _createAlert(true, 0, message);
     }
 
     void updateAlert(XmonNCAlert& aid, const std::string& message) {
         if (aid.alertId < 0) {
-            aid.alertId = _createAlert(false, message);
+            aid.alertId = _createAlert(false, aid.quietPeriod, message);
         } else {
             XmonRequest req;
             req.msgType = XmonRequestType::UPDATE;
             req.alertId = aid.alertId;
             req.binnable = false;
             req.message = message;
+            req.quietPeriod = 0;
             _addRequest(std::move(req));
         }
     }
@@ -78,6 +84,7 @@ public:
         req.alertId = aid.alertId;
         req.binnable = false;
         req.message = {};
+        req.quietPeriod = 0;
         _addRequest(std::move(req));
         aid.alertId = -1;
     }

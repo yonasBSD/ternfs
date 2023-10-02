@@ -363,7 +363,7 @@ const tooManyAlertsAlertId = int64(0)
 
 var alertIdCount = int64(1)
 
-func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, quietPeriod time.Duration, binnable bool, format string, v ...any) string {
+func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
 	if *alertId < 0 {
@@ -391,20 +391,20 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, quie
 
 func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1+calldepth, &alertId, 0, true, format, v...)
+	xmonRaiseStack(log, x, 1+calldepth, &alertId, true, 0, format, v...)
 }
 
 func (x *Xmon) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1, &alertId, 0, true, format, v...)
+	xmonRaiseStack(log, x, 1, &alertId, true, 0, format, v...)
 }
 
 func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1+calldepth, &a.alertId, a.quietPeriod, false, format, v...)
+	a.lastMessage = xmonRaiseStack(log, xmon, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
 func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1, &a.alertId, a.quietPeriod, false, format, v...)
+	a.lastMessage = xmonRaiseStack(log, xmon, 1, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
 func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {

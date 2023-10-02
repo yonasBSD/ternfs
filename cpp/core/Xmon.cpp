@@ -158,11 +158,17 @@ bool XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
 
 constexpr int MAX_BINNABLE_ALERTS = 20;
 
+struct QuietAlert {
+    EggsTime quietUntil;
+    std::string message;
+};
+
 void Xmon::run() {
     XmonBuf buf;
     int sock = -1;
     std::deque<XmonRequest> requests;
     std::unordered_set<int64_t> binnableAlerts;
+    std::unordered_map<int64_t, QuietAlert> quietAlerts;
 
     std::string errString;
 
@@ -210,21 +216,49 @@ reconnect:
 
         // send all requests
         if (gotHeartbeatAt > 0) {
+            auto now = eggsNow();
+            // unquiet alerts that are due
+            for (auto it = quietAlerts.begin(); it != quietAlerts.end();) {
+                if (now >= it->second.quietUntil) {
+                    requests.emplace_back(XmonRequest{
+                        .msgType = XmonRequestType::CREATE,
+                        .alertId = it->first,
+                        .quietPeriod = 0,
+                        .binnable = false,
+                        .message = std::move(it->second.message),
+                    });
+                    it = quietAlerts.erase(it);
+                } else {
+                    it++;
+                }
+            }
+            // get all requests
             _agent->getRequests(requests);
             while (!requests.empty()) {
                 const auto& req = requests.front();
+                LOG_INFO(_env, "got req of type %s alertId=%s", (int)XmonRequestType::CREATE, req.alertId);
                 int64_t alertIdToInsert = -1;
                 if (req.msgType == XmonRequestType::CREATE) {
-                    if (req.binnable) {
+                    if (req.quietPeriod > 0) {
+                        ALWAYS_ASSERT(!req.binnable, "got alert with quietPeriod=%s, but it is binnable", req.quietPeriod);
+                        LOG_INFO(_env, "got non-binnable alertId=%s message=%s quietPeriod=%s, will wait", req.alertId, req.message, req.quietPeriod);
+                        quietAlerts[req.alertId] = QuietAlert{
+                            .quietUntil = now + req.quietPeriod,
+                            .message = std::move(req.message),
+                        };
+                        goto skip_request;
+                    } else if (req.binnable) {
                         alertIdToInsert = req.alertId;
                         if (binnableAlerts.size() > MAX_BINNABLE_ALERTS) {
                             LOG_ERROR(_env, "not creating alert, aid=%s binnable=%s message=%s, we're full", req.alertId, req.binnable, req.message);
                             if (binnableAlerts.count(XmonAgent::TOO_MANY_ALERTS_ALERT_ID) == 0) {
-                                XmonRequest req;
-                                req.msgType = XmonRequestType::CREATE;
-                                req.alertId = XmonAgent::TOO_MANY_ALERTS_ALERT_ID;
-                                req.message = "too many alerts, alerts dropped";
-                                req.binnable = true;
+                                XmonRequest req{
+                                    .msgType = XmonRequestType::CREATE,
+                                    .alertId = XmonAgent::TOO_MANY_ALERTS_ALERT_ID,
+                                    .quietPeriod = 0,
+                                    .binnable = true,
+                                    .message = "too many alerts, alerts dropped",
+                                };
                                 packRequest(buf, req);
                                 alertIdToInsert = XmonAgent::TOO_MANY_ALERTS_ALERT_ID;
                                 goto write_request;
@@ -236,9 +270,21 @@ reconnect:
                     LOG_INFO(_env, "creating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::UPDATE) {
                     ALWAYS_ASSERT(!req.binnable);
+                    auto quiet = quietAlerts.find(req.alertId);
+                    if (quiet != quietAlerts.end()) {
+                        LOG_INFO(_env, "skipping update alertId=%s message=%s since it's still quiet", req.alertId, req.message);
+                        quiet->second.message = std::move(req.message);
+                        goto skip_request;
+                    }
                     LOG_INFO(_env, "updating alert, aid=%s binnable=%s message=%s", req.alertId, req.binnable, req.message);
                 } else if (req.msgType == XmonRequestType::CLEAR) {
                     ALWAYS_ASSERT(!req.binnable);
+                    auto quiet = quietAlerts.find(req.alertId);
+                    if (quiet != quietAlerts.end()) {
+                        LOG_INFO(_env, "skipping clear alertId=%s since it's still quiet", req.alertId);
+                        quietAlerts.erase(quiet);
+                        goto skip_request;
+                    }                    
                     LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
                 } else {
                     ALWAYS_ASSERT(false, "bad req type %s", (int)req.msgType);

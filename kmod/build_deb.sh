@@ -11,8 +11,6 @@ MOD_LOAD_DIR="${BASE_DIR}/etc/modules-load.d"
 
 mkdir -p ${BASE_DIR}/DEBIAN
 cat debian/control | sed "s/##VERSION##/${VERSION}/g" > ${BASE_DIR}/DEBIAN/control
-cp debian/postinst ${BASE_DIR}/DEBIAN
-chmod +x ${BASE_DIR}/DEBIAN/postinst
 
 mkdir -p ${MOD_LOAD_DIR}
 cp debian/eggsfs_load.conf ${MOD_LOD_DIR}/eggsfs.conf

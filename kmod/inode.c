@@ -180,11 +180,13 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
 
     BUG_ON(dentry->d_inode);
 
+    // internal-repo/blob/main/docs/kmod-file-tracking.md
+    // This (should) happen only from NFSd. Right now we only re-export on NFS for
+    // this reason, so we should never hit this.
     if (current->group_leader->mm == NULL) {
-        // internal-repo/blob/main/docs/kmod-file-tracking.md
         eggsfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
-        return(ERR_PTR(-EIO));
-	}
+        return ERR_PTR(-EIO);
+    }
 
     struct eggsfs_inode* parent_enode = EGGSFS_I(parent);
 
@@ -200,7 +202,7 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     if (err) { return ERR_PTR(eggsfs_error_to_linux(err)); }
     // make this dentry stick around?
 
-    struct inode* inode = eggsfs_get_inode(parent->i_sb, parent_enode, ino); // new_inode
+    struct inode* inode = eggsfs_get_inode(parent->i_sb, false, parent_enode, ino); // new_inode
     if (IS_ERR(inode)) { return ERR_PTR(PTR_ERR(inode)); }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
@@ -374,7 +376,12 @@ static const struct inode_operations eggsfs_symlink_inode_ops = {
 
 extern struct file_operations eggsfs_dir_operations;
 
-struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* parent, u64 ino) {
+struct inode* eggsfs_get_inode(
+    struct super_block* sb,
+    bool allow_no_parent,
+    struct eggsfs_inode* parent,
+    u64 ino
+) {
     trace_eggsfs_get_inode_enter(ino);
 
     struct inode* inode = iget_locked(sb, ino); // new_inode when possible?
@@ -426,21 +433,39 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
         inode->i_uid = make_kuid(&init_user_ns, 1000);
         inode->i_gid = make_kgid(&init_user_ns, 1000);
 
-        // Only == NULL when we're getting the root inode    
+        // Only == NULL when we're getting the root inode,
+        // unless we allow no parent, which is only in the
+        // case of NFS exports. In that case we never write
+        // files anyway, so not having the right policy does
+        // not matter. Ofc we could re-export a mount that
+        // is also written to, but this is an edge case that
+        // we do not cater to very well for now. The proper
+        // solution is to store the correct policy on
+        // `d_splice_alias`, but we can only do that if we
+        // also remember if the current enode policy is its
+        // own or not. In fact, I just realized that `eggsfs_rename`
+        // is wrong: it unconditionally sets the policy of the
+        // child directory to that of the parent, but that's
+        // not right, it should do that _only if the child
+        // policy is inherited_. We should store a bit that tells
+        // us whether it is inherited, and then use it
+        // on `d_splice_alias` and `d_move`.
         if (parent) {
             enode->block_policy = parent->block_policy;
             enode->span_policy = parent->span_policy;
             enode->stripe_policy = parent->stripe_policy;
         } else {
-            if (ino != EGGSFS_ROOT_INODE) {
+            bool is_root = ino == EGGSFS_ROOT_INODE;
+            BUG_ON(!allow_no_parent && !is_root);
+            if (is_root) { // we've just created the root inode, policy will be filled in later
+                enode->block_policy = NULL;
+                enode->span_policy = NULL;
+                enode->stripe_policy = NULL;
+            } else {
                 struct eggsfs_inode* root = EGGSFS_I(sb->s_root->d_inode);
                 enode->block_policy = root->block_policy;
                 enode->span_policy = root->span_policy;
                 enode->stripe_policy = root->stripe_policy;
-            } else {
-                enode->block_policy = NULL;
-                enode->span_policy = NULL;
-                enode->stripe_policy = NULL;
             }
         }
 

@@ -127,7 +127,7 @@ struct dentry* eggsfs_lookup(struct inode* dir, struct dentry* dentry, unsigned 
         goto out_err;
     }
 
-    struct inode* inode = eggsfs_get_inode(dentry->d_sb, EGGSFS_I(dir), ino);
+    struct inode* inode = eggsfs_get_inode(dentry->d_sb, false, EGGSFS_I(dir), ino);
     if (IS_ERR(inode)) {
         err = PTR_ERR(inode);
         goto out_err;
@@ -176,7 +176,7 @@ int eggsfs_mkdir(struct inode* dir, struct dentry* dentry, umode_t mode) {
     }
     eggsfs_dir_drop_cache(EGGSFS_I(dir));
 
-    struct inode* inode = eggsfs_get_inode(dentry->d_sb, EGGSFS_I(dir), ino);
+    struct inode* inode = eggsfs_get_inode(dentry->d_sb, false, EGGSFS_I(dir), ino);
     if (IS_ERR(inode)) { err = PTR_ERR(inode); goto out_err; }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
     enode->edge_creation_time = creation_time;

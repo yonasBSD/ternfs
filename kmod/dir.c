@@ -195,7 +195,7 @@ again:
         goto again;
     } else {
         // new entry
-        struct inode* inode = eggsfs_get_inode(parent->d_sb, EGGSFS_I(parent_inode), ino);
+        struct inode* inode = eggsfs_get_inode(parent->d_sb, false, EGGSFS_I(parent_inode), ino);
         if (!IS_ERR(inode)) {
             struct eggsfs_inode* enode = EGGSFS_I(inode);
             enode->edge_creation_time = edge_creation_time;

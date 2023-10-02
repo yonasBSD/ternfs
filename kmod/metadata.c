@@ -482,6 +482,7 @@ int eggsfs_shard_getattr_dir(
     struct eggsfs_fs_info* info,
     u64 dir,
     u64* mtime,
+    u64* owner,
     struct eggsfs_policy_body* block_policies,
     struct eggsfs_policy_body* span_policies,
     struct eggsfs_policy_body* stripe_policy
@@ -508,8 +509,8 @@ int eggsfs_shard_getattr_dir(
         PREPARE_SHARD_RESP_CTX();
         eggsfs_stat_directory_resp_get_start(&ctx, start);
         eggsfs_stat_directory_resp_get_mtime(&ctx, start, resp_mtime);
-        eggsfs_stat_directory_resp_get_owner(&ctx, resp_mtime, owner);
-        eggsfs_stat_directory_resp_get_info(&ctx, owner, resp_info);
+        eggsfs_stat_directory_resp_get_owner(&ctx, resp_mtime, resp_owner);
+        eggsfs_stat_directory_resp_get_info(&ctx, resp_owner, resp_info);
         eggsfs_directory_info_get_entries(&ctx, resp_info, entries);
         int i;
         for (i = 0; i < entries.len; i++) {
@@ -536,6 +537,7 @@ int eggsfs_shard_getattr_dir(
         eggsfs_stat_directory_resp_get_finish(&ctx, end);
         FINISH_RESP();
         *mtime = resp_mtime.x;
+        *owner = resp_owner.x;
     }
 
     return 0;    

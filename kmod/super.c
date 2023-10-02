@@ -7,6 +7,7 @@
 
 #include "log.h"
 #include "inode.h"
+#include "export.h"
 #include "metadata.h"
 #include "dentry.h"
 #include "net.h"
@@ -337,6 +338,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
 
     sb->s_op = &eggsfs_super_ops;
     sb->s_d_op = &eggsfs_dentry_ops;
+    sb->s_export_op = &eggsfs_export_ops;
 
     sb->s_time_gran = 1;
     sb->s_time_min = 0;

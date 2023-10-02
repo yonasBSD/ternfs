@@ -6,6 +6,7 @@ obj-m += eggsfs.o
 eggsfs-objs += \
 	dir.o \
 	err.o \
+	export.o \
 	file.o \
 	inode.o \
 	kmod.o \

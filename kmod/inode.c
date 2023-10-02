@@ -91,6 +91,7 @@ again: // progress: whoever wins the lock won't try again
         bool has_atime = false;
         u64 atime;
         if (S_ISDIR(enode->inode.i_mode)) {
+            u64 owner;
             struct eggsfs_policy_body block_policy;
             struct eggsfs_policy_body span_policy;
             struct eggsfs_policy_body stripe_policy;
@@ -98,6 +99,7 @@ again: // progress: whoever wins the lock won't try again
                 (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
                 enode->inode.i_ino,
                 &mtime,
+		&owner,
                 &block_policy,
                 &span_policy,
                 &stripe_policy
@@ -177,6 +179,12 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     int err;
 
     BUG_ON(dentry->d_inode);
+
+    if (current->group_leader->mm == NULL) {
+        // internal-repo/blob/main/docs/kmod-file-tracking.md
+        eggsfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
+        return(ERR_PTR(-EIO));
+	}
 
     struct eggsfs_inode* parent_enode = EGGSFS_I(parent);
 
@@ -424,10 +432,16 @@ struct inode* eggsfs_get_inode(struct super_block* sb, struct eggsfs_inode* pare
             enode->span_policy = parent->span_policy;
             enode->stripe_policy = parent->stripe_policy;
         } else {
-            BUG_ON(ino != EGGSFS_ROOT_INODE);
-            enode->block_policy = NULL;
-            enode->span_policy = NULL;
-            enode->stripe_policy = NULL;
+            if (ino != EGGSFS_ROOT_INODE) {
+                struct eggsfs_inode* root = EGGSFS_I(sb->s_root->d_inode);
+                enode->block_policy = root->block_policy;
+                enode->span_policy = root->span_policy;
+                enode->stripe_policy = root->stripe_policy;
+            } else {
+                enode->block_policy = NULL;
+                enode->span_policy = NULL;
+                enode->stripe_policy = NULL;
+            }
         }
 
         unlock_new_inode(inode);

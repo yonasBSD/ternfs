@@ -443,6 +443,7 @@ struct file_operations eggsfs_dir_operations = {
     .iterate = eggsfs_dir_read,
     .iterate_shared = eggsfs_dir_read,
     .release = eggsfs_dir_close,
+    .llseek = generic_file_llseek,
 };
 
 int __init eggsfs_dir_init(void) {

@@ -26,6 +26,7 @@ int eggsfs_shard_getattr_dir(
     struct eggsfs_fs_info* info,
     u64 file,
     u64* mtime,
+    u64* owner,
     struct eggsfs_policy_body* block_policies,
     struct eggsfs_policy_body* span_policies,
     struct eggsfs_policy_body* stripe_policy

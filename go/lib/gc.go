@@ -126,7 +126,7 @@ func destructFilesInternal(
 	shid msgs.ShardId,
 	stats *DestructionStats,
 ) error {
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(10 * time.Second)
 	timeouts := NewReqTimeouts(time.Second, 10*time.Second, 0, 1.5, 0.2)
 	req := msgs.VisitTransientFilesReq{}
 	resp := msgs.VisitTransientFilesResp{}

@@ -273,6 +273,7 @@ type BlockServiceOpts struct {
 	LogLevel       lib.LogLevel
 	ShuckleAddress string
 	Profile        bool
+	Xmon           string
 }
 
 func createDataDir(dir string) {
@@ -307,6 +308,9 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	}
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
 	}
 	for i, storageClass := range opts.StorageClasses {
 		args = append(args, path.Join(opts.Path, fmt.Sprintf("%d", i)), storageClass.String())
@@ -378,6 +382,7 @@ type ShuckleOpts struct {
 	HttpPort             uint16
 	BlockserviceMinBytes uint64
 	Stale                time.Duration
+	Xmon                 string
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -397,6 +402,9 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	}
 	if opts.Stale != 0 {
 		args = append(args, "-stale", opts.Stale.String())
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",
@@ -449,6 +457,7 @@ type ShardOpts struct {
 	OwnIp2                    string
 	Port2                     uint16
 	TransientDeadlineInterval *time.Duration
+	Xmon                      string
 }
 
 func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
@@ -470,6 +479,9 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	}
 	if opts.TransientDeadlineInterval != nil {
 		args = append(args, "-transient-deadline-interval", fmt.Sprintf("%dns", opts.TransientDeadlineInterval.Nanoseconds()))
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:
@@ -537,6 +549,7 @@ type CDCOpts struct {
 	OwnIp2         string
 	Port2          uint16
 	ShardTimeout   time.Duration
+	Xmon           string
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
@@ -556,6 +569,9 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	}
 	if opts.ShardTimeout != 0 {
 		args = append(args, "-shard-timeout-ms", fmt.Sprintf("%v", opts.ShardTimeout.Milliseconds()))
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:

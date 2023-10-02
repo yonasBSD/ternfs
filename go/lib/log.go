@@ -215,11 +215,11 @@ func (l *Logger) ErrorNoAlert(format string, v ...any) {
 	l.LogStack(1, ERROR, format, v...)
 }
 
-func (l *Logger) NewNCAlert() *XmonNCAlert {
+func (l *Logger) NewNCAlert(quietTime time.Duration) *XmonNCAlert {
 	if l.xmon == nil {
 		return &XmonNCAlert{}
 	} else {
-		return l.xmon.NewNCAlert()
+		return l.xmon.NewNCAlert(quietTime)
 	}
 }
 

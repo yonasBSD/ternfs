@@ -18,10 +18,11 @@ const (
 )
 
 type xmonRequest struct {
-	msgType  int32
-	alertId  int64
-	binnable bool
-	message  string
+	msgType     int32
+	alertId     int64
+	quietPeriod time.Duration
+	binnable    bool
+	message     string
 }
 
 type Xmon struct {
@@ -115,6 +116,12 @@ func (x *Xmon) packRequest(buf *bytes.Buffer, req *xmonRequest) {
 
 const maxBinnableAlerts int = 20
 
+// alert in quiet period
+type quietAlert struct {
+	quietUntil time.Time
+	message    string
+}
+
 func (x *Xmon) run(log *Logger) {
 	buffer := bytes.NewBuffer([]byte{})
 	requestsCap := uint64(4096)
@@ -123,6 +130,8 @@ func (x *Xmon) run(log *Logger) {
 	requestsHead := uint64(0)
 	requestsTail := uint64(0)
 	binnableAlerts := make(map[int64]struct{})
+	// alerts in quiet period
+	quietAlerts := make(map[int64]*quietAlert)
 
 	var conn *net.TCPConn
 	defer func() {
@@ -172,7 +181,21 @@ Reconnect:
 
 		// fetch a bunch of requests and then send them out
 		if !gotHeartbeatAt.Equal(time.Time{}) {
-			// fill in requests
+			now := time.Now()
+			// unquiet alerts that are due
+			for aid, alert := range quietAlerts {
+				if alert.quietUntil.Before(now) {
+					delete(quietAlerts, aid)
+					requests[requestsTail&requestsMask] = xmonRequest{
+						msgType:  XMON_CREATE,
+						alertId:  aid,
+						binnable: false,
+						message:  alert.message,
+					}
+					requestsTail++
+				}
+			}
+			// fill in requests from channel
 			for requestsTail-requestsHead < requestsCap {
 				select {
 				case requests[requestsTail&requestsMask] = <-x.requests:
@@ -187,8 +210,18 @@ Reconnect:
 				req := &requests[requestsHead&requestsMask]
 				switch req.msgType {
 				case XMON_CREATE:
-					if req.binnable && len(binnableAlerts) > maxBinnableAlerts {
-						log.ErrorNoAlert("skipping create alert, alertId=%v binnable=%v message=%v, too many already", req.alertId, req.binnable, req.message)
+					if req.quietPeriod > 0 {
+						if req.binnable {
+							panic(fmt.Errorf("got alert create with quietPeriod=%v, but it is binnable", req.quietPeriod))
+						}
+						log.Info("got non-binnable alertId=%v message=%q quietPeriod=%v, will wait", req.alertId, req.message, req.quietPeriod)
+						quietAlerts[req.alertId] = &quietAlert{
+							message:    req.message,
+							quietUntil: now.Add(req.quietPeriod),
+						}
+						goto SkipRequest
+					} else if req.binnable && len(binnableAlerts) > maxBinnableAlerts {
+						log.ErrorNoAlert("skipping create alert, alertId=%v binnable=%v message=%q, too many already", req.alertId, req.binnable, req.message)
 						// if we don't have the "too many alerts" alert, create it
 						if _, ok := binnableAlerts[tooManyAlertsAlertId]; !ok {
 							req = &xmonRequest{
@@ -201,16 +234,28 @@ Reconnect:
 							goto SkipRequest
 						}
 					} else {
-						log.Info("sending create alert, alertId=%v binnable=%v message=%v", req.alertId, req.binnable, req.message)
+						log.Info("sending create alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 					}
 				case XMON_UPDATE:
 					if req.binnable {
 						panic(fmt.Errorf("unexpected update to non-binnable alert"))
 					}
-					log.Info("sending update alert, alertId=%v binnable=%v message=%v", req.alertId, req.binnable, req.message)
+					quiet := quietAlerts[req.alertId]
+					if quiet != nil {
+						log.Info("skipping update alertId=%v message=%q since it's still quiet", req.alertId, req.message)
+						quiet.message = req.message
+						goto SkipRequest
+					}
+					log.Info("sending update alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 				case XMON_CLEAR:
 					if req.binnable {
 						panic(fmt.Errorf("unexpected clear to non-binnable alert"))
+					}
+					quiet := quietAlerts[req.alertId]
+					if quiet != nil {
+						log.Info("skipping clear alertId=%v since it's still quiet", req.alertId)
+						delete(quietAlerts, req.alertId)
+						goto SkipRequest
 					}
 					log.Info("sending clear alert, alertId=%v", req.alertId)
 				default:
@@ -304,11 +349,13 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 type XmonNCAlert struct {
 	alertId     int64 // -1 if we haven't got one yet
 	lastMessage string
+	quietPeriod time.Duration
 }
 
-func (x *Xmon) NewNCAlert() *XmonNCAlert {
+func (x *Xmon) NewNCAlert(quietPeriod time.Duration) *XmonNCAlert {
 	return &XmonNCAlert{
-		alertId: -1,
+		alertId:     -1,
+		quietPeriod: quietPeriod,
 	}
 }
 
@@ -316,25 +363,27 @@ const tooManyAlertsAlertId = int64(0)
 
 var alertIdCount = int64(1)
 
-func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binnable bool, format string, v ...any) string {
+func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, quietPeriod time.Duration, binnable bool, format string, v ...any) string {
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
 		log.LogStack(1, INFO, "creating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
-			msgType:  XMON_CREATE,
-			alertId:  *alertId,
-			binnable: binnable,
-			message:  message,
+			msgType:     XMON_CREATE,
+			alertId:     *alertId,
+			quietPeriod: quietPeriod,
+			binnable:    binnable,
+			message:     message,
 		}
 	} else {
 		log.LogStack(1, INFO, "updating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
-			msgType:  XMON_UPDATE,
-			alertId:  *alertId,
-			binnable: binnable,
-			message:  message,
+			msgType:     XMON_UPDATE,
+			alertId:     *alertId,
+			quietPeriod: quietPeriod,
+			binnable:    binnable,
+			message:     message,
 		}
 	}
 	return message
@@ -342,20 +391,20 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binn
 
 func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1+calldepth, &alertId, true, format, v...)
+	xmonRaiseStack(log, x, 1+calldepth, &alertId, 0, true, format, v...)
 }
 
 func (x *Xmon) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1, &alertId, true, format, v...)
+	xmonRaiseStack(log, x, 1, &alertId, 0, true, format, v...)
 }
 
 func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1+calldepth, &a.alertId, false, format, v...)
+	a.lastMessage = xmonRaiseStack(log, xmon, 1+calldepth, &a.alertId, a.quietPeriod, false, format, v...)
 }
 
 func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1, &a.alertId, false, format, v...)
+	a.lastMessage = xmonRaiseStack(log, xmon, 1, &a.alertId, a.quietPeriod, false, format, v...)
 }
 
 func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {

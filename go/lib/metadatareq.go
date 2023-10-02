@@ -136,7 +136,12 @@ func (c *Client) metadataRequest(
 	startedAt := time.Now()
 	requestId := c.newRequestId()
 	// will keep trying as long as we get timeouts
-	timeoutAlert := log.NewNCAlert()
+	timeoutAlertQuietPeriod := time.Second
+	if shid < 0 {
+		// currently the CDC can be extremely slow as we sync stuff
+		timeoutAlertQuietPeriod = time.Minute
+	}
+	timeoutAlert := log.NewNCAlert(timeoutAlertQuietPeriod)
 	// We return the error anyway, so once we exit this function this alert must be gone
 	defer log.ClearNC(timeoutAlert)
 	timeoutAlertAndStandalone := func(f string, v ...any) {

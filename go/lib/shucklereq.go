@@ -214,7 +214,7 @@ func ShuckleRequest(
 		timeout = &DefaultShuckleTimeout
 	}
 
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(10 * time.Second)
 	defer log.ClearNC(alert)
 
 	var err error

@@ -36,6 +36,7 @@ func main() {
 	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
+	xmon := flag.String("xmon", "", "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -127,6 +128,7 @@ func main() {
 		HttpPort:    uint16(*shuckleHttpPort),
 		LogLevel:    level,
 		Dir:         path.Join(*dataDir, "shuckle"),
+		Xmon:        *xmon,
 	})
 
 	// Start block services
@@ -149,6 +151,7 @@ func main() {
 			OwnIp1:         "127.0.0.1",
 			OwnIp2:         "127.0.0.1",
 			Profile:        *profile,
+			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
 			opts.Port1 = uint16(*startingPort) + 257 + uint16(i)
@@ -173,6 +176,7 @@ func main() {
 			ShuckleAddress: shuckleAddress,
 			OwnIp1:         *ownIp,
 			Perf:           *profile,
+			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
 			opts.Port1 = uint16(*startingPort)
@@ -192,6 +196,7 @@ func main() {
 			ShuckleAddress: shuckleAddress,
 			OwnIp1:         *ownIp,
 			Perf:           *profile,
+			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
 			opts.Port1 = uint16(*startingPort) + 1 + uint16(i)

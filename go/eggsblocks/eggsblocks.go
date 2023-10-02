@@ -150,7 +150,7 @@ func initBlockServicesInfo(
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
 	wg.Add(len(blockServices))
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(0)
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
 		bs.cachedInfo.Id = id
@@ -179,7 +179,7 @@ func registerPeriodically(
 	shuckleAddress string,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
@@ -663,7 +663,7 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		log.Info("sending metrics")
 		metrics.Reset()
@@ -864,7 +864,7 @@ func main() {
 			key:                     key,
 			cipher:                  cipher,
 			storageClass:            storageClass,
-			couldNotUpdateInfoAlert: *log.NewNCAlert(),
+			couldNotUpdateInfoAlert: *log.NewNCAlert(time.Second),
 		}
 	}
 	for id, blockService := range blockServices {

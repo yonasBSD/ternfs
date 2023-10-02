@@ -1714,7 +1714,7 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 func sendMetrics(log *lib.Logger, st *state) error {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
-	alert := log.NewNCAlert()
+	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		log.Info("sending metrics")
 		metrics.Reset()
@@ -1775,7 +1775,7 @@ func statsWriter(ll *lib.Logger, st *state) {
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	staleAlert := ll.NewNCAlert()
+	staleAlert := ll.NewNCAlert(0)
 
 	for {
 		<-ticker.C

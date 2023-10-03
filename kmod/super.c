@@ -348,7 +348,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     sb->s_magic = EGGSFS_SUPER_MAGIC;
     sb->s_blocksize_bits = ffs(sb->s_blocksize) - 1;
 
-    struct inode* root = eggsfs_get_inode(sb, false, NULL, EGGSFS_ROOT_INODE);
+    struct inode* root = eggsfs_get_inode_normal(sb, NULL, EGGSFS_ROOT_INODE);
     if (IS_ERR(root)) { err = PTR_ERR(root); goto out_sb; }
     
     struct eggsfs_inode* root_enode = EGGSFS_I(root);

@@ -242,7 +242,7 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.Info("skipping update alertId=%v message=%q since it's still quiet", req.alertId, req.message)
+						log.Info("skipping update alertId=%v message=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
 						quiet.message = req.message
 						goto SkipRequest
 					}
@@ -253,7 +253,7 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.Info("skipping clear alertId=%v since it's still quiet", req.alertId)
+						log.Info("skipping clear alertId=%v since it's quiet until %v", req.alertId, quiet.quietUntil)
 						delete(quietAlerts, req.alertId)
 						goto SkipRequest
 					}

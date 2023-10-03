@@ -159,7 +159,40 @@ static inline u32 eggsfs_inode_shard(u64 ino) {
     return ino & 0xff;
 }
 
-struct inode* eggsfs_get_inode(struct super_block* sb, bool allow_no_parent, struct eggsfs_inode* parent, u64 ino);
+struct inode* eggsfs_get_inode(
+    struct super_block* sb,
+    // Do we expect the `ino` to be a transient file?
+    bool transient,
+    // Are we OK with not having `parent`? This is currently only OK
+    // in the context of NFS.
+    bool allow_no_parent,
+    struct eggsfs_inode* parent,
+    u64 ino
+);
+
+static inline struct inode* eggsfs_get_inode_normal(
+    struct super_block* sb,
+    struct eggsfs_inode* parent,
+    u64 ino
+) {
+    return eggsfs_get_inode(sb, false, false, parent, ino);
+}
+
+static inline struct inode* eggsfs_get_inode_transient(
+    struct super_block* sb,
+    struct eggsfs_inode* parent,
+    u64 ino
+) {
+    return eggsfs_get_inode(sb, true, false, parent, ino);
+}
+
+static inline struct inode* eggsfs_get_inode_export(
+    struct super_block* sb,
+    struct eggsfs_inode* parent,
+    u64 ino
+) {
+    return eggsfs_get_inode(sb, false, true, parent, ino);
+}
 
 // super ops
 struct inode* eggsfs_inode_alloc(struct super_block* sb);

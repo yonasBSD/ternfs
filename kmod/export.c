@@ -61,7 +61,7 @@ static struct inode* eggsfs_nfs_get_inode(struct super_block *sb, u64 ino) {
         return ERR_PTR(-ESTALE);
     }
 
-    struct inode* inode = eggsfs_get_inode(sb, true, NULL, ino);
+    struct inode* inode = eggsfs_get_inode_export(sb, NULL, ino);
     if (IS_ERR(inode)) {
         eggsfs_debug("returning error %ld as ESTALE", PTR_ERR(inode));
         return ERR_PTR(-ESTALE);

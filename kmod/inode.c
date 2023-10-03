@@ -99,7 +99,7 @@ again: // progress: whoever wins the lock won't try again
                 (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
                 enode->inode.i_ino,
                 &mtime,
-		&owner,
+                &owner,
                 &block_policy,
                 &span_policy,
                 &stripe_policy
@@ -117,10 +117,6 @@ again: // progress: whoever wins the lock won't try again
                 expiry = ts + eggsfs_dir_refresh_time_jiffies;
             }
         } else {
-            // Make it so that this function is only called once. Afterwards
-            // we always keep this up to date internally, until the file is
-            // linked in which case it never changes size nor mtime TODO
-            // this will change soon as we add utime.
             if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
                 eggsfs_debug("updating getattr for reading file");
                 u64 size;
@@ -202,7 +198,8 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     if (err) { return ERR_PTR(eggsfs_error_to_linux(err)); }
     // make this dentry stick around?
 
-    struct inode* inode = eggsfs_get_inode(parent->i_sb, false, parent_enode, ino); // new_inode
+    // new_inode
+    struct inode* inode = eggsfs_get_inode_transient(parent->i_sb, parent_enode, ino);
     if (IS_ERR(inode)) { return ERR_PTR(PTR_ERR(inode)); }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
@@ -378,6 +375,7 @@ extern struct file_operations eggsfs_dir_operations;
 
 struct inode* eggsfs_get_inode(
     struct super_block* sb,
+    bool transient,
     bool allow_no_parent,
     struct eggsfs_inode* parent,
     u64 ino
@@ -470,9 +468,21 @@ struct inode* eggsfs_get_inode(
         }
 
         unlock_new_inode(inode);
+
+        // Make sure attrs are filled in before doing anything else --
+        // e.g. if we do open + lseek we wouldn't have the chance to
+        // getattr anywhere.
+        if (!transient) {
+            int err = eggsfs_do_getattr(enode);
+            if (err) {
+                iput(inode);
+                return ERR_PTR(err);
+            }
+        }
     }
 
     trace_eggsfs_get_inode_exit(ino, inode, new, 0);
+
     return inode;
 }
 

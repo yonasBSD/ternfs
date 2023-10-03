@@ -382,8 +382,10 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
 }
 
 static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
-    // the zeroing is to just write out to blocks assuming we have trailing
-    // zeros, we could do it on demand but I can't be bothered.
+    // The zeroing is to assume that in the blocks we have trailing zeros,
+    // and we also use this to just append zeros to the blocks without
+    // copying. The former is definitely not needed, but anyway, simpler
+    // for now.
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
     if (p == NULL) { return p; }
     // This contributes to OOM score.
@@ -674,7 +676,9 @@ out_err_keep_writing:
 }
 
 // To be called with the inode lock.
-ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from) {
+//
+// This accepts a NULL `from`, in which case zeros will be written.
+static ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from, size_t count) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     int err;
@@ -682,7 +686,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
 
     loff_t ppos_before = *ppos;
 
-    eggsfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, iov_iter_count(from), enode->inode.i_size, *ppos, enode->file.status);
+    eggsfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, count, enode->inode.i_size, *ppos, enode->file.status);
 
     if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
         err = -EROFS;
@@ -723,7 +727,7 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
     ktime_get_real_ts64(&enode->inode.i_mtime);
 
     // We now start writing into the span, as much as we can anyway
-    while (span->written < max_span_size && iov_iter_count(from)) {
+    while (span->written < max_span_size && count) {
         // grab the page to write to
         struct page* page = list_empty(&span->pages) ? NULL : list_last_entry(&span->pages, struct page, lru);
         if (page == NULL || page->index == 0) { // we're the first ones to get here, or we need to switch to the next one
@@ -738,13 +742,19 @@ ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, s
         }
 
         // copy stuff into page
-        int ret = copy_page_from_iter(page, page->index, PAGE_SIZE - page->index, from);
+        int ret;
+        if (likely(from)) {
+            ret = copy_page_from_iter(page, page->index, PAGE_SIZE - page->index, from);
+        } else {
+            ret = min(count, PAGE_SIZE - page->index);
+        }
         if (ret < 0) { err = ret; goto out_err_permanent; }
         eggsfs_debug("written %d to page %p", ret, page);
         enode->inode.i_size += ret;
         span->written += ret;
         page->index = (page->index + ret) % PAGE_SIZE;
         *ppos += ret;
+        count -= ret;
     }
     
     if (span->written >= max_span_size) { // we need to start flushing the span
@@ -769,6 +779,10 @@ out_err:
         goto out;
     }
     return err;
+}
+
+ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from) {
+    return eggsfs_file_write_internal(enode, flags, ppos, from, iov_iter_count(from));
 }
 
 static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
@@ -1050,12 +1064,65 @@ out_err:
     return ERR_PTR(err);
 }
 
+static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
+    // When seeking a read file, we just do as normal.
+    // When seeking a file we're writing, we only allow to seek forward,
+    // which is the same as writing zeros past the end.
+    struct inode* inode = file->f_inode;
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    // Technically we could read/write to enode->file.status using
+    // release/acquire and don't take any lock here and immediately
+    // dispatch to generic_file_llseek, but feeling lazy.
+    //
+    // We could also replicate the logic in generic_file_llseek inline.
+
+    inode_lock(inode);
+
+    if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+        loff_t ppos = enode->inode.i_size;
+        switch (whence) {
+        case SEEK_SET:
+            if (offset < ppos) { goto out_err; }
+            break;
+        case SEEK_CUR:
+        case SEEK_END:
+            if (offset < 0) { goto out_err; }
+            offset = ppos + offset;
+            break;
+        default:
+            goto out_err;
+        }
+        while (ppos < offset) {
+            ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, offset - ppos);
+            if (unlikely(written < 0)) {
+                offset = written;
+                goto out;
+            }
+            file->f_pos = ppos;
+            file->f_version = 0; // what's this for?
+        }
+    } else {
+        // very lazy
+        inode_unlock(inode);
+        return generic_file_llseek(file, offset, whence);
+    }
+
+out:
+    inode_unlock(inode);
+    return offset;
+
+out_err:
+    offset = -EINVAL;
+    goto out;
+}
+
 const struct file_operations eggsfs_file_operations = {
     .open = file_open,
     .read_iter = file_read_iter,
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
-    .llseek = generic_file_llseek,
+    .llseek = file_lseek,
 };
 
 int __init eggsfs_file_init(void) {

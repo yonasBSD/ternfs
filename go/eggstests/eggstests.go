@@ -574,6 +574,7 @@ func killBlockServices(
 	// request. we should make it so that older failures are remembered too.
 	// in any case, this means that for now we only kill one block service at a time.
 	killDuration := time.Second * 10
+	gracePeriod := time.Second * 10
 	log.Info("will kill block service for %v", killDuration)
 	rand := wyhash.New(uint64(time.Now().UnixNano()))
 	go func() {
@@ -629,6 +630,17 @@ func killBlockServices(
 					procs,
 				)
 				bsProcs[procId] = victim
+			}
+			// wait
+			go func() {
+				time.Sleep(gracePeriod)
+				sleepChan <- struct{}{}
+			}()
+			select {
+			case <-stopChan:
+				stopChan <- struct{}{} // reply
+				return
+			case <-sleepChan:
 			}
 		}
 	}()

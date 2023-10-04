@@ -76,7 +76,19 @@ struct InFlightCDCRequest {
 
 // these can happen through normal user interaction
 static bool innocuousShardError(EggsError err) {
-    return err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND;
+    return err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_EMPTY;
+}
+
+// These can happen but should be rare.
+//
+// DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
+// it, but somebody else might have created stuff in it in the meantime)
+//
+// TIMEOUT/MISMATCHING_CREATION_TIME are actually concerning, but right
+// now they happen often and I need a better story for timeouts in general.
+// In the meantime let's not spam a gazillion alerts.
+static bool rareInnocuousShardError(EggsError err) {
+    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME;
 }
 
 struct InFlightCDCRequestKey {
@@ -459,16 +471,8 @@ private:
     void _handleShardError(ShardId shid, EggsError err) {
         if (innocuousShardError(err)) {
             LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
-        } else if (err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND) {
-            // These can happen but should be rare.
-            //
-            // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
-            // it, but somebody else might have created stuff in it in the meantime)
-            //
-            // TIMEOUT/MISMATCHING_CREATION_TIME are actually concerning, but right
-            // now they happen often and I need a better story for timeouts in general.
-            // In the meantime let's not spam a gazillion alerts.
-            LOG_INFO(_env, "got innocuous shard error %s from shard %s", err, shid);
+        } else if (rareInnocuousShardError(err)) {
+            LOG_INFO(_env, "got rare innocuous shard error %s from shard %s", err, shid);
         } else {
             RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);
         }
@@ -489,7 +493,9 @@ private:
                 _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
                 _shared.errors[(int)inFlight->second.kind].add(_step.err);
                 if (step.err != NO_ERROR) {
-                    if (!innocuousShardError(step.err)) {
+                    if (rareInnocuousShardError(step.err)) {
+                        LOG_INFO(_env, "txn %s, req id %s, finished with rare innocuous error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
+                    } else if (!innocuousShardError(step.err)) {
                         RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
                     }
                     _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, step.err, inFlight->second.clientAddr);

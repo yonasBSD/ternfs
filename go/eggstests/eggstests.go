@@ -441,6 +441,78 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"seek to extend",
+		"",
+		func(counters *lib.ClientCounters) {
+			rand := wyhash.New(42)
+			for i := 0; i < 100; i++ {
+				fn := path.Join(r.mountPoint, fmt.Sprintf("test%v", i))
+				f, err := os.OpenFile(fn, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err != nil {
+					panic(err)
+				}
+				// write ~50MB, alternating between real content and holes
+				// everything random so we try to cheaply stimulate all possible start/end
+				// configurations
+				data := []byte{}
+				for i := 0; i < 10; i++ {
+					// the lowest value where we have multiple pages
+					// testing multiple spans is probably not worth it, the code
+					// is identical
+					sz := int64(rand.Uint64()%10000 + 1) // ]0, 10000]
+					if rand.Uint32()%2 == 0 {            // hole
+						log.Debug("extending %v with %v zeros using seek", fn, sz)
+						var whence int
+						var offset int64
+						expectedOffset := int64(len(data)) + sz
+						switch rand.Uint32() % 3 {
+						case 0:
+							whence = io.SeekStart
+							offset = expectedOffset
+						case 1:
+							whence = io.SeekCurrent
+							offset = sz
+						case 2:
+							whence = io.SeekEnd
+							offset = sz
+						}
+						retOffset, err := f.Seek(offset, whence)
+						if err != nil {
+							panic(err)
+						}
+						if retOffset != expectedOffset {
+							panic(fmt.Errorf("unexpected offset %v, expected %v", retOffset, expectedOffset))
+						}
+						data = append(data, make([]byte, int(sz))...)
+					} else { // read data
+						log.Debug("extending %v with %v random bytes using write", fn, sz)
+						chunk := make([]byte, sz)
+						if _, err := rand.Read(chunk); err != nil {
+							panic(err)
+						}
+						if _, err := f.Write(chunk); err != nil {
+							panic(err)
+						}
+						data = append(data, chunk...)
+					}
+				}
+				if err := f.Close(); err != nil {
+					panic(err)
+				}
+				// read back
+				readData, err := os.ReadFile(fn)
+				if err != nil {
+					panic(err)
+				}
+				if !bytes.Equal(data, readData) {
+					panic(fmt.Errorf("mismatching data"))
+				}
+			}
+		},
+	)
+
 	terminateChan <- nil
 }
 

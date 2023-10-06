@@ -7,7 +7,6 @@
 package lib
 
 import (
-	"fmt"
 	"sync"
 	"xtx/eggsfs/msgs"
 )
@@ -39,10 +38,22 @@ func (env *parwalkEnv) visit(
 	} else {
 		// pass to other shard
 		env.wg.Add(1)
-		env.chans[id.Shard()] <- parwarlkReq{
+		req := parwarlkReq{
 			id:   id,
 			path: path,
 		}
+		env.chans[id.Shard()] <- req
+		/*
+			for {
+				select {
+				case env.chans[id.Shard()] <- req:
+					goto Sent
+				default:
+					log.Info("could not send message to shard %v, will retry", id.Shard())
+					time.Sleep(time.Second)
+				}
+			}
+		*/
 	}
 	return nil
 }
@@ -63,7 +74,8 @@ func (env *parwalkEnv) process(
 	readResp := &msgs.ReadDirResp{}
 	for {
 		if err := env.clients[id.Shard()].ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
-			return fmt.Errorf("failed to read dir %v: %v", id, err)
+			log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
+			return nil
 		}
 		for _, e := range readResp.Results {
 			newPath := path + "/" + e.Name
@@ -91,7 +103,7 @@ func ParwalkWithClients(
 		callback: callback,
 	}
 	for i := 0; i < 256; i++ {
-		env.chans[i] = make(chan parwarlkReq, 100000)
+		env.chans[i] = make(chan parwarlkReq, 10_000_000)
 	}
 	var overallError error
 	for i := 0; i < 256; i++ {

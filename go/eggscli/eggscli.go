@@ -353,6 +353,19 @@ func main() {
 		if err := json.Unmarshal([]byte(*cdcReqReq), &req); err != nil {
 			panic(fmt.Errorf("could not decode cdc req: %w", err))
 		}
+		fmt.Printf("Will send this CDC request: %T %+v\n", req, req)
+		for {
+			var action string
+			fmt.Printf("Proceed? y/n ")
+			fmt.Scanln(&action)
+			if action == "y" {
+				break
+			}
+			if action == "n" {
+				fmt.Printf("BYE\n")
+				os.Exit(0)
+			}
+		}
 		client, err := lib.NewClient(log, nil, *shuckleAddress, 1)
 		if err != nil {
 			panic(err)

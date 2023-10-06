@@ -13,81 +13,98 @@
 
 // sysctls
 int eggsfs_dir_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
-#define eggsfs_dir_get_page_n(_page) ({ *((((u32*)&(_page)->private))+1); })
-#define eggsfs_dir_set_page_n(_page, _n) ({ *((((u32*)&(_page)->private))+1) = _n; })
 
-static struct kmem_cache* eggsfs_readdir_ctx_cachep;
+static struct kmem_cache* eggsfs_dirents_cachep;
+
+struct eggsfs_dirents {
+    // used to know when we need to refresh the dirents
+    u64 mtime;
+    // used to know when we're done quickly
+    u64 max_hash;
+    // to GC this structure
+    atomic_t refcount;
+    // to synchronize between modifications of the reference count
+    struct rcu_head rcu_head;
+    // the list of pages with the dirents in them. always at least
+    // one page in it.
+    //
+    // we use fields of each page to store stuff:
+    // * ->index: number of entries in the page
+    // * ->private: first hash appearing in the page
+    struct list_head pages;
+};
 
 static inline int eggsfs_dir_entry_size(int name_len) {
-    return 8 + 1 + name_len; // inode + len + name
+    return 8 + 8 + 1 + name_len; // inode + name_hash + len + name
 }
 
-static inline void eggsfs_dir_entry_parse(const char* buf, u64* ino, u8* name_len, const char** name) {
+static inline void eggsfs_dir_entry_parse(const char* buf, u64* ino, u64* name_hash, u8* name_len, const char** name) {
     *ino = get_unaligned_le64(buf); buf += 8;
+    *name_hash = get_unaligned_le64(buf); buf += 8;
     *name_len = *(u8*)buf; buf++;
     *name = buf; buf += *name_len;
 }
 
+static inline u64 eggsfs_dir_entry_hash(const char* buf) {
+    return get_unaligned_le64(buf + 8);
+}
+
+static struct kmem_cache* eggsfs_readdir_ctx_cachep;
+
 struct eggsfs_readdir_ctx {
-    struct page* current_page;
-    struct page* pages;
+    struct eggsfs_dirents* dirents;
+    struct page* current_page; // never NULL
     u32 page_offset;
-    u32 page_n;
+    u16 page_n;
 };
 
-// Increments the refcount of the cache in ->private under RCU.
-// After this we know the page won't be deallocated until we
+// Increments the refcount of the cache under RCU.
+// After this we know the dirents won't be deallocated until we
 // decrease the refcount.
-static struct page* eggsfs_dir_get_cache(struct eggsfs_inode* enode) {
-    struct page* page;
+static struct eggsfs_dirents* eggsfs_dir_get_cache(struct eggsfs_inode* enode) {
+    struct eggsfs_dirents* dirents;
     rcu_read_lock();
-    page = rcu_dereference(enode->dir.pages);
-    if (page) { atomic_inc((atomic_t*)&page->private); }
+    dirents = rcu_dereference(enode->dir.dirents);
+    if (dirents) { atomic_inc(&dirents->refcount); }
     rcu_read_unlock();
-    return page;
+    return dirents;
 }
 
 // Decrements the refcount, and frees up all the pages in the
 // cache if we were the last ones. Must be called by
 // somebody who called eggsfs_dir_get_cache before.
 //
-// Note that ->current_page and ->dir_pages are both holding a
-// reference, so once you clear those you should call `eggsfs_dir_put_cache`.
-static void eggsfs_dir_put_cache(struct page* page) {
-    if (atomic_dec_and_test((atomic_t*)&page->private)) {
-        LIST_HEAD(pages);
-        while (page) {
-            struct page* next = (struct page*)page->mapping;
-            page->mapping = NULL;
-            page->private = 0;
-            list_add_tail(&page->lru, &pages);
-            page = next;
-        }
-        put_pages_list(&pages);
+// Note that ->dirents and ->dir.pages are both holding a reference, so
+// once you clear those you should call `eggsfs_dir_put_cache`.
+static void eggsfs_dir_put_cache(struct eggsfs_dirents* dirents) {
+    if (atomic_dec_and_test(&dirents->refcount)) {
+        put_pages_list(&dirents->pages);
+        kmem_cache_free(eggsfs_dirents_cachep, dirents);
     }
 }
 
 static void __eggsfs_dir_put_cache_rcu(struct rcu_head* rcu) {
-    struct page* page = container_of(rcu, struct page, rcu_head);
-    eggsfs_dir_put_cache(page);
+    struct eggsfs_dirents* dirents = container_of(rcu, struct eggsfs_dirents, rcu_head);
+    eggsfs_dir_put_cache(dirents);
 }
 
-// Removes the cache from ->dir_pages, and also calls
-// `eggsfs_dir_put_cache` to clear the reference.
+// Removes the cache from ->dir.dirents, and also calls `eggsfs_dir_put_cache` to
+// clear the reference.
 void eggsfs_dir_drop_cache(struct eggsfs_inode* enode) {
-    struct page* page;
-    static_assert(sizeof(struct rcu_head) == sizeof(struct list_head));
-    if (!atomic64_read((atomic64_t*)&enode->dir.pages)) { return; }
-    page = (struct page*)atomic64_xchg((atomic64_t*)&enode->dir.pages, (u64)0);
-    if (page) { call_rcu(&page->rcu_head, __eggsfs_dir_put_cache_rcu); }
+    if (!atomic64_read((atomic64_t*)&enode->dir.dirents)) { return; } // early atomicless exit
+    // zero out dirents, and free it up after the grace period.
+    struct eggsfs_dirents* dirents = (struct eggsfs_dirents*)atomic64_xchg((atomic64_t*)&enode->dir.dirents, (u64)0);
+    if (likely(dirents)) {
+        call_rcu(&dirents->rcu_head, __eggsfs_dir_put_cache_rcu);
+    }
 }
 
-static struct page* eggsfs_dir_read_all(struct dentry* dentry, u64 dir_seqno);
+static struct eggsfs_dirents* eggsfs_dir_read_all(struct dentry* dentry, u64 dir_seqno);
 
 static int eggsfs_dir_open(struct inode* inode, struct file* filp) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
     struct eggsfs_readdir_ctx* ctx;
-    struct page* page;
+    struct eggsfs_dirents* dirents;
     int err;
 
     trace_eggsfs_vfs_opendir_enter(inode);
@@ -101,52 +118,52 @@ static int eggsfs_dir_open(struct inode* inode, struct file* filp) {
     if (!ctx) { return -ENOMEM; }
 
 again: // progress: whoever wins the lock either get pages or fails
-    page = eggsfs_dir_get_cache(enode);
-    if (page && page->index != READ_ONCE(enode->mtime)) {
-        eggsfs_dir_put_cache(page);
+    dirents = eggsfs_dir_get_cache(enode);
+    if (dirents && dirents->mtime != READ_ONCE(enode->mtime)) {
+        eggsfs_dir_put_cache(dirents);
         eggsfs_dir_drop_cache(enode);
-        page = NULL;
+        dirents = NULL;
     }
-    if (!page) {
+    if (!dirents) {
         int seqno;
-        if (!eggsfs_latch_try_acquire(&enode->dir.pages_latch, seqno)) {
-            err = eggsfs_latch_wait_killable(&enode->dir.pages_latch, seqno);
-            if (err) { goto out_ctx; }
+        if (!eggsfs_latch_try_acquire(&enode->dir.dirents_latch, seqno)) {
+            err = eggsfs_latch_wait_killable(&enode->dir.dirents_latch, seqno);
+            if (err) { goto out_err; }
             goto again;
         }
 
         // If somebody else got to creating the page already, drop it,
         // otherwise we'll leak.
-        page = eggsfs_dir_get_cache(enode);
-        if (page && page->index != READ_ONCE(enode->mtime)) {
-            eggsfs_dir_put_cache(page);
+        dirents = eggsfs_dir_get_cache(enode);
+        if (dirents && dirents->mtime != READ_ONCE(enode->mtime)) {
+            eggsfs_dir_put_cache(dirents);
             eggsfs_dir_drop_cache(enode);
-            page = NULL;
+            dirents = NULL;
         }
 
-        if (!page) {
+        if (!dirents) {
             u64 dir_mtime = READ_ONCE(enode->mtime);
-            page = eggsfs_dir_read_all(filp->f_path.dentry, dir_mtime);
-            if (!IS_ERR(page)) {
+            dirents = eggsfs_dir_read_all(filp->f_path.dentry, dir_mtime);
+            if (!IS_ERR(dirents)) {
                 // If the mtime matches (which will be the case unless somebody
                 // else revalidated between the READ_ONCE above), then the refcount
-                // starts at two: one for the ->dir_pages, and one for the
-                // ->current_page below. Otherwise only for ->current_page (basically
+                // starts at two: one for the ->dir.dirents, and one for the
+                // ->dirents below. Otherwise only for ->dirents (basically
                 // we have these pages to be private to this read).
                 if (likely(READ_ONCE(enode->mtime) == dir_mtime)) {
-                    atomic_set((atomic_t*)&page->private, 2);
-                    rcu_assign_pointer(enode->dir.pages, page);
+                    atomic_set(&dirents->refcount, 2);
+                    rcu_assign_pointer(enode->dir.dirents, dirents);
                 } else {
-                    atomic_set((atomic_t*)&page->private, 1);
+                    atomic_set(&dirents->refcount, 1);
                 }
             }
         }
-        eggsfs_latch_release(&enode->dir.pages_latch, seqno);
+        eggsfs_latch_release(&enode->dir.dirents_latch, seqno);
     }
-    if (IS_ERR(page)) { err = PTR_ERR(page); goto out_ctx; }
+    if (IS_ERR(dirents)) { err = PTR_ERR(dirents); goto out_err; }
 
-    ctx->current_page = page;
-    ctx->pages = page;
+    ctx->dirents = dirents;
+    ctx->current_page = list_first_entry(&dirents->pages, struct page, lru);
     ctx->page_offset = 0;
     ctx->page_n = 0;
 
@@ -155,7 +172,7 @@ again: // progress: whoever wins the lock either get pages or fails
     trace_eggsfs_vfs_opendir_exit(inode, 0);
     return 0;
 
-out_ctx:
+out_err:
     kmem_cache_free(eggsfs_readdir_ctx_cachep, ctx);
     trace_eggsfs_vfs_opendir_exit(inode, err);
     eggsfs_debug("err=%d", err);
@@ -222,33 +239,38 @@ out:
 
 struct eggsfs_dir_fill_ctx {
     struct dentry* parent;
-    u64 dir_mtime;
 
-    // NULL or kmap'ed at page_addr
-    struct page* current_page;
-    // kmap'd address of current_page
+    struct eggsfs_dirents* dirents;
+    // kmap'd address of last page
     char* page_addr;
-    // Current offset inside the page we're writing
+    // current offset inside last page
     u32 page_off;
-    // Number of eggsfs dir entries in the current page
-    u32 page_n;
+    // Number of eggsfs dir entries in the last page
+    u16 page_n;
 };
 
-static int eggsfs_dir_add_entry(struct eggsfs_dir_fill_ctx* ctx, const char* name, int name_len, u64 ino) {
+static struct page* dir_fill_ctx_last_page(struct eggsfs_dir_fill_ctx* ctx) {
+    return list_last_entry(&ctx->dirents->pages, struct page, lru);
+}
+
+static int eggsfs_dir_add_entry(struct eggsfs_dir_fill_ctx* ctx, u64 name_hash, const char* name, int name_len, u64 ino) {
     if (name_len > EGGSFS_MAX_FILENAME) { return -ENAMETOOLONG; }
-    // Flush current page, and start a new one, linking it in ->mapping
+    // Flush current page, and start a new one
     if (ctx->page_off + eggsfs_dir_entry_size(name_len) > PAGE_SIZE) {
         struct page* page = alloc_page(GFP_KERNEL);
         if (!page) { return -ENOMEM; }
 
-        kunmap(ctx->current_page);
-        ctx->current_page->mapping = (void*)page;
-        eggsfs_dir_set_page_n(ctx->current_page, ctx->page_n);
+        // unmap and store number of entries
+        kunmap(dir_fill_ctx_last_page(ctx));
+        dir_fill_ctx_last_page(ctx)->index = ctx->page_n;
 
-        ctx->current_page = page;
+        // add new page, reset ctx indices
+        list_add_tail(&page->lru, &ctx->dirents->pages);
         ctx->page_addr = kmap(page);
         ctx->page_off = 0;
         ctx->page_n = 0;
+        static_assert(sizeof(page->private) == sizeof(name_hash));
+        page->private = name_hash;
     }
     if (ctx->page_off + eggsfs_dir_entry_size(name_len) > PAGE_SIZE) {
         WARN_ON(ctx->page_off + eggsfs_dir_entry_size(name_len) > PAGE_SIZE);
@@ -257,61 +279,74 @@ static int eggsfs_dir_add_entry(struct eggsfs_dir_fill_ctx* ctx, const char* nam
 
     char* entry = ctx->page_addr + ctx->page_off;
     put_unaligned_le64(ino, entry); entry += 8;
+    put_unaligned_le64(name_hash, entry); entry += 8;
     *(u8*)entry = (u8)name_len; entry++;
     memcpy(entry, name, name_len);
     ctx->page_off += eggsfs_dir_entry_size(name_len);
-    ++ctx->page_n;
+    ctx->page_n++;
+    ctx->dirents->max_hash = name_hash;
     return 0;
 }
 
-int eggsfs_dir_readdir_entry_cb(void* ptr, const char* name, int name_len, u64 hash, u64 edge_creation_time, u64 ino) {
+int eggsfs_dir_readdir_entry_cb(void* ptr, u64 hash, const char* name, int name_len, u64 edge_creation_time, u64 ino) {
     struct eggsfs_dir_fill_ctx* ctx = ptr;
     eggsfs_debug("hash=%llx ino=%llx, name_len=%d, name=%*pE", hash, ino, name_len, name_len, name);
-    update_dcache(ctx->parent, ctx->dir_mtime, name, name_len, edge_creation_time, ino);
-    return eggsfs_dir_add_entry(ctx, name, name_len, ino);
+    update_dcache(ctx->parent, ctx->dirents->mtime, name, name_len, edge_creation_time, ino);
+    return eggsfs_dir_add_entry(ctx, hash, name, name_len, ino);
 }
 
 // mut hold
-static struct page* eggsfs_dir_read_all(struct dentry* dentry, u64 dir_mtime) {
-    bool eof = false;
-    int err;
-    u64 continuation_key = 0;
+static struct eggsfs_dirents* eggsfs_dir_read_all(struct dentry* dentry, u64 dir_mtime) {
     struct inode* inode = d_inode(dentry);
     struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    struct eggsfs_dirents* dirents = kmem_cache_alloc(eggsfs_dirents_cachep, GFP_KERNEL);
+    if (!dirents) { return ERR_PTR(-ENOMEM); }
+
+    dirents->mtime = dir_mtime;
+    INIT_LIST_HEAD(&dirents->pages);
+    atomic_set(&dirents->refcount, 0); // the caller sets this up
+    dirents->max_hash = 0;
+
+    int err;
+    struct page* first_page = alloc_page(GFP_KERNEL);
+    if (!first_page) {
+        err = -ENOMEM;
+        goto out_err_dirents;
+    }
+    list_add_tail(&first_page->lru, &dirents->pages);
+    first_page->private = 0; // first hash = 0
+
+    bool eof = false;
+    u64 continuation_key = 0;
     struct eggsfs_dir_fill_ctx ctx = {
         .parent = dentry,
-        .dir_mtime = dir_mtime,
+        .dirents = dirents,
+        .page_addr = kmap(first_page),
+        .page_off = 0,
+        .page_n = 0,
     };
-    struct page* first_page;
-
-    first_page = alloc_page(GFP_KERNEL);
-    if (!first_page) { return ERR_PTR(-ENOMEM); }
-    ctx.current_page = first_page;
-    ctx.page_addr = kmap(first_page);
-    ctx.page_off = 0;
-    ctx.page_n = 0;
-    first_page->index = dir_mtime;
 
     while (!eof) {
         eggsfs_debug("cont_key=%llx", continuation_key);
         err = eggsfs_shard_readdir((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, continuation_key, &ctx, &continuation_key);
-        if (err) { err = eggsfs_error_to_linux(err); goto out_err; }
+        if (err) {
+            err = eggsfs_error_to_linux(err);
+            goto out_err;
+        }
         eof = continuation_key == 0;
     }
 
-    kunmap(ctx.current_page);
-    eggsfs_dir_set_page_n(ctx.current_page, ctx.page_n);
+    kunmap(dir_fill_ctx_last_page(&ctx));
+    dir_fill_ctx_last_page(&ctx)->index = ctx.page_n;
 
-    return first_page;
+    return dirents;
 
 out_err:
-    kunmap(ctx.current_page);
-    while (first_page) {
-        struct page* next = (struct page*)first_page->mapping;
-        first_page->mapping = NULL;
-        put_page(first_page);
-        first_page = next;
-    }
+    kunmap(dir_fill_ctx_last_page(&ctx));
+    put_pages_list(&ctx.dirents->pages);
+out_err_dirents:
+    kmem_cache_free(eggsfs_dirents_cachep, dirents);
     eggsfs_info("err=%d", err);
     return ERR_PTR(err);
 };
@@ -320,110 +355,156 @@ out_err:
 // vfs: mutex file.f_pos_lock 
 static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     struct eggsfs_readdir_ctx* ctx = filp->private_data;
-    char* page_addr;
 
     WARN_ON(!ctx);
     if (!ctx) { return -EINVAL; }
 
-    eggsfs_debug("ctx=%p ctx.current_page=%p ctx.pages=%p ctx.page_offset=%u ctx.page_n=%u", ctx,
-            ctx->current_page, ctx->pages, ctx->page_offset, ctx->page_n);
+    eggsfs_debug("ctx=%p ctx.current_page=%p ctx.dirents=%p ctx.page_offset=%u ctx.page_n=%u pos=%lld", ctx, ctx->current_page, ctx->dirents, ctx->page_offset, ctx->page_n, dctx->pos);
 
-    if (!dir_emit_dots(filp, dctx)) { return 0; }
-    if (!ctx->current_page || !eggsfs_dir_get_page_n(ctx->current_page)) { return 0; }
+    // For our offsets, we just use the edge hash. This is technically not guaranteed
+    // to be correct: there might be collisions which mean that multiple elements will
+    // have the same offset. However this is very unlikely -- we need to get to roughly
+    // 5 million elements in a directory for the probability of a collision happening
+    // being more than 1 in a million (assuming that the hash that we use is a good
+    // hashing function). And seeking directories is somewhat uncommon -- the code below
+    // will just work for normal directory listings (not skipping over duplicate offsets,
+    // if they're present). So we accept it.
 
-    page_addr = kmap(ctx->current_page);
+    if (dctx->pos < 0) {
+        eggsfs_warn("got negative pos %lld, this shoyuld never happen", dctx->pos);
+        return -EIO;
+    }
 
-    while (ctx->current_page) {
-        int dtype;
+    char* page_addr;
+    // The first thing we do is restore coherency between the dctx pos and the
+    // ctx pos, by making sure current_page is the correct one, and that we're
+    // positioned _before_ the entry we're looking for. The code below will then
+    // skip forward to the right entry.
+    if (dctx->pos == 0 || dctx->pos == 1) {
+        // If the context position is zero (.) or one (..), we've just started. We reset the
+        // context to the beginning and we're good to go.
+        eggsfs_debug("we're at the beginning, will start with dots");
+        ctx->current_page = list_first_entry(&ctx->dirents->pages, struct page, lru);
+        ctx->page_offset = 0;
+        ctx->page_n = 0;
+        page_addr = kmap(ctx->current_page);
+    } else {
+        // Otherwise, we make sure we're in the right page, if there is such a page.
+        // In the very common case where we're already at the right entry (from where
+        // we left off the last time), we just leave things as they are, so no skipping
+        // forward will happen.
+        page_addr = kmap(ctx->current_page);
+        if (likely(
+            ctx->page_n < ctx->current_page->index && // we're not out of bounds
+            eggsfs_dir_entry_hash(page_addr + ctx->page_offset) == dctx->pos // we're at the right place
+        )) {
+            // we're good, nothing to do
+        } else if (likely(dctx->pos > ctx->dirents->max_hash)) {
+            // we're done for good
+            eggsfs_debug("pos out of bounds (%lld > %llu), returning", dctx->pos, ctx->dirents->max_hash);
+            return 0;
+        } else {
+            // First try to rewind if we're at an earlier position. We know we'll stop
+            // when we hit zero.
+            for (; ctx->current_page->private > dctx->pos; ctx->current_page = list_prev_entry(ctx->current_page, lru)) {
+                eggsfs_debug("rewinding");
+            }
+            // Then check if we need to go forward, by checking if we have a next page,
+            // and if we do, checking if the position is <= than its first hash.
+            for (;;) {
+                if (list_is_last(&ctx->current_page->lru, &ctx->dirents->pages)) {
+                    eggsfs_debug("ran out of pages to forward");
+                    break;
+                }
+                struct page* next_page = list_next_entry(ctx->current_page, lru);
+                if (next_page->private > dctx->pos) {
+                    eggsfs_debug("found right page to forward to");
+                    break;
+                }
+                eggsfs_debug("forwarding");
+                ctx->current_page = next_page;
+            }
+            // Finally, reset position inside page. The code below will forward to
+            // the right hash.
+            page_addr = kmap(ctx->current_page);
+            ctx->page_offset = 0;
+            ctx->page_n = 0;
+        }
+    }
+
+    // emit dots first
+    if (!dir_emit_dots(filp, dctx)) {
+        eggsfs_debug("exiting after dots");
+        return 0;
+    }
+
+    // move along, nothing to look here
+    if (ctx->page_n >= ctx->current_page->index) {
+        eggsfs_debug("we're out of elements before even starting");
+        return 0;
+    }
+
+    for (;;) {
         const char* entry = page_addr + ctx->page_offset;
         eggsfs_debug("next page_addr=%p ctx.page_offset=%u entry=%p", page_addr, ctx->page_offset, entry);
 
         u64 ino;
+        u64 hash;
         u8 name_len;
         const char* name;
-        eggsfs_dir_entry_parse(entry, &ino, &name_len, &name);
+        eggsfs_dir_entry_parse(entry, &ino, &hash, &name_len, &name);
         eggsfs_debug("name=%*pE ino=0x%016llx", name_len, name, ino);
 
-        switch (eggsfs_inode_type(ino)) {
-        case EGGSFS_INODE_DIRECTORY: dtype = DT_DIR; break;
-        case EGGSFS_INODE_FILE: dtype = DT_REG; break;
-        case EGGSFS_INODE_SYMLINK: dtype = DT_LNK; break;
-        default: dtype = DT_UNKNOWN;
-        }
+        if (likely(hash >= dctx->pos)) {
+            dctx->pos = hash;
 
-        if (!dir_emit(dctx, name, name_len, ino, dtype)) {
-            eggsfs_debug("break");
-            break;
+            int dtype;
+
+            switch (eggsfs_inode_type(ino)) {
+            case EGGSFS_INODE_DIRECTORY: dtype = DT_DIR; break;
+            case EGGSFS_INODE_FILE: dtype = DT_REG; break;
+            case EGGSFS_INODE_SYMLINK: dtype = DT_LNK; break;
+            default: dtype = DT_UNKNOWN; break;
+            }
+
+            eggsfs_debug("emitting name=%*pE ino=%016llx dtype=%d hash=%llu", name_len, name, ino, dtype, hash);
+            if (!dir_emit(dctx, name, name_len, ino, dtype)) {
+                eggsfs_debug("break");
+                kunmap(ctx->current_page);
+                break;
+            }
+        } else {
+            eggsfs_debug("skipping hash %llu < dctx->pos %lld", hash, dctx->pos);
         }
 
         ctx->page_offset += eggsfs_dir_entry_size(name_len);
-        ++ctx->page_n;
-        ++dctx->pos;
+        ctx->page_n++;
 
         eggsfs_debug(
-            "next ctx=%p ctx.current_page=%p ctx.pages=%p ctx.page_offset=%u ctx.page_n=%u page_n=%u", ctx,
-            ctx->current_page, ctx->pages, ctx->page_offset, ctx->page_n, eggsfs_dir_get_page_n(ctx->current_page)
+            "next ctx=%p ctx.current_page=%p ctx.dirents=%p ctx.page_offset=%u ctx.page_n=%u page_n=%ld", ctx,
+            ctx->current_page, ctx->dirents, ctx->page_offset, ctx->page_n, ctx->current_page->index
         );
 
-        if (ctx->page_n >= eggsfs_dir_get_page_n(ctx->current_page)) {
+        if (ctx->page_n >= ctx->current_page->index) {
             kunmap(ctx->current_page);
-            ctx->current_page = (struct page*)ctx->current_page->mapping;
-            eggsfs_debug("next page current_page = %p", ctx->current_page);
-            ctx->page_offset = 0;
             ctx->page_n = 0;
-            page_addr = kmap(ctx->current_page);
+            ctx->page_offset = 0;
+            if (list_is_last(&ctx->current_page->lru, &ctx->dirents->pages)) {
+                // we've run out of pages
+                eggsfs_debug("ran out of pages, exiting");
+                ctx->current_page = list_first_entry(&ctx->dirents->pages, struct page, lru);
+                dctx->pos++; // otherwise we'll loop forever
+                break;
+            } else {
+                ctx->current_page = list_next_entry(ctx->current_page, lru);
+                page_addr = kmap(ctx->current_page);
+            }
         }
     }
 
-    if (ctx->current_page) {
-        eggsfs_debug("unmap current_page = %p", ctx->current_page);
-        kunmap(ctx->current_page);
-    }
-
-    eggsfs_debug("done");
+    eggsfs_debug("done, exit pos %lld", dctx->pos);
     return 0;
 }
-
-#if 0
-// multiple seeks at the same time?
-static loff_t eggsfs_llseek_dir(struct file* filp, loff_t offset, int whence) {
-    int err;
-    struct eggsfs_readdir_ctx* ctx = filp->private_data;
-    loff_t dir_offset;
-
-    if (whence != SEEK_CUR) { return -EINVAL; }
-    // concurrency with readdir?
-    // TODO: if offset == 0 reacquire pages
-
-    ctx->current_page = ctx->pages;
-    ctx->page_offset = 0;
-    ctx->page_n = 0;
-    if (offset > 2) {
-        dir_offset = offset - 2;
-        while (ctx->current_page && eggsfs_dir_get_page_n(ctx->current_page) <= dir_offset) {
-                dir_offset -= eggsfs_dir_get_page_n(ctx->current_page);
-                ctx->current_page = (struct page*)ctx->current_page->mapping;
-        }
-        if (ctx->current_page) {
-            char* page_addr = (char*)kmap(ctx->current_page);
-            while (ctx->page_n < dir_offset) {
-                BUG_ON(ctx->page_offset >= PAGE_SIZE);
-                u64 ino;
-                u8 name_len;
-                const char* name;
-                eggsfs_dir_entry_parse(page_addr + ctx->page_offset, &ino, &name_len, &name);
-                ctx->page_offset += eggsfs_dir_entry_size(name_len);
-                ++ctx->page_n;
-            }
-            kunmap(ctx->current_page);
-        }
-    }
-    
-    filp->f_pos = offset;
-
-    return offset;
-}
-#endif
 
 static int eggsfs_dir_close(struct inode* inode, struct file* filp) {
     struct eggsfs_readdir_ctx* ctx = (struct eggsfs_readdir_ctx*)filp->private_data;
@@ -432,21 +513,64 @@ static int eggsfs_dir_close(struct inode* inode, struct file* filp) {
     if (!ctx) { return -EINVAL; }
 
     trace_eggsfs_vfs_closedir_enter(inode);
-    eggsfs_dir_put_cache(ctx->pages);
+    eggsfs_dir_put_cache(ctx->dirents);
     kmem_cache_free(eggsfs_readdir_ctx_cachep, ctx);
     trace_eggsfs_vfs_closedir_exit(inode, 0);
 	return 0;
 }
 
+static loff_t eggsfs_dir_seek(struct file* file, loff_t offset, int whence) {
+    struct inode* inode = file_inode(file);
+
+    inode_lock(inode);
+
+    switch (whence) {
+    case SEEK_SET:
+        break;
+    case SEEK_CUR:
+        offset += file->f_pos;
+        break;
+    case SEEK_END:
+        offset = -EOPNOTSUPP;
+        goto out_err;
+    default:
+        offset = -EINVAL;
+        goto out_err;
+    }
+
+    if (offset < 0) {
+        offset = -EINVAL;
+        goto out_err;
+    }
+
+    eggsfs_debug("setting dir position to %lld", offset);
+
+    vfs_setpos(file, offset, MAX_LFS_FILESIZE);
+
+out_err:
+    inode_unlock(inode);
+    return offset;
+}
+
 struct file_operations eggsfs_dir_operations = {
     .open = eggsfs_dir_open,
     .iterate = eggsfs_dir_read,
-    .iterate_shared = eggsfs_dir_read,
     .release = eggsfs_dir_close,
-    .llseek = generic_file_llseek,
+    .llseek = eggsfs_dir_seek,
 };
 
 int __init eggsfs_dir_init(void) {
+    eggsfs_dirents_cachep = kmem_cache_create(
+        "eggsfs_dirents_cache",
+        sizeof(struct eggsfs_dirents),
+        0,
+        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        NULL
+    );
+    if (!eggsfs_dirents_cachep) {
+        return -ENOMEM;
+    }
+
     eggsfs_readdir_ctx_cachep = kmem_cache_create(
         "eggsfs_readdir_ctx_cache",
         sizeof(struct eggsfs_readdir_ctx),
@@ -454,11 +578,15 @@ int __init eggsfs_dir_init(void) {
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
         NULL
     );
-    if (!eggsfs_readdir_ctx_cachep) { return -ENOMEM; }
+    if (!eggsfs_readdir_ctx_cachep) {
+        kmem_cache_destroy(eggsfs_dirents_cachep);
+        return -ENOMEM;
+    }
     return 0;
 }
 
 void __cold eggsfs_dir_exit(void) {
     eggsfs_debug("dir exit");
     kmem_cache_destroy(eggsfs_readdir_ctx_cachep);
+    kmem_cache_destroy(eggsfs_dirents_cachep);
 }

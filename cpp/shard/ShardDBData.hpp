@@ -317,7 +317,9 @@ struct SpanBody {
 };
 
 enum class HashMode : uint8_t {
-    // temporary 63-bit hash since pyfuse does not seem to like 64 bits dirents.
+    // TODO add docs regarding why we like 63 bit hashes, specifically the fact
+    // that they're never negative when loff_t. DO NOT add a 64 bit hash to this
+    // enum!
     XXH3_63 = 1,
 };
 

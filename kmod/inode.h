@@ -105,6 +105,7 @@ struct eggsfs_inode_file {
     struct mm_struct* mm;
 };
 
+struct eggsfs_dirents;
 
 struct eggsfs_inode_dir {
     // In `struct page`, we use:
@@ -116,8 +117,8 @@ struct eggsfs_inode_dir {
     // ->rcu_head to synchronize between modifications to the reference count.
     // ->index in the first page to store the dir mtime we've tagged the dir with
     //     (used to invalidate the dir contents).
-    struct page __rcu * pages;
-    struct eggsfs_latch pages_latch;
+    struct eggsfs_dirents __rcu * dirents;
+    struct eggsfs_latch dirents_latch;
 };
 
 struct eggsfs_inode {

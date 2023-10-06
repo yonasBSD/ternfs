@@ -407,8 +407,8 @@ struct inode* eggsfs_get_inode(
             inode->i_op = &eggsfs_dir_inode_ops;
             inode->i_fop = &eggsfs_dir_operations;
 
-            rcu_assign_pointer(enode->dir.pages, NULL);
-            eggsfs_latch_init(&enode->dir.pages_latch);
+            rcu_assign_pointer(enode->dir.dirents, NULL);
+            eggsfs_latch_init(&enode->dir.dirents_latch);
         } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
             if (unlikely(S_ISLNK(inode->i_mode))) {
                 inode->i_op = &eggsfs_symlink_inode_ops;

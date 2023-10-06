@@ -171,8 +171,6 @@ static auto wrappedSnapshot(rocksdb::DB* db) {
 static uint64_t computeHash(HashMode mode, const BincodeBytesRef& bytes) {
     switch (mode) {
     case HashMode::XXH3_63:
-        // TODO remove this chopping, pyfuse3 doesn't currently like
-        // full 64-bit hashes.
         return XXH3_64bits(bytes.data(), bytes.size()) & ~(1ull<<63);
     default:
         throw EGGS_EXCEPTION("bad hash mode %s", (int)mode);

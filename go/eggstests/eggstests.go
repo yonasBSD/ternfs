@@ -513,6 +513,15 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"dir seek",
+		"",
+		func(counters *lib.ClientCounters) {
+			dirSeekTest(log, r.shuckleAddress(), r.mountPoint)
+		},
+	)
+
 	terminateChan <- nil
 }
 
@@ -845,11 +854,11 @@ func main() {
 	shucklePort := uint16(*shucklePortArg)
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
 	shuckleOpts := &managedprocess.ShuckleOpts{
-		Exe:         goExes.ShuckleExe,
-		BincodePort: shucklePort,
-		LogLevel:    level,
+		Exe:                  goExes.ShuckleExe,
+		BincodePort:          shucklePort,
+		LogLevel:             level,
 		BlockserviceMinBytes: 10 << (10 * 3),
-		Dir:         path.Join(*dataDir, "shuckle"),
+		Dir:                  path.Join(*dataDir, "shuckle"),
 	}
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback

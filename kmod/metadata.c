@@ -243,7 +243,7 @@ int eggsfs_shard_readdir(struct eggsfs_fs_info* info, u64 dir, u64 start_pos, vo
             eggsfs_current_edge_get_end(&ctx, creation_time, end);
             eggsfs_bincode_get_finish_list_el(end);
             if (likely(ctx.err == 0)) {
-                int err = eggsfs_dir_readdir_entry_cb(data, name.str.buf, name.str.len, name_hash.x, creation_time.x, target_id.x);
+                int err = eggsfs_dir_readdir_entry_cb(data, name_hash.x, name.str.buf, name.str.len, creation_time.x, target_id.x);
                 if (err) {
                     consume_skb(skb);
                     return err;

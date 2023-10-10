@@ -371,7 +371,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     // if they're present). So we accept it.
 
     if (dctx->pos < 0) {
-        eggsfs_warn("got negative pos %lld, this shoyuld never happen", dctx->pos);
+        eggsfs_warn("got negative pos %lld, this should never happen", dctx->pos);
         return -EIO;
     }
 
@@ -399,6 +399,7 @@ static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
             eggsfs_dir_entry_hash(page_addr + ctx->page_offset) == dctx->pos // we're at the right place
         )) {
             // we're good, nothing to do
+            eggsfs_debug("resuming readdir");
         } else if (likely(dctx->pos > ctx->dirents->max_hash)) {
             // we're done for good
             eggsfs_debug("pos out of bounds (%lld > %llu), returning", dctx->pos, ctx->dirents->max_hash);

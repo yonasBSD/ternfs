@@ -17,7 +17,8 @@ args = parser.parse_args()
 paths = args.paths
 
 if args.generate and (args.race or paths):
-    printf('--generate only works as the only flag')
+    print('--generate only works as the only flag')
+    os.exit(2)
 
 if not args.generate and len(paths) == 0:
     for path in os.listdir(str(go_dir)):

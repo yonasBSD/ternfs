@@ -3018,7 +3018,7 @@ struct ShardDBImpl {
         bool good = proof.proof == expectedProof;
 
         if (!good) {
-            LOG_DEBUG(_env, "bad block write proof, expected %s, got %s", BincodeFixedBytes<8>(expectedProof), proof);
+            RAISE_ALERT(_env, "bad block write proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), proof);
         }
 
         return good;
@@ -3050,7 +3050,7 @@ struct ShardDBImpl {
 
         bool good = proof.proof == expectedProof;
         if (!good) {
-            RAISE_ALERT(_env, "Bad block delete proof, expected %s, got %s", BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
+            RAISE_ALERT(_env, "Bad block delete proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
         }
         return good;
     }

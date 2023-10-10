@@ -281,21 +281,25 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 		}
 		fmtBuilder.Write(fmtValues)
 	}
+	// Never change the storage_class/failure_domain/secret_key/ip/path,
+	// see <internal-repo/issues/89>, we might
+	// relax the IP restriction in the future but let's be cautious now
 	fmtBuilder.Write([]byte(`
 		ON CONFLICT DO UPDATE SET
-			ip1 = excluded.ip1,
-			port1 = excluded.port1,
-			ip2 = excluded.ip2,
-			port2 = excluded.port2,
-			storage_class = excluded.storage_class,
-			failure_domain = excluded.failure_domain,
-			secret_key = excluded.secret_key,
 			flags = (flags & ~?) | excluded.flags,
 			capacity_bytes = excluded.capacity_bytes,
 			available_bytes = excluded.available_bytes,
 			blocks = excluded.blocks,
-			path = excluded.path,
 			last_seen = excluded.last_seen
+		WHERE
+			ip1 = excluded.ip1 AND
+			port1 = excluded.port1 AND
+			ip2 = excluded.ip2 AND
+			port2 = excluded.port2 AND
+			storage_class = excluded.storage_class AND
+			failure_domain = excluded.failure_domain AND
+			path = excluded.path AND
+			secret_key = excluded.secret_key
 	`))
 	values = append(values, msgs.EGGSFS_BLOCK_SERVICE_STALE)
 
@@ -303,11 +307,21 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	defer s.mutex.Unlock()
 
 	// ll.Info("values: %+q", values)
-	_, err := s.db.Exec(fmtBuilder.String(), values...)
+	result, err := s.db.Exec(fmtBuilder.String(), values...)
 
 	if err != nil {
 		ll.RaiseAlert("error registering block services: %s", err)
 		return nil, err
+	}
+
+	// check that all of them fired
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	if int(rowsAffected) != len(req.BlockServices) {
+		ll.Info("failed request: %+v", req)
+		ll.RaiseAlert("could not update all block services (expected %v, updated %v), some of them probably have inconsistent info, check logs", len(req.BlockServices), rowsAffected)
 	}
 
 	return &msgs.RegisterBlockServicesResp{}, nil

@@ -161,8 +161,6 @@ func writeBlock(
 		if err := client.ShardRequest(log, scratch.id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
 			return 0, err
 		}
-
-		return 0, nil
 	}
 }
 

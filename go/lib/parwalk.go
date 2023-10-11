@@ -19,8 +19,8 @@ type parwarlkReq struct {
 type parwalkEnv struct {
 	wg       sync.WaitGroup
 	chans    []chan parwarlkReq
-	clients  []*Client
-	callback func(client *Client, parent msgs.InodeId, id msgs.InodeId, path string) error
+	client   *Client
+	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error
 }
 
 func (env *parwalkEnv) visit(
@@ -29,7 +29,7 @@ func (env *parwalkEnv) visit(
 	id msgs.InodeId,
 	path string,
 ) error {
-	if err := env.callback(env.clients[id.Shard()], parent, id, path); err != nil {
+	if err := env.callback(parent, id, path); err != nil {
 		return err
 	}
 	if parent != msgs.NULL_INODE_ID && parent.Shard() == id.Shard() {
@@ -73,7 +73,7 @@ func (env *parwalkEnv) process(
 	}
 	readResp := &msgs.ReadDirResp{}
 	for {
-		if err := env.clients[id.Shard()].ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
+		if err := env.client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
 			log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
 			return nil
 		}
@@ -91,15 +91,15 @@ func (env *parwalkEnv) process(
 	return nil
 }
 
-func ParwalkWithClients(
+func Parwalk(
 	log *Logger,
-	clients []*Client,
-	callback func(client *Client, parent msgs.InodeId, id msgs.InodeId, path string) error,
+	client *Client,
+	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error,
 ) error {
 	// compute
 	env := parwalkEnv{
 		chans:    make([]chan parwarlkReq, 256),
-		clients:  clients,
+		client:   client,
 		callback: callback,
 	}
 	for i := 0; i < 256; i++ {
@@ -129,27 +129,4 @@ func ParwalkWithClients(
 	}
 	env.wg.Wait()
 	return overallError
-}
-
-func Parwalk(
-	log *Logger,
-	shuckleAddress string,
-	callback func(client *Client, parent msgs.InodeId, id msgs.InodeId, path string) error,
-) error {
-	var clients [256]*Client
-	defer func() {
-		for i := 0; i < 256; i++ {
-			if clients[i] == nil {
-				continue
-			}
-		}
-	}()
-	for i := 0; i < 256; i++ {
-		var err error
-		clients[i], err = NewClient(log, nil, shuckleAddress, 1)
-		if err != nil {
-			panic(err)
-		}
-	}
-	return ParwalkWithClients(log, clients[:], callback)
 }

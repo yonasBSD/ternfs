@@ -121,20 +121,17 @@ func (c *Client) metadataRequest(
 	counters map[uint8]*ReqCounters,
 	dontWait bool,
 ) error {
-	sock, err := c.GetUDPSocket()
-	if err != nil {
-		return err
-	}
-	defer c.ReleaseUDPSocket(sock)
 	hasSecondIp := 0
 	if addrs[1].Port != 0 {
 		hasSecondIp = 1
 	}
-	mtu := clientMtu
-	respBuf := make([]byte, mtu)
 	attempts := 0
 	startedAt := time.Now()
 	requestId := c.newRequestId()
+	respChan := make(chan []byte, 1)
+	c.inFlightRequestsMu.Lock()
+	c.inFlightRequests[requestId] = inFlightMetadataRequest{ch: respChan}
+	c.inFlightRequestsMu.Unlock()
 	// will keep trying as long as we get timeouts
 	timeoutAlertQuietPeriod := time.Second
 	if shid < 0 {
@@ -170,9 +167,11 @@ func (c *Client) metadataRequest(
 		}
 		reqBytes := packMetadataRequest(&req, c.cdcKey)
 		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp]
-		log.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, sock.LocalAddr(), attempts)
+		log.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, c.metadataSock.LocalAddr(), attempts)
 		log.Trace("reqBody %+v", reqBody)
-		written, err := sock.WriteTo(reqBytes, addr)
+		c.metadataSockMu.Lock()
+		written, err := c.metadataSock.WriteTo(reqBytes, addr)
+		c.metadataSockMu.Unlock()
 		if err != nil {
 			if isSendToEPERM(err) {
 				if dontWait {
@@ -194,34 +193,14 @@ func (c *Client) metadataRequest(
 			log.Debug("dontWait is on, we've sent the request, goodbye")
 			return nil
 		}
-		// Keep going until we found the right request id -- we can't assume that what we get isn't
-		// some other request we thought was timed out.
-		readLoopStart := time.Now()
-		readLoopDeadline := readLoopStart.Add(timeout)
-		sock.SetReadDeadline(readLoopDeadline)
-		for {
-			// We could discard immediatly if the addr doesn't match, but the req id protects
-			// ourselves well enough from this anyway.
-			read, _, err := sock.ReadFrom(respBuf)
-			respBytes := respBuf[:read]
-			if err != nil {
-				// We retry very liberally rather than only with timeouts (at least for now),
-				// to survive the shard dying in the most exotic ways.
-				shouldRetry := false
-				switch err.(type) {
-				case net.Error, *net.OpError:
-					shouldRetry = true
-				}
-				if shouldRetry {
-					log.RaiseNC(timeoutAlert, "got network error %v to shard %v for req id %v of type %T, will try to retry", err, shid, requestId, reqBody)
-					// make sure we've waited as much as the expected timeout, otherwise we might
-					// call in a busy loop due to the server just not being up.
-					time.Sleep(time.Until(readLoopDeadline))
-					break // keep trying
-				}
-				// Something unexpected happen, exit immediately
-				return err
-			}
+		// race between timeout and response
+		go func() {
+			time.Sleep(timeout)
+			respChan <- nil
+		}()
+		respBytes := <-respChan
+		if respBytes != nil {
+			// we got something
 			// Start parsing, from the header with request id
 			respReader := bytes.NewReader(respBytes)
 			respRequestId := unpackedMetadataRequestId{
@@ -235,12 +214,11 @@ func (c *Client) metadataRequest(
 				}
 				continue
 			}
-			// Check if we're interested in the request id we got
+			// we can never get the wrong resp id
 			if respRequestId.requestId != requestId {
-				log.RaiseNC(timeoutAlert, "dropping response %v from shard %v, since we expected one of %v", respRequestId.requestId, shid, requestId)
-				continue
+				panic(fmt.Errorf("got response %v rather than %v", respRequestId.requestId, requestId))
 			}
-			// We are interested, parse the kind
+			// pparse the kind
 			var kind uint8
 			if err := bincode.UnpackScalar(respReader, &kind); err != nil {
 				timeoutAlertAndStandalone("could not decode Shard response kind for request %v (%T) from shard %v, will continue waiting for responses: %w", req.requestId, req.body, shid, err)
@@ -256,7 +234,7 @@ func (c *Client) metadataRequest(
 					continue
 				}
 			} else {
-				// If the kind dosen't match, it's bad, since it's the same request id
+				// If the kind doesn't match, it's bad, since it's the same request id
 				if kind != msgKind {
 					timeoutAlertAndStandalone("dropping response %v from shard %v, since we it is of kind %v while we expected %v", respRequestId.requestId, shid, msgs.ShardMessageKind(kind), msgKind)
 					continue
@@ -298,8 +276,10 @@ func (c *Client) metadataRequest(
 			log.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
 			log.Trace("respBody %+v", respBody)
 			return nil
+		} else {
+			log.RaiseNC(timeoutAlert, "timed out when sending req %v to shard %v, might retry", requestId, shid)
 		}
-		// We got through the loop busily consuming responses, now try again by sending a new request
 		attempts++
 	}
+	panic("IMPOSSIBLE")
 }

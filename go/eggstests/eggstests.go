@@ -206,7 +206,7 @@ func (r *RunTests) run(
 	log *lib.Logger,
 ) {
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, nil, r.shuckleAddress(), 1)
+	client, err := lib.NewClient(log, nil, r.shuckleAddress())
 	if err != nil {
 		panic(err)
 	}
@@ -1008,7 +1008,7 @@ func main() {
 	// Start block policy changer -- this is useful to test kmod/policy.c machinery
 	if *changeBlockPolicyEvery != time.Duration(0) {
 		fmt.Printf("will change block policy every %v\n", *dropFetchBlockSocketsEvery)
-		client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+		client, err := lib.NewClient(log, nil, shuckleAddress)
 		if err != nil {
 			panic(err)
 		}

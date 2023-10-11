@@ -722,7 +722,7 @@ func fsTestInternal[Id comparable](
 	// Now, try to migrate away from one block service, to stimulate that code path
 	// in tests somewhere.
 	if opts.maxFileSize > 0 {
-		client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+		client, err := lib.NewClient(log, nil, shuckleAddress)
 		if err != nil {
 			panic(err)
 		}
@@ -759,7 +759,7 @@ func fsTest(
 	counters *lib.ClientCounters,
 	realFs string, // if non-empty, will run the tests using this mountpoint
 ) {
-	client, err := lib.NewClient(log, nil, shuckleAddress, opts.checkThreads)
+	client, err := lib.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}

@@ -3,6 +3,7 @@ package lib
 import (
 	"bytes"
 	"crypto/cipher"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
@@ -218,28 +219,31 @@ var DefaultCDCTimeout = ReqTimeouts{
 	rand:    wyhash.Rand{State: 0},
 }
 
+type inFlightMetadataRequest struct {
+	ch chan []byte
+}
+
 type Client struct {
-	shardAddrs       [256][2]net.UDPAddr
-	cdcAddrs         [2]net.UDPAddr
-	udpSocks         []net.PacketConn
-	socksLock        sync.Mutex
-	counters         *ClientCounters
-	cdcKey           cipher.Block
-	writeBlocksConns blocksConnFactory
-	readBlocksConns  blocksConnFactory
-	shardTimeout     *ReqTimeouts
-	cdcTimeout       *ReqTimeouts
-	requestIdCounter uint64
+	shardAddrs         [256][2]net.UDPAddr
+	cdcAddrs           [2]net.UDPAddr
+	metadataSock       net.PacketConn
+	metadataSockClosed bool       // to terminate the receiver
+	metadataSockMu     sync.Mutex // for sending
+	inFlightRequests   map[uint64]inFlightMetadataRequest
+	inFlightRequestsMu sync.Mutex
+	counters           *ClientCounters
+	cdcKey             cipher.Block
+	writeBlocksConns   blocksConnFactory
+	readBlocksConns    blocksConnFactory
+	shardTimeout       *ReqTimeouts
+	cdcTimeout         *ReqTimeouts
+	requestIdCounter   uint64
 }
 
 func NewClient(
 	log *Logger,
 	shuckleTimeout *ReqTimeouts,
 	shuckleAddress string,
-	// How many sockets to use for cdc/shard communications, if there's not going
-	// to be contention just pick 1. If no sockets are available when `GetSocket`
-	// is called, a new one will be created.
-	udpSockets int,
 ) (*Client, error) {
 	var shardIps [256][2][4]byte
 	var shardPorts [256][2]uint16
@@ -274,7 +278,7 @@ func NewClient(
 		cdcIps[1] = cdc.Ip2
 		cdcPorts[1] = cdc.Port2
 	}
-	return NewClientDirect(log, udpSockets, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	return NewClientDirect(log, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
 }
 
 func (c *Client) SetCounters(counters *ClientCounters) {
@@ -308,7 +312,6 @@ func SetMTU(mtu uint64) {
 
 func NewClientDirect(
 	log *Logger,
-	udpSockets int,
 	cdcIps *[2][4]byte,
 	cdcPorts *[2]uint16,
 	shardIps *[256][2][4]byte,
@@ -329,19 +332,45 @@ func NewClientDirect(
 		}
 		c.cdcAddrs[i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(cdcIps[i]), cdcPorts[i]))
 	}
-	c.udpSocks = make([]net.PacketConn, udpSockets)
-	for i := 0; i < udpSockets; i++ {
-		sock, err := net.ListenPacket("udp", ":0")
-		if err != nil {
-			for j := 0; j < i; j++ {
-				c.udpSocks[j].Close()
-			}
-			return nil, err
-		}
-		c.udpSocks[i] = sock
+	c.metadataSock, err = net.ListenPacket("udp", ":0")
+	if err != nil {
+		return nil, err
 	}
+	c.inFlightRequests = make(map[uint64]inFlightMetadataRequest)
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
+	go func() {
+		mtu := clientMtu
+		for {
+			if c.metadataSockClosed {
+				return
+			}
+			respBuf := make([]byte, mtu)
+			log.Debug("waiting for metadata response")
+			read, _, err := c.metadataSock.ReadFrom(respBuf)
+			if err != nil {
+				log.RaiseAlert("got error while reading from metadata socket: %v", err)
+				continue
+			}
+			// extract request id
+			if read < 12 {
+				log.RaiseAlert("got runt metadata response: %v < 12", read)
+				continue
+			}
+			requestId := binary.LittleEndian.Uint64(respBuf[4 : 4+8])
+			log.Debug("got metadata response %v", requestId)
+			c.inFlightRequestsMu.Lock()
+			ch, ok := c.inFlightRequests[requestId]
+			delete(c.inFlightRequests, requestId)
+			c.inFlightRequestsMu.Unlock()
+			if !ok {
+				log.Info("could not find request id %v, probably a late request", requestId)
+				continue
+			}
+			log.Debug("found request id %v, sending back", requestId)
+			ch.ch <- respBuf[:read]
+		}
+	}()
 	return c, nil
 }
 
@@ -353,46 +382,9 @@ func (c *Client) ShardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
 	return &c.shardAddrs[int(shid)]
 }
 
-func (c *Client) GetUDPSocket() (net.PacketConn, error) {
-	c.socksLock.Lock()
-	for i := range c.udpSocks {
-		if c.udpSocks[i] != nil {
-			sock := c.udpSocks[i]
-			c.udpSocks[i] = nil
-			c.socksLock.Unlock()
-			return sock, nil
-		}
-	}
-	c.socksLock.Unlock()
-	// no socket found, we need to create one
-	sock, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return nil, err
-	}
-	return sock, nil
-}
-
-func (c *Client) ReleaseUDPSocket(sock net.PacketConn) {
-	c.socksLock.Lock()
-	for i := range c.udpSocks {
-		if c.udpSocks[i] == nil {
-			c.udpSocks[i] = sock
-			c.socksLock.Unlock()
-			return
-		}
-	}
-	c.socksLock.Unlock()
-	// no slot found, close
-	sock.Close()
-}
-
 func (c *Client) Close() {
-	for i := range c.udpSocks {
-		if c.udpSocks[i] == nil {
-			panic(fmt.Errorf("not all UDP sockets were returned! found one at %v", i))
-		}
-		c.udpSocks[i].Close()
-	}
+	c.metadataSockClosed = true
+	c.metadataSock.Close()
 	c.readBlocksConns.close()
 	c.writeBlocksConns.close()
 }
@@ -663,6 +655,9 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 	for i := start; i < start+2; i++ {
 		ip := ips[i&1]
 		port := ports[i&1]
+		if port == 0 {
+			continue
+		}
 		sock, errs[i&1] = f.getBlocksConnInner(log, false, ip, port)
 		if sock != nil && errs[i&1] == nil {
 			return sock, nil
@@ -672,7 +667,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 		}
 	}
 	// if we got two errors, return one of them
-	if errs[0] != nil && errs[1] != nil {
+	if errs[0] != nil && (port2 == 0 && errs[1] != nil) {
 		// return one of the two errors, we don't want to mess with them too much and they are alerts
 		return nil, errs[0]
 	}
@@ -680,6 +675,9 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 	for i := start; i < start+2; i++ {
 		ip := ips[i&1]
 		port := ports[i&1]
+		if port == 0 {
+			continue
+		}
 		sock, errs[i&1] = f.getBlocksConnInner(log, true, ip, port)
 		if errs[i&1] == nil {
 			return sock, nil

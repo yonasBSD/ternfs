@@ -159,7 +159,7 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 }
 
 func dirSeekTest(log *lib.Logger, shuckleAddress string, mountPoint string) {
-	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+	client, err := lib.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}

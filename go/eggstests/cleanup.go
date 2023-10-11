@@ -53,7 +53,7 @@ func cleanupAfterTest(
 	pauseBlockServiceKiller.Lock()
 	defer pauseBlockServiceKiller.Unlock() // otherwise we won't be able to collect
 	cleanupStartedAt := time.Now()
-	client, err := lib.NewClient(log, nil, shuckleAddress, 1)
+	client, err := lib.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
@@ -63,13 +63,13 @@ func cleanupAfterTest(
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything, making sure that all the deadlines will have passed
 	dirInfoCache := lib.NewDirInfoCache()
-	if err := lib.CollectDirectoriesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}, dirInfoCache); err != nil {
+	if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache); err != nil {
 		panic(err)
 	}
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
 	log.Info("deadlines passed, collecting")
-	if err := lib.DestructFilesInAllShards(log, &lib.GCOptions{ShuckleAddress: shuckleAddress, Counters: counters}); err != nil {
+	if err := lib.DestructFilesInAllShards(log, client, &lib.GCOptions{Counters: counters}); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left after collection

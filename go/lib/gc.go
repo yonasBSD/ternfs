@@ -9,15 +9,14 @@ import (
 
 type GCOptions struct {
 	ShuckleTimeouts        *ReqTimeouts
-	ShuckleAddress         string
 	ShardTimeouts          *ReqTimeouts
 	CDCTimeouts            *ReqTimeouts
 	Counters               *ClientCounters
 	RetryOnDestructFailure bool
 }
 
-func gcClient(log *Logger, options *GCOptions, udpSockets int) (*Client, error) {
-	client, err := NewClient(log, options.ShuckleTimeouts, options.ShuckleAddress, udpSockets)
+func GCClient(log *Logger, shuckleAddress string, options *GCOptions) (*Client, error) {
+	client, err := NewClient(log, options.ShuckleTimeouts, shuckleAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -175,14 +174,10 @@ func destructFilesInternal(
 func destructFiles(
 	log *Logger,
 	options *GCOptions,
+	client *Client,
 	shid msgs.ShardId,
 ) error {
 	log.Info("starting to destruct files in shard %v", shid)
-	client, err := gcClient(log, options, 1)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
 	stats := DestructionStats{}
 	if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
 		return err
@@ -191,27 +186,21 @@ func destructFiles(
 	return nil
 }
 
-func DestructFiles(
-	log *Logger, options *GCOptions, shid msgs.ShardId,
-) error {
-	return destructFiles(log, options, shid)
+func DestructFiles(log *Logger, options *GCOptions, client *Client, shid msgs.ShardId) error {
+	return destructFiles(log, options, client, shid)
 }
 
 func DestructFilesMockedBlockServices(
-	log *Logger, options *GCOptions, shid msgs.ShardId,
+	log *Logger, options *GCOptions, client *Client, shid msgs.ShardId,
 ) error {
-	return destructFiles(log, options, shid)
+	return destructFiles(log, options, client, shid)
 }
 
 func DestructFilesInAllShards(
 	log *Logger,
+	client *Client,
 	options *GCOptions,
 ) error {
-	client, err := gcClient(log, options, 256)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
 	stats := DestructionStats{}
 	someErrored := false
 	for i := 0; i < 256; i++ {
@@ -416,11 +405,7 @@ func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirIn
 	return nil
 }
 
-func CollectDirectories(log *Logger, options *GCOptions, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, shid msgs.ShardId) error {
-	client, err := gcClient(log, options, 1)
-	if err != nil {
-		return err
-	}
+func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, shid msgs.ShardId) error {
 	stats := CollectStats{}
 	if err := collectDirectoriesInternal(log, client, dirInfoCache, cdcMu, &stats, shid); err != nil {
 		return err
@@ -429,12 +414,7 @@ func CollectDirectories(log *Logger, options *GCOptions, dirInfoCache *DirInfoCa
 	return nil
 }
 
-func CollectDirectoriesInAllShards(log *Logger, options *GCOptions, dirInfoCache *DirInfoCache) error {
-	client, err := gcClient(log, options, 256)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
+func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
 	stats := CollectStats{}
 	var cdcMu sync.Mutex
 	for i := 0; i < 256; i++ {

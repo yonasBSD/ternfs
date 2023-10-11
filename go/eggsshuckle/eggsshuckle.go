@@ -1057,7 +1057,7 @@ func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
 	cdcPorts[0] = cdc.port1
 	cdcIps[1] = cdc.ip2
 	cdcPorts[1] = cdc.port2
-	client, err := lib.NewClientDirect(log, 1, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	client, err := lib.NewClientDirect(log, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
 	if err != nil {
 		return nil, fmt.Errorf("error creating client: %s", err)
 	}

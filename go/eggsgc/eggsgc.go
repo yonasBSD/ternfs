@@ -109,11 +109,14 @@ func main() {
 		ShuckleTimeouts:        lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
 		ShardTimeouts:          lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
 		CDCTimeouts:            lib.NewReqTimeouts(lib.DefaultCDCTimeout.Initial, lib.DefaultCDCTimeout.Max, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
-		ShuckleAddress:         *shuckleAddress,
 		RetryOnDestructFailure: *retryOnDestructFailure,
 	}
 
 	dirInfoCache := lib.NewDirInfoCache()
+	client, err := lib.GCClient(log, *shuckleAddress, options)
+	if err != nil {
+		panic(err)
+	}
 	var cdcMu sync.Mutex
 	if *parallel {
 		terminateChan := make(chan any)
@@ -127,7 +130,7 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
 					log.Info("waiting %v before collecting directories in %v", waitFor, shard)
 					time.Sleep(waitFor)
-					if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
+					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, shard); err != nil {
 						log.RaiseAlert("could not collect directories: %v", err)
 					}
 				}
@@ -143,22 +146,23 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
 					log.Info("waiting %v before destructing files in %v", waitFor, shard)
 					time.Sleep(waitFor)
-					if err := lib.DestructFiles(log, options, shard); err != nil {
+					if err := lib.DestructFiles(log, options, client, shard); err != nil {
 						log.RaiseAlert("could not destruct files: %v", err)
 					}
 				}
 			}()
 		}
 		err := <-terminateChan
+		log.Info("got error, winding down: %v", err)
 		panic(err)
 	} else {
 		rand := wyhash.New(rand.Uint64())
 		for {
 			for _, shard := range shards {
-				if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
+				if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, shard); err != nil {
 					log.RaiseAlert("could not collect directories: %v", err)
 				}
-				if err := lib.DestructFiles(log, options, shard); err != nil {
+				if err := lib.DestructFiles(log, options, client, shard); err != nil {
 					log.RaiseAlert("could not destruct files: %v", err)
 				}
 			}

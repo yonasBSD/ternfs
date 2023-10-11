@@ -733,7 +733,7 @@ func main() {
 	counters := lib.NewClientCounters()
 
 	var err error
-	client, err = lib.NewClient(logger, nil, *shuckleAddress, 10)
+	client, err = lib.NewClient(logger, nil, *shuckleAddress)
 	if err != nil {
 		panic(err)
 	}

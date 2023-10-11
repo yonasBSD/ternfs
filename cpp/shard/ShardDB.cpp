@@ -2030,7 +2030,12 @@ struct ShardDBImpl {
                 if (!locked) { // the edge we're trying to create is not locked
                     return EggsError::NAME_IS_LOCKED;
                 }
-                if (existingEdge().creationTime() != oldCreationTime) { // we're not locking the right thing
+                if (existingEdge().targetId() != targetId) {
+                    LOG_DEBUG(_env, "expecting target %s, got %s instead", existingEdge().targetId(), targetId);
+                    return EggsError::MISMATCHING_TARGET;
+                }
+                // we're not locking the right thing
+                if (existingEdge().creationTime() != oldCreationTime) {
                     LOG_DEBUG(_env, "expecting time %s, got %s instead", existingEdge().creationTime(), oldCreationTime);
                     return EggsError::MISMATCHING_CREATION_TIME;
                 }

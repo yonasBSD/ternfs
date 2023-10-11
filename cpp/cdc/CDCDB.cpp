@@ -293,6 +293,7 @@ struct MakeDirectoryStateMachine {
         if (err == EggsError::TIMEOUT) {
             lookupOldCreationTime(true); // retry
         } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+            // the directory we looked into doesn't even exist anymore --
             // we've failed hard and we need to remove the inode.
             state.setExitError(err);
             rollback();
@@ -323,15 +324,19 @@ struct MakeDirectoryStateMachine {
         if (createCurrentLockedEdgeRetry(err)) {
             createLockedEdge(true); // try again
         } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
-            // can't go forward
+            // this happens when a file gets created between when we looked
+            // up whether there was something else and now.
             state.setExitError(err);
             rollback();
         } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
             // lookup the old creation time again
             lookupOldCreationTime();
         } else {
-            // we know we cannot get directory not found because we managed to lookup
+            // We know we cannot get directory not found because we managed to lookup
             // old creation time.
+            //
+            // We also cannot get MISMATCHING_TARGET since we are the only one
+            // creating locked edges, and transactions execute serially.
             ALWAYS_ASSERT(err == NO_ERROR);
             state.setCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
             unlockEdge();
@@ -366,6 +371,7 @@ struct MakeDirectoryStateMachine {
     }
 
     void rollback(bool repeated = false) {
+        // disown the child, it'll be collected by GC.
         auto& shardReq = env.needsShard(MAKE_DIRECTORY_ROLLBACK, state.dirId().shard(), repeated).setRemoveDirectoryOwner();
         shardReq.dirId = state.dirId();
         // we've just created this directory, it is empty, therefore the policy

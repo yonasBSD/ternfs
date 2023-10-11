@@ -114,35 +114,58 @@ func main() {
 	}
 
 	dirInfoCache := lib.NewDirInfoCache()
-	rand := wyhash.New(rand.Uint64())
 	var cdcMu sync.Mutex
-	collectSingleShard := func(shard msgs.ShardId) {
-		if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
-			log.RaiseAlert("could not collect directories: %v", err)
-		}
-		if err := lib.DestructFiles(log, options, shard); err != nil {
-			log.RaiseAlert("could not destruct files: %v", err)
-		}
-	}
 	if *parallel {
+		terminateChan := make(chan any)
+		// directories
 		for i := range shards {
 			shard := shards[i]
+			rand := wyhash.New(uint64(shard))
 			go func() {
-				collectSingleShard(shard)
-				waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
-				log.Info("waiting %v before collecting again in %v", waitFor, shard)
-				time.Sleep(waitFor)
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
+					log.Info("waiting %v before collecting directories in %v", waitFor, shard)
+					time.Sleep(waitFor)
+					if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
+						log.RaiseAlert("could not collect directories: %v", err)
+					}
+				}
 			}()
 		}
+		// files
+		for i := range shards {
+			shard := shards[i]
+			rand := wyhash.New(256 + uint64(shard))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
+					log.Info("waiting %v before destructing files in %v", waitFor, shard)
+					time.Sleep(waitFor)
+					if err := lib.DestructFiles(log, options, shard); err != nil {
+						log.RaiseAlert("could not destruct files: %v", err)
+					}
+				}
+			}()
+		}
+		err := <-terminateChan
+		panic(err)
 	} else {
+		rand := wyhash.New(rand.Uint64())
 		for {
 			for _, shard := range shards {
-				collectSingleShard(shard)
+				if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
+					log.RaiseAlert("could not collect directories: %v", err)
+				}
+				if err := lib.DestructFiles(log, options, shard); err != nil {
+					log.RaiseAlert("could not destruct files: %v", err)
+				}
 			}
 			if *singleIteration {
 				goto Finish
 			}
-			waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+			waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
 			log.Info("waiting %v before collecting again", waitFor)
 			time.Sleep(waitFor)
 		}

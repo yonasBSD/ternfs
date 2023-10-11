@@ -389,6 +389,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 }
 
 func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectStats, shid msgs.ShardId) error {
+	log.Info("starting to collect directories in shard %v", shid)
 	req := msgs.VisitDirectoriesReq{}
 	resp := msgs.VisitDirectoriesResp{}
 	for {

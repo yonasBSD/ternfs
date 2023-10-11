@@ -122,44 +122,53 @@ func DestructFile(
 func destructFilesInternal(
 	log *Logger,
 	client *Client,
-	retryOnFailure bool,
-	shid msgs.ShardId,
 	stats *DestructionStats,
+	retryOnFailure bool,
+	shards []msgs.ShardId,
 ) error {
 	alert := log.NewNCAlert(10 * time.Second)
 	timeouts := NewReqTimeouts(time.Second, 10*time.Second, 0, 1.5, 0.2)
-	req := msgs.VisitTransientFilesReq{}
-	resp := msgs.VisitTransientFilesResp{}
+	reqs := make([]msgs.VisitTransientFilesReq, len(shards))
+	resps := make([]msgs.VisitTransientFilesResp, len(shards))
 	someErrored := false
-	for {
-		log.Debug("visiting files with %+v", req)
-		err := client.ShardRequest(log, shid, &req, &resp)
-		if err != nil {
-			return fmt.Errorf("could not visit transient files: %w", err)
-		}
-		for ix := range resp.Files {
-			file := &resp.Files[ix]
-			if !retryOnFailure {
-				if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-					log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-					stats.FailedFiles++
-					someErrored = true
-				}
-			} else {
-				startedAt := time.Now()
-				for {
+	for i := 0; ; i++ {
+		allDone := true
+		for j, shid := range shards {
+			req := &reqs[j]
+			resp := &resps[j]
+			if i > 0 && req.BeginId == 0 {
+				continue
+			}
+			allDone = false
+			log.Debug("visiting files with %+v", req)
+			err := client.ShardRequest(log, shid, req, resp)
+			if err != nil {
+				return fmt.Errorf("could not visit transient files: %w", err)
+			}
+			for ix := range resp.Files {
+				file := &resp.Files[ix]
+				if !retryOnFailure {
 					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-						log.RaiseNC(alert, "%+v: error while destructing file, will retry: %v", file, err)
-						time.Sleep(timeouts.Next(startedAt))
-					} else {
-						log.ClearNC(alert)
-						break
+						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
+						stats.FailedFiles++
+						someErrored = true
+					}
+				} else {
+					startedAt := time.Now()
+					for {
+						if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+							log.RaiseNC(alert, "%+v: error while destructing file, will retry: %v", file, err)
+							time.Sleep(timeouts.Next(startedAt))
+						} else {
+							log.ClearNC(alert)
+							break
+						}
 					}
 				}
 			}
+			req.BeginId = resp.NextId
 		}
-		req.BeginId = resp.NextId
-		if resp.NextId == 0 {
+		if allDone {
 			break
 		}
 	}
@@ -175,25 +184,19 @@ func destructFiles(
 	log *Logger,
 	options *GCOptions,
 	client *Client,
-	shid msgs.ShardId,
+	shards []msgs.ShardId,
 ) error {
-	log.Info("starting to destruct files in shard %v", shid)
+	log.Info("starting to destruct files in shards %+v", shards)
 	stats := DestructionStats{}
-	if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
+	if err := destructFilesInternal(log, client, &stats, options.RetryOnDestructFailure, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
 	return nil
 }
 
-func DestructFiles(log *Logger, options *GCOptions, client *Client, shid msgs.ShardId) error {
-	return destructFiles(log, options, client, shid)
-}
-
-func DestructFilesMockedBlockServices(
-	log *Logger, options *GCOptions, client *Client, shid msgs.ShardId,
-) error {
-	return destructFiles(log, options, client, shid)
+func DestructFiles(log *Logger, options *GCOptions, client *Client, shards []msgs.ShardId) error {
+	return destructFiles(log, options, client, shards)
 }
 
 func DestructFilesInAllShards(
@@ -202,14 +205,15 @@ func DestructFilesInAllShards(
 	options *GCOptions,
 ) error {
 	stats := DestructionStats{}
-	someErrored := false
+	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		if err := destructFilesInternal(log, client, options.RetryOnDestructFailure, shid, &stats); err != nil {
-			// `destructFilesInternal` itself raises an alert, no need to raise two.
-			log.Info("destructing files in shard %v failed: %v", shid, err)
-			someErrored = true
-		}
+		shards[i] = msgs.ShardId(i)
+	}
+	someErrored := false
+	if err := destructFilesInternal(log, client, &stats, options.RetryOnDestructFailure, shards); err != nil {
+		// `destructFilesInternal` itself raises an alert, no need to raise two.
+		log.Info("destructing files in shards %+v failed: %v", shards, err)
+		someErrored = true
 	}
 	if someErrored {
 		return fmt.Errorf("failed to destruct %v files, see logs", stats.FailedFiles)
@@ -377,37 +381,46 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 	return nil
 }
 
-func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectStats, shid msgs.ShardId) error {
-	log.Info("starting to collect directories in shard %v", shid)
-	req := msgs.VisitDirectoriesReq{}
-	resp := msgs.VisitDirectoriesResp{}
-	for {
-		err := client.ShardRequest(log, shid, &req, &resp)
-		if err != nil {
-			return fmt.Errorf("could not visit directories: %w", err)
+func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectStats, shards []msgs.ShardId) error {
+	log.Info("starting to collect directories in shards %+v", shards)
+	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
+	resps := make([]msgs.VisitDirectoriesResp, len(shards))
+	for i := 0; ; i++ {
+		allDone := true
+		for j, shid := range shards {
+			req := &reqs[j]
+			resp := &resps[j]
+			if i > 0 && req.BeginId == 0 {
+				continue
+			}
+			allDone = false
+			err := client.ShardRequest(log, shid, req, resp)
+			if err != nil {
+				return fmt.Errorf("could not visit directories: %w", err)
+			}
+			for _, id := range resp.Ids {
+				if id.Type() != msgs.DIRECTORY {
+					panic(fmt.Errorf("bad directory inode %v", id))
+				}
+				if id.Shard() != shid {
+					panic("bad shard")
+				}
+				if err := CollectDirectory(log, client, dirInfoCache, cdcMu, stats, id); err != nil {
+					return fmt.Errorf("error while collecting inode %v: %w", id, err)
+				}
+			}
+			req.BeginId = resp.NextId
 		}
-		for _, id := range resp.Ids {
-			if id.Type() != msgs.DIRECTORY {
-				panic(fmt.Errorf("bad directory inode %v", id))
-			}
-			if id.Shard() != shid {
-				panic("bad shard")
-			}
-			if err := CollectDirectory(log, client, dirInfoCache, cdcMu, stats, id); err != nil {
-				return fmt.Errorf("error while collecting inode %v: %w", id, err)
-			}
-		}
-		req.BeginId = resp.NextId
-		if req.BeginId == 0 {
+		if allDone {
 			break
 		}
 	}
 	return nil
 }
 
-func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, shid msgs.ShardId) error {
+func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, shards []msgs.ShardId) error {
 	stats := CollectStats{}
-	if err := collectDirectoriesInternal(log, client, dirInfoCache, cdcMu, &stats, shid); err != nil {
+	if err := collectDirectoriesInternal(log, client, dirInfoCache, cdcMu, &stats, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one collect directories iteration: %+v", stats)
@@ -417,10 +430,12 @@ func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache,
 func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
 	stats := CollectStats{}
 	var cdcMu sync.Mutex
+	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
-		if err := collectDirectoriesInternal(log, client, dirInfoCache, &cdcMu, &stats, msgs.ShardId(i)); err != nil {
-			return err
-		}
+		shards[i] = msgs.ShardId(i)
+	}
+	if err := collectDirectoriesInternal(log, client, dirInfoCache, &cdcMu, &stats, shards); err != nil {
+		return err
 	}
 	log.Info("stats after one all shards collect directories iteration: %+v", stats)
 	return nil

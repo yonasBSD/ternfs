@@ -219,25 +219,38 @@ var DefaultCDCTimeout = ReqTimeouts{
 	rand:    wyhash.Rand{State: 0},
 }
 
-type inFlightMetadataRequest struct {
-	ch chan []byte
+type metadataProcessorRequest struct {
+	requestId uint64
+	clear     bool // if this is set, the other fields are ignored: we just remove the req from the map.
+	timeout   time.Duration
+	addr      *net.UDPAddr
+	body      []byte
+	respCh    chan []byte
+}
+
+type metadataProcessorResponse struct {
+	requestId uint64
+	body      []byte
+}
+
+type clientMetadata struct {
+	sock       net.PacketConn
+	sockClosed bool // to terminate the receiver
+	requests   chan *metadataProcessorRequest
+	responses  chan metadataProcessorResponse
 }
 
 type Client struct {
-	shardAddrs         [256][2]net.UDPAddr
-	cdcAddrs           [2]net.UDPAddr
-	metadataSock       net.PacketConn
-	metadataSockClosed bool       // to terminate the receiver
-	metadataSockMu     sync.Mutex // for sending
-	inFlightRequests   map[uint64]inFlightMetadataRequest
-	inFlightRequestsMu sync.Mutex
-	counters           *ClientCounters
-	cdcKey             cipher.Block
-	writeBlocksConns   blocksConnFactory
-	readBlocksConns    blocksConnFactory
-	shardTimeout       *ReqTimeouts
-	cdcTimeout         *ReqTimeouts
-	requestIdCounter   uint64
+	shardAddrs       [256][2]net.UDPAddr
+	cdcAddrs         [2]net.UDPAddr
+	clientMetadata   clientMetadata
+	counters         *ClientCounters
+	cdcKey           cipher.Block
+	writeBlocksConns blocksConnFactory
+	readBlocksConns  blocksConnFactory
+	shardTimeout     *ReqTimeouts
+	cdcTimeout       *ReqTimeouts
+	requestIdCounter uint64
 }
 
 func NewClient(
@@ -310,6 +323,95 @@ func SetMTU(mtu uint64) {
 	clientMtu = uint16(mtu)
 }
 
+func (cm *clientMetadata) init(log *Logger) error {
+	var err error
+	cm.sock, err = net.ListenPacket("udp", ":0")
+	if err != nil {
+		return err
+	}
+	cm.requests = make(chan *metadataProcessorRequest, 10_000)
+	cm.responses = make(chan metadataProcessorResponse, 10_000)
+	// sock drainer
+	go func() {
+		for {
+			if cm.sockClosed {
+				return
+			}
+			mtu := clientMtu
+			respBuf := make([]byte, mtu)
+			log.Debug("waiting for metadata response")
+			read, _, err := cm.sock.ReadFrom(respBuf)
+			if err != nil {
+				log.RaiseAlert("got error while reading from metadata socket: %v", err)
+				continue
+			}
+			// extract request id
+			if read < 12 {
+				log.RaiseAlert("got runt metadata response: %v < 12", read)
+				continue
+			}
+			requestId := binary.LittleEndian.Uint64(respBuf[4 : 4+8])
+			log.Debug("got metadata response %v", requestId)
+			cm.responses <- metadataProcessorResponse{
+				requestId: requestId,
+				body:      respBuf[:read],
+			}
+		}
+	}()
+	// processor
+	go func() {
+		inFlight := make(map[uint64](chan []byte))
+		for {
+			if cm.sockClosed {
+				return
+			}
+			select {
+			case resp := <-cm.responses:
+				ch, ok := inFlight[resp.requestId]
+				if ok {
+					log.Debug("found request id %v, sending back", resp.requestId)
+					// don't block the main loop because of a full queue
+					select {
+					case ch <- resp.body:
+					default:
+					}
+				} else {
+					log.Debug("ignoring request %v which we could not find, probably late", resp.requestId)
+				}
+			case req := <-cm.requests:
+				if req.clear {
+					delete(inFlight, req.requestId)
+				} else {
+					log.Debug("about to send request id %v using conn %v->%v", req.requestId, req.addr, cm.sock.LocalAddr())
+					written, err := cm.sock.WriteTo(req.body, req.addr)
+					log.Debug("sent request id %v, sending back", req.requestId)
+					if err != nil {
+						log.RaiseAlert("could not send request %v to %v: %v", req.requestId, req.addr, err)
+					} else if written != len(req.body) {
+						// this should never happen, but don't panic in this infinite loop
+						log.RaiseAlert("expected write of %v, got %v", len(req.body), written)
+					}
+					// overwrites are fine
+					inFlight[req.requestId] = req.respCh
+					go func() {
+						time.Sleep(req.timeout)
+						select {
+						case req.respCh <- nil:
+						default:
+						}
+					}()
+				}
+			}
+		}
+	}()
+	return nil
+}
+
+func (cm *clientMetadata) close() {
+	cm.sockClosed = true
+	cm.sock.Close()
+}
+
 func NewClientDirect(
 	log *Logger,
 	cdcIps *[2][4]byte,
@@ -332,45 +434,11 @@ func NewClientDirect(
 		}
 		c.cdcAddrs[i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(cdcIps[i]), cdcPorts[i]))
 	}
-	c.metadataSock, err = net.ListenPacket("udp", ":0")
-	if err != nil {
-		return nil, err
-	}
-	c.inFlightRequests = make(map[uint64]inFlightMetadataRequest)
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
-	go func() {
-		mtu := clientMtu
-		for {
-			if c.metadataSockClosed {
-				return
-			}
-			respBuf := make([]byte, mtu)
-			log.Debug("waiting for metadata response")
-			read, _, err := c.metadataSock.ReadFrom(respBuf)
-			if err != nil {
-				log.RaiseAlert("got error while reading from metadata socket: %v", err)
-				continue
-			}
-			// extract request id
-			if read < 12 {
-				log.RaiseAlert("got runt metadata response: %v < 12", read)
-				continue
-			}
-			requestId := binary.LittleEndian.Uint64(respBuf[4 : 4+8])
-			log.Debug("got metadata response %v", requestId)
-			c.inFlightRequestsMu.Lock()
-			ch, ok := c.inFlightRequests[requestId]
-			delete(c.inFlightRequests, requestId)
-			c.inFlightRequestsMu.Unlock()
-			if !ok {
-				log.Info("could not find request id %v, probably a late request", requestId)
-				continue
-			}
-			log.Debug("found request id %v, sending back", requestId)
-			ch.ch <- respBuf[:read]
-		}
-	}()
+	if err := c.clientMetadata.init(log); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -383,8 +451,7 @@ func (c *Client) ShardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
 }
 
 func (c *Client) Close() {
-	c.metadataSockClosed = true
-	c.metadataSock.Close()
+	c.clientMetadata.close()
 	c.readBlocksConns.close()
 	c.writeBlocksConns.close()
 }

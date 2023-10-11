@@ -253,7 +253,7 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.Info("skipping clear alertId=%v since it's quiet until %v", req.alertId, quiet.quietUntil)
+						log.Debug("skipping clear alertId=%v since it's quiet until %v", req.alertId, quiet.quietUntil)
 						delete(quietAlerts, req.alertId)
 						goto SkipRequest
 					}

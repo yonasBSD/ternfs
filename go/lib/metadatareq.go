@@ -128,10 +128,13 @@ func (c *Client) metadataRequest(
 	attempts := 0
 	startedAt := time.Now()
 	requestId := c.newRequestId()
-	respChan := make(chan []byte, 1)
-	c.inFlightRequestsMu.Lock()
-	c.inFlightRequests[requestId] = inFlightMetadataRequest{ch: respChan}
-	c.inFlightRequestsMu.Unlock()
+	defer func() {
+		c.clientMetadata.requests <- &metadataProcessorRequest{
+			requestId: requestId,
+			clear:     true,
+		}
+	}()
+	respChan := make(chan []byte, 16)
 	// will keep trying as long as we get timeouts
 	timeoutAlertQuietPeriod := time.Second
 	if shid < 0 {
@@ -167,39 +170,21 @@ func (c *Client) metadataRequest(
 		}
 		reqBytes := packMetadataRequest(&req, c.cdcKey)
 		addr := &addrs[(startedAt.Nanosecond()+attempts)&1&hasSecondIp]
-		log.DebugStack(1, "about to send request id %v (type %T) to shard %v using conn %v->%v, after %v attempts", requestId, reqBody, shid, addr, c.metadataSock.LocalAddr(), attempts)
+		log.DebugStack(1, "about to send request id %v (type %T) to shard %v through processor, after %v attempts", requestId, reqBody, shid, attempts)
 		log.Trace("reqBody %+v", reqBody)
-		c.metadataSockMu.Lock()
-		written, err := c.metadataSock.WriteTo(reqBytes, addr)
-		c.metadataSockMu.Unlock()
-		if err != nil {
-			if isSendToEPERM(err) {
-				if dontWait {
-					log.Info("dontWait is on, we couldn't send the request due to EPERM %v, goodbye", err)
-					return nil
-				} else {
-					log.RaiseNC(timeoutAlert, "got possibly transient EPERM when sending to shard %v, might retry after waiting for %v: %v", shid, timeout, err)
-					time.Sleep(timeout)
-					attempts++
-					continue
-				}
-			}
-			return err
-		}
-		if written < len(reqBytes) {
-			panic(fmt.Sprintf("incomplete send to shard %v -- %v bytes written instead of %v", shid, written, len(reqBytes)))
+		c.clientMetadata.requests <- &metadataProcessorRequest{
+			requestId: requestId,
+			addr:      addr,
+			body:      reqBytes,
+			respCh:    respChan,
+			timeout:   timeout,
 		}
 		if dontWait {
 			log.Debug("dontWait is on, we've sent the request, goodbye")
 			return nil
 		}
-		// race between timeout and response
-		go func() {
-			time.Sleep(timeout)
-			respChan <- nil
-		}()
 		respBytes := <-respChan
-		if respBytes != nil {
+		if respBytes != nil { // timed out
 			// we got something
 			// Start parsing, from the header with request id
 			respReader := bytes.NewReader(respBytes)
@@ -251,7 +236,7 @@ func (c *Client) metadataRequest(
 			}
 			// If we've got a timeout, keep trying
 			if eggsError != nil && *eggsError == msgs.TIMEOUT {
-				log.RaiseNC(timeoutAlert, "got resp timeout error %v from shard %v, will try to retry", err, shid)
+				log.RaiseNC(timeoutAlert, "got resp timeout error %v from shard %v, will try to retry", eggsError, shid)
 				break // keep trying
 			}
 			// At this point, we know we've got a response
@@ -277,7 +262,7 @@ func (c *Client) metadataRequest(
 			log.Trace("respBody %+v", respBody)
 			return nil
 		} else {
-			log.RaiseNC(timeoutAlert, "timed out when sending req %v to shard %v, might retry", requestId, shid)
+			log.RaiseNC(timeoutAlert, "timed out when receiving resp %v of typ %T (started at %v) to shard %v, might retry", requestId, reqBody, startedAt, shid)
 		}
 		attempts++
 	}

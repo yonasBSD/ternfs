@@ -26,10 +26,10 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
-	parallel := flag.Bool("parallel", false, "Collect all shards in parallel")
+	parallel := flag.Uint("parallel", 0, "Collect all shards in parallel. If 0, no parallelism. If n > 0, the shards will be split in n groups and done in parallel.")
 	flag.Parse()
 
-	if *parallel && *singleIteration {
+	if *parallel > 0 && *singleIteration {
 		fmt.Fprintf(os.Stderr, "-single-iteration is not compatible with -parallel for now. Pick one.")
 		os.Exit(2)
 	}
@@ -41,6 +41,15 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shards = append(shards, msgs.ShardId(i))
 		}
+	}
+
+	if int(*parallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).", len(shards))
+		os.Exit(2)
+	}
+	if len(shards)%int(*parallel) != 0 {
+		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).", len(shards))
+		os.Exit(2)
 	}
 
 	for _, shardStr := range flag.Args() {
@@ -105,10 +114,13 @@ func main() {
 	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
+	//
+	// The timeout is _extremely_ lax because we run GC with a lot of parallelism in prod,
+	// and we want GC to have low priority.
 	options := &lib.GCOptions{
 		ShuckleTimeouts:        lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
-		ShardTimeouts:          lib.NewReqTimeouts(lib.DefaultShardTimeout.Initial, lib.DefaultShardTimeout.Max, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
-		CDCTimeouts:            lib.NewReqTimeouts(lib.DefaultCDCTimeout.Initial, lib.DefaultCDCTimeout.Max, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
+		ShardTimeouts:          lib.NewReqTimeouts(5*time.Second, 60*time.Second, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
+		CDCTimeouts:            lib.NewReqTimeouts(5*time.Second, 60*time.Second, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
 		RetryOnDestructFailure: *retryOnDestructFailure,
 	}
 
@@ -118,35 +130,38 @@ func main() {
 		panic(err)
 	}
 	var cdcMu sync.Mutex
-	if *parallel {
+	if *parallel > 0 {
+		shardsPerGroup := len(shards) / int(*parallel)
 		terminateChan := make(chan any)
 		// directories
-		for i := range shards {
-			shard := shards[i]
-			rand := wyhash.New(uint64(shard))
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
-					log.Info("waiting %v before collecting directories in %v", waitFor, shard)
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+					log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, shard); err != nil {
+					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, groupShards); err != nil {
 						log.RaiseAlert("could not collect directories: %v", err)
 					}
 				}
 			}()
 		}
 		// files
-		for i := range shards {
-			shard := shards[i]
-			rand := wyhash.New(256 + uint64(shard))
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
-					log.Info("waiting %v before destructing files in %v", waitFor, shard)
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.DestructFiles(log, options, client, shard); err != nil {
+					if err := lib.DestructFiles(log, options, client, groupShards); err != nil {
 						log.RaiseAlert("could not destruct files: %v", err)
 					}
 				}
@@ -158,18 +173,16 @@ func main() {
 	} else {
 		rand := wyhash.New(rand.Uint64())
 		for {
-			for _, shard := range shards {
-				if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, shard); err != nil {
-					log.RaiseAlert("could not collect directories: %v", err)
-				}
-				if err := lib.DestructFiles(log, options, client, shard); err != nil {
-					log.RaiseAlert("could not destruct files: %v", err)
-				}
+			if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, shards); err != nil {
+				log.RaiseAlert("could not collect directories: %v", err)
+			}
+			if err := lib.DestructFiles(log, options, client, shards); err != nil {
+				log.RaiseAlert("could not destruct files: %v", err)
 			}
 			if *singleIteration {
 				goto Finish
 			}
-			waitFor := time.Millisecond * time.Duration(rand.Uint64()%300_000)
+			waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 			log.Info("waiting %v before collecting again", waitFor)
 			time.Sleep(waitFor)
 		}

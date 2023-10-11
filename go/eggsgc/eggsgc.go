@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/lib"
@@ -25,7 +26,13 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
+	parallel := flag.Bool("parallel", false, "Collect all shards in parallel")
 	flag.Parse()
+
+	if *parallel && *singleIteration {
+		fmt.Fprintf(os.Stderr, "-single-iteration is not compatible with -parallel for now. Pick one.")
+		os.Exit(2)
+	}
 
 	shards := []msgs.ShardId{}
 	var appInstance string
@@ -108,21 +115,37 @@ func main() {
 
 	dirInfoCache := lib.NewDirInfoCache()
 	rand := wyhash.New(rand.Uint64())
-	for {
-		for _, shard := range shards {
-			if err := lib.CollectDirectories(log, options, dirInfoCache, shard); err != nil {
-				log.RaiseAlert("could not collect directories: %v", err)
-			}
-			if err := lib.DestructFiles(log, options, shard); err != nil {
-				log.RaiseAlert("could not destruct files: %v", err)
-			}
+	var cdcMu sync.Mutex
+	collectSingleShard := func(shard msgs.ShardId) {
+		if err := lib.CollectDirectories(log, options, dirInfoCache, &cdcMu, shard); err != nil {
+			log.RaiseAlert("could not collect directories: %v", err)
 		}
-		if *singleIteration {
-			goto Finish
+		if err := lib.DestructFiles(log, options, shard); err != nil {
+			log.RaiseAlert("could not destruct files: %v", err)
 		}
-		waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
-		log.Info("waiting %v before collecting again", waitFor)
-		time.Sleep(waitFor)
 	}
-Finish:
+	if *parallel {
+		for i := range shards {
+			shard := shards[i]
+			go func() {
+				collectSingleShard(shard)
+				waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+				log.Info("waiting %v before collecting again in %v", waitFor, shard)
+				time.Sleep(waitFor)
+			}()
+		}
+	} else {
+		for {
+			for _, shard := range shards {
+				collectSingleShard(shard)
+			}
+			if *singleIteration {
+				goto Finish
+			}
+			waitFor := time.Minute * time.Duration((rand.Uint32()%10)+1)
+			log.Info("waiting %v before collecting again", waitFor)
+			time.Sleep(waitFor)
+		}
+	Finish:
+	}
 }

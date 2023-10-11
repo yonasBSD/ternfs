@@ -183,7 +183,8 @@ func main() {
 			}
 			defer client.Close()
 			stats := lib.CollectStats{}
-			if err := lib.CollectDirectory(log, client, dirInfoCache, &stats, dirId); err != nil {
+			var cdcMu sync.Mutex
+			if err := lib.CollectDirectory(log, client, dirInfoCache, &cdcMu, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)

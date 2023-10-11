@@ -721,13 +721,11 @@ func (c *wrappedBlockConn) Close() error {
 }
 
 func (c *wrappedBlockConn) Put() {
-	c.Close()
-	// Until we fix <internal-repo/issues/68>...
-	// if c.conn == nil {
-	// 	return
-	// }
-	// c.conn.Put()
-	// c.conn = nil
+	if c.conn == nil {
+		return
+	}
+	c.conn.Put()
+	c.conn = nil
 }
 
 // These two will block until the connection gets freed -- you can't nest calls to these.

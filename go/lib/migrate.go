@@ -40,11 +40,6 @@ func fetchBlock(
 		return err
 	}
 	defer srcConn.Close()
-	defer func() {
-		if err == nil {
-			srcConn.Put()
-		}
-	}()
 	if err = FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
 		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
 		return err
@@ -61,6 +56,7 @@ func fetchBlock(
 	if block.Crc != readCrc {
 		return fmt.Errorf("read %v CRC instead of %v", readCrc, block.Crc)
 	}
+	srcConn.Put()
 	return nil
 }
 
@@ -113,7 +109,6 @@ func writeBlock(
 			log.Info("could not reach block service, might retry")
 			goto FailedAttempt
 		}
-		defer dstConn.Close()
 		writeProof, err = WriteBlock(log, dstConn, dstBlock, newContents, blockSize, block.Crc)
 		if err != nil {
 			dstConn.Close()

@@ -91,9 +91,9 @@ func DestructFile(
 					}
 					return err
 				}
-				defer conn.Close()
 				proof, err = EraseBlock(log, conn, &block)
 				if err != nil {
+					conn.Close()
 					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
 				} else {
 					conn.Put()

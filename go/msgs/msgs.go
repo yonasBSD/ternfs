@@ -82,7 +82,7 @@ const (
 
 func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
 	switch n {
-	case "EMPTY":
+	case "0":
 		return EGGSFS_BLOCK_SERVICE_EMPTY, nil
 	case "STALE":
 		return EGGSFS_BLOCK_SERVICE_STALE, nil
@@ -95,6 +95,18 @@ func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
 	default:
 		panic(fmt.Errorf("unknown blockservice flag %q", n))
 	}
+}
+
+func BlockServiceFlagsFromUnion(n string) (BlockServiceFlags, error) {
+	var flags BlockServiceFlags
+	for _, fs := range strings.Split(n, "|") {
+		f, err := BlockServiceFlagFromName(fs)
+		if err != nil {
+			return 0, err
+		}
+		flags |= f
+	}
+	return flags, nil
 }
 
 func (flags BlockServiceFlags) String() string {

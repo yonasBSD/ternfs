@@ -342,7 +342,11 @@ func (cm *clientMetadata) init(log *Logger) error {
 			log.Debug("waiting for metadata response")
 			read, _, err := cm.sock.ReadFrom(respBuf)
 			if err != nil {
-				log.RaiseAlert("got error while reading from metadata socket: %v", err)
+				if cm.sockClosed {
+					log.Debug("got error while reading from metadata socket when winded down: %v", err)
+				} else {
+					log.RaiseAlert("got error while reading from metadata socket: %v", err)
+				}
 				continue
 			}
 			// extract request id

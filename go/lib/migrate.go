@@ -35,7 +35,7 @@ func fetchBlock(
 ) error {
 	blockService := &blockServices[block.BlockServiceIx]
 	var srcConn BlocksConn
-	srcConn, err := client.GetReadBlocksConn(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+	srcConn, err := client.GetReadBlocksConn(log, true, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func writeBlock(
 		var dstConn BlocksConn
 		certifySpanResp := msgs.AddSpanCertifyResp{}
 		var writeProof [8]byte
-		dstConn, err = client.GetWriteBlocksConn(log, dstBlock.BlockServiceId, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
+		dstConn, err = client.GetWriteBlocksConn(log, true, dstBlock.BlockServiceId, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
 		if err != nil {
 			log.Info("could not reach block service, might retry")
 			goto FailedAttempt

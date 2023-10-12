@@ -79,11 +79,12 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i, block := range initResp.Blocks {
 				var proof [8]byte
-				conn, err := client.GetWriteBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+				// Check if the block was stale/decommissioned, in which case
+				// there might be nothing we can do here, for now.
+				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+				conn, err := client.GetWriteBlocksConn(log, !acceptFailure, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 				if err != nil {
-					// Check if the block was stale/decommissioned, in which case
-					// there might be nothing we can do here.
-					if block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
+					if acceptFailure {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v", block.BlockServiceId, id)
 						stats.SkippedSpans++
 						return nil

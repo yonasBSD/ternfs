@@ -708,7 +708,7 @@ func (f *blocksConnFactory) getBlocksConnInner(log *Logger, block bool, ip [4]by
 
 // The first ip1/port1 cannot be zeroed, the second one can. One of them
 // will be tried at random.
-func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*blockConn, error) {
+func (f *blocksConnFactory) getBlocksConns(log *Logger, alert bool, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*blockConn, error) {
 	// decide at random which one we want to stimulate the two ports path
 	if port1 == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
@@ -734,7 +734,11 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 			return sock, nil
 		}
 		if errs[i&1] != nil {
-			log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+			if alert {
+				log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+			} else {
+				log.Info("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+			}
 		}
 	}
 	// if we got two errors, return one of them
@@ -753,7 +757,11 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, blockServiceId msgs.Bloc
 		if errs[i&1] == nil {
 			return sock, nil
 		}
-		log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+		if alert {
+			log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+		} else {
+			log.Info("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+		}
 	}
 	for _, err := range errs {
 		if err != nil {
@@ -798,16 +806,16 @@ func (c *wrappedBlockConn) Put() {
 }
 
 // These two will block until the connection gets freed -- you can't nest calls to these.
-func (c *Client) GetWriteBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
-	conn, err := c.writeBlocksConns.getBlocksConns(log, blockServiceId, ip1, port1, ip2, port2)
+func (c *Client) GetWriteBlocksConn(log *Logger, alert bool, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
+	conn, err := c.writeBlocksConns.getBlocksConns(log, alert, blockServiceId, ip1, port1, ip2, port2)
 	if err == nil {
 		return &wrappedBlockConn{conn: conn}, nil
 	}
 	return nil, err
 }
 
-func (c *Client) GetReadBlocksConn(log *Logger, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
-	conn, err := c.readBlocksConns.getBlocksConns(log, blockServiceId, ip1, port1, ip2, port2)
+func (c *Client) GetReadBlocksConn(log *Logger, alert bool, blockServiceId msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (BlocksConn, error) {
+	conn, err := c.readBlocksConns.getBlocksConns(log, alert, blockServiceId, ip1, port1, ip2, port2)
 	if err == nil {
 		return &wrappedBlockConn{conn: conn}, nil
 	}

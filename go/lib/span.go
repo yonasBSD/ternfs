@@ -259,7 +259,7 @@ func (c *Client) CreateSpan(
 		}
 		for i, block := range initiateResp.Blocks {
 			var conn BlocksConn
-			conn, err = c.GetWriteBlocksConn(log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+			conn, err = c.GetWriteBlocksConn(log, true, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
 			if err != nil {
 				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
 				log.Info("failed to get blocks conn to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
@@ -429,7 +429,7 @@ func (c *Client) fetchCell(
 	block := &body.Blocks[blockIx]
 	blockService := &blockServices[block.BlockServiceIx]
 	var conn BlocksConn
-	conn, err = c.GetReadBlocksConn(log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+	conn, err = c.GetReadBlocksConn(log, true, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 	if err != nil {
 		log.Info("could not connect to block service %+v", blockService)
 		return nil, err

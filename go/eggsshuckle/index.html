@@ -23,25 +23,7 @@
         </tbody>
     </table>
     <h2 id="shards">Shards</h2>
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Id</th>
-                <th>Address 1</th>
-                <th>Address 2</th>
-                <th>LastSeen</th>
-            </tr>
-        <tbody>
-            {{ range $id, $shard := .ShardsAddrs }}
-                <tr>
-                    <td><code>{{printf "%03v" $id}}</code></td>
-                    <td><code>{{$shard.Addr1}}</code></td>
-                    <td><code>{{$shard.Addr2}}</code></td>
-                    <td>{{$shard.LastSeen}}</td>
-                </tr>
-            {{end}}
-        </tbody>
-    </table>
+    <div id="shards-table"><em>Loading...</em></div>
     <h2 id="block-services">Block services</h2>
     <p>
         Flags legend:
@@ -55,37 +37,9 @@
     <p>
         The most common occasion where a human sets block services flags is disk failure, see <a href="internal-repo/blob/main/docs/disk-failure.md">the docs</a> for more info.
     </p>
-    <table class="table">
-        <thead>
-            <tr>
-                <th>FailureDomain</th>
-                <th>Address 1</th>
-                <th>Address 2</th>
-                <th>Path</th>
-                <th>Id</th>
-                <th>Flags</th>
-                <th>StorageClass</th>
-                <th class="text-end">Blocks</th>
-                <th class="text-end">Capacity</th>
-                <th class="text-end">Available</th>
-                <th>LastSeen</th>
-            </tr>
-        <tbody>
-            {{ range .BlockServices }}
-                <tr id="bs-{{.Id}}">
-                    <td>{{.FailureDomain}}</td>
-                    <td><code>{{.Addr1}}</code></td>
-                    <td><code>{{.Addr2}}</code></td>
-                    <td><code>{{.Path}}</code></td>
-                    <td><code>{{.Id}}</code></td>
-                    <td><code>{{.Flags}}</code></td>
-                    <td>{{.StorageClass}}</td>
-                    <td class="text-end">{{.Blocks}}</td>
-                    <td class="text-end">{{.CapacityBytes}}</td>
-                    <td class="text-end">{{.AvailableBytes}}</td>
-                    <td>{{.LastSeen}}</td>
-                </tr>
-            {{end}}
-        </tbody>
-    </table>
+    <div id="block-services-table"><em>Loading...</em></div>
+    <script type="module">
+        import { renderIndex } from '/static/scripts.js';
+        renderIndex();
+    </script>
 {{end}}

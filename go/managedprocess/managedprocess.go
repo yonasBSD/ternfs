@@ -383,6 +383,7 @@ type ShuckleOpts struct {
 	BlockserviceMinBytes uint64
 	Stale                time.Duration
 	Xmon                 string
+	ScriptsJs            string
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -405,6 +406,9 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.ScriptsJs != "" {
+		args = append(args, "-scripts-js", opts.ScriptsJs)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",

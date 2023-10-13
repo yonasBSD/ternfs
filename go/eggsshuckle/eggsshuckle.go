@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -794,8 +795,6 @@ type indexData struct {
 	CDCAddr1            string
 	CDCAddr2            string
 	CDCLastSeen         string
-	BlockServices       []indexBlockService
-	ShardsAddrs         []indexShard
 	Blocks              uint64
 }
 
@@ -889,57 +888,6 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
 			failureDomainsBytes := make(map[string]struct{})
-			for _, bs := range blockServices {
-				data.BlockServices = append(data.BlockServices, indexBlockService{
-					Id:             bs.Id,
-					Addr1:          fmt.Sprintf("%v:%v", net.IP(bs.Ip1[:]), bs.Port1),
-					Addr2:          fmt.Sprintf("%v:%v", net.IP(bs.Ip2[:]), bs.Port2),
-					StorageClass:   bs.StorageClass,
-					Flags:          bs.Flags.ShortString(),
-					FailureDomain:  string(bs.FailureDomain.Name[:bytes.Index(bs.FailureDomain.Name[:], []byte{0})]),
-					CapacityBytes:  formatSize(bs.CapacityBytes),
-					AvailableBytes: formatSize(bs.AvailableBytes),
-					Path:           bs.Path,
-					Blocks:         bs.Blocks,
-					LastSeen:       formatLastSeen(bs.LastSeen),
-				})
-				failureDomainsBytes[string(bs.FailureDomain.Name[:])] = struct{}{}
-				if (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0 {
-					totalAvailableBytes += bs.AvailableBytes
-					totalCapacityBytes += bs.CapacityBytes
-					data.Blocks += bs.Blocks
-				}
-			}
-			sort.Slice(
-				data.BlockServices,
-				func(i, j int) bool {
-					a := data.BlockServices[i]
-					b := data.BlockServices[j]
-					if len(a.FailureDomain) != len(b.FailureDomain) {
-						return len(a.FailureDomain) < len(b.FailureDomain)
-					}
-					if a.FailureDomain != b.FailureDomain {
-						return a.FailureDomain < b.FailureDomain
-					}
-					if a.Path != b.Path {
-						return a.Path < b.Path
-					}
-					return a.Id < b.Id
-				},
-			)
-
-			shards, err := state.selectShards()
-			if err != nil {
-				ll.RaiseAlert("error reading shards: %s", err)
-				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading shards: %s", err))
-			}
-			for _, shard := range shards {
-				data.ShardsAddrs = append(data.ShardsAddrs, indexShard{
-					Addr1:    fmt.Sprintf("%v:%v", net.IP(shard.Ip1[:]), shard.Port1),
-					Addr2:    fmt.Sprintf("%v:%v", net.IP(shard.Ip2[:]), shard.Port2),
-					LastSeen: formatLastSeen(shard.LastSeen),
-				})
-			}
 
 			cdc, err := state.selectCDC()
 			if err != nil {
@@ -1579,39 +1527,99 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 			if segments[0] != "api" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
 			}
-			if len(segments) != 2 {
-				return sendJsonErr(w, fmt.Errorf("expected /api/<req>, got %v", r.URL.Path), http.StatusBadRequest)
+			badUrl := func(what string) (io.ReadCloser, int64, int) {
+				return sendJsonErr(w, fmt.Errorf("expected /api/(shuckle|cdc|shard)/<req>, got %v (%v)", r.URL.Path, what), http.StatusBadRequest)
 			}
-			req, _, err := msgs.MkShuckleMessage(segments[1])
-			if err != nil {
-				return sendJsonErr(w, fmt.Errorf("expected /api/<req>, got %v", r.URL.Path), http.StatusBadRequest)
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
-			}
-			resp, err := handleRequestParsed(log, st, req)
-			if err != nil {
-				return sendJsonErr(w, err, http.StatusInternalServerError)
-			}
-			accept := r.Header.Get("Accept")
-			if accept == "application/octet-stream" {
-				buf := bytes.NewBuffer([]byte{})
-				if err := resp.Pack(buf); err != nil {
-					panic(err)
+			sendResponse := func(resp bincode.Packable) (io.ReadCloser, int64, int) {
+				accept := r.Header.Get("Accept")
+				if accept == "application/octet-stream" {
+					buf := bytes.NewBuffer([]byte{})
+					if err := resp.Pack(buf); err != nil {
+						panic(err)
+					}
+					w.Header().Set("Content-Type", "application/octet-stream")
+					out := buf.Bytes()
+					return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
+				} else {
+					out, err := json.Marshal(map[string]any{"resp": resp})
+					if err != nil {
+						return sendJsonErr(w, fmt.Errorf("could not marshal request: %v", err), http.StatusInternalServerError)
+					}
+					return sendJson(w, out)
 				}
-				w.Header().Set("Content-Type", "application/octet-stream")
-				out := buf.Bytes()
-				return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), http.StatusOK
-			} else {
-				out, err := json.Marshal(map[string]any{"resp": resp})
+			}
+			switch segments[1] {
+			case "shuckle":
+				if len(segments) != 3 {
+					return badUrl("bad segments len")
+				}
+				req, _, err := msgs.MkShuckleMessage(segments[2])
 				if err != nil {
-					return sendJsonErr(w, fmt.Errorf("could not marshal request: %v", err), http.StatusInternalServerError)
+					return badUrl("bad ")
 				}
-				return sendJson(w, out)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
+				}
+				resp, err := handleRequestParsed(log, st, req)
+				if err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				return sendResponse(resp)
+			case "cdc":
+				if len(segments) != 3 {
+					return badUrl("bad segments len")
+				}
+				req, resp, err := msgs.MkCDCMessage(segments[2])
+				if err != nil {
+					return badUrl("bad req type")
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
+				}
+				client, err := newClient(log, st)
+				if err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				if err := client.CDCRequest(log, req, resp); err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				return sendResponse(resp)
+			case "shard":
+				if len(segments) != 4 {
+					return badUrl("bad segments len")
+				}
+				req, resp, err := msgs.MkShardMessage(segments[2])
+				if err != nil {
+					return badUrl("bad req type")
+				}
+				shidU, err := strconv.ParseUint(segments[3], 10, 8)
+				if err != nil {
+					return badUrl("bad shard id")
+				}
+				shid := msgs.ShardId(shidU)
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
+				}
+				client, err := newClient(log, st)
+				if err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				if err := client.ShardRequest(log, shid, req, resp); err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				return sendResponse(resp)
+			default:
+				return badUrl("bad api type")
 			}
 		},
 	)
 }
+
+//go:embed preact-10.18.1.module.js
+var preactJsStr []byte
+
+//go:embed preact-hooks-10.18.1.module.js
+var preactHooksJsStr []byte
 
 //go:embed scripts.js
 var scriptsJs []byte
@@ -1652,6 +1660,22 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 			w.Header().Set("Content-Type", "text/javascript")
 			w.Header().Set("Cache-Control", "max-age=31536000")
 			w.Write(chartsJsStr)
+		},
+	)
+	http.HandleFunc(
+		"/static/preact-10.18.1.module.js",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Cache-Control", "max-age=31536000")
+			w.Write(preactJsStr)
+		},
+	)
+	http.HandleFunc(
+		"/static/preact-hooks-10.18.1.module.js",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Header().Set("Cache-Control", "max-age=31536000")
+			w.Write(preactHooksJsStr)
 		},
 	)
 

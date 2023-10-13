@@ -1,3 +1,6 @@
+import * as p from '/static/preact-10.18.1.module.js';
+import { useEffect, useState, useCallback } from '/static/preact-hooks-10.18.1.module.js';
+
 // Snapshot edges
 // --------------------------------------------------------------------
 
@@ -24,10 +27,347 @@ export function snapshotEdges() {
     });
 }
 
+// API to shuckle itself
+// --------------------------------------------------------------------
+
+async function shuckleReq(reqKind, req) {
+    const response = await fetch(`/api/shuckle/${reqKind}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(req),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Bad HTTP status ${response.status}`);
+    }
+
+    const r = await response.json();
+    return r.resp;
+}
+
+// Table viewer
+// --------------------------------------------------------------------
+
+function Table(props) {
+    const { cols, rows } = props
+    const initialSortByIx = props.initialSorting || [];
+    const initialElementsPerPage = props.elementPerPage || 20;
+    const initialColFilters = Array.from({length: cols.length}, () => '');
+
+    function computePages(sortByIx, colFilters, elementsPerPage) {
+        const colRegexps = colFilters.map(s => new RegExp(s));
+        const filteredRows = rows.filter(row => row.every((cell, ix) => {
+            let s;
+            let col = cols[ix];
+            if (col.string) {
+                s = col.string(cell);
+            } else if (typeof cell !== 'string') {
+                s = `${cell}`;
+            } else {
+                s = cell;
+            }
+            return s.match(colRegexps[ix]);
+        }));
+        const sortedRows = filteredRows.sort((row1, row2) => {
+            for (const [ix, ascending] of sortByIx) {
+                if (row1[ix] < row2[ix]) {
+                    return ascending ? -1 : 1;
+                } else if (row1[ix] > row2[ix]) {
+                    return ascending ? 1 : -1;
+                }
+            }
+            return 0;
+        });
+        const pages = [];
+        for (let i = 0; i < sortedRows.length; i += elementsPerPage) {
+            pages.push(sortedRows.slice(i, i + elementsPerPage));
+        }
+        return pages;
+    }
+
+    const [{pages, currentPage, sortByIx, colFilters, elementsPerPage}, setState] = useState({
+        pages: computePages(initialSortByIx, initialColFilters, initialElementsPerPage),
+        currentPage: 0,
+        sortByIx: initialSortByIx,
+        colFilters: initialColFilters,
+        elementsPerPage: initialElementsPerPage,
+    });
+    const pageRows = pages[currentPage];
+    const project = (fld) => (set) => setState(prev => {
+        const next = {...prev};
+        next[fld] = set(prev[fld]);
+        if (fld === 'sortByIx' || fld === 'colFilters' || fld === 'elementsPerPage') {
+            if (prev[fld] !== next[fld]) { // deep equal would be nicer
+                next.pages = computePages(next.sortByIx, next.colFilters, next.elementsPerPage)
+                next.currentPage = 0;
+            }
+        }
+        return next;
+    });
+    const setSortByIx = project('sortByIx');
+    const setColFilters = project('colFilters');
+    const setElementsPerPage = project('elementsPerPage');
+
+    const setIx = (ix) => (ev) => {
+        ev.preventDefault();
+        setSortByIx(prev => {
+            const next = [...prev];
+            for (let i = 0; i < next.length; i++) {
+                const [otherIx, ascending] = prev[i];
+                if (ix === otherIx) {
+                    next[i] = [otherIx, !ascending];
+                    return next;
+                }
+            }
+            next.push([ix, true]);
+            return next;
+        });
+    };
+    const removeIx = (ix) => (ev) => {
+        ev.preventDefault();
+        setSortByIx(prev => [...prev].filter(([otherIx, _]) => otherIx !== ix));
+    };
+    const setColFilter = (ix) => (ev) => {
+        const v = ev.target.value;
+        setColFilters(prev => {
+            const next = [...prev];
+            next[ix] = v;
+            return next;
+        });
+    };
+
+    const switchPage = (direction) => () => setState(prev => {
+        const next = {...prev};
+        next.currentPage += direction;
+        next.currentPage = Math.max(0, Math.min(next.pages.length-1, next.currentPage));
+        return next;
+    });
+
+    function Paginate() {
+        return p.h('tr', {}, p.h('th', { className: 'input-group-sm py-1', colspan: `${cols.length}` },
+            p.h('button', {type: 'button', onClick: switchPage(-1), className: 'btn btn-primary py-1', disabled: currentPage === 0}, '🡐'),
+            ' ',
+            p.h('button', {type: 'button', onClick: switchPage(+1), className: 'btn btn-primary py-1 me-2', disabled: currentPage >= pages.length-1}, '🡒'),
+            ` ${currentPage+1} / ${pages.length} `,
+            p.h('input', {
+                type: 'number', min: '1', step: '1', className: 'ms-2 form-control', style: 'width: 5rem; display: inline;', value: elementsPerPage,
+                onChange: (ev) => {
+                    const x = parseInt(ev.target.value);
+                    setElementsPerPage(_ => x);
+                },
+            }),
+            ' elements per page',
+        ));
+    };
+
+    const dummyRows = [];
+    if (currentPage > 0) {
+        for (let i = pageRows.length; i < elementsPerPage; i++) {
+            dummyRows.push(p.h('tr', {}, cols.map(_ => p.h('td', {}, '\u00A0'))));
+        }    
+    }
+
+    return p.h(
+        'table', {className: 'table'},
+        p.h('thead', {},
+            p.h(Paginate),
+            p.h('tr', {className: 'text-nowrap'}, cols.map(({name: c}, ix) => {
+                const sortIx = sortByIx.findIndex(([otherIx, _]) => ix == otherIx);
+                let sortButton;
+                if (sortIx < 0) {
+                    sortButton = p.h(
+                        'a',
+                        {
+                            className: 'text-muted',
+                            href: '#',
+                            style: 'text-decoration: none;',
+                            onClick: setIx(ix),
+                        },
+                        '▲'
+                    )
+                } else {
+                    const [_, ascending] = sortByIx[sortIx];
+                    sortButton = [
+                        p.h('a', { href: '#', style: 'text-decoration: none;', onClick: setIx(ix)}, `${ascending ? "▲" : "▼"}`),
+                        p.h('sup', {}, `${sortIx+1}`), ' ',
+                        p.h('a', {href: '#', style: 'text-decoration: none;', onClick: removeIx(ix)}, '×')];
+                }             
+                return p.h('th', {}, c, ' ', p.h('small', {}, sortButton))
+            })),
+            p.h('tr', {className: 'text-nowrap'}, cols.map((_, ix) => {
+                return p.h('th', {className: 'py-1 input-group-sm'}, p.h('input', { type: 'text', className: 'form-control', onChange: setColFilter(ix), value: colFilters[ix] }));
+            })),
+        ),
+        p.h('tbody', {},
+            pageRows.map(row =>
+                p.h('tr', {}, row.map((r, i) => {
+                    let col = cols[i];
+                    let content = r;
+                    if (col.string) {
+                        content = col.string(content);
+                    }
+                    if (col.render) {
+                        content = col.render(content);
+                    }
+                    return p.h('td', {}, content);
+                })),
+            ),
+            dummyRows,
+        ),
+        p.h('thead', {}, p.h(Paginate)),
+    );
+}
+
+// Pages
+// --------------------------------------------------------------------
+
+function stringifyShortFlags(f) {
+    if (f == 0) {
+        return '0';
+    }
+    const flags = [[0x1, 'S'], [0x2, 'NR'], [0x4, 'NW'], [0x8, 'D']];
+    return flags.filter(([otherF, _]) => otherF&f).map(([_, s]) => s).join('|');
+}
+
+function stringifyStorageClass(x) {
+    switch (x) {
+    case 2:
+        return 'HDD';
+    case 3:
+        return 'FLASH';
+    }
+    throw Error(`Bad storage ${x}`);
+}
+
+function stringifySize(x) {
+    let amount = x;
+    let unit = 'byte';
+    if (x > 1e15) {
+        amount = x/1e15;
+        unit = 'PB';
+    } else if (x > 1e12) {
+        amount = x/1e12;
+        unit = 'TB';
+    } else if (x > 1e9) {
+        amount = x/1e9;
+        unit = 'GB';
+    } else if (x > 1e6) {
+        amount = x/1e6;
+        unit = 'MB';
+    } else if (x > 1e3) {
+        amount = x/1e3;
+        unit = 'KB';
+    }
+    return amount.toFixed(2) + unit;
+}
+
+function stringifyAgo(then, now) {
+    const diffInSeconds = Math.floor((now - then) / 1000);
+
+    let timeAgo;
+    if (diffInSeconds < 60) {
+        timeAgo = `${diffInSeconds}s ago`;
+    } else if (diffInSeconds < 3600) {
+        timeAgo = `${Math.floor(diffInSeconds / 60)}m ago`;
+    } else if (diffInSeconds < 86400) {
+        timeAgo = `${Math.floor(diffInSeconds / 3600)}h ago`;
+    } else {
+        timeAgo = `${Math.floor(diffInSeconds / 86400)}d ago`;
+    }
+    
+    return timeAgo;
+}
+
+function stringifyAddress(ip, port) {
+    return `${ip[0]}.${ip[1]}.${ip[2]}.${ip[3]}:${port}`;
+}
+
+export function renderIndex() {
+    function BlockServices() {
+        const [blockServices, setBlockServices] = useState(null);
+        useEffect(async () => {
+            const resp = await shuckleReq('ALL_BLOCK_SERVICES', {});
+            setBlockServices(resp);
+        }, []);
+    
+        if (blockServices === null) {
+            return p.h('em', null, 'Loading...');
+        }
+ 
+        const now = new Date();
+        const rows = [];
+        for (const bs of blockServices.BlockServices) {
+            rows.push([
+                bs.FailureDomain,
+                stringifyAddress(bs.Ip1, bs.Port1),
+                stringifyAddress(bs.Ip2, bs.Port2),
+                bs.Path,
+                bs.Id,
+                bs.Flags,
+                bs.StorageClass,
+                bs.Blocks,
+                bs.CapacityBytes,
+                bs.AvailableBytes,
+                bs.LastSeen,
+            ])
+        }
+        const cols = [
+            {name: 'FailureDomain'},
+            {name: 'Address 1'},
+            {name: 'Address 2'}, 
+            {name: 'Path', render: t => p.h('code', {}, t)},
+            {name: 'Id', render: t => p.h('code', {}, t)},
+            {name: 'Flags', string: stringifyShortFlags, render: t => p.h('code', {}, t)},
+            {name: 'StorageClass', string: stringifyStorageClass},
+            {name: 'Blocks'},
+            {name: 'Capacity', string: stringifySize},
+            {name: 'Available', string: stringifySize},
+            {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
+        ];
+
+        return p.h(Table, { cols, rows, initialSorting: [[0, true], [3, true]] })
+    }
+    p.render(p.h(BlockServices), document.getElementById('block-services-table'));
+
+    function Shards() {
+        const [shards, setShards] = useState(null);
+        useEffect(async () => {
+            const resp = await shuckleReq('SHARDS', {});
+            setShards(resp);
+        }, []);
+    
+        if (shards === null) {
+            return p.h('em', null, 'Loading...');
+        }
+
+        const now = new Date();
+        const rows = [];
+        shards.Shards.forEach((shard, ix) => {
+            rows.push([
+                ix,
+                stringifyAddress(shard.Ip1, shard.Port1),
+                stringifyAddress(shard.Ip2, shard.Port2),
+                shard.LastSeen,
+            ])
+        });
+        const cols = [
+            {name: 'Id', string: i => i.toString().padStart(3, '0'), render: t => p.h('code', {}, t)},
+            {name: 'Address 1', render: t => p.h('code', {}, t)},
+            {name: 'Address 2', render: t => p.h('code', {}, t)},
+            {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
+        ];
+
+        return p.h(Table, { cols, rows })
+    }
+    p.render(p.h(Shards), document.getElementById('shards-table'));
+}
+
 // stats
 // --------------------------------------------------------------------
 
-export function stats() {
+export function renderStats() {
     function h(tag, attrs, ...children) {
         const el = document.createElement(tag);
         // set attrs
@@ -119,7 +459,7 @@ export function stats() {
 
     async function getStats(startName, startTime, endTime) {
         console.log(`fetching startName=${startName} startTime=${startTime} endTime=${endTime}`)
-        const response = await fetch('/api/GET_STATS', {
+        const response = await fetch('/api/shuckle/GET_STATS', {
             method: 'POST',
             headers: { 'Accept': 'application/octet-stream' },
             body: JSON.stringify({

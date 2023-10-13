@@ -737,7 +737,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, alert bool, blockService
 			if alert {
 				log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
 			} else {
-				log.Info("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+				log.Debug("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
 			}
 		}
 	}
@@ -760,7 +760,7 @@ func (f *blocksConnFactory) getBlocksConns(log *Logger, alert bool, blockService
 		if alert {
 			log.RaiseAlert("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
 		} else {
-			log.Info("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
+			log.Debug("could not connect to block service %v:%v: %v, might try other ip/port", ip, port, errs[i&1])
 		}
 	}
 	for _, err := range errs {

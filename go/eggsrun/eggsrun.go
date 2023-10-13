@@ -37,6 +37,7 @@ func main() {
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
+	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -129,6 +130,7 @@ func main() {
 		LogLevel:    level,
 		Dir:         path.Join(*dataDir, "shuckle"),
 		Xmon:        *xmon,
+		ScriptsJs:   *shuckleScriptsJs,
 	})
 
 	// Start block services

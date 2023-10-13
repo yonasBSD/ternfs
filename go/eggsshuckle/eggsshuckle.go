@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -1172,7 +1171,7 @@ func handleInode(
 							data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(transResp.Size), transResp.Size)
 							data.TransientNote = transResp.Note
 						} else {
-							panic(err)
+							panic(fmt.Errorf("normal: %v, transient: %v", err, transErr))
 						}
 					} else if err == nil {
 						data.Mtime = resp.Mtime.String()
@@ -1397,50 +1396,13 @@ var transientTemplateStr string
 
 var transientTemplate *template.Template
 
-type transientFile struct {
-	Shard    int
-	Id       string
-	Deadline string
-	Cookie   string
-}
-
-type transientData struct {
-	Files []transientFile
-}
-
 func handleTransient(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		log, w, r,
 		func(query url.Values) (*template.Template, *pageData, int) {
-			data := &transientData{Files: []transientFile{}}
-			client, err := newClient(log, st)
-			if err != nil {
-				panic(err)
-			}
-			for i := 0; i < 256; i++ {
-				req := msgs.VisitTransientFilesReq{}
-				resp := msgs.VisitTransientFilesResp{}
-				for {
-					if err := client.ShardRequest(log, msgs.ShardId(i), &req, &resp); err != nil {
-						panic(err)
-					}
-					for _, f := range resp.Files {
-						data.Files = append(data.Files, transientFile{
-							Shard:    i,
-							Id:       f.Id.String(),
-							Deadline: f.DeadlineTime.String(),
-							Cookie:   fmt.Sprintf("0x%016x", binary.LittleEndian.Uint64(f.Cookie[:])),
-						})
-					}
-					if resp.NextId == msgs.NULL_INODE_ID {
-						break
-					}
-					req.BeginId = resp.NextId
-				}
-			}
 			pd := pageData{
 				Title: "transient",
-				Body:  data,
+				Body:  nil,
 			}
 			return transientTemplate, &pd, http.StatusOK
 		},

@@ -75,6 +75,7 @@ function rowProps(row) {
 function TableInner(props) {
     const { cols, rows, sortByIx: initialSortByIx, elementsPerPage: initialElementsPerPage } = props
     const paginateExtra = props.paginateExtra || [];
+    const disableSearch = !!props.disableSearch;
 
     function computePages(sortByIx, colFilters, elementsPerPage) {
         const colRegexps = colFilters.map(s => new RegExp(s));
@@ -238,9 +239,10 @@ function TableInner(props) {
                 }             
                 return p.h('th', {}, c, ' ', p.h('small', {}, sortButton))
             })),
-            p.h('tr', {className: 'text-nowrap'}, cols.map((_, ix) => {
-                return p.h('th', {className: 'py-1 input-group-sm'}, p.h('input', { type: 'text', className: 'form-control', onChange: setColFilter(ix), value: colFilters[ix] }));
-            })),
+            disableSearch ? null :
+                p.h('tr', {className: 'text-nowrap'}, cols.map((_, ix) => {
+                    return p.h('th', {className: 'py-1 input-group-sm'}, p.h('input', { type: 'text', className: 'form-control', onChange: setColFilter(ix), value: colFilters[ix] }));
+                })),
         ),
         p.h('tbody', {},
             pageRows.map(row => 
@@ -527,6 +529,58 @@ export function renderDirectoryEdges(id, path) {
 
     const showSnapshotEdges = localStorage.getItem('edges-full');
     p.render(p.h(Edges, {id, path, showSnapshotEdges}), document.getElementById('edges-table'));
+}
+
+// transient files
+// --------------------------------------------------------------------
+
+export function renderTransientFiles() {
+    function TransientFiles() {
+        const [{shard, transientFiles}, setState] = useState({
+            shard: 0,
+            transientFiles: null,
+        });
+
+        useEffect(async () => {
+            const results = [];
+            const req = {};
+            while (true) {
+                const resp = await shardReq('VISIT_TRANSIENT_FILES', shard, req);
+                results.push(...resp.Files);
+                if (resp.NextId === NULL_INODE_ID) { break; }
+                req.BeginId = resp.NextId;
+            }
+            setState(prev => ({...prev, transientFiles: results}));
+        }, [shard]);
+
+        const rows = [];
+        if (transientFiles !== null) {
+            for (const {Id, DeadlineTime} of transientFiles) {
+                rows.push([Id, DeadlineTime]);
+            }    
+        }
+        const cols = [
+            {name: 'Id', render: t => p.h('a', {href: `/browse?id=${t}`}, p.h('code', {}, t))},
+            {name: 'Deadline', render: t => p.h('code', {}, t)},
+        ]
+
+        return [
+            p.h('div', {className: 'input-group', style: 'width: 10rem;'},
+                p.h('div', {className: 'input-group-text'}, 'Shard'),
+                p.h('input', {
+                    type: 'number', min: '0', max: '255', step: '1', className: 'form-control', value: shard.toString(),
+                    onChange: (ev) => {
+                        const shard = ev.target.value;
+                        setState(prev => ({...prev, shard: parseInt(shard), transientFiles: null}));
+                    },
+                }),
+            ),
+            // key for redrawing...
+            // 0x400000023ed25301
+            transientFiles === null ? p.h('em', {}, 'Loading...') : p.h(Table, {key: shard, rows, cols, identifier: 'transient'}),
+        ]
+    }
+    p.render(p.h(TransientFiles), document.getElementById('transient-files-table'));
 }
 
 // stats

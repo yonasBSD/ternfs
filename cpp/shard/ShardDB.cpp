@@ -983,7 +983,21 @@ struct ShardDBImpl {
             ExternalValue<FileBody> file;
             EggsError err = _getFile(options, req.fileId, fileValue, file);
             if (err != NO_ERROR) {
-                return err;
+                // might be a transient file, let's check
+                bool isTransient = false;
+                if (err == EggsError::FILE_NOT_FOUND) {
+                    std::string transientFileValue;
+                    ExternalValue<TransientFileBody> transientFile;
+                    EggsError transError = _getTransientFile(options, 0, true, req.fileId, transientFileValue, transientFile);
+                    if (transError == NO_ERROR) {
+                        isTransient = true;
+                    } else if (transError != EggsError::FILE_NOT_FOUND) {
+                        LOG_INFO(_env, "Dropping error gotten when doing fallback transient lookup for id %s: %s", req.fileId, transError);
+                    }
+                }
+                if (!isTransient) {
+                    return err;
+                }
             }
         }
 

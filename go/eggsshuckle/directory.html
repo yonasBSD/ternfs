@@ -1,8 +1,4 @@
 {{define "body"}}
-    <script type="module">
-        import { snapshotEdges } from '/static/scripts.js';
-        snapshotEdges();
-    </script>
     <table class="table">
         <tbody>
             {{if .Path}}
@@ -65,72 +61,9 @@
             </tr>
         </tbody>
     </table>
-    <form>
-        <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="snapshot-edges-checkbox" checked="true">
-            <label class="form-check-label">Show snapshot edges</label>
-        </div>
-    </form>
-    <table class="table">
-        <thead>
-            <tr>
-                <th>NameHash</th>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Target</th>
-                <th>CreationTime</th>
-                <th class="edges-full">Owned</th>
-                <th>Locked</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{range $edge := .Edges}}
-                {{if $edge.Current}}
-                <tr>
-                {{else}}
-                <tr class="table-active edges-full">
-                {{end}}
-                    <td><code>{{$edge.NameHash}}</code></td>
-                    <td>
-                        {{if eq $edge.TargetId "0x0"}}
-                            <code>{{$edge.Name}}</code>
-                        {{else}}
-                            {{if and $edge.Current $.Path}}
-                                <a href="/browse{{$.Path}}{{$edge.Name}}"><code>{{$edge.Name}}</code></a>
-                            {{else}}
-                                <a href="/browse?id={{$edge.TargetId}}"><code>{{$edge.Name}}</code></a>
-                            {{end}}
-                        {{end}}
-                    </td>
-                    <td>
-                        <code>{{$edge.Type}}</code>
-                    </td>
-                    <td>
-                        {{if not (eq $edge.TargetId "0x0")}}
-                            <code>{{$edge.TargetId}}</code>
-                        {{else}}
-                            <code>DELETE</code>
-                        {{end}}
-                    </td>
-                    <td><code>{{$edge.CreationTime}}</code></td>
-                    <td class="edges-full">
-                        {{if $edge.Owned}}
-                            <strong>yes</strong>
-                        {{else}}
-                            no
-                        {{end}}
-                    </td>
-                    <td>
-                        {{if $edge.Current}}
-                            {{if $edge.Locked}}
-                                <strong>yes</strong>
-                            {{else}}
-                                no
-                            {{end}}
-                        {{end}}
-                    </td>
-                </tr>
-            {{end}}
-        </tbody>
-    </table>
+    <div id="edges-table"><em>Loading...</em></div>
+    <script type="module">
+        import { renderDirectoryEdges } from '/static/scripts.js';
+        renderDirectoryEdges({{.Id}}, {{.Path}});
+    </script>
 {{end}}

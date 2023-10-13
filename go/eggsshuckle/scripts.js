@@ -1,32 +1,6 @@
 import * as p from '/static/preact-10.18.1.module.js';
 import { useEffect, useState, useCallback } from '/static/preact-hooks-10.18.1.module.js';
 
-// Snapshot edges
-// --------------------------------------------------------------------
-
-export function snapshotEdges() {
-    function toggleFullEdges(show) {
-        const els = document.getElementsByClassName('edges-full');
-        for (let i = 0; i < els.length; i++) {
-            els[i].style.display = show ? '' : 'none';
-        }
-        if (show) {
-            localStorage.setItem('edges-full', show);
-        } else {
-            localStorage.removeItem('edges-full');
-        }
-    }
-    window.addEventListener('DOMContentLoaded', () => {
-        const enabled = localStorage.getItem('edges-full');
-        toggleFullEdges(enabled);
-        const checkbox = document.getElementById('snapshot-edges-checkbox')
-        checkbox.checked = enabled;
-        checkbox.addEventListener('change', (ev) => {
-            toggleFullEdges(ev.target.checked);
-        });
-    });
-}
-
 // API to shuckle itself
 // --------------------------------------------------------------------
 
@@ -47,18 +21,64 @@ async function shuckleReq(reqKind, req) {
     return r.resp;
 }
 
+function idToShard(id) {
+    return Number.parseInt(id.slice(-2), 16);
+}
+
+const NULL_INODE_ID = '0x0000000000000000';
+
+function idToType(id) {
+    const idN = BigInt(id);
+    const typ = (idN >> 61n) & 3n;
+    switch (typ) {
+    case 1n:
+        return 'DIRECTORY';
+    case 2n:
+        return 'FILE';
+    case 3n:
+        return 'SYMLINK';
+    default:
+        throw new Error(`Bad inode id ${id}`);
+    }
+}
+
+async function shardReq(reqKind, shardId, req) {
+    const response = await fetch(`/api/shard/${shardId}/${reqKind}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(req),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Bad HTTP status ${response.status}`);
+    }
+
+    const r = await response.json();
+    return r.resp;
+}
+
 // Table viewer
 // --------------------------------------------------------------------
 
-function Table(props) {
-    const { cols, rows } = props
-    const initialSortByIx = props.initialSorting || [];
-    const initialElementsPerPage = props.elementPerPage || 20;
-    const initialColFilters = Array.from({length: cols.length}, () => '');
+function rowCells(row) {
+    if (Array.isArray(row)) { return row; }
+    return row.cells;
+}
+
+function rowProps(row) {
+    if (Array.isArray(row)) { return {}; }
+    return row.props || {};
+}
+
+function TableInner(props) {
+    const { cols, rows, sortByIx: initialSortByIx, elementsPerPage: initialElementsPerPage } = props
+    const paginateExtra = props.paginateExtra || [];
 
     function computePages(sortByIx, colFilters, elementsPerPage) {
         const colRegexps = colFilters.map(s => new RegExp(s));
-        const filteredRows = rows.filter(row => row.every((cell, ix) => {
+        const filteredRows = rows.filter(row => rowCells(row).every((cell, ix) => {
             let s;
             let col = cols[ix];
             if (col.string) {
@@ -72,9 +92,9 @@ function Table(props) {
         }));
         const sortedRows = filteredRows.sort((row1, row2) => {
             for (const [ix, ascending] of sortByIx) {
-                if (row1[ix] < row2[ix]) {
+                if (rowCells(row1)[ix] < rowCells(row2)[ix]) {
                     return ascending ? -1 : 1;
-                } else if (row1[ix] > row2[ix]) {
+                } else if (rowCells(row1)[ix] > rowCells(row2)[ix]) {
                     return ascending ? 1 : -1;
                 }
             }
@@ -84,23 +104,37 @@ function Table(props) {
         for (let i = 0; i < sortedRows.length; i += elementsPerPage) {
             pages.push(sortedRows.slice(i, i + elementsPerPage));
         }
-        return pages;
+        if (pages.length === 0) {
+            pages.push([]);
+        }
+        return { pages, numRows: sortedRows.length };
     }
 
-    const [{pages, currentPage, sortByIx, colFilters, elementsPerPage}, setState] = useState({
-        pages: computePages(initialSortByIx, initialColFilters, initialElementsPerPage),
+    const initialColFilters = Array.from({length: cols.length}, () => '');
+    const [{pages, numRows, currentPage, sortByIx, colFilters, elementsPerPage}, setState] = useState({
+        pages: [[]],
+        numRows: 0,
         currentPage: 0,
         sortByIx: initialSortByIx,
         colFilters: initialColFilters,
         elementsPerPage: initialElementsPerPage,
     });
+
+    // first filtering
+    useEffect(() => {
+        const {pages, numRows} = computePages(initialSortByIx, initialColFilters, initialElementsPerPage);
+        setState(prev => ({...prev, pages, numRows}));
+    }, [])
+
     const pageRows = pages[currentPage];
     const project = (fld) => (set) => setState(prev => {
         const next = {...prev};
         next[fld] = set(prev[fld]);
         if (fld === 'sortByIx' || fld === 'colFilters' || fld === 'elementsPerPage') {
             if (prev[fld] !== next[fld]) { // deep equal would be nicer
-                next.pages = computePages(next.sortByIx, next.colFilters, next.elementsPerPage)
+                const {pages, numRows} = computePages(next.sortByIx, next.colFilters, next.elementsPerPage);
+                next.pages = pages;
+                next.numRows = numRows;
                 next.currentPage = 0;
             }
         }
@@ -109,6 +143,13 @@ function Table(props) {
     const setSortByIx = project('sortByIx');
     const setColFilters = project('colFilters');
     const setElementsPerPage = project('elementsPerPage');
+
+    if (props.identifier) {
+        useEffect(() => {
+            localStorage.setItem(`table-${props.identifier}-elements-per-page`, JSON.stringify(elementsPerPage));
+            localStorage.setItem(`table-${props.identifier}-sort-by-ix`, JSON.stringify(sortByIx));
+        })
+    }
 
     const setIx = (ix) => (ev) => {
         ev.preventDefault();
@@ -150,7 +191,7 @@ function Table(props) {
             p.h('button', {type: 'button', onClick: switchPage(-1), className: 'btn btn-primary py-1', disabled: currentPage === 0}, '🡐'),
             ' ',
             p.h('button', {type: 'button', onClick: switchPage(+1), className: 'btn btn-primary py-1 me-2', disabled: currentPage >= pages.length-1}, '🡒'),
-            ` ${currentPage+1} / ${pages.length} `,
+            ` ${currentPage+1} / ${pages.length} (${numRows} rows)`,
             p.h('input', {
                 type: 'number', min: '1', step: '1', className: 'ms-2 form-control', style: 'width: 5rem; display: inline;', value: elementsPerPage,
                 onChange: (ev) => {
@@ -158,7 +199,8 @@ function Table(props) {
                     setElementsPerPage(_ => x);
                 },
             }),
-            ' elements per page',
+            ' per page',
+            ...paginateExtra,
         ));
     };
 
@@ -201,26 +243,34 @@ function Table(props) {
             })),
         ),
         p.h('tbody', {},
-            pageRows.map(row =>
-                p.h('tr', {}, row.map((r, i) => {
+            pageRows.map(row => 
+                p.h('tr', {className: 'text-nowrap', ...rowProps(row)}, rowCells(row).map((r, i) => {
                     let col = cols[i];
                     let content = r;
                     if (col.string) {
                         content = col.string(content);
                     }
                     if (col.render) {
-                        content = col.render(content);
+                        content = col.render(content, row);
                     }
                     return p.h('td', {}, content);
                 })),
             ),
             dummyRows,
         ),
-        p.h('thead', {}, p.h(Paginate)),
+        pages.length > 1 ? p.h('thead', {}, p.h(Paginate)) : null,
     );
 }
 
-// Pages
+function Table(props) {
+    const elementsPerPageStorage = localStorage.getItem(`table-${props.identifier}-elements-per-page`);
+    const elementsPerPage = elementsPerPageStorage ? parseInt(elementsPerPageStorage) : (props.elementsPerPage || 20);
+    const sortByIxStorage = localStorage.getItem(`table-${props.identifier}-sort-by-ix`);
+    const sortByIx = sortByIxStorage ? JSON.parse(sortByIxStorage) : [];
+    return TableInner({...props, elementsPerPage, sortByIx});
+}
+
+// index
 // --------------------------------------------------------------------
 
 function stringifyShortFlags(f) {
@@ -327,7 +377,7 @@ export function renderIndex() {
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
         ];
 
-        return p.h(Table, { cols, rows, initialSorting: [[0, true], [3, true]] })
+        return p.h(Table, { identifier: 'block-services', cols, rows, initialSorting: [[0, true], [3, true]] })
     }
     p.render(p.h(BlockServices), document.getElementById('block-services-table'));
 
@@ -359,9 +409,124 @@ export function renderIndex() {
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
         ];
 
-        return p.h(Table, { cols, rows })
+        return p.h(Table, { identifier: 'shards', cols, rows })
     }
     p.render(p.h(Shards), document.getElementById('shards-table'));
+}
+
+// browse
+// --------------------------------------------------------------------
+
+export function renderDirectoryEdges(id, path) {
+    function Edges({id, path, showSnapshotEdges: initialShowSnapshotEdges}) {
+        const [{showSnapshotEdges, edges}, setState] = useState({
+            showSnapshotEdges: initialShowSnapshotEdges,
+            edges: null,
+        });
+
+        useEffect(async () => {
+            const results = [];
+            const req = {DirId: id};
+            while (true) {
+                const resp = await shardReq('FULL_READ_DIR', idToShard(id), req);
+                results.push(...resp.Results);
+                if (resp.Next.StartName === '') {
+                    break;
+                }
+                req.Flags = resp.Next.Current ? 1 : 0;
+                req.StartName = resp.Next.StartName;
+                req.StartTime = resp.Next.StartTime;
+            }
+            setState(prev => ({...prev, edges: results}));
+        }, [])
+
+        useEffect(() => {
+            if (showSnapshotEdges) {
+                localStorage.setItem('edges-full', showSnapshotEdges);
+            } else {
+                localStorage.removeItem('edges-full');
+            }                
+        }, [showSnapshotEdges])
+
+        const renderBool = (s) => s === 'yes' ? p.h('strong', {}, s) : s;
+    
+        let edgesTable = p.h('em', {}, 'Loading...');
+        if (edges !== null) {
+            const rows = [];
+            for (const edge of edges) {
+                if (!showSnapshotEdges && !edge.Current) {
+                    continue;
+                }
+                rows.push({
+                    props: {...(edge.Current ? {} : {className: 'table-active'})},
+                    cells: [
+                        edge.NameHash,
+                        edge.Name,
+                        edge.TargetId.Id === NULL_INODE_ID ? '' : idToType(edge.TargetId.Id),
+                        edge.TargetId.Id,
+                        edge.CreationTime,
+                        ...(showSnapshotEdges ? [edge.Current ? 'yes' : 'no'] : []),
+                        ...(showSnapshotEdges ? [edge.Current ? 'yes' : (edge.TargetId.Extra ? 'yes' : 'no')] : []),
+                        edge.Current ? (edge.TargetId.Extra ? 'yes' : 'no') : '',
+                    ],
+                })
+            }
+            const cols = [
+                {name: 'NameHash', render: t => p.h('code', {}, t)},
+                {
+                    name: 'Name',
+                    render: (t, row) => {
+                        if (t === NULL_INODE_ID) {
+                            return p.h('code', {}, t);
+                        } else {
+                            const name = rowCells(row)[1];
+                            const typ = rowCells(row)[2];
+                            const id = rowCells(row)[3];
+                            if (path && (!showSnapshotEdges || rowCells(row)[5] === 'yes')) { // current
+                                return p.h('a', {href: `/browse${path}${name}`}, p.h('code', {}, t + (typ === 'DIRECTORY' ? '/' : '')));
+                            } else {
+                                return p.h('a', {href: `/browse?id=${id}`}, p.h('code', {}, t + (typ === 'DIRECTORY' ? '/' : '')));
+                            }
+                        }
+                    },
+                },
+                {name: 'Type', render: t => p.h('code', {}, t)},
+                {name: 'Target', render: t => p.h('code', {}, t)},
+                {name: 'CreationTime', render: t => p.h('code', {}, t)},
+                ...(showSnapshotEdges ? [{name: 'Current', render: renderBool}]: []),
+                ...(showSnapshotEdges ? [{name: 'Owned', render: renderBool}] : []),
+                {name: 'Locked', render: renderBool},
+            ];
+            edgesTable = p.h(Table, {
+                identifier: 'edges',
+                rows,
+                cols,
+                elementsPerPage: 100,
+                // the key forces rerender when the number of cols changes
+                key: `edges-${showSnapshotEdges}`,
+                paginateExtra: [p.h('div', {className: 'ms-2 form-check form-check-inline'},
+                    p.h(
+                        'input',
+                        {
+                            type: 'checkbox',
+                            className: 'form-check-input',
+                            checked: !!showSnapshotEdges,
+                            onChange: (ev) => {
+                                ev.preventDefault();
+                                setState(prev => ({...prev, showSnapshotEdges: !prev.showSnapshotEdges}));
+                            },
+                        }
+                    ),
+                    p.h('label', {className: 'form-check-label'}, 'Show snapshot edges'),
+                )],
+            });
+        }
+
+        return edgesTable
+    }
+
+    const showSnapshotEdges = localStorage.getItem('edges-full');
+    p.render(p.h(Edges, {id, path, showSnapshotEdges}), document.getElementById('edges-table'));
 }
 
 // stats
@@ -458,7 +623,6 @@ export function renderStats() {
     }
 
     async function getStats(startName, startTime, endTime) {
-        console.log(`fetching startName=${startName} startTime=${startTime} endTime=${endTime}`)
         const response = await fetch('/api/shuckle/GET_STATS', {
             method: 'POST',
             headers: { 'Accept': 'application/octet-stream' },

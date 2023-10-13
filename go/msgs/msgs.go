@@ -31,6 +31,7 @@ type BlockId uint64
 type BlockServiceId uint64
 type BlockServiceFlags uint8
 type Crc uint32
+type NameHash uint64
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -214,6 +215,53 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*id = InodeId(idu)
+	return nil
+}
+
+func marshalNameHash(id uint64) ([]byte, error) {
+	return []byte(fmt.Sprintf("\"%016x\"", uint64(id))), nil
+}
+
+func unmarshalNameHash(b []byte) (uint64, error) {
+	var ids string
+	if err := json.Unmarshal(b, &ids); err != nil {
+		return 0, err
+	}
+	idu, err := strconv.ParseUint(ids, 16, 64)
+	if err != nil {
+		return 0, err
+	}
+	return idu, nil
+}
+
+func (h NameHash) MarshalJSON() ([]byte, error) {
+	return marshalNameHash(uint64(h))
+}
+
+func (h *NameHash) UnmarshalJSON(b []byte) error {
+	idu, err := unmarshalNameHash(b)
+	if err != nil {
+		return err
+	}
+	*h = NameHash(idu)
+	return nil
+}
+
+type inodeIdJson struct {
+	Id    InodeId
+	Extra bool
+}
+
+func (id InodeIdExtra) MarshalJSON() ([]byte, error) {
+	return json.Marshal(&inodeIdJson{Id: id.Id(), Extra: id.Extra()})
+}
+
+func (id *InodeIdExtra) UnmarshalJSON(b []byte) error {
+	idJ := &inodeIdJson{}
+	if err := json.Unmarshal(b, idJ); err != nil {
+		return err
+	}
+	*id = MakeInodeIdExtra(idJ.Id, idJ.Extra)
 	return nil
 }
 
@@ -462,14 +510,14 @@ type StatDirectoryResp struct {
 // certainly better served by FullReadDirReq.
 type ReadDirReq struct {
 	DirId     InodeId
-	StartHash uint64
+	StartHash NameHash
 	// if 0, a conservative MTU will be used.
 	Mtu uint16
 }
 
 type CurrentEdge struct {
 	TargetId     InodeId
-	NameHash     uint64
+	NameHash     NameHash
 	Name         string
 	CreationTime EggsTime
 }
@@ -477,7 +525,7 @@ type CurrentEdge struct {
 // Names with the same hash will never straddle two `ReadDirResp`s, assuming the
 // directory contents don't change in the meantime.
 type ReadDirResp struct {
-	NextHash uint64
+	NextHash NameHash
 	Results  []CurrentEdge
 }
 
@@ -864,7 +912,7 @@ type Edge struct {
 	// if not current, the extra bit tells us whether the edge is owned.
 	// this is needed for GC.
 	TargetId     InodeIdExtra
-	NameHash     uint64
+	NameHash     NameHash
 	Name         string
 	CreationTime EggsTime
 }

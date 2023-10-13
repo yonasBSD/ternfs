@@ -21,7 +21,6 @@ import (
 	"os/signal"
 	"path"
 	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -977,7 +976,6 @@ type directoryData struct {
 	PathSegments []pathSegment
 	Mtime        string
 	Owner        string
-	Edges        []directoryEdge
 	Info         []directoryInfoEntry
 }
 
@@ -1116,8 +1114,13 @@ func handleInode(
 			}
 			if id.Type() == msgs.DIRECTORY {
 				data := directoryData{
-					Id:   fmt.Sprintf("%v", id),
-					Path: "/" + path + "/",
+					Id: fmt.Sprintf("%v", id),
+				}
+				if path != "" {
+					data.Path = "/" + path + "/"
+				}
+				if id == msgs.ROOT_DIR_INODE_ID {
+					data.Path = "/"
 				}
 				title := fmt.Sprintf("Directory %v", data.Id)
 				{
@@ -1129,63 +1132,6 @@ func handleInode(
 					data.Mtime = resp.Mtime.String()
 				}
 				data.PathSegments = pathSegments(path)
-				{
-					_, full := query["full"]
-					if full {
-
-					} else {
-						req := msgs.FullReadDirReq{DirId: id}
-						resp := msgs.FullReadDirResp{}
-						edges := []msgs.Edge{}
-						for {
-							if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
-								panic(err)
-							}
-							edges = append(edges, resp.Results...)
-							if resp.Next.StartName == "" {
-								break
-							}
-							req.Flags = 0
-							if resp.Next.Current {
-								req.Flags = msgs.FULL_READ_DIR_CURRENT
-							}
-							req.StartName = resp.Next.StartName
-							req.StartTime = resp.Next.StartTime
-						}
-						sort.Slice(
-							edges,
-							func(i, j int) bool {
-								a := edges[i]
-								b := edges[j]
-								if a.Name != b.Name {
-									return a.Name < b.Name
-								}
-								if a.NameHash != b.NameHash {
-									return a.NameHash < b.NameHash
-								}
-								return a.CreationTime < b.CreationTime
-							},
-						)
-						for _, edge := range edges {
-							dataEdge := directoryEdge{
-								Current:      edge.Current,
-								TargetId:     fmt.Sprintf("%v", edge.TargetId.Id()),
-								Owned:        edge.Current || edge.TargetId.Extra(),
-								NameHash:     fmt.Sprintf("%016x", edge.NameHash),
-								Name:         edge.Name,
-								CreationTime: edge.CreationTime.String(),
-								Locked:       edge.Current && edge.TargetId.Extra(),
-							}
-							if edge.TargetId.Id() != msgs.NULL_INODE_ID {
-								dataEdge.Type = edge.TargetId.Id().Type().String()
-								if edge.TargetId.Id().Type() == msgs.DIRECTORY {
-									dataEdge.Name = dataEdge.Name + "/"
-								}
-							}
-							data.Edges = append(data.Edges, dataEdge)
-						}
-					}
-				}
 				{
 					data.Info = []directoryInfoEntry{}
 					dirInfoCache := lib.NewDirInfoCache()
@@ -1588,11 +1534,11 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				if len(segments) != 4 {
 					return badUrl("bad segments len")
 				}
-				req, resp, err := msgs.MkShardMessage(segments[2])
+				req, resp, err := msgs.MkShardMessage(segments[3])
 				if err != nil {
 					return badUrl("bad req type")
 				}
-				shidU, err := strconv.ParseUint(segments[3], 10, 8)
+				shidU, err := strconv.ParseUint(segments[2], 10, 8)
 				if err != nil {
 					return badUrl("bad shard id")
 				}

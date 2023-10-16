@@ -365,10 +365,15 @@ func (cm *clientMetadata) init(log *Logger) error {
 	// processor
 	go func() {
 		inFlight := make(map[uint64](chan []byte))
+		defer func() {
+			log.Debug("request processor terminating")
+		}()
 		for {
 			if cm.sockClosed {
+				log.Debug("request processor terminating since socket is closed")
 				return
 			}
+			log.Debug("request processor waiting for request and responses")
 			select {
 			case resp := <-cm.responses:
 				ch, ok := inFlight[resp.requestId]
@@ -384,6 +389,7 @@ func (cm *clientMetadata) init(log *Logger) error {
 				}
 			case req := <-cm.requests:
 				if req.clear {
+					log.Debug("clearing request id %v", req.requestId)
 					delete(inFlight, req.requestId)
 				} else {
 					log.Debug("about to send request id %v using conn %v->%v", req.requestId, req.addr, cm.sock.LocalAddr())
@@ -399,6 +405,7 @@ func (cm *clientMetadata) init(log *Logger) error {
 					inFlight[req.requestId] = req.respCh
 					go func() {
 						time.Sleep(req.timeout)
+						log.Debug("sending back timeout for req id %v", req.requestId)
 						select {
 						case req.respCh <- nil:
 						default:
@@ -480,9 +487,15 @@ func (c *Client) UpdateAddrs(
 ) {
 	for i := 0; i < 2; i++ {
 		for j := 0; j < 256; j++ {
-			c.shardRawAddrs[j][i] = uint64(shardPorts[j][i])<<32 | uint64(shardIps[j][i][0])<<24 | uint64(shardIps[j][i][1])<<16 | uint64(shardIps[j][i][2])<<8 | uint64(shardIps[j][i][3])
+			atomic.StoreUint64(
+				&c.shardRawAddrs[j][i],
+				uint64(shardPorts[j][i])<<32|uint64(shardIps[j][i][0])<<24|uint64(shardIps[j][i][1])<<16|uint64(shardIps[j][i][2])<<8|uint64(shardIps[j][i][3]),
+			)
 		}
-		c.cdcRawAddr[i] = uint64(cdcPorts[i])<<32 | uint64(cdcIps[i][0])<<24 | uint64(cdcIps[i][1])<<16 | uint64(cdcIps[i][2])<<8 | uint64(cdcIps[i][3])
+		atomic.StoreUint64(
+			&c.cdcRawAddr[i],
+			uint64(cdcPorts[i])<<32|uint64(cdcIps[i][0])<<24|uint64(cdcIps[i][1])<<16|uint64(cdcIps[i][2])<<8|uint64(cdcIps[i][3]),
+		)
 	}
 }
 

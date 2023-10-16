@@ -1106,7 +1106,6 @@ func handleInode(
 			if err != nil {
 				panic(err)
 			}
-			defer client.Close()
 			if id == msgs.NULL_INODE_ID {
 				mbId := lookup(log, client, path)
 				if mbId == nil {

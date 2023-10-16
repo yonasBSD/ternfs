@@ -183,6 +183,7 @@ func (c *Client) metadataRequest(
 			log.Debug("dontWait is on, we've sent the request, goodbye")
 			return nil
 		}
+		log.DebugStack(1, "waiting for response for req id %v on channel", requestId)
 		respBytes := <-respChan
 		if respBytes != nil { // timed out
 			// we got something

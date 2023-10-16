@@ -70,6 +70,7 @@ type state struct {
 	db                       *sql.DB
 	counters                 map[msgs.ShuckleMessageKind]*lib.Timings
 	blockServiceMinFreeBytes uint64
+	client                   *lib.Client
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -191,7 +192,7 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServ
 	return ret, nil
 }
 
-func newState(db *sql.DB, minBytes uint64) *state {
+func newState(log *lib.Logger, db *sql.DB, minBytes uint64) (*state, error) {
 	st := &state{
 		db:                       db,
 		mutex:                    sync.Mutex{},
@@ -201,7 +202,12 @@ func newState(db *sql.DB, minBytes uint64) *state {
 	for _, k := range msgs.AllShuckleMessageKind {
 		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
-	return st
+	var err error
+	st.client, err = lib.NewClientDirectNoAddrs(log)
+	if err != nil {
+		return nil, err
+	}
+	return st, err
 }
 
 func (st *state) resetTimings() {
@@ -978,7 +984,7 @@ type directoryData struct {
 	Info         []directoryInfoEntry
 }
 
-func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
+func refreshClient(log *lib.Logger, state *state) (*lib.Client, error) {
 	shards, err := state.selectShards()
 	if err != nil {
 		return nil, fmt.Errorf("error reading shards: %s", err)
@@ -1002,11 +1008,8 @@ func newClient(log *lib.Logger, state *state) (*lib.Client, error) {
 	cdcPorts[0] = cdc.port1
 	cdcIps[1] = cdc.ip2
 	cdcPorts[1] = cdc.port2
-	client, err := lib.NewClientDirect(log, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
-	if err != nil {
-		return nil, fmt.Errorf("error creating client: %s", err)
-	}
-	return client, nil
+	state.client.UpdateAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	return state.client, nil
 }
 
 func normalizePath(path string) string {
@@ -1099,7 +1102,7 @@ func handleInode(
 			if id == msgs.ROOT_DIR_INODE_ID && path != "/" && path != "" {
 				return errorPage(http.StatusBadRequest, "bad root inode id")
 			}
-			client, err := newClient(log, state)
+			client, err := refreshClient(log, state)
 			if err != nil {
 				panic(err)
 			}
@@ -1338,7 +1341,7 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 				mimeType = "application/x-binary"
 			}
 
-			client, err := newClient(log, st)
+			client, err := refreshClient(log, st)
 			if err != nil {
 				panic(err)
 			}
@@ -1484,7 +1487,7 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
-				client, err := newClient(log, st)
+				client, err := refreshClient(log, st)
 				if err != nil {
 					return sendJsonErr(w, err, http.StatusInternalServerError)
 				}
@@ -1508,7 +1511,7 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
-				client, err := newClient(log, st)
+				client, err := refreshClient(log, st)
 				if err != nil {
 					return sendJsonErr(w, err, http.StatusInternalServerError)
 				}
@@ -1966,7 +1969,10 @@ func main() {
 
 	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
 
-	state := newState(db, *bsMinBytes)
+	state, err := newState(ll, db, *bsMinBytes)
+	if err != nil {
+		panic(err)
+	}
 
 	statsWrittenBeforeQuitting := int32(0)
 	writeStatsBeforeQuitting := func() {

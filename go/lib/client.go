@@ -8,10 +8,10 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/msgs"
@@ -241,8 +241,8 @@ type clientMetadata struct {
 }
 
 type Client struct {
-	shardAddrs       [256][2]net.UDPAddr
-	cdcAddrs         [2]net.UDPAddr
+	shardRawAddrs    [256][2]uint64
+	cdcRawAddr       [2]uint64
 	clientMetadata   clientMetadata
 	counters         *ClientCounters
 	cdcKey           cipher.Block
@@ -416,12 +416,8 @@ func (cm *clientMetadata) close() {
 	cm.sock.Close()
 }
 
-func NewClientDirect(
+func NewClientDirectNoAddrs(
 	log *Logger,
-	cdcIps *[2][4]byte,
-	cdcPorts *[2]uint16,
-	shardIps *[256][2][4]byte,
-	shardPorts *[256][2]uint16,
 ) (c *Client, err error) {
 	c = &Client{
 		writeBlocksConns: blocksConnFactory{
@@ -432,12 +428,6 @@ func NewClientDirect(
 		},
 		requestIdCounter: rand.Uint64(),
 	}
-	for i := 0; i < 2; i++ {
-		for j := 0; j < 256; j++ {
-			c.shardAddrs[j][i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(shardIps[j][i]), shardPorts[j][i]))
-		}
-		c.cdcAddrs[i] = *net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4(cdcIps[i]), cdcPorts[i]))
-	}
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
 	if err := c.clientMetadata.init(log); err != nil {
@@ -446,12 +436,54 @@ func NewClientDirect(
 	return c, nil
 }
 
+func NewClientDirect(
+	log *Logger,
+	cdcIps *[2][4]byte,
+	cdcPorts *[2]uint16,
+	shardIps *[256][2][4]byte,
+	shardPorts *[256][2]uint16,
+) (c *Client, err error) {
+	c, err = NewClientDirectNoAddrs(log)
+	if err != nil {
+		return nil, err
+	}
+	c.UpdateAddrs(cdcIps, cdcPorts, shardIps, shardPorts)
+	return c, nil
+}
+
+func uint64ToUDPAddr(addr uint64) *net.UDPAddr {
+	udpAddr := &net.UDPAddr{}
+	udpAddr.IP = []byte{byte(addr >> 24), byte(addr >> 16), byte(addr >> 8), byte(addr)}
+	udpAddr.Port = int(addr >> 32)
+	return udpAddr
+}
+
 func (c *Client) CDCAddrs() *[2]net.UDPAddr {
-	return &c.cdcAddrs
+	return &[2]net.UDPAddr{
+		*uint64ToUDPAddr(atomic.LoadUint64(&c.cdcRawAddr[0])),
+		*uint64ToUDPAddr(atomic.LoadUint64(&c.cdcRawAddr[1])),
+	}
 }
 
 func (c *Client) ShardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
-	return &c.shardAddrs[int(shid)]
+	return &[2]net.UDPAddr{
+		*uint64ToUDPAddr(atomic.LoadUint64(&c.shardRawAddrs[shid][0])),
+		*uint64ToUDPAddr(atomic.LoadUint64(&c.shardRawAddrs[shid][1])),
+	}
+}
+
+func (c *Client) UpdateAddrs(
+	cdcIps *[2][4]byte,
+	cdcPorts *[2]uint16,
+	shardIps *[256][2][4]byte,
+	shardPorts *[256][2]uint16,
+) {
+	for i := 0; i < 2; i++ {
+		for j := 0; j < 256; j++ {
+			c.shardRawAddrs[j][i] = uint64(shardPorts[j][i])<<32 | uint64(shardIps[j][i][0])<<24 | uint64(shardIps[j][i][1])<<16 | uint64(shardIps[j][i][2])<<8 | uint64(shardIps[j][i][3])
+		}
+		c.cdcRawAddr[i] = uint64(cdcPorts[i])<<32 | uint64(cdcIps[i][0])<<24 | uint64(cdcIps[i][1])<<16 | uint64(cdcIps[i][2])<<8 | uint64(cdcIps[i][3])
+	}
 }
 
 func (c *Client) Close() {

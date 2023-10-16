@@ -764,5 +764,14 @@ func main() {
 	}
 	defer client.Close()
 
+	// Be relaxed here: if we're running migrations or similar,
+	// do not hammer the shards.
+	client.SetShardTimeouts(
+		lib.NewReqTimeouts(1*time.Second, 60*time.Second, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
+	)
+	client.SetCDCTimeouts(
+		lib.NewReqTimeouts(1*time.Second, 60*time.Second, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
+	)
+
 	spec.run()
 }

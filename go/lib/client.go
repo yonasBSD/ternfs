@@ -202,7 +202,7 @@ func (r *ReqTimeouts) Next(startedAt time.Time) time.Duration {
 }
 
 var DefaultShardTimeout = ReqTimeouts{
-	Initial: 100 * time.Millisecond,
+	Initial: 1 * time.Second,
 	Max:     2 * time.Second,
 	Overall: 10 * time.Second,
 	Growth:  1.5,
@@ -211,7 +211,7 @@ var DefaultShardTimeout = ReqTimeouts{
 }
 
 var DefaultCDCTimeout = ReqTimeouts{
-	Initial: 250 * time.Millisecond,
+	Initial: 1 * time.Second,
 	Max:     5 * time.Second,
 	Overall: 10 * time.Second,
 	Growth:  1.5,

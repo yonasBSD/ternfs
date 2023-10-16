@@ -669,6 +669,69 @@ func main() {
 		run:   fileSizesRun,
 	}
 
+	findBlockCmd := flag.NewFlagSet("find-block", flag.ExitOnError)
+	findBlockId := findBlockCmd.Uint64("id", 0, "Block id to find")
+	findBlockRun := func() {
+		blockId := msgs.BlockId(*findBlockId)
+		log.Info("looking for %v", blockId)
+		ch := make(chan any)
+		lib.SetMTU(msgs.MAX_UDP_MTU)
+		analyzedFiles := uint64(0)
+		go func() {
+			err := lib.Parwalk(
+				log,
+				client,
+				func(parent, id msgs.InodeId, path string) error {
+					if id.Type() == msgs.DIRECTORY {
+						return nil
+					}
+					req := msgs.FileSpansReq{
+						FileId: id,
+					}
+					resp := msgs.FileSpansResp{}
+					for {
+						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+							log.ErrorNoAlert("could not get spans for file %q, id %v", id, path)
+							return err
+						}
+						for _, span := range resp.Spans {
+							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+								continue
+							}
+							body := span.Body.(*msgs.FetchedBlocksSpan)
+							for _, block := range body.Blocks {
+								if block.BlockId == blockId {
+									log.Info("block id %v is in file %q, id %v", blockId, path, id)
+									ch <- nil // terminate
+									return nil
+								}
+							}
+						}
+						req.ByteOffset = resp.NextOffset
+						if req.ByteOffset == 0 {
+							break
+						}
+					}
+					if atomic.AddUint64(&analyzedFiles, 1)%uint64(1_000_000) == 0 {
+						log.Info("went through %v files", analyzedFiles)
+					}
+					return nil
+				},
+			)
+			ch <- err
+		}()
+		err := <-ch
+		if err != nil {
+			log.ErrorNoAlert("could not find block %v: %v", blockId, err)
+			panic(err)
+		}
+
+	}
+	commands["find-block"] = commandSpec{
+		flags: findBlockCmd,
+		run:   findBlockRun,
+	}
+
 	flag.Parse()
 
 	if flag.NArg() < 1 {

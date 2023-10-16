@@ -88,7 +88,7 @@ func (t *Timings) Mean() time.Duration {
 	return time.Duration(x)
 }
 
-func (t *Timings) Median() time.Duration {
+func (t *Timings) P(target float64) time.Duration {
 	bins := t.Histogram()
 	totalCount := uint64(0)
 	for _, bin := range bins {
@@ -97,11 +97,15 @@ func (t *Timings) Median() time.Duration {
 	p := float64(0)
 	for _, bin := range bins {
 		p += float64(bin.Count) / float64(totalCount)
-		if p >= 0.5 {
+		if p >= target {
 			return bin.UpperBound
 		}
 	}
 	panic("impossible")
+}
+
+func (t *Timings) Median() time.Duration {
+	return t.P(0.5)
 }
 
 func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {

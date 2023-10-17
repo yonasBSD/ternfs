@@ -362,6 +362,8 @@ func (k ShardMessageKind) String() string {
 		return "REMOVE_INODE"
 	case 124:
 		return "ADD_SPAN_INITIATE_WITH_REFERENCE"
+	case 125:
+		return "REMOVE_ZERO_BLOCK_SERVICE_FILES"
 	case 128:
 		return "CREATE_DIRECTORY_INODE"
 	case 129:
@@ -413,6 +415,7 @@ const (
 	BLOCK_SERVICE_FILES ShardMessageKind = 0x79
 	REMOVE_INODE ShardMessageKind = 0x7A
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
+	REMOVE_ZERO_BLOCK_SERVICE_FILES ShardMessageKind = 0x7D
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -452,6 +455,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	BLOCK_SERVICE_FILES,
 	REMOVE_INODE,
 	ADD_SPAN_INITIATE_WITH_REFERENCE,
+	REMOVE_ZERO_BLOCK_SERVICE_FILES,
 	CREATE_DIRECTORY_INODE,
 	SET_DIRECTORY_OWNER,
 	REMOVE_DIRECTORY_OWNER,
@@ -522,6 +526,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &RemoveInodeReq{}, &RemoveInodeResp{}, nil
 	case k == "ADD_SPAN_INITIATE_WITH_REFERENCE":
 		return &AddSpanInitiateWithReferenceReq{}, &AddSpanInitiateWithReferenceResp{}, nil
+	case k == "REMOVE_ZERO_BLOCK_SERVICE_FILES":
+		return &RemoveZeroBlockServiceFilesReq{}, &RemoveZeroBlockServiceFilesResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
 		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
@@ -2385,6 +2391,60 @@ func (v *AddSpanInitiateWithReferenceResp) Pack(w io.Writer) error {
 
 func (v *AddSpanInitiateWithReferenceResp) Unpack(r io.Reader) error {
 	if err := v.Resp.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveZeroBlockServiceFilesReq) ShardRequestKind() ShardMessageKind {
+	return REMOVE_ZERO_BLOCK_SERVICE_FILES
+}
+
+func (v *RemoveZeroBlockServiceFilesReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.StartBlockService)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.StartFile)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveZeroBlockServiceFilesReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartBlockService)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartFile)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveZeroBlockServiceFilesResp) ShardResponseKind() ShardMessageKind {
+	return REMOVE_ZERO_BLOCK_SERVICE_FILES
+}
+
+func (v *RemoveZeroBlockServiceFilesResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Removed)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.NextBlockService)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.NextFile)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RemoveZeroBlockServiceFilesResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Removed)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextBlockService)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextFile)); err != nil {
 		return err
 	}
 	return nil

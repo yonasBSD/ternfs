@@ -1297,6 +1297,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
 			reflect.TypeOf(msgs.MoveSpanEntry{}),
 			reflect.TypeOf(msgs.SetTimeEntry{}),
+			reflect.TypeOf(msgs.RemoveZeroBlockServiceFilesEntry{}),
 		},
 	)
 
@@ -1523,6 +1524,11 @@ func main() {
 			0x7C,
 			reflect.TypeOf(msgs.AddSpanInitiateWithReferenceReq{}),
 			reflect.TypeOf(msgs.AddSpanInitiateWithReferenceResp{}),
+		},
+		{
+			0x7D,
+			reflect.TypeOf(msgs.RemoveZeroBlockServiceFilesReq{}),
+			reflect.TypeOf(msgs.RemoveZeroBlockServiceFilesResp{}),
 		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{

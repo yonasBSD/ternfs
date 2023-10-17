@@ -1730,6 +1730,12 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _prepareRemoveZeroBlockServiceFiles(EggsTime time, const RemoveZeroBlockServiceFilesReq& req, RemoveZeroBlockServiceFilesEntry& entry) {
+        entry.startBlockService = req.startBlockService;
+        entry.startFile = req.startFile;
+        return NO_ERROR;
+    }
+
     EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         logEntry.clear();
@@ -1816,6 +1822,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::SET_TIME:
             err = _prepareSetTime(time, req.getSetTime(), logEntryBody.setSetTime());
+            break;
+        case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+            err = _prepareRemoveZeroBlockServiceFiles(time, req.getRemoveZeroBlockServiceFiles(), logEntryBody.setRemoveZeroBlockServiceFiles());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -3476,6 +3485,45 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _applyRemoveZeroBlockServiceFiles(EggsTime time, rocksdb::WriteBatch& batch, const RemoveZeroBlockServiceFilesEntry& entry, RemoveZeroBlockServiceFilesResp& resp) {
+        // Max number of entries we'll look at, otherwise each req will spend tons of time
+        // iterating.
+        int maxEntries = 1'000;
+
+        StaticValue<BlockServiceToFileKey> beginKey;
+        beginKey().setBlockServiceId(entry.startBlockService.u64);
+        beginKey().setFileId(entry.startFile);
+
+        rocksdb::ReadOptions options;
+        std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _blockServicesToFilesCf));
+        int i;
+        resp.removed = 0;
+        for (
+            i = 0, it->Seek(beginKey.toSlice());
+            it->Valid() && i < maxEntries;
+            it->Next(), i++
+        ) {
+            auto key = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
+            int64_t blocks = ExternalValue<I64Value>::FromSlice(it->value())().i64();
+            if (blocks == 0) {
+                LOG_DEBUG(_env, "Removing block service id %s file %s", key().blockServiceId(), key().fileId());
+                ROCKS_DB_CHECKED(batch.Delete(_blockServicesToFilesCf, it->key()));
+                resp.removed++;
+            }
+        }
+        if (it->Valid()) {
+            LOG_DEBUG(_env, "Not done removing zero block service files");
+            auto key = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
+            resp.nextBlockService = key().blockServiceId();
+            resp.nextFile = key().fileId();
+        } else {
+            LOG_DEBUG(_env, "Done removing zero block service files");
+            resp.nextBlockService = 0;
+            resp.nextFile = NULL_INODE_ID;
+        }
+        return NO_ERROR;
+    }
+
     EggsError applyLogEntry(bool sync, ShardMessageKind reqKind, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
@@ -3583,6 +3631,9 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::SET_TIME:
             err = _applySetTime(time, batch, logEntryBody.getSetTime(), resp.setSetTime());
+            break;
+        case ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+            err = _applyRemoveZeroBlockServiceFiles(time, batch, logEntryBody.getRemoveZeroBlockServiceFiles(), resp.setRemoveZeroBlockServiceFiles());
             break;
         default:
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
@@ -3804,6 +3855,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
     case ShardMessageKind::MOVE_SPAN:
     case ShardMessageKind::SET_TIME:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

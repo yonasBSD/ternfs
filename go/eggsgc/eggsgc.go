@@ -158,10 +158,28 @@ func main() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
 					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
 					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
 					time.Sleep(waitFor)
 					if err := lib.DestructFiles(log, options, client, groupShards); err != nil {
+						log.RaiseAlert("could not destruct files: %v", err)
+					}
+				}
+			}()
+		}
+		// zero block services
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					// just do that once an hour, we don't need this often.
+					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
+					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
+					time.Sleep(waitFor)
+					if err := lib.CollectZeroBlockServiceFiles(log, client, groupShards); err != nil {
 						log.RaiseAlert("could not destruct files: %v", err)
 					}
 				}

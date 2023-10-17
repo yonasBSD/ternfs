@@ -66,6 +66,9 @@ func cleanupAfterTest(
 	if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache); err != nil {
 		panic(err)
 	}
+	if err := lib.CollectZeroBlockServiceFilesInAllShards(log, client); err != nil {
+		panic(err)
+	}
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
 	log.Info("deadlines passed, collecting")

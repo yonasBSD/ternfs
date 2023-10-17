@@ -1207,6 +1207,17 @@ type CrossShardHardUnlinkFileReq struct {
 
 type CrossShardHardUnlinkFileResp struct{}
 
+type RemoveZeroBlockServiceFilesReq struct {
+	StartBlockService BlockServiceId
+	StartFile         InodeId
+}
+
+type RemoveZeroBlockServiceFilesResp struct {
+	Removed          uint64
+	NextBlockService BlockServiceId
+	NextFile         InodeId
+}
+
 // --------------------------------------------------------------------
 // directory info
 
@@ -1615,6 +1626,11 @@ type SetTimeEntry struct {
 	Id    InodeId
 	Mtime uint64
 	Atime uint64
+}
+
+type RemoveZeroBlockServiceFilesEntry struct {
+	StartBlockService BlockServiceId
+	StartFile         InodeId
 }
 
 // --------------------------------------------------------------------

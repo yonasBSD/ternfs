@@ -469,7 +469,7 @@ export function renderDirectoryEdges(id, path) {
 
         const renderBool = (s) => s === 'yes' ? p.h('strong', {}, s) : s;
     
-        let edgesTable = p.h('em', {}, `Loading (${loadedEdgdes}/?)...`);
+        let edgesTable = p.h('em', {}, `Loading (${loadedEdges}/?)...`);
         if (edges !== null) {
             const rows = [];
             for (const edge of edges) {

@@ -441,3 +441,50 @@ func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *Di
 	log.Info("stats after one all shards collect directories iteration: %+v", stats)
 	return nil
 }
+
+func collectZeroBlockServiceFiles(log *Logger, client *Client, shards []msgs.ShardId) (removed uint64, err error) {
+	log.Info("starting to collect block services with zero files in shards %+v", shards)
+	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, len(shards))
+	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, len(shards))
+	for i := 0; ; i++ {
+		allDone := true
+		for j, shid := range shards {
+			req := &reqs[j]
+			resp := &resps[j]
+			if i > 0 && req.StartBlockService == 0 && req.StartFile == msgs.NULL_INODE_ID {
+				continue
+			}
+			allDone = false
+			err := client.ShardRequest(log, shid, req, resp)
+			if err != nil {
+				return removed, fmt.Errorf("could not remove zero block services: %w", err)
+			}
+			req.StartBlockService = resp.NextBlockService
+			req.StartFile = resp.NextFile
+			removed += resp.Removed
+		}
+		if allDone {
+			break
+		}
+	}
+	return removed, nil
+}
+
+func CollectZeroBlockServiceFiles(log *Logger, client *Client, shards []msgs.ShardId) error {
+	removed, err := collectZeroBlockServiceFiles(log, client, shards)
+	if err != nil {
+		log.Info("got error after collecting %v zero block service files in shards %v", removed, shards)
+		return err
+	} else {
+		log.Info("collected %v zero block service files in shards %v", removed, shards)
+		return nil
+	}
+}
+
+func CollectZeroBlockServiceFilesInAllShards(log *Logger, client *Client) error {
+	shards := make([]msgs.ShardId, 256)
+	for i := 0; i < 256; i++ {
+		shards[i] = msgs.ShardId(i)
+	}
+	return CollectZeroBlockServiceFiles(log, client, shards)
+}

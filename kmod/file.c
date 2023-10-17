@@ -643,7 +643,6 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
         up(&enode->file.flushing_span_sema); // nothing to do
     } else if (span->storage_class == EGGSFS_INLINE_STORAGE) {
         // this is an easy one, just add the inline span
-        up(&enode->file.flushing_span_sema); // however it goes, we won't be 
         struct page* page = list_first_entry(&span->pages, struct page, lru);
         char* data = kmap(page);
         eggsfs_debug("adding inline span of length %d", span->written);
@@ -652,7 +651,8 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
             span->offset, span->written, data, span->written
         ));
         kunmap(page);
-        if (err) { goto out_err_keep_writing; }
+        up(&enode->file.flushing_span_sema);
+        return err;
     } else {
         // the real deal, we need to write blocks
         err = write_blocks(span);
@@ -667,11 +667,6 @@ out:
     // we don't need this anymore (the requests might though)
     put_transient_span(span);
     enode->file.writing_span = NULL;
-    return err;
-
-    // When we got an error before even starting to flush
-out_err_keep_writing:
-    up(&enode->file.flushing_span_sema); // nothing is flushing
     return err;
 }
 

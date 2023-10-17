@@ -94,7 +94,7 @@ kill $trace_pid
 kill $dmesg_pid
 
 # Unmount
-timeout -s KILL 10 ssh -p 2222 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
+timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
 
 # Rmmod
-timeout -s KILL 10 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsfs"
+timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsfs"

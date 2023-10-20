@@ -350,7 +350,15 @@ export function renderIndex() {
  
         const now = new Date();
         const rows = [];
+        let failureDomains = new Set();
+        let capacity = 0;
+        let available = 0;
+        let blocks = 0n;
         for (const bs of blockServices.BlockServices) {
+            failureDomains.add(bs.FailureDomain);
+            capacity += bs.CapacityBytes;
+            available += bs.AvailableBytes;
+            blocks += BigInt(bs.Blocks);
             rows.push([
                 bs.FailureDomain,
                 stringifyAddress(bs.Ip1, bs.Port1),
@@ -363,7 +371,7 @@ export function renderIndex() {
                 bs.CapacityBytes,
                 bs.AvailableBytes,
                 bs.LastSeen,
-            ])
+            ]);
         }
         const cols = [
             {name: 'FailureDomain'},
@@ -379,7 +387,14 @@ export function renderIndex() {
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
         ];
 
-        return p.h(Table, { identifier: 'block-services', cols, rows, initialSorting: [[0, true], [3, true]] })
+        return p.h('div', {},
+            p.h('p', {}, p.h('ul', {},
+                p.h('li', {}, `${rows.length} block services on ${failureDomains.size} failure domains`),
+                p.h('li', {}, `Total capacity: ${stringifySize(capacity)}`),
+                p.h('li', {}, `${stringifySize(capacity-available)} used over ${blocks} blocks (${(100*(capacity-available)/available).toFixed(2)}%)`),
+            )),
+            p.h(Table, { identifier: 'block-services', cols, rows, initialSorting: [[0, true], [3, true]] })
+        )
     }
     p.render(p.h(BlockServices), document.getElementById('block-services-table'));
 
@@ -421,9 +436,10 @@ export function renderIndex() {
 
 export function renderDirectoryEdges(id, path) {
     function Edges({id, path, showSnapshotEdges: initialShowSnapshotEdges}) {
-        const [{showSnapshotEdges, edges}, setState] = useState({
+        const [{showSnapshotEdges, edges, loadedEdges}, setState] = useState({
             showSnapshotEdges: initialShowSnapshotEdges,
             edges: null,
+            loadedEdges: 0,
         });
 
         useEffect(async () => {
@@ -438,6 +454,7 @@ export function renderDirectoryEdges(id, path) {
                 req.Flags = resp.Next.Current ? 1 : 0;
                 req.StartName = resp.Next.StartName;
                 req.StartTime = resp.Next.StartTime;
+                setState(prev => ({...prev, loadedEdges: results.length}))
             }
             setState(prev => ({...prev, edges: results}));
         }, [])
@@ -452,7 +469,7 @@ export function renderDirectoryEdges(id, path) {
 
         const renderBool = (s) => s === 'yes' ? p.h('strong', {}, s) : s;
     
-        let edgesTable = p.h('em', {}, 'Loading...');
+        let edgesTable = p.h('em', {}, `Loading (${loadedEdgdes}/?)...`);
         if (edges !== null) {
             const rows = [];
             for (const edge of edges) {
@@ -536,9 +553,10 @@ export function renderDirectoryEdges(id, path) {
 
 export function renderTransientFiles() {
     function TransientFiles() {
-        const [{shard, transientFiles}, setState] = useState({
+        const [{shard, transientFiles, loadedTransientFiles}, setState] = useState({
             shard: 0,
             transientFiles: null,
+            loadedTransientFiles: 0,
         });
 
         useEffect(async () => {
@@ -549,6 +567,7 @@ export function renderTransientFiles() {
                 results.push(...resp.Files);
                 if (resp.NextId === NULL_INODE_ID) { break; }
                 req.BeginId = resp.NextId;
+                setState(prev => ({...prev, loadedTransientFiles: results.length}));
             }
             setState(prev => ({...prev, transientFiles: results}));
         }, [shard]);
@@ -576,8 +595,7 @@ export function renderTransientFiles() {
                 }),
             ),
             // key for redrawing...
-            // 0x400000023ed25301
-            transientFiles === null ? p.h('em', {}, 'Loading...') : p.h(Table, {key: shard, rows, cols, identifier: 'transient'}),
+            transientFiles === null ? p.h('em', {}, `Loading (${loadedTransientFiles}/?)...`) : p.h(Table, {key: shard, rows, cols, identifier: 'transient'}),
         ]
     }
     p.render(p.h(TransientFiles), document.getElementById('transient-files-table'));

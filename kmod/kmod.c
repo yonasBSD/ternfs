@@ -17,6 +17,7 @@
 #include "span.h"
 #include "dir.h"
 #include "file.h"
+#include "debugfs.h"
 #include "policy.h"
 
 MODULE_LICENSE("GPL");
@@ -63,6 +64,9 @@ static int __init eggsfs_init(void) {
     err = eggsfs_fs_init();
     if (err) { goto out_fs; }
 
+    err = eggsfs_debugfs_init();
+    if (err) { goto out_debugfs; }
+
     return 0;
 
 out_fs:
@@ -85,6 +89,8 @@ out_policy:
     eggsfs_rs_exit();
 out_rs:
     destroy_workqueue(eggsfs_wq);
+out_debugfs:
+    eggsfs_debugfs_exit();
     return err;
 }
 
@@ -99,6 +105,7 @@ static void __exit eggsfs_exit(void) {
     eggsfs_sysfs_exit();
     eggsfs_policy_exit();
     eggsfs_rs_exit();
+    eggsfs_debugfs_exit();
 
     // tracepoint_synchronize_unregister() must be called before the end of
     // the module exit function to make sure there is no caller left using

@@ -9,3 +9,6 @@ modules.order
 *.mod
 *.mod.c
 eggsfs-client-*
+linux*
+*.img
+revision.c

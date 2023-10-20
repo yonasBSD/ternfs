@@ -7,3 +7,6 @@ eggsrun/eggsrun
 gcdaemon/gcdaemon
 eggscli/eggscli
 eggstests/eggstests
+bincodegen/bincodegen
+crc32csum/crc32csum
+eggsgc/eggsgc

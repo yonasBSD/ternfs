@@ -7,6 +7,7 @@ eggsfs-objs += \
 	dir.o \
 	err.o \
 	export.o \
+	debugfs.o \
 	file.o \
 	inode.o \
 	kmod.o \

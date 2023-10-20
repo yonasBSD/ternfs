@@ -5,6 +5,7 @@
 #include "log.h"
 #include "trace.h"
 #include "err.h"
+#include "debugfs.h"
 #include "metadata.h"
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
@@ -198,6 +199,12 @@ struct sk_buff* eggsfs_metadata_request(
 
     u8 kind = *((u8*)p + 12);
     const char* kind_str = (shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
+    // We can think of the contiguous stats array as list of areas for each shard.
+    // Shard area is then split to 4 entries (EGGSFS_STATS_NUM_COUNTERS) per request kind (EGGSFS_SHARD_KIND_MAX).
+    // The expression above is left unminimised to make it easier to understand and match the explanation above.
+    u64 stats_idx = (shard_id < 0) ?
+        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_STATS_NUM_COUNTERS) :
+        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_STATS_NUM_COUNTERS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_STATS_NUM_COUNTERS);
 
     req.skb = NULL;
     req.request_id = req_id;
@@ -216,6 +223,15 @@ struct sk_buff* eggsfs_metadata_request(
 #define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, jiffies64_to_msecs(elapsed)
 #define WARN_LATE if (elapsed > MSECS_TO_JIFFIES(1000)) { eggsfs_info("late request: " LOG_STR, LOG_ARGS); }
 
+    // This should be atomic64_add to be correct, but given that these are
+    // stats, we leave it like this. Almost certainly wouldn't matter.
+#define INC_STAT_COUNTER(_name) \
+    if (shard_id < 0) { \
+        cdc_metrics[stats_idx + EGGSFS_STATS_IDX_##_name]++; \
+    } else { \
+        shard_metrics[stats_idx + EGGSFS_STATS_IDX_##_name]++; \
+    }
+
     for (;;) {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
         init_completion(&req.comp);
@@ -230,6 +246,7 @@ struct sk_buff* eggsfs_metadata_request(
     
         err = kernel_sendmsg(sock->sock, msg, &vec, 1, len);
         if (err < 0) {
+            INC_STAT_COUNTER(NET_FAILURES)
             eggsfs_info("could not send: " LOG_STR " err=%d", LOG_ARGS, err);
             goto out_unregister;
         }
@@ -238,6 +255,7 @@ struct sk_buff* eggsfs_metadata_request(
         u64 t = get_jiffies_64();
         elapsed = t - start_t;
         (*attempts)++;
+        INC_STAT_COUNTER(ATTEMPTED)
         timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
         if (!err) {
             eggsfs_debug("got response");
@@ -254,9 +272,11 @@ struct sk_buff* eggsfs_metadata_request(
                 }
             }
             if (bincode_err && eggsfs_unexpected_error(bincode_err)) {
+                INC_STAT_COUNTER(FAILURES)
                 eggsfs_warn("unexpected error: " LOG_STR " err_str=%s err=%d", LOG_ARGS, eggsfs_err_str(bincode_err), bincode_err);
             }
             WARN_LATE
+            INC_STAT_COUNTER(COMPLETED)
             trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
             return req.skb;
         }
@@ -264,6 +284,7 @@ struct sk_buff* eggsfs_metadata_request(
         eggsfs_debug("err=%d", err);
         if (err != -ETIMEDOUT || elapsed >= overall_timeout) {
             if (err != -ERESTARTSYS) {
+                INC_STAT_COUNTER(TIMEOUTS)
                 eggsfs_warn("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
             }
             goto out_err;
@@ -290,6 +311,7 @@ out_err:
 #undef LOG_STR
 #undef LOG_ARGS
 #undef WARN_LATE
+#undef INC_STAT_COUNTER
 }
 
 #if 0

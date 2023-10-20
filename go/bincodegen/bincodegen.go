@@ -334,6 +334,23 @@ func generateKmodMsgKind(hOut io.Writer, cOut io.Writer, what string, reqResps [
 		fmt.Fprintf(hOut, ", { %d, %q }", reqResp.kind, reqRespEnum(reqResp))
 	}
 	fmt.Fprintf(hOut, ")\n")
+	fmt.Fprintf(hOut, "#define EGGSFS_%s_KIND_MAX %d\n", what, len(reqResps))
+	fmt.Fprintf(hOut, "static const u8 __eggsfs_%s_kind_index_mappings[256] = {", strings.ToLower(what))
+	var idx [256]uint8
+	for k, _ := range idx {
+		idx[k] = 0xff
+	}
+	for k, reqResp := range reqResps {
+		idx[reqResp.kind] = uint8(k)
+	}
+	for k, _ := range idx {
+		fmt.Fprintf(hOut, "%d", idx[k])
+		if k < len(idx)-1 {
+			fmt.Fprintf(hOut, ", ")
+		}
+	}
+	fmt.Fprintf(hOut, "};\n")
+
 	fmt.Fprintf(hOut, "const char* eggsfs_%s_kind_str(int kind);\n\n", strings.ToLower(what))
 
 	fmt.Fprintf(cOut, "const char* eggsfs_%s_kind_str(int kind) {\n", strings.ToLower(what))

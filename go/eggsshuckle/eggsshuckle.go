@@ -2021,11 +2021,6 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-
-	}()
-
-	go func() {
-		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
 		statsWriter(ll, state)
 	}()
 

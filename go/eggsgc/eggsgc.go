@@ -177,10 +177,10 @@ func main() {
 					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
 					// just do that once an hour, we don't need this often.
 					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
+					log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
 					time.Sleep(waitFor)
 					if err := lib.CollectZeroBlockServiceFiles(log, client, groupShards); err != nil {
-						log.RaiseAlert("could not destruct files: %v", err)
+						log.RaiseAlert("could not collecting zero block service files: %v", err)
 					}
 				}
 			}()

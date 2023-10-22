@@ -467,7 +467,7 @@ export function renderDirectoryEdges(id, path) {
             }                
         }, [showSnapshotEdges])
 
-        const renderBool = (s) => s === 'yes' ? p.h('strong', {}, s) : s;
+        const renderBool = s => s === 'yes' ? p.h('strong', {}, s) : s;
     
         let edgesTable = p.h('em', {}, `Loading (${loadedEdges}/?)...`);
         if (edges !== null) {

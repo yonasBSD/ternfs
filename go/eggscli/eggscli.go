@@ -175,7 +175,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			defer client.Close()
-			stats := lib.CollectStats{}
+			var stats lib.GCStats
 			var cdcMu sync.Mutex
 			if err := lib.CollectDirectory(log, client, dirInfoCache, &cdcMu, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
@@ -201,7 +201,7 @@ func main() {
 			if fileId.Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
-			stats := lib.DestructionStats{}
+			stats := lib.GCStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
 			if err := lib.DestructFile(log, client, &stats, fileId, 0, destructFileCookie); err != nil {

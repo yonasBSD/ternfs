@@ -3,6 +3,7 @@ package lib
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/msgs"
 )
@@ -32,23 +33,33 @@ func GCClient(log *Logger, shuckleAddress string, options *GCOptions) (*Client, 
 	return client, nil
 }
 
-type DestructionStats struct {
+type GCStats struct {
+	// file destruction
 	VisitedFiles     uint64
 	DestructedFiles  uint64
 	DestructedSpans  uint64
 	SkippedSpans     uint64
 	DestructedBlocks uint64
 	FailedFiles      uint64
+	// directory collection
+	VisitedDirectories    uint64
+	VisitedEdges          uint64
+	CollectedEdges        uint64
+	DestructedDirectories uint64
+	// zero block service stuff
+	ZeroBlockServiceFilesRemoved uint64
 }
 
 func DestructFile(
 	log *Logger,
 	client *Client,
-	stats *DestructionStats,
-	id msgs.InodeId, deadline msgs.EggsTime, cookie [8]byte,
+	stats *GCStats,
+	id msgs.InodeId,
+	deadline msgs.EggsTime,
+	cookie [8]byte,
 ) error {
 	log.Debug("%v: destructing file, cookie=%v", id, cookie)
-	stats.VisitedFiles++
+	atomic.AddUint64(&stats.VisitedFiles, 1)
 	now := msgs.Now()
 	if now < deadline {
 		log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", id, deadline, now)
@@ -86,7 +97,7 @@ func DestructFile(
 				if err != nil {
 					if acceptFailure {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v", block.BlockServiceId, id)
-						stats.SkippedSpans++
+						atomic.AddUint64(&stats.SkippedSpans, 1)
 						return nil
 					}
 					return err
@@ -98,7 +109,7 @@ func DestructFile(
 				} else {
 					conn.Put()
 				}
-				stats.DestructedBlocks++
+				atomic.AddUint64(&stats.DestructedBlocks, 1)
 				certifyReq.Proofs[i].BlockId = block.BlockId
 				certifyReq.Proofs[i].Proof = proof
 			}
@@ -107,7 +118,7 @@ func DestructFile(
 				return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
 			}
 		}
-		stats.DestructedSpans++
+		atomic.AddUint64(&stats.DestructedSpans, 1)
 	}
 	// Now purge the inode
 	{
@@ -116,14 +127,14 @@ func DestructFile(
 			return fmt.Errorf("%v: could not remove transient file inode after removing spans: %w", id, err)
 		}
 	}
-	stats.DestructedFiles++
+	atomic.AddUint64(&stats.DestructedFiles, 1)
 	return nil
 }
 
 func destructFilesInternal(
 	log *Logger,
 	client *Client,
-	stats *DestructionStats,
+	stats *GCStats,
 	retryOnFailure bool,
 	shards []msgs.ShardId,
 ) error {
@@ -151,7 +162,7 @@ func destructFilesInternal(
 				if !retryOnFailure {
 					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-						stats.FailedFiles++
+						atomic.AddUint64(&stats.FailedFiles, 1)
 						someErrored = true
 					}
 				} else {
@@ -181,23 +192,19 @@ func destructFilesInternal(
 
 // Collects dead transient files, and expunges them. Stops when
 // all files have been traversed. Useful for testing a single iteration.
-func destructFiles(
+func DestructFiles(
 	log *Logger,
 	options *GCOptions,
 	client *Client,
+	stats *GCStats,
 	shards []msgs.ShardId,
 ) error {
 	log.Info("starting to destruct files in shards %+v", shards)
-	stats := DestructionStats{}
-	if err := destructFilesInternal(log, client, &stats, options.RetryOnDestructFailure, shards); err != nil {
+	if err := destructFilesInternal(log, client, stats, options.RetryOnDestructFailure, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
 	return nil
-}
-
-func DestructFiles(log *Logger, options *GCOptions, client *Client, shards []msgs.ShardId) error {
-	return destructFiles(log, options, client, shards)
 }
 
 func DestructFilesInAllShards(
@@ -205,7 +212,7 @@ func DestructFilesInAllShards(
 	client *Client,
 	options *GCOptions,
 ) error {
-	stats := DestructionStats{}
+	stats := GCStats{}
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
@@ -226,25 +233,18 @@ func DestructFilesInAllShards(
 	return nil
 }
 
-type CollectStats struct {
-	VisitedDirectories    uint64
-	VisitedEdges          uint64
-	CollectedEdges        uint64
-	DestructedDirectories uint64
-}
-
 // returns whether all the edges were removed
 func applyPolicy(
 	log *Logger,
 	client *Client,
 	cdcMu *sync.Mutex,
-	stats *CollectStats,
+	stats *GCStats,
 	dirId msgs.InodeId,
 	policy *msgs.SnapshotPolicy,
 	edges []msgs.Edge,
 ) (bool, error) {
 	log.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
-	stats.VisitedEdges = stats.VisitedEdges + uint64(len(edges))
+	atomic.AddUint64(&stats.VisitedEdges, uint64(len(edges)))
 	now := msgs.Now()
 	toCollect := edgesToRemove(policy, now, edges)
 	log.Debug("%v: will remove %d edges out of %d", dirId, toCollect, len(edges))
@@ -292,14 +292,14 @@ func applyPolicy(
 		if err != nil {
 			return false, fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
 		}
-		stats.CollectedEdges++
+		atomic.AddUint64(&stats.CollectedEdges, 1)
 	}
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *GCStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
-	stats.VisitedDirectories++
+	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
 	statReq := msgs.StatDirectoryReq{
 		Id: dirId,
@@ -376,13 +376,13 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 			if err != nil {
 				return fmt.Errorf("error while trying to remove directory inode: %w", err)
 			}
-			stats.DestructedDirectories++
+			atomic.AddUint64(&stats.DestructedDirectories, 1)
 		}
 	}
 	return nil
 }
 
-func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectStats, shards []msgs.ShardId) error {
+func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *GCStats, shards []msgs.ShardId) error {
 	log.Info("starting to collect directories in shards %+v", shards)
 	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
 	resps := make([]msgs.VisitDirectoriesResp, len(shards))
@@ -416,33 +416,25 @@ func collectDirectoriesInternal(log *Logger, client *Client, dirInfoCache *DirIn
 			break
 		}
 	}
-	return nil
-}
-
-func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, shards []msgs.ShardId) error {
-	stats := CollectStats{}
-	if err := collectDirectoriesInternal(log, client, dirInfoCache, cdcMu, &stats, shards); err != nil {
-		return err
-	}
 	log.Info("stats after one collect directories iteration: %+v", stats)
 	return nil
 }
 
 func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
-	stats := CollectStats{}
+	stats := GCStats{}
 	var cdcMu sync.Mutex
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	if err := collectDirectoriesInternal(log, client, dirInfoCache, &cdcMu, &stats, shards); err != nil {
+	if err := CollectDirectories(log, client, dirInfoCache, &cdcMu, &stats, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one all shards collect directories iteration: %+v", stats)
 	return nil
 }
 
-func collectZeroBlockServiceFiles(log *Logger, client *Client, shards []msgs.ShardId) (removed uint64, err error) {
+func CollectZeroBlockServiceFiles(log *Logger, client *Client, stats *GCStats, shards []msgs.ShardId) error {
 	log.Info("starting to collect block services with zero files in shards %+v", shards)
 	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, len(shards))
 	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, len(shards))
@@ -457,34 +449,25 @@ func collectZeroBlockServiceFiles(log *Logger, client *Client, shards []msgs.Sha
 			allDone = false
 			err := client.ShardRequest(log, shid, req, resp)
 			if err != nil {
-				return removed, fmt.Errorf("could not remove zero block services: %w", err)
+				return fmt.Errorf("could not remove zero block services: %w", err)
 			}
 			req.StartBlockService = resp.NextBlockService
 			req.StartFile = resp.NextFile
-			removed += resp.Removed
+			atomic.AddUint64(&stats.ZeroBlockServiceFilesRemoved, resp.Removed)
 		}
 		if allDone {
 			break
 		}
 	}
-	return removed, nil
-}
-
-func CollectZeroBlockServiceFiles(log *Logger, client *Client, shards []msgs.ShardId) error {
-	removed, err := collectZeroBlockServiceFiles(log, client, shards)
-	if err != nil {
-		log.Info("got error after collecting %v zero block service files in shards %v", removed, shards)
-		return err
-	} else {
-		log.Info("collected %v zero block service files in shards %v", removed, shards)
-		return nil
-	}
+	log.Info("finished collecting zero block service files in shards %+v: %+v", shards, stats)
+	return nil
 }
 
 func CollectZeroBlockServiceFilesInAllShards(log *Logger, client *Client) error {
+	var stats GCStats
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	return CollectZeroBlockServiceFiles(log, client, shards)
+	return CollectZeroBlockServiceFiles(log, client, &stats, shards)
 }

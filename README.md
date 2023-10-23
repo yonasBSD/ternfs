@@ -136,6 +136,12 @@ If you have a small fix and want to push to `main`, run at least
 
 In `go/eggstests`. This takes around 3 minutes, and will surface gross mistakes. Note that this does _not_ test the kernel module (CI does).
 
+The equivalent for testing the kmod, from inside the kmod VM, is
+
+```
+% ./eggs/eggstests -kmod -binaries-dir eggs -filter mounted 
+```
+
 TODO easy way to run kmod tests locally (just requires a bit of reworking of [ci.sh](kmod/ci.sh), plus pushing Ubuntu base image to artifactory).
 
 ## Playing with a local EggsFS instance

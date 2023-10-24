@@ -47,8 +47,6 @@ func usage() {
 }
 
 func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
-	// max mtu
-	lib.SetMTU(msgs.MAX_UDP_MTU)
 	var examinedDirs uint64
 	var examinedFiles uint64
 	err := lib.Parwalk(
@@ -102,8 +100,6 @@ func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
 }
 
 func outputBriefFileSizes(log *lib.Logger, client *lib.Client) {
-	// max mtu
-	lib.SetMTU(msgs.MAX_UDP_MTU)
 	// histogram
 	histoBins := 256
 	histo := lib.NewHistogram(histoBins, 1024, 1.1)
@@ -153,11 +149,31 @@ func outputBriefFileSizes(log *lib.Logger, client *lib.Client) {
 func main() {
 	flag.Usage = usage
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
+	shardInitialTimeout := flag.Duration("shard-initial-timeout", 0, "")
+	shardMaxTimeout := flag.Duration("shard-max-timeout", 0, "")
+	shardOverallTimeout := flag.Duration("shard-overall-timeout", -1, "")
+	cdcInitialTimeout := flag.Duration("cdc-initial-timeout", 0, "")
+	cdcMaxTimeout := flag.Duration("cdc-max-timeout", 0, "")
+	cdcOverallTimeout := flag.Duration("cdc-overall-timeout", -1, "")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 
 	var log *lib.Logger
 	var client *lib.Client
+
+	if *mtu != "" {
+		if *mtu == "max" {
+			lib.SetMTU(msgs.MAX_UDP_MTU)
+		} else {
+			mtuU, err := strconv.ParseUint(*mtu, 0, 16)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "could not parse mtu: %v", err)
+				os.Exit(2)
+			}
+			lib.SetMTU(mtuU)
+		}
+	}
 
 	commands = make(map[string]commandSpec)
 
@@ -675,7 +691,6 @@ func main() {
 		blockId := msgs.BlockId(*findBlockId)
 		log.Info("looking for %v", blockId)
 		ch := make(chan any)
-		lib.SetMTU(msgs.MAX_UDP_MTU)
 		analyzedFiles := uint64(0)
 		go func() {
 			err := lib.Parwalk(
@@ -766,12 +781,39 @@ func main() {
 
 	// Be relaxed here: if we're running migrations or similar,
 	// do not hammer the shards.
-	client.SetShardTimeouts(
-		lib.NewReqTimeouts(1*time.Second, 60*time.Second, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
-	)
-	client.SetCDCTimeouts(
-		lib.NewReqTimeouts(1*time.Second, 60*time.Second, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
-	)
+	shardTimeouts := lib.DefaultShardTimeout
+	printTimeouts := false
+	if *shardInitialTimeout > 0 {
+		printTimeouts = true
+		shardTimeouts.Initial = *shardInitialTimeout
+	}
+	if *shardMaxTimeout > 0 {
+		printTimeouts = true
+		shardTimeouts.Max = *shardMaxTimeout
+	}
+	if *shardOverallTimeout >= 0 {
+		printTimeouts = true
+		shardTimeouts.Overall = *shardOverallTimeout
+	}
+	client.SetShardTimeouts(&shardTimeouts)
+	cdcTimeouts := lib.DefaultCDCTimeout
+	if *cdcInitialTimeout > 0 {
+		printTimeouts = true
+		cdcTimeouts.Initial = *cdcInitialTimeout
+	}
+	if *cdcMaxTimeout > 0 {
+		printTimeouts = true
+		cdcTimeouts.Max = *cdcMaxTimeout
+	}
+	if *cdcOverallTimeout >= 0 {
+		printTimeouts = true
+		cdcTimeouts.Overall = *cdcOverallTimeout
+	}
+	client.SetCDCTimeouts(&cdcTimeouts)
+	if printTimeouts {
+		log.Info("shard timeouts: %+v", shardTimeouts)
+		log.Info("CDC timeouts: %+v", cdcTimeouts)
+	}
 
 	spec.run()
 }

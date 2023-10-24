@@ -660,7 +660,7 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 	return key
 }
 
-func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
+func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
 	alert := log.NewNCAlert(10 * time.Second)
@@ -687,6 +687,15 @@ func sendMetrics(log *lib.Logger, env *env, failureDomain string) {
 			metrics.Tag("blockservice", bsId.String())
 			metrics.Tag("failuredomain", failureDomain)
 			metrics.FieldU64("blocks", bsStats.blocksErased)
+			metrics.Timestamp(now)
+		}
+		for bsId, bsInfo := range blockServices {
+			metrics.Measurement("eggsfs_blocks_storage")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("storageclass", bsInfo.storageClass.String())
+			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
+			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)
 			metrics.Timestamp(now)
 		}
 		err := lib.SendMetrics(metrics.Payload())
@@ -975,7 +984,7 @@ func main() {
 	if *metrics {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			sendMetrics(log, env, *failureDomainStr)
+			sendMetrics(log, env, blockServices, *failureDomainStr)
 		}()
 	}
 

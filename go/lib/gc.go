@@ -93,22 +93,17 @@ func DestructFile(
 				// Check if the block was stale/decommissioned, in which case
 				// there might be nothing we can do here, for now.
 				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
-				conn, err := client.GetWriteBlocksConn(log, !acceptFailure, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
+				proof, err := client.EraseBlock(log, !acceptFailure, &block)
 				if err != nil {
 					if acceptFailure {
-						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v", block.BlockServiceId, id)
+						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)
 						return nil
 					}
 					return err
 				}
-				proof, err = EraseBlock(log, conn, &block)
-				if err != nil {
-					conn.Close()
-					return fmt.Errorf("%v: could not erase block %+v: %w", id, block, err)
-				} else {
-					conn.Put()
-				}
+				certifyReq.Proofs[i].BlockId = block.BlockId
+				certifyReq.Proofs[i].Proof = proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
 				certifyReq.Proofs[i].BlockId = block.BlockId
 				certifyReq.Proofs[i].Proof = proof

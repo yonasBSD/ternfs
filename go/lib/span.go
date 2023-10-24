@@ -258,24 +258,13 @@ func (c *Client) CreateSpan(
 			Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
 		}
 		for i, block := range initiateResp.Blocks {
-			var conn BlocksConn
-			conn, err = c.GetWriteBlocksConn(log, true, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2)
-			if err != nil {
-				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
-				log.Info("failed to get blocks conn to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
-				goto FailedAttempt
-			}
-			defer conn.Close()
-			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
 			var proof [8]byte
-			proof, err = WriteBlock(log, conn, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
+			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
+			proof, err = c.WriteBlock(log, true, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
 			if err != nil {
-				conn.Close()
-				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
 				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
+				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
 				goto FailedAttempt
-			} else {
-				conn.Put()
 			}
 			certifyReq.Proofs[i].BlockId = block.BlockId
 			certifyReq.Proofs[i].Proof = proof
@@ -428,28 +417,16 @@ func (c *Client) fetchCell(
 	}()
 	block := &body.Blocks[blockIx]
 	blockService := &blockServices[block.BlockServiceIx]
-	var conn BlocksConn
-	conn, err = c.GetReadBlocksConn(log, true, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
-	if err != nil {
-		log.Info("could not connect to block service %+v", blockService)
-		return nil, err
-	}
-	defer conn.Close()
-	err = FetchBlock(log, conn, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
+	var data *[]byte
+	data, err = c.FetchBlock(log, true, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err
 	}
-	cursor := 0
-	for cursor < int(body.CellSize) {
-		var read int
-		read, err = conn.Read((*buf)[cursor:])
-		if err != nil {
-			return nil, err
-		}
-		cursor += read
+	defer c.PutFetchedBlock(data)
+	if copy(*buf, *data) != int(body.CellSize) {
+		panic(fmt.Errorf("runt block cell"))
 	}
-	conn.Put()
 	return buf, nil
 }
 

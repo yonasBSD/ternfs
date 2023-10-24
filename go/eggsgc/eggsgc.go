@@ -117,6 +117,7 @@ func main() {
 	shardsPerGroup := len(shards) / int(*parallel)
 	terminateChan := make(chan any)
 	var stats lib.GCStats
+
 	// directories
 	for group0 := 0; group0 < int(*parallel); group0++ {
 		group := group0

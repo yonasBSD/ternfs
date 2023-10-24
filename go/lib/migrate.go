@@ -31,33 +31,22 @@ func fetchBlock(
 	blockServices []msgs.BlockService,
 	blockSize uint32,
 	block *msgs.FetchedBlock,
-	buf *bytes.Buffer,
-) error {
+) (*[]byte, error) {
 	blockService := &blockServices[block.BlockServiceIx]
-	var srcConn BlocksConn
-	srcConn, err := client.GetReadBlocksConn(log, true, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+	data, err := client.FetchBlock(log, true, blockService, block.BlockId, 0, blockSize)
 	if err != nil {
-		return err
-	}
-	defer srcConn.Close()
-	if err = FetchBlock(log, srcConn, blockService, block.BlockId, 0, blockSize); err != nil {
 		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
-		return err
+		return nil, err
 	}
-	var readBytes int64
-	readBytes, err = buf.ReadFrom(io.LimitReader(srcConn, int64(blockSize)))
-	if err != nil {
-		return err
+	if len(*data) != int(blockSize) {
+		panic(fmt.Errorf("len(*data) %v != blockSize %v", len(*data), int(blockSize)))
 	}
-	if readBytes != int64(blockSize) {
-		return fmt.Errorf("read %v bytes instead of %v", readBytes, blockSize)
-	}
-	readCrc := msgs.Crc(crc32c.Sum(0, buf.Bytes()))
+	readCrc := msgs.Crc(crc32c.Sum(0, *data))
 	if block.Crc != readCrc {
-		return fmt.Errorf("read %v CRC instead of %v", readCrc, block.Crc)
+		client.PutFetchedBlock(data)
+		return nil, fmt.Errorf("read %v CRC instead of %v", readCrc, block.Crc)
 	}
-	srcConn.Put()
-	return nil
+	return data, nil
 }
 
 func writeBlock(
@@ -101,21 +90,12 @@ func writeBlock(
 			return 0, err
 		}
 		dstBlock := &initiateSpanResp.Resp.Blocks[0]
-		var dstConn BlocksConn
-		certifySpanResp := msgs.AddSpanCertifyResp{}
 		var writeProof [8]byte
-		dstConn, err = client.GetWriteBlocksConn(log, true, dstBlock.BlockServiceId, dstBlock.BlockServiceIp1, dstBlock.BlockServicePort1, dstBlock.BlockServiceIp2, dstBlock.BlockServicePort2)
+		writeProof, err = client.WriteBlock(log, true, dstBlock, newContents, blockSize, block.Crc)
+		certifySpanResp := msgs.AddSpanCertifyResp{}
 		if err != nil {
-			log.Info("could not reach block service, might retry")
+			log.Info("could not write to block service, might retry: %v", err)
 			goto FailedAttempt
-		}
-		writeProof, err = WriteBlock(log, dstConn, dstBlock, newContents, blockSize, block.Crc)
-		if err != nil {
-			dstConn.Close()
-			log.Info("could not write to block service, might retry")
-			goto FailedAttempt
-		} else {
-			dstConn.Put()
 		}
 		err = client.ShardRequest(
 			log,
@@ -163,7 +143,6 @@ func writeBlock(
 func copyBlock(
 	log *Logger,
 	client *Client,
-	bufPool *sync.Pool,
 	scratch *scratchFile,
 	file msgs.InodeId,
 	blockServices []msgs.BlockService,
@@ -172,20 +151,19 @@ func copyBlock(
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 ) (msgs.BlockId, bool, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufPool.Put(buf)
-	if err := fetchBlock(log, client, blockServices, blockSize, block, buf); err != nil {
+	data, err := fetchBlock(log, client, blockServices, blockSize, block)
+	if err != nil {
 		return 0, true, nil // might find other block services
 	}
-	blockId, err := writeBlock(log, client, scratch, file, blacklist, blockSize, storageClass, block, buf)
+	blockId, err := writeBlock(log, client, scratch, file, blacklist, blockSize, storageClass, block, bytes.NewReader(*data))
+	client.PutFetchedBlock(data)
 	return blockId, false, err
 }
 
 func reconstructBlock(
 	log *Logger,
 	client *Client,
-	bufPool *sync.Pool,
+	bufPool *BufPool,
 	fileId msgs.InodeId,
 	scratchFile *scratchFile,
 	blockServices []msgs.BlockService,
@@ -211,15 +189,14 @@ func reconstructBlock(
 			continue
 		}
 		// try to fetch
-		buf := bufPool.Get().(*bytes.Buffer)
-		buf.Reset()
-		defer bufPool.Put(buf)
-		if err := fetchBlock(log, client, blockServices, blockSize, block, buf); err != nil {
+		data, err := fetchBlock(log, client, blockServices, blockSize, block)
+		if err != nil {
 			log.Info("could not fetch block %v: %v, might try other ones", block.BlockId, err)
 			continue
 		}
+		defer client.PutFetchedBlock(data)
 		// we managed to fetch, good
-		haveBlocks = append(haveBlocks, buf.Bytes())
+		haveBlocks = append(haveBlocks, (*data))
 		haveBlocksIxs = append(haveBlocksIxs, uint8(blockIx))
 		if len(haveBlocks) >= D {
 			break
@@ -230,13 +207,10 @@ func reconstructBlock(
 	}
 	// we got everything we need
 	rs := rs.Get(parity)
-	wantBuf := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(wantBuf)
-	wantBuf.Reset()
-	wantBuf.Grow(int(blockSize))
-	wantBytes := wantBuf.Bytes()[:blockSize]
-	rs.RecoverInto(haveBlocksIxs, haveBlocks, uint8(blockToMigrateIx), wantBytes)
-	return writeBlock(log, client, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes))
+	wantBytes := bufPool.Get(int(blockSize))
+	defer bufPool.Put(wantBytes)
+	rs.RecoverInto(haveBlocksIxs, haveBlocks, uint8(blockToMigrateIx), *wantBytes)
+	return writeBlock(log, client, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(*wantBytes))
 }
 
 type timeStats struct {
@@ -269,7 +243,7 @@ func printStats(log *Logger, client *Client, stats *MigrateStats, timeStats *tim
 func migrateBlocksInFileInternal(
 	log *Logger,
 	client *Client,
-	bufPool *sync.Pool,
+	bufPool *BufPool,
 	stats *MigrateStats,
 	timeStats *timeStats,
 	blockServiceId msgs.BlockServiceId,
@@ -351,7 +325,7 @@ func migrateBlocksInFileInternal(
 						}
 						var err error
 						var canRetry bool
-						newBlock, canRetry, err = copyBlock(log, client, bufPool, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
+						newBlock, canRetry, err = copyBlock(log, client, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
 						if err != nil && !canRetry {
 							return err
 						}
@@ -416,16 +390,6 @@ type MigrateStats struct {
 	MigratedBytes  uint64
 }
 
-func newBufPool() *sync.Pool {
-	pool := sync.Pool{
-		New: func() any {
-			var buf bytes.Buffer
-			return &buf
-		},
-	}
-	return &pool
-}
-
 // Migrates the blocks in that block service, in that file.
 //
 // If the source block service it's still healthy, it'll just copy the block over, otherwise
@@ -440,7 +404,7 @@ func MigrateBlocksInFile(
 	scratchFile := scratchFile{}
 	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
 	defer keepAlive.stop()
-	return migrateBlocksInFileInternal(log, client, newBufPool(), stats, newTimeStats(), blockServiceId, &scratchFile, fileId)
+	return migrateBlocksInFileInternal(log, client, NewBufPool(), stats, newTimeStats(), blockServiceId, &scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
@@ -448,7 +412,7 @@ func MigrateBlocksInFile(
 func migrateBlocksInternal(
 	log *Logger,
 	client *Client,
-	bufPool *sync.Pool,
+	bufPool *BufPool,
 	stats *MigrateStats,
 	timeStats *timeStats,
 	shid msgs.ShardId,
@@ -488,7 +452,7 @@ func MigrateBlocks(
 	blockServiceId msgs.BlockServiceId,
 ) error {
 	timeStats := newTimeStats()
-	bufPool := newBufPool()
+	bufPool := NewBufPool()
 	if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, shid, blockServiceId); err != nil {
 		return err
 	}
@@ -504,7 +468,7 @@ func MigrateBlocksInAllShards(
 	blockServiceId msgs.BlockServiceId,
 ) error {
 	timeStats := newTimeStats()
-	bufPool := newBufPool()
+	bufPool := NewBufPool()
 	var wg sync.WaitGroup
 	wg.Add(256)
 	failed := int32(0)

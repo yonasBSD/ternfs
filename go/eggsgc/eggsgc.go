@@ -193,7 +193,7 @@ func main() {
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
-					sleepFor := time.Second * 5
+					sleepFor := time.Second * 30
 					log.Info("metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {

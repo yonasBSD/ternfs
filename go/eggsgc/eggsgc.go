@@ -99,15 +99,15 @@ func main() {
 	log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
-	//
-	// The timeout is _extremely_ lax because we run GC with a lot of parallelism in prod,
-	// and we want GC to have low priority.
 	options := &lib.GCOptions{
-		ShuckleTimeouts:        lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter),
-		ShardTimeouts:          lib.NewReqTimeouts(5*time.Second, 60*time.Second, 0, lib.DefaultShardTimeout.Growth, lib.DefaultShardTimeout.Jitter),
-		CDCTimeouts:            lib.NewReqTimeouts(5*time.Second, 60*time.Second, 0, lib.DefaultCDCTimeout.Growth, lib.DefaultCDCTimeout.Jitter),
+		ShuckleTimeouts:        &lib.DefaultShuckleTimeout,
+		ShardTimeouts:          &lib.DefaultShardTimeout,
+		CDCTimeouts:            &lib.DefaultCDCTimeout,
 		RetryOnDestructFailure: *retryOnDestructFailure,
 	}
+	options.ShuckleTimeouts.Overall = 0
+	options.ShardTimeouts.Overall = 0
+	options.ShuckleTimeouts.Overall = 0
 
 	dirInfoCache := lib.NewDirInfoCache()
 	client, err := lib.GCClient(log, *shuckleAddress, options)

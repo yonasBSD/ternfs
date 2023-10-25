@@ -752,7 +752,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false, PrintQuietAlerts: true})
 
 	if *mtu > 0 {
 		log.Info("Setting MTU to %v", *mtu)

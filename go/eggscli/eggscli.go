@@ -883,8 +883,6 @@ func main() {
 	}
 	defer client.Close()
 
-	// Be relaxed here: if we're running migrations or similar,
-	// do not hammer the shards.
 	shardTimeouts := lib.DefaultShardTimeout
 	printTimeouts := false
 	if *shardInitialTimeout > 0 {

@@ -23,20 +23,28 @@ type xmonRequest struct {
 	quietPeriod time.Duration
 	binnable    bool
 	message     string
+	file        string
+	line        int
 }
 
 type Xmon struct {
-	appType     string
-	appInstance string
-	hostname    string
-	xmonAddr    string
-	requests    chan xmonRequest
+	appType          string
+	appInstance      string
+	hostname         string
+	xmonAddr         string
+	requests         chan xmonRequest
+	onlyLogging      bool
+	printQuietAlerts bool
 }
 
 type XmonConfig struct {
-	Prod        bool
-	AppInstance string
-	AppType     string
+	// If this is true, the alerts won't actually be sent,
+	// but it'll still log alert creation etc
+	OnlyLogging      bool
+	Prod             bool
+	AppInstance      string
+	AppType          string
+	PrintQuietAlerts bool
 }
 
 func (x *Xmon) packString(buf *bytes.Buffer, s string) {
@@ -129,7 +137,10 @@ func (x *Xmon) run(log *Logger) {
 	requests := make([]xmonRequest, requestsCap)
 	requestsHead := uint64(0)
 	requestsTail := uint64(0)
-	binnableAlerts := make(map[int64]struct{})
+	var binnableAlerts map[int64]struct{}
+	if !x.onlyLogging {
+		binnableAlerts = make(map[int64]struct{})
+	}
 	// alerts in quiet period
 	quietAlerts := make(map[int64]*quietAlert)
 
@@ -142,45 +153,53 @@ func (x *Xmon) run(log *Logger) {
 	var err error
 
 Reconnect:
-	// close previous conn
-	if conn != nil {
-		conn.Close()
-		conn = nil
-	}
-	// delay if we're recovering after an error
-	if err != nil {
-		log.Info("about to reconnect to Xmon (%v) after err %v, waiting for 1 sec first", x.xmonAddr, err)
-		time.Sleep(time.Second)
+	if x.onlyLogging {
+		log.Info("using xmon only for logging")
 	} else {
-		log.Info("connecting to Xmon (%v)", x.xmonAddr)
+		// close previous conn
+		if conn != nil {
+			conn.Close()
+			conn = nil
+		}
+		// delay if we're recovering after an error
+		if err != nil {
+			log.Info("about to reconnect to Xmon (%v) after err %v, waiting for 1 sec first", x.xmonAddr, err)
+			time.Sleep(time.Second)
+		} else {
+			log.Info("connecting to Xmon (%v)", x.xmonAddr)
+		}
+		// connect
+		var someConn net.Conn
+		someConn, err = net.Dial("tcp", x.xmonAddr)
+		if err != nil {
+			log.ErrorNoAlert("could not connect to xmon, will reconnect: %v", err)
+			goto Reconnect
+		}
+		conn = someConn.(*net.TCPConn)
+		// send logon message
+		x.packLogon(buffer)
+		if _, err = buffer.WriteTo(conn); err != nil {
+			log.ErrorNoAlert("could not logon to xmon, will reconnect: %v", err)
+			goto Reconnect
+		}
+		log.Info("connected to xmon, logon sent")
 	}
-	// connect
-	var someConn net.Conn
-	someConn, err = net.Dial("tcp", x.xmonAddr)
-	if err != nil {
-		log.ErrorNoAlert("could not connect to xmon, will reconnect: %v", err)
-		goto Reconnect
-	}
-	conn = someConn.(*net.TCPConn)
-	// send logon message
-	x.packLogon(buffer)
-	if _, err = buffer.WriteTo(conn); err != nil {
-		log.ErrorNoAlert("could not logon to xmon, will reconnect: %v", err)
-		goto Reconnect
-	}
-	log.Info("connected to xmon, logon sent")
 	// we're in, start loop
 	gotHeartbeatAt := time.Time{}
+	quietAlertsLevel := DEBUG
+	if x.printQuietAlerts {
+		quietAlertsLevel = ERROR
+	}
 	for {
 		// reconnect when too much time has passed
-		if !gotHeartbeatAt.Equal(time.Time{}) && time.Since(gotHeartbeatAt) > time.Second*2*time.Duration(heartbeatIntervalSecs) {
+		if !x.onlyLogging && !gotHeartbeatAt.Equal(time.Time{}) && time.Since(gotHeartbeatAt) > time.Second*2*time.Duration(heartbeatIntervalSecs) {
 			log.Info("heartbeat deadline has passed, will reconnect")
 			gotHeartbeatAt = time.Time{}
 			goto Reconnect
 		}
 
 		// fetch a bunch of requests and then send them out
-		if !gotHeartbeatAt.Equal(time.Time{}) {
+		if x.onlyLogging || !gotHeartbeatAt.Equal(time.Time{}) {
 			now := time.Now()
 			// unquiet alerts that are due
 			for aid, alert := range quietAlerts {
@@ -214,14 +233,14 @@ Reconnect:
 						if req.binnable {
 							panic(fmt.Errorf("got alert create with quietPeriod=%v, but it is binnable", req.quietPeriod))
 						}
-						log.Info("got non-binnable alertId=%v message=%q quietPeriod=%v, will wait", req.alertId, req.message, req.quietPeriod)
+						log.LogLocation(quietAlertsLevel, req.file, req.line, "quiet non-binnable alertId=%v message=%q quietPeriod=%v, will wait", req.alertId, req.message, req.quietPeriod)
 						quietAlerts[req.alertId] = &quietAlert{
 							message:    req.message,
 							quietUntil: now.Add(req.quietPeriod),
 						}
 						goto SkipRequest
-					} else if req.binnable && len(binnableAlerts) > maxBinnableAlerts {
-						log.ErrorNoAlert("skipping create alert, alertId=%v binnable=%v message=%q, too many already", req.alertId, req.binnable, req.message)
+					} else if req.binnable && !x.onlyLogging && len(binnableAlerts) > maxBinnableAlerts {
+						log.LogLocation(ERROR, req.file, req.line, "skipping create alert, alertId=%v binnable=%v message=%q, too many already", req.alertId, req.binnable, req.message)
 						// if we don't have the "too many alerts" alert, create it
 						if _, ok := binnableAlerts[tooManyAlertsAlertId]; !ok {
 							req = &xmonRequest{
@@ -234,7 +253,7 @@ Reconnect:
 							goto SkipRequest
 						}
 					} else {
-						log.Info("sending create alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+						log.LogLocation(ERROR, req.file, req.line, "creating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 					}
 				case XMON_UPDATE:
 					if req.binnable {
@@ -242,35 +261,37 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.Info("skipping update alertId=%v message=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
+						log.LogLocation(quietAlertsLevel, req.file, req.line, "skipping update alertId=%v message=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
 						quiet.message = req.message
 						goto SkipRequest
 					}
-					log.Info("sending update alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+					log.LogLocation(ERROR, req.file, req.line, "updating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 				case XMON_CLEAR:
 					if req.binnable {
 						panic(fmt.Errorf("unexpected clear to non-binnable alert"))
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.Debug("skipping clear alertId=%v since it's quiet until %v", req.alertId, quiet.quietUntil)
+						log.LogLocation(DEBUG, req.file, req.line, "skipping clear alertId=%v lastMessage=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
 						delete(quietAlerts, req.alertId)
 						goto SkipRequest
 					}
-					log.Info("sending clear alert, alertId=%v", req.alertId)
+					log.LogLocation(INFO, req.file, req.line, "sending clear alert, alertId=%v lastMessage=%v", req.alertId, req.message)
 				default:
 					panic(fmt.Errorf("bad req type %v", req.msgType))
 				}
-				x.packRequest(buffer, req)
-				if _, err = buffer.WriteTo(conn); err != nil {
-					log.ErrorNoAlert("could not write request to xmon: %v", err)
-					// note that we haven't removed the request from the ring buffer yet
-					goto Reconnect
-				}
-				switch req.msgType {
-				case XMON_CREATE:
-					if req.binnable {
-						binnableAlerts[req.alertId] = struct{}{}
+				if !x.onlyLogging {
+					x.packRequest(buffer, req)
+					if _, err = buffer.WriteTo(conn); err != nil {
+						log.ErrorNoAlert("could not write request to xmon: %v", err)
+						// note that we haven't removed the request from the ring buffer yet
+						goto Reconnect
+					}
+					switch req.msgType {
+					case XMON_CREATE:
+						if req.binnable {
+							binnableAlerts[req.alertId] = struct{}{}
+						}
 					}
 				}
 			SkipRequest:
@@ -278,69 +299,83 @@ Reconnect:
 			}
 		}
 		// read all responses, not waiting too long
-		for {
-			if err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * 100)); err != nil {
-				log.ErrorNoAlert("could not set deadline: %v", err)
-				goto Reconnect
-			}
-			var respType int32
-			if err = binary.Read(conn, binary.BigEndian, &respType); err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() { // nothing to read
-					break
-				}
-				log.ErrorNoAlert("could not read request from xmon: %v", err)
-				goto Reconnect
-			}
-			switch respType {
-			case 0x0:
-				if gotHeartbeatAt.Equal(time.Time{}) {
-					log.Info("got first xmon heartbeat, we're in")
-				}
-				gotHeartbeatAt = time.Now()
-				x.packUpdate(buffer)
-				if _, err = buffer.WriteTo(conn); err != nil {
-					log.ErrorNoAlert("cold not send update to xmon: %v", err)
-					goto Reconnect
-				}
-			case 0x1:
-				// we need to wait for the rest
-				if err = conn.SetReadDeadline(time.Time{}); err != nil {
+		if x.onlyLogging {
+			time.Sleep(time.Millisecond * 100)
+		} else {
+			for {
+				if err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * 100)); err != nil {
 					log.ErrorNoAlert("could not set deadline: %v", err)
 					goto Reconnect
 				}
-				var alertId int64
-				if err = binary.Read(conn, binary.BigEndian, &alertId); err != nil {
-					log.ErrorNoAlert("could not read alert id: %v", err)
+				var respType int32
+				if err = binary.Read(conn, binary.BigEndian, &respType); err != nil {
+					if netErr, ok := err.(net.Error); ok && netErr.Timeout() { // nothing to read
+						break
+					}
+					log.ErrorNoAlert("could not read request from xmon: %v", err)
 					goto Reconnect
 				}
-				delete(binnableAlerts, alertId)
-				log.Info("UI cleared alert alertId=%v", alertId)
-			default:
-				panic(fmt.Errorf("bad message type %v", respType))
+				switch respType {
+				case 0x0:
+					if gotHeartbeatAt.Equal(time.Time{}) {
+						log.Info("got first xmon heartbeat, we're in")
+					}
+					gotHeartbeatAt = time.Now()
+					x.packUpdate(buffer)
+					if _, err = buffer.WriteTo(conn); err != nil {
+						log.ErrorNoAlert("cold not send update to xmon: %v", err)
+						goto Reconnect
+					}
+				case 0x1:
+					// we need to wait for the rest
+					if err = conn.SetReadDeadline(time.Time{}); err != nil {
+						log.ErrorNoAlert("could not set deadline: %v", err)
+						goto Reconnect
+					}
+					var alertId int64
+					if err = binary.Read(conn, binary.BigEndian, &alertId); err != nil {
+						log.ErrorNoAlert("could not read alert id: %v", err)
+						goto Reconnect
+					}
+					delete(binnableAlerts, alertId)
+					log.Info("UI cleared alert alertId=%v", alertId)
+				default:
+					panic(fmt.Errorf("bad message type %v", respType))
+				}
 			}
 		}
 	}
 }
 
 func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
-	if config.AppInstance == "" {
-		panic(fmt.Errorf("empty app instance"))
-	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
-	hostname = strings.Split(hostname, ".")[0]
-	x := &Xmon{
-		appType:     config.AppType,
-		appInstance: config.AppInstance + "@" + hostname,
-		hostname:    hostname,
-		requests:    make(chan xmonRequest, 4096),
-	}
-	if config.Prod {
-		x.xmonAddr = "REDACTED"
+	var x *Xmon
+	if config.OnlyLogging {
+		x = &Xmon{
+			requests:         make(chan xmonRequest, 4096),
+			printQuietAlerts: config.PrintQuietAlerts,
+			onlyLogging:      true,
+		}
 	} else {
-		x.xmonAddr = "REDACTED"
+		if config.AppInstance == "" {
+			panic(fmt.Errorf("empty app instance"))
+		}
+		hostname, err := os.Hostname()
+		if err != nil {
+			return nil, err
+		}
+		hostname = strings.Split(hostname, ".")[0]
+		x := &Xmon{
+			appType:          config.AppType,
+			appInstance:      config.AppInstance + "@" + hostname,
+			hostname:         hostname,
+			requests:         make(chan xmonRequest, 4096),
+			printQuietAlerts: config.PrintQuietAlerts,
+		}
+		if config.Prod {
+			x.xmonAddr = "REDACTED"
+		} else {
+			x.xmonAddr = "REDACTED"
+		}
 	}
 	go x.run(log)
 	return x, nil
@@ -368,16 +403,18 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binn
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
-		log.LogStack(1, INFO, "creating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
+		// log.LogStack(1, INFO, "creating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
 			msgType:     XMON_CREATE,
 			alertId:     *alertId,
 			quietPeriod: quietPeriod,
 			binnable:    binnable,
 			message:     message,
+			file:        file,
+			line:        line,
 		}
 	} else {
-		log.LogStack(1, INFO, "updating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
+		// log.LogStack(1, INFO, "updating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
 			msgType:     XMON_UPDATE,
 			alertId:     *alertId,
@@ -411,10 +448,10 @@ func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {
 	if a.alertId < 0 {
 		return
 	}
-	log.LogStack(1, INFO, "clearing alert alertId=%v lastMessage=%v", a.alertId, a.lastMessage)
 	xmon.requests <- xmonRequest{
 		msgType: XMON_CLEAR,
 		alertId: a.alertId,
+		message: a.lastMessage,
 	}
 	a.alertId = -1
 }

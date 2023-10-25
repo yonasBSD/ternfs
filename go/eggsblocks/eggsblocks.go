@@ -812,11 +812,12 @@ func main() {
 		level = lib.TRACE
 	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{
-		Level:   level,
-		Syslog:  *syslog,
-		Xmon:    *xmon,
-		AppName: "blockservice",
-		AppType: "restech.daytime",
+		Level:            level,
+		Syslog:           *syslog,
+		Xmon:             *xmon,
+		AppName:          "blockservice",
+		AppType:          "restech.daytime",
+		PrintQuietAlerts: true,
 	})
 
 	if *profileFile != "" {

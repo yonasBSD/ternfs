@@ -47,12 +47,13 @@ const (
 )
 
 type LoggerOptions struct {
-	Level       LogLevel
-	Syslog      bool
-	AppName     string
-	AppInstance string
-	Xmon        string // "dev", "qa", empty string for no xmon
-	AppType     string // only used for xmon
+	Level            LogLevel
+	Syslog           bool
+	AppName          string
+	AppInstance      string
+	Xmon             string // "dev", "qa", empty string for no xmon
+	AppType          string // only used for xmon
+	PrintQuietAlerts bool   // whether to print alerts in quiet period
 }
 
 type Logger struct {
@@ -133,6 +134,9 @@ func NewLogger(
 		out: out,
 	}
 
+	xmonConfig := XmonConfig{
+		PrintQuietAlerts: options.PrintQuietAlerts,
+	}
 	if options.Xmon != "" {
 		if options.Xmon != "prod" && options.Xmon != "qa" {
 			panic(fmt.Errorf("invalid xmon environment %q", options.Xmon))
@@ -141,15 +145,16 @@ func NewLogger(
 		if len(options.AppInstance) > 0 {
 			ai = fmt.Sprintf("%s:%s", options.AppName, options.AppInstance)
 		}
-		var err error
-		logger.xmon, err = NewXmon(logger, &XmonConfig{
-			Prod:        options.Xmon == "prod",
-			AppInstance: ai,
-			AppType:     options.AppType,
-		})
-		if err != nil {
-			panic(err)
-		}
+		xmonConfig.Prod = options.Xmon == "prod"
+		xmonConfig.AppInstance = ai
+		xmonConfig.AppType = options.AppType
+	} else {
+		xmonConfig.OnlyLogging = true
+	}
+	var err error
+	logger.xmon, err = NewXmon(logger, &xmonConfig)
+	if err != nil {
+		panic(err)
 	}
 
 	return logger
@@ -186,6 +191,12 @@ func getFileLine(calldepth int) (string, int) {
 	return file, line
 }
 
+func (l *Logger) LogLocation(level LogLevel, file string, line int, format string, v ...any) {
+	if l.shouldLog(level) {
+		l.formatLog(level, time.Now(), file, line, format, v...)
+	}
+}
+
 func (l *Logger) LogStack(calldepth int, level LogLevel, format string, v ...any) {
 	if l.shouldLog(level) {
 		file, line := getFileLine(1 + calldepth)
@@ -216,18 +227,10 @@ func (l *Logger) ErrorNoAlert(format string, v ...any) {
 }
 
 func (l *Logger) NewNCAlert(quietTime time.Duration) *XmonNCAlert {
-	if l.xmon == nil {
-		return &XmonNCAlert{}
-	} else {
-		return l.xmon.NewNCAlert(quietTime)
-	}
+	return l.xmon.NewNCAlert(quietTime)
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
-	l.LogStack(1+calldepth, ERROR, "ALERT "+format, v...)
-	if l.xmon == nil {
-		return
-	}
 	l.xmon.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
 }
 
@@ -236,10 +239,6 @@ func (l *Logger) RaiseAlert(format string, v ...any) {
 }
 
 func (l *Logger) RaiseNCStack(alert *XmonNCAlert, calldepth int, format string, v ...any) {
-	l.LogStack(1+calldepth, ERROR, "ALERT "+format, v...)
-	if l.xmon == nil {
-		return
-	}
 	alert.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
 }
 
@@ -248,13 +247,6 @@ func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
 }
 
 func (l *Logger) ClearNC(alert *XmonNCAlert) {
-	if alert.lastMessage != "" {
-		l.LogStack(1, INFO, "clearing alert, last message %q", alert.lastMessage)
-	}
-	alert.lastMessage = ""
-	if l.xmon == nil {
-		return
-	}
 	alert.Clear(l, l.xmon)
 }
 

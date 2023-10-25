@@ -719,7 +719,7 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	logger = lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog})
+	logger = lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, PrintQuietAlerts: true})
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)

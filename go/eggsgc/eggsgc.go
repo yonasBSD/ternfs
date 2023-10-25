@@ -23,12 +23,13 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
-	parallel := flag.Uint("parallel", 1, "The shards will be split in N groups and done in parallel.")
+	dirsParallel := flag.Uint("directories-parallel", 1, "")
+	filesParallel := flag.Uint("files-parallel", 1, "")
 	metrics := flag.Bool("metrics", false, "")
 	flag.Parse()
 
-	if *parallel < 1 {
-		fmt.Fprintf(os.Stderr, "-parallel must be at least 1.")
+	if *dirsParallel < 1 || *filesParallel < 1 {
+		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel must be at least 1.")
 		os.Exit(2)
 	}
 
@@ -41,12 +42,12 @@ func main() {
 		}
 	}
 
-	if int(*parallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).", len(shards))
+	if int(*filesParallel) > len(shards) || int(*dirsParallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel can't be greater than %v (number of shards).", len(shards))
 		os.Exit(2)
 	}
-	if len(shards)%int(*parallel) != 0 {
-		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).", len(shards))
+	if len(shards)%int(*filesParallel) != 0 || len(shards)%int(*dirsParallel) != 0 {
+		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel does not divide %v (number of shards).", len(shards))
 		os.Exit(2)
 	}
 
@@ -114,12 +115,12 @@ func main() {
 		panic(err)
 	}
 	var cdcMu sync.Mutex
-	shardsPerGroup := len(shards) / int(*parallel)
 	terminateChan := make(chan any)
 	var stats lib.GCStats
 
 	// directories
-	for group0 := 0; group0 < int(*parallel); group0++ {
+	for group0 := 0; group0 < int(*dirsParallel); group0++ {
+		shardsPerGroup := len(shards) / int(*dirsParallel)
 		group := group0
 		rand := wyhash.New(uint64(group))
 		go func() {
@@ -136,7 +137,8 @@ func main() {
 		}()
 	}
 	// files
-	for group0 := 0; group0 < int(*parallel); group0++ {
+	for group0 := 0; group0 < int(*filesParallel); group0++ {
+		shardsPerGroup := len(shards) / int(*filesParallel)
 		group := group0
 		rand := wyhash.New(uint64(group))
 		go func() {
@@ -153,7 +155,8 @@ func main() {
 		}()
 	}
 	// zero block services
-	for group0 := 0; group0 < int(*parallel); group0++ {
+	for group0 := 0; group0 < int(*dirsParallel); group0++ {
+		shardsPerGroup := len(shards) / int(*dirsParallel)
 		group := group0
 		rand := wyhash.New(uint64(group))
 		go func() {

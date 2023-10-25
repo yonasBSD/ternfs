@@ -533,7 +533,7 @@ func (cm *clientMetadata) init(log *Logger) error {
 			read, _, err := cm.sock.ReadFrom(respBuf)
 			if err != nil {
 				if cm.sockClosed {
-					log.Debug("got error while reading from metadata socket when winded down: %v", err)
+					log.Debug("got error while reading from metadata socket when wound down: %v", err)
 				} else {
 					log.RaiseAlert("got error while reading from metadata socket: %v", err)
 				}
@@ -783,10 +783,11 @@ TraverseDirectories:
 	return inheritedFrom, nil
 }
 
-func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error) {
+func (client *Client) ResolvePathWithParent(log *Logger, path string) (msgs.InodeId, msgs.InodeId, error) {
 	if !filepath.IsAbs(path) {
-		return msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
+		return msgs.NULL_INODE_ID, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
 	}
+	parent := msgs.NULL_INODE_ID
 	id := msgs.ROOT_DIR_INODE_ID
 	for _, segment := range strings.Split(filepath.Clean(path), "/")[1:] {
 		if segment == "" {
@@ -794,11 +795,17 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 		}
 		resp := msgs.LookupResp{}
 		if err := client.ShardRequest(log, id.Shard(), &msgs.LookupReq{DirId: id, Name: segment}, &resp); err != nil {
-			return msgs.NULL_INODE_ID, err
+			return msgs.NULL_INODE_ID, msgs.NULL_INODE_ID, err
 		}
+		parent = id
 		id = resp.TargetId
 	}
-	return id, nil
+	return id, parent, nil
+}
+
+func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error) {
+	id, _, err := client.ResolvePathWithParent(log, path)
+	return id, err
 }
 
 type WriteBlockFuture struct {

@@ -52,6 +52,7 @@ func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
 	err := lib.Parwalk(
 		log,
 		client,
+		"/",
 		func(parent msgs.InodeId, id msgs.InodeId, path string) error {
 			if id.Type() == msgs.DIRECTORY {
 				if atomic.AddUint64(&examinedDirs, 1)%1000000 == 0 {
@@ -144,6 +145,26 @@ func outputBriefFileSizes(log *lib.Logger, client *lib.Client) {
 		}
 		fmt.Printf("%v,%v\n", upperBound, size)
 	}
+}
+
+func formatSize(bytes uint64) string {
+	bytesf := float64(bytes)
+	if bytes == 0 {
+		return "0"
+	}
+	if bytes < 1e6 {
+		return fmt.Sprintf("%.2fKB", bytesf/1e3)
+	}
+	if bytes < 1e9 {
+		return fmt.Sprintf("%.2fMB", bytesf/1e6)
+	}
+	if bytes < 1e12 {
+		return fmt.Sprintf("%.2fGB", bytesf/1e9)
+	}
+	if bytes < 1e15 {
+		return fmt.Sprintf("%.2fTB", bytesf/1e12)
+	}
+	return fmt.Sprintf("%.2fPB", bytesf/1e15)
 }
 
 func main() {
@@ -697,6 +718,7 @@ func main() {
 			err := lib.Parwalk(
 				log,
 				client,
+				"/",
 				func(parent, id msgs.InodeId, path string) error {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
@@ -748,7 +770,6 @@ func main() {
 	}
 
 	countFilesCmd := flag.NewFlagSet("count-files", flag.ExitOnError)
-	// countFilesTransient := countFilesCmd.Bool("transient", false, "")
 	countFilesRun := func() {
 		var wg sync.WaitGroup
 		ch := make(chan any)
@@ -791,6 +812,43 @@ func main() {
 	commands["count-files"] = commandSpec{
 		flags: countFilesCmd,
 		run:   countFilesRun,
+	}
+
+	duCmd := flag.NewFlagSet("du", flag.ExitOnError)
+	duDir := duCmd.String("path", "/", "")
+	duRun := func() {
+		var numFiles uint64
+		var numDirectories uint64
+		var totalSize uint64
+		startedAt := time.Now()
+		err := lib.Parwalk(
+			log,
+			client,
+			*duDir,
+			func(parent, id msgs.InodeId, path string) error {
+				if id.Type() == msgs.DIRECTORY {
+					atomic.AddUint64(&numDirectories, 1)
+					return nil
+				}
+				resp := msgs.StatFileResp{}
+				if err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+					return err
+				}
+				atomic.AddUint64(&totalSize, resp.Size)
+				if atomic.AddUint64(&numFiles, 1)%uint64(1_000_000) == 0 {
+					log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			panic(err)
+		}
+		log.Info("total size: %v (%v bytes), in %v files and %v directories", formatSize(totalSize), totalSize, numFiles, numDirectories)
+	}
+	commands["du"] = commandSpec{
+		flags: duCmd,
+		run:   duRun,
 	}
 
 	flag.Parse()

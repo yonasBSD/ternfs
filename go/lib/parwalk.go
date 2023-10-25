@@ -29,6 +29,7 @@ func (env *parwalkEnv) visit(
 	id msgs.InodeId,
 	path string,
 ) error {
+	log.Debug("visiting %q, %v", path, id)
 	if err := env.callback(parent, id, path); err != nil {
 		return err
 	}
@@ -43,17 +44,6 @@ func (env *parwalkEnv) visit(
 			path: path,
 		}
 		env.chans[id.Shard()] <- req
-		/*
-			for {
-				select {
-				case env.chans[id.Shard()] <- req:
-					goto Sent
-				default:
-					log.Info("could not send message to shard %v, will retry", id.Shard())
-					time.Sleep(time.Second)
-				}
-			}
-		*/
 	}
 	return nil
 }
@@ -94,6 +84,7 @@ func (env *parwalkEnv) process(
 func Parwalk(
 	log *Logger,
 	client *Client,
+	root string,
 	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error,
 ) error {
 	// compute
@@ -124,7 +115,11 @@ func Parwalk(
 			}
 		}()
 	}
-	if err := env.visit(log, msgs.NULL_INODE_ID, msgs.ROOT_DIR_INODE_ID, ""); err != nil {
+	rootId, parentId, err := client.ResolvePathWithParent(log, root)
+	if err != nil {
+		return err
+	}
+	if err := env.visit(log, parentId, rootId, root); err != nil {
 		return err
 	}
 	env.wg.Wait()

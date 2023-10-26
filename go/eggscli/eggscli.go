@@ -816,10 +816,14 @@ func main() {
 
 	duCmd := flag.NewFlagSet("du", flag.ExitOnError)
 	duDir := duCmd.String("path", "/", "")
+	duHisto := duCmd.String("histogram", "", "Filepath in which to write size histogram (in CSV) to")
 	duRun := func() {
 		var numFiles uint64
 		var numDirectories uint64
 		var totalSize uint64
+		histoSizeBins := make([]uint64, 256)
+		histoCountBins := make([]uint64, 256)
+		histogram := lib.NewHistogram(len(histoSizeBins), 255, 1.15) // max: ~900PB
 		startedAt := time.Now()
 		err := lib.Parwalk(
 			log,
@@ -838,6 +842,9 @@ func main() {
 				if atomic.AddUint64(&numFiles, 1)%uint64(1_000_000) == 0 {
 					log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 				}
+				bin := histogram.WhichBin(resp.Size)
+				atomic.AddUint64(&histoCountBins[bin], 1)
+				atomic.AddUint64(&histoSizeBins[bin], resp.Size)
 				return nil
 			},
 		)
@@ -845,6 +852,19 @@ func main() {
 			panic(err)
 		}
 		log.Info("total size: %v (%v bytes), in %v files and %v directories", formatSize(totalSize), totalSize, numFiles, numDirectories)
+		if *duHisto != "" {
+			log.Info("writing size histogram to %q", *duHisto)
+			histoCsvBuf := bytes.NewBuffer([]byte{})
+			fmt.Fprintf(histoCsvBuf, "upper_bound,file_count,total_size\n")
+			for i, upperBound := range histogram.Bins() {
+				fmt.Fprintf(histoCsvBuf, "%v,%v,%v\n", upperBound, histoCountBins[i], histoSizeBins[i])
+			}
+			if err := os.WriteFile(*duHisto, histoCsvBuf.Bytes(), 0644); err != nil {
+				log.ErrorNoAlert("could not write histo file %q, will print histogram here: %v", *duHisto, err)
+				fmt.Print(histoCsvBuf.Bytes())
+				panic(err)
+			}
+		}
 	}
 	commands["du"] = commandSpec{
 		flags: duCmd,

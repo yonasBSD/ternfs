@@ -696,6 +696,7 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			metrics.Tag("storageclass", bsInfo.storageClass.String())
 			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
 			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)
+			metrics.FieldU64("blocks", bsInfo.cachedInfo.Blocks)
 			metrics.Timestamp(now)
 		}
 		err := lib.SendMetrics(metrics.Payload())

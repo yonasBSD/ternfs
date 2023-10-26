@@ -173,6 +173,37 @@ func main() {
 			}
 		}()
 	}
+	// transient file counter -- just loop through each shard, we don't care
+	// about updating these quickly anyway
+	var transientFiles [256]uint64
+	if *metrics {
+		go func() {
+			for {
+				log.Info("starting to count transient files")
+				for i := 0; i < 256; i++ {
+					shid := msgs.ShardId(i)
+					req := msgs.VisitTransientFilesReq{}
+					resp := msgs.VisitTransientFilesResp{}
+					files := uint64(0)
+					var err error
+					for {
+						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
+							break
+						}
+						files += uint64(len(resp.Files))
+						req.BeginId = resp.NextId
+						if req.BeginId == 0 {
+							break
+						}
+					}
+					if err == nil {
+						transientFiles[i] = files
+					}
+				}
+			}
+		}()
+	}
 	if *metrics {
 		// one thing just pushing the stats every minute
 		go func() {
@@ -181,6 +212,7 @@ func main() {
 			for {
 				log.Info("sending stats metrics")
 				now := time.Now()
+				metrics.Reset()
 				metrics.Measurement("eggsfs_gc")
 				metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
 				metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
@@ -198,10 +230,39 @@ func main() {
 				if err == nil {
 					log.ClearNC(alert)
 					sleepFor := time.Second * 30
-					log.Info("metrics sent, sleeping for %v", sleepFor)
+					log.Info("gc metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {
-					log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
+					log.RaiseNC(alert, "failed to send gc metrics, will try again in a second: %v", err)
+					time.Sleep(time.Second)
+				}
+			}
+		}()
+		// one to insert transient files
+		go func() {
+			metrics := lib.MetricsBuilder{}
+			alert := log.NewNCAlert(10 * time.Second)
+			for {
+				log.Info("sending transient files metrics")
+				now := time.Now()
+				metrics.Reset()
+				for i := 0; i < 256; i++ {
+					if transientFiles[i] == 0 {
+						continue
+					}
+					metrics.Measurement("eggsfs_transient_files")
+					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+					metrics.FieldU64("count", transientFiles[i])
+					metrics.Timestamp(now)
+				}
+				err := lib.SendMetrics(metrics.Payload())
+				if err == nil {
+					log.ClearNC(alert)
+					sleepFor := time.Second * 30
+					log.Info("transient files metrics sent, sleeping for %v", sleepFor)
+					time.Sleep(sleepFor)
+				} else {
+					log.RaiseNC(alert, "failed to send transient files metrics, will try again in a second: %v", err)
 					time.Sleep(time.Second)
 				}
 			}

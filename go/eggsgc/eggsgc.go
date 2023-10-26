@@ -173,37 +173,6 @@ func main() {
 			}
 		}()
 	}
-	// transient file counter -- just loop through each shard, we don't care
-	// about updating these quickly anyway
-	var transientFiles [256]uint64
-	if *metrics {
-		go func() {
-			for {
-				log.Info("starting to count transient files")
-				for i := 0; i < 256; i++ {
-					shid := msgs.ShardId(i)
-					req := msgs.VisitTransientFilesReq{}
-					resp := msgs.VisitTransientFilesResp{}
-					files := uint64(0)
-					var err error
-					for {
-						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
-							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
-							break
-						}
-						files += uint64(len(resp.Files))
-						req.BeginId = resp.NextId
-						if req.BeginId == 0 {
-							break
-						}
-					}
-					if err == nil {
-						transientFiles[i] = files
-					}
-				}
-			}
-		}()
-	}
 	if *metrics {
 		// one thing just pushing the stats every minute
 		go func() {
@@ -238,31 +207,123 @@ func main() {
 				}
 			}
 		}()
-		// one to insert transient files
+		// counting transient files/files/directories
+		var transientFiles [256]uint64
+		go func() {
+			for {
+				log.Info("starting to count transient files")
+				for i := 0; i < 256; i++ {
+					shid := msgs.ShardId(i)
+					req := msgs.VisitTransientFilesReq{}
+					resp := msgs.VisitTransientFilesResp{}
+					files := uint64(0)
+					var err error
+					for {
+						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
+							break
+						}
+						files += uint64(len(resp.Files))
+						req.BeginId = resp.NextId
+						if req.BeginId == 0 {
+							break
+						}
+					}
+					if err == nil {
+						transientFiles[i] = files
+					}
+				}
+			}
+		}()
+		var files [256]uint64
+		go func() {
+			for {
+				log.Info("starting to count files")
+				for i := 0; i < 256; i++ {
+					shid := msgs.ShardId(i)
+					req := msgs.VisitFilesReq{}
+					resp := msgs.VisitFilesResp{}
+					count := uint64(0)
+					var err error
+					for {
+						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+							log.RaiseAlert("could not get files for shard %v: %v", shid, err)
+							break
+						}
+						count += uint64(len(resp.Ids))
+						req.BeginId = resp.NextId
+						if req.BeginId == 0 {
+							break
+						}
+					}
+					if err == nil {
+						files[i] = count
+					}
+				}
+			}
+		}()
+		var directories [256]uint64
+		go func() {
+			for {
+				log.Info("starting to count directories")
+				for i := 0; i < 256; i++ {
+					shid := msgs.ShardId(i)
+					req := msgs.VisitDirectoriesReq{}
+					resp := msgs.VisitDirectoriesResp{}
+					count := uint64(0)
+					var err error
+					for {
+						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+							log.RaiseAlert("could not get directories for shard %v: %v", shid, err)
+							break
+						}
+						count += uint64(len(resp.Ids))
+						req.BeginId = resp.NextId
+						if req.BeginId == 0 {
+							break
+						}
+					}
+					if err == nil {
+						directories[i] = count
+					}
+				}
+			}
+		}()
 		go func() {
 			metrics := lib.MetricsBuilder{}
 			alert := log.NewNCAlert(10 * time.Second)
 			for {
-				log.Info("sending transient files metrics")
+				log.Info("sending files/transient files/dirs metrics")
 				now := time.Now()
 				metrics.Reset()
 				for i := 0; i < 256; i++ {
-					if transientFiles[i] == 0 {
-						continue
+					if transientFiles[i] != 0 {
+						metrics.Measurement("eggsfs_transient_files")
+						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+						metrics.FieldU64("count", transientFiles[i])
+						metrics.Timestamp(now)
 					}
-					metrics.Measurement("eggsfs_transient_files")
-					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-					metrics.FieldU64("count", transientFiles[i])
-					metrics.Timestamp(now)
+					if files[i] != 0 {
+						metrics.Measurement("eggsfs_files")
+						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+						metrics.FieldU64("count", files[i])
+						metrics.Timestamp(now)
+					}
+					if directories[i] != 0 {
+						metrics.Measurement("eggsfs_directories")
+						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+						metrics.FieldU64("count", directories[i])
+						metrics.Timestamp(now)
+					}
 				}
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
 					sleepFor := time.Second * 30
-					log.Info("transient files metrics sent, sleeping for %v", sleepFor)
+					log.Info("count metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {
-					log.RaiseNC(alert, "failed to send transient files metrics, will try again in a second: %v", err)
+					log.RaiseNC(alert, "failed to send count metrics, will try again in a second: %v", err)
 					time.Sleep(time.Second)
 				}
 			}

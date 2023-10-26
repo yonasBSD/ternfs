@@ -88,14 +88,29 @@ func DestructFile(
 		if len(initResp.Blocks) > 0 {
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
+			acceptFailure := make([]bool, len(initResp.Blocks))
+			eraseReqs := make([]*EraseBlockFuture, len(initResp.Blocks))
+			// first start all erase reqs at once
 			for i, block := range initResp.Blocks {
-				var proof [8]byte
 				// Check if the block was stale/decommissioned, in which case
 				// there might be nothing we can do here, for now.
-				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
-				proof, err := client.EraseBlock(log, !acceptFailure, &block)
+				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+				var err error
+				eraseReqs[i], err = client.StartEraseBlock(log, !acceptFailure[i], &block)
 				if err != nil {
-					if acceptFailure {
+					if acceptFailure[i] {
+						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
+						atomic.AddUint64(&stats.SkippedSpans, 1)
+						return nil
+					}
+					return err
+				}
+			}
+			// then wait for them
+			for i, block := range initResp.Blocks {
+				proof, err := eraseReqs[i].Wait()
+				if err != nil {
+					if acceptFailure[i] {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)
 						return nil

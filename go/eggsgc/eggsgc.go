@@ -107,7 +107,7 @@ func main() {
 	}
 	options.ShuckleTimeouts.Overall = 0
 	options.ShardTimeouts.Overall = 0
-	options.ShuckleTimeouts.Overall = 0
+	options.CDCTimeouts.Overall = 0
 
 	dirInfoCache := lib.NewDirInfoCache()
 	client, err := lib.GCClient(log, *shuckleAddress, options)

@@ -364,7 +364,7 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 			return nil, err
 		}
 		hostname = strings.Split(hostname, ".")[0]
-		x := &Xmon{
+		x = &Xmon{
 			appType:          config.AppType,
 			appInstance:      config.AppInstance + "@" + hostname,
 			hostname:         hostname,

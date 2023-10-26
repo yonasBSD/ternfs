@@ -49,91 +49,14 @@
 // that it's probably not worth doing this, at least since the beginning, and that
 // it's better to just serialize the transactions manually with a mutex here in C++.
 //
-// ## RocksDB schema
+// ## RocksDB size
 //
-// Overview of the column families we use. Assumptions from the document:
-//
-// * 1e12 files
-// * 10EiB storage
-// * 100000 concurrent clients
-// * 20000 storage nodes
-//
-// * Files:
-//     - Lots of point queries, we actually never do iteration of any kind here.
-//     - InodeId (8 bytes): FileBody (25 bytes)
-//     - Total size: 1e12 files / 256 shards * 33 bytes = ~120GiB
-//
-// * Spans:
-//     - Lots of range queries, mostly with SeekForPrev
-//     - Both files and transient files point to this. This is part of why it makes
-//         sense to have a different column family: otherwise we couldn't easily
-//         traverse the transient files with them without stepping over spans.
-//     - { id: InodeId, byte_offset: uint64_t } (16 bytes): SpanBody
-//         * SpanBody is common header + blocks/inline stuff
-//         * Common header is 1 + 4 + 4 + 1 = 10 bytes
-//         * SpanBlocksBody worst case is is 1 + 1 + 4 + (8 + 8 + 4)*14 (blocks) + 4*15 (crcs) = 346 bytes
-//         * Inline blocks bodies are always smaller than the above
-//         * Worst case ~400bytes key + value
-//         * The max span size is 100MiB
-//         * We store at least one span per file, so the lower bound on the number of spans is 1e12
-//         * Moreover, if we add on top the number of spans to store all the data we have 10EiB/100MiB
-//         * Total size: (1e12 + 10EiB/100MiB) * 400byte / 256 ~= 1.5TiB
-//         * The above is kind of an upper bound, since we're double counting the first spans for many files
-//
-// * TransientFiles:
-//     - Should use bloom filter here, lots of point queries
-//     - Unordered iteration for garbage collection
-//     - InodeId (8 bytes): TransientFileBody (25-281 bytes)
-//     - The size for this will be neglegible -- say 1% of Files.
-//
-// * Directories:
-//     - We store the directory body
-//     - Unordered traversal for garbage collection
-//     - InodeId (8 bytes): DirectoryBody (18-273 bytes)
-//     - Unclear how many directories we have, but it's probably going to have a few order of magnitude less
-//         than files, e.g. 10e9 directories / 256 shards * 200 bytes = ~7GiB, relatively small dataset.
-//
-// * Edges:
-//     - Lots of range queries
-//     - Might want to exploit the fact that for current edges we always seek by prefix (without the name)
-//     - Two kind of records:
-//         * { dir: InodeId, current: false, nameHash: nameHash, name: bytes, creationTime: uint64_t }: SnapshotEdgeBody
-//         * { dir: InodeId, current: true,  nameHash: nameHash, name: bytes }: CurrentEdgeBody
-//     - The sizes below are for snapshot, for current the creation time moves to the body
-//     - They key size is 25-300 bytes, say 80 bytes on average with a 50 bytes filename
-//     - The value size is 10 bytes or so
-//     - Make it 100bytes total for key and value
-//     - The number of files puts a lower bound on the number of edges, and we don't expect the number to be much
-//         higher, since we won't have many snaphsot edges, and we have no hardlinks. Also there aren't that many
-//         directories.
-//     - So total size is something like 1e12 / 256 * 250 bytes = ~400GiB
-//     - Similar size as spans -- I think it makes a ton of sense to have them in a different column family
-//         from directories, given the different order of magnitude when it comes to size.
-//
-// * Block services to files:
-//     - Goes from block service, file id to count
-//     - { blockServiceId: uint64_t, fileId: uint64_t }: int64
-//     - Assuming RS(10,4), roughly 1e12/256 * 24 bytes ~ 100GiB
-//     - Not small, but not a huge deal either.
-//
-// We'll also store some small metadata in the default column family:
-//
-// - SHARD_INFO_KEY ShardInfoBody
-// - LAST_APPLIED_LOG_ENTRY_KEY uint64_t
-// - NEXT_FILE_ID_KEY InodeId
-// - NEXT_SYMLINK_ID_KEY InodeId
-// - NEXT_BLOCK_ID_KEY InodeId
-// - CURRENT_BLOCK_SERVICES_KEY CurrentBlockServicesBody
-// - BLOCK_SERVICE_KEY {blockServiceId: uint64_t} BlockServiceBody
-//
-// Note that the block services might be out of date, especially those not referred to by
-// CURRENT_BLOCK_SERVICES_KEY.
-//
-// Total data for the shard will be 1-3TiB. The big ones are `Spans` and `Edges`, which are also
-// the ones requiring range queries.
-//
-// Does this sit well with RocksDB? Their own benchmarks use 900M keys, 20 byte key, 400 byte value,
-// so 900e6 * (20+400)byte = ~400GiB. They're not very far off, so it seems reasonable.
+// See docs/eggsfs-rocksdb-size.xlsx for some computation. Please update that document
+// if you update the schema. The per-shard size should be ~3.5TB at capacity. This computation
+// tracks decently with what we currently witness. Most of the space is taken by the edges
+// (expected) and by the block service to files mapping (not so great, but I think required).
+// I think 3.5TB dataset, with maximum single column family dataset being 1.5TB or so, is
+// acceptable.
 //
 // ## RocksDB test (state)
 //

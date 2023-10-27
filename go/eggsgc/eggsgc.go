@@ -23,13 +23,21 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
-	dirsParallel := flag.Uint("directories-parallel", 1, "")
-	filesParallel := flag.Uint("files-parallel", 1, "")
-	metrics := flag.Bool("metrics", false, "")
+	collectDirectories := flag.Bool("collect-directories", false, "")
+	destructFiles := flag.Bool("destruct-files", false, "")
+	zeroBlockServices := flag.Bool("zero-block-services", false, "")
+	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
+	metrics := flag.Bool("metrics", false, "Send metrics")
+	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	flag.Parse()
 
-	if *dirsParallel < 1 || *filesParallel < 1 {
-		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel must be at least 1.")
+	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics {
+		fmt.Fprintf(os.Stderr, "Nothing to do!")
+		os.Exit(2)
+	}
+
+	if *parallel < 1 {
+		fmt.Fprintf(os.Stderr, "-parallel must be at least 1.")
 		os.Exit(2)
 	}
 
@@ -42,12 +50,12 @@ func main() {
 		}
 	}
 
-	if int(*filesParallel) > len(shards) || int(*dirsParallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel can't be greater than %v (number of shards).", len(shards))
+	if int(*parallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).", len(shards))
 		os.Exit(2)
 	}
-	if len(shards)%int(*filesParallel) != 0 || len(shards)%int(*dirsParallel) != 0 {
-		fmt.Fprintf(os.Stderr, "-directories-parallel/-files-parallel does not divide %v (number of shards).", len(shards))
+	if len(shards)%int(*parallel) != 0 {
+		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).", len(shards))
 		os.Exit(2)
 	}
 
@@ -118,62 +126,67 @@ func main() {
 	terminateChan := make(chan any)
 	var stats lib.GCStats
 
-	// directories
-	for group0 := 0; group0 < int(*dirsParallel); group0++ {
-		shardsPerGroup := len(shards) / int(*dirsParallel)
-		group := group0
-		rand := wyhash.New(uint64(group))
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-				waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
-				log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
-				time.Sleep(waitFor)
-				if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, &stats, groupShards); err != nil {
-					log.RaiseAlert("could not collect directories: %v", err)
+	shardsPerGroup := len(shards) / int(*parallel)
+
+	if *collectDirectories {
+		// directories
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+					log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
+					time.Sleep(waitFor)
+					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, &stats, groupShards); err != nil {
+						log.RaiseAlert("could not collect directories: %v", err)
+					}
 				}
-			}
-		}()
+			}()
+		}
 	}
-	// files
-	for group0 := 0; group0 < int(*filesParallel); group0++ {
-		shardsPerGroup := len(shards) / int(*filesParallel)
-		group := group0
-		rand := wyhash.New(uint64(group))
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-				waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
-				log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
-				time.Sleep(waitFor)
-				if err := lib.DestructFiles(log, options, client, &stats, groupShards); err != nil {
-					log.RaiseAlert("could not destruct files: %v", err)
+	if *destructFiles {
+		// files
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
+					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
+					time.Sleep(waitFor)
+					if err := lib.DestructFiles(log, options, client, &stats, groupShards); err != nil {
+						log.RaiseAlert("could not destruct files: %v", err)
+					}
 				}
-			}
-		}()
+			}()
+		}
 	}
-	// zero block services
-	for group0 := 0; group0 < int(*dirsParallel); group0++ {
-		shardsPerGroup := len(shards) / int(*dirsParallel)
-		group := group0
-		rand := wyhash.New(uint64(group))
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-				// just do that once an hour, we don't need this often.
-				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-				log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
-				time.Sleep(waitFor)
-				if err := lib.CollectZeroBlockServiceFiles(log, client, &stats, groupShards); err != nil {
-					log.RaiseAlert("could not collecting zero block service files: %v", err)
+	if *zeroBlockServices {
+		// zero block services
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					// just do that once an hour, we don't need this often.
+					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
+					log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
+					time.Sleep(waitFor)
+					if err := lib.CollectZeroBlockServiceFiles(log, client, &stats, groupShards); err != nil {
+						log.RaiseAlert("could not collecting zero block service files: %v", err)
+					}
 				}
-			}
-		}()
+			}()
+		}
 	}
-	if *metrics {
+	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices) {
 		// one thing just pushing the stats every minute
 		go func() {
 			metrics := lib.MetricsBuilder{}
@@ -183,17 +196,23 @@ func main() {
 				now := time.Now()
 				metrics.Reset()
 				metrics.Measurement("eggsfs_gc")
-				metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
-				metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
-				metrics.FieldU64("destructed_spans", atomic.LoadUint64(&stats.DestructedSpans))
-				metrics.FieldU64("skipped_spans", atomic.LoadUint64(&stats.SkippedSpans))
-				metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&stats.DestructedBlocks))
-				metrics.FieldU64("failed_files", atomic.LoadUint64(&stats.FailedFiles))
-				metrics.FieldU64("visited_directories", atomic.LoadUint64(&stats.VisitedDirectories))
-				metrics.FieldU64("visited_edges", atomic.LoadUint64(&stats.VisitedEdges))
-				metrics.FieldU64("collected_edges", atomic.LoadUint64(&stats.CollectedEdges))
-				metrics.FieldU64("destructed_directories", atomic.LoadUint64(&stats.DestructedDirectories))
-				metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&stats.ZeroBlockServiceFilesRemoved))
+				if *destructFiles {
+					metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
+					metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
+					metrics.FieldU64("destructed_spans", atomic.LoadUint64(&stats.DestructedSpans))
+					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&stats.SkippedSpans))
+					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&stats.DestructedBlocks))
+					metrics.FieldU64("failed_files", atomic.LoadUint64(&stats.FailedFiles))
+				}
+				if *collectDirectories {
+					metrics.FieldU64("visited_directories", atomic.LoadUint64(&stats.VisitedDirectories))
+					metrics.FieldU64("visited_edges", atomic.LoadUint64(&stats.VisitedEdges))
+					metrics.FieldU64("collected_edges", atomic.LoadUint64(&stats.CollectedEdges))
+					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&stats.DestructedDirectories))
+				}
+				if *zeroBlockServices {
+					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&stats.ZeroBlockServiceFilesRemoved))
+				}
 				metrics.Timestamp(now)
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
@@ -207,6 +226,8 @@ func main() {
 				}
 			}
 		}()
+	}
+	if *countMetrics {
 		// counting transient files/files/directories
 		var transientFiles [256]uint64
 		go func() {
@@ -329,6 +350,7 @@ func main() {
 			}
 		}()
 	}
+
 	mbErr := <-terminateChan
 	log.Info("got error, winding down: %v", mbErr)
 	panic(mbErr)

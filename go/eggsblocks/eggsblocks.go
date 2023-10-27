@@ -40,8 +40,9 @@ type blockServiceStats struct {
 }
 
 type env struct {
-	bufPool *lib.BufPool
-	stats   map[msgs.BlockServiceId]*blockServiceStats
+	bufPool  *lib.BufPool
+	stats    map[msgs.BlockServiceId]*blockServiceStats
+	counters map[msgs.BlocksMessageKind]*lib.Timings
 }
 
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
@@ -490,6 +491,10 @@ func handleSingleRequest(
 		return handleRequestError(log, conn, lastError, 0, err)
 	}
 	kind := req.BlocksRequestKind()
+	t := time.Now()
+	defer func() {
+		env.counters[kind].Add(time.Since(t))
+	}()
 	log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
 	log.Trace("req %+v", req)
 	defer log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())
@@ -709,6 +714,22 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
 			time.Sleep(time.Second)
 		}
+	}
+}
+
+func insertStats(log *lib.Logger, env *env, shuckleAddress string) {
+	for {
+		stats := lib.TimingsToStats("blocks", env.counters)
+		for _, t := range env.counters {
+			t.Reset()
+		}
+		log.Info("writing stats to shuckle")
+		timeouts := lib.DefaultShuckleTimeout
+		timeouts.Overall = 0
+		if _, err := lib.ShuckleRequest(log, &timeouts, shuckleAddress, &msgs.InsertStatsReq{Stats: stats}); err != nil {
+			log.RaiseAlert("could not insert stats: %v", err)
+		}
+		time.Sleep(time.Hour)
 	}
 }
 
@@ -972,6 +993,10 @@ func main() {
 	for bsId := range deadBlockServices {
 		env.stats[bsId] = &blockServiceStats{}
 	}
+	env.counters = make(map[msgs.BlocksMessageKind]*lib.Timings)
+	for _, k := range msgs.AllBlocksMessageKind {
+		env.counters[k] = lib.NewTimings(40, 100*time.Microsecond, 1.5)
+	}
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -989,6 +1014,11 @@ func main() {
 			sendMetrics(log, env, blockServices, *failureDomainStr)
 		}()
 	}
+
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		insertStats(log, env, *shuckleAddress)
+	}()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

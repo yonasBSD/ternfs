@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -48,36 +49,28 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shards = append(shards, msgs.ShardId(i))
 		}
+	} else {
+		shardsMap := make(map[uint64]struct{})
+		for _, shStr := range flag.Args() {
+			shid, err := strconv.ParseUint(shStr, 0, 8)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Could not parse %q as shard: %v", shStr, err)
+				os.Exit(2)
+			}
+			shardsMap[shid] = struct{}{}
+		}
+		for shid := range shardsMap {
+			shards = append(shards, msgs.ShardId(shid))
+		}
 	}
 
 	if int(*parallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).", len(shards))
+		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
 	if len(shards)%int(*parallel) != 0 {
-		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).", len(shards))
+		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).\n", len(shards))
 		os.Exit(2)
-	}
-
-	for _, shardStr := range flag.Args() {
-		shardI, err := strconv.Atoi(shardStr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid shard %v: %v", shardStr, err)
-			os.Exit(2)
-		}
-		if shardI < 0 || shardI > 255 {
-			fmt.Fprintf(os.Stderr, "Invalid shard %v", shardStr)
-			os.Exit(2)
-		}
-		shards = append(shards, msgs.ShardId(shardI))
-	}
-
-	shardsStrs := []string{}
-	for _, shard := range shards {
-		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
-	}
-	if flag.NArg() >= 1 { // only have instance when shards are provided (otherwise for all shards it's huge)
-		appInstance = strings.Join(shardsStrs, ",")
 	}
 
 	logOut := os.Stdout
@@ -98,6 +91,13 @@ func main() {
 		level = lib.TRACE
 	}
 
+	shardsStrs := []string{}
+	for _, shard := range shards {
+		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
+	}
+	if flag.NArg() >= 1 { // only have instance when shards are provided (otherwise for all shards it's huge)
+		appInstance = strings.Join(shardsStrs, ",")
+	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech.daytime", AppInstance: appInstance})
 
 	if *mtu != 0 {
@@ -196,6 +196,9 @@ func main() {
 				now := time.Now()
 				metrics.Reset()
 				metrics.Measurement("eggsfs_gc")
+				if appInstance != "" {
+					metrics.Tag("shards", appInstance)
+				}
 				if *destructFiles {
 					metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
 					metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
@@ -313,6 +316,7 @@ func main() {
 		go func() {
 			metrics := lib.MetricsBuilder{}
 			alert := log.NewNCAlert(10 * time.Second)
+			rand := wyhash.New(rand.Uint64())
 			for {
 				log.Info("sending files/transient files/dirs metrics")
 				now := time.Now()
@@ -340,7 +344,7 @@ func main() {
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
-					sleepFor := time.Second * 30
+					sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
 					log.Info("count metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {

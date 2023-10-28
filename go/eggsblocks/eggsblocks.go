@@ -266,6 +266,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
 		return err

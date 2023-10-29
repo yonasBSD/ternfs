@@ -338,9 +338,10 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 }
 
 type blocksProcessors struct {
-	what       string
-	mu         sync.RWMutex
-	processors map[blockConnKey]*blocksProcessor
+	what                   string
+	mu                     sync.RWMutex
+	oneSockPerBlockService bool
+	processors             map[blockConnKey]*blocksProcessor
 }
 
 func (procs *blocksProcessors) init(what string) {
@@ -350,7 +351,7 @@ func (procs *blocksProcessors) init(what string) {
 
 var whichBlockIp uint
 
-func (procs *blocksProcessors) send(log *Logger, alert bool, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16, req *clientBlockRequest) error {
+func (procs *blocksProcessors) send(log *Logger, alert bool, blockService msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16, req *clientBlockRequest) error {
 	// try both ips at random
 	var err error
 	whichBlockIp++
@@ -369,7 +370,12 @@ func (procs *blocksProcessors) send(log *Logger, alert bool, ip1 [4]byte, port1 
 		}
 		addr := &net.TCPAddr{IP: net.IP(ip[:]), Port: int(port)}
 		log.Debug("block processor send for %v", addr)
-		key := newBlockConnKey(ip, port)
+		var key blockConnKey
+		if procs.oneSockPerBlockService {
+			key = blockConnKey(blockService)
+		} else {
+			key = newBlockConnKey(ip, port)
+		}
 		procs.mu.RLock()
 		proc, found := procs.processors[key]
 		if found { // we already have a conn
@@ -628,6 +634,9 @@ func NewClientDirectNoAddrs(
 	c.writeBlockProcessors.init("write")
 	c.fetchBlockProcessors.init("fetch")
 	c.eraseBlockProcessors.init("erase")
+	// we're not constrained by bandwidth here, we want to have requests
+	// for all block services in parallel
+	c.eraseBlockProcessors.oneSockPerBlockService = true
 	return c, nil
 }
 
@@ -860,7 +869,7 @@ func (client *Client) StartWriteBlock(log *Logger, alert bool, block *msgs.AddSp
 		body:   r,
 		resp:   resp,
 	}
-	if err := client.writeBlockProcessors.send(log, alert, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
+	if err := client.writeBlockProcessors.send(log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -977,7 +986,7 @@ func (client *Client) StartFetchBlock(log *Logger, alert bool, blockService *msg
 		body:   nil,
 		resp:   resp,
 	}
-	if err := client.fetchBlockProcessors.send(log, alert, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2, req); err != nil {
+	if err := client.fetchBlockProcessors.send(log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2, req); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -1041,7 +1050,7 @@ func (client *Client) StartEraseBlock(log *Logger, alert bool, block *msgs.Remov
 		header: header.Bytes(),
 		resp:   resp,
 	}
-	if err := client.eraseBlockProcessors.send(log, alert, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
+	if err := client.eraseBlockProcessors.send(log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
 		return nil, err
 	}
 	return resp, nil

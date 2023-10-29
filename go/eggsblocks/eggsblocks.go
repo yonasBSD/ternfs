@@ -455,12 +455,8 @@ func handleRequestError(
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
-		// Always terminate connections for now as I debug
-		// <internal-repo/issues/45>
-		// Eventually we probably want a whitelist here of req +
-		// error combinations that we know are fine. Some errors
-		// will never be fine, e.g. MALFORMED_REQUEST.
-		return false
+		// normal error, we can keep the connection alive
+		return true
 	} else {
 		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)

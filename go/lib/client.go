@@ -1012,9 +1012,21 @@ type EraseBlockFuture struct {
 func (r *EraseBlockFuture) consume(log *Logger, b []byte) (int, error) {
 	read := copy(r.resp[r.read:], b)
 	r.read += read
+	if r.read >= 4+1+2 && r.resp[4] == msgs.ERROR {
+		// error
+		resp := msgs.EraseBlockResp{}
+		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
+		if r.err == nil {
+			panic(fmt.Errorf("impossible, expected error but got none"))
+		}
+		return read, io.EOF
+	}
 	if r.read == len(r.resp) {
 		resp := msgs.EraseBlockResp{}
 		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
+		if r.err != nil {
+			panic(fmt.Errorf("impossible, expected no error but got some: %v", r.err))
+		}
 		return read, io.EOF
 	}
 	return read, nil

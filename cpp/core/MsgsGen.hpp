@@ -282,6 +282,7 @@ enum class BlocksMessageKind : uint8_t {
     WRITE_BLOCK = 3,
     ERASE_BLOCK = 1,
     TEST_WRITE = 5,
+    CHECK_BLOCK = 6,
 };
 
 const std::vector<BlocksMessageKind> allBlocksMessageKind {
@@ -289,9 +290,10 @@ const std::vector<BlocksMessageKind> allBlocksMessageKind {
     BlocksMessageKind::WRITE_BLOCK,
     BlocksMessageKind::ERASE_BLOCK,
     BlocksMessageKind::TEST_WRITE,
+    BlocksMessageKind::CHECK_BLOCK,
 };
 
-constexpr int maxBlocksMessageKind = 5;
+constexpr int maxBlocksMessageKind = 6;
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
 
@@ -3533,6 +3535,46 @@ struct TestWriteResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const TestWriteResp& x);
+
+struct CheckBlockReq {
+    uint64_t blockId;
+    uint32_t size;
+    Crc crc;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4; // blockId + size + crc
+
+    CheckBlockReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // blockId
+        _size += 4; // size
+        _size += 4; // crc
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CheckBlockReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CheckBlockReq& x);
+
+struct CheckBlockResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    CheckBlockResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CheckBlockResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x);
 
 struct ShardReqContainer {
 private:

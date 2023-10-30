@@ -24,11 +24,12 @@ type fsTestOpts struct {
 	numFiles int // how many files (in total) to create
 	depth    int // directory tree depth
 	// these two should sum up to be < 1
-	emptyFileProb  float64
-	inlineFileProb float64
-	maxFileSize    int
-	spanSize       int
-	checkThreads   int
+	emptyFileProb   float64
+	inlineFileProb  float64
+	maxFileSize     int
+	spanSize        int
+	checkThreads    int
+	corruptFileProb float64
 }
 
 type fsTestHarness[Id comparable] interface {
@@ -619,8 +620,116 @@ func findBlockServiceToPurge(log *lib.Logger, client *lib.Client) msgs.BlockServ
 	}
 }
 
+// returns how many blocks were corrupted
+func corruptFiles(
+	log *lib.Logger,
+	shuckleAddress string,
+	client *lib.Client,
+	opts *fsTestOpts,
+	rand *wyhash.Rand,
+) uint64 {
+	blockServicesToDataDirs := make(map[msgs.BlockServiceId]string)
+	{
+		resp, err := lib.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			panic(err)
+		}
+		body := resp.(*msgs.AllBlockServicesResp)
+		for _, block := range body.BlockServices {
+			blockServicesToDataDirs[block.Id] = block.Path
+		}
+	}
+	filesReq := msgs.VisitFilesReq{}
+	filesResp := msgs.VisitFilesResp{}
+	corrupted := uint64(0)
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+			panic(err)
+		}
+		for _, file := range filesResp.Ids {
+			if rand.Float64() > opts.corruptFileProb {
+				continue
+			}
+			fileSpansReq := msgs.FileSpansReq{
+				FileId:     file,
+				ByteOffset: 0,
+			}
+			fileSpansResp := msgs.FileSpansResp{}
+			for {
+				if err := client.ShardRequest(log, file.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+					panic(err)
+				}
+				for spanIx := range fileSpansResp.Spans {
+					span := &fileSpansResp.Spans[spanIx]
+					if span.Header.StorageClass == msgs.INLINE_STORAGE {
+						continue
+					}
+					body := span.Body.(*msgs.FetchedBlocksSpan)
+					P := body.Parity.ParityBlocks()
+					if P < 1 {
+						continue
+					}
+					// corrupt at least one, at most P
+					numBlocksToCorrupt := 1 + rand.Uint64()%uint64(P-1)
+					log.Debug("will corrupt %v blocks in %v", numBlocksToCorrupt, file)
+					blocksToCorruptIxs := make([]int, len(body.Blocks))
+					for i := range blocksToCorruptIxs {
+						blocksToCorruptIxs[i] = i
+					}
+					for i := 0; i < int(numBlocksToCorrupt); i++ {
+						swapWith := i + int(rand.Uint64()%uint64(len(blocksToCorruptIxs)-i-1))
+						blocksToCorruptIxs[i], blocksToCorruptIxs[swapWith] = blocksToCorruptIxs[swapWith], blocksToCorruptIxs[i]
+					}
+					blocksToCorruptIxs = blocksToCorruptIxs[:numBlocksToCorrupt]
+					for ix := range blocksToCorruptIxs {
+						block := body.Blocks[ix]
+						path := lib.BlockIdToPath(blockServicesToDataDirs[fileSpansResp.BlockServices[block.BlockServiceIx].Id], block.BlockId)
+						if rand.Uint64()&1 == 0 {
+							log.Debug("removing block %v at %q", block.BlockId, path)
+							// remove block
+							if err := os.Remove(path); err != nil {
+								panic(err)
+							}
+						} else {
+							log.Debug("corrupting block %v at %q", block.BlockId, path)
+							// corrupt block
+							offset := int64(rand.Uint64() % (uint64(body.CellSize) * uint64(body.Stripes)))
+							file, err := os.OpenFile(path, os.O_RDWR, 0644)
+							if err != nil {
+								panic(err)
+							}
+							buf := make([]byte, 1)
+							_, err = file.ReadAt(buf, offset)
+							if err != nil {
+								panic(err)
+							}
+							buf[0] ^= 0xFF
+							_, err = file.WriteAt(buf, offset)
+							if err != nil {
+								panic(err)
+							}
+						}
+						corrupted++
+					}
+				}
+				if fileSpansResp.NextOffset == 0 {
+					break
+				}
+				fileSpansReq.ByteOffset = fileSpansResp.NextOffset
+			}
+		}
+		filesReq.BeginId = filesResp.NextId
+		if filesReq.BeginId == 0 {
+			break
+		}
+	}
+	return corrupted
+}
+
 func fsTestInternal[Id comparable](
 	log *lib.Logger,
+	client *lib.Client,
 	state *fsTestState[Id],
 	shuckleAddress string,
 	opts *fsTestOpts,
@@ -688,6 +797,29 @@ func fsTestInternal[Id comparable](
 		}
 	}
 	log.Info("created files in %s", time.Since(t0))
+	if opts.corruptFileProb > 0 {
+		// now flip bits in 10% of files, to test scrubbing
+		log.Info("corrupting %v%% of files", opts.corruptFileProb*100)
+		corruptedBlocks := corruptFiles(log, shuckleAddress, client, opts, rand)
+		log.Info("corrupted %v blocks", corruptedBlocks)
+		// Now, scrub the corrupted blocks away. It would be nice to do this _after_
+		// we've checked the files, so that we also test recovery on the read side,
+		// but we currently just fail on bad CRC (just because I haven't got around
+		// to implementing recovery)
+		log.Info("scrubbing files")
+		{
+			var stats lib.ScrubStats
+			// ideally we'd have retryOnFailure=false, but this will make this
+			// work with the block service killer, at the cost of an infinite loop if
+			// something else is wrong.
+			if err := lib.ScrubFilesInAllShards(log, client, true, &stats); err != nil {
+				panic(err)
+			}
+			if stats.Migrate.MigratedBlocks != corruptedBlocks {
+				panic(fmt.Errorf("expected to have migrated %v blocks, but migrated=%v", corruptedBlocks, stats.Migrate.MigratedBlocks))
+			}
+		}
+	}
 	t0 = time.Now()
 	// finally, check that our view of the world is the real view of the world
 	log.Info("checking directories/files")
@@ -763,9 +895,9 @@ func fsTest(
 	if err != nil {
 		panic(err)
 	}
+	defer client.Close()
 	client.SetCounters(counters)
 	if realFs == "" {
-		defer client.Close()
 		harness := &apiFsTestHarness{
 			client:       client,
 			dirInfoCache: lib.NewDirInfoCache(),
@@ -775,7 +907,7 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 		}
-		fsTestInternal[msgs.InodeId](log, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
+		fsTestInternal[msgs.InodeId](log, client, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{
 			bufPool: lib.NewBufPool(),
@@ -784,6 +916,6 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(realFs),
 		}
-		fsTestInternal[string](log, &state, shuckleAddress, opts, counters, harness, realFs)
+		fsTestInternal[string](log, client, &state, shuckleAddress, opts, counters, harness, realFs)
 	}
 }

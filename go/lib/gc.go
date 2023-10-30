@@ -89,15 +89,13 @@ func DestructFile(
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			acceptFailure := make([]bool, len(initResp.Blocks))
-			eraseReqs := make([]*EraseBlockFuture, len(initResp.Blocks))
+			eraseChan := make(chan *BlockCompletion, len(initResp.Blocks))
 			// first start all erase reqs at once
 			for i, block := range initResp.Blocks {
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
 				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
-				var err error
-				eraseReqs[i], err = client.StartEraseBlock(log, !acceptFailure[i], &block)
-				if err != nil {
+				if err := client.StartEraseBlock(log, !acceptFailure[i], &block, i, eraseChan); err != nil {
 					if acceptFailure[i] {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)
@@ -107,9 +105,11 @@ func DestructFile(
 				}
 			}
 			// then wait for them
-			for i, block := range initResp.Blocks {
-				proof, err := eraseReqs[i].Wait()
-				if err != nil {
+			for range initResp.Blocks {
+				completion := <-eraseChan
+				i := completion.Extra.(int)
+				block := initResp.Blocks[i]
+				if completion.Error != nil {
 					if acceptFailure[i] {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)
@@ -117,11 +117,10 @@ func DestructFile(
 					}
 					return err
 				}
+				resp := completion.Resp.(*msgs.EraseBlockResp)
 				certifyReq.Proofs[i].BlockId = block.BlockId
-				certifyReq.Proofs[i].Proof = proof
+				certifyReq.Proofs[i].Proof = resp.Proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
-				certifyReq.Proofs[i].BlockId = block.BlockId
-				certifyReq.Proofs[i].Proof = proof
 			}
 			err = client.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
 			if err != nil {
@@ -169,13 +168,7 @@ func destructFilesInternal(
 			}
 			for ix := range resp.Files {
 				file := &resp.Files[ix]
-				if !retryOnFailure {
-					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-						atomic.AddUint64(&stats.FailedFiles, 1)
-						someErrored = true
-					}
-				} else {
+				if retryOnFailure {
 					startedAt := time.Now()
 					for {
 						if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
@@ -185,6 +178,12 @@ func destructFilesInternal(
 							log.ClearNC(alert)
 							break
 						}
+					}
+				} else {
+					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
+						atomic.AddUint64(&stats.FailedFiles, 1)
+						someErrored = true
 					}
 				}
 			}

@@ -12,9 +12,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
+	"unsafe"
 	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
 )
@@ -112,13 +113,6 @@ func (counters *ClientCounters) Log(log *Logger) {
 
 }
 
-type blockConnKey uint64
-
-func newBlockConnKey(ip [4]byte, port uint16) blockConnKey {
-	ip4 := uint64(ip[0])<<24 | uint64(ip[1])<<16 | uint64(ip[2])<<8 | uint64(ip[3])<<0
-	return blockConnKey(ip4<<32 | uint64(port))
-}
-
 type ReqTimeouts struct {
 	Initial time.Duration // the first timeout
 	Max     time.Duration // the max timeout -- 0 for never
@@ -211,227 +205,330 @@ type clientMetadata struct {
 	responses  chan metadataProcessorResponse
 }
 
-type clientBlockResponse interface {
-	// err == io.EOF means that we're done.
-	consume(log *Logger, b []byte) (read int, err error)
-	done(err error)
+type BlockCompletion struct {
+	Resp  msgs.BlocksResponse
+	Extra any
+	Error error
+}
+
+type clientBlockResponse struct {
+	req   msgs.BlocksRequest
+	resp  msgs.BlocksResponse
+	extra any
+	// when fetching block, this gets written into
+	additionalBodyWriter io.ReaderFrom
+	// stores the error, if any
+	err error
+	// called when we're done
+	completionChan chan *BlockCompletion
+}
+
+func (resp *clientBlockResponse) done(log *Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
+	if resp.err == nil && err != nil {
+		log.InfoStack(1, "failing request %T %+v addr1=%+v addr2=%+v extra=%+v: %v", resp.req, resp.req, addr1, addr2, extra, err)
+		resp.err = err
+	}
+	completion := &BlockCompletion{
+		Resp:  resp.resp,
+		Error: resp.err,
+		Extra: resp.extra,
+	}
+	resp.completionChan <- completion
 }
 
 type clientBlockRequest struct {
-	// We separate header and body so that if the body is a file or whatever
-	// we can use sendfile/splice directly.
-	header []byte
-	body   io.Reader
-	resp   clientBlockResponse
+	blockService         msgs.BlockServiceId
+	req                  msgs.BlocksRequest
+	additionalBodyReader io.Reader // when writing block, this will be written after the request
+	resp                 *clientBlockResponse
+}
+
+type blocksProcessorConn struct {
+	conn       *net.TCPConn
+	generation uint64
+}
+
+type clientBlockResponseWithGeneration struct {
+	generation uint64
+	resp       *clientBlockResponse
 }
 
 type blocksProcessor struct {
-	tornDown        int32 // we've stopped processing request
-	shouldStop      int32 // we want to stop processing requests
 	reqChan         chan *clientBlockRequest
-	inFlightReqChan chan clientBlockResponse
-	conn            *net.TCPConn
-	key             blockConnKey
-	procs           *blocksProcessors
+	inFlightReqChan chan clientBlockResponseWithGeneration
+	addr1           net.TCPAddr
+	addr2           net.TCPAddr
+	what            string
+	conn            *blocksProcessorConn
 }
 
-func (proc *blocksProcessor) tearDown(log *Logger, err error, resp clientBlockResponse) {
-	// error out the current response, if any, which we own
-	if resp != nil {
-		resp.done(err)
-	}
-
-	// Now we check if we're the first ones here. If we aren't, nothing to do.
-	if !atomic.CompareAndSwapInt32(&proc.tornDown, 0, 1) {
-		log.Info("we've already torn down blocks processor, not doing it again")
-		return
-	}
-
-	// Then we remove ourselves from the map. After this we know that no requests are
-	// going to come through anymore.
-	proc.procs.mu.Lock()
-	delete(proc.procs.processors, proc.key)
-	proc.procs.mu.Unlock()
-
-	// Close the sock
-	proc.conn.Close()
-
-	// Now we just drain all the queues and error things out
-	for {
-		select {
-		case req := <-proc.reqChan:
-			req.resp.done(err)
-		case resp := <-proc.inFlightReqChan:
-			resp.done(err)
-		default:
-			goto Finish
-		}
-	}
-Finish:
+func (proc *blocksProcessor) loadConn() *blocksProcessorConn {
+	return (*blocksProcessorConn)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&proc.conn))))
 }
 
-func (proc *blocksProcessor) processRequests(log *Logger) {
-	log.Debug("%v: starting request processor for %v", proc.conn.RemoteAddr(), proc.procs.what)
-	for {
-		if atomic.LoadInt32(&proc.tornDown) == 1 {
-			log.Debug("%v: block processor torn down, terminating", proc.procs.what)
-			return
-		}
-		if atomic.LoadInt32(&proc.shouldStop) == 1 {
-			log.Debug("%v: block processor should stop, tearing down", proc.procs.what)
-			proc.tearDown(log, io.EOF, nil)
-			return
-		}
-		req := <-proc.reqChan
-		if _, err := proc.conn.Write(req.header); err != nil {
-			proc.tearDown(log, err, req.resp)
-			return
-		}
-		if req.body != nil {
-			if _, err := proc.conn.ReadFrom(req.body); err != nil {
-				proc.tearDown(log, err, req.resp)
-				return
-			}
-		}
-		proc.inFlightReqChan <- req.resp
+func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
+	gen := proc.loadConn().generation
+	newConn := &blocksProcessorConn{
+		conn:       conn,
+		generation: gen + 1,
 	}
-}
-
-func (proc *blocksProcessor) processResponses(log *Logger) {
-	log.Debug("%v: starting response processor for %v", proc.procs.what, proc.conn.RemoteAddr())
-	buf := make([]byte, 10<<20)  // 10MB buffer for receiving
-	var resp clientBlockResponse // what we're currently parsing
-	for {
-		if atomic.LoadInt32(&proc.tornDown) == 1 {
-			log.Debug("%v: block processor torn down, terminating", proc.procs.what)
-			return
-		}
-		if atomic.LoadInt32(&proc.shouldStop) == 1 {
-			log.Debug("%v: block processor should stop, tearing down", proc.procs.what)
-			proc.tearDown(log, io.EOF, resp)
-			return
-		}
-		read, err := proc.conn.Read(buf)
-		if err != nil {
-			proc.tearDown(log, err, resp)
-			return
-		}
-		consumed := 0
-		for consumed < read {
-			// load the response if we don't have any
-			if resp == nil {
-				resp = <-proc.inFlightReqChan
-			}
-			log.Debug("%v: consuming from %v to %v", proc.procs.what, consumed, read)
-			consumedNow, err := resp.consume(log, buf[consumed:read])
-			log.Debug("%v: consumed %v: %v", proc.procs.what, consumedNow, err)
-			if err == io.EOF {
-				resp.done(nil)
-				resp = nil
-			} else if err != nil {
-				proc.tearDown(log, err, resp)
-				return
-			}
-			consumed += consumedNow
-		}
-	}
-}
-
-type blocksProcessors struct {
-	what                   string
-	mu                     sync.RWMutex
-	oneSockPerBlockService bool
-	processors             map[blockConnKey]*blocksProcessor
-}
-
-func (procs *blocksProcessors) init(what string) {
-	procs.what = what
-	procs.processors = make(map[blockConnKey]*blocksProcessor)
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&proc.conn)), unsafe.Pointer(newConn))
+	return newConn
 }
 
 var whichBlockIp uint
 
-func (procs *blocksProcessors) send(log *Logger, alert bool, blockService msgs.BlockServiceId, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16, req *clientBlockRequest) error {
-	// try both ips at random
+func (proc *blocksProcessor) connect(log *Logger) (*net.TCPConn, error) {
 	var err error
 	whichBlockIp++
 	for i := whichBlockIp; i < whichBlockIp+2; i++ {
-		var ip [4]byte
-		var port uint16
+		var addr *net.TCPAddr
 		if i&1 == 0 {
-			ip = ip1
-			port = port1
+			addr = &proc.addr1
 		} else {
-			ip = ip2
-			port = port2
+			addr = &proc.addr2
 		}
-		if port == 0 {
+		if addr.Port == 0 {
 			continue
 		}
-		addr := &net.TCPAddr{IP: net.IP(ip[:]), Port: int(port)}
-		log.Debug("block processor send for %v", addr)
-		var key blockConnKey
-		if procs.oneSockPerBlockService {
-			key = blockConnKey(blockService)
-		} else {
-			key = newBlockConnKey(ip, port)
-		}
-		procs.mu.RLock()
-		proc, found := procs.processors[key]
-		if found { // we already have a conn
-			log.Debug("block processor for %v already present", addr)
-			proc.reqChan <- req
-			procs.mu.RUnlock()
-			return nil
-		}
-		procs.mu.RUnlock()
-		// we try to create a new conn
-		log.Debug("block processor for %v not present, creating", addr)
+		log.Debug("trying to connect to block service %v", addr)
 		var sock *net.TCPConn
 		sock, err = net.DialTCP("tcp4", nil, addr)
 		if err == nil {
-			procs.mu.Lock()
-			proc, found = procs.processors[key]
-			if found { // somebody got there before us
-				log.Debug("somebody got there before us for %v", addr)
-				sock.Close()
-				proc.reqChan <- req
-				procs.mu.Unlock()
-				return nil
-			}
-			proc := &blocksProcessor{
-				reqChan:         make(chan *clientBlockRequest, 100),
-				inFlightReqChan: make(chan clientBlockResponse, 100),
-				conn:            sock,
-				key:             key,
-				procs:           procs,
-			}
-			procs.processors[key] = proc
-			proc.reqChan <- req
-			go proc.processRequests(log)
-			go proc.processResponses(log)
-			procs.mu.Unlock()
-			return nil
-		} else {
-			if alert {
-				log.RaiseAlert("could not connect to block service %v: %v, might try other ip/port", addr, err)
-			} else {
-				log.Debug("could not connect to block service %v: %v, might try other ip/port", addr, err)
-			}
+			return sock, nil
 		}
+		log.Info("could not connect to block service %v, might try next connection: %v", addr, err)
 	}
 	if err == nil {
-		panic(fmt.Errorf("exiting loop without error"))
+		panic(fmt.Errorf("impossible: got out without errors"))
 	}
-	return err
+	return nil, err
+}
+
+// From <https://stackoverflow.com/a/58664631>, checks if a connection
+// is still alive.
+func connCheck(conn *net.TCPConn) error {
+	var sysErr error = nil
+	rc, err := conn.SyscallConn()
+	if err != nil {
+		return err
+	}
+	err = rc.Read(func(fd uintptr) bool {
+		var buf []byte = []byte{0}
+		n, _, err := syscall.Recvfrom(int(fd), buf, syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+		switch {
+		case n == 0 && err == nil:
+			sysErr = io.EOF
+		case err == syscall.EAGAIN || err == syscall.EWOULDBLOCK:
+			sysErr = nil
+		default:
+			sysErr = err
+		}
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	return sysErr
+}
+
+func (proc *blocksProcessor) processRequests(log *Logger) {
+	log.Debug("%v: starting request processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
+	// one iteration = one request
+	lastIterationAt := time.Now()
+	for {
+		conn := proc.loadConn()
+		req := <-proc.reqChan
+		if req == nil {
+			log.Debug("%v: got nil request, tearing down", proc.what)
+			if conn.conn != nil {
+				conn.conn.Close()
+			}
+			proc.inFlightReqChan <- clientBlockResponseWithGeneration{
+				resp:       nil, // this tears down the response processor
+				generation: 0,
+			}
+			return
+		}
+		// empty queue, and haven't done anything in a while, check that conn is alive,
+		// otherwise we might still succeed sending, but inevitably fail when reading.
+		if conn.conn != nil && time.Since(lastIterationAt) > 10*time.Second && len(proc.inFlightReqChan) == 0 {
+			if err := connCheck(conn.conn); err != nil {
+				log.Debug("connection for addr1=%+v addr2=%+v is dead: %v", proc.addr1, proc.addr2, err)
+				conn.conn = nil
+			}
+		}
+		// clear stale connections otherwise we might succeed writing but fail reading on the other side
+		if conn.conn == nil {
+			tcpConn, err := proc.connect(log)
+			if err != nil { // we couldn't connect, not much to do
+				req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
+				continue
+			}
+			// we did connect
+			conn = proc.storeConn(tcpConn)
+		}
+		log.Debug("writing block request %T %+v for addr1=%v addr2=%v", req.req, req.req, proc.addr1, proc.addr2)
+		if err := WriteBlocksRequest(log, conn.conn, req.blockService, req.req); err != nil {
+			log.Info("got error when writing block request of kind %v in %v->%v: %v", req.req.BlocksRequestKind(), conn.conn.LocalAddr(), conn.conn.RemoteAddr(), err)
+			req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
+			conn.conn = nil
+			continue
+		}
+		if req.req.BlocksRequestKind() == msgs.WRITE_BLOCK {
+			writeReq := req.req.(*msgs.WriteBlockReq)
+			lr := &io.LimitedReader{
+				R: req.additionalBodyReader,
+				N: int64(writeReq.Size),
+			}
+			log.Debug("writing block body to %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+			if _, err := conn.conn.ReadFrom(lr); err != nil {
+				log.Info("got error when writing block body: %v", err)
+				req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
+				conn.conn = nil
+				continue
+			}
+		}
+		lastIterationAt = time.Now()
+		// we wrote it fine, proceed
+		proc.inFlightReqChan <- clientBlockResponseWithGeneration{
+			generation: conn.generation,
+			resp:       req.resp,
+		}
+	}
+}
+
+func (proc *blocksProcessor) processResponses(log *Logger) {
+	log.Debug("%v: starting response processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
+	// one iteration = one request
+	for {
+		resp := <-proc.inFlightReqChan
+		if resp.resp == nil {
+			return
+		}
+		conn := proc.loadConn()
+		if conn.conn == nil {
+			log.Info("%v: resp %T %+v has no conn, skipping", proc.what, resp.resp.resp, resp.resp.resp)
+			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, io.EOF)
+			continue
+		}
+		if conn.generation != resp.generation {
+			log.Info("%v: resp %T %+v has bad generation %v vs %v, skipping", proc.what, resp.resp.resp, resp.resp.resp, resp.generation, conn.generation)
+			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, io.EOF)
+			continue
+		}
+		log.Debug("reading block response %T for req %+v from %v->%v", resp.resp.resp, resp.resp.req, conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+		// the responsibility for cleaning up the connection is always in the request processor
+		if err := ReadBlocksResponse(log, conn.conn, resp.resp.resp); err != nil {
+			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
+			continue
+		}
+		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK {
+			req := resp.resp.req.(*msgs.FetchBlockReq)
+			lr := &io.LimitedReader{
+				R: conn.conn,
+				N: int64(req.Count),
+			}
+			log.Debug("reading block body from %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+			if _, err := resp.resp.additionalBodyWriter.ReadFrom(lr); err != nil {
+				resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
+				continue
+			}
+		}
+		log.Debug("read block response %T %+v for req %v from %v->%v", resp.resp.resp, resp.resp.resp, resp.resp.req, conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+		resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, nil)
+	}
+}
+
+type blocksProcessorKey struct {
+	// if oneSockPerBlockService=false, this field is always zero.
+	blockService msgs.BlockServiceId
+	ip1          [4]byte
+	port1        uint16
+	ip2          [4]byte
+	port2        uint16
+}
+
+type blocksProcessors struct {
+	what                   string
+	oneSockPerBlockService bool
+	// blocksProcessorKey -> *blocksProcessor
+	processors sync.Map
+}
+
+func (procs *blocksProcessors) init(what string) {
+	procs.what = what
+}
+
+func (procs *blocksProcessors) send(
+	log *Logger,
+	alert bool,
+	blockService msgs.BlockServiceId,
+	ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16,
+	breq msgs.BlocksRequest,
+	breqAdditionalBody io.Reader,
+	bresp msgs.BlocksResponse,
+	brespAdditionalBody io.ReaderFrom,
+	extra any,
+	completionChan chan *BlockCompletion,
+) error {
+	if port1 == 0 && port2 == 0 {
+		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", blockService, ip1, port1, ip2, port2))
+	}
+	resp := &clientBlockResponse{
+		req:                  breq,
+		resp:                 bresp,
+		additionalBodyWriter: brespAdditionalBody,
+		completionChan:       completionChan,
+		extra:                extra,
+	}
+	req := &clientBlockRequest{
+		blockService:         blockService,
+		req:                  breq,
+		additionalBodyReader: breqAdditionalBody,
+		resp:                 resp,
+	}
+	key := blocksProcessorKey{
+		ip1:   ip1,
+		port1: port1,
+		ip2:   ip2,
+		port2: port2,
+	}
+	if procs.oneSockPerBlockService {
+		key.blockService = blockService
+	}
+	// likely case, we already have something. we could
+	// LoadOrStore directly but this saves us allocating new
+	// chans
+	if procAny, found := procs.processors.Load(key); found {
+		proc := procAny.(*blocksProcessor)
+		proc.reqChan <- req
+		return nil
+	}
+	// unlikely case, create new one
+	procAny, loaded := procs.processors.LoadOrStore(key, &blocksProcessor{
+		reqChan:         make(chan *clientBlockRequest, 128),
+		inFlightReqChan: make(chan clientBlockResponseWithGeneration, 128),
+		addr1:           net.TCPAddr{IP: net.IP(ip1[:]), Port: int(port1)},
+		addr2:           net.TCPAddr{IP: net.IP(ip2[:]), Port: int(port2)},
+		what:            procs.what,
+		conn:            &blocksProcessorConn{},
+	})
+	proc := procAny.(*blocksProcessor)
+	if !loaded {
+		// we're the first ones here, start the routines
+		go proc.processRequests(log)
+		go proc.processResponses(log)
+	}
+	proc.reqChan <- req
+	return nil
 }
 
 func (procs *blocksProcessors) close() {
-	procs.mu.Lock()
-	for _, proc := range procs.processors {
-		atomic.StoreInt32(&proc.shouldStop, 1)
-	}
-	procs.mu.Unlock()
+	procs.processors.Range(func(key, value any) bool {
+		value.(*blocksProcessor).reqChan <- nil
+		return true
+	})
 }
 
 type Client struct {
@@ -442,8 +539,9 @@ type Client struct {
 	cdcKey               cipher.Block
 	writeBlockProcessors blocksProcessors
 	fetchBlockProcessors blocksProcessors
-	fetchBlockBufs       *BufPool
+	fetchBlockBufs       sync.Pool
 	eraseBlockProcessors blocksProcessors
+	checkBlockProcessors blocksProcessors
 	shardTimeout         *ReqTimeouts
 	cdcTimeout           *ReqTimeouts
 	requestIdCounter     uint64
@@ -543,7 +641,6 @@ func (cm *clientMetadata) init(log *Logger) error {
 			}
 			mtu := clientMtu
 			respBuf := make([]byte, mtu)
-			log.Debug("waiting for metadata response")
 			read, _, err := cm.sock.ReadFrom(respBuf)
 			if err != nil {
 				if cm.sockClosed {
@@ -559,7 +656,6 @@ func (cm *clientMetadata) init(log *Logger) error {
 				continue
 			}
 			requestId := binary.LittleEndian.Uint64(respBuf[4 : 4+8])
-			log.Debug("got metadata response %v", requestId)
 			cm.responses <- metadataProcessorResponse{
 				requestId: requestId,
 				body:      respBuf[:read],
@@ -569,20 +665,15 @@ func (cm *clientMetadata) init(log *Logger) error {
 	// processor
 	go func() {
 		inFlight := make(map[uint64](chan []byte))
-		defer func() {
-			log.Debug("request processor terminating")
-		}()
 		for {
 			if cm.sockClosed {
 				log.Debug("request processor terminating since socket is closed")
 				return
 			}
-			log.Debug("request processor waiting for request and responses")
 			select {
 			case resp := <-cm.responses:
 				ch, ok := inFlight[resp.requestId]
 				if ok {
-					log.Debug("found request id %v, sending back", resp.requestId)
 					// don't block the main loop because of a full queue
 					select {
 					case ch <- resp.body:
@@ -593,12 +684,10 @@ func (cm *clientMetadata) init(log *Logger) error {
 				}
 			case req := <-cm.requests:
 				if req.clear {
-					log.Debug("clearing request id %v", req.requestId)
 					delete(inFlight, req.requestId)
 				} else {
 					log.Debug("about to send request id %v using conn %v->%v", req.requestId, req.addr, cm.sock.LocalAddr())
 					written, err := cm.sock.WriteTo(req.body, req.addr)
-					log.Debug("sent request id %v, sending back", req.requestId)
 					if err != nil {
 						log.RaiseAlert("could not send request %v to %v: %v", req.requestId, req.addr, err)
 					} else if written != len(req.body) {
@@ -609,7 +698,6 @@ func (cm *clientMetadata) init(log *Logger) error {
 					inFlight[req.requestId] = req.respCh
 					go func() {
 						time.Sleep(req.timeout)
-						log.Debug("sending back timeout for req id %v", req.requestId)
 						select {
 						case req.respCh <- nil:
 						default:
@@ -632,7 +720,11 @@ func NewClientDirectNoAddrs(
 ) (c *Client, err error) {
 	c = &Client{
 		requestIdCounter: rand.Uint64(),
-		fetchBlockBufs:   NewBufPool(),
+		fetchBlockBufs: sync.Pool{
+			New: func() any {
+				return bytes.NewBuffer([]byte{})
+			},
+		},
 	}
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
@@ -645,6 +737,10 @@ func NewClientDirectNoAddrs(
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel
 	c.eraseBlockProcessors.oneSockPerBlockService = true
+	// here we're also not constrained by bandwidth, but the requests
+	// take a long time, so have a separate channel from the erase ones
+	c.checkBlockProcessors.init("erase")
+	c.checkBlockProcessors.oneSockPerBlockService = true
 	return c, nil
 }
 
@@ -709,6 +805,7 @@ func (c *Client) Close() {
 	c.writeBlockProcessors.close()
 	c.fetchBlockProcessors.close()
 	c.eraseBlockProcessors.close()
+	c.checkBlockProcessors.close()
 }
 
 // Not atomic between the read/write
@@ -825,256 +922,125 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, err
 }
 
-type WriteBlockFuture struct {
-	mu  sync.Mutex // locked until done
-	err error
-	// protocol + kind + error or proof
-	resp [4 + 1 + 8]byte
-	read int
-}
-
-func (r *WriteBlockFuture) consume(log *Logger, b []byte) (int, error) {
-	read := copy(r.resp[r.read:], b)
-	r.read += read
-	if r.read == len(r.resp) || (r.read >= 4+1+2 && r.resp[0] == msgs.ERROR) {
-		resp := msgs.WriteBlockResp{}
-		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
-		return read, io.EOF
-	}
-	return read, nil
-}
-
-func (r *WriteBlockFuture) done(err error) {
-	if err != nil && r.err == nil {
-		r.err = err
-	}
-	r.mu.Unlock()
-}
-
-func (r *WriteBlockFuture) Wait() (proof [8]byte, err error) {
-	r.mu.Lock()
-	r.mu.Unlock()
-	if r.err != nil {
-		return proof, r.err
-	}
-	copy(proof[:], r.resp[4+1:])
-	return proof, nil
-}
-
-func (client *Client) StartWriteBlock(log *Logger, alert bool, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (*WriteBlockFuture, error) {
-	header := bytes.NewBuffer([]byte{})
-	err := WriteBlocksRequest(log, header, block.BlockServiceId, &msgs.WriteBlockReq{
-		BlockId:     block.BlockId,
-		Crc:         crc,
-		Size:        size,
-		Certificate: block.Certificate,
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp := &WriteBlockFuture{}
-	resp.mu.Lock()
-	req := &clientBlockRequest{
-		header: header.Bytes(),
-		body:   r,
-		resp:   resp,
-	}
-	if err := client.writeBlockProcessors.send(log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
-		return nil, err
-	}
-	return resp, nil
+func (client *Client) StartWriteBlock(log *Logger, alert bool, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+	resp := &msgs.WriteBlockResp{}
+	return client.writeBlockProcessors.send(
+		log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+		&msgs.WriteBlockReq{
+			BlockId:     block.BlockId,
+			Crc:         crc,
+			Size:        size,
+			Certificate: block.Certificate,
+		},
+		r,
+		resp,
+		nil,
+		extra,
+		completion,
+	)
 }
 
 func (client *Client) WriteBlock(log *Logger, alert bool, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
-	resp, err := client.StartWriteBlock(log, alert, block, r, size, crc)
+	ch := make(chan *BlockCompletion, 1)
+	err = client.StartWriteBlock(log, alert, block, r, size, crc, nil, ch)
 	if err != nil {
 		var proof [8]byte
 		return proof, err
 	}
-	return resp.Wait()
+	resp := <-ch
+	if resp.Error != nil {
+		return proof, resp.Error
+	}
+	return resp.Resp.(*msgs.WriteBlockResp).Proof, nil
 }
 
-type FetchBlockFuture struct {
-	mu  sync.Mutex // locked until done
-	err error
-	// protocol + kind
-	header     [4 + 1]byte
-	headerRead int
-	errorBytes [2]byte
-	errorRead  int
-	body       *[]byte
-	bodyRead   int
-	crc        uint32
+func (client *Client) StartFetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
+	resp := &msgs.FetchBlockResp{}
+	return client.fetchBlockProcessors.send(
+		log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+		&msgs.FetchBlockReq{
+			BlockId: blockId,
+			Offset:  offset,
+			Count:   count,
+		},
+		nil,
+		resp,
+		w,
+		extra,
+		completion,
+	)
 }
 
-func (r *FetchBlockFuture) consume(log *Logger, b []byte) (int, error) {
-	// header read, no error, we're reading the body
-	if r.headerRead == len(r.header) && r.header[4] != msgs.ERROR {
-		log.Debug("header read, reading body from %v", r.bodyRead)
-		read := copy((*r.body)[r.bodyRead:], b)
-		r.crc = crc32c.Sum(r.crc, (*r.body)[r.bodyRead:r.bodyRead+read])
-		r.bodyRead += read
-		if r.bodyRead == len(*r.body) {
-			return read, io.EOF
-		}
-		return read, nil
-	}
-
-	log.Debug("reading header from %v", r.headerRead)
-	read := copy(r.header[r.headerRead:], b)
-	r.headerRead += read
-	if r.headerRead == len(r.header) {
-		log.Debug("header read %v", r.header)
-		// we still parse the response normally since otherwise
-		// we will not check the protocol
-		resp := msgs.FetchBlockResp{}
-		if r.header[4] != msgs.ERROR {
-			// no error, return immediately, we'll be called in again
-			if err := ReadBlocksResponse(log, bytes.NewReader(r.header[:]), &resp); err != nil {
-				return read, err
-			}
-			return read, nil
-		} else {
-			// we have an error, read it fully
-			log.Debug("reading error from %v", r.errorRead)
-			errorRead := copy(r.errorBytes[r.errorRead:], b[read:])
-			r.errorRead += errorRead
-			if r.errorRead == len(r.errorBytes) {
-				log.Debug("error read")
-				if err := ReadBlocksResponse(log, io.MultiReader(bytes.NewReader(r.header[:]), bytes.NewReader(r.errorBytes[:])), &resp); err != nil {
-					return read + errorRead, err
-				}
-				panic(fmt.Errorf("impossible -- we know we have an error: %+v, %+v", r.header, resp))
-			}
-			return read + errorRead, nil
-		}
-	}
-	// header not fully read yet
-	return read, nil
-}
-
-func (r *FetchBlockFuture) done(err error) {
-	if err != nil && r.err == nil {
-		r.err = err
-	}
-	r.mu.Unlock()
-}
-
-func (r *FetchBlockFuture) Wait() (body *[]byte, err error) {
-	r.mu.Lock()
-	r.mu.Unlock()
-	if r.err != nil {
-		return nil, r.err
-	}
-	// consume the body, so that the first caller can then put it back
-	body = r.body
-	if body == nil {
-		return nil, fmt.Errorf("block body already consumed")
-	}
-	r.body = nil
-	return body, r.err
-}
-
-func (c *Client) PutFetchedBlock(body *[]byte) {
+func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 	c.fetchBlockBufs.Put(body)
 }
 
-func (client *Client) StartFetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (*FetchBlockFuture, error) {
-	header := bytes.NewBuffer([]byte{})
-	err := WriteBlocksRequest(log, header, blockService.Id, &msgs.FetchBlockReq{
-		BlockId: blockId,
-		Offset:  offset,
-		Count:   count,
-	})
-	if err != nil {
+func (client *Client) FetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
+	ch := make(chan *BlockCompletion, 1)
+	buf := client.fetchBlockBufs.Get().(*bytes.Buffer)
+	buf.Reset()
+	if err := client.StartFetchBlock(log, alert, blockService, blockId, offset, count, buf, nil, ch); err != nil {
+		client.PutFetchedBlock(buf)
 		return nil, err
 	}
-	resp := &FetchBlockFuture{
-		body: client.fetchBlockBufs.Get(int(count)),
+	resp := <-ch
+	if resp.Error != nil {
+		client.PutFetchedBlock(buf)
+		return nil, resp.Error
 	}
-	resp.mu.Lock()
-	req := &clientBlockRequest{
-		header: header.Bytes(),
-		body:   nil,
-		resp:   resp,
-	}
-	if err := client.fetchBlockProcessors.send(log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2, req); err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return buf, nil
 }
 
-func (client *Client) FetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *[]byte, err error) {
-	resp, err := client.StartFetchBlock(log, alert, blockService, blockId, offset, count)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Wait()
-}
-
-type EraseBlockFuture struct {
-	// locked until mu.
-	mu  sync.Mutex
-	err error
-	// protocol + kind + error or proof
-	resp [4 + 1 + 8]byte
-	read int
-}
-
-func (r *EraseBlockFuture) consume(log *Logger, b []byte) (int, error) {
-	read := copy(r.resp[r.read:], b)
-	r.read += read
-	if (r.read >= 4+1+2 && r.resp[4] == msgs.ERROR) || (r.read == len(r.resp)) {
-		resp := msgs.EraseBlockResp{}
-		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
-		return read, io.EOF
-	}
-	return read, nil
-}
-
-func (r *EraseBlockFuture) done(err error) {
-	if err != nil && r.err == nil {
-		r.err = err
-	}
-	r.mu.Unlock()
-}
-
-func (r *EraseBlockFuture) Wait() (proof [8]byte, err error) {
-	r.mu.Lock()
-	r.mu.Unlock()
-	if r.err != nil {
-		return proof, r.err
-	}
-	copy(proof[:], r.resp[4+1:])
-	return proof, nil
-}
-
-func (client *Client) StartEraseBlock(log *Logger, alert bool, block *msgs.RemoveSpanInitiateBlockInfo) (*EraseBlockFuture, error) {
-	header := bytes.NewBuffer([]byte{})
-	err := WriteBlocksRequest(log, header, block.BlockServiceId, &msgs.EraseBlockReq{
-		BlockId:     block.BlockId,
-		Certificate: block.Certificate,
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp := &EraseBlockFuture{}
-	resp.mu.Lock()
-	req := &clientBlockRequest{
-		header: header.Bytes(),
-		resp:   resp,
-	}
-	if err := client.eraseBlockProcessors.send(log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2, req); err != nil {
-		return nil, err
-	}
-	return resp, nil
+func (client *Client) StartEraseBlock(log *Logger, alert bool, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
+	resp := &msgs.EraseBlockResp{}
+	return client.eraseBlockProcessors.send(
+		log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+		&msgs.EraseBlockReq{
+			BlockId:     block.BlockId,
+			Certificate: block.Certificate,
+		},
+		nil,
+		resp,
+		nil,
+		extra,
+		completion,
+	)
 }
 
 func (client *Client) EraseBlock(log *Logger, alert bool, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
-	resp, err := client.StartEraseBlock(log, alert, block)
-	if err != nil {
-		var proof [8]byte
+	ch := make(chan *BlockCompletion, 1)
+	if err := client.StartEraseBlock(log, alert, block, nil, ch); err != nil {
 		return proof, err
 	}
-	return resp.Wait()
+	resp := <-ch
+	if resp.Error != nil {
+		return proof, resp.Error
+	}
+	return resp.Resp.(*msgs.EraseBlockResp).Proof, nil
+}
+
+func (client *Client) StartCheckBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+	resp := &msgs.CheckBlockResp{}
+	return client.checkBlockProcessors.send(
+		log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+		&msgs.CheckBlockReq{
+			BlockId: blockId,
+			Size:    size,
+			Crc:     crc,
+		},
+		nil,
+		resp,
+		nil,
+		extra,
+		completion,
+	)
+}
+
+func (client *Client) CheckBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
+	ch := make(chan *BlockCompletion, 1)
+	if err := client.StartCheckBlock(log, alert, blockService, blockId, size, crc, nil, ch); err != nil {
+		return err
+	}
+	resp := <-ch
+	return resp.Error
 }

@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	crand "crypto/rand"
-	"crypto/sha1"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -38,6 +37,8 @@ type blockServiceStats struct {
 	blocksErased  uint64
 	blocksFetched uint64
 	bytesFetched  uint64
+	blocksChecked uint64
+	bytesChecked  uint64
 }
 
 type env struct {
@@ -226,20 +227,8 @@ func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, 
 	return nil
 }
 
-func blockIdToPath(basePath string, blockId msgs.BlockId) string {
-	hex := fmt.Sprintf("%016x", uint64(blockId))
-	// We want to split the blocks in dirs to avoid trouble with high number of
-	// files in single directory (e.g. birthday paradox stuff). However the block
-	// id is very much _not_ uniformly distributed (it's the time). So we use
-	// the first byte of the SHA1 of the filename of the block id.
-	h := sha1.New()
-	h.Write([]byte(hex))
-	dir := fmt.Sprintf("%02x", h.Sum(nil)[0])
-	return path.Join(path.Join(basePath, dir), hex)
-}
-
 func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
-	blockPath := blockIdToPath(basePath, blockId)
+	blockPath := lib.BlockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
 		if os.IsNotExist(err) {
@@ -257,7 +246,7 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 }
 
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
-	blockPath := blockIdToPath(basePath, blockId)
+	blockPath := lib.BlockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
@@ -299,6 +288,52 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	s := env.stats[blockServiceId]
 	atomic.AddUint64(&s.blocksFetched, 1)
 	atomic.AddUint64(&s.bytesFetched, uint64(count))
+	return nil
+}
+
+func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, size uint32, crc msgs.Crc, conn *net.TCPConn) error {
+	blockPath := lib.BlockIdToPath(basePath, blockId)
+	log.Debug("checking block id %v at path %v", blockId, blockPath)
+	f, err := os.Open(blockPath)
+	if os.IsNotExist(err) {
+		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
+		return msgs.BLOCK_NOT_FOUND
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Size() != int64(size) {
+		log.RaiseAlert("expected size %v for block %v, got size %v instead", size, blockPath, fi.Size())
+		return msgs.BAD_BLOCK_CRC
+	}
+	buf := env.bufPool.Get(1 << 20)
+	defer env.bufPool.Put(buf)
+	cursor := uint32(0)
+	actualCrc := uint32(0)
+	for cursor < size {
+		read, err := f.Read(*buf)
+		if err != nil {
+			log.RaiseAlert("could not read file %v at %v: %v", blockPath, cursor, err)
+			return err
+		}
+		actualCrc = crc32c.Sum(actualCrc, (*buf)[:read])
+		cursor += uint32(read)
+	}
+	s := env.stats[blockServiceId]
+	atomic.AddUint64(&s.blocksChecked, 1)
+	atomic.AddUint64(&s.bytesChecked, uint64(size))
+	if msgs.Crc(actualCrc) != crc {
+		log.RaiseAlert("expected crc %v for block %v, got %v instead", crc, blockPath, msgs.Crc(actualCrc))
+		return msgs.BAD_BLOCK_CRC
+	}
+	if err := lib.WriteBlocksResponse(log, conn, &msgs.CheckBlockResp{}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -363,7 +398,7 @@ func writeBlock(
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
-	filePath := blockIdToPath(basePath, blockId)
+	filePath := lib.BlockIdToPath(basePath, blockId)
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err
@@ -435,7 +470,7 @@ func handleRequestError(
 	}()
 
 	if err == io.EOF {
-		log.Debug("got EOF, terminating")
+		log.Debug("got EOF from %v, terminating", conn.RemoteAddr())
 		return false
 	}
 
@@ -469,10 +504,12 @@ func handleRequestError(
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
 		// normal error, we can keep the connection alive
+		log.Info("preserving connection from %v after err %v", conn.RemoteAddr(), err)
 		return true
 	} else {
 		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+		log.Info("tearing down connection from %v after internal error %v", conn.RemoteAddr(), err)
 		return false
 	}
 }
@@ -591,6 +628,11 @@ func handleSingleRequest(
 			log.Info("could not write block: %v", err)
 			return handleRequestError(log, conn, lastError, kind, err)
 		}
+	case *msgs.CheckBlockReq:
+		if err := checkBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Size, whichReq.Crc, conn); err != nil {
+			log.Info("checking block failed, conn %v, err %v", conn.RemoteAddr(), err)
+			return handleRequestError(log, conn, lastError, kind, err)
+		}
 	case *msgs.TestWriteReq:
 		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 			log.Info("could not perform test write: %v", err)
@@ -702,6 +744,13 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			metrics.Tag("blockservice", bsId.String())
 			metrics.Tag("failuredomain", failureDomain)
 			metrics.FieldU64("blocks", bsStats.blocksErased)
+			metrics.Timestamp(now)
+
+			metrics.Measurement("eggsfs_blocks_check")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("blocks", bsStats.blocksChecked)
+			metrics.FieldU64("bytes", bsStats.bytesChecked)
 			metrics.Timestamp(now)
 		}
 		for bsId, bsInfo := range blockServices {

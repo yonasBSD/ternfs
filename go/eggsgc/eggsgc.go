@@ -93,6 +93,8 @@ func main() {
 	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
+	scrub := flag.Bool("scrub", false, "scrub")
+	scrubFilesParallel := flag.Uint("scrub-parallel", 0, "If non-zero, it'll override -parallel just for scrubbing")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
 
@@ -101,7 +103,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics {
+	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics && !*scrub {
 		fmt.Fprintf(os.Stderr, "Nothing to do!\n")
 		os.Exit(2)
 	}
@@ -133,12 +135,12 @@ func main() {
 		}
 	}
 
-	if int(*parallel) > len(shards) || int(*destructFilesParallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel can't be greater than %v (number of shards).\n", len(shards))
+	if int(*parallel) > len(shards) || int(*destructFilesParallel) > len(shards) || int(*scrubFilesParallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel/-scrub-parallel can't be greater than %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
-	if len(shards)%int(*parallel) != 0 || (*destructFilesParallel > 0 && len(shards)%int(*destructFilesParallel) != 0) {
-		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel does not divide %v (number of shards).\n", len(shards))
+	if len(shards)%int(*parallel) != 0 || (*destructFilesParallel > 0 && len(shards)%int(*destructFilesParallel) != 0) || (*scrubFilesParallel > 0 && len(shards)%int(*scrubFilesParallel) != 0) {
+		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel/-scrub-parallel does not divide %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
 
@@ -205,14 +207,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	counters := lib.NewClientCounters()
+	client.SetCounters(counters)
 	var cdcMu sync.Mutex
 	terminateChan := make(chan any)
 	var stats lib.GCStats
+	var scrubStats lib.ScrubStats
 
 	shardsPerGroup := len(shards) / int(*parallel)
 
 	if *collectDirectories {
-		// directories
 		for group0 := 0; group0 < int(*parallel); group0++ {
 			group := group0
 			rand := wyhash.New(uint64(group))
@@ -235,7 +239,6 @@ func main() {
 		if *destructFilesParallel > 0 {
 			shardsPerGroup = len(shards) / int(*destructFilesParallel)
 		}
-		// files
 		for group0 := 0; group0 < int(*parallel); group0++ {
 			group := group0
 			rand := wyhash.New(uint64(group))
@@ -254,7 +257,6 @@ func main() {
 		}
 	}
 	if *zeroBlockServices {
-		// zero block services
 		for group0 := 0; group0 < int(*parallel); group0++ {
 			group := group0
 			rand := wyhash.New(uint64(group))
@@ -273,7 +275,29 @@ func main() {
 			}()
 		}
 	}
-	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices) {
+	if *scrub {
+		shardsPerGroup := len(shards) / int(*parallel)
+		if *scrubFilesParallel > 0 {
+			shardsPerGroup = len(shards) / int(*scrubFilesParallel)
+		}
+		for group0 := 0; group0 < int(*parallel); group0++ {
+			group := group0
+			rand := wyhash.New(uint64(group))
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
+					time.Sleep(waitFor)
+					if err := lib.ScrubFiles(log, client, &scrubStats, true, groupShards); err != nil {
+						log.RaiseAlert("could not scrub files: %v", err)
+					}
+				}
+			}()
+		}
+	}
+	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub) {
 		// one thing just pushing the stats every minute
 		go func() {
 			metrics := lib.MetricsBuilder{}
@@ -282,10 +306,8 @@ func main() {
 				log.Info("sending stats metrics")
 				now := time.Now()
 				metrics.Reset()
+				// generic GC metrics
 				metrics.Measurement("eggsfs_gc")
-				if appInstance != "" {
-					metrics.Tag("shards", appInstance)
-				}
 				if *destructFiles {
 					metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
 					metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
@@ -303,7 +325,34 @@ func main() {
 				if *zeroBlockServices {
 					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&stats.ZeroBlockServiceFilesRemoved))
 				}
+				if *scrub {
+					metrics.FieldU64("checked_bytes", atomic.LoadUint64(&scrubStats.CheckedBytes))
+					metrics.FieldU64("checked_blocks", atomic.LoadUint64(&scrubStats.CheckedBlocks))
+					metrics.FieldU64("scrubbed_files", atomic.LoadUint64(&scrubStats.Migrate.MigratedFiles))
+					metrics.FieldU64("scrubbed_blocks", atomic.LoadUint64(&scrubStats.Migrate.MigratedBlocks))
+					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubStats.Migrate.MigratedBytes))
+					metrics.FieldU64("scrub_send_queue_size", atomic.LoadUint64(&scrubStats.SendQueueSize))
+					metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubStats.CheckQueueSize))
+				}
 				metrics.Timestamp(now)
+				// shard requests
+				for _, kind := range msgs.AllShardMessageKind {
+					counter := counters.Shard[uint8(kind)]
+					metrics.Measurement("eggsfs_gc_shard_reqs")
+					metrics.Tag("kind", kind.String())
+					metrics.FieldU64("attempts", counter.Attempts)
+					metrics.FieldU64("completed", counter.Timings.Count())
+					metrics.Timestamp(now)
+				}
+				// CDC requests
+				for _, kind := range msgs.AllCDCMessageKind {
+					counter := counters.CDC[uint8(kind)]
+					metrics.Measurement("eggsfs_gc_cdc_reqs")
+					metrics.Tag("kind", kind.String())
+					metrics.FieldU64("attempts", counter.Attempts)
+					metrics.FieldU64("completed", counter.Timings.Count())
+					metrics.Timestamp(now)
+				}
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)

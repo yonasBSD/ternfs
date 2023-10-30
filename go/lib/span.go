@@ -417,14 +417,14 @@ func (c *Client) fetchCell(
 	}()
 	block := &body.Blocks[blockIx]
 	blockService := &blockServices[block.BlockServiceIx]
-	var data *[]byte
+	var data *bytes.Buffer
 	data, err = c.FetchBlock(log, true, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err
 	}
 	defer c.PutFetchedBlock(data)
-	if copy(*buf, *data) != int(body.CellSize) {
+	if copy(*buf, data.Bytes()) != int(body.CellSize) {
 		panic(fmt.Errorf("runt block cell"))
 	}
 	return buf, nil

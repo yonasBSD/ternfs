@@ -401,9 +401,11 @@ var alertIdCount = int64(1)
 func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
+	if binnable || quietPeriod == 0 {
+		log.LogLocation(ERROR, file, line, message)
+	}
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
-		// log.LogStack(1, INFO, "creating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
 			msgType:     XMON_CREATE,
 			alertId:     *alertId,
@@ -414,13 +416,14 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binn
 			line:        line,
 		}
 	} else {
-		// log.LogStack(1, INFO, "updating alert alertId=%v binnable=%v message=%v", *alertId, binnable, message)
 		xmon.requests <- xmonRequest{
 			msgType:     XMON_UPDATE,
 			alertId:     *alertId,
 			quietPeriod: quietPeriod,
 			binnable:    binnable,
 			message:     message,
+			file:        file,
+			line:        line,
 		}
 	}
 	return message

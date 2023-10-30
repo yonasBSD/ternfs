@@ -7,6 +7,7 @@
 #include "Exception.hpp"
 #include "Time.hpp"
 #include "Msgs.hpp"
+#include "Metrics.hpp"
 
 struct Timings {
     // static stuff
@@ -47,5 +48,6 @@ public:
     Duration percentile(double p) const;
 
     void toStats(const std::string& prefix, std::vector<Stat>& stats);
+    // void toMetrics(MetricsBuilder& builder, const std::string& name, const std::vector<std::pair<std::string, std::string>>& tags);
     void reset();
 };

@@ -713,6 +713,8 @@ func (k BlocksMessageKind) String() string {
 		return "ERASE_BLOCK"
 	case 5:
 		return "TEST_WRITE"
+	case 6:
+		return "CHECK_BLOCK"
 	default:
 		return fmt.Sprintf("BlocksMessageKind(%d)", k)
 	}
@@ -724,6 +726,7 @@ const (
 	WRITE_BLOCK BlocksMessageKind = 0x3
 	ERASE_BLOCK BlocksMessageKind = 0x1
 	TEST_WRITE BlocksMessageKind = 0x5
+	CHECK_BLOCK BlocksMessageKind = 0x6
 )
 
 var AllBlocksMessageKind = [...]BlocksMessageKind{
@@ -731,9 +734,10 @@ var AllBlocksMessageKind = [...]BlocksMessageKind{
 	WRITE_BLOCK,
 	ERASE_BLOCK,
 	TEST_WRITE,
+	CHECK_BLOCK,
 }
 
-const MaxBlocksMessageKind BlocksMessageKind = 5
+const MaxBlocksMessageKind BlocksMessageKind = 6
 
 func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 	switch {
@@ -745,6 +749,8 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 		return &EraseBlockReq{}, &EraseBlockResp{}, nil
 	case k == "TEST_WRITE":
 		return &TestWriteReq{}, &TestWriteResp{}, nil
+	case k == "CHECK_BLOCK":
+		return &CheckBlockReq{}, &CheckBlockResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4689,6 +4695,48 @@ func (v *TestWriteResp) Pack(w io.Writer) error {
 }
 
 func (v *TestWriteResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *CheckBlockReq) BlocksRequestKind() BlocksMessageKind {
+	return CHECK_BLOCK
+}
+
+func (v *CheckBlockReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Size)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Crc)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *CheckBlockReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Size)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Crc)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *CheckBlockResp) BlocksResponseKind() BlocksMessageKind {
+	return CHECK_BLOCK
+}
+
+func (v *CheckBlockResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *CheckBlockResp) Unpack(r io.Reader) error {
 	return nil
 }
 

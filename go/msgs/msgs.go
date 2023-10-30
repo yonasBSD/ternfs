@@ -1800,6 +1800,14 @@ type TestWriteReq struct {
 
 type TestWriteResp struct{}
 
+type CheckBlockReq struct {
+	BlockId BlockId
+	Size    uint32
+	Crc     Crc
+}
+
+type CheckBlockResp struct{}
+
 type Stat struct {
 	Name  string
 	Time  EggsTime

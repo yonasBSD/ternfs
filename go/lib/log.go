@@ -220,6 +220,10 @@ func (l *Logger) Info(format string, v ...any) {
 	l.LogStack(1, INFO, format, v...)
 }
 
+func (l *Logger) InfoStack(calldepth int, format string, v ...any) {
+	l.LogStack(1+calldepth, INFO, format, v...)
+}
+
 // There should be very few times where you want an alert but
 // not an error.
 func (l *Logger) ErrorNoAlert(format string, v ...any) {

@@ -136,7 +136,7 @@ func (c *Client) metadataRequest(
 	}()
 	respChan := make(chan []byte, 16)
 	// will keep trying as long as we get timeouts
-	timeoutAlertQuietPeriod := time.Second
+	timeoutAlertQuietPeriod := 10 * time.Second
 	if shid < 0 {
 		// currently the CDC can be extremely slow as we sync stuff
 		timeoutAlertQuietPeriod = time.Minute

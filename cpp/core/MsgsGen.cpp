@@ -397,6 +397,9 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::TEST_WRITE:
         out << "TEST_WRITE";
         break;
+    case BlocksMessageKind::CHECK_BLOCK:
+        out << "CHECK_BLOCK";
+        break;
     default:
         out << "BlocksMessageKind(" << ((int)kind) << ")";
         break;
@@ -3763,6 +3766,46 @@ bool TestWriteResp::operator==(const TestWriteResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const TestWriteResp& x) {
     out << "TestWriteResp(" << ")";
+    return out;
+}
+
+void CheckBlockReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockId);
+    buf.packScalar<uint32_t>(size);
+    crc.pack(buf);
+}
+void CheckBlockReq::unpack(BincodeBuf& buf) {
+    blockId = buf.unpackScalar<uint64_t>();
+    size = buf.unpackScalar<uint32_t>();
+    crc.unpack(buf);
+}
+void CheckBlockReq::clear() {
+    blockId = uint64_t(0);
+    size = uint32_t(0);
+    crc = Crc(0);
+}
+bool CheckBlockReq::operator==(const CheckBlockReq& rhs) const {
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
+    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CheckBlockReq& x) {
+    out << "CheckBlockReq(" << "BlockId=" << x.blockId << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ")";
+    return out;
+}
+
+void CheckBlockResp::pack(BincodeBuf& buf) const {
+}
+void CheckBlockResp::unpack(BincodeBuf& buf) {
+}
+void CheckBlockResp::clear() {
+}
+bool CheckBlockResp::operator==(const CheckBlockResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x) {
+    out << "CheckBlockResp(" << ")";
     return out;
 }
 

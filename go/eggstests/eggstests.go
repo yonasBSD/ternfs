@@ -190,6 +190,18 @@ func (i *cfgOverrides) int(k string, def int) int {
 	return n
 }
 
+func (i *cfgOverrides) float64(k string, def float64) float64 {
+	s, present := (*i)[k]
+	if !present {
+		return def
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
 func (i *cfgOverrides) flag(k string) bool {
 	s, present := (*i)[k]
 	if !present {
@@ -265,6 +277,7 @@ func (r *RunTests) run(
 		fsTestOpts.emptyFileProb = 0.1
 		fsTestOpts.inlineFileProb = 0.3
 	}
+	fsTestOpts.corruptFileProb = r.overrides.float64("fsTest.corruptFileProb", 0.1)
 
 	r.test(
 		log,
@@ -657,7 +670,7 @@ func killBlockServices(
 
 // 0 interval won't do, because otherwise transient files will immediately be
 // expired and not picked.
-var testTransientDeadlineInterval = 10 * time.Second
+var testTransientDeadlineInterval = 30 * time.Second
 var testBlockFutureCutoff = testTransientDeadlineInterval / 2
 
 func main() {

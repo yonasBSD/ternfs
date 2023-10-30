@@ -871,6 +871,37 @@ func main() {
 		run:   duRun,
 	}
 
+	scrubFileCmd := flag.NewFlagSet("scrub-file", flag.ExitOnError)
+	scrubFileId := scrubFileCmd.Uint64("id", 0, "The file to scrub")
+	scrubFileRun := func() {
+		file := msgs.InodeId(*scrubFileId)
+		stats := &lib.ScrubStats{}
+		if err := lib.ScrubFile(log, client, stats, file); err != nil {
+			panic(err)
+		}
+		log.Info("scrub stats: %+v", stats)
+	}
+	commands["scrub-file"] = commandSpec{
+		flags: scrubFileCmd,
+		run:   scrubFileRun,
+	}
+
+	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
+	scrubRun := func() {
+		shards := make([]msgs.ShardId, 256)
+		for i := 0; i < 256; i++ {
+			shards[i] = msgs.ShardId(i)
+		}
+		stats := lib.ScrubStats{}
+		if err := lib.ScrubFiles(log, client, &stats, true, shards); err != nil {
+			panic(err)
+		}
+	}
+	commands["scrub"] = commandSpec{
+		flags: scrubCmd,
+		run:   scrubRun,
+	}
+
 	flag.Parse()
 
 	if flag.NArg() < 1 {

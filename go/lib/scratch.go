@@ -28,6 +28,7 @@ func ensureScratchFile(log *Logger, client *Client, shard msgs.ShardId, file *sc
 	if err != nil {
 		return err
 	}
+	log.Debug("created scratch file %v", resp.Id)
 	file.id = resp.Id
 	file.cookie = resp.Cookie
 	file.size = 0
@@ -59,11 +60,11 @@ func startToKeepScratchFileAlive(
 					StorageClass: msgs.EMPTY_STORAGE,
 				}
 				if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddInlineSpanResp{}); err != nil {
-					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %w", err)
+					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %v", err)
 				}
 			}
 			go func() {
-				time.Sleep(time.Minute)
+				time.Sleep(10 * time.Second)
 				select {
 				case timerExpired <- struct{}{}:
 				default:

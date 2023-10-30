@@ -3287,7 +3287,7 @@ struct ShardDBImpl {
                     continue;
                 }
                 const auto block = blocks.block(i);
-                ALWAYS_ASSERT(block.blockService() != newBlock.blockService());
+                ALWAYS_ASSERT(block.blockService() != newBlock.blockService(), "new block has block service %s which is already in block %s", newBlock.blockService(), i);
             }
         };
         checkNoDuplicateBlockServices(blocks1, block1Ix, block2);

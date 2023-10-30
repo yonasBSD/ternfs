@@ -70,3 +70,27 @@ Duration Timings::percentile(double p) const {
     }
     return Duration(upperBound);
 }
+
+#if 0
+void Timings::toMetrics(MetricsBuilder& builder, const std::string& name, const std::vector<std::pair<std::string, std::string>>& tags) {
+    uint64_t sum = 0;
+    {
+        double upperBound = _firstUpperBound;
+        for (int i = 0; i < _bins.size(); i++) {
+            sum += _bins[i].load();
+            builder.measurement(name + "_bucket");
+            for (const auto& tag: tags) {
+                builder.tag(tag.first, tag.second);
+            }
+            builder.tag("le", std::to_string((uint64_t)upperBound));
+            builder.fieldU64("count", sum);
+            upperBound *= _growth;
+        }
+    }
+    builder.measurement(name + "_count");
+    for (const auto& tag: tags) {
+        builder.tag(tag.first, tag.second);
+    }
+    builder.fieldU64("count", sum);
+}
+#endif

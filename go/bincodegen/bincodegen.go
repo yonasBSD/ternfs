@@ -1716,6 +1716,11 @@ func main() {
 			reflect.TypeOf(msgs.TestWriteReq{}),
 			reflect.TypeOf(msgs.TestWriteResp{}),
 		},
+		{
+			0x06,
+			reflect.TypeOf(msgs.CheckBlockReq{}),
+			reflect.TypeOf(msgs.CheckBlockResp{}),
+		},
 	}...)
 
 	kernelExtras := []reflect.Type{

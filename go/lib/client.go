@@ -828,7 +828,7 @@ type WriteBlockFuture struct {
 func (r *WriteBlockFuture) consume(log *Logger, b []byte) (int, error) {
 	read := copy(r.resp[r.read:], b)
 	r.read += read
-	if r.read == len(r.resp) {
+	if r.read == len(r.resp) || (r.read >= 4+1+2 && r.resp[0] == msgs.ERROR) {
 		resp := msgs.WriteBlockResp{}
 		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
 		return read, io.EOF
@@ -837,7 +837,9 @@ func (r *WriteBlockFuture) consume(log *Logger, b []byte) (int, error) {
 }
 
 func (r *WriteBlockFuture) done(err error) {
-	r.err = err
+	if err != nil && r.err == nil {
+		r.err = err
+	}
 	r.mu.Unlock()
 }
 
@@ -899,7 +901,7 @@ type FetchBlockFuture struct {
 
 func (r *FetchBlockFuture) consume(log *Logger, b []byte) (int, error) {
 	// header read, no error, we're reading the body
-	if r.headerRead == len(r.header) && r.header[4] != 0 {
+	if r.headerRead == len(r.header) && r.header[4] != msgs.ERROR {
 		log.Debug("header read, reading body from %v", r.bodyRead)
 		read := copy((*r.body)[r.bodyRead:], b)
 		r.crc = crc32c.Sum(r.crc, (*r.body)[r.bodyRead:r.bodyRead+read])
@@ -918,7 +920,7 @@ func (r *FetchBlockFuture) consume(log *Logger, b []byte) (int, error) {
 		// we still parse the response normally since otherwise
 		// we will not check the protocol
 		resp := msgs.FetchBlockResp{}
-		if r.header[4] != 0 {
+		if r.header[4] != msgs.ERROR {
 			// no error, return immediately, we'll be called in again
 			if err := ReadBlocksResponse(log, bytes.NewReader(r.header[:]), &resp); err != nil {
 				return read, err
@@ -944,7 +946,9 @@ func (r *FetchBlockFuture) consume(log *Logger, b []byte) (int, error) {
 }
 
 func (r *FetchBlockFuture) done(err error) {
-	r.err = err
+	if err != nil && r.err == nil {
+		r.err = err
+	}
 	r.mu.Unlock()
 }
 
@@ -1012,28 +1016,18 @@ type EraseBlockFuture struct {
 func (r *EraseBlockFuture) consume(log *Logger, b []byte) (int, error) {
 	read := copy(r.resp[r.read:], b)
 	r.read += read
-	if r.read >= 4+1+2 && r.resp[4] == msgs.ERROR {
-		// error
+	if (r.read >= 4+1+2 && r.resp[4] == msgs.ERROR) || (r.read == len(r.resp)) {
 		resp := msgs.EraseBlockResp{}
 		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
-		if r.err == nil {
-			panic(fmt.Errorf("impossible, expected error but got none"))
-		}
-		return read, io.EOF
-	}
-	if r.read == len(r.resp) {
-		resp := msgs.EraseBlockResp{}
-		r.err = ReadBlocksResponse(log, bytes.NewReader(r.resp[:]), &resp)
-		if r.err != nil {
-			panic(fmt.Errorf("impossible, expected no error but got some: %v", r.err))
-		}
 		return read, io.EOF
 	}
 	return read, nil
 }
 
 func (r *EraseBlockFuture) done(err error) {
-	r.err = err
+	if err != nil && r.err == nil {
+		r.err = err
+	}
 	r.mu.Unlock()
 }
 

@@ -33,12 +33,12 @@ func main() {
 	flag.Parse()
 
 	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics {
-		fmt.Fprintf(os.Stderr, "Nothing to do!")
+		fmt.Fprintf(os.Stderr, "Nothing to do!\n")
 		os.Exit(2)
 	}
 
 	if *parallel < 1 {
-		fmt.Fprintf(os.Stderr, "-parallel must be at least 1.")
+		fmt.Fprintf(os.Stderr, "-parallel must be at least 1.\n")
 		os.Exit(2)
 	}
 
@@ -54,7 +54,7 @@ func main() {
 		for _, shStr := range flag.Args() {
 			shid, err := strconv.ParseUint(shStr, 0, 8)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Could not parse %q as shard: %v", shStr, err)
+				fmt.Fprintf(os.Stderr, "Could not parse %q as shard: %v\n", shStr, err)
 				os.Exit(2)
 			}
 			shardsMap[shid] = struct{}{}

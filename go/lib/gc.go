@@ -92,9 +92,9 @@ func DestructFile(
 			eraseReqs := make([]*EraseBlockFuture, len(initResp.Blocks))
 			// first start all erase reqs at once
 			for i, block := range initResp.Blocks {
-				// Check if the block was stale/decommissioned, in which case
+				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
-				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
 				var err error
 				eraseReqs[i], err = client.StartEraseBlock(log, !acceptFailure[i], &block)
 				if err != nil {

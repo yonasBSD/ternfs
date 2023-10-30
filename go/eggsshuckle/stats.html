@@ -13,9 +13,6 @@
             In shuckle requests might get blocked on the write lock, since we currently use SQLite, and that time is measured here.
         </p>
         <p>
-            `blocks` requests apart from `ERASE_BLOCK` are kind of meaningless since the "latency" for reading/writing a block will depend on the size of the block. But they are useful for `ERASE_BLOCK`.
-        </p>
-        <p>
             We currently store a week of histograms.
         </p>
         <form id="time-selection" class="row row-cols-lg-auto g-3 align-items-center my-2">

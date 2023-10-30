@@ -88,6 +88,7 @@ func main() {
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
+	destructFilesParallel := flag.Uint("destruct-files-parallel", 0, "If non-zero, it'll override -parallel just for files destruction")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
@@ -132,12 +133,12 @@ func main() {
 		}
 	}
 
-	if int(*parallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).\n", len(shards))
+	if int(*parallel) > len(shards) || int(*destructFilesParallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel can't be greater than %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
-	if len(shards)%int(*parallel) != 0 {
-		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).\n", len(shards))
+	if len(shards)%int(*parallel) != 0 || (*destructFilesParallel > 0 && len(shards)%int(*destructFilesParallel) != 0) {
+		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel does not divide %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
 
@@ -230,6 +231,10 @@ func main() {
 		}
 	}
 	if *destructFiles {
+		shardsPerGroup := len(shards) / int(*parallel)
+		if *destructFilesParallel > 0 {
+			shardsPerGroup = len(shards) / int(*destructFilesParallel)
+		}
 		// files
 		for group0 := 0; group0 < int(*parallel); group0++ {
 			group := group0

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"database/sql"
 	"flag"
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,7 +15,67 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
+
+	_ "github.com/mattn/go-sqlite3"
 )
+
+// Right now the DB just stores the counting stats
+func initDb(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS count_stats(
+		shid INT NOT NULL PRIMARY KEY,
+		files INT NOT NULL,
+		directories INT NOT NULL,
+		transient_files INT NOT NULL
+	)`)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 256; i++ {
+		_, err = db.Exec("INSERT OR IGNORE INTO count_stats (shid, files, directories, transient_files) VALUES (?, 0, 0, 0)", i)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return nil
+}
+
+func updateCountStat(db *sql.DB, mu *sync.Mutex, shid msgs.ShardId, which string, increase uint64) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	_, err := db.Exec(fmt.Sprintf("UPDATE count_stats SET %s = ? WHERE shid = ?", which), increase, int(shid))
+	return err
+}
+
+type countStats struct {
+	files           uint64
+	directories     uint64
+	transient_files uint64
+}
+
+func getCountStats(db *sql.DB) (*[256]countStats, error) {
+	rows, err := db.Query("SELECT files, directories, transient_files FROM count_stats")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	s := &[256]countStats{}
+	i := 0
+	for rows.Next() {
+		var files, directories, transient_files uint64
+		err = rows.Scan(&files, &directories, &transient_files)
+		if err != nil {
+			return nil, err
+		}
+		s[i].files = files
+		s[i].directories = directories
+		s[i].transient_files = transient_files
+		i++
+	}
+
+	return s, nil
+}
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
@@ -30,7 +92,13 @@ func main() {
 	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
+	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
+
+	if *dataDir == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
+		os.Exit(2)
+	}
 
 	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics {
 		fmt.Fprintf(os.Stderr, "Nothing to do!\n")
@@ -105,6 +173,20 @@ func main() {
 	}
 
 	log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
+
+	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
+		panic(err)
+	}
+	dbFile := path.Join(*dataDir, "gc.db")
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", dbFile))
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	if err := initDb(db); err != nil {
+		panic(err)
+	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
 	options := &lib.GCOptions{
@@ -231,38 +313,12 @@ func main() {
 		}()
 	}
 	if *countMetrics {
+		var mu sync.Mutex
 		// counting transient files/files/directories
-		var transientFiles [256]uint64
-		go func() {
-			for {
-				log.Info("starting to count transient files")
-				for i := 0; i < 256; i++ {
-					shid := msgs.ShardId(i)
-					req := msgs.VisitTransientFilesReq{}
-					resp := msgs.VisitTransientFilesResp{}
-					files := uint64(0)
-					var err error
-					for {
-						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
-							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
-							break
-						}
-						files += uint64(len(resp.Files))
-						req.BeginId = resp.NextId
-						if req.BeginId == 0 {
-							break
-						}
-					}
-					if err == nil {
-						transientFiles[i] = files
-					}
-				}
-			}
-		}()
-		var files [256]uint64
 		go func() {
 			for {
 				log.Info("starting to count files")
+				updateAlert := log.NewNCAlert(10 * time.Second)
 				for i := 0; i < 256; i++ {
 					shid := msgs.ShardId(i)
 					req := msgs.VisitFilesReq{}
@@ -281,15 +337,22 @@ func main() {
 						}
 					}
 					if err == nil {
-						files[i] = count
+						for {
+							err := updateCountStat(db, &mu, shid, "files", count)
+							if err == nil {
+								break
+							}
+							log.RaiseNC(updateAlert, "could not update file count, will wait one second: %v", err)
+							time.Sleep(time.Second)
+						}
 					}
 				}
 			}
 		}()
-		var directories [256]uint64
 		go func() {
 			for {
 				log.Info("starting to count directories")
+				updateAlert := log.NewNCAlert(10 * time.Second)
 				for i := 0; i < 256; i++ {
 					shid := msgs.ShardId(i)
 					req := msgs.VisitDirectoriesReq{}
@@ -307,8 +370,45 @@ func main() {
 							break
 						}
 					}
-					if err == nil {
-						directories[i] = count
+					for {
+						err := updateCountStat(db, &mu, shid, "directories", count)
+						if err == nil {
+							break
+						}
+						log.RaiseNC(updateAlert, "could not update directory count, will wait one second: %v", err)
+						time.Sleep(time.Second)
+					}
+				}
+			}
+		}()
+		go func() {
+			for {
+				log.Info("starting to count transient files")
+				updateAlert := log.NewNCAlert(10 * time.Second)
+				for i := 0; i < 256; i++ {
+					shid := msgs.ShardId(i)
+					req := msgs.VisitTransientFilesReq{}
+					resp := msgs.VisitTransientFilesResp{}
+					count := uint64(0)
+					var err error
+					for {
+						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
+							break
+						}
+						count += uint64(len(resp.Files))
+						req.BeginId = resp.NextId
+						if req.BeginId == 0 {
+							break
+						}
+					}
+					for {
+						err := updateCountStat(db, &mu, shid, "transient_files", count)
+						if err == nil {
+							break
+						}
+						log.RaiseNC(updateAlert, "could not update transient files count, will wait one second: %v", err)
+						time.Sleep(time.Second)
 					}
 				}
 			}
@@ -321,27 +421,28 @@ func main() {
 				log.Info("sending files/transient files/dirs metrics")
 				now := time.Now()
 				metrics.Reset()
-				for i := 0; i < 256; i++ {
-					if transientFiles[i] != 0 {
-						metrics.Measurement("eggsfs_transient_files")
-						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-						metrics.FieldU64("count", transientFiles[i])
-						metrics.Timestamp(now)
-					}
-					if files[i] != 0 {
-						metrics.Measurement("eggsfs_files")
-						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-						metrics.FieldU64("count", files[i])
-						metrics.Timestamp(now)
-					}
-					if directories[i] != 0 {
-						metrics.Measurement("eggsfs_directories")
-						metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-						metrics.FieldU64("count", directories[i])
-						metrics.Timestamp(now)
-					}
+				stats, err := getCountStats(db)
+				if err != nil {
+					log.RaiseNC(alert, "failed to get count stats, will try again in a second: %v", err)
+					time.Sleep(time.Second)
+					continue
 				}
-				err := lib.SendMetrics(metrics.Payload())
+				log.ClearNC(alert)
+				for i := 0; i < 256; i++ {
+					metrics.Measurement("eggsfs_transient_files")
+					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+					metrics.FieldU64("count", stats[i].transient_files)
+					metrics.Timestamp(now)
+					metrics.Measurement("eggsfs_files")
+					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+					metrics.FieldU64("count", stats[i].files)
+					metrics.Timestamp(now)
+					metrics.Measurement("eggsfs_directories")
+					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
+					metrics.FieldU64("count", stats[i].directories)
+					metrics.Timestamp(now)
+				}
+				err = lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
 					sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute

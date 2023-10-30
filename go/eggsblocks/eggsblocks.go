@@ -714,22 +714,6 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 	}
 }
 
-func insertStats(log *lib.Logger, env *env, shuckleAddress string) {
-	for {
-		stats := lib.TimingsToStats("blocks", env.counters)
-		for _, t := range env.counters {
-			t.Reset()
-		}
-		log.Info("writing stats to shuckle")
-		timeouts := lib.DefaultShuckleTimeout
-		timeouts.Overall = 0
-		if _, err := lib.ShuckleRequest(log, &timeouts, shuckleAddress, &msgs.InsertStatsReq{Stats: stats}); err != nil {
-			log.RaiseAlert("could not insert stats: %v", err)
-		}
-		time.Sleep(time.Hour)
-	}
-}
-
 type blockService struct {
 	path                    string
 	key                     [16]byte
@@ -1011,11 +995,6 @@ func main() {
 			sendMetrics(log, env, blockServices, *failureDomainStr)
 		}()
 	}
-
-	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		insertStats(log, env, *shuckleAddress)
-	}()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

@@ -8,7 +8,7 @@ qemu-system-x86_64 \
     -enable-kvm \
     -cpu host \
     -kernel "${SCRIPT_DIR}/linux/arch/x86/boot/bzImage" \
-    -append "root=/dev/sda1 single console=ttyS0 systemd.unit=multi-user.target" \
+    -append "root=/dev/sda1 single console=ttyS0 systemd.unit=graphical.target" \
     -hda "${SCRIPT_DIR}/ubuntu.img" \
     -hdb "${SCRIPT_DIR}/init.img" \
     -m 64G \

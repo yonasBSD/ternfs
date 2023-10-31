@@ -8,14 +8,14 @@ build_variant=$1
 out_dir=build/$build_variant 
 mkdir -p build/$build_variant
 
-./cpp/build.py alpine rs crc32c # build libs for go
-./go/build.py --generate # generate C++ files
+${PWD}/cpp/build.py alpine rs crc32c # build libs for go
+${PWD}/go/build.py --generate # generate C++ files
 
 # build C++
-./cpp/build.py $build_variant
+${PWD}/cpp/build.py $build_variant
 
 # build go
-./go/build.py
+${PWD}/go/build.py
 
 # copy binaries
 binaries=(

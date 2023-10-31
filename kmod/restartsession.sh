@@ -66,7 +66,7 @@ ssh -i image-key -p 2222 fmazzol@localhost 'sudo insmod eggsfs.ko'
 
 if [[ "$deploy" = true ]]; then
     # Deploy binaries
-    (cd ../deploy && ./deploy.py --build-type "$build_type" --upload --host fmazzol@localhost)
+    (cd ../deploy && $(pwd)/deploy.py --build-type "$build_type" --upload --vm)
 fi
 
 # Create shells

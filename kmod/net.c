@@ -200,11 +200,15 @@ struct sk_buff* eggsfs_metadata_request(
     u8 kind = *((u8*)p + 12);
     const char* kind_str = (shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
     // We can think of the contiguous stats array as list of areas for each shard.
-    // Shard area is then split to 4 entries (EGGSFS_STATS_NUM_COUNTERS) per request kind (EGGSFS_SHARD_KIND_MAX).
+    // Shard area is then split to 4 entries (EGGSFS_COUNTERS_NUM_COUNTERS) per request kind (EGGSFS_SHARD_KIND_MAX).
     // The expression above is left unminimised to make it easier to understand and match the explanation above.
     u64 stats_idx = (shard_id < 0) ?
-        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_STATS_NUM_COUNTERS) :
-        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_STATS_NUM_COUNTERS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_STATS_NUM_COUNTERS);
+        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS) :
+        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS);
+
+    u64 latencies_idx = (shard_id < 0) ?
+        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS) :
+        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS);
 
     req.skb = NULL;
     req.request_id = req_id;
@@ -227,10 +231,24 @@ struct sk_buff* eggsfs_metadata_request(
     // stats, we leave it like this. Almost certainly wouldn't matter.
 #define INC_STAT_COUNTER(_name) \
     if (shard_id < 0) { \
-        cdc_metrics[stats_idx + EGGSFS_STATS_IDX_##_name]++; \
+        atomic64_add(1, (atomic64_t*)&cdc_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_name]); \
     } else { \
-        shard_metrics[stats_idx + EGGSFS_STATS_IDX_##_name]++; \
+        atomic64_add(1, (atomic64_t*)&shard_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_name]); \
     }
+
+// jiffies only have millisecond precision, but we still use nanoseconds as the
+// format is nicer and makes the buckets a bit more precise.
+// |1 below drops the 0 value to the smallest bucket
+#define INC_LATENCY_BUCKET ({ \
+	u64 hist_bucket = 0; \
+	u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1; \
+	__asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs)); \
+	if (shard_id < 0) { \
+	    atomic64_add(1, (atomic64_t*)&cdc_latencies[latencies_idx + hist_bucket]); \
+	} else { \
+	    atomic64_add(1, (atomic64_t*)&shard_latencies[latencies_idx + hist_bucket]); \
+	} \
+    });
 
     for (;;) {
         trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
@@ -277,6 +295,7 @@ struct sk_buff* eggsfs_metadata_request(
             }
             WARN_LATE
             INC_STAT_COUNTER(COMPLETED)
+            INC_LATENCY_BUCKET
             trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
             return req.skb;
         }
@@ -302,6 +321,7 @@ out_unregister:
 
 out_err:
     WARN_LATE
+    INC_LATENCY_BUCKET
     trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
     if (err != -ERESTARTSYS) {
         eggsfs_info("err=%d", err);
@@ -312,6 +332,7 @@ out_err:
 #undef LOG_ARGS
 #undef WARN_LATE
 #undef INC_STAT_COUNTER
+#undef INC_LATENCY_BUCKET
 }
 
 #if 0

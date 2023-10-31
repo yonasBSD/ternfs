@@ -6,56 +6,90 @@
 
 #define EGGSFS_ROOT_DEBUGFS_NAME "eggsfs"
 
-#define EGGSFS_SHARD_STATS_SIZE (256 * EGGSFS_SHARD_KIND_MAX * EGGSFS_STATS_NUM_COUNTERS * 8)
-#define EGGSFS_CDC_STATS_SIZE (EGGSFS_CDC_KIND_MAX * EGGSFS_STATS_NUM_COUNTERS * 8)
+#define EGGSFS_SHARD_COUNTERS_SIZE (256 * EGGSFS_SHARD_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS * 8)
+#define EGGSFS_CDC_COUNTERS_SIZE (EGGSFS_CDC_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS * 8)
+
+#define EGGSFS_SHARD_LATENCIES_SIZE (256 * EGGSFS_SHARD_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS * 8)
+#define EGGSFS_CDC_LATENCIES_SIZE (EGGSFS_CDC_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS * 8)
 
 static struct dentry* eggsfs_debugfs_root;
 
-static struct debugfs_blob_wrapper* debug_wrapper_shard_metrics = NULL;
-static struct debugfs_blob_wrapper* debug_wrapper_shard_header = NULL;
-static struct debugfs_blob_wrapper* debug_wrapper_cdc_metrics = NULL;
-static struct debugfs_blob_wrapper* debug_wrapper_cdc_header = NULL;
+static struct debugfs_blob_wrapper* debug_wrapper_shard_stats_header = NULL;
+static struct debugfs_blob_wrapper* debug_wrapper_cdc_stats_header = NULL;
 
-static struct eggsfs_metrics_header* shard_header;
-static struct eggsfs_metrics_header* cdc_header;
+static struct debugfs_blob_wrapper* debug_wrapper_shard_counters = NULL;
+static struct debugfs_blob_wrapper* debug_wrapper_cdc_counters = NULL;
 
-u64* shard_metrics;
-u64* cdc_metrics;
+static struct debugfs_blob_wrapper* debug_wrapper_shard_latencies = NULL;
+static struct debugfs_blob_wrapper* debug_wrapper_cdc_latencies = NULL;
+
+static struct eggsfs_stats_header* shard_stats_header;
+static struct eggsfs_stats_header* cdc_stats_header;
+
+u64* shard_counters;
+u64* cdc_counters;
+
+u64* shard_latencies;
+u64* cdc_latencies;
 
 int __init eggsfs_debugfs_init(void) {
     int err;
 
-    shard_metrics = (u64 *)vzalloc(EGGSFS_SHARD_STATS_SIZE);
-    if (IS_ERR(shard_metrics)) {
-        err = PTR_ERR(shard_metrics);
-        goto out_shard_metrics;
+    // Headers
+    shard_stats_header = kzalloc(sizeof(struct eggsfs_stats_header), GFP_KERNEL);
+    if (IS_ERR(shard_stats_header)) {
+        err = PTR_ERR(shard_stats_header);
+        goto out_shard_stats_header;
     }
 
-    cdc_metrics = (u64 *)vzalloc(EGGSFS_CDC_STATS_SIZE);
-    if (IS_ERR(cdc_metrics)) {
-        err = PTR_ERR(cdc_metrics);
-        goto out_cdc_metrics;
+    cdc_stats_header = kzalloc(sizeof(struct eggsfs_stats_header), GFP_KERNEL);
+    if (IS_ERR(cdc_stats_header)) {
+        err = PTR_ERR(cdc_stats_header);
+        goto out_cdc_stats_header;
     }
 
-    shard_header = kzalloc(sizeof(struct eggsfs_metrics_header), GFP_KERNEL);
-    if (IS_ERR(shard_header)) {
-        err = PTR_ERR(shard_header);
-        goto out_shard_header;
+    int j;
+    shard_stats_header->version = (u8)EGGSFS_COUNTERS_DATA_VERSION;
+    static_assert(sizeof(__eggsfs_shard_kind_index_mappings) == sizeof(shard_stats_header->kind_index_mapping));
+    memcpy(shard_stats_header->kind_index_mapping, __eggsfs_shard_kind_index_mappings, sizeof(__eggsfs_shard_kind_index_mappings));
+    shard_stats_header->n_buckets = (u8)EGGSFS_LATENCIES_NUM_BUCKETS;
+    for (j = EGGSFS_LATENCIES_NUM_BUCKETS - 1; j >= 0; j--) {
+        shard_stats_header->upper_bound_values[j] = 1ull << (EGGSFS_LATENCIES_NUM_BUCKETS - 1 - j);
     }
 
-    cdc_header = kzalloc(sizeof(struct eggsfs_metrics_header), GFP_KERNEL);
-    if (IS_ERR(cdc_header)) {
-        err = PTR_ERR(cdc_header);
-        goto out_cdc_header;
+    cdc_stats_header->version = (u8)EGGSFS_COUNTERS_DATA_VERSION;
+    static_assert(sizeof(__eggsfs_cdc_kind_index_mappings) == sizeof(cdc_stats_header->kind_index_mapping));
+    memcpy(cdc_stats_header->kind_index_mapping, __eggsfs_cdc_kind_index_mappings, sizeof(__eggsfs_cdc_kind_index_mappings));
+    cdc_stats_header->n_buckets = (u8)EGGSFS_LATENCIES_NUM_BUCKETS;
+    for (j = EGGSFS_LATENCIES_NUM_BUCKETS - 1; j >= 0; j--) {
+        cdc_stats_header->upper_bound_values[j] = 1ull << (EGGSFS_LATENCIES_NUM_BUCKETS - 1 - j);
     }
 
-    shard_header->version = (u8)0;
-    static_assert(sizeof(__eggsfs_shard_kind_index_mappings) == sizeof(shard_header->kind_index_mapping));
-    memcpy(shard_header->kind_index_mapping, __eggsfs_shard_kind_index_mappings, sizeof(__eggsfs_shard_kind_index_mappings));
+    // Metrics
+    shard_counters = (u64 *)vzalloc(EGGSFS_SHARD_COUNTERS_SIZE);
+    if (IS_ERR(shard_counters)) {
+        err = PTR_ERR(shard_counters);
+        goto out_shard_counters;
+    }
 
-    cdc_header->version = (u8)0;
-    static_assert(sizeof(__eggsfs_cdc_kind_index_mappings) == sizeof(cdc_header->kind_index_mapping));
-    memcpy(cdc_header->kind_index_mapping, __eggsfs_cdc_kind_index_mappings, sizeof(__eggsfs_cdc_kind_index_mappings));
+    cdc_counters = (u64 *)vzalloc(EGGSFS_CDC_COUNTERS_SIZE);
+    if (IS_ERR(cdc_counters)) {
+        err = PTR_ERR(cdc_counters);
+        goto out_cdc_counters;
+    }
+
+    // Timings
+    shard_latencies = vzalloc(EGGSFS_SHARD_LATENCIES_SIZE);
+    if (IS_ERR(shard_latencies)) {
+        err = PTR_ERR(shard_latencies);
+        goto out_shard_latencies;
+    }
+
+    cdc_latencies = vzalloc(EGGSFS_CDC_LATENCIES_SIZE);
+    if (IS_ERR(cdc_latencies)) {
+        err = PTR_ERR(cdc_latencies);
+        goto out_cdc_latencies;
+    }
 
     eggsfs_debugfs_root = debugfs_create_dir(EGGSFS_ROOT_DEBUGFS_NAME, NULL);
     if (IS_ERR(eggsfs_debugfs_root)) {
@@ -78,20 +112,26 @@ int __init eggsfs_debugfs_init(void) {
         } \
     })
 
-    EGGSFS_DEBUGFS_FILE(shard_metrics, EGGSFS_SHARD_STATS_SIZE, "shard_metrics");
-    EGGSFS_DEBUGFS_FILE(shard_header, 256, "shard_header");
-    EGGSFS_DEBUGFS_FILE(cdc_metrics, EGGSFS_CDC_STATS_SIZE, "cdc_metrics");
-    EGGSFS_DEBUGFS_FILE(cdc_header, 256, "cdc_header");
+    EGGSFS_DEBUGFS_FILE(shard_stats_header, sizeof(struct eggsfs_stats_header), "shard_stats_header");
+    EGGSFS_DEBUGFS_FILE(cdc_stats_header, sizeof(struct eggsfs_stats_header), "cdc_stats_header");
+    EGGSFS_DEBUGFS_FILE(shard_counters, EGGSFS_SHARD_COUNTERS_SIZE, "shard_counters");
+    EGGSFS_DEBUGFS_FILE(cdc_counters, EGGSFS_CDC_COUNTERS_SIZE, "cdc_counters");
+    EGGSFS_DEBUGFS_FILE(shard_latencies, EGGSFS_SHARD_LATENCIES_SIZE, "shard_latencies");
+    EGGSFS_DEBUGFS_FILE(cdc_latencies, EGGSFS_CDC_LATENCIES_SIZE, "cdc_latencies");
 
     return 0;
 
-out_cdc_header:
-    vfree(shard_header);
-out_shard_header:
-    vfree(cdc_metrics);
-out_cdc_metrics:
-    vfree(shard_metrics);
-out_shard_metrics:
+out_cdc_latencies:
+    vfree(shard_latencies);
+out_shard_latencies:
+    vfree(cdc_counters);
+out_cdc_counters:
+    vfree(shard_counters);
+out_shard_counters:
+    kfree(cdc_stats_header);
+out_cdc_stats_header:
+    kfree(shard_stats_header);
+out_shard_stats_header:
     return err;
 
 out_err:
@@ -104,14 +144,17 @@ out_err:
 void __cold eggsfs_debugfs_exit(void) {
     debugfs_remove_recursive(eggsfs_debugfs_root);
 
-    vfree(shard_metrics);
-    vfree(cdc_metrics);
+    kfree(shard_stats_header);
+    kfree(cdc_stats_header);
 
-    kfree(shard_header);
-    kfree(cdc_header);
+    vfree(shard_counters);
+    vfree(cdc_counters);
 
-    kfree(debug_wrapper_shard_metrics);
-    kfree(debug_wrapper_shard_header);
-    kfree(debug_wrapper_cdc_metrics);
-    kfree(debug_wrapper_cdc_header);
+    vfree(shard_latencies);
+    vfree(cdc_latencies);
+
+    kfree(debug_wrapper_shard_counters);
+    kfree(debug_wrapper_shard_stats_header);
+    kfree(debug_wrapper_cdc_counters);
+    kfree(debug_wrapper_cdc_stats_header);
 }

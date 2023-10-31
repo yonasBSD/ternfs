@@ -53,26 +53,26 @@ tmux new-session -d -s uovo
 tmux new-window -t uovo:4 './startvm.sh'
 
 # Wait for VM to go up, and build
-while ! scp eggsfs.ko uovo: ; do sleep 1; done
+while ! scp -i image-key eggsfs.ko fmazzol@localhost: ; do sleep 1; done
 
 # Start dmesg as soon as it's booted (before we insert module)
-tmux send-keys -t uovo:0 "ssh -t uovo dmesg -wHT | tee dmesg" Enter
+tmux send-keys -t uovo:0 "ssh -i image-key -t fmazzol@localhost -p 2222 -i image-key dmesg -wHT | tee dmesg" Enter
 
 # and trace_pipe
-tmux new-window -t uovo:3 'ssh -t uovo sudo cat /sys/kernel/debug/tracing/trace_pipe'
+tmux new-window -t uovo:3 'ssh -i image-key -t fmazzol@localhost -p 2222 sudo cat /sys/kernel/debug/tracing/trace_pipe'
 
 # Insert module
-ssh uovo 'sudo insmod eggsfs.ko'
+ssh -i image-key -p 2222 fmazzol@localhost 'sudo insmod eggsfs.ko'
 
 if [[ "$deploy" = true ]]; then
     # Deploy binaries
-    (cd ../deploy && ./deploy.py --build-type "$build_type" --upload --host fmazzol@uovo)
+    (cd ../deploy && ./deploy.py --build-type "$build_type" --upload --host fmazzol@localhost)
 fi
 
 # Create shells
-tmux new-window -t uovo:1 'ssh -t uovo'
+tmux new-window -t uovo:1 'ssh -i image-key -t fmazzol@localhost -p 2222'
 if [[ "$run" = true ]]; then
-    tmux new-window -t uovo:2 'ssh -t uovo "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/"'
+    tmux new-window -t uovo:2 'ssh -i image-key -t fmazzol@localhost -p 2222 "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/"'
 fi
 
 # Attach

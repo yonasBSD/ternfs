@@ -1821,6 +1821,59 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	}
 }
 
+func missingBlockServiceAlert(log *lib.Logger, s *state) {
+	alert := log.NewNCAlert(0)
+	for {
+		blockServices, err := s.selectBlockServices(nil)
+		if err != nil {
+			log.RaiseNC(alert, "error reading block services, will try again in one second: %s", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		// collect non-decommissioned block services
+		// failure domain -> path
+		activeBlockServices := make(map[string]map[string]struct{})
+		for _, bs := range blockServices {
+			if bs.Flags.Has(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+				continue
+			}
+			fd := bs.FailureDomain.String()
+			if _, found := activeBlockServices[fd]; !found {
+				activeBlockServices[fd] = make(map[string]struct{})
+			}
+			if _, alreadyPresent := activeBlockServices[fd][bs.Path]; alreadyPresent {
+				log.RaiseAlert("found duplicate block service at path %q for failure domain %q", bs.Path, fd)
+				continue
+			}
+			activeBlockServices[fd][bs.Path] = struct{}{}
+		}
+		// collect non-replaced decommissioned block services
+		missingBlockServices := []string{}
+		for _, bs := range blockServices {
+			if !bs.Flags.Has(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+				continue
+			}
+			fd := bs.FailureDomain.String()
+			if _, found := activeBlockServices[fd]; !found {
+				// this alert can go once we start decommissioning entire servers, leaving it in
+				// now for safety
+				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Id, fd)
+				continue
+			}
+			if _, found := activeBlockServices[fd][bs.Path]; !found {
+				missingBlockServices = append(missingBlockServices, fmt.Sprintf("%q,%q", fd, bs.Path))
+			}
+		}
+		if len(missingBlockServices) == 0 {
+			log.ClearNC(alert)
+		} else {
+			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(missingBlockServices, " "))
+		}
+		log.Info("checked for missing block services, sleeping for a minute")
+		time.Sleep(time.Minute)
+	}
+}
+
 func main() {
 	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
 	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
@@ -2022,6 +2075,11 @@ func main() {
 	go func() {
 		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
 		statsWriter(ll, state)
+	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
+		missingBlockServiceAlert(ll, state)
 	}()
 
 	if *metrics {

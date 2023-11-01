@@ -205,7 +205,7 @@ type metadataProcessorResponse struct {
 }
 
 type clientMetadata struct {
-	sock       net.PacketConn
+	sock       *net.UDPConn
 	sockClosed bool // to terminate the receiver
 	requests   chan *metadataProcessorRequest
 	responses  chan metadataProcessorResponse
@@ -520,9 +520,17 @@ func SetMTU(mtu uint64) {
 }
 
 func (cm *clientMetadata) init(log *Logger) error {
-	var err error
-	cm.sock, err = net.ListenPacket("udp", ":0")
+	sock, err := net.ListenPacket("udp", ":0")
 	if err != nil {
+		return err
+	}
+	cm.sock = sock.(*net.UDPConn)
+	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
+		cm.sock.Close()
+		return err
+	}
+	if err := cm.sock.SetWriteBuffer(10 << 20); err != nil {
+		cm.sock.Close()
 		return err
 	}
 	cm.requests = make(chan *metadataProcessorRequest, 10_000)

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 	"sync"
@@ -382,6 +383,18 @@ func writeBlock(
 		return err
 	}
 	defer os.Remove(tmpName)
+	// fsync directory too to ensure the rename is durable -- we have had blocks disappear
+	// in the past, so this is probably needed. It would be good to coalesce these two
+	// syncs (one for the file write, one for the rename), and it might be possible to
+	// do only one relying on some XFS internal, but let's be safe for now.
+	dir, err := os.Open(filepath.Dir(filePath))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return err
+	}
 	log.Debug("writing proof")
 	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err

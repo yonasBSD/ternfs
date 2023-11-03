@@ -45,6 +45,12 @@ public:
         fieldRaw(name, ss.str());
     }
 
+    void fieldFloat(const std::string& name, double x) {
+        std::ostringstream ss;
+        ss << x;
+        fieldRaw(name, ss.str());
+    }
+
     void timestamp(EggsTime t);
 };
 

@@ -905,12 +905,18 @@ func main() {
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		timeouts := lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter)
-		resp, err := lib.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
-		if err != nil {
-			panic(fmt.Errorf("could not request block services from shuckle: %v", err))
+		var shuckleBlockServices []msgs.BlockServiceInfo
+		{
+			alert := log.NewNCAlert(0)
+			log.RaiseNC(alert, "fetching block services")
+			timeouts := lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter)
+			resp, err := lib.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
+			if err != nil {
+				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
+			}
+			log.ClearNC(alert)
+			shuckleBlockServices = resp.(*msgs.AllBlockServicesResp).BlockServices
 		}
-		shuckleBlockServices := resp.(*msgs.AllBlockServicesResp).BlockServices
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]
 			ourBs, weHaveBs := blockServices[bs.Id]

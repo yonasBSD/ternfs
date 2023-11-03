@@ -476,7 +476,7 @@ private:
     MetricsBuilder _metricsBuilder;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1_mins}),
+        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
         _shid(shid)
     {}

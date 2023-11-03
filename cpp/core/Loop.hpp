@@ -64,6 +64,9 @@ struct PeriodicLoopConfig {
     double successIntervalJitter = 1.0;
 
     PeriodicLoopConfig(Duration failureInterval_, Duration successInterval_) : failureInterval(failureInterval_), successInterval(successInterval_) {}
+    PeriodicLoopConfig(Duration failureInterval_, double failureIntervalJitter_, Duration successInterval_, double successIntervalJitter_) :
+        failureInterval(failureInterval_), failureIntervalJitter(failureIntervalJitter_), successInterval(successInterval_), successIntervalJitter(successIntervalJitter_)
+    {}
 };
 
 struct PeriodicLoop : Loop {

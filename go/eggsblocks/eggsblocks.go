@@ -832,7 +832,7 @@ func main() {
 		Syslog:           *syslog,
 		Xmon:             *xmon,
 		AppName:          "blockservice",
-		AppType:          "restech.daytime",
+		AppType:          "restech_eggsfs.daytime",
 		PrintQuietAlerts: true,
 	})
 

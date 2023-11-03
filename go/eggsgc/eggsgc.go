@@ -167,7 +167,7 @@ func main() {
 	if flag.NArg() >= 1 { // only have instance when shards are provided (otherwise for all shards it's huge)
 		appInstance = strings.Join(shardsStrs, ",")
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech.daytime", AppInstance: appInstance})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech_eggsfs.daytime", AppInstance: appInstance})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)

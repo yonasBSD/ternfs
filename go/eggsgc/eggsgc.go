@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -28,13 +29,20 @@ func initDb(db *sql.DB) error {
 		transient_files INT NOT NULL
 	)`)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	for i := 0; i < 256; i++ {
 		_, err = db.Exec("INSERT OR IGNORE INTO count_stats (shid, files, directories, transient_files) VALUES (?, 0, 0, 0)", i)
 		if err != nil {
-			panic(err)
+			return err
 		}
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS state(
+		what TEXT NOT NULL PRIMARY KEY,
+		state BLOB NOT NULL
+	)`)
+	if err == nil {
+		return err
 	}
 	return nil
 }
@@ -75,6 +83,43 @@ func getCountStats(db *sql.DB) (*[256]countStats, error) {
 	}
 
 	return s, nil
+}
+
+func storeState(db *sql.Tx, what string, state any) error {
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec("INSERT OR REPLACE INTO state (what, state) VALUES (?, ?)", what, bytes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadState(db *sql.DB, what string, state any) error {
+	var bytes []byte
+	err := db.QueryRow("SELECT state FROM state WHERE what = ?", what).Scan(&bytes)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(bytes, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+type CountStateSection struct {
+	Shard  msgs.ShardId
+	Cursor msgs.InodeId
+}
+
+type CountState struct {
+	Files          CountStateSection
+	Directories    CountStateSection
+	TransientFiles CountStateSection
 }
 
 func main() {
@@ -211,8 +256,56 @@ func main() {
 	client.SetCounters(counters)
 	var cdcMu sync.Mutex
 	terminateChan := make(chan any)
-	var stats lib.GCStats
-	var scrubStats lib.ScrubStats
+
+	collectDirectoriesState := &lib.CollectDirectoriesState{}
+	if err := loadState(db, "collect_directories", collectDirectoriesState); err != nil {
+		panic(err)
+	}
+
+	destructFilesState := &lib.DestructFilesState{}
+	if err := loadState(db, "destruct_files", destructFilesState); err != nil {
+		panic(err)
+	}
+
+	scrubState := &lib.ScrubState{}
+	if err := loadState(db, "scrub", scrubState); err != nil {
+		panic(err)
+	}
+
+	zeroBlockServiceFilesStats := &lib.ZeroBlockServiceFilesStats{}
+
+	countState := &CountState{}
+	if err := loadState(db, "count", countState); err != nil {
+		panic(err)
+	}
+
+	// store the state
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		for {
+			tx, err := db.Begin()
+			if err != nil {
+				panic(err)
+			}
+			if *collectDirectories {
+				storeState(tx, "collect_directories", collectDirectoriesState)
+			}
+			if *destructFiles {
+				storeState(tx, "destruct_files", destructFilesState)
+			}
+			if *scrub {
+				storeState(tx, "scrub", scrubState)
+			}
+			if *countMetrics {
+				storeState(tx, "count", countState)
+			}
+			if err := tx.Commit(); err != nil {
+				panic(err)
+			}
+			log.Info("stored state, waiting one minute")
+			time.Sleep(time.Minute)
+		}
+	}()
 
 	shardsPerGroup := len(shards) / int(*parallel)
 
@@ -227,7 +320,7 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 					log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, &stats, groupShards); err != nil {
+					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, collectDirectoriesState, groupShards); err != nil {
 						log.RaiseAlert("could not collect directories: %v", err)
 					}
 				}
@@ -249,7 +342,7 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
 					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.DestructFiles(log, options, client, &stats, groupShards); err != nil {
+					if err := lib.DestructFiles(log, options, client, destructFilesState, groupShards); err != nil {
 						log.RaiseAlert("could not destruct files: %v", err)
 					}
 				}
@@ -268,7 +361,7 @@ func main() {
 					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
 					log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.CollectZeroBlockServiceFiles(log, client, &stats, groupShards); err != nil {
+					if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
 						log.RaiseAlert("could not collecting zero block service files: %v", err)
 					}
 				}
@@ -290,7 +383,7 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.ScrubFiles(log, client, &scrubStats, true, groupShards); err != nil {
+					if err := lib.ScrubFiles(log, client, scrubState, true, groupShards); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
 				}
@@ -309,30 +402,30 @@ func main() {
 				// generic GC metrics
 				metrics.Measurement("eggsfs_gc")
 				if *destructFiles {
-					metrics.FieldU64("visited_files", atomic.LoadUint64(&stats.VisitedFiles))
-					metrics.FieldU64("destructed_files", atomic.LoadUint64(&stats.DestructedFiles))
-					metrics.FieldU64("destructed_spans", atomic.LoadUint64(&stats.DestructedSpans))
-					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&stats.SkippedSpans))
-					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&stats.DestructedBlocks))
-					metrics.FieldU64("failed_files", atomic.LoadUint64(&stats.FailedFiles))
+					metrics.FieldU64("visited_files", atomic.LoadUint64(&destructFilesState.Stats.VisitedFiles))
+					metrics.FieldU64("destructed_files", atomic.LoadUint64(&destructFilesState.Stats.DestructedFiles))
+					metrics.FieldU64("destructed_spans", atomic.LoadUint64(&destructFilesState.Stats.DestructedSpans))
+					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&destructFilesState.Stats.SkippedSpans))
+					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&destructFilesState.Stats.DestructedBlocks))
+					metrics.FieldU64("failed_files", atomic.LoadUint64(&destructFilesState.Stats.FailedFiles))
 				}
 				if *collectDirectories {
-					metrics.FieldU64("visited_directories", atomic.LoadUint64(&stats.VisitedDirectories))
-					metrics.FieldU64("visited_edges", atomic.LoadUint64(&stats.VisitedEdges))
-					metrics.FieldU64("collected_edges", atomic.LoadUint64(&stats.CollectedEdges))
-					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&stats.DestructedDirectories))
+					metrics.FieldU64("visited_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedDirectories))
+					metrics.FieldU64("visited_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedEdges))
+					metrics.FieldU64("collected_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.CollectedEdges))
+					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.DestructedDirectories))
 				}
 				if *zeroBlockServices {
-					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&stats.ZeroBlockServiceFilesRemoved))
+					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&zeroBlockServiceFilesStats.ZeroBlockServiceFilesRemoved))
 				}
 				if *scrub {
-					metrics.FieldU64("checked_bytes", atomic.LoadUint64(&scrubStats.CheckedBytes))
-					metrics.FieldU64("checked_blocks", atomic.LoadUint64(&scrubStats.CheckedBlocks))
-					metrics.FieldU64("scrubbed_files", atomic.LoadUint64(&scrubStats.Migrate.MigratedFiles))
-					metrics.FieldU64("scrubbed_blocks", atomic.LoadUint64(&scrubStats.Migrate.MigratedBlocks))
-					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubStats.Migrate.MigratedBytes))
-					metrics.FieldU64("scrub_send_queue_size", atomic.LoadUint64(&scrubStats.SendQueueSize))
-					metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubStats.CheckQueueSize))
+					metrics.FieldU64("checked_bytes", atomic.LoadUint64(&scrubState.CheckedBytes))
+					metrics.FieldU64("checked_blocks", atomic.LoadUint64(&scrubState.CheckedBlocks))
+					metrics.FieldU64("scrubbed_files", atomic.LoadUint64(&scrubState.Migrate.MigratedFiles))
+					metrics.FieldU64("scrubbed_blocks", atomic.LoadUint64(&scrubState.Migrate.MigratedBlocks))
+					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubState.Migrate.MigratedBytes))
+					metrics.FieldU64("scrub_send_queue_size", atomic.LoadUint64(&scrubState.SendQueueSize))
+					metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubState.CheckQueueSize))
 				}
 				metrics.Timestamp(now)
 				// shard requests
@@ -375,6 +468,7 @@ func main() {
 				updateAlert := log.NewNCAlert(10 * time.Second)
 				for i := 0; i < 256; i++ {
 					shid := msgs.ShardId(i)
+					countState.Files.Shard = shid
 					req := msgs.VisitFilesReq{}
 					resp := msgs.VisitFilesResp{}
 					count := uint64(0)
@@ -386,6 +480,7 @@ func main() {
 						}
 						count += uint64(len(resp.Ids))
 						req.BeginId = resp.NextId
+						countState.Files.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}
@@ -409,6 +504,7 @@ func main() {
 				updateAlert := log.NewNCAlert(10 * time.Second)
 				for i := 0; i < 256; i++ {
 					shid := msgs.ShardId(i)
+					countState.Directories.Shard = shid
 					req := msgs.VisitDirectoriesReq{}
 					resp := msgs.VisitDirectoriesResp{}
 					count := uint64(0)
@@ -420,6 +516,7 @@ func main() {
 						}
 						count += uint64(len(resp.Ids))
 						req.BeginId = resp.NextId
+						countState.Directories.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}
@@ -441,6 +538,7 @@ func main() {
 				updateAlert := log.NewNCAlert(10 * time.Second)
 				for i := 0; i < 256; i++ {
 					shid := msgs.ShardId(i)
+					countState.TransientFiles.Shard = shid
 					req := msgs.VisitTransientFilesReq{}
 					resp := msgs.VisitTransientFilesResp{}
 					count := uint64(0)
@@ -452,6 +550,7 @@ func main() {
 						}
 						count += uint64(len(resp.Files))
 						req.BeginId = resp.NextId
+						countState.TransientFiles.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}

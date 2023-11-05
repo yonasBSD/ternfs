@@ -7,19 +7,20 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-type ScrubStats struct {
+type ScrubState struct {
 	Migrate        MigrateStats
 	CheckedBlocks  uint64
 	CheckedBytes   uint64
 	SendQueueSize  uint64
 	CheckQueueSize uint64
+	Cursors        [256]msgs.InodeId
 }
 
 func scrubFileInternal(
 	log *Logger,
 	client *Client,
 	bufPool *BufPool,
-	stats *ScrubStats,
+	stats *ScrubState,
 	timeStats *timeStats,
 	scratchFile *scratchFile,
 	file msgs.InodeId,
@@ -47,7 +48,7 @@ type scrubCheckInfo struct {
 func scrubChecker(
 	log *Logger,
 	client *Client,
-	stats *ScrubStats,
+	stats *ScrubState,
 	retryOnFailure bool,
 	scratchFiles map[msgs.ShardId]*scratchFile,
 	checkerChan chan *BlockCompletion,
@@ -157,7 +158,7 @@ type scrubRequest struct {
 func scrubSender(
 	log *Logger,
 	client *Client,
-	stats *ScrubStats,
+	stats *ScrubState,
 	retryOnFailure bool,
 	sendChan chan *scrubRequest,
 	checkerChan chan *BlockCompletion,
@@ -206,13 +207,16 @@ func scrubSender(
 func scrubScraper(
 	log *Logger,
 	client *Client,
-	stats *ScrubStats,
+	stats *ScrubState,
 	retryOnFailure bool,
 	terminateChan chan any,
 	sendChan chan *scrubRequest,
 	shards []msgs.ShardId,
 ) {
 	fileReqs := make([]msgs.VisitFilesReq, len(shards))
+	for i := 0; i < len(fileReqs); i++ {
+		fileReqs[i].BeginId = stats.Cursors[shards[i]]
+	}
 	fileResps := make([]msgs.VisitFilesResp, len(shards))
 	for i := 0; ; i++ {
 		allDone := true
@@ -267,6 +271,7 @@ func scrubScraper(
 					}
 				}
 			}
+			stats.Cursors[shid] = fileResp.NextId
 			fileReq.BeginId = fileResp.NextId
 		}
 		if allDone {
@@ -280,7 +285,7 @@ func scrubScraper(
 func ScrubFile(
 	log *Logger,
 	client *Client,
-	stats *ScrubStats,
+	stats *ScrubState,
 	file msgs.InodeId,
 ) error {
 	bufPool := NewBufPool()
@@ -293,7 +298,7 @@ func ScrubFile(
 func ScrubFiles(
 	log *Logger,
 	client *Client,
-	stats *ScrubStats,
+	stats *ScrubState,
 	retryOnFailure bool,
 	shards []msgs.ShardId,
 ) error {
@@ -353,7 +358,7 @@ func ScrubFiles(
 	}
 }
 
-func ScrubFilesInAllShards(log *Logger, client *Client, retryOnFailure bool, stats *ScrubStats) error {
+func ScrubFilesInAllShards(log *Logger, client *Client, retryOnFailure bool, stats *ScrubState) error {
 	var shards [256]msgs.ShardId
 	for i := range shards {
 		shards[i] = msgs.ShardId(i)

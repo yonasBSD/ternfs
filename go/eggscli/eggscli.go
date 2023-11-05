@@ -212,7 +212,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			defer client.Close()
-			var stats lib.GCStats
+			var stats lib.CollectDirectoriesStats
 			var cdcMu sync.Mutex
 			if err := lib.CollectDirectory(log, client, dirInfoCache, &cdcMu, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
@@ -238,7 +238,7 @@ func main() {
 			if fileId.Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
-			stats := lib.GCStats{}
+			stats := lib.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
 			if err := lib.DestructFile(log, client, &stats, fileId, 0, destructFileCookie); err != nil {
@@ -875,7 +875,7 @@ func main() {
 	scrubFileId := scrubFileCmd.Uint64("id", 0, "The file to scrub")
 	scrubFileRun := func() {
 		file := msgs.InodeId(*scrubFileId)
-		stats := &lib.ScrubStats{}
+		stats := &lib.ScrubState{}
 		if err := lib.ScrubFile(log, client, stats, file); err != nil {
 			panic(err)
 		}
@@ -892,7 +892,7 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shards[i] = msgs.ShardId(i)
 		}
-		stats := lib.ScrubStats{}
+		stats := lib.ScrubState{}
 		if err := lib.ScrubFiles(log, client, &stats, true, shards); err != nil {
 			panic(err)
 		}

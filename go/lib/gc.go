@@ -33,19 +33,33 @@ func GCClient(log *Logger, shuckleAddress string, options *GCOptions) (*Client, 
 	return client, nil
 }
 
-type GCStats struct {
-	// file destruction
+type DestructFilesStats struct {
 	VisitedFiles     uint64
 	DestructedFiles  uint64
 	DestructedSpans  uint64
 	SkippedSpans     uint64
 	DestructedBlocks uint64
 	FailedFiles      uint64
-	// directory collection
+}
+
+type DestructFilesState struct {
+	Stats   DestructFilesStats
+	Cursors [256]msgs.InodeId
+}
+
+type CollectDirectoriesStats struct {
 	VisitedDirectories    uint64
 	VisitedEdges          uint64
 	CollectedEdges        uint64
 	DestructedDirectories uint64
+}
+
+type CollectDirectoriesState struct {
+	Stats   CollectDirectoriesStats
+	Cursors [256]msgs.InodeId
+}
+
+type ZeroBlockServiceFilesStats struct {
 	// zero block service stuff
 	ZeroBlockServiceFilesRemoved uint64
 }
@@ -53,7 +67,7 @@ type GCStats struct {
 func DestructFile(
 	log *Logger,
 	client *Client,
-	stats *GCStats,
+	stats *DestructFilesStats,
 	id msgs.InodeId,
 	deadline msgs.EggsTime,
 	cookie [8]byte,
@@ -143,7 +157,7 @@ func DestructFile(
 func destructFilesInternal(
 	log *Logger,
 	client *Client,
-	stats *GCStats,
+	state *DestructFilesState,
 	retryOnFailure bool,
 	shards []msgs.ShardId,
 ) error {
@@ -171,7 +185,7 @@ func destructFilesInternal(
 				if retryOnFailure {
 					startedAt := time.Now()
 					for {
-						if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+						if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 							log.RaiseNC(alert, "%+v: error while destructing file, will retry: %v", file, err)
 							time.Sleep(timeouts.Next(startedAt))
 						} else {
@@ -180,13 +194,14 @@ func destructFilesInternal(
 						}
 					}
 				} else {
-					if err := DestructFile(log, client, stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+					if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
 						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-						atomic.AddUint64(&stats.FailedFiles, 1)
+						atomic.AddUint64(&state.Stats.FailedFiles, 1)
 						someErrored = true
 					}
 				}
 			}
+			state.Cursors[shid] = resp.NextId
 			req.BeginId = resp.NextId
 		}
 		if allDone {
@@ -205,7 +220,7 @@ func DestructFiles(
 	log *Logger,
 	options *GCOptions,
 	client *Client,
-	stats *GCStats,
+	stats *DestructFilesState,
 	shards []msgs.ShardId,
 ) error {
 	log.Info("starting to destruct files in shards %+v", shards)
@@ -221,24 +236,24 @@ func DestructFilesInAllShards(
 	client *Client,
 	options *GCOptions,
 ) error {
-	stats := GCStats{}
+	state := DestructFilesState{}
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
 	someErrored := false
-	if err := destructFilesInternal(log, client, &stats, options.RetryOnDestructFailure, shards); err != nil {
+	if err := destructFilesInternal(log, client, &state, options.RetryOnDestructFailure, shards); err != nil {
 		// `destructFilesInternal` itself raises an alert, no need to raise two.
 		log.Info("destructing files in shards %+v failed: %v", shards, err)
 		someErrored = true
 	}
 	if someErrored {
-		return fmt.Errorf("failed to destruct %v files, see logs", stats.FailedFiles)
+		return fmt.Errorf("failed to destruct %v files, see logs", state.Stats.FailedFiles)
 	}
-	if stats.SkippedSpans > 0 {
-		log.RaiseAlert("skipped over %v spans, this is normal if some servers are (or were) down while garbage collecting", stats.SkippedSpans)
+	if state.Stats.SkippedSpans > 0 {
+		log.RaiseAlert("skipped over %v spans, this is normal if some servers are (or were) down while garbage collecting", state.Stats.SkippedSpans)
 	}
-	log.Info("stats after one destruct files iteration in all shards: %+v", stats)
+	log.Info("stats after one destruct files iteration in all shards: %+v", state.Stats)
 	return nil
 }
 
@@ -247,7 +262,7 @@ func applyPolicy(
 	log *Logger,
 	client *Client,
 	cdcMu *sync.Mutex,
-	stats *GCStats,
+	stats *CollectDirectoriesStats,
 	dirId msgs.InodeId,
 	policy *msgs.SnapshotPolicy,
 	edges []msgs.Edge,
@@ -306,7 +321,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *GCStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
@@ -391,7 +406,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 	return nil
 }
 
-func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *GCStats, shards []msgs.ShardId) error {
+func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, state *CollectDirectoriesState, shards []msgs.ShardId) error {
 	log.Info("starting to collect directories in shards %+v", shards)
 	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
 	resps := make([]msgs.VisitDirectoriesResp, len(shards))
@@ -415,35 +430,36 @@ func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache,
 				if id.Shard() != shid {
 					panic("bad shard")
 				}
-				if err := CollectDirectory(log, client, dirInfoCache, cdcMu, stats, id); err != nil {
+				if err := CollectDirectory(log, client, dirInfoCache, cdcMu, &state.Stats, id); err != nil {
 					return fmt.Errorf("error while collecting inode %v: %w", id, err)
 				}
 			}
+			state.Cursors[shid] = resp.NextId
 			req.BeginId = resp.NextId
 		}
 		if allDone {
 			break
 		}
 	}
-	log.Info("stats after one collect directories iteration: %+v", stats)
+	log.Info("stats after one collect directories iteration: %+v", state)
 	return nil
 }
 
 func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
-	stats := GCStats{}
+	state := CollectDirectoriesState{}
 	var cdcMu sync.Mutex
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	if err := CollectDirectories(log, client, dirInfoCache, &cdcMu, &stats, shards); err != nil {
+	if err := CollectDirectories(log, client, dirInfoCache, &cdcMu, &state, shards); err != nil {
 		return err
 	}
-	log.Info("stats after one all shards collect directories iteration: %+v", stats)
+	log.Info("stats after one all shards collect directories iteration: %+v", state.Stats)
 	return nil
 }
 
-func CollectZeroBlockServiceFiles(log *Logger, client *Client, stats *GCStats, shards []msgs.ShardId) error {
+func CollectZeroBlockServiceFiles(log *Logger, client *Client, stats *ZeroBlockServiceFilesStats, shards []msgs.ShardId) error {
 	log.Info("starting to collect block services with zero files in shards %+v", shards)
 	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, len(shards))
 	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, len(shards))
@@ -473,7 +489,7 @@ func CollectZeroBlockServiceFiles(log *Logger, client *Client, stats *GCStats, s
 }
 
 func CollectZeroBlockServiceFilesInAllShards(log *Logger, client *Client) error {
-	var stats GCStats
+	var stats ZeroBlockServiceFilesStats
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)

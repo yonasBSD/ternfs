@@ -808,7 +808,7 @@ func fsTestInternal[Id comparable](
 		// to implementing recovery)
 		log.Info("scrubbing files")
 		{
-			var stats lib.ScrubStats
+			var stats lib.ScrubState
 			// ideally we'd have retryOnFailure=false, but this will make this
 			// work with the block service killer, at the cost of an infinite loop if
 			// something else is wrong.

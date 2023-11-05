@@ -176,9 +176,9 @@ var DefaultShardTimeout = ReqTimeouts{
 }
 
 var DefaultCDCTimeout = ReqTimeouts{
-	Initial: 100 * time.Millisecond,
-	Max:     5 * time.Second,
-	Overall: 10 * time.Second,
+	Initial: time.Second,
+	Max:     10 * time.Second,
+	Overall: time.Minute,
 	Growth:  1.5,
 	Jitter:  0.1,
 	rand:    wyhash.Rand{State: 0},

@@ -110,7 +110,7 @@ func BlockServiceFlagsFromUnion(n string) (BlockServiceFlags, error) {
 	return flags, nil
 }
 
-func (flags BlockServiceFlags) Has(f BlockServiceFlags) bool {
+func (flags BlockServiceFlags) HasAny(f BlockServiceFlags) bool {
 	return flags&f != 0
 }
 

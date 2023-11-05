@@ -1834,7 +1834,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 		// failure domain -> path
 		activeBlockServices := make(map[string]map[string]struct{})
 		for _, bs := range blockServices {
-			if bs.Flags.Has(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
 			fd := bs.FailureDomain.String()
@@ -1850,7 +1850,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 		// collect non-replaced decommissioned block services
 		missingBlockServices := []string{}
 		for _, bs := range blockServices {
-			if !bs.Flags.Has(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			if !bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
 			fd := bs.FailureDomain.String()

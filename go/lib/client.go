@@ -462,7 +462,6 @@ func (procs *blocksProcessors) init(what string) {
 
 func (procs *blocksProcessors) send(
 	log *Logger,
-	alert bool,
 	blockService msgs.BlockServiceId,
 	ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16,
 	breq msgs.BlocksRequest,
@@ -922,10 +921,10 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, err
 }
 
-func (client *Client) StartWriteBlock(log *Logger, alert bool, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartWriteBlock(log *Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	resp := &msgs.WriteBlockResp{}
 	return client.writeBlockProcessors.send(
-		log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+		log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
 		&msgs.WriteBlockReq{
 			BlockId:     block.BlockId,
 			Crc:         crc,
@@ -940,9 +939,9 @@ func (client *Client) StartWriteBlock(log *Logger, alert bool, block *msgs.AddSp
 	)
 }
 
-func (client *Client) WriteBlock(log *Logger, alert bool, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
+func (client *Client) WriteBlock(log *Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
 	ch := make(chan *BlockCompletion, 1)
-	err = client.StartWriteBlock(log, alert, block, r, size, crc, nil, ch)
+	err = client.StartWriteBlock(log, block, r, size, crc, nil, ch)
 	if err != nil {
 		var proof [8]byte
 		return proof, err
@@ -954,10 +953,10 @@ func (client *Client) WriteBlock(log *Logger, alert bool, block *msgs.AddSpanIni
 	return resp.Resp.(*msgs.WriteBlockResp).Proof, nil
 }
 
-func (client *Client) StartFetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartFetchBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
 	resp := &msgs.FetchBlockResp{}
 	return client.fetchBlockProcessors.send(
-		log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+		log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
 		&msgs.FetchBlockReq{
 			BlockId: blockId,
 			Offset:  offset,
@@ -975,11 +974,11 @@ func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 	c.fetchBlockBufs.Put(body)
 }
 
-func (client *Client) FetchBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
+func (client *Client) FetchBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
 	ch := make(chan *BlockCompletion, 1)
 	buf := client.fetchBlockBufs.Get().(*bytes.Buffer)
 	buf.Reset()
-	if err := client.StartFetchBlock(log, alert, blockService, blockId, offset, count, buf, nil, ch); err != nil {
+	if err := client.StartFetchBlock(log, blockService, blockId, offset, count, buf, nil, ch); err != nil {
 		client.PutFetchedBlock(buf)
 		return nil, err
 	}
@@ -991,10 +990,10 @@ func (client *Client) FetchBlock(log *Logger, alert bool, blockService *msgs.Blo
 	return buf, nil
 }
 
-func (client *Client) StartEraseBlock(log *Logger, alert bool, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartEraseBlock(log *Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
 	resp := &msgs.EraseBlockResp{}
 	return client.eraseBlockProcessors.send(
-		log, alert, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+		log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
 		&msgs.EraseBlockReq{
 			BlockId:     block.BlockId,
 			Certificate: block.Certificate,
@@ -1007,9 +1006,9 @@ func (client *Client) StartEraseBlock(log *Logger, alert bool, block *msgs.Remov
 	)
 }
 
-func (client *Client) EraseBlock(log *Logger, alert bool, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
+func (client *Client) EraseBlock(log *Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
 	ch := make(chan *BlockCompletion, 1)
-	if err := client.StartEraseBlock(log, alert, block, nil, ch); err != nil {
+	if err := client.StartEraseBlock(log, block, nil, ch); err != nil {
 		return proof, err
 	}
 	resp := <-ch
@@ -1019,10 +1018,10 @@ func (client *Client) EraseBlock(log *Logger, alert bool, block *msgs.RemoveSpan
 	return resp.Resp.(*msgs.EraseBlockResp).Proof, nil
 }
 
-func (client *Client) StartCheckBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartCheckBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	resp := &msgs.CheckBlockResp{}
 	return client.checkBlockProcessors.send(
-		log, alert, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+		log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
 		&msgs.CheckBlockReq{
 			BlockId: blockId,
 			Size:    size,
@@ -1036,9 +1035,9 @@ func (client *Client) StartCheckBlock(log *Logger, alert bool, blockService *msg
 	)
 }
 
-func (client *Client) CheckBlock(log *Logger, alert bool, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
+func (client *Client) CheckBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
 	ch := make(chan *BlockCompletion, 1)
-	if err := client.StartCheckBlock(log, alert, blockService, blockId, size, crc, nil, ch); err != nil {
+	if err := client.StartCheckBlock(log, blockService, blockId, size, crc, nil, ch); err != nil {
 		return err
 	}
 	resp := <-ch

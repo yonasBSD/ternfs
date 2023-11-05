@@ -33,7 +33,7 @@ func fetchBlock(
 	block *msgs.FetchedBlock,
 ) (*bytes.Buffer, error) {
 	blockService := &blockServices[block.BlockServiceIx]
-	data, err := client.FetchBlock(log, true, blockService, block.BlockId, 0, blockSize)
+	data, err := client.FetchBlock(log, blockService, block.BlockId, 0, blockSize)
 	if err != nil {
 		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
 		return nil, err
@@ -91,7 +91,7 @@ func writeBlock(
 		}
 		dstBlock := &initiateSpanResp.Resp.Blocks[0]
 		var writeProof [8]byte
-		writeProof, err = client.WriteBlock(log, true, dstBlock, newContents, blockSize, block.Crc)
+		writeProof, err = client.WriteBlock(log, dstBlock, newContents, blockSize, block.Crc)
 		certifySpanResp := msgs.AddSpanCertifyResp{}
 		if err != nil {
 			log.Info("could not write to block service, might retry: %v", err)

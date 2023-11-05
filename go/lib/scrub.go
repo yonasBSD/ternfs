@@ -25,8 +25,7 @@ func scrubFileInternal(
 	file msgs.InodeId,
 ) error {
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
-		alert := blockService.Flags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
-		err := client.CheckBlock(log, alert, blockService, block.BlockId, blockSize, block.Crc)
+		err := client.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND {
 			log.RaiseAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
@@ -38,7 +37,7 @@ func scrubFileInternal(
 
 type scrubCheckInfo struct {
 	file         msgs.InodeId
-	alert        bool
+	alert        *XmonNCAlert
 	blockService msgs.BlockService
 	block        msgs.BlockId
 	size         uint32
@@ -54,53 +53,81 @@ func scrubChecker(
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
 ) {
-	alert := log.NewNCAlert(10 * time.Second)
 	bufPool := NewBufPool()
+	// This chan is to feed back failed things, we can't do it in the
+	// loop directly otherwise we might deadlock because of a full
+	// send queue in the block request
+	retryChan := make(chan *BlockCompletion, 128)
+	var outstandingScrubbings sync.WaitGroup
+	var scrubbingMu sync.Mutex
 
 	for {
-		completion := <-checkerChan
+		var completion *BlockCompletion
+		select {
+		case completion = <-retryChan:
+		case completion = <-checkerChan:
+		}
 		if completion == nil {
+			outstandingScrubbings.Wait()
 			return
 		}
 		atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
 		err := completion.Error
 		info := completion.Extra.(*scrubCheckInfo)
-	CheckAgain:
 		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
 			}
-			log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
-			if retryOnFailure {
-				for {
-					err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file)
-					if err == nil {
-						log.ClearNC(alert)
-						break
+			// don't delay queue processing
+			outstandingScrubbings.Add(1)
+			go func() {
+				defer outstandingScrubbings.Done()
+				scrubbingMu.Lock() // scrubbings don't work in parallel
+				defer scrubbingMu.Unlock()
+				alert := log.NewNCAlert(0)
+				log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
+				if retryOnFailure {
+					for {
+						err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file)
+						if err == nil {
+							log.ClearNC(alert)
+							break
+						}
+						log.RaiseNC(alert, "could not scrub file %v, will try again in a second: %v", info.file, err)
+						time.Sleep(time.Second)
 					}
-					log.RaiseNC(alert, "could not scrub file %v, will try again in a second: %v", info.file, err)
-					time.Sleep(time.Second)
-				}
-			} else {
-				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
-					log.Info("could not scrub file %v, will terminate: %v", info.file, err)
-					select {
-					case terminateChan <- err:
-					default:
+				} else {
+					if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
+						log.Info("could not scrub file %v, will terminate: %v", info.file, err)
+						select {
+						case terminateChan <- err:
+						default:
+						}
+						return
 					}
-					return
 				}
-			}
-			log.Info("migration finished for file %v", info.file)
+				log.Info("migration finished for file %v", info.file)
+			}()
 		} else if err != nil {
 			if retryOnFailure {
-				for {
-					log.RaiseNC(alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
+				outstandingScrubbings.Add(1)
+				go func() {
+					defer outstandingScrubbings.Done()
+					if info.alert == nil {
+						info.alert = log.NewNCAlert(0)
+					}
+					log.RaiseNC(info.alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
 					time.Sleep(time.Second)
-					err = client.CheckBlock(log, info.alert, &info.blockService, info.block, info.size, info.crc)
-					goto CheckAgain
-				}
+					for {
+						err := client.StartCheckBlock(log, &info.blockService, info.block, info.size, info.crc, info, checkerChan)
+						if err == nil {
+							break
+						}
+						log.RaiseNC(info.alert, "could not start checking block %v in file %v, will retry after a second: %v", info.block, info.file, err)
+						time.Sleep(time.Second)
+					}
+				}()
 			} else {
 				log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
 				select {
@@ -112,7 +139,9 @@ func scrubChecker(
 		} else {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
-			log.ClearNC(alert)
+			if info.alert != nil {
+				log.ClearNC(info.alert)
+			}
 		}
 	}
 }
@@ -142,7 +171,7 @@ func scrubSender(
 			return
 		}
 		atomic.StoreUint64(&stats.SendQueueSize, uint64(len(sendChan)))
-		shouldAlert := req.blockService.Flags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
+		canIgnoreError := req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE | msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
 		info := &scrubCheckInfo{
 			file:         req.file,
 			blockService: req.blockService,
@@ -151,11 +180,11 @@ func scrubSender(
 			crc:          req.crc,
 		}
 	TryAgain:
-		err := client.StartCheckBlock(log, shouldAlert, &req.blockService, req.block, req.size, req.crc, info, checkerChan)
+		err := client.StartCheckBlock(log, &req.blockService, req.block, req.size, req.crc, info, checkerChan)
 		if err == nil {
 			log.ClearNC(alert)
 		} else {
-			if !shouldAlert {
+			if canIgnoreError {
 				// migration takes care of this, not scrubbing
 				log.Info("skipping block %v in file %v because of its block service flags %v: %v", req.block, req.file, req.blockService.Flags, err)
 			} else if retryOnFailure {

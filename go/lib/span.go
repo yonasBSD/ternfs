@@ -260,7 +260,7 @@ func (c *Client) CreateSpan(
 		for i, block := range initiateResp.Blocks {
 			var proof [8]byte
 			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
-			proof, err = c.WriteBlock(log, true, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
+			proof, err = c.WriteBlock(log, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
 			if err != nil {
 				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
 				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
@@ -418,7 +418,7 @@ func (c *Client) fetchCell(
 	block := &body.Blocks[blockIx]
 	blockService := &blockServices[block.BlockServiceIx]
 	var data *bytes.Buffer
-	data, err = c.FetchBlock(log, true, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
+	data, err = c.FetchBlock(log, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err

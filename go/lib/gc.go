@@ -95,7 +95,7 @@ func DestructFile(
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
 				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
-				if err := client.StartEraseBlock(log, !acceptFailure[i], &block, i, eraseChan); err != nil {
+				if err := client.StartEraseBlock(log, &block, i, eraseChan); err != nil {
 					if acceptFailure[i] {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)

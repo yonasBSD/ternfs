@@ -385,7 +385,11 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 				N: int64(writeReq.Size),
 			}
 			log.Debug("writing block body to %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
-			if _, err := conn.conn.ReadFrom(lr); err != nil {
+			writtenBytes, err := conn.conn.ReadFrom(lr)
+			if err != nil || writtenBytes < int64(writeReq.Size) {
+				if err == nil {
+					err = io.EOF
+				}
 				log.Info("got error when writing block body: %v", err)
 				req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
 				conn.conn.Close()
@@ -434,7 +438,11 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 				N: int64(req.Count),
 			}
 			log.Debug("reading block body from %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
-			if _, err := resp.resp.additionalBodyWriter.ReadFrom(lr); err != nil {
+			readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(lr)
+			if err != nil || readBytes < int64(req.Count) {
+				if err == nil {
+					err = io.EOF
+				}
 				resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
 				continue
 			}

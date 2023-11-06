@@ -356,6 +356,7 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 		if conn.conn != nil && time.Since(lastIterationAt) > 10*time.Second && len(proc.inFlightReqChan) == 0 {
 			if err := connCheck(conn.conn); err != nil {
 				log.Debug("connection for addr1=%+v addr2=%+v is dead: %v", proc.addr1, proc.addr2, err)
+				conn.conn.Close()
 				conn.conn = nil
 			}
 		}
@@ -373,6 +374,7 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 		if err := WriteBlocksRequest(log, conn.conn, req.blockService, req.req); err != nil {
 			log.Info("got error when writing block request of kind %v in %v->%v: %v", req.req.BlocksRequestKind(), conn.conn.LocalAddr(), conn.conn.RemoteAddr(), err)
 			req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
+			conn.conn.Close()
 			conn.conn = nil
 			continue
 		}
@@ -386,6 +388,7 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 			if _, err := conn.conn.ReadFrom(lr); err != nil {
 				log.Info("got error when writing block body: %v", err)
 				req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
+				conn.conn.Close()
 				conn.conn = nil
 				continue
 			}

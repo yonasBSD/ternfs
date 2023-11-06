@@ -295,6 +295,7 @@ func (proc *blocksProcessor) connect(log *Logger) (*net.TCPConn, error) {
 		var sock *net.TCPConn
 		sock, err = net.DialTCP("tcp4", nil, addr)
 		if err == nil {
+			log.Debug("connected to block service at %v", addr)
 			return sock, nil
 		}
 		log.Info("could not connect to block service %v, might try next connection: %v", addr, err)

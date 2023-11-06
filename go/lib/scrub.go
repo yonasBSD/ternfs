@@ -37,12 +37,13 @@ func scrubFileInternal(
 }
 
 type scrubCheckInfo struct {
-	file         msgs.InodeId
-	alert        *XmonNCAlert
-	blockService msgs.BlockService
-	block        msgs.BlockId
-	size         uint32
-	crc          msgs.Crc
+	file           msgs.InodeId
+	alert          *XmonNCAlert
+	blockService   msgs.BlockService
+	block          msgs.BlockId
+	size           uint32
+	crc            msgs.Crc
+	canIgnoreError bool
 }
 
 func scrubChecker(
@@ -111,7 +112,9 @@ func scrubChecker(
 				log.Info("migration finished for file %v", info.file)
 			}()
 		} else if err != nil {
-			if retryOnFailure {
+			if info.canIgnoreError {
+				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)
+			} else if retryOnFailure {
 				outstandingScrubbings.Add(1)
 				go func() {
 					defer outstandingScrubbings.Done()
@@ -174,11 +177,12 @@ func scrubSender(
 		atomic.StoreUint64(&stats.SendQueueSize, uint64(len(sendChan)))
 		canIgnoreError := req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE | msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
 		info := &scrubCheckInfo{
-			file:         req.file,
-			blockService: req.blockService,
-			block:        req.block,
-			size:         req.size,
-			crc:          req.crc,
+			file:           req.file,
+			blockService:   req.blockService,
+			block:          req.block,
+			size:           req.size,
+			crc:            req.crc,
+			canIgnoreError: canIgnoreError,
 		}
 	TryAgain:
 		err := client.StartCheckBlock(log, &req.blockService, req.block, req.size, req.crc, info, checkerChan)

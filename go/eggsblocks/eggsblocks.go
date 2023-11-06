@@ -503,9 +503,14 @@ func handleRequestError(
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
-		// normal error, we can keep the connection alive
-		log.Info("preserving connection from %v after err %v", conn.RemoteAddr(), err)
-		return true
+		// kill the connection in bad cases
+		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) {
+			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
+			return false
+		} else {
+			log.Info("preserving connection from %v after err %v", conn.RemoteAddr(), err)
+			return true
+		}
 	} else {
 		// attempt to say goodbye, ignore errors
 		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)

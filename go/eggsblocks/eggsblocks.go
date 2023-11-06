@@ -318,6 +318,12 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	for cursor < size {
 		read, err := f.Read(*buf)
 		if err != nil {
+			// we distinguish this since it's likely a bad single block
+			var pathErr *os.PathError
+			if cursor > 0 && errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
+				log.RaiseAlert("got IO error for file %v at %v, will return BLOCK_PARTIAL_IO_ERROR: %v", blockPath, cursor, err)
+				return msgs.BLOCK_PARTIAL_IO_ERROR
+			}
 			log.RaiseAlert("could not read file %v at %v: %v", blockPath, cursor, err)
 			return err
 		}
@@ -496,6 +502,13 @@ func handleRequestError(
 			log.Info("got connection reset error from %v, terminating", conn.RemoteAddr())
 			return false
 		}
+	}
+
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
+		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return BLOCK_IO_ERROR, previous error: %v", err, conn.RemoteAddr(), req, *lastError)
+		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR)
+		return false
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service

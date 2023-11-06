@@ -164,6 +164,9 @@ func destructFilesInternal(
 	alert := log.NewNCAlert(10 * time.Second)
 	timeouts := NewReqTimeouts(time.Second, 10*time.Second, 0, 1.5, 0.2)
 	reqs := make([]msgs.VisitTransientFilesReq, len(shards))
+	for i := range reqs {
+		reqs[i].BeginId = state.Cursors[shards[i]]
+	}
 	resps := make([]msgs.VisitTransientFilesResp, len(shards))
 	someErrored := false
 	for i := 0; ; i++ {
@@ -409,6 +412,9 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, state *CollectDirectoriesState, shards []msgs.ShardId) error {
 	log.Info("starting to collect directories in shards %+v", shards)
 	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
+	for i := range reqs {
+		reqs[i].BeginId = state.Cursors[shards[i]]
+	}
 	resps := make([]msgs.VisitDirectoriesResp, len(shards))
 	for i := 0; ; i++ {
 		allDone := true

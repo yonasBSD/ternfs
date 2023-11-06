@@ -259,11 +259,11 @@ type blocksProcessor struct {
 	addr1           net.TCPAddr
 	addr2           net.TCPAddr
 	what            string
-	conn            *blocksProcessorConn
+	_conn           *blocksProcessorConn // this must be loaded through loadConn
 }
 
 func (proc *blocksProcessor) loadConn() *blocksProcessorConn {
-	return (*blocksProcessorConn)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&proc.conn))))
+	return (*blocksProcessorConn)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&proc._conn))))
 }
 
 func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
@@ -272,7 +272,7 @@ func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
 		conn:       conn,
 		generation: gen + 1,
 	}
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&proc.conn)), unsafe.Pointer(newConn))
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&proc._conn)), unsafe.Pointer(newConn))
 	return newConn
 }
 
@@ -511,7 +511,7 @@ func (procs *blocksProcessors) send(
 		addr1:           net.TCPAddr{IP: net.IP(ip1[:]), Port: int(port1)},
 		addr2:           net.TCPAddr{IP: net.IP(ip2[:]), Port: int(port2)},
 		what:            procs.what,
-		conn:            &blocksProcessorConn{},
+		_conn:           &blocksProcessorConn{},
 	})
 	proc := procAny.(*blocksProcessor)
 	if !loaded {
@@ -730,8 +730,13 @@ func NewClientDirectNoAddrs(
 	if err := c.clientMetadata.init(log); err != nil {
 		return nil, err
 	}
+	// Ideally, for write/fetch we'd want to have one socket
+	// per block service. However we don't have flash yet, so
+	// it's hard to saturate a socket because of seek time.
 	c.writeBlockProcessors.init("write")
+	c.writeBlockProcessors.oneSockPerBlockService = true
 	c.fetchBlockProcessors.init("fetch")
+	c.fetchBlockProcessors.oneSockPerBlockService = true
 	c.eraseBlockProcessors.init("erase")
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel

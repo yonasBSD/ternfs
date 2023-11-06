@@ -214,7 +214,7 @@ func scrubScraper(
 	shards []msgs.ShardId,
 ) {
 	fileReqs := make([]msgs.VisitFilesReq, len(shards))
-	for i := 0; i < len(fileReqs); i++ {
+	for i := range fileReqs {
 		fileReqs[i].BeginId = stats.Cursors[shards[i]]
 	}
 	fileResps := make([]msgs.VisitFilesResp, len(shards))

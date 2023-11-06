@@ -47,14 +47,6 @@ func initDb(db *sql.DB) error {
 	return nil
 }
 
-func updateCountStat(db *sql.DB, mu *sync.Mutex, shid msgs.ShardId, which string, increase uint64) error {
-	mu.Lock()
-	defer mu.Unlock()
-
-	_, err := db.Exec(fmt.Sprintf("UPDATE count_stats SET %s = ? WHERE shid = ?", which), increase, int(shid))
-	return err
-}
-
 type countStats struct {
 	files           uint64
 	directories     uint64
@@ -113,7 +105,7 @@ func loadState(db *sql.DB, what string, state any) error {
 
 type CountStateSection struct {
 	Shard  msgs.ShardId
-	Cursor msgs.InodeId
+	Counts [256]uint64
 }
 
 type CountState struct {
@@ -133,13 +125,11 @@ func main() {
 	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
-	destructFilesParallel := flag.Uint("destruct-files-parallel", 0, "If non-zero, it'll override -parallel just for files destruction")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	scrub := flag.Bool("scrub", false, "scrub")
-	scrubFilesParallel := flag.Uint("scrub-parallel", 0, "If non-zero, it'll override -parallel just for scrubbing")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
 
@@ -180,12 +170,12 @@ func main() {
 		}
 	}
 
-	if int(*parallel) > len(shards) || int(*destructFilesParallel) > len(shards) || int(*scrubFilesParallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel/-scrub-parallel can't be greater than %v (number of shards).\n", len(shards))
+	if int(*parallel) > len(shards) {
+		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
-	if len(shards)%int(*parallel) != 0 || (*destructFilesParallel > 0 && len(shards)%int(*destructFilesParallel) != 0) || (*scrubFilesParallel > 0 && len(shards)%int(*scrubFilesParallel) != 0) {
-		fmt.Fprintf(os.Stderr, "-parallel/-destruct-files-parallel/-scrub-parallel does not divide %v (number of shards).\n", len(shards))
+	if len(shards)%int(*parallel) != 0 {
+		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).\n", len(shards))
 		os.Exit(2)
 	}
 
@@ -310,52 +300,65 @@ func main() {
 	shardsPerGroup := len(shards) / int(*parallel)
 
 	if *collectDirectories {
-		for group0 := 0; group0 < int(*parallel); group0++ {
-			group := group0
-			rand := wyhash.New(uint64(group))
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				for {
-					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
-					log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
-					time.Sleep(waitFor)
-					if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, collectDirectoriesState, groupShards); err != nil {
-						log.RaiseAlert("could not collect directories: %v", err)
-					}
+		go func() {
+			for {
+				var wg sync.WaitGroup
+				wg.Add(int(*parallel))
+				for group0 := 0; group0 < int(*parallel); group0++ {
+					group := group0
+					rand := wyhash.New(uint64(group))
+					go func() {
+						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+						waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
+						log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
+						time.Sleep(waitFor)
+						if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, collectDirectoriesState, groupShards); err != nil {
+							log.RaiseAlert("could not collect directories: %v", err)
+						}
+						wg.Done()
+					}()
 				}
-			}()
-		}
+				wg.Wait()
+				log.Info("finished collect directories cycle")
+				*collectDirectoriesState = lib.CollectDirectoriesState{}
+			}
+		}()
 	}
 	if *destructFiles {
-		shardsPerGroup := len(shards) / int(*parallel)
-		if *destructFilesParallel > 0 {
-			shardsPerGroup = len(shards) / int(*destructFilesParallel)
-		}
-		for group0 := 0; group0 < int(*parallel); group0++ {
-			group := group0
-			rand := wyhash.New(uint64(group))
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				for {
-					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
-					log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
-					time.Sleep(waitFor)
-					if err := lib.DestructFiles(log, options, client, destructFilesState, groupShards); err != nil {
-						log.RaiseAlert("could not destruct files: %v", err)
-					}
+		go func() {
+			for {
+				var wg sync.WaitGroup
+				wg.Add(int(*parallel))
+				for group0 := 0; group0 < int(*parallel); group0++ {
+					group := group0
+					rand := wyhash.New(uint64(group))
+					go func() {
+						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+						waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
+						log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
+						time.Sleep(waitFor)
+						if err := lib.DestructFiles(log, options, client, destructFilesState, groupShards); err != nil {
+							log.RaiseAlert("could not destruct files: %v", err)
+						}
+					}()
 				}
-			}()
-		}
+				wg.Wait()
+				log.Info("finished destruct files cycle")
+				*destructFilesState = lib.DestructFilesState{}
+			}
+		}()
 	}
 	if *zeroBlockServices {
-		for group0 := 0; group0 < int(*parallel); group0++ {
-			group := group0
-			rand := wyhash.New(uint64(group))
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				for {
+		go func() {
+			var wg sync.WaitGroup
+			wg.Add(int(*parallel))
+			for group0 := 0; group0 < int(*parallel); group0++ {
+				group := group0
+				rand := wyhash.New(uint64(group))
+				go func() {
+					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
 					// just do that once an hour, we don't need this often.
 					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
@@ -364,21 +367,22 @@ func main() {
 					if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
 						log.RaiseAlert("could not collecting zero block service files: %v", err)
 					}
-				}
-			}()
-		}
+				}()
+			}
+			wg.Wait()
+			log.Info("finished zero block services cycle")
+			*zeroBlockServiceFilesStats = lib.ZeroBlockServiceFilesStats{}
+		}()
 	}
 	if *scrub {
-		shardsPerGroup := len(shards) / int(*parallel)
-		if *scrubFilesParallel > 0 {
-			shardsPerGroup = len(shards) / int(*scrubFilesParallel)
-		}
-		for group0 := 0; group0 < int(*parallel); group0++ {
-			group := group0
-			rand := wyhash.New(uint64(group))
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				for {
+		go func() {
+			var wg sync.WaitGroup
+			wg.Add(int(*parallel))
+			for group0 := 0; group0 < int(*parallel); group0++ {
+				group := group0
+				rand := wyhash.New(uint64(group))
+				go func() {
+					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
@@ -386,9 +390,12 @@ func main() {
 					if err := lib.ScrubFiles(log, client, scrubState, true, groupShards); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
-				}
-			}()
-		}
+				}()
+			}
+			wg.Wait()
+			log.Info("finished scrubbing cycle")
+			*scrubState = lib.ScrubState{}
+		}()
 	}
 	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub) {
 		// one thing just pushing the stats every minute
@@ -460,13 +467,11 @@ func main() {
 		}()
 	}
 	if *countMetrics {
-		var mu sync.Mutex
 		// counting transient files/files/directories
 		go func() {
 			for {
 				log.Info("starting to count files")
-				updateAlert := log.NewNCAlert(10 * time.Second)
-				for i := 0; i < 256; i++ {
+				for i := int(countState.Files.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.Files.Shard = shid
 					req := msgs.VisitFilesReq{}
@@ -480,29 +485,21 @@ func main() {
 						}
 						count += uint64(len(resp.Ids))
 						req.BeginId = resp.NextId
-						countState.Files.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}
 					}
 					if err == nil {
-						for {
-							err := updateCountStat(db, &mu, shid, "files", count)
-							if err == nil {
-								break
-							}
-							log.RaiseNC(updateAlert, "could not update file count, will wait one second: %v", err)
-							time.Sleep(time.Second)
-						}
+						countState.Files.Counts[shid] = count
 					}
 				}
+				countState.Files.Shard = 0
 			}
 		}()
 		go func() {
 			for {
 				log.Info("starting to count directories")
-				updateAlert := log.NewNCAlert(10 * time.Second)
-				for i := 0; i < 256; i++ {
+				for i := int(countState.Directories.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.Directories.Shard = shid
 					req := msgs.VisitDirectoriesReq{}
@@ -516,27 +513,19 @@ func main() {
 						}
 						count += uint64(len(resp.Ids))
 						req.BeginId = resp.NextId
-						countState.Directories.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}
 					}
-					for {
-						err := updateCountStat(db, &mu, shid, "directories", count)
-						if err == nil {
-							break
-						}
-						log.RaiseNC(updateAlert, "could not update directory count, will wait one second: %v", err)
-						time.Sleep(time.Second)
-					}
+					countState.Directories.Counts[shid] = count
 				}
+				countState.Directories.Shard = 0
 			}
 		}()
 		go func() {
 			for {
 				log.Info("starting to count transient files")
-				updateAlert := log.NewNCAlert(10 * time.Second)
-				for i := 0; i < 256; i++ {
+				for i := int(countState.TransientFiles.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.TransientFiles.Shard = shid
 					req := msgs.VisitTransientFilesReq{}
@@ -550,20 +539,13 @@ func main() {
 						}
 						count += uint64(len(resp.Files))
 						req.BeginId = resp.NextId
-						countState.TransientFiles.Cursor = resp.NextId
 						if req.BeginId == 0 {
 							break
 						}
 					}
-					for {
-						err := updateCountStat(db, &mu, shid, "transient_files", count)
-						if err == nil {
-							break
-						}
-						log.RaiseNC(updateAlert, "could not update transient files count, will wait one second: %v", err)
-						time.Sleep(time.Second)
-					}
+					countState.TransientFiles.Counts[shid] = count
 				}
+				countState.TransientFiles.Shard = 0
 			}
 		}()
 		go func() {
@@ -574,25 +556,19 @@ func main() {
 				log.Info("sending files/transient files/dirs metrics")
 				now := time.Now()
 				metrics.Reset()
-				stats, err := getCountStats(db)
-				if err != nil {
-					log.RaiseNC(alert, "failed to get count stats, will try again in a second: %v", err)
-					time.Sleep(time.Second)
-					continue
-				}
 				log.ClearNC(alert)
 				for i := 0; i < 256; i++ {
 					metrics.Measurement("eggsfs_transient_files")
 					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-					metrics.FieldU64("count", stats[i].transient_files)
+					metrics.FieldU64("count", countState.TransientFiles.Counts[i])
 					metrics.Timestamp(now)
 					metrics.Measurement("eggsfs_files")
 					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-					metrics.FieldU64("count", stats[i].files)
+					metrics.FieldU64("count", countState.Files.Counts[i])
 					metrics.Timestamp(now)
 					metrics.Measurement("eggsfs_directories")
 					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
-					metrics.FieldU64("count", stats[i].directories)
+					metrics.FieldU64("count", countState.Directories.Counts[i])
 					metrics.Timestamp(now)
 				}
 				err = lib.SendMetrics(metrics.Payload())

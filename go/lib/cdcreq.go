@@ -12,7 +12,7 @@ func (c *Client) checkRepeatedCDCRequestError(
 	reqBody msgs.CDCRequest,
 	resp msgs.CDCResponse,
 	respErr msgs.ErrCode,
-) *msgs.ErrCode {
+) msgs.ErrCode {
 	switch reqBody := reqBody.(type) {
 	case *msgs.RenameDirectoryReq:
 		// We repeat the request, but the previous had actually gone through:
@@ -26,42 +26,42 @@ func (c *Client) checkRepeatedCDCRequestError(
 			// we had  just moved it, and that the target edge also exists.
 			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameDirectoryReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return &respErr
+				return respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.RenameDirectoryResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
-				return &respErr
+				return respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
-			return nil
+			return 0
 		}
 	// in a decent language this branch and the previous could be merged
 	case *msgs.RenameFileReq:
 		if respErr == msgs.EDGE_NOT_FOUND {
 			logger.Info("following up on EDGE_NOT_FOUND after repeated RenameFileReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OldOwnerId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return &respErr
+				return respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.RenameFileResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.NewOwnerId, reqBody.TargetId, reqBody.NewName, &respBody.CreationTime) {
-				return &respErr
+				return respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
-			return nil
+			return 0
 		}
 	case *msgs.SoftUnlinkDirectoryReq:
 		if respErr == msgs.EDGE_NOT_FOUND {
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkDirectoryReq %+v", reqBody)
 			// Note that here we expect a non-owned edge, since we're deleting a directory.
 			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.TargetId, reqBody.Name, reqBody.CreationTime, false) {
-				return &respErr
+				return respErr
 			}
-			return nil
+			return 0
 		}
 	}
-	return &respErr
+	return respErr
 }
 
 func (c *Client) CDCRequest(

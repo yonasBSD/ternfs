@@ -72,7 +72,7 @@ func (c *Client) checkRepeatedShardRequestError(
 	reqBody msgs.ShardRequest,
 	resp msgs.ShardResponse,
 	respErr msgs.ErrCode,
-) *msgs.ErrCode {
+) msgs.ErrCode {
 	switch reqBody := reqBody.(type) {
 	case *msgs.SameDirectoryRenameReq:
 		if respErr == msgs.EDGE_NOT_FOUND {
@@ -84,26 +84,26 @@ func (c *Client) checkRepeatedShardRequestError(
 			// we had  just moved it, and that the target edge also exists.
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SameDirectoryRenameReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.DirId, reqBody.TargetId, reqBody.OldName, reqBody.OldCreationTime, false) {
-				return &respErr
+				return respErr
 			}
 			// Then we check the target edge, and update creation time
 			respBody := resp.(*msgs.SameDirectoryRenameResp)
 			if !c.checkNewEdgeAfterRename(logger, reqBody.DirId, reqBody.TargetId, reqBody.NewName, &respBody.NewCreationTime) {
-				return &respErr
+				return respErr
 			}
 			logger.Info("recovered from EDGE_NOT_FOUND, will fill in creation time")
-			return nil
+			return 0
 		}
 	case *msgs.SoftUnlinkFileReq:
 		if respErr == msgs.EDGE_NOT_FOUND {
 			logger.Info("following up on EDGE_NOT_FOUND after repeated SoftUnlinkFileReq %+v", reqBody)
 			if !c.checkDeletedEdge(logger, reqBody.OwnerId, reqBody.FileId, reqBody.Name, reqBody.CreationTime, true) {
-				return &respErr
+				return respErr
 			}
-			return nil
+			return 0
 		}
 	}
-	return &respErr
+	return respErr
 }
 
 func (c *Client) shardRequestInternal(

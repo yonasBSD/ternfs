@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"container/heap"
 	"crypto/cipher"
 	"encoding/binary"
 	"errors"
@@ -143,23 +144,356 @@ var DefaultBlockTimeout = ReqTimeouts{
 
 type metadataProcessorRequest struct {
 	requestId uint64
-	clear     bool // if this is set, the other fields are ignored: we just remove the req from the map.
 	timeout   time.Duration
-	addr      *net.UDPAddr
-	body      []byte
-	respCh    chan []byte
+	shard     int16 // -1 = cdc
+	req       bincode.Packable
+	resp      bincode.Unpackable
+	extra     any
+	respCh    chan *metadataProcessorResponse
+	// filled in by request processor
+	deadline time.Time
+	index    int // index in the heap
 }
 
 type metadataProcessorResponse struct {
 	requestId uint64
-	body      []byte
+	resp      any
+	err       error
+}
+
+type metadataRequestsPQ []*metadataProcessorRequest
+
+func (pq metadataRequestsPQ) Len() int { return len(pq) }
+
+func (pq metadataRequestsPQ) Less(i, j int) bool {
+	return pq[i].deadline.UnixNano() < pq[j].deadline.UnixNano()
+}
+
+func (pq metadataRequestsPQ) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+	pq[i].index = i
+	pq[j].index = j
+}
+
+func (pq *metadataRequestsPQ) Push(x any) {
+	n := len(*pq)
+	item := x.(*metadataProcessorRequest)
+	item.index = n
+	*pq = append(*pq, item)
+}
+
+func (pq *metadataRequestsPQ) Pop() any {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil  // avoid memory leak
+	item.index = -1 // for safety
+	*pq = old[0 : n-1]
+	return item
+}
+
+type rawMetadataResponse struct {
+	receivedAt time.Time
+	protocol   uint32
+	requestId  uint64
+	kind       uint8
+	respLen    int
+	buf        *[]byte // the buf contains the header
 }
 
 type clientMetadata struct {
-	sock       *net.UDPConn
-	sockClosed bool // to terminate the receiver
-	requests   chan *metadataProcessorRequest
-	responses  chan metadataProcessorResponse
+	client *Client
+	sock   *net.UDPConn
+
+	requestsById      map[uint64]*metadataProcessorRequest // requests we've sent, by req id
+	requestsByTimeout metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
+	earlyRequests     map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet
+
+	quit          chan struct{}                  // channel to quit the response processor, which in turn closes the socket
+	incoming      chan *metadataProcessorRequest // channel where user requests come in
+	inFlight      chan *metadataProcessorRequest // channel going from request processor to response processor
+	rawResponses  chan rawMetadataResponse       // channel going from the socket drainer to the response processor
+	responsesBufs chan *[]byte                   // channel to store a cache of buffers to read into
+	timeoutTicker *time.Ticker                   // channel to notify the response processor to time out requests
+}
+
+var whichMetadatataAddr int
+
+func (cm *clientMetadata) init(log *Logger, client *Client) error {
+	log.Debug("initiating clientMetadata")
+	defer log.Debug("finished initializing clientMetadata")
+	cm.client = client
+	sock, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return err
+	}
+	cm.sock = sock.(*net.UDPConn)
+	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
+		cm.sock.Close()
+		return err
+	}
+
+	cm.requestsById = make(map[uint64]*metadataProcessorRequest)
+	cm.requestsByTimeout = make(metadataRequestsPQ, 0)
+	cm.earlyRequests = make(map[uint64]rawMetadataResponse)
+
+	cm.quit = make(chan struct{})
+	cm.incoming = make(chan *metadataProcessorRequest, 10_000)
+	cm.inFlight = make(chan *metadataProcessorRequest, 10_000)
+	cm.rawResponses = make(chan rawMetadataResponse, 10_000)
+	cm.responsesBufs = make(chan *[]byte, 128)
+	for i := 0; i < len(cm.responsesBufs); i++ {
+		buf := make([]byte, clientMtu)
+		cm.responsesBufs <- &buf
+	}
+
+	cm.timeoutTicker = time.NewTicker(100 * time.Millisecond)
+
+	go cm.processRequests(log)
+	go cm.processResponses(log)
+	go cm.drainSocket(log)
+
+	return nil
+}
+
+func (cm *clientMetadata) close() {
+	cm.timeoutTicker.Stop()
+	cm.quit <- struct{}{}
+}
+
+func (cm *clientMetadata) processRequests(log *Logger) {
+	buf := bytes.NewBuffer([]byte{})
+	for {
+		req := <-cm.incoming
+		log.Debug("sending request %v req id %v to shard %v", req.req, req.requestId, req.shard)
+		buf.Reset()
+		var addrs *[2]net.UDPAddr
+		var kind uint8
+		var protocol uint32
+		if req.shard >= 0 { // shard
+			addrs = cm.client.ShardAddrs(msgs.ShardId(req.shard))
+			kind = uint8(req.req.(msgs.ShardRequest).ShardRequestKind())
+			protocol = msgs.SHARD_REQ_PROTOCOL_VERSION
+		} else { // CDC
+			addrs = cm.client.CDCAddrs()
+			kind = uint8(req.req.(msgs.CDCRequest).CDCRequestKind())
+			protocol = msgs.CDC_REQ_PROTOCOL_VERSION
+		}
+		binary.Write(buf, binary.LittleEndian, protocol)
+		binary.Write(buf, binary.LittleEndian, req.requestId)
+		binary.Write(buf, binary.LittleEndian, kind)
+		if err := req.req.Pack(buf); err != nil {
+			log.RaiseAlert("could not pack request %v to shard %v: %v", req.req, req.shard, err)
+			req.respCh <- &metadataProcessorResponse{
+				requestId: req.requestId,
+				err:       err,
+				resp:      nil,
+			}
+			continue
+		}
+		addr := &addrs[whichMetadatataAddr%2]
+		if addr.Port == 0 {
+			addr = &addrs[0]
+		}
+		whichMetadatataAddr++
+		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
+		if err != nil {
+			log.RaiseAlert("could not send request %v to shard %v addr %v, will quit: %v", req.req, req.shard, addr, err)
+			req.respCh <- &metadataProcessorResponse{
+				requestId: req.requestId,
+				err:       err,
+				resp:      nil,
+			}
+			return
+		}
+		if written != len(buf.Bytes()) {
+			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
+		}
+		req.deadline = time.Now().Add(req.timeout)
+		cm.inFlight <- req
+	}
+}
+
+func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse) {
+	// discharge the raw request at the end
+	defer func() {
+		select {
+		case cm.responsesBufs <- rawResp.buf:
+		default:
+		}
+	}()
+	// check protocol
+	if req.shard < 0 { // CDC
+		if rawResp.protocol != msgs.CDC_RESP_PROTOCOL_VERSION {
+			log.RaiseAlert("got bad cdc protocol %v for request id %v, ignoring", rawResp.protocol, req.requestId)
+			return
+		}
+	} else {
+		if rawResp.protocol != msgs.SHARD_RESP_PROTOCOL_VERSION {
+			log.RaiseAlert("got bad shard protocol %v for request id %v, shard %v, ignoring", rawResp.protocol, req.shard, req.requestId)
+			return
+		}
+	}
+	// remove everywhere
+	delete(cm.earlyRequests, req.requestId)
+	if _, found := cm.requestsById[req.requestId]; found {
+		delete(cm.requestsById, req.requestId)
+		heap.Remove(&cm.requestsByTimeout, req.index)
+	}
+	if rawResp.kind == msgs.ERROR {
+		// it's an error
+		var err error
+		if rawResp.respLen != 4+8+1+2 {
+			log.RaiseAlert("bad error response length %v, expected %v", rawResp.respLen, 4+8+1+2)
+			err = msgs.MALFORMED_REQUEST
+		} else {
+			err = msgs.ErrCode(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
+		}
+		req.respCh <- &metadataProcessorResponse{
+			requestId: req.requestId,
+			err:       err,
+			resp:      nil,
+		}
+	} else {
+		// check kind
+		if req.shard < 0 { // CDC
+			expectedKind := req.req.(msgs.CDCRequest).CDCRequestKind()
+			if uint8(expectedKind) != rawResp.kind {
+				log.RaiseAlert("got bad cdc kind %v for request id %v, expected %v", msgs.CDCMessageKind(rawResp.kind), req.requestId, expectedKind)
+				req.respCh <- &metadataProcessorResponse{
+					requestId: req.requestId,
+					err:       msgs.MALFORMED_REQUEST,
+					resp:      nil,
+				}
+				return
+			}
+		} else {
+			expectedKind := req.req.(msgs.ShardRequest).ShardRequestKind()
+			if uint8(expectedKind) != rawResp.kind {
+				log.RaiseAlert("got bad shard kind %v for request id %v, shard %v, expected %v", msgs.ShardMessageKind(rawResp.kind), req.requestId, req.shard, expectedKind)
+				req.respCh <- &metadataProcessorResponse{
+					requestId: req.requestId,
+					err:       msgs.MALFORMED_REQUEST,
+					resp:      nil,
+				}
+				return
+			}
+		}
+		// unpack
+		if err := bincode.Unpack((*rawResp.buf)[4+8+1:rawResp.respLen], req.resp); err != nil {
+			log.RaiseAlert("could not unpack resp %T for request id %v, shard %v: %v", req.resp, req.requestId, req.shard, err)
+			req.respCh <- &metadataProcessorResponse{
+				requestId: req.requestId,
+				err:       err,
+				resp:      nil,
+			}
+			return
+		}
+		log.Debug("received resp %v req id %v from shard %v", req.resp, req.requestId, req.shard)
+		// done
+		req.respCh <- &metadataProcessorResponse{
+			requestId: req.requestId,
+			err:       nil,
+			resp:      req.resp,
+		}
+	}
+}
+
+func (cm *clientMetadata) processResponses(log *Logger) {
+	for {
+		select {
+		case req := <-cm.inFlight:
+			if rawResp, found := cm.earlyRequests[req.requestId]; found {
+				// uncommon case: we have a response for this already.
+				cm.parseRequest(log, req, &rawResp)
+			} else {
+				// common case: we don't have the response yet, put it in the data structures and wait.
+				// if the request was there before, we remove it from the heap so that we don't have
+				// dupes and the deadline is right
+				if _, found := cm.requestsById[req.requestId]; found {
+					heap.Remove(&cm.requestsByTimeout, req.index)
+				}
+				cm.requestsById[req.requestId] = req
+				heap.Push(&cm.requestsByTimeout, req)
+			}
+		case rawResp := <-cm.rawResponses:
+			if req, found := cm.requestsById[rawResp.requestId]; found {
+				// common case, the request is already there
+				cm.parseRequest(log, req, &rawResp)
+			} else {
+				// uncommon case, the request is missing
+				cm.earlyRequests[rawResp.requestId] = rawResp
+			}
+		case now := <-cm.timeoutTicker.C:
+			// expire requests
+			for len(cm.requestsById) > 0 {
+				first := cm.requestsByTimeout[0]
+				if now.After(first.deadline) {
+					log.Debug("request %v %T to shard %v has timed out", first.requestId, first.req, first.shard)
+					heap.Pop(&cm.requestsByTimeout)
+					delete(cm.requestsById, first.requestId)
+					// consumer might very plausibly be gone by now,
+					// don't risk it
+					go func() {
+						first.respCh <- &metadataProcessorResponse{
+							requestId: first.requestId,
+							err:       msgs.TIMEOUT,
+							resp:      nil,
+						}
+					}()
+				} else {
+					log.Debug("first request %v %T has not passed deadline %v", first.requestId, first.req, first.deadline)
+					break
+				}
+			}
+			// expire request we got past timeouts -- this map should always be small
+			for reqId, rawReq := range cm.earlyRequests {
+				if now.Sub(rawReq.receivedAt) > 10*time.Minute {
+					delete(cm.earlyRequests, reqId)
+				}
+			}
+		case <-cm.quit:
+			log.Info("got quit signal, closing socket")
+			cm.sock.Close()
+		}
+	}
+}
+
+func (cm *clientMetadata) drainSocket(log *Logger) {
+	for {
+		var buf *[]byte
+		select {
+		case buf = <-cm.responsesBufs:
+		default:
+		}
+		if buf == nil {
+			log.Debug("allocating new MTU buffer")
+			bufv := make([]byte, clientMtu)
+			buf = &bufv
+		}
+		read, _, err := cm.sock.ReadFromUDP(*buf)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				log.Info("socket is closed, winding down")
+			} else {
+				log.RaiseAlert("got error when reading socket, winding down: %v", err)
+			}
+			return
+		}
+		if read < 4+8+1 {
+			log.RaiseAlert("got runt metadata message, expected at least %v bytes, got %v", 4+8+1, read)
+			continue
+		}
+		rawResp := rawMetadataResponse{
+			receivedAt: time.Now(),
+			respLen:    read,
+			buf:        buf,
+			protocol:   binary.LittleEndian.Uint32(*buf),
+			requestId:  binary.LittleEndian.Uint64((*buf)[4:]),
+			kind:       (*buf)[4+8],
+		}
+		cm.rawResponses <- rawResp
+	}
 }
 
 type BlockCompletion struct {
@@ -598,104 +932,6 @@ func SetMTU(mtu uint64) {
 	clientMtu = uint16(mtu)
 }
 
-func (cm *clientMetadata) init(log *Logger) error {
-	sock, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return err
-	}
-	cm.sock = sock.(*net.UDPConn)
-	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
-		cm.sock.Close()
-		return err
-	}
-	if err := cm.sock.SetWriteBuffer(10 << 20); err != nil {
-		cm.sock.Close()
-		return err
-	}
-	cm.requests = make(chan *metadataProcessorRequest, 10_000)
-	cm.responses = make(chan metadataProcessorResponse, 10_000)
-	// sock drainer
-	go func() {
-		for {
-			if cm.sockClosed {
-				return
-			}
-			mtu := clientMtu
-			respBuf := make([]byte, mtu)
-			read, _, err := cm.sock.ReadFrom(respBuf)
-			if err != nil {
-				if cm.sockClosed {
-					log.Debug("got error while reading from metadata socket when wound down: %v", err)
-				} else {
-					log.RaiseAlert("got error while reading from metadata socket: %v", err)
-				}
-				continue
-			}
-			// extract request id
-			if read < 12 {
-				log.RaiseAlert("got runt metadata response: %v < 12", read)
-				continue
-			}
-			requestId := binary.LittleEndian.Uint64(respBuf[4 : 4+8])
-			cm.responses <- metadataProcessorResponse{
-				requestId: requestId,
-				body:      respBuf[:read],
-			}
-		}
-	}()
-	// processor
-	go func() {
-		inFlight := make(map[uint64](chan []byte))
-		for {
-			if cm.sockClosed {
-				log.Debug("request processor terminating since socket is closed")
-				return
-			}
-			select {
-			case resp := <-cm.responses:
-				ch, ok := inFlight[resp.requestId]
-				if ok {
-					// don't block the main loop because of a full queue
-					select {
-					case ch <- resp.body:
-					default:
-					}
-				} else {
-					log.Debug("ignoring request %v which we could not find, probably late", resp.requestId)
-				}
-			case req := <-cm.requests:
-				if req.clear {
-					delete(inFlight, req.requestId)
-				} else {
-					log.Debug("about to send request id %v using conn %v->%v", req.requestId, req.addr, cm.sock.LocalAddr())
-					written, err := cm.sock.WriteTo(req.body, req.addr)
-					if err != nil {
-						log.RaiseAlert("could not send request %v to %v: %v", req.requestId, req.addr, err)
-					} else if written != len(req.body) {
-						// this should never happen, but don't panic in this infinite loop
-						log.RaiseAlert("expected write of %v, got %v", len(req.body), written)
-					}
-					// overwrites are fine
-					inFlight[req.requestId] = req.respCh
-					go func() {
-						time.Sleep(req.timeout)
-						select {
-						case req.respCh <- nil:
-						default:
-						}
-					}()
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-func (cm *clientMetadata) close() {
-	cm.sockClosed = true
-	cm.sock.Close()
-}
-
 func NewClientDirectNoAddrs(
 	log *Logger,
 ) (c *Client, err error) {
@@ -710,7 +946,7 @@ func NewClientDirectNoAddrs(
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
 	c.blockTimeout = &DefaultBlockTimeout
-	if err := c.clientMetadata.init(log); err != nil {
+	if err := c.clientMetadata.init(log, c); err != nil {
 		return nil, err
 	}
 	// Ideally, for write/fetch we'd want to have one socket

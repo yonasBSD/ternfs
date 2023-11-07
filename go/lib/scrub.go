@@ -56,19 +56,12 @@ func scrubChecker(
 	terminateChan chan any,
 ) {
 	bufPool := NewBufPool()
-	// This chan is to feed back failed things, we can't do it in the
-	// loop directly otherwise we might deadlock because of a full
-	// send queue in the block request
-	retryChan := make(chan *BlockCompletion, 128)
 	var outstandingScrubbings sync.WaitGroup
 	var scrubbingMu sync.Mutex
 
 	for {
-		var completion *BlockCompletion
-		select {
-		case completion = <-retryChan:
-		case completion = <-checkerChan:
-		}
+
+		completion := <-checkerChan
 		if completion == nil {
 			outstandingScrubbings.Wait()
 			return

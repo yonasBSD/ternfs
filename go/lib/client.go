@@ -748,9 +748,9 @@ func NewClientDirectNoAddrs(
 	// bits splits the block services in 32 buckets, and the
 	// block service id is uniformly distributed.
 	//
-	// So we'll have roughly 32 connections per server, for a
-	// maximum of (currently) 32*102*4 = 13k connections, which
-	// is acceptable.
+	// So we'll have roughly 30 connections per server for the first
+	// two, and, for a maximum of (currently) 30*96*2 + 102*96*2 =
+	// 25k connections, which is within limits.
 	//
 	// (The exact expected number of connections per server is
 	// ~30.7447, I'll let you figure out why.)
@@ -760,12 +760,12 @@ func NewClientDirectNoAddrs(
 	c.fetchBlockProcessors.blockServiceBits = 5
 	c.eraseBlockProcessors.init("erase")
 	// we're not constrained by bandwidth here, we want to have requests
-	// for all block services in parallel
-	c.eraseBlockProcessors.blockServiceBits = 5
+	// for all block services in parallel.
+	c.eraseBlockProcessors.blockServiceBits = 63
 	// here we're also not constrained by bandwidth, but the requests
-	// take a long time, so have a separate channel from the erase ones
+	// take a long time, so have a separate channel from the erase ones.
 	c.checkBlockProcessors.init("erase")
-	c.checkBlockProcessors.blockServiceBits = 5
+	c.checkBlockProcessors.blockServiceBits = 63
 	return c, nil
 }
 

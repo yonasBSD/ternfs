@@ -22,15 +22,7 @@ import (
 
 // Right now the DB just stores the counting stats
 func initDb(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS count_stats(
-		shid INT NOT NULL PRIMARY KEY,
-		files INT NOT NULL,
-		directories INT NOT NULL,
-		transient_files INT NOT NULL
-	)`)
-	if err != nil {
-		return err
-	}
+	var err error
 	for i := 0; i < 256; i++ {
 		_, err = db.Exec("INSERT OR IGNORE INTO count_stats (shid, files, directories, transient_files) VALUES (?, 0, 0, 0)", i)
 		if err != nil {
@@ -45,36 +37,6 @@ func initDb(db *sql.DB) error {
 		return err
 	}
 	return nil
-}
-
-type countStats struct {
-	files           uint64
-	directories     uint64
-	transient_files uint64
-}
-
-func getCountStats(db *sql.DB) (*[256]countStats, error) {
-	rows, err := db.Query("SELECT files, directories, transient_files FROM count_stats")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	s := &[256]countStats{}
-	i := 0
-	for rows.Next() {
-		var files, directories, transient_files uint64
-		err = rows.Scan(&files, &directories, &transient_files)
-		if err != nil {
-			return nil, err
-		}
-		s[i].files = files
-		s[i].directories = directories
-		s[i].transient_files = transient_files
-		i++
-	}
-
-	return s, nil
 }
 
 func storeState(db *sql.Tx, what string, state any) error {

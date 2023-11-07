@@ -79,6 +79,7 @@ type CountState struct {
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
+	appInstance := flag.String("app-instance", "", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
@@ -111,7 +112,6 @@ func main() {
 	}
 
 	shards := []msgs.ShardId{}
-	var appInstance string
 
 	if flag.NArg() < 1 { // all shards
 		for i := 0; i < 256; i++ {
@@ -163,10 +163,7 @@ func main() {
 	for _, shard := range shards {
 		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
 	}
-	if flag.NArg() >= 1 { // only have instance when shards are provided (otherwise for all shards it's huge)
-		appInstance = strings.Join(shardsStrs, ",")
-	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech_eggsfs.daytime", AppInstance: appInstance})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech_eggsfs.daytime", AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
@@ -401,6 +398,9 @@ func main() {
 				for _, kind := range msgs.AllShardMessageKind {
 					counter := counters.Shard[uint8(kind)]
 					metrics.Measurement("eggsfs_gc_shard_reqs")
+					if *appInstance != "" {
+						metrics.Tag("instance", *appInstance)
+					}
 					metrics.Tag("kind", kind.String())
 					metrics.FieldU64("attempts", counter.Attempts)
 					metrics.FieldU64("completed", counter.Timings.Count())
@@ -410,6 +410,9 @@ func main() {
 				for _, kind := range msgs.AllCDCMessageKind {
 					counter := counters.CDC[uint8(kind)]
 					metrics.Measurement("eggsfs_gc_cdc_reqs")
+					if *appInstance != "" {
+						metrics.Tag("instance", *appInstance)
+					}
 					metrics.Tag("kind", kind.String())
 					metrics.FieldU64("attempts", counter.Attempts)
 					metrics.FieldU64("completed", counter.Timings.Count())

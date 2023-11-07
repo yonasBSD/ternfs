@@ -453,17 +453,17 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 }
 
 type blocksProcessorKey struct {
-	// if oneSockPerBlockService=false, this field is always zero.
-	blockService msgs.BlockServiceId
-	ip1          [4]byte
-	port1        uint16
-	ip2          [4]byte
-	port2        uint16
+	blockServiceKey uint64
+	ip1             [4]byte
+	port1           uint16
+	ip2             [4]byte
+	port2           uint16
 }
 
 type blocksProcessors struct {
-	what                   string
-	oneSockPerBlockService bool
+	what string
+	// how many bits of the block service id to use for blockServiceKey
+	blockServiceBits uint8
 	// blocksProcessorKey -> *blocksProcessor
 	processors sync.Map
 }
@@ -505,9 +505,7 @@ func (procs *blocksProcessors) send(
 		ip2:   ip2,
 		port2: port2,
 	}
-	if procs.oneSockPerBlockService {
-		key.blockService = blockService
-	}
+	key.blockServiceKey = uint64(blockService) & ((1 << uint64(procs.blockServiceBits)) - 1)
 	// likely case, we already have something. we could
 	// LoadOrStore directly but this saves us allocating new
 	// chans
@@ -745,18 +743,29 @@ func NewClientDirectNoAddrs(
 	// Ideally, for write/fetch we'd want to have one socket
 	// per block service. However we don't have flash yet, so
 	// it's hard to saturate a socket because of seek time.
+	//
+	// Currently we have 102 disks per server, 96 servers. 5
+	// bits splits the block services in 32 buckets, and the
+	// block service id is uniformly distributed.
+	//
+	// So we'll have roughly 32 connections per server, for a
+	// maximum of (currently) 32*102*4 = 13k connections, which
+	// is acceptable.
+	//
+	// (The exact expected number of connections per server is
+	// ~30.7447, I'll let you figure out why.)
 	c.writeBlockProcessors.init("write")
-	c.writeBlockProcessors.oneSockPerBlockService = true
+	c.writeBlockProcessors.blockServiceBits = 5
 	c.fetchBlockProcessors.init("fetch")
-	c.fetchBlockProcessors.oneSockPerBlockService = true
+	c.fetchBlockProcessors.blockServiceBits = 5
 	c.eraseBlockProcessors.init("erase")
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel
-	c.eraseBlockProcessors.oneSockPerBlockService = true
+	c.eraseBlockProcessors.blockServiceBits = 5
 	// here we're also not constrained by bandwidth, but the requests
 	// take a long time, so have a separate channel from the erase ones
 	c.checkBlockProcessors.init("erase")
-	c.checkBlockProcessors.oneSockPerBlockService = true
+	c.checkBlockProcessors.blockServiceBits = 5
 	return c, nil
 }
 

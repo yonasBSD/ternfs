@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <arpa/inet.h>
+#include <sys/ioctl.h>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -42,6 +43,7 @@ public:
     std::atomic<uint16_t> port2;
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
+    std::array<std::atomic<double>, 2> sockBytes;
 
     ShardShared() = delete;
     ShardShared(ShardDB& db_): db(db_), ip1(0), port1(0), ip2(0), port2(0) {
@@ -49,6 +51,8 @@ public:
         for (ShardMessageKind kind : allShardMessageKind) {
             timings[(int)kind] = Timings::Standard();
         }
+        sockBytes[0] = 0.0;
+        sockBytes[1] = 0.0;
     }
 
 private:
@@ -120,6 +124,7 @@ private:
     std::unique_ptr<ShardReqContainer> _reqContainer;
     std::unique_ptr<ShardRespContainer> _respContainer;
     std::unique_ptr<ShardLogEntry> _logEntry;
+    std::atomic<double>& _sockBytes;
 
 public:
     ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, int ipPortIx, ShardShared& shared) :
@@ -131,7 +136,8 @@ public:
         _desiredPort(options.ipPorts[ipPortIx].port),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
-        _outgoingPacketDropProbability(0)
+        _outgoingPacketDropProbability(0),
+        _sockBytes(_shared.sockBytes[ipPortIx])
     {
         auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
             if (prob != 0.0) {
@@ -203,6 +209,14 @@ public:
             throw SYSCALL_EXCEPTION("recvfrom");
         }
         LOG_DEBUG(_env, "received message from %s", _clientAddr);
+
+        {
+            int bytes;
+            if (ioctl(_sock, FIONREAD, &bytes) < 0) {
+                throw SYSCALL_EXCEPTION("ioctl");
+            }
+            _sockBytes = _sockBytes*0.95 + (double)bytes*0.05;
+        }
 
         BincodeBuf reqBbuf(_recvBuf.data(), read);
         
@@ -500,6 +514,13 @@ public:
                 _metricsBuilder.fieldU64("count", count);
                 _metricsBuilder.timestamp(now);
             }
+        }
+        for (int i = 0; i < 2; i++) {
+            _metricsBuilder.measurement("eggsfs_shard_socket_buf");
+            _metricsBuilder.tag("shard", _shid);
+            _metricsBuilder.tag("socket", std::to_string(i));
+            _metricsBuilder.fieldFloat("size", _shared.sockBytes[i]);
+            _metricsBuilder.timestamp(now);
         }
         std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();

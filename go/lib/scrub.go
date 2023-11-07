@@ -27,7 +27,7 @@ func scrubFileInternal(
 ) error {
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := client.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND {
+		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
 			log.RaiseAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}

@@ -291,6 +291,24 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	return nil
 }
 
+func getPhysicalBlockSize(path string) (int, error) {
+
+	fs := syscall.Statfs_t{}
+	err := syscall.Statfs(path, &fs)
+	if err != nil {
+		return 0, err
+	}
+	return int(fs.Bsize), nil
+}
+
+func isIOErr(err error) bool {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
+		return true
+	}
+	return false
+}
+
 func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, size uint32, crc msgs.Crc, conn *net.TCPConn) error {
 	blockPath := lib.BlockIdToPath(basePath, blockId)
 	log.Debug("checking block id %v at path %v", blockId, blockPath)
@@ -318,12 +336,46 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	for cursor < size {
 		read, err := f.Read(*buf)
 		if err != nil {
-			// we distinguish this since it's likely a bad single block
-			var pathErr *os.PathError
-			if cursor > 0 && errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
-				log.RaiseAlert("got IO error for file %v at %v, will return BLOCK_PARTIAL_IO_ERROR: %v", blockPath, cursor, err)
-				return msgs.BLOCK_PARTIAL_IO_ERROR
+			// We try to establish if this is a single broken block, in which case
+			// we leave the disk be, see <internal-repo/issues/115>
+			if isIOErr(err) {
+				log.Info("got IO error for file %v at %v, checking if it's a single block: %v", blockPath, cursor, err)
+				blockSize, blockSizeErr := getPhysicalBlockSize(blockPath)
+				failures := []int64{}
+				if blockSizeErr != nil {
+					log.Info("could not get block size, giving up: %v", blockSizeErr)
+					goto NormalErr
+				}
+				for cursor := int64(0); cursor < int64(size); cursor += int64(blockSize) {
+					// previous failures might have impeded the file position being bumped
+					if _, seekErr := f.Seek(cursor, io.SeekStart); seekErr != nil {
+						log.Info("could not get block size, giving up: %v", seekErr)
+						goto NormalErr
+					}
+					_, readErr := f.Read((*buf)[:blockSize])
+					if readErr == nil {
+						continue
+					}
+					if isIOErr(readErr) {
+						failures = append(failures, cursor)
+						// The file might not be block-aligned, hence the >2
+						// It might actually be that they're always block aligned in XFS, but I
+						// can't be bothered to properly check
+						if len(failures) > 2 || len(failures) >= (int(size)+blockSize-1)/blockSize {
+							log.Info("got too many failures at %+v, giving up", failures)
+							goto NormalErr
+						}
+					} else {
+						log.Info("could not read, giving up: %v", readErr)
+						goto NormalErr
+					}
+				}
+				if len(failures) <= 2 {
+					log.RaiseAlert("got IO errors for file %v at %+v, will return BLOCK_PARTIAL_IO_ERROR: %v", blockPath, failures, err)
+					return msgs.BLOCK_PARTIAL_IO_ERROR
+				}
 			}
+		NormalErr:
 			log.RaiseAlert("could not read file %v at %v: %v", blockPath, cursor, err)
 			return err
 		}
@@ -504,8 +556,7 @@ func handleRequestError(
 		}
 	}
 
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
+	if isIOErr(err) {
 		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return BLOCK_IO_ERROR, previous error: %v", err, conn.RemoteAddr(), req, *lastError)
 		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR)
 		return false

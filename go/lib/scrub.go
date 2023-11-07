@@ -76,7 +76,7 @@ func scrubChecker(
 		atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
 		err := completion.Error
 		info := completion.Extra.(*scrubCheckInfo)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND {
+		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
@@ -111,6 +111,10 @@ func scrubChecker(
 				}
 				log.Info("migration finished for file %v", info.file)
 			}()
+		} else if err == msgs.BLOCK_IO_ERROR {
+			// This is almost certainly a broken server. There isn't that much we can do.
+			// The block service will alert.
+			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", info.file, info.block, info.blockService.Id, err)
 		} else if err != nil {
 			if info.canIgnoreError {
 				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)

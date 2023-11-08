@@ -223,9 +223,11 @@ struct sk_buff* eggsfs_metadata_request(
     u64 start_t = get_jiffies_64();
     u64 elapsed = 0;
 
+    u64 late_threshold = (shard_id < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
+
 #define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
 #define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, jiffies64_to_msecs(elapsed)
-#define WARN_LATE if (elapsed > MSECS_TO_JIFFIES(1000)) { eggsfs_info("late request: " LOG_STR, LOG_ARGS); }
+#define WARN_LATE if (elapsed > late_threshold) { eggsfs_info("late request: " LOG_STR, LOG_ARGS); }
 
     // This should be atomic64_add to be correct, but given that these are
     // stats, we leave it like this. Almost certainly wouldn't matter.

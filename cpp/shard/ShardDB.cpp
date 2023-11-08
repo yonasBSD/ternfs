@@ -2987,7 +2987,7 @@ struct ShardDBImpl {
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
-    bool _checkBlockDeleteProof(BlockServiceId blockServiceId, const BlockProof& proof) {
+    bool _checkBlockDeleteProof(InodeId fileId, BlockServiceId blockServiceId, const BlockProof& proof) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -3001,7 +3001,7 @@ struct ShardDBImpl {
 
         bool good = proof.proof == expectedProof;
         if (!good) {
-            RAISE_ALERT(_env, "Bad block delete proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
+            RAISE_ALERT(_env, "Bad block delete proof for file %s, block service id %s, expected %s, got %s", fileId, blockServiceId, BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
         }
         return good;
     }
@@ -3150,10 +3150,10 @@ struct ShardDBImpl {
             const auto block = blocks.block(i);
             const auto& proof = entry.proofs.els[i];
             if (block.blockId() != proof.blockId) {
-                RAISE_ALERT(_env, "bad block proof id, expected %s, got %s", block.blockId(), proof.blockId);
+                RAISE_ALERT(_env, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
                 return EggsError::BAD_BLOCK_PROOF;
             }
-            if (!_checkBlockDeleteProof(block.blockService(), proof)) {
+            if (!_checkBlockDeleteProof(entry.fileId, block.blockService(), proof)) {
                 return EggsError::BAD_BLOCK_PROOF;
             }
             // record balance change in block service to files

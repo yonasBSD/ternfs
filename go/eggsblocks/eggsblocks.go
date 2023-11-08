@@ -238,8 +238,17 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 			// block but not certify the deletion in the shard.
 			return nil
 		}
-		log.RaiseAlert("internal error deleting block at path %v: %v", blockPath, err)
-		return msgs.INTERNAL_ERROR
+		log.RaiseAlert("error deleting block at path %v: %v", blockPath, err)
+		return err
+	}
+	// fsync directory to make sure change is durable
+	dir, err := os.Open(filepath.Dir(blockPath))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return err
 	}
 	atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 	return nil

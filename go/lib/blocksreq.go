@@ -153,7 +153,9 @@ func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) err
 	if err := resp.Pack(buf); err != nil {
 		return err
 	}
-	w.Write(buf.Bytes())
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -169,7 +171,9 @@ func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error 
 	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
 		return err
 	}
-	w.Write(buf.Bytes())
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -291,8 +291,13 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		R: f,
 		N: int64(count),
 	}
-	if _, err := conn.ReadFrom(&lf); err != nil {
+	read, err := conn.ReadFrom(&lf)
+	if err != nil {
 		return err
+	}
+	if read != int64(count) {
+		log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", count, read, blockPath)
+		return msgs.INTERNAL_ERROR
 	}
 	s := env.stats[blockServiceId]
 	atomic.AddUint64(&s.blocksFetched, 1)

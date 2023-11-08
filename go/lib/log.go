@@ -49,7 +49,6 @@ const (
 type LoggerOptions struct {
 	Level            LogLevel
 	Syslog           bool
-	AppName          string
 	AppInstance      string
 	Xmon             string // "dev", "qa", empty string for no xmon
 	AppType          string // only used for xmon
@@ -141,12 +140,11 @@ func NewLogger(
 		if options.Xmon != "prod" && options.Xmon != "qa" {
 			panic(fmt.Errorf("invalid xmon environment %q", options.Xmon))
 		}
-		ai := options.AppName
-		if len(options.AppInstance) > 0 {
-			ai = fmt.Sprintf("%s:%s", options.AppName, options.AppInstance)
+		if options.AppInstance == "" {
+			panic(fmt.Errorf("empty app instance"))
 		}
 		xmonConfig.Prod = options.Xmon == "prod"
-		xmonConfig.AppInstance = ai
+		xmonConfig.AppInstance = options.AppInstance
 		xmonConfig.AppType = options.AppType
 	} else {
 		xmonConfig.OnlyLogging = true

@@ -963,7 +963,7 @@ func main() {
 		Level:            level,
 		Syslog:           *syslog,
 		Xmon:             *xmon,
-		AppName:          "blockservice",
+		AppInstance:      "eggsblocks",
 		AppType:          "restech_eggsfs.daytime",
 		PrintQuietAlerts: true,
 	})

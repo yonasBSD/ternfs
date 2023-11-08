@@ -971,7 +971,6 @@ struct write_request {
 static void write_complete(struct block_request* breq) {
     struct write_request* req = get_write_request(breq);
 
-
     // might be that we didn't consume all the pages -- in which case we need
     // to keep rotating until we're there.
     while (list_first_entry(&req->pages, struct page, lru)->private == 0) {

@@ -581,7 +581,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         {
             std::ostringstream ss;
             ss << std::setw(3) << std::setfill('0') << shid;
-            config.appInstance = "shard:" + ss.str();
+            config.appInstance = "eggsshard" + ss.str();
         }
         config.prod = options.xmonProd;
         config.appType = "restech_eggsfs.critical";

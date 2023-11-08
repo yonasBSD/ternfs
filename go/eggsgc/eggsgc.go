@@ -79,7 +79,7 @@ type CountState struct {
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
-	appInstance := flag.String("app-instance", "", "")
+	appInstance := flag.String("app-instance", "eggsgc", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
@@ -163,7 +163,7 @@ func main() {
 	for _, shard := range shards {
 		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppName: "gc", AppType: "restech_eggsfs.daytime", AppInstance: *appInstance})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: "restech_eggsfs.daytime", AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)

@@ -851,7 +851,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
     if (xmon) {
         XmonConfig config;
-        config.appInstance = "cdc";
+        config.appInstance = "eggscdc";
         config.appType = "restech_eggsfs.critical";
         config.prod = options.xmonProd;
         Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));

@@ -301,6 +301,7 @@ func main() {
 						if err := lib.DestructFiles(log, options, client, destructFilesState, groupShards); err != nil {
 							log.RaiseAlert("could not destruct files: %v", err)
 						}
+						wg.Done()
 					}()
 				}
 				wg.Wait()
@@ -326,6 +327,7 @@ func main() {
 					if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
 						log.RaiseAlert("could not collecting zero block service files: %v", err)
 					}
+					wg.Done()
 				}()
 			}
 			wg.Wait()
@@ -349,6 +351,7 @@ func main() {
 					if err := lib.ScrubFiles(log, client, scrubState, true, groupShards); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
+					wg.Done()
 				}()
 			}
 			wg.Wait()

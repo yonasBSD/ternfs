@@ -1,5 +1,7 @@
 #pragma once
 
+#include <variant>
+
 #include "Assert.hpp"
 #include "Common.hpp"
 #include "Bincode.hpp"

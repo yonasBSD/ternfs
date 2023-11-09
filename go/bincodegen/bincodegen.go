@@ -1055,7 +1055,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(hpp, "struct %s {\n", name)
 	fmt.Fprintf(hpp, "private:\n")
 	fmt.Fprintf(hpp, "    %s _kind = (%s)0;\n", kindTypeName, kindTypeName)
-	fmt.Fprintf(hpp, "    std::tuple<")
+	fmt.Fprintf(hpp, "    std::variant<")
 	for i, typ := range types {
 		if i > 0 {
 			fmt.Fprintf(hpp, ", ")
@@ -1077,8 +1077,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		fmt.Fprintf(cpp, "}\n")
 		fmt.Fprintf(cpp, "%s& %s::set%s() {\n", cppType(typ.typ), name, typ.name)
 		fmt.Fprintf(cpp, "    _kind = %s::%s;\n", kindTypeName, typ.enum)
-		fmt.Fprintf(cpp, "    auto& x = std::get<%d>(_data);\n", i)
-		fmt.Fprintf(cpp, "    x.clear();\n")
+		fmt.Fprintf(cpp, "    auto& x = _data.emplace<%d>();\n", i)
 		fmt.Fprintf(cpp, "    return x;\n")
 		fmt.Fprintf(cpp, "}\n")
 	}
@@ -1141,7 +1140,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    switch (kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		fmt.Fprintf(cpp, "        std::get<%d>(_data).unpack(buf);\n", i)
+		fmt.Fprintf(cpp, "        _data.emplace<%d>().unpack(buf);\n", i)
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")

@@ -236,8 +236,8 @@ TRACE_EVENT(eggsfs_vfs_rename_exit,
 #define EGGSFS_METADATA_REQUEST_DONE 1
 
 TRACE_EVENT(eggsfs_metadata_request,
-    TP_PROTO(struct msghdr* msg, u64 req_id, u32 len, s16 shard_id, u8 kind, u32 n_attempts, u32 resp_len, u8 event, int error),
-    TP_ARGS(msg, req_id, len, shard_id, kind, n_attempts, resp_len, event, error),
+    TP_PROTO(struct sockaddr_in* addr, u64 req_id, u32 len, s16 shard_id, u8 kind, u32 n_attempts, u32 resp_len, u8 event, int error),
+    TP_ARGS(addr, req_id, len, shard_id, kind, n_attempts, resp_len, event, error),
 
     TP_STRUCT__entry(
         __array(u8, addr, sizeof(struct sockaddr_in))
@@ -251,7 +251,7 @@ TRACE_EVENT(eggsfs_metadata_request,
         __field(u8, kind)
     ),
     TP_fast_assign(
-        memcpy(__entry->addr, msg->msg_name, sizeof(struct sockaddr_in));
+        memcpy(__entry->addr, addr, sizeof(struct sockaddr_in));
         __entry->req_id = req_id;
         __entry->len = len;
         __entry->shard_id = shard_id;

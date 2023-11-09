@@ -104,6 +104,7 @@ const char* eggsfs_shuckle_kind_str(int kind) {
     case 3: return "SHARDS";
     case 7: return "CDC";
     case 8: return "INFO";
+    case 15: return "SHUCKLE";
     default: return "UNKNOWN";
     }
 }

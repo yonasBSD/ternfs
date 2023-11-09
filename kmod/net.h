@@ -34,8 +34,10 @@ int eggsfs_init_shard_socket(struct eggsfs_shard_socket* sock);
 void eggsfs_net_shard_free_socket(struct eggsfs_shard_socket* sock);
 
 struct sk_buff* eggsfs_metadata_request(
-    struct eggsfs_shard_socket* sock, s16 shard_id, struct msghdr* msg, u64 req_id, void* p, u32 len, u32* attempts
+    struct eggsfs_shard_socket* sock, s16 shard_id, u64 req_id, void* p, u32 len, u32* attempts, const atomic64_t* ip_data1, const atomic64_t* ip_data2
 );
+
+int eggsfs_metadata_request_nowait(struct eggsfs_shard_socket *sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2);
 
 struct eggsfs_shard_async_request {
     struct eggsfs_shard_request request;

@@ -4,6 +4,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/statfs.h>
+#include <linux/workqueue.h>
 
 #include "log.h"
 #include "inode.h"
@@ -17,27 +18,24 @@
 #include "err.h"
 #include "rs.h"
 
+#define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
+int eggsfs_shuckle_refresh_time_jiffies = MSECS_TO_JIFFIES(60000);
+
+static struct eggsfs_fs_info* eggsfs_info;
+
 static void eggsfs_free_fs_info(struct eggsfs_fs_info* info) {
     eggsfs_debug("info=%p", info);
+    cancel_delayed_work_sync(&info->shuckle_refresh_work);
     eggsfs_net_shard_free_socket(&info->sock);
     kfree(info);
 }
 
-static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
+static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
     int err;
 
-    struct eggsfs_fs_info* info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
-    if (!info) { err = -ENOMEM; goto out; }
-
-    err = eggsfs_parse_shuckle_addr(dev_name, &info->shuckle_addr);
-    if (err) { goto out; }
-
-    err = eggsfs_init_shard_socket(&info->sock);
-    if (err) { goto out_info; }
-
     struct socket* shuckle_sock;
-    err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
-    if (err < 0) { goto out_info; }
+    err = eggsfs_create_shuckle_socket(&info->shuckle_addr1, &info->shuckle_addr2, &shuckle_sock);
+    if (err < 0) { return err; }
 
     struct kvec iov;
     struct msghdr msg = {NULL};
@@ -93,29 +91,17 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
             .err = 0,
         };
         eggsfs_shard_info_get_start(&ctx, start);
-        eggsfs_shard_info_get_ip1(&ctx, start, shard_ip);
-        eggsfs_shard_info_get_port1(&ctx, shard_ip, shard_port);
-        eggsfs_shard_info_get_ip2(&ctx, shard_port, shard_ip2);
+        eggsfs_shard_info_get_ip1(&ctx, start, shard_ip1);
+        eggsfs_shard_info_get_port1(&ctx, shard_ip1, shard_port1);
+        eggsfs_shard_info_get_ip2(&ctx, shard_port1, shard_ip2);
         eggsfs_shard_info_get_port2(&ctx, shard_ip2, shard_port2);
         eggsfs_shard_info_get_last_seen(&ctx, shard_port2, last_seen);
         eggsfs_shard_info_get_end(&ctx, last_seen, end);
         eggsfs_shard_info_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 
-        struct sockaddr_in* addr = &info->shards_addrs[shid];
-        struct msghdr* hdr = &info->shards_msghdrs[shid];
-
-        addr->sin_addr.s_addr = htonl(shard_ip.x);
-        addr->sin_family = AF_INET;
-        addr->sin_port = htons(shard_port.x);
-
-        eggsfs_debug("shard %d has addr %pI4:%d", shid, &addr->sin_addr, ntohs(addr->sin_port));
-
-        hdr->msg_name = addr;
-        hdr->msg_namelen = sizeof(struct sockaddr_in);
-        hdr->msg_control = NULL;
-        hdr->msg_controllen = 0;
-        hdr->msg_flags = 0;
+        atomic64_set(&info->shard_addrs1[shid], eggsfs_mk_addr(shard_ip1.x, shard_port1.x));
+        atomic64_set(&info->shard_addrs2[shid], eggsfs_mk_addr(shard_ip2.x, shard_port2.x));
     }
 
     static_assert(EGGSFS_CDC_REQ_SIZE == 0);
@@ -157,41 +143,61 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
             .err = 0,
         };
         eggsfs_cdc_resp_get_start(&ctx, start);
-        eggsfs_cdc_resp_get_ip1(&ctx, start, cdc_ip);
-        eggsfs_cdc_resp_get_port1(&ctx, cdc_ip, cdc_port);
-        eggsfs_cdc_resp_get_ip2(&ctx, cdc_port, cdc_ip2);
+        eggsfs_cdc_resp_get_ip1(&ctx, start, cdc_ip1);
+        eggsfs_cdc_resp_get_port1(&ctx, cdc_ip1, cdc_port1);
+        eggsfs_cdc_resp_get_ip2(&ctx, cdc_port1, cdc_ip2);
         eggsfs_cdc_resp_get_port2(&ctx, cdc_ip2, cdc_port2);
         eggsfs_cdc_resp_get_last_seen(&ctx, cdc_port2, last_seen);
         eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
         eggsfs_cdc_resp_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 
-        struct sockaddr_in* addr = &info->cdc_addr;
-        struct msghdr* hdr = &info->cdc_msghdr;
-
-        addr->sin_addr.s_addr = htonl(cdc_ip.x);
-        addr->sin_family = AF_INET;
-        addr->sin_port = htons(cdc_port.x);
-
-        eggsfs_debug("CDC has addr %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
-
-        hdr->msg_name = addr;
-        hdr->msg_namelen = sizeof(struct sockaddr_in);
-        hdr->msg_control = NULL;
-        hdr->msg_controllen = 0;
-        hdr->msg_flags = 0;
+        atomic64_set(&info->cdc_addr1, eggsfs_mk_addr(cdc_ip1.x, cdc_port1.x));
+        atomic64_set(&info->cdc_addr2, eggsfs_mk_addr(cdc_ip2.x, cdc_port2.x));
     }
 
     sock_release(shuckle_sock);
-
-    eggsfs_info("mount successful");
-
-    return info;
+    return 0;
 
 out_sock:
     sock_release(shuckle_sock);
+    return err;
+}
+
+static void eggsfs_shuckle_refresh_work(struct work_struct *work) {
+    int err = eggsfs_refresh_fs_info(eggsfs_info);
+    if (err != 0) {
+        eggsfs_warn("failed to refresh shuckle data: %d", err);
+    }
+    eggsfs_debug("scheduling shuckle data refresh after %dms", jiffies_to_msecs(eggsfs_shuckle_refresh_time_jiffies));
+    schedule_delayed_work(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
+}
+
+static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
+    int err;
+
+    eggsfs_info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
+    if (!eggsfs_info) { err = -ENOMEM; goto out; }
+
+    err = eggsfs_parse_shuckle_addr(dev_name, &eggsfs_info->shuckle_addr1, &eggsfs_info->shuckle_addr2);
+    if (err) { goto out; }
+
+    err = eggsfs_init_shard_socket(&eggsfs_info->sock);
+    if (err) { goto out_info; }
+
+    err = eggsfs_refresh_fs_info(eggsfs_info);
+    if (err != 0) { goto out_socket; }
+
+    INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
+    schedule_delayed_work(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
+
+    eggsfs_info("mount successful");
+    return eggsfs_info;
+
+out_socket:
+    eggsfs_net_shard_free_socket(&eggsfs_info->sock);
 out_info:
-    eggsfs_free_fs_info(info);
+    kfree(eggsfs_info);
 out:
     return ERR_PTR(err);
 }
@@ -208,7 +214,7 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
     struct eggsfs_fs_info* info = (struct eggsfs_fs_info*)dentry->d_sb->s_fs_info;
 
     struct socket* shuckle_sock;
-    int err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
+    int err = eggsfs_create_shuckle_socket(&info->shuckle_addr1, &info->shuckle_addr2, &shuckle_sock);
     if (err < 0) {
         eggsfs_info("could not create socket err=%d", err);
         return err;
@@ -291,7 +297,7 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
     stats->f_type = EGGSFS_SUPER_MAGIC;
     stats->f_bsize = PAGE_SIZE;
     stats->f_frsize = PAGE_SIZE;
-	stats->f_blocks = capacity.x / PAGE_SIZE;
+    stats->f_blocks = capacity.x / PAGE_SIZE;
     stats->f_bfree = available.x / PAGE_SIZE;
     stats->f_bavail = available.x / PAGE_SIZE;
     stats->f_files = -1;

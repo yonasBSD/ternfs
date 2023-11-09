@@ -1643,6 +1643,11 @@ func main() {
 			reflect.TypeOf(msgs.InfoReq{}),
 			reflect.TypeOf(msgs.InfoResp{}),
 		},
+		{
+			0x0F,
+			reflect.TypeOf(msgs.ShuckleReq{}),
+			reflect.TypeOf(msgs.ShuckleResp{}),
+		},
 	}
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{

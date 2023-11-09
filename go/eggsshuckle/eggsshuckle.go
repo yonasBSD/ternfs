@@ -66,11 +66,11 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex                    sync.Mutex
-	db                       *sql.DB
-	counters                 map[msgs.ShuckleMessageKind]*lib.Timings
-	blockServiceMinFreeBytes uint64
-	client                   *lib.Client
+	mutex    sync.Mutex
+	db       *sql.DB
+	counters map[msgs.ShuckleMessageKind]*lib.Timings
+	config   *shuckleConfig
+	client   *lib.Client
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -192,11 +192,23 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServ
 	return ret, nil
 }
 
-func newState(log *lib.Logger, db *sql.DB, minBytes uint64) (*state, error) {
+type shuckleConfig struct {
+	blockServiceMinFreeBytes uint64
+	ip1                      [4]byte
+	port1                    uint16
+	ip2                      [4]byte
+	port2                    uint16
+}
+
+func newState(
+	log *lib.Logger,
+	db *sql.DB,
+	conf *shuckleConfig,
+) (*state, error) {
 	st := &state{
-		db:                       db,
-		mutex:                    sync.Mutex{},
-		blockServiceMinFreeBytes: minBytes,
+		db:     db,
+		mutex:  sync.Mutex{},
+		config: conf,
 	}
 	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
@@ -269,7 +281,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED
 		}
 		flags := bs.Flags
-		if bs.AvailableBytes < s.blockServiceMinFreeBytes {
+		if bs.AvailableBytes < s.config.blockServiceMinFreeBytes {
 			flags = flags | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE
 		}
 		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
@@ -531,6 +543,16 @@ func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.Get
 	return resp, nil
 }
 
+func handleShuckle(log *lib.Logger, s *state) (*msgs.ShuckleResp, error) {
+	resp := &msgs.ShuckleResp{
+		Ip1:   s.config.ip1,
+		Port1: s.config.port1,
+		Ip2:   s.config.ip2,
+		Port2: s.config.port2,
+	}
+	return resp, nil
+}
+
 func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
@@ -565,6 +587,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleShard(log, s, whichReq)
 	case *msgs.GetStatsReq:
 		resp, err = handleGetStats(log, s, whichReq)
+	case *msgs.ShuckleReq:
+		resp, err = handleShuckle(log, s)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1874,69 +1898,11 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 	}
 }
 
-func main() {
-	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
-	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
-	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
-	verbose := flag.Bool("verbose", false, "")
-	trace := flag.Bool("trace", false, "")
-	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
-	syslog := flag.Bool("syslog", false, "")
-	metrics := flag.Bool("metrics", false, "")
-	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
-	// See internal-repo/issues/69 for more info on the default value below.
-	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
-	mtu := flag.Uint64("mtu", 0, "")
-	stale := flag.Duration("stale", 3*time.Minute, "")
-	scriptsJs := flag.String("scripts-js", "", "")
-	flag.Parse()
-	noRunawayArgs()
-
-	logOut := os.Stdout
-	if *logFile != "" {
-		var err error
-		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatalf("could not open log file %v: %v", *logFile, err)
-		}
-	}
-
-	level := lib.INFO
-	if *verbose {
-		level = lib.DEBUG
-	}
-	if *trace {
-		level = lib.TRACE
-	}
-	ll := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical", PrintQuietAlerts: true})
-
-	if *dataDir == "" {
-		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
-		os.Exit(2)
-	}
-
-	ll.Info("Running shuckle with options:")
-	ll.Info("  bincodePort = %v", *bincodePort)
-	ll.Info("  httpPort = %v", *httpPort)
-	ll.Info("  logFile = '%v'", *logFile)
-	ll.Info("  logLevel = %v", level)
-	ll.Info("  mtu = %v", *mtu)
-	ll.Info("  stale = '%v'", *stale)
-	ll.Info("  dataDir = %s", *dataDir)
-
-	if *mtu != 0 {
-		lib.SetMTU(*mtu)
-	}
-
-	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
-		panic(err)
-	}
-	dbFile := path.Join(*dataDir, "shuckle.db")
+func initDb(dbFile string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_journal=WAL", dbFile))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	defer db.Close()
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
 		id INT NOT NULL PRIMARY KEY,
@@ -1950,7 +1916,7 @@ func main() {
 		last_seen INT
 	)`)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards(
 		id INT NOT NULL PRIMARY KEY,
@@ -1961,11 +1927,11 @@ func main() {
 		last_seen INT
 	)`)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_s on shards (last_seen)")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
 		id INT NOT NULL PRIMARY KEY,
@@ -1984,11 +1950,11 @@ func main() {
 		last_seen INT
 	)`)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS stats(
@@ -1998,20 +1964,123 @@ func main() {
 		PRIMARY KEY (name, time)
 	)`)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS stats_by_time on stats (time, name)")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	readSpanBufPool = lib.NewBufPool()
+	return db, nil
+}
 
-	bincodeListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *bincodePort))
+func main() {
+	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
+	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
+	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
+	verbose := flag.Bool("verbose", false, "")
+	trace := flag.Bool("trace", false, "")
+	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
+	syslog := flag.Bool("syslog", false, "")
+	metrics := flag.Bool("metrics", false, "")
+	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
+	// See internal-repo/issues/69 for more info on the default value below.
+	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
+	mtu := flag.Uint64("mtu", 0, "")
+	stale := flag.Duration("stale", 3*time.Minute, "")
+	scriptsJs := flag.String("scripts-js", "", "")
+	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to.")
+	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll bind to. If it is not provided, we will only bind to the first IP.")
+
+	flag.Parse()
+	noRunawayArgs()
+
+	if *ownIp1Str == "" {
+		fmt.Fprintf(os.Stderr, "-own-ip-1 must be provided.\n")
+		os.Exit(2)
+	}
+
+	parseIp := func(ipStr string) [4]byte {
+		parsedOwnIp := net.ParseIP(ipStr)
+		if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
+			fmt.Fprintf(os.Stderr, "IP %v is not a valid ipv4 address. %v\n", ipStr, parsedOwnIp)
+			os.Exit(2)
+		}
+		var ownIp [4]byte
+		copy(ownIp[:], parsedOwnIp.To4())
+		return ownIp
+	}
+	ownIp1 := parseIp(*ownIp1Str)
+	var ownIp2 [4]byte
+	if *ownIp2Str != "" {
+		ownIp2 = parseIp(*ownIp2Str)
+	}
+
+	logOut := os.Stdout
+	if *logFile != "" {
+		var err error
+		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatalf("could not open log file %v: %v", *logFile, err)
+		}
+	}
+
+	level := lib.INFO
+	if *verbose {
+		level = lib.DEBUG
+	}
+	if *trace {
+		level = lib.TRACE
+	}
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical", PrintQuietAlerts: true})
+
+	if *dataDir == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
+		os.Exit(2)
+	}
+
+	log.Info("Running shuckle with options:")
+	log.Info("  bincodePort = %v", *bincodePort)
+	log.Info("  ownIp1 = %s", *ownIp1Str)
+	log.Info("  ownIp2 = %s", *ownIp2Str)
+	log.Info("  httpPort = %v", *httpPort)
+	log.Info("  logFile = '%v'", *logFile)
+	log.Info("  logLevel = %v", level)
+	log.Info("  mtu = %v", *mtu)
+	log.Info("  stale = '%v'", *stale)
+	log.Info("  dataDir = %s", *dataDir)
+
+	if *mtu != 0 {
+		lib.SetMTU(*mtu)
+	}
+
+	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
+		panic(err)
+	}
+	dbFile := path.Join(*dataDir, "shuckle.db")
+	db, err := initDb(dbFile)
 	if err != nil {
 		panic(err)
 	}
-	defer bincodeListener.Close()
+	defer db.Close()
+
+	readSpanBufPool = lib.NewBufPool()
+
+	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *bincodePort))
+	if err != nil {
+		panic(err)
+	}
+	defer bincodeListener1.Close()
+
+	var bincodeListener2 net.Listener
+	if *ownIp2Str != "" {
+		var err error
+		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), *bincodePort))
+		if err != nil {
+			panic(err)
+		}
+		defer bincodeListener2.Close()
+	}
 
 	httpListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *httpPort))
 	if err != nil {
@@ -2019,9 +2088,20 @@ func main() {
 	}
 	defer httpListener.Close()
 
-	ll.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener.Addr())
+	if bincodeListener2 == nil {
+		log.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener1.Addr())
+	} else {
+		log.Info("running on %v (HTTP) and %v,%v (bincode)", httpListener.Addr(), bincodeListener1.Addr(), bincodeListener2.Addr())
+	}
 
-	state, err := newState(ll, db, *bsMinBytes)
+	config := &shuckleConfig{
+		ip1:                      ownIp1,
+		port1:                    uint16(*bincodePort),
+		ip2:                      ownIp2,
+		port2:                    uint16(*bincodePort),
+		blockServiceMinFreeBytes: *bsMinBytes,
+	}
+	state, err := newState(log, db, config)
 	if err != nil {
 		panic(err)
 	}
@@ -2029,7 +2109,7 @@ func main() {
 	statsWrittenBeforeQuitting := int32(0)
 	writeStatsBeforeQuitting := func() {
 		if atomic.CompareAndSwapInt32(&statsWrittenBeforeQuitting, 0, 1) {
-			writeStats(ll, state)
+			writeStats(log, state)
 		}
 	}
 	defer writeStatsBeforeQuitting()
@@ -2042,50 +2122,56 @@ func main() {
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
 	}()
 
-	setupRouting(ll, state, *scriptsJs)
+	setupRouting(log, state, *scriptsJs)
 
 	terminateChan := make(chan any)
 
-	go func() {
-		defer func() { lib.HandleRecoverChan(ll, terminateChan, recover()) }()
-		for {
-			conn, err := bincodeListener.Accept()
-			if err != nil {
-				terminateChan <- err
-				return
+	startBincodeHandler := func(listener net.Listener) {
+		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					terminateChan <- err
+					return
+				}
+				go func() {
+					defer func() { lib.HandleRecoverPanic(log, recover()) }()
+					handleRequest(log, state, conn.(*net.TCPConn))
+				}()
 			}
-			go func() {
-				defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-				handleRequest(ll, state, conn.(*net.TCPConn))
-			}()
-		}
-	}()
+		}()
+	}
+	startBincodeHandler(bincodeListener1)
+	if bincodeListener2 != nil {
+		startBincodeHandler(bincodeListener2)
+	}
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(ll, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		terminateChan <- http.Serve(httpListener, nil)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-		err := serviceMonitor(ll, state, *stale)
-		ll.RaiseAlert("serviceMonitor ended with error %s", err)
+		defer func() { lib.HandleRecoverPanic(log, recover()) }()
+		err := serviceMonitor(log, state, *stale)
+		log.RaiseAlert("serviceMonitor ended with error %s", err)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-		statsWriter(ll, state)
+		defer func() { lib.HandleRecoverPanic(log, recover()) }()
+		statsWriter(log, state)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-		missingBlockServiceAlert(ll, state)
+		defer func() { lib.HandleRecoverPanic(log, recover()) }()
+		missingBlockServiceAlert(log, state)
 	}()
 
 	if *metrics {
 		go func() {
-			defer func() { lib.HandleRecoverPanic(ll, recover()) }()
-			sendMetrics(ll, state)
+			defer func() { lib.HandleRecoverPanic(log, recover()) }()
+			sendMetrics(log, state)
 		}()
 	}
 

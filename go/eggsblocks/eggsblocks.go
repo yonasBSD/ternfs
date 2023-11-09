@@ -361,7 +361,8 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 					goto NormalErr
 				}
 				for cursor := int64(0); cursor < int64(size); cursor += int64(blockSize) {
-					// previous failures might have impeded the file position being bumped
+					// Previous failures might have impeded the file position being bumped,
+					// so use SeekStart
 					if _, seekErr := f.Seek(cursor, io.SeekStart); seekErr != nil {
 						log.Info("could not get block size, giving up: %v", seekErr)
 						goto NormalErr

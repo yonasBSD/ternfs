@@ -10,8 +10,8 @@
 
 #define POLICY_BITS 8
 #define POLICY_BUCKETS (1<<POLICY_BITS) // 256
-DECLARE_HASHTABLE(policies, POLICY_BITS);
-spinlock_t policies_locks[POLICY_BUCKETS];
+static DECLARE_HASHTABLE(policies, POLICY_BITS);
+static spinlock_t policies_locks[POLICY_BUCKETS];
 
 static u64 policy_key(u64 inode, u8 tag) {
     return ((u64)tag << 48) ^ inode;

@@ -384,6 +384,8 @@ type ShuckleOpts struct {
 	Stale                time.Duration
 	Xmon                 string
 	ScriptsJs            string
+	OwnIp1               string
+	OwnIp2               string
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -394,6 +396,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-bs-min-bytes", fmt.Sprintf("%d", opts.BlockserviceMinBytes),
 		"-data-dir", opts.Dir,
+		"-own-ip-1", opts.OwnIp1,
 	}
 	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")
@@ -409,6 +412,9 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	}
 	if opts.ScriptsJs != "" {
 		args = append(args, "-scripts-js", opts.ScriptsJs)
+	}
+	if opts.OwnIp2 != "" {
+		args = append(args, "-own-ip-2", opts.OwnIp2)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",

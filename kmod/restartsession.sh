@@ -53,7 +53,7 @@ tmux new-session -d -s uovo
 tmux new-window -t uovo:4 './startvm.sh'
 
 # Wait for VM to go up, and build
-while ! scp -i image-key eggsfs.ko fmazzol@localhost: ; do sleep 1; done
+while ! scp -i image-key -P 2222 eggsfs.ko fmazzol@localhost: ; do sleep 1; done
 
 # Start dmesg as soon as it's booted (before we insert module)
 tmux send-keys -t uovo:0 "ssh -i image-key -t fmazzol@localhost -p 2222 -i image-key dmesg -wHT | tee dmesg" Enter

@@ -3,6 +3,7 @@
 #include <linux/version.h>
 
 #include "log.h"
+#include "super.h"
 #include "trace.h"
 #include "err.h"
 #include "debugfs.h"
@@ -72,7 +73,6 @@ static void sock_readable(struct sock* sk) {
                 req->skb = skb;
                 skb = NULL;
                 complete(&req->comp);
-
 #if 0
                 if (!(req->flags & EGGSFS_SHARD_ASYNC)) {
                 } else {
@@ -182,17 +182,58 @@ out_err:
 
 // TODO: congestion control
 
+static void eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
+    u64 v1 = atomic64_read(addr_data);
+
+    __be32 ip = eggsfs_get_addr_ip(v1);
+    __be16 port = eggsfs_get_addr_port(v1);
+
+    addr->sin_addr.s_addr = ip;
+    addr->sin_port = port;
+    addr->sin_family = AF_INET;
+
+    msg->msg_name = addr;
+    msg->msg_namelen = sizeof(struct sockaddr_in);
+    msg->msg_control = NULL;
+    msg->msg_controllen = 0;
+    msg->msg_flags = 0;
+}
+
+static u64 WHICH_SHARD_IP = 0;
+
+int eggsfs_metadata_request_nowait(struct eggsfs_shard_socket* sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2) {
+    struct msghdr msg;
+    struct sockaddr_in addr;
+    if (WHICH_SHARD_IP++ % 2) {
+        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data1);
+    } else {
+        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data2);
+    }
+    struct kvec vec;
+    vec.iov_base = p;
+    vec.iov_len = len;
+    int err = kernel_sendmsg(sock->sock, &msg, &vec, 1, vec.iov_len);
+    if (err < 0) {
+        eggsfs_info("could not send, err=%d", err);
+        return err;
+    }
+    return 0;
+}
+
 // shard_id is just used for debugging/event tracing, and should be -1 if we're going to the CDC
 struct sk_buff* eggsfs_metadata_request(
     struct eggsfs_shard_socket* sock,
     s16 shard_id,
-    struct msghdr* msg,
     u64 req_id,
     void* p,
     u32 len,
-    u32* attempts
+    u32* attempts,
+    const atomic64_t* addr_data1,
+    const atomic64_t* addr_data2
 ) {
-    struct sockaddr_in* addr = (struct sockaddr_in*)msg->msg_name;
+    u64 which_shard_ip = WHICH_SHARD_IP++;
+    const atomic64_t* addr_data[2] = {addr_data1, addr_data2};
+
     struct eggsfs_shard_request req;
     struct kvec vec;
     int err = -EIO;
@@ -225,9 +266,11 @@ struct sk_buff* eggsfs_metadata_request(
 
     u64 late_threshold = (shard_id < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
 
-#define LOG_STR "req_id=%llu shard_id=%d kind_str=%s kind=%d addr=%pI4:%d attempts=%d elapsed=%llums"
-#define LOG_ARGS req_id, shard_id, kind_str, kind, &addr->sin_addr, ntohs(addr->sin_port), *attempts, jiffies64_to_msecs(elapsed)
-#define WARN_LATE if (elapsed > late_threshold) { eggsfs_info("late request: " LOG_STR, LOG_ARGS); }
+#define LOG_STR_NO_ADDR "req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums"
+#define LOG_STR LOG_STR_NO_ADDR " addr=%pI4:%d"
+#define LOG_ARGS_NO_ADDR req_id, shard_id, kind_str, kind, *attempts, jiffies64_to_msecs(elapsed)
+#define LOG_ARGS LOG_ARGS_NO_ADDR, &addr.sin_addr, ntohs(addr.sin_port)
+#define WARN_LATE if (elapsed > late_threshold) { eggsfs_info("late request: " LOG_STR_NO_ADDR, LOG_ARGS_NO_ADDR); }
 
     // This should be atomic64_add to be correct, but given that these are
     // stats, we leave it like this. Almost certainly wouldn't matter.
@@ -253,7 +296,13 @@ struct sk_buff* eggsfs_metadata_request(
     });
 
     for (;;) {
-        trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
+        struct sockaddr_in addr;
+        struct msghdr msg;
+
+        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[which_shard_ip%2]);
+        which_shard_ip++;
+
+        trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
         init_completion(&req.comp);
 
         BUG_ON(req.skb);
@@ -263,8 +312,7 @@ struct sk_buff* eggsfs_metadata_request(
 
         eggsfs_debug("sending: " LOG_STR, LOG_ARGS)
         eggsfs_debug("sending to sock=%p iov=%p len=%u", sock->sock, p, len);
-    
-        err = kernel_sendmsg(sock->sock, msg, &vec, 1, len);
+        err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
         if (err < 0) {
             INC_STAT_COUNTER(NET_FAILURES)
             eggsfs_info("could not send: " LOG_STR " err=%d", LOG_ARGS, err);
@@ -298,7 +346,7 @@ struct sk_buff* eggsfs_metadata_request(
             WARN_LATE
             INC_STAT_COUNTER(COMPLETED)
             INC_LATENCY_BUCKET
-            trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
+            trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
             return req.skb;
         }
 
@@ -320,11 +368,17 @@ out_unregister:
     rb_erase(&req.node, &sock->requests);
     spin_unlock_bh(&sock->lock);
     elapsed = get_jiffies_64() - start_t;
+    goto out;
 
 out_err:
     WARN_LATE
     INC_LATENCY_BUCKET
-    trace_eggsfs_metadata_request(msg, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
+
+out:
+    {
+        struct sockaddr_in addr = {0};
+        trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
+    }
     if (err != -ERESTARTSYS) {
         eggsfs_info("err=%d", err);
     }

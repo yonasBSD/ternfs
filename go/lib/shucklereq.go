@@ -62,6 +62,8 @@ func ReadShuckleRequest(
 		req = &msgs.ShardReq{}
 	case msgs.GET_STATS:
 		req = &msgs.GetStatsReq{}
+	case msgs.SHUCKLE:
+		req = &msgs.ShuckleReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

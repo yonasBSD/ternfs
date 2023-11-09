@@ -250,6 +250,7 @@ enum class ShuckleMessageKind : uint8_t {
     SHARDS = 3,
     CDC = 7,
     INFO = 8,
+    SHUCKLE = 15,
     REGISTER_BLOCK_SERVICES = 2,
     REGISTER_SHARD = 4,
     ALL_BLOCK_SERVICES = 5,
@@ -265,6 +266,7 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::SHARDS,
     ShuckleMessageKind::CDC,
     ShuckleMessageKind::INFO,
+    ShuckleMessageKind::SHUCKLE,
     ShuckleMessageKind::REGISTER_BLOCK_SERVICES,
     ShuckleMessageKind::REGISTER_SHARD,
     ShuckleMessageKind::ALL_BLOCK_SERVICES,
@@ -276,7 +278,7 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::GET_STATS,
 };
 
-constexpr int maxShuckleMessageKind = 13;
+constexpr int maxShuckleMessageKind = 15;
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
@@ -3030,6 +3032,48 @@ struct InfoResp {
 
 std::ostream& operator<<(std::ostream& out, const InfoResp& x);
 
+struct ShuckleReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    ShuckleReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShuckleReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShuckleReq& x);
+
+struct ShuckleResp {
+    BincodeFixedBytes<4> ip1;
+    uint16_t port1;
+    BincodeFixedBytes<4> ip2;
+    uint16_t port2;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
+
+    ShuckleResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
+        _size += 2; // port1
+        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
+        _size += 2; // port2
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShuckleResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
+
 struct RegisterBlockServicesReq {
     BincodeList<BlockServiceInfo> blockServices;
 
@@ -3843,7 +3887,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsReq, CdcReq, InfoReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq> _data;
+    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq> _data;
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
@@ -3857,6 +3901,8 @@ public:
     CdcReq& setCdc();
     const InfoReq& getInfo() const;
     InfoReq& setInfo();
+    const ShuckleReq& getShuckle() const;
+    ShuckleReq& setShuckle();
     const RegisterBlockServicesReq& getRegisterBlockServices() const;
     RegisterBlockServicesReq& setRegisterBlockServices();
     const RegisterShardReq& getRegisterShard() const;
@@ -3889,7 +3935,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsResp, CdcResp, InfoResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp> _data;
+    std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -3903,6 +3949,8 @@ public:
     CdcResp& setCdc();
     const InfoResp& getInfo() const;
     InfoResp& setInfo();
+    const ShuckleResp& getShuckle() const;
+    ShuckleResp& setShuckle();
     const RegisterBlockServicesResp& getRegisterBlockServices() const;
     RegisterBlockServicesResp& setRegisterBlockServices();
     const RegisterShardResp& getRegisterShard() const;

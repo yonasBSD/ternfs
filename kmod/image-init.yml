@@ -3,7 +3,6 @@ hostname: uovo
 users:
   - name: fmazzol
     ssh-authorized-keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE93TJCd7qWh/kHzaBoCSU9VgOKSWlUls9OkiBNCjG3B francesco.mazzoli@xtxmarkets.com
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPZYOlGn7Phs99W8B7tun81sjCpbHdhNdISzhfqI93K fmazzol@uovo
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     groups: sudo

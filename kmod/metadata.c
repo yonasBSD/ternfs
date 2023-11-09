@@ -119,10 +119,9 @@ static int finish_resp(struct sk_buff* skb, u8 kind, struct eggsfs_bincode_get_c
         if (err != 0) { return err; } \
     }
 
+
 static struct sk_buff* eggsfs_send_shard_req(struct eggsfs_fs_info* info, int shid, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
-    struct msghdr msg;
-    memcpy(&msg, &info->shards_msghdrs[shid], sizeof(msg));
-    return eggsfs_metadata_request(&info->sock, shid, &msg, req_id, ctx->start, ctx->cursor-ctx->start, attempts);
+    return eggsfs_metadata_request(&info->sock, shid, req_id, ctx->start, ctx->cursor-ctx->start, attempts, &info->shard_addrs1[shid], &info->shard_addrs2[shid]);
 }
 
 #define EGGSFS_CDC_HEADER_SIZE (4 + 8 + 1) // protocol, reqId, kind
@@ -173,9 +172,7 @@ static void prepare_cdc_resp_ctx(struct sk_buff* skb, u64 req_id, u8 kind, struc
     prepare_cdc_resp_ctx(skb, req_id, kind, &ctx);
 
 static struct sk_buff* eggsfs_send_cdc_req(struct eggsfs_fs_info* info, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
-    struct msghdr msg;
-    memcpy(&msg, &info->cdc_msghdr, sizeof(msg));
-    return eggsfs_metadata_request(&info->sock, -1, &msg, req_id, ctx->start, ctx->cursor-ctx->start, attempts);
+    return eggsfs_metadata_request(&info->sock, -1, req_id, ctx->start, ctx->cursor-ctx->start, attempts, &info->cdc_addr1, &info->cdc_addr2);
 }
 
 int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time) {
@@ -678,16 +675,9 @@ int eggsfs_shard_set_atime_nowait(struct eggsfs_fs_info* info, u64 file, u64 ati
     eggsfs_set_time_req_put_mtime(&ctx, file_id, mtime_req, 0);
     eggsfs_set_time_req_put_atime(&ctx, mtime_req, atime_req, atime | (1ull<<63));
     eggsfs_set_time_req_put_end(&ctx, atime_req, end);
-    struct msghdr msg;
-    memcpy(&msg, &info->shards_msghdrs[eggsfs_inode_shard(file)], sizeof(msg));
-    struct kvec vec;
-    vec.iov_base = ctx.start;
-    vec.iov_len = ctx.cursor-ctx.start;
-    int err = kernel_sendmsg(info->sock.sock, &msg, &vec, 1, vec.iov_len);
-    if (err < 0) {
-        eggsfs_info("could not send, err=%d", err);
-        return err;
-    }
+
+    u8 shid = eggsfs_inode_shard(file);
+    return eggsfs_metadata_request_nowait(&info->sock, req_id, ctx.start, ctx.cursor-ctx.start, &info->shard_addrs1[shid], &info->shard_addrs2[shid]);
 
     return 0;
 }

@@ -622,6 +622,8 @@ func (k ShuckleMessageKind) String() string {
 		return "CDC"
 	case 8:
 		return "INFO"
+	case 15:
+		return "SHUCKLE"
 	case 2:
 		return "REGISTER_BLOCK_SERVICES"
 	case 4:
@@ -650,6 +652,7 @@ const (
 	SHARDS ShuckleMessageKind = 0x3
 	CDC ShuckleMessageKind = 0x7
 	INFO ShuckleMessageKind = 0x8
+	SHUCKLE ShuckleMessageKind = 0xF
 	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x2
 	REGISTER_SHARD ShuckleMessageKind = 0x4
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
@@ -665,6 +668,7 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	SHARDS,
 	CDC,
 	INFO,
+	SHUCKLE,
 	REGISTER_BLOCK_SERVICES,
 	REGISTER_SHARD,
 	ALL_BLOCK_SERVICES,
@@ -676,7 +680,7 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	GET_STATS,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 13
+const MaxShuckleMessageKind ShuckleMessageKind = 15
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -686,6 +690,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &CdcReq{}, &CdcResp{}, nil
 	case k == "INFO":
 		return &InfoReq{}, &InfoResp{}, nil
+	case k == "SHUCKLE":
+		return &ShuckleReq{}, &ShuckleResp{}, nil
 	case k == "REGISTER_BLOCK_SERVICES":
 		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}, nil
 	case k == "REGISTER_SHARD":
@@ -4131,6 +4137,54 @@ func (v *InfoResp) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShuckleReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SHUCKLE
+}
+
+func (v *ShuckleReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ShuckleReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ShuckleResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SHUCKLE
+}
+
+func (v *ShuckleResp) Pack(w io.Writer) error {
+	if err := bincode.PackFixedBytes(w, 4, v.Ip1[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Port2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShuckleResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip1[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 4, v.Ip2[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Port2)); err != nil {
 		return err
 	}
 	return nil

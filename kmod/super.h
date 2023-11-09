@@ -5,23 +5,37 @@
 
 #include "net.h"
 
+extern int eggsfs_shuckle_refresh_time_jiffies;
+
+// We store addresses as atomics so that we can
+// easily refresh them.
 struct eggsfs_fs_info {
-    struct sockaddr_in shuckle_addr;
+    atomic64_t shuckle_addr1;
+    atomic64_t shuckle_addr2;
 
     struct eggsfs_shard_socket sock;
 
-    // NB: ->msg_iter is used by `kernel_sendmsg`, so when you want to use the `struct msghhdr`
-    // stored here you should copy it to some local structure, and then use it, otherwise
-    // multiple users might step on each others' toes.
+    atomic64_t shard_addrs1[256];
+    atomic64_t shard_addrs2[256];
+    atomic64_t cdc_addr1;
+    atomic64_t cdc_addr2;
 
-    struct sockaddr_in shards_addrs[256];
-    struct msghdr shards_msghdrs[256];
-    struct sockaddr_in cdc_addr;
-    struct msghdr cdc_msghdr;
+    struct delayed_work shuckle_refresh_work;
 };
 
 int __init eggsfs_fs_init(void);
 void __cold eggsfs_fs_exit(void);
+
+static inline u64 eggsfs_mk_addr(u32 ip, u16 port) {
+    return ((u64)port << 32) | (u64)ip;
+}
+
+static inline __be32 eggsfs_get_addr_ip(u64 v) {
+    return htonl(v&((1ull<<32)-1));
+}
+static inline __be16 eggsfs_get_addr_port(u64 v) {
+    return htons(v >> 32);
+}
 
 #endif
 

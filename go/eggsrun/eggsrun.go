@@ -131,6 +131,7 @@ func main() {
 		Dir:         path.Join(*dataDir, "shuckle"),
 		Xmon:        *xmon,
 		ScriptsJs:   *shuckleScriptsJs,
+		OwnIp1:      "127.0.0.1",
 	})
 
 	// Start block services

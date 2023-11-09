@@ -872,6 +872,7 @@ func main() {
 		LogLevel:             level,
 		BlockserviceMinBytes: 10 << (10 * 3),
 		Dir:                  path.Join(*dataDir, "shuckle"),
+		OwnIp1:               "127.0.0.1",
 	}
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback

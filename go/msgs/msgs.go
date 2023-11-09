@@ -1747,6 +1747,15 @@ type ShardResp struct {
 	Info ShardInfo
 }
 
+type ShuckleReq struct{}
+
+type ShuckleResp struct {
+	Ip1   [4]byte
+	Port1 uint16
+	Ip2   [4]byte
+	Port2 uint16
+}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

@@ -101,9 +101,10 @@ const char* eggsfs_cdc_kind_str(int kind);
 #define EGGSFS_SHUCKLE_SHARDS 0x3
 #define EGGSFS_SHUCKLE_CDC 0x7
 #define EGGSFS_SHUCKLE_INFO 0x8
-#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" })
-#define EGGSFS_SHUCKLE_KIND_MAX 3
-static const u8 __eggsfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+#define EGGSFS_SHUCKLE_SHUCKLE 0xF
+#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" })
+#define EGGSFS_SHUCKLE_KIND_MAX 4
+static const u8 __eggsfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_shuckle_kind_str(int kind);
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
@@ -6360,6 +6361,148 @@ static inline void _eggsfs_info_resp_put_blocks(struct eggsfs_bincode_put_ctx* c
 #define eggsfs_info_resp_put_end(ctx, prev, next) \
     { struct eggsfs_info_resp_blocks* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_info_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SHUCKLE_REQ_SIZE 0
+struct eggsfs_shuckle_req_start;
+#define eggsfs_shuckle_req_get_start(ctx, start) struct eggsfs_shuckle_req_start* start = NULL
+
+struct eggsfs_shuckle_req_end;
+#define eggsfs_shuckle_req_get_end(ctx, prev, next) \
+    { struct eggsfs_shuckle_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_shuckle_req_end* next = NULL
+
+static inline void eggsfs_shuckle_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_shuckle_req_put_start(ctx, start) struct eggsfs_shuckle_req_start* start = NULL
+
+#define eggsfs_shuckle_req_put_end(ctx, prev, next) \
+    { struct eggsfs_shuckle_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_shuckle_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_SHUCKLE_RESP_SIZE 12
+struct eggsfs_shuckle_resp_start;
+#define eggsfs_shuckle_resp_get_start(ctx, start) struct eggsfs_shuckle_resp_start* start = NULL
+
+struct eggsfs_shuckle_resp_ip1 { u32 x; };
+static inline void _eggsfs_shuckle_resp_get_ip1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_resp_start** prev, struct eggsfs_shuckle_resp_ip1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_shuckle_resp_get_ip1(ctx, prev, next) \
+    struct eggsfs_shuckle_resp_ip1 next; \
+    _eggsfs_shuckle_resp_get_ip1(ctx, &(prev), &(next))
+
+struct eggsfs_shuckle_resp_port1 { u16 x; };
+static inline void _eggsfs_shuckle_resp_get_port1(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_resp_ip1* prev, struct eggsfs_shuckle_resp_port1* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_shuckle_resp_get_port1(ctx, prev, next) \
+    struct eggsfs_shuckle_resp_port1 next; \
+    _eggsfs_shuckle_resp_get_port1(ctx, &(prev), &(next))
+
+struct eggsfs_shuckle_resp_ip2 { u32 x; };
+static inline void _eggsfs_shuckle_resp_get_ip2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_resp_port1* prev, struct eggsfs_shuckle_resp_ip2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_be32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_shuckle_resp_get_ip2(ctx, prev, next) \
+    struct eggsfs_shuckle_resp_ip2 next; \
+    _eggsfs_shuckle_resp_get_ip2(ctx, &(prev), &(next))
+
+struct eggsfs_shuckle_resp_port2 { u16 x; };
+static inline void _eggsfs_shuckle_resp_get_port2(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_resp_ip2* prev, struct eggsfs_shuckle_resp_port2* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    }
+}
+#define eggsfs_shuckle_resp_get_port2(ctx, prev, next) \
+    struct eggsfs_shuckle_resp_port2 next; \
+    _eggsfs_shuckle_resp_get_port2(ctx, &(prev), &(next))
+
+struct eggsfs_shuckle_resp_end;
+#define eggsfs_shuckle_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_shuckle_resp_port2* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_shuckle_resp_end* next = NULL
+
+static inline void eggsfs_shuckle_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shuckle_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_shuckle_resp_put_start(ctx, start) struct eggsfs_shuckle_resp_start* start = NULL
+
+static inline void _eggsfs_shuckle_resp_put_ip1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shuckle_resp_start** prev, struct eggsfs_shuckle_resp_ip1* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_shuckle_resp_put_ip1(ctx, prev, next, x) \
+    struct eggsfs_shuckle_resp_ip1 next; \
+    _eggsfs_shuckle_resp_put_ip1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_shuckle_resp_put_port1(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shuckle_resp_ip1* prev, struct eggsfs_shuckle_resp_port1* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_shuckle_resp_put_port1(ctx, prev, next, x) \
+    struct eggsfs_shuckle_resp_port1 next; \
+    _eggsfs_shuckle_resp_put_port1(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_shuckle_resp_put_ip2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shuckle_resp_port1* prev, struct eggsfs_shuckle_resp_ip2* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_be32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_shuckle_resp_put_ip2(ctx, prev, next, x) \
+    struct eggsfs_shuckle_resp_ip2 next; \
+    _eggsfs_shuckle_resp_put_ip2(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_shuckle_resp_put_port2(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shuckle_resp_ip2* prev, struct eggsfs_shuckle_resp_port2* next, u16 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(x, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_shuckle_resp_put_port2(ctx, prev, next, x) \
+    struct eggsfs_shuckle_resp_port2 next; \
+    _eggsfs_shuckle_resp_put_port2(ctx, &(prev), &(next), x)
+
+#define eggsfs_shuckle_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_shuckle_resp_port2* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_shuckle_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FETCH_BLOCK_REQ_SIZE 16
 struct eggsfs_fetch_block_req_start;

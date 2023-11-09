@@ -799,7 +799,7 @@ public:
         }
         {
             _rocksDBStats.clear();
-            _shared.db.rocksDBStats(_rocksDBStats);
+            _shared.db.rocksDBMetrics(_rocksDBStats);
             for (const auto& [name, value]: _rocksDBStats) {
                 _metricsBuilder.measurement("eggsfs_cdc_rocksdb");
                 _metricsBuilder.fieldU64(name, value);

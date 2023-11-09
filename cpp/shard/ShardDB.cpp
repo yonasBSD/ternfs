@@ -3687,8 +3687,8 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    void rocksDBStats(std::unordered_map<std::string, uint64_t>& stats) {
-        ::rocksDBStats(_env, _db, stats);
+    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
+        ::rocksDBMetrics(_env, _db, stats);
     }
 };
 
@@ -3826,6 +3826,6 @@ const std::array<uint8_t, 16>& ShardDB::secretKey() const {
     return ((ShardDBImpl*)_impl)->_secretKey;
 }
 
-void ShardDB::rocksDBStats(std::unordered_map<std::string, uint64_t>& stats) {
-    return ((ShardDBImpl*)_impl)->rocksDBStats(stats);
+void ShardDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
+    return ((ShardDBImpl*)_impl)->rocksDBMetrics(stats);
 }

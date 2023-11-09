@@ -59,7 +59,7 @@ static const std::vector<std::pair<const std::string&, std::string>> rocksDBIntS
     {rocksdb::DB::Properties::kEstimatePendingCompactionBytes, "estimate_pending_compaction_bytes"},
 };
 
-void rocksDBStats(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats) {
+void rocksDBMetrics(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats) {
     for (const auto& [prop, name]: rocksDBIntStats) {
         uint64_t v;
         bool ok = db->GetIntProperty(prop, &v);

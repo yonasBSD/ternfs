@@ -380,4 +380,4 @@ struct InodeIdValue {
 
 std::shared_ptr<rocksdb::MergeOperator> CreateInt64AddOperator();
 
-void rocksDBStats(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats);
+void rocksDBMetrics(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats);

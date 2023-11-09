@@ -132,5 +132,5 @@ public:
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
 
-    void rocksDBStats(std::unordered_map<std::string, uint64_t>& values);
+    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values);
 };

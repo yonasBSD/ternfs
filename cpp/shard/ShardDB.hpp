@@ -98,5 +98,5 @@ public:
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;
 
-    void rocksDBStats(std::unordered_map<std::string, uint64_t>& stats);
+    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
 };

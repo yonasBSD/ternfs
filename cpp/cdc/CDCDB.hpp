@@ -133,4 +133,5 @@ public:
     uint64_t lastAppliedLogEntry();
 
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values);
+    void dumpRocksDBStatistics();
 };

@@ -497,6 +497,7 @@ public:
     {}
 
     virtual bool periodicStep() {
+        _shared.db.dumpRocksDBStatistics();
         auto now = eggsNow();
         for (ShardMessageKind kind : allShardMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];

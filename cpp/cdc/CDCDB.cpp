@@ -1,9 +1,11 @@
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/statistics.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
+#include <fstream>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -1226,6 +1228,9 @@ struct CDCDBImpl {
 
     AssertiveLock _processLock;
 
+    std::shared_ptr<rocksdb::Statistics> _dbStatistics;
+    std::string _dbStatisticsFile;
+
     // Used to deserialize into
     CDCReqContainer _cdcReq;
 
@@ -1236,6 +1241,9 @@ struct CDCDBImpl {
     CDCDBImpl& operator=(const CDCDBImpl&) = delete;
 
     CDCDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) : _env(logger, xmon, "cdc_db") {
+        _dbStatistics = rocksdb::CreateDBStatistics();
+        _dbStatisticsFile = path + "/db-statistics.txt";
+
         rocksdb::Options options;
         options.create_if_missing = true;
         options.create_missing_column_families = true;
@@ -1243,6 +1251,7 @@ struct CDCDBImpl {
         // In the shards we set this given that 1000*256 = 256k, doing it here also
         // for symmetry although it's probably not needed.
         options.max_open_files = 1000;
+        options.statistics = _dbStatistics;
         std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
             {rocksdb::kDefaultColumnFamilyName, {}},
             {"reqQueue", {}},
@@ -1670,6 +1679,12 @@ struct CDCDBImpl {
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
         ::rocksDBMetrics(_env, _db, stats);
     }
+
+    void dumpRocksDBStatistics() {
+        LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
+        std::ofstream file(_dbStatisticsFile);
+        file << _dbStatistics->ToString();
+    }
 };
 
 CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
@@ -1702,4 +1717,8 @@ uint64_t CDCDB::lastAppliedLogEntry() {
 
 void CDCDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values) {
     return ((CDCDBImpl*)_impl)->rocksDBMetrics(values);
+}
+
+void CDCDB::dumpRocksDBStatistics() {
+    return ((CDCDBImpl*)_impl)->dumpRocksDBStatistics();
 }

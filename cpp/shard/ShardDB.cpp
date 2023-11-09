@@ -4,11 +4,13 @@
 #include <limits>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/statistics.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/table.h>
 #include <system_error>
 #include <xxhash.h>
 #include <type_traits>
+#include <fstream>
 
 #include "Bincode.hpp"
 #include "Common.hpp"
@@ -181,6 +183,9 @@ struct ShardDBImpl {
     rocksdb::ColumnFamilyHandle* _edgesCf;
     rocksdb::ColumnFamilyHandle* _blockServicesToFilesCf;
 
+    std::shared_ptr<rocksdb::Statistics> _dbStatistics;
+    std::string _dbStatisticsFile;
+
     AssertiveLock _applyLogEntryLock;
 
     // ----------------------------------------------------------------
@@ -198,6 +203,9 @@ struct ShardDBImpl {
         // TODO actually figure out the best strategy for each family, including the default
         // one.
 
+        _dbStatistics = rocksdb::CreateDBStatistics();
+        _dbStatisticsFile = path + "/db-statistics.txt";
+
         rocksdb::Options options;
         options.create_if_missing = true;
         options.create_missing_column_families = true;
@@ -206,6 +214,7 @@ struct ShardDBImpl {
         // 1000*256 = 256k open files at once, given that we currently run on a
         // single machine this is appropriate.
         options.max_open_files = 1000;
+        options.statistics = _dbStatistics;
 
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
@@ -3690,6 +3699,12 @@ struct ShardDBImpl {
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
         ::rocksDBMetrics(_env, _db, stats);
     }
+
+    void dumpRocksDBStatistics() {
+        LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
+        std::ofstream file(_dbStatisticsFile);
+        file << _dbStatistics->ToString();
+    }
 };
 
 DirectoryInfo defaultDirectoryInfo() {
@@ -3828,4 +3843,8 @@ const std::array<uint8_t, 16>& ShardDB::secretKey() const {
 
 void ShardDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
     return ((ShardDBImpl*)_impl)->rocksDBMetrics(stats);
+}
+
+void ShardDB::dumpRocksDBStatistics() {
+    return ((ShardDBImpl*)_impl)->dumpRocksDBStatistics();
 }

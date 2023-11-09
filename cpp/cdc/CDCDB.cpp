@@ -1666,6 +1666,10 @@ struct CDCDBImpl {
          
         commitTransaction(*dbTxn);
     }
+
+    void rocksDBStats(std::unordered_map<std::string, uint64_t>& stats) {
+        ::rocksDBStats(_env, _db, stats);
+    }
 };
 
 CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
@@ -1694,4 +1698,8 @@ void CDCDB::startNextTransaction(bool sync, EggsTime time, uint64_t logIndex, CD
 
 uint64_t CDCDB::lastAppliedLogEntry() {
     return ((CDCDBImpl*)_impl)->_lastAppliedLogEntry();
+}
+
+void CDCDB::rocksDBStats(std::unordered_map<std::string, uint64_t>& values) {
+    return ((CDCDBImpl*)_impl)->rocksDBStats(values);
 }

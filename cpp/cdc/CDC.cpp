@@ -762,6 +762,7 @@ private:
     CDCShared& _shared;
     XmonNCAlert _alert;
     MetricsBuilder _metricsBuilder;
+    std::unordered_map<std::string, uint64_t> _rocksDBStats;
 public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1.0, 1_mins, 0.1}),
@@ -795,6 +796,15 @@ public:
             }
             _metricsBuilder.fieldFloat("size", (double)sum / (double)_shared.inFlightTxnsWindow.size());
             _metricsBuilder.timestamp(now);
+        }
+        {
+            _rocksDBStats.clear();
+            _shared.db.rocksDBStats(_rocksDBStats);
+            for (const auto& [name, value]: _rocksDBStats) {
+                _metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+                _metricsBuilder.fieldU64(name, value);
+                _metricsBuilder.timestamp(now);
+            }
         }
         std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();

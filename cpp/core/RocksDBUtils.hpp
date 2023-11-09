@@ -7,6 +7,7 @@
 #include "Assert.hpp"
 #include "Bincode.hpp"
 #include "Msgs.hpp"
+#include "Env.hpp"
 
 #define ROCKS_DB_CHECKED_MSG(status, ...) \
     do { \
@@ -378,3 +379,5 @@ struct InodeIdValue {
 };
 
 std::shared_ptr<rocksdb::MergeOperator> CreateInt64AddOperator();
+
+void rocksDBStats(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats);

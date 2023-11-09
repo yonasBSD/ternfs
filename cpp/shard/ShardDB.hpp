@@ -1,5 +1,7 @@
 #pragma once
 
+#include "unordered_map"
+
 #include "Common.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
@@ -95,4 +97,6 @@ public:
 
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;
+
+    void rocksDBStats(std::unordered_map<std::string, uint64_t>& stats);
 };

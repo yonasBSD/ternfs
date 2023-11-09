@@ -488,6 +488,7 @@ private:
     ShardId _shid;
     XmonNCAlert _alert;
     MetricsBuilder _metricsBuilder;
+    std::unordered_map<std::string, uint64_t> _rocksDBStats;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1.0, 1_mins, 0.1}),
@@ -521,6 +522,16 @@ public:
             _metricsBuilder.tag("socket", std::to_string(i));
             _metricsBuilder.fieldFloat("size", _shared.sockBytes[i]);
             _metricsBuilder.timestamp(now);
+        }
+        {
+            _rocksDBStats.clear();
+            _shared.db.rocksDBStats(_rocksDBStats);
+            for (const auto& [name, value]: _rocksDBStats) {
+                _metricsBuilder.measurement("eggsfs_shard_rocksdb");
+                _metricsBuilder.tag("shard", _shid);
+                _metricsBuilder.fieldU64(name, value);
+                _metricsBuilder.timestamp(now);
+            }
         }
         std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();

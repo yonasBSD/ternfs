@@ -3686,6 +3686,10 @@ struct ShardDBImpl {
         tf = tmpTf;
         return NO_ERROR;
     }
+
+    void rocksDBStats(std::unordered_map<std::string, uint64_t>& stats) {
+        ::rocksDBStats(_env, _db, stats);
+    }
 };
 
 DirectoryInfo defaultDirectoryInfo() {
@@ -3820,4 +3824,8 @@ uint64_t ShardDB::lastAppliedLogEntry() {
 
 const std::array<uint8_t, 16>& ShardDB::secretKey() const {
     return ((ShardDBImpl*)_impl)->_secretKey;
+}
+
+void ShardDB::rocksDBStats(std::unordered_map<std::string, uint64_t>& stats) {
+    return ((ShardDBImpl*)_impl)->rocksDBStats(stats);
 }

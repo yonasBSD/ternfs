@@ -1,5 +1,7 @@
 #pragma once
 
+#include "unordered_map"
+
 #include "Bincode.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
@@ -129,4 +131,6 @@ public:
 
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
+
+    void rocksDBStats(std::unordered_map<std::string, uint64_t>& values);
 };

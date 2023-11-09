@@ -1677,7 +1677,7 @@ struct CDCDBImpl {
     }
 
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
-        ::rocksDBMetrics(_env, _db, stats);
+        ::rocksDBMetrics(_env, _db, *_dbStatistics, stats);
     }
 
     void dumpRocksDBStatistics() {

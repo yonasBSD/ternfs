@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <rocksdb/db.h>
+#include <rocksdb/statistics.h>
 #include <rocksdb/utilities/transaction.h>
 
 #include "Assert.hpp"
@@ -380,4 +381,4 @@ struct InodeIdValue {
 
 std::shared_ptr<rocksdb::MergeOperator> CreateInt64AddOperator();
 
-void rocksDBMetrics(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats);
+void rocksDBMetrics(Env& env, rocksdb::DB* db, const rocksdb::Statistics& statistics, std::unordered_map<std::string, uint64_t>& stats);

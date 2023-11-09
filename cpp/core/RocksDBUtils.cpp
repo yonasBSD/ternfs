@@ -1,6 +1,7 @@
 #include <rocksdb/env.h>
 #include <rocksdb/merge_operator.h>
 #include <rocksdb/slice.h>
+#include <rocksdb/statistics.h>
 
 #include "RocksDBUtils.hpp"
 
@@ -59,14 +60,21 @@ static const std::vector<std::pair<const std::string&, std::string>> rocksDBIntS
     {rocksdb::DB::Properties::kEstimatePendingCompactionBytes, "estimate_pending_compaction_bytes"},
 };
 
-void rocksDBMetrics(Env& env, rocksdb::DB* db, std::unordered_map<std::string, uint64_t>& stats) {
+void rocksDBMetrics(Env& env, rocksdb::DB* db, const rocksdb::Statistics& statistics, std::unordered_map<std::string, uint64_t>& stats) {
+    // properties
     for (const auto& [prop, name]: rocksDBIntStats) {
         uint64_t v;
-        bool ok = db->GetIntProperty(prop, &v);
-        if (ok) {
-            stats.emplace(std::make_pair(name, v));
-        } else {
-            LOG_INFO(env, "Could not read RocksDB property %s, will not be included in the stats", prop);
-        }
+        ALWAYS_ASSERT(db->GetIntProperty(prop, &v));
+    }
+    // statistics
+    std::map<std::string, uint64_t> tickers;
+    ALWAYS_ASSERT(statistics.getTickerMap(&tickers));
+    for (const auto& [name, value]: tickers) {
+        std::string prefix = "rocksdb.";
+        ALWAYS_ASSERT(name.rfind(prefix, 0) == 0);
+        std::string metric_name = name;
+        metric_name.erase(0, prefix.length());
+        std::replace(metric_name.begin(), metric_name.end(), '.', '_');
+        stats.emplace(std::make_pair(metric_name, value));
     }
 }

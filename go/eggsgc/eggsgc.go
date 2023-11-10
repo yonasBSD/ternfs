@@ -312,27 +312,29 @@ func main() {
 	}
 	if *zeroBlockServices {
 		go func() {
-			var wg sync.WaitGroup
-			wg.Add(int(*parallel))
-			for group0 := 0; group0 < int(*parallel); group0++ {
-				group := group0
-				rand := wyhash.New(uint64(group))
-				go func() {
-					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-					// just do that once an hour, we don't need this often.
-					waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-					log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
-					time.Sleep(waitFor)
-					if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
-						log.RaiseAlert("could not collecting zero block service files: %v", err)
-					}
-					wg.Done()
-				}()
+			for {
+				var wg sync.WaitGroup
+				wg.Add(int(*parallel))
+				for group0 := 0; group0 < int(*parallel); group0++ {
+					group := group0
+					rand := wyhash.New(uint64(group))
+					go func() {
+						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
+						// just do that once an hour, we don't need this often.
+						waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
+						log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
+						time.Sleep(waitFor)
+						if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
+							log.RaiseAlert("could not collecting zero block service files: %v", err)
+						}
+						wg.Done()
+					}()
+				}
+				wg.Wait()
+				log.Info("finished zero block services cycle")
+				*zeroBlockServiceFilesStats = lib.ZeroBlockServiceFilesStats{}
 			}
-			wg.Wait()
-			log.Info("finished zero block services cycle")
-			*zeroBlockServiceFilesStats = lib.ZeroBlockServiceFilesStats{}
 		}()
 	}
 	if *scrub {

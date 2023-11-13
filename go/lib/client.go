@@ -415,7 +415,8 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 			return
 		}
 		conn := proc.loadConn()
-		if conn.conn == nil {
+		connr := conn.conn
+		if connr == nil {
 			log.Info("%v: resp %T %+v has no conn, skipping", proc.what, resp.resp.resp, resp.resp.resp)
 			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, io.EOF)
 			continue
@@ -425,19 +426,19 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, io.EOF)
 			continue
 		}
-		log.Debug("reading block response %T for req %+v from %v->%v", resp.resp.resp, resp.resp.req, conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+		log.Debug("reading block response %T for req %+v from %v->%v", resp.resp.resp, resp.resp.req, connr.LocalAddr(), connr.RemoteAddr())
 		// the responsibility for cleaning up the connection is always in the request processor
-		if err := ReadBlocksResponse(log, conn.conn, resp.resp.resp); err != nil {
+		if err := ReadBlocksResponse(log, connr, resp.resp.resp); err != nil {
 			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
 			continue
 		}
 		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK {
 			req := resp.resp.req.(*msgs.FetchBlockReq)
 			lr := &io.LimitedReader{
-				R: conn.conn,
+				R: connr,
 				N: int64(req.Count),
 			}
-			log.Debug("reading block body from %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+			log.Debug("reading block body from %v->%v", connr.LocalAddr(), connr.RemoteAddr())
 			readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(lr)
 			if err != nil || readBytes < int64(req.Count) {
 				if err == nil {
@@ -447,7 +448,7 @@ func (proc *blocksProcessor) processResponses(log *Logger) {
 				continue
 			}
 		}
-		log.Debug("read block response %T %+v for req %v from %v->%v", resp.resp.resp, resp.resp.resp, resp.resp.req, conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+		log.Debug("read block response %T %+v for req %v from %v->%v", resp.resp.resp, resp.resp.resp, resp.resp.req, connr.LocalAddr(), connr.RemoteAddr())
 		resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, nil)
 	}
 }

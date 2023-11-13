@@ -148,7 +148,31 @@ ExternalProject_Get_property(make_xxhash INSTALL_DIR)
 include_directories(SYSTEM ${INSTALL_DIR}/include)
 set_target_properties(xxhash PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libxxhash.a)
 
+ExternalProject_Add(make_jemalloc
+    DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
+    # URL https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2
+    URL https://REDACTED
+    URL_HASH SHA256=2db82d1e7119df3e71b7640219b6dfe84789bc0537983c3b7ac4f7189aecfeaa
+    PREFIX thirdparty/jemalloc
+    UPDATE_COMMAND ""
+    SOURCE_DIR ${make_jemalloc_SOURCE_DIR}
+    CONFIGURE_COMMAND ./configure --prefix=<INSTALL_DIR> --disable-libdl
+    BUILD_IN_SOURCE 1
+    BUILD_COMMAND ${MAKE_EXE} -j
+    BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libjemalloc.a
+    INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
+    LOG_DOWNLOAD ON
+    LOG_CONFIGURE ON
+    LOG_INSTALL ON
+    LOG_BUILD ON
+    LOG_OUTPUT_ON_FAILURE ON
+)
+add_library(jemalloc STATIC IMPORTED)
+ExternalProject_Get_property(make_jemalloc INSTALL_DIR)
+include_directories(SYSTEM ${INSTALL_DIR}/include)
+set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libjemalloc.a)
+
 # This explicit dependency tracking is needed for ninja, which is blind to the
 # include dependencies from our code into the above, apparently.
 add_custom_target(thirdparty)
-add_dependencies(thirdparty make_uring make_lz4 make_zstd make_rocksdb make_xxhash)
+add_dependencies(thirdparty make_uring make_lz4 make_zstd make_rocksdb make_xxhash make_jemalloc)

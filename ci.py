@@ -81,7 +81,7 @@ def wait_cmds(ps):
 
 if not args.no_build:
     bold_print('building')
-    for r in ['alpine', 'sanitized', 'valgrind']:
+    for r in ['release', 'sanitized', 'valgrind']:
         wait_cmd(run_cmd(['./build.sh', r]))
     wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'))
 
@@ -105,7 +105,7 @@ if args.integration:
         ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short,
         # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
         # of the child processes confuse the FUSE driver)
-        ['./go/eggstests/eggstests', '-build-type', 'alpine', '-binaries-dir', 'build/alpine', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
+        ['./go/eggstests/eggstests', '-build-type', 'release', '-binaries-dir', 'build/release', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
     ]
     if not args.short:
         # valgrind is super slow, it still surfaced bugs in the past but run the short

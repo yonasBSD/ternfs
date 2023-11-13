@@ -22,7 +22,7 @@ func noRunawayArgs() {
 }
 
 func main() {
-	buildType := flag.String("build-type", "alpine", "C++ build type, one of alpine/release/debug/sanitized/valgrind.")
+	buildType := flag.String("build-type", "release", "C++ build type")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")

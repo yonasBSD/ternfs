@@ -28,8 +28,13 @@ if not args.generate and len(paths) == 0:
             paths.append(path)
 
 if 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
+    container = 'REDACTED'
+    # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
+    # for motivation for `--security-opt seccomp=unconfined`,
+    # the `--pids-limit -1` is not something I hit but it seems
+    # like a good idea.
     subprocess.run(
-        ['docker', 'run', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', 'REDACTED', '/eggsfs/go/build.py'] + sys.argv[1:],
+        ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/eggsfs/go/build.py'] + sys.argv[1:],
         check=True,
     )
 else:

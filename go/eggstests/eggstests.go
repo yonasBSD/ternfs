@@ -571,6 +571,7 @@ func (bsv *blockServiceVictim) start(
 		FutureCutoff:   &testBlockFutureCutoff,
 		Addr1:          "127.0.0.1:0",
 		Addr2:          "127.0.0.1:0",
+		Profile:        profile,
 	})
 }
 

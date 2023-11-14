@@ -631,7 +631,6 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 
 type ShuckleBeaconOpts struct {
 	Exe            string
-	Dir            string
 	LogLevel       lib.LogLevel
 	Valgrind       bool
 	Perf           bool

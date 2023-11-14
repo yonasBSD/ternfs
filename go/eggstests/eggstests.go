@@ -569,11 +569,8 @@ func (bsv *blockServiceVictim) start(
 		LogLevel:       log.Level(),
 		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
 		FutureCutoff:   &testBlockFutureCutoff,
-		OwnIp1:         "127.0.0.1",
-		OwnIp2:         "127.0.0.1",
-		Profile:        profile,
-		Port1:          port1,
-		Port2:          port2,
+		Addr1:          "127.0.0.1:0",
+		Addr2:          "127.0.0.1:0",
 	})
 }
 
@@ -875,11 +872,10 @@ func main() {
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
 	shuckleOpts := &managedprocess.ShuckleOpts{
 		Exe:                  goExes.ShuckleExe,
-		BincodePort:          shucklePort,
 		LogLevel:             level,
 		BlockserviceMinBytes: 10 << (10 * 3),
 		Dir:                  path.Join(*dataDir, "shuckle"),
-		OwnIp1:               "127.0.0.1",
+		Addr1:                fmt.Sprintf("127.0.0.1:%v", shucklePort),
 	}
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
@@ -950,8 +946,8 @@ func main() {
 		Valgrind:       *buildType == "valgrind",
 		Perf:           *profile,
 		ShuckleAddress: shuckleAddress,
-		OwnIp1:         "127.0.0.1",
-		OwnIp2:         "127.0.0.1",
+		Addr1:          "127.0.0.1:0",
+		Addr2:          "127.0.0.1:0",
 	}
 	if *buildType == "valgrind" {
 		// apparently 100ms is too little when running with valgrind
@@ -973,8 +969,8 @@ func main() {
 			IncomingPacketDrop:        *incomingPacketDrop,
 			OutgoingPacketDrop:        *outgoingPacketDrop,
 			ShuckleAddress:            shuckleAddress,
-			OwnIp1:                    "127.0.0.1",
-			OwnIp2:                    "127.0.0.1",
+			Addr1:                     "127.0.0.1:0",
+			Addr2:                     "127.0.0.1:0",
 			TransientDeadlineInterval: &testTransientDeadlineInterval,
 		}
 		procs.StartShard(log, *repoDir, &shopts)

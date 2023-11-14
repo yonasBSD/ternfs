@@ -263,10 +263,8 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 type BlockServiceOpts struct {
 	Exe            string
 	Path           string
-	OwnIp1         string
-	Port1          uint16
-	OwnIp2         string
-	Port2          uint16
+	Addr1          string
+	Addr2          string
 	StorageClasses []msgs.StorageClass
 	FailureDomain  string
 	FutureCutoff   *time.Duration
@@ -288,11 +286,11 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
-		"-own-ip-1", opts.OwnIp1,
-		"-port-1", fmt.Sprintf("%d", opts.Port1),
-		"-own-ip-2", opts.OwnIp2,
-		"-port-2", fmt.Sprintf("%d", opts.Port2),
+		"-addr-1", opts.Addr1,
 		"-log-file", path.Join(opts.Path, "log"),
+	}
+	if opts.Addr2 != "" {
+		args = append(args, "-addr-2", opts.Addr2)
 	}
 	if opts.FutureCutoff != nil {
 		args = append(args, "-future-cutoff", opts.FutureCutoff.String())
@@ -316,7 +314,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 		args = append(args, path.Join(opts.Path, fmt.Sprintf("%d", i)), storageClass.String())
 	}
 	return procs.Start(ll, &ManagedProcessArgs{
-		Name:            fmt.Sprintf("block service (%v:%d & %v:%d)", opts.OwnIp1, opts.Port1, opts.OwnIp2, opts.Port2),
+		Name:            fmt.Sprintf("block service (%s & %s)", opts.Addr1, opts.Addr2),
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Path, "stdout"),
@@ -386,25 +384,23 @@ type ShuckleOpts struct {
 	Exe                  string
 	Dir                  string
 	LogLevel             lib.LogLevel
-	BincodePort          uint16
 	HttpPort             uint16
 	BlockserviceMinBytes uint64
 	Stale                time.Duration
 	Xmon                 string
 	ScriptsJs            string
-	OwnIp1               string
-	OwnIp2               string
+	Addr1                string
+	Addr2                string
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
-		"-bincode-port", fmt.Sprintf("%d", opts.BincodePort),
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-bs-min-bytes", fmt.Sprintf("%d", opts.BlockserviceMinBytes),
 		"-data-dir", opts.Dir,
-		"-own-ip-1", opts.OwnIp1,
+		"-addr-1", opts.Addr1,
 	}
 	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")
@@ -421,8 +417,8 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	if opts.ScriptsJs != "" {
 		args = append(args, "-scripts-js", opts.ScriptsJs)
 	}
-	if opts.OwnIp2 != "" {
-		args = append(args, "-own-ip-2", opts.OwnIp2)
+	if opts.Addr2 != "" {
+		args = append(args, "-addr-2", opts.Addr2)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",
@@ -470,10 +466,8 @@ type ShardOpts struct {
 	IncomingPacketDrop        float64
 	OutgoingPacketDrop        float64
 	ShuckleAddress            string
-	OwnIp1                    string
-	Port1                     uint16
-	OwnIp2                    string
-	Port2                     uint16
+	Addr1                     string
+	Addr2                     string
 	TransientDeadlineInterval *time.Duration
 	Xmon                      string
 }
@@ -488,12 +482,10 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		"-incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-shuckle", opts.ShuckleAddress,
-		"-own-ip-1", opts.OwnIp1,
-		"-port-1", fmt.Sprintf("%v", opts.Port1),
-		"-port-2", fmt.Sprintf("%v", opts.Port2),
+		"-addr-1", opts.Addr1,
 	}
-	if opts.OwnIp2 != "" {
-		args = append(args, "-own-ip-2", opts.OwnIp2)
+	if opts.Addr2 != "" {
+		args = append(args, "-addr-2", opts.Addr2)
 	}
 	if opts.TransientDeadlineInterval != nil {
 		args = append(args, "-transient-deadline-interval", fmt.Sprintf("%dns", opts.TransientDeadlineInterval.Nanoseconds()))
@@ -562,10 +554,8 @@ type CDCOpts struct {
 	Valgrind       bool
 	Perf           bool
 	ShuckleAddress string
-	OwnIp1         string
-	Port1          uint16
-	OwnIp2         string
-	Port2          uint16
+	Addr1          string
+	Addr2          string
 	ShardTimeout   time.Duration
 	Xmon           string
 }
@@ -578,12 +568,10 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-shuckle", opts.ShuckleAddress,
-		"-own-ip-1", opts.OwnIp1,
-		"-port-1", fmt.Sprintf("%v", opts.Port1),
-		"-port-2", fmt.Sprintf("%v", opts.Port2),
+		"-addr-1", opts.Addr1,
 	}
-	if opts.OwnIp2 != "" {
-		args = append(args, "-own-ip-2", opts.OwnIp2)
+	if opts.Addr2 != "" {
+		args = append(args, "-addr-2", opts.Addr2)
 	}
 	if opts.ShardTimeout != 0 {
 		args = append(args, "-shard-timeout-ms", fmt.Sprintf("%v", opts.ShardTimeout.Milliseconds()))
@@ -639,6 +627,21 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 		)
 	}
 	procs.Start(ll, &mpArgs)
+}
+
+type ShuckleBeaconOpts struct {
+	Exe            string
+	Dir            string
+	LogLevel       lib.LogLevel
+	Valgrind       bool
+	Perf           bool
+	ShuckleAddress string
+	OwnIp1         string
+	Port1          uint16
+	OwnIp2         string
+	Port2          uint16
+	ShardTimeout   time.Duration
+	Xmon           string
 }
 
 type BuildCppOpts struct {

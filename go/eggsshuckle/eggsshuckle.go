@@ -1976,7 +1976,8 @@ func initDb(dbFile string) (*sql.DB, error) {
 
 func main() {
 	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
-	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
+	addr1 := flag.String("addr-1", "", "First address to bind bincode server on.")
+	addr2 := flag.String("addr-2", "", "Second address to bind bincode server on (optional).")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
@@ -1989,31 +1990,27 @@ func main() {
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	scriptsJs := flag.String("scripts-js", "", "")
-	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to.")
-	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll bind to. If it is not provided, we will only bind to the first IP.")
 
 	flag.Parse()
 	noRunawayArgs()
 
-	if *ownIp1Str == "" {
-		fmt.Fprintf(os.Stderr, "-own-ip-1 must be provided.\n")
+	if *addr1 == "" {
+		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n")
 		os.Exit(2)
 	}
 
-	parseIp := func(ipStr string) [4]byte {
-		parsedOwnIp := net.ParseIP(ipStr)
-		if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
-			fmt.Fprintf(os.Stderr, "IP %v is not a valid ipv4 address. %v\n", ipStr, parsedOwnIp)
-			os.Exit(2)
-		}
-		var ownIp [4]byte
-		copy(ownIp[:], parsedOwnIp.To4())
-		return ownIp
+	ownIp1, ownPort1, err := lib.ParseIPV4Addr(*addr1)
+	if err != nil {
+		panic(err)
 	}
-	ownIp1 := parseIp(*ownIp1Str)
+
 	var ownIp2 [4]byte
-	if *ownIp2Str != "" {
-		ownIp2 = parseIp(*ownIp2Str)
+	var ownPort2 uint16
+	if *addr2 != "" {
+		ownIp2, ownPort2, err = lib.ParseIPV4Addr(*addr2)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	logOut := os.Stdout
@@ -2040,9 +2037,8 @@ func main() {
 	}
 
 	log.Info("Running shuckle with options:")
-	log.Info("  bincodePort = %v", *bincodePort)
-	log.Info("  ownIp1 = %s", *ownIp1Str)
-	log.Info("  ownIp2 = %s", *ownIp2Str)
+	log.Info("  addr1 = %s", *addr1)
+	log.Info("  addr2 = %s", *addr2)
 	log.Info("  httpPort = %v", *httpPort)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
@@ -2066,16 +2062,16 @@ func main() {
 
 	readSpanBufPool = lib.NewBufPool()
 
-	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *bincodePort))
+	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), ownPort1))
 	if err != nil {
 		panic(err)
 	}
 	defer bincodeListener1.Close()
 
 	var bincodeListener2 net.Listener
-	if *ownIp2Str != "" {
+	if *addr2 != "" {
 		var err error
-		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), *bincodePort))
+		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), ownPort2))
 		if err != nil {
 			panic(err)
 		}
@@ -2096,9 +2092,9 @@ func main() {
 
 	config := &shuckleConfig{
 		ip1:                      ownIp1,
-		port1:                    uint16(*bincodePort),
+		port1:                    ownPort1,
 		ip2:                      ownIp2,
-		port2:                    uint16(*bincodePort),
+		port2:                    ownPort2,
 		blockServiceMinFreeBytes: *bsMinBytes,
 	}
 	state, err := newState(log, db, config)

@@ -101,3 +101,6 @@ timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "grep eggsfs /pro
 
 # Rmmod
 timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsfs"
+
+# sudo sysctl fs.eggsfs.debug=1
+# eggs/eggstests -kmod -filter 'direct' -short -binaries-dir eggs

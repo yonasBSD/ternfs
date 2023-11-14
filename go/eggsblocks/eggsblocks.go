@@ -874,10 +874,8 @@ func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
-	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to, and that we'll advertise to shuckle.")
-	port1 := flag.Uint("port-1", 0, "First port on which to run on. By default it will be picked automatically.")
-	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll advertise to shuckle. If it is not provided, we will only bind to the first IP.")
-	port2 := flag.Uint("port-2", 0, "Port on which to run on. By default it will be picked automatically.")
+	addr1 := flag.String("addr-1", "", "First address to bind to, and that will be advertised to shuckle.")
+	addr2 := flag.String("addr-2", "", "Second address to bind to, and that will be advertised to shuckle. Optional.")
 	verbose := flag.Bool("verbose", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "")
@@ -899,33 +897,23 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *ownIp1Str == "" {
-		fmt.Fprintf(os.Stderr, "-own-ip-1 must be provided.\n\n")
+	if *addr1 == "" {
+		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n\n")
 		usage()
 		os.Exit(2)
 	}
 
-	if *ownIp2Str == "" && *port2 != 0 {
-		fmt.Fprintf(os.Stderr, "You've provided -port-2, but no -own-ip-2. If you don't need the second route, provide neither. If you do, provide both.\n\n")
-		usage()
-		os.Exit(2)
+	ownIp1, port1, err := lib.ParseIPV4Addr(*addr1)
+	if err != nil {
+		panic(err)
 	}
-
-	parseIp := func(ipStr string) [4]byte {
-		parsedOwnIp := net.ParseIP(ipStr)
-		if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
-			fmt.Fprintf(os.Stderr, "IP %v is not a valid ipv4 address. %v\n\n", ipStr, parsedOwnIp)
-			usage()
-			os.Exit(2)
-		}
-		var ownIp [4]byte
-		copy(ownIp[:], parsedOwnIp.To4())
-		return ownIp
-	}
-	ownIp1 := parseIp(*ownIp1Str)
 	var ownIp2 [4]byte
-	if *ownIp2Str != "" {
-		ownIp2 = parseIp(*ownIp2Str)
+	var port2 uint16
+	if *addr2 != "" {
+		ownIp2, port2, err = lib.ParseIPV4Addr(*addr2)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	var failureDomain [16]byte
@@ -995,10 +983,8 @@ func main() {
 	log.Info("Running block service with options:")
 	log.Info("  failureDomain = %v", *failureDomainStr)
 	log.Info("  futureCutoff = %v", *futureCutoff)
-	log.Info("  ownIp1 = '%v'", *ownIp1Str)
-	log.Info("  port1 = %v", *port1)
-	log.Info("  ownIp2 = %v", *ownIp2Str)
-	log.Info("  port2 = %v", *port2)
+	log.Info("  addr1 = '%v'", *addr1)
+	log.Info("  addr2 = '%v'", *addr2)
 	log.Info("  logLevel = %v", level)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
@@ -1087,7 +1073,7 @@ func main() {
 		}
 	}
 
-	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *port1))
+	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
 	if err != nil {
 		panic(err)
 	}
@@ -1098,8 +1084,8 @@ func main() {
 
 	var listener2 net.Listener
 	var actualPort2 uint16
-	if *ownIp2Str != "" {
-		listener2, err = net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), *port2))
+	if *addr2 != "" {
+		listener2, err = net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
 		if err != nil {
 			panic(err)
 		}

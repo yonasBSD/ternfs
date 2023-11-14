@@ -21,14 +21,10 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
     fprintf(stderr, " -shuckle host:port\n");
     fprintf(stderr, "    	How to reach shuckle, default '%s'\n", defaultShuckleAddress.c_str());
-    fprintf(stderr, " -own-ip-1 ipv4 address\n");
-    fprintf(stderr, "    	How to advertise ourselves to shuckle.\n");
-    fprintf(stderr, " -port-1 port\n");
-    fprintf(stderr, "    	Port on which to listen on.\n");
-    fprintf(stderr, " -own-ip-2 ipv4 address\n");
-    fprintf(stderr, "    	How to advertise ourselves to shuckle (second address, optional).\n");
-    fprintf(stderr, " -port-2 port\n");
-    fprintf(stderr, "    	Port on which to listen on (second port).\n");
+    fprintf(stderr, " -addr-1 ipv4 ip:port\n");
+    fprintf(stderr, "    	The first address to bind ourselves too, we'll also advertise it to shuckle.\n");
+    fprintf(stderr, " -addr-2 ipv4 ip:port\n");
+    fprintf(stderr, "    	The second address to bind ourselves too, we'll also advertise it to shuckle. Optional.\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -incoming-packet-drop [0, 1)\n");
@@ -84,6 +80,18 @@ static uint16_t parsePort(const std::string& arg) {
         die("Bad port %s", arg.c_str());
     }
     return port;
+}
+
+static std::pair<uint32_t, uint16_t> parseIpv4Addr(const char* binary, const std::string& arg) {
+    size_t colon = arg.find(':');
+    if (colon == std::string::npos) {
+        fprintf(stderr, "Invalid ipv4 ip:port address '%s'\n\n", arg.c_str());
+        usage(binary);
+        exit(2);
+    }
+    uint32_t ip = parseIpv4(binary, arg.substr(0, colon));
+    uint16_t port = parsePort(arg.substr(colon+1));
+    return {ip, port};
 }
 
 const std::unordered_map<std::string, uint64_t> durationUnitMap = {
@@ -150,14 +158,14 @@ int main(int argc, char** argv) {
             options.simulateOutgoingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "-shuckle") {
             shuckleAddress = getNextArg();
-        } else if (arg == "-own-ip-1") {
-            options.ipPorts[0].ip = parseIpv4(argv[0], getNextArg());
-        } else if (arg == "-port-1") {
-            options.ipPorts[0].port = parsePort(getNextArg());
-        } else if (arg == "-own-ip-2") {
-            options.ipPorts[1].ip = parseIpv4(argv[0], getNextArg());
-        } else if (arg == "-port-2") {
-            options.ipPorts[1].port = parsePort(getNextArg());
+        } else if (arg == "-addr-1") {
+            const auto [ip, port] = parseIpv4Addr(argv[0], getNextArg());
+            options.ipPorts[0].ip = ip;
+            options.ipPorts[0].port = port;
+        } else if (arg == "-addr-2") {
+            const auto [ip, port] = parseIpv4Addr(argv[0], getNextArg());
+            options.ipPorts[1].ip = ip;
+            options.ipPorts[1].port = port;
         } else if (arg == "-syslog") {
             options.syslog = true;
         } else if (arg == "-xmon") {
@@ -197,7 +205,7 @@ int main(int argc, char** argv) {
     }
 
     if (options.ipPorts[0].ip == 0) {
-        fprintf(stderr, "Please provide -own-ip-1.\n\n");
+        fprintf(stderr, "Please provide -addr-1.\n\n");
         usage(argv[0]);
         exit(2);
     }

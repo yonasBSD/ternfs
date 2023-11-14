@@ -30,7 +30,6 @@ func main() {
 	hddBlockServices := flag.Uint("hdd-block-services", 2, "Number of HDD block services per failure domain.")
 	flashBlockServices := flag.Uint("flash-block-services", 2, "Number of HDD block services per failure domain.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
-	ownIp := flag.String("own-ip", "127.0.0.1", "What IP to advertise to shuckle for these services.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
 	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
 	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
@@ -124,14 +123,13 @@ func main() {
 	// Start shuckle
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", *shuckleBincodePort)
 	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
-		Exe:         goExes.ShuckleExe,
-		BincodePort: uint16(*shuckleBincodePort),
-		HttpPort:    uint16(*shuckleHttpPort),
-		LogLevel:    level,
-		Dir:         path.Join(*dataDir, "shuckle"),
-		Xmon:        *xmon,
-		ScriptsJs:   *shuckleScriptsJs,
-		OwnIp1:      "127.0.0.1",
+		Exe:       goExes.ShuckleExe,
+		HttpPort:  uint16(*shuckleHttpPort),
+		LogLevel:  level,
+		Dir:       path.Join(*dataDir, "shuckle"),
+		Xmon:      *xmon,
+		ScriptsJs: *shuckleScriptsJs,
+		Addr1:     "127.0.0.1:10001",
 	})
 
 	// Start block services
@@ -151,13 +149,15 @@ func main() {
 			FailureDomain:  fmt.Sprintf("%d", i),
 			LogLevel:       level,
 			ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
-			OwnIp1:         "127.0.0.1",
-			OwnIp2:         "127.0.0.1",
 			Profile:        *profile,
 			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
-			opts.Port1 = uint16(*startingPort) + 257 + uint16(i)
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257+uint16(i))
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257+uint16(i))
+		} else {
+			opts.Addr1 = "127.0.0.1:0"
+			opts.Addr2 = "127.0.0.1:0"
 		}
 		procs.StartBlockService(log, &opts)
 	}
@@ -177,12 +177,13 @@ func main() {
 			LogLevel:       level,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,
-			OwnIp1:         *ownIp,
 			Perf:           *profile,
 			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
-			opts.Port1 = uint16(*startingPort)
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", *startingPort)
+		} else {
+			opts.Addr1 = "127.0.0.1:0"
 		}
 		procs.StartCDC(log, *repoDir, &opts)
 	}
@@ -197,12 +198,13 @@ func main() {
 			Shid:           shid,
 			Valgrind:       *buildType == "valgrind",
 			ShuckleAddress: shuckleAddress,
-			OwnIp1:         *ownIp,
 			Perf:           *profile,
 			Xmon:           *xmon,
 		}
 		if *startingPort != 0 {
-			opts.Port1 = uint16(*startingPort) + 1 + uint16(i)
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+1+uint16(i))
+		} else {
+			opts.Addr1 = "127.0.0.1:0"
 		}
 		procs.StartShard(log, *repoDir, &opts)
 	}

@@ -30,6 +30,8 @@ type fsTestOpts struct {
 	spanSize        int
 	checkThreads    int
 	corruptFileProb float64
+
+	migrate bool
 }
 
 type fsTestHarness[Id comparable] interface {
@@ -809,10 +811,7 @@ func fsTestInternal[Id comparable](
 		log.Info("scrubbing files")
 		{
 			var stats lib.ScrubState
-			// ideally we'd have retryOnFailure=false, but this will make this
-			// work with the block service killer, at the cost of an infinite loop if
-			// something else is wrong.
-			if err := lib.ScrubFilesInAllShards(log, client, true, &stats); err != nil {
+			if err := lib.ScrubFilesInAllShards(log, client, false, &stats); err != nil {
 				panic(err)
 			}
 			if stats.Migrate.MigratedBlocks != corruptedBlocks {
@@ -851,37 +850,38 @@ func fsTestInternal[Id comparable](
 	state.rootDir.check(log, harness)
 	log.Info("checked files in %s", time.Since(t0))
 	t0 = time.Now()
-	// Now, try to migrate away from one block service, to stimulate that code path
-	// in tests somewhere.
-	if opts.maxFileSize > 0 {
-		client, err := lib.NewClient(log, nil, shuckleAddress)
-		if err != nil {
-			panic(err)
+	if opts.migrate {
+		// Now, try to migrate away from one block service, to stimulate that code path
+		// in tests somewhere.
+		if opts.maxFileSize > 0 {
+			client, err := lib.NewClient(log, nil, shuckleAddress)
+			if err != nil {
+				panic(err)
+			}
+			client.SetCounters(counters)
+			defer client.Close()
+			blockServiceToPurge := findBlockServiceToPurge(log, client)
+			log.Info("will migrate block service %v", blockServiceToPurge)
+			migrateStats := lib.MigrateStats{}
+			err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, blockServiceToPurge)
+			if err != nil {
+				panic(fmt.Errorf("could not migrate: %w", err))
+			}
+			if migrateStats.MigratedBlocks == 0 {
+				panic(fmt.Errorf("migrate didn't migrate any blocks"))
+			}
 		}
-		client.SetCounters(counters)
-		defer client.Close()
-		blockServiceToPurge := findBlockServiceToPurge(log, client)
-		log.Info("will migrate block service %v", blockServiceToPurge)
-		migrateStats := lib.MigrateStats{}
-		err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, blockServiceToPurge)
-		if err != nil {
-			panic(fmt.Errorf("could not migrate: %w", err))
-		}
-		if migrateStats.MigratedBlocks == 0 {
-			panic(fmt.Errorf("migrate didn't migrate any blocks"))
-		}
+		log.Info("migrated files in %s", time.Since(t0))
+		t0 = time.Now()
+		// And check the state again, don't bother with multiple threads thoush
+		state.rootDir.check(log, harness)
+		log.Info("checked files in %s", time.Since(t0))
 	}
-	log.Info("migrated files in %s", time.Since(t0))
-	t0 = time.Now()
-	// And check the state again, don't bother with multiple threads thoush
-	state.rootDir.check(log, harness)
-	log.Info("checked files in %s", time.Since(t0))
 	t0 = time.Now()
 	// Now, remove everything -- the cleanup would do this anyway, but we want to stimulate
 	// the removal paths in the filesystem tests.
-	log.Info("cleaned files in %s", time.Since(t0))
-	t0 = time.Now()
 	state.rootDir.clean(log, harness)
+	log.Info("cleaned files in %s", time.Since(t0))
 }
 
 func fsTest(

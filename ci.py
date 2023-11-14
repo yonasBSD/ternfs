@@ -101,11 +101,13 @@ if args.integration:
 
     bold_print('integration tests')
     short = ['-short'] if args.short else []
+    # -block-service-killer does not work with FUSE driver (the duplicated FDs
+    # of the child processes confuse the FUSE driver), and it also does not fully
+    # work with migration and scrubbing right now, because that code is not robustly
+    # written with regards to block service migrations.
     tests = [
         ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short,
-        # TODO explanation on why -block-service-killer does not work with all the tests (the duplicated FDs
-        # of the child processes confuse the FUSE driver)
-        ['./go/eggstests/eggstests', '-build-type', 'release', '-binaries-dir', 'build/release', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
+        ['./go/eggstests/eggstests', '-build-type', 'release', '-binaries-dir', 'build/release', '-preserve-data-dir', '-verbose', '-block-service-killer', '-cfg', 'fsTests.dontMigrate', '-cfg', 'fsTest.corruptFileProb=0', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
     ]
     if not args.short:
         # valgrind is super slow, it still surfaced bugs in the past but run the short

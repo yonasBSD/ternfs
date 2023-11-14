@@ -278,6 +278,7 @@ func (r *RunTests) run(
 		fsTestOpts.inlineFileProb = 0.3
 	}
 	fsTestOpts.corruptFileProb = r.overrides.float64("fsTest.corruptFileProb", 0.1)
+	fsTestOpts.migrate = !r.overrides.flag("fsTest.dontMigrate")
 
 	r.test(
 		log,

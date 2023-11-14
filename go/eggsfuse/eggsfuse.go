@@ -688,6 +688,8 @@ func main() {
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
+	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
+	initialCDCTimeout := flag.Duration("initial-cdc-timeout", 0, "")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -738,6 +740,17 @@ func main() {
 		panic(err)
 	}
 	client.SetCounters(counters)
+
+	shardTimeouts := lib.DefaultShardTimeout
+	if *initialShardTimeout != 0 {
+		shardTimeouts.Initial = *initialShardTimeout
+	}
+	client.SetShardTimeouts(&shardTimeouts)
+	cdcTimeouts := lib.DefaultCDCTimeout
+	if *initialCDCTimeout != 0 {
+		shardTimeouts.Initial = *initialCDCTimeout
+	}
+	client.SetCDCTimeouts(&cdcTimeouts)
 
 	dirInfoCache = lib.NewDirInfoCache()
 

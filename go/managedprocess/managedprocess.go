@@ -326,12 +326,14 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 }
 
 type FuseOpts struct {
-	Exe            string
-	Path           string
-	LogLevel       lib.LogLevel
-	Wait           bool
-	ShuckleAddress string
-	Profile        bool
+	Exe                 string
+	Path                string
+	LogLevel            lib.LogLevel
+	Wait                bool
+	ShuckleAddress      string
+	Profile             bool
+	InitialShardTimeout time.Duration
+	InitialCDCTimeout   time.Duration
 }
 
 func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string {
@@ -356,6 +358,12 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 	}
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
+	}
+	if opts.InitialCDCTimeout != 0 {
+		args = append(args, "-initial-cdc-timeout", opts.InitialCDCTimeout.String())
+	}
+	if opts.InitialShardTimeout != 0 {
+		args = append(args, "-initial-shard-timeout", opts.InitialShardTimeout.String())
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{

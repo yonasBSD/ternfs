@@ -747,6 +747,11 @@ func main() {
 		*repoDir = path.Dir(path.Dir(path.Dir(filename)))
 	}
 
+	// in tests where we intentionally drop packets this makes things _much_
+	// faster
+	lib.DefaultShardTimeout.Initial = 5 * time.Millisecond
+	lib.DefaultCDCTimeout.Initial = 10 * time.Millisecond
+
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File
 	{
@@ -805,22 +810,23 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		isQEMU := strings.TrimSpace(string(dmiOut)) == "QEMU"
-		if isQEMU {
-			log.Info("increasing metadata timeout since we're in QEMU")
-			cmd = exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.overall_shard_timeout_ms=60000")
-			cmd.Stdout = io.Discard
-			cmd.Stderr = io.Discard
-			if err := cmd.Run(); err != nil {
-				panic(err)
-			}
-			cmd = exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.overall_cdc_timeout_ms=60000")
+		sysctl := func(what string, val string) {
+			cmd = exec.Command("sudo", "/usr/sbin/sysctl", fmt.Sprintf("%s=%s", what, val))
 			cmd.Stdout = io.Discard
 			cmd.Stderr = io.Discard
 			if err := cmd.Run(); err != nil {
 				panic(err)
 			}
 		}
+		isQEMU := strings.TrimSpace(string(dmiOut)) == "QEMU"
+		if isQEMU {
+			log.Info("increasing metadata timeout since we're in QEMU")
+			sysctl("fs.eggsfs.overall_shard_timeout_ms", "60000")
+			sysctl("fs.eggsfs.overall_cdc_timeout_ms", "60000")
+		}
+		// low initial timeout for fast packet drop stuff
+		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", lib.DefaultShardTimeout.Initial.Milliseconds()))
+		sysctl("fs.eggsfs.overall_cdc_timeout_ms", fmt.Sprintf("%v", lib.DefaultCDCTimeout.Initial.Milliseconds()))
 	}
 
 	// Start cached spans dropper
@@ -991,12 +997,14 @@ func main() {
 	}
 
 	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-		Exe:            goExes.FuseExe,
-		Path:           path.Join(*dataDir, "fuse"),
-		LogLevel:       level,
-		Wait:           true,
-		ShuckleAddress: shuckleAddress,
-		Profile:        *profile,
+		Exe:                 goExes.FuseExe,
+		Path:                path.Join(*dataDir, "fuse"),
+		LogLevel:            level,
+		Wait:                true,
+		ShuckleAddress:      shuckleAddress,
+		Profile:             *profile,
+		InitialShardTimeout: lib.DefaultShardTimeout.Initial,
+		InitialCDCTimeout:   lib.DefaultCDCTimeout.Initial,
 	})
 
 	var mountPoint string

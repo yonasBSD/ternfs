@@ -152,11 +152,24 @@ static int eggsfs_parse_single_shuckle_addr(const char* str, int len, atomic64_t
         return -EINVAL;
     }
     u16 port;
-    err = kstrtou16(addr_end+1, 10, &port);
-    if (err < 0) { return err; }
-    if (port == 0) {
-        eggsfs_warn("zero port in address %*pE", len, str);
-        return -EINVAL;
+    {
+        char port_str[6]; // max port + terminating byte
+        int port_len = len - (addr_end-str) - 1;
+        if (port_len <= 0 || port_len >= sizeof(port_str)) {
+            eggsfs_warn("bad port in address %*pE (port_len=%d)", len, str, port_len);
+            return -EINVAL;
+        }
+        memcpy(port_str, addr_end+1, port_len);
+        port_str[port_len] = '\0';
+        err = kstrtou16(port_str, 10, &port);
+        if (err < 0) {
+            eggsfs_warn("bad port in address %*pE", len, str);
+            return err;
+        }
+        if (port == 0) {
+            eggsfs_warn("zero port in address %*pE", len, str);
+            return -EINVAL;
+        }
     }
 
     eggsfs_debug("parsed shuckle addr %pI4:%d", &addrn, port);

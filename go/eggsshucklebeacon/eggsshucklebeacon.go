@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -74,68 +73,50 @@ func noRunawayArgs() {
 }
 
 func main() {
-	bincodePort := flag.Uint("bincode-port", 10001, "Port on which to run the bincode server.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
-	ownIp1Str := flag.String("own-ip-1", "", "First IP that we'll bind to.")
-	ownIp2Str := flag.String("own-ip-2", "", "Second IP that we'll bind to. If it is not provided, we will only bind to the first IP.")
+	addr1Str := flag.String("addr-1", "", "First address that we'll bind to.")
+	addr2Str := flag.String("addr-2", "", "Second address that we'll bind to. If it is not provided, we will only bind to the first IP.")
 	shuckleAddr1 := flag.String("shuckle-1", "", "First shuckle address to advertise")
 	shuckleAddr2 := flag.String("shuckle-2", "", "Second shuckle address to advertise")
 
 	flag.Parse()
 	noRunawayArgs()
 
-	if *ownIp1Str == "" {
-		fmt.Fprintf(os.Stderr, "-own-ip-1 must be provided.\n")
+	if *addr1Str == "" {
+		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n")
 		os.Exit(2)
 	}
-
-	parseIp := func(ipStr string) [4]byte {
-		parsedOwnIp := net.ParseIP(ipStr)
-		if parsedOwnIp == nil || parsedOwnIp.To4() == nil {
-			fmt.Fprintf(os.Stderr, "IP %v is not a valid ipv4 address. %v\n", ipStr, parsedOwnIp)
-			os.Exit(2)
-		}
-		var ownIp [4]byte
-		copy(ownIp[:], parsedOwnIp.To4())
-		return ownIp
+	ownIp1, port1, err := lib.ParseIPV4Addr(*addr1Str)
+	if err != nil {
+		panic(err)
 	}
-	ownIp1 := parseIp(*ownIp1Str)
+
 	var ownIp2 [4]byte
-	if *ownIp2Str != "" {
-		ownIp2 = parseIp(*ownIp2Str)
-	}
-
-	parseShuckleAddr := func(addrStr string) (ip [4]byte, port uint16) {
-		hostStr, portStr, err := net.SplitHostPort(addrStr)
+	var port2 uint16
+	if *addr2Str != "" {
+		ownIp2, port2, err = lib.ParseIPV4Addr(*addr2Str)
 		if err != nil {
 			panic(err)
 		}
-
-		ipV := net.ParseIP(hostStr)
-		if ipV == nil || len(ipV) != 4 {
-			panic(fmt.Errorf("invalid ip address %q", hostStr))
-		}
-		copy(ip[:], ipV[:])
-
-		port64, err := strconv.ParseUint(portStr, 0, 16)
-		if err != nil {
-			panic(err)
-		}
-		port = uint16(port64)
-
-		return ip, port
 	}
+
 	if *shuckleAddr1 == "" {
 		panic(fmt.Errorf("-shuckle-1 needs to be provided"))
 	}
 	shuckleResp := &msgs.ShuckleResp{}
-	shuckleResp.Ip1, shuckleResp.Port1 = parseShuckleAddr(*shuckleAddr1)
+	shuckleResp.Ip1, shuckleResp.Port1, err = lib.ParseIPV4Addr(*shuckleAddr1)
+	if err != nil {
+		panic(err)
+	}
 	if *shuckleAddr2 != "" {
-		shuckleResp.Ip2, shuckleResp.Port2 = parseShuckleAddr(*shuckleAddr2)
+		shuckleResp.Ip2, shuckleResp.Port2, err = lib.ParseIPV4Addr(*shuckleAddr2)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	logOut := os.Stdout
@@ -157,22 +138,23 @@ func main() {
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical", PrintQuietAlerts: true})
 
 	log.Info("Running shuckle beacon with options:")
-	log.Info("  bincodePort = %v", *bincodePort)
-	log.Info("  ownIp1 = %s", *ownIp1Str)
-	log.Info("  ownIp2 = %s", *ownIp2Str)
+	log.Info("  addr1 = %s", *addr1Str)
+	log.Info("  addr2 = %s", *addr2Str)
+	log.Info("  shuckleAddr1 = %s", *shuckleAddr1)
+	log.Info("  shuckleAddr2 = %s", *shuckleAddr2)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
 
-	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), *bincodePort))
+	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
 	if err != nil {
 		panic(err)
 	}
 	defer bincodeListener1.Close()
 
 	var bincodeListener2 net.Listener
-	if *ownIp2Str != "" {
+	if *addr1Str != "" {
 		var err error
-		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), *bincodePort))
+		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
 		if err != nil {
 			panic(err)
 		}

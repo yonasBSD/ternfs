@@ -29,6 +29,7 @@ binaries=(
     go/eggscli/eggscli
     go/eggsgc/eggsgc
     go/eggstests/eggstests
+    go/eggsshucklebeacon/eggsshucklebeacon
 )
 
 for binary in "${binaries[@]}"; do

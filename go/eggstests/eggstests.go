@@ -145,8 +145,12 @@ func setKmodDirRefreshTime(ms uint64) {
 	}
 }
 
-func mountKmod(shucklePort uint16, mountPoint string) {
-	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", fmt.Sprintf("127.0.0.1:%v", shucklePort), mountPoint).CombinedOutput()
+func mountKmod(shuckleAddr string, shuckleBeaconAddr string, mountPoint string) {
+	dev := shuckleAddr
+	if shuckleBeaconAddr != "" {
+		dev = fmt.Sprintf("%s,%s", shuckleBeaconAddr, shuckleAddr)
+	}
+	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", dev, mountPoint).CombinedOutput()
 	if err != nil {
 		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
 	}
@@ -698,6 +702,7 @@ func main() {
 	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
+	shuckleBeaconPort := flag.Uint("shuckle-beacon-port", 0, "")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -784,9 +789,10 @@ func main() {
 			CDCExe:   path.Join(*binariesDir, "eggscdc"),
 		}
 		goExes = &managedprocess.GoExes{
-			ShuckleExe: path.Join(*binariesDir, "eggsshuckle"),
-			BlocksExe:  path.Join(*binariesDir, "eggsblocks"),
-			FuseExe:    path.Join(*binariesDir, "eggsfuse"),
+			ShuckleExe:       path.Join(*binariesDir, "eggsshuckle"),
+			BlocksExe:        path.Join(*binariesDir, "eggsblocks"),
+			FuseExe:          path.Join(*binariesDir, "eggsfuse"),
+			ShuckleBeaconExe: path.Join(*binariesDir, "eggsshucklebeacon"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
@@ -868,15 +874,30 @@ func main() {
 		}()
 	}
 
-	// Start shuckle
 	shucklePort := uint16(*shucklePortArg)
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
+
+	// Start shuckle beacon
+	var shuckleBeaconAddr string
+	if *shuckleBeaconPort != 0 {
+		shuckleBeaconAddr = fmt.Sprintf("127.0.0.1:%v", *shuckleBeaconPort)
+		shuckleBeaconOpts := &managedprocess.ShuckleBeaconOpts{
+			Exe:          goExes.ShuckleBeaconExe,
+			LogLevel:     level,
+			Dir:          path.Join(*dataDir, "shucklebeacon"),
+			Addr1:        shuckleBeaconAddr,
+			ShuckleAddr1: shuckleAddress,
+		}
+		procs.StartShuckleBeacon(log, shuckleBeaconOpts)
+	}
+
+	// Start shuckle
 	shuckleOpts := &managedprocess.ShuckleOpts{
 		Exe:                  goExes.ShuckleExe,
 		LogLevel:             level,
 		BlockserviceMinBytes: 10 << (10 * 3),
 		Dir:                  path.Join(*dataDir, "shuckle"),
-		Addr1:                fmt.Sprintf("127.0.0.1:%v", shucklePort),
+		Addr1:                shuckleAddress,
 	}
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
@@ -1012,7 +1033,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		mountKmod(shucklePort, mountPoint)
+		mountKmod(shuckleAddress, shuckleBeaconAddr, mountPoint)
 		defer func() {
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
 			if err != nil {

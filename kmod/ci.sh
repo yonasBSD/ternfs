@@ -89,9 +89,9 @@ trace_pid=$!
 # -block-service-killer does not fully work with migration and scrubbing right now,
 # because that code is not robustly written with regards to block service migrations.
 # We test that code in the non-kmod tests anyway.
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'large file|cp|utime|seek' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 
 kill $trace_pid
 kill $dmesg_pid
@@ -104,3 +104,5 @@ timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsf
 
 # sudo sysctl fs.eggsfs.debug=1
 # eggs/eggstests -kmod -filter 'direct' -short -binaries-dir eggs
+
+# ./eggs/eggstests -binaries-dir eggs -filter direct -kmod -shuckle-beacon-port 55556

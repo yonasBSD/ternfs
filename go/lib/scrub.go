@@ -61,14 +61,16 @@ func scrubChecker(
 	terminateChan chan any,
 ) {
 	bufPool := NewBufPool()
-	var outstandingScrubbings sync.WaitGroup
+	outstandingScrubbings := &sync.WaitGroup{}
 	var scrubbingMu sync.Mutex
 
 	for {
 
 		completion := <-checkerChan
 		if completion == nil {
+			log.Debug("checker terminating, waiting for outstanding scrubbings")
 			outstandingScrubbings.Wait()
+			log.Debug("checker finished waiting for outstanding scrubbing, terminating")
 			return
 		}
 		atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
@@ -162,6 +164,7 @@ func scrubSender(
 	for {
 		req := <-sendChan
 		if req == nil {
+			log.Debug("sender terminating")
 			sendChan <- nil // terminate the other senders, too
 			return
 		}
@@ -260,6 +263,7 @@ func scrubScraper(
 		}
 		if allDone {
 			// this will terminate all the senders
+			log.Debug("file scraping done, terminating senders")
 			sendChan <- nil
 			return
 		}

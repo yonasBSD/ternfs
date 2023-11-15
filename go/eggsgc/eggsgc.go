@@ -85,7 +85,6 @@ func main() {
 	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
-	retryOnDestructFailure := flag.Bool("retry-on-destruct-failure", false, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
@@ -186,21 +185,23 @@ func main() {
 	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
-	options := &lib.GCOptions{
-		ShuckleTimeouts:        &lib.DefaultShuckleTimeout,
-		ShardTimeouts:          &lib.DefaultShardTimeout,
-		CDCTimeouts:            &lib.DefaultCDCTimeout,
-		RetryOnDestructFailure: *retryOnDestructFailure,
-	}
-	options.ShuckleTimeouts.Overall = 0
-	options.ShardTimeouts.Overall = 0
-	options.CDCTimeouts.Overall = 0
+	shuckleTimeouts := &lib.DefaultShuckleTimeout
+	shuckleTimeouts.Overall = 0
+	shardTimeouts := &lib.DefaultShardTimeout
+	shardTimeouts.Overall = 0
+	cdcTimeouts := &lib.DefaultCDCTimeout
+	cdcTimeouts.Overall = 0
+	blockTimeouts := &lib.DefaultBlockTimeout
+	blockTimeouts.Overall = 0
 
 	dirInfoCache := lib.NewDirInfoCache()
-	client, err := lib.GCClient(log, *shuckleAddress, options)
+	client, err := lib.NewClient(log, shuckleTimeouts, *shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
+	client.SetShardTimeouts(shardTimeouts)
+	client.SetCDCTimeouts(cdcTimeouts)
+	client.SetBlockTimeout(blockTimeouts)
 	counters := lib.NewClientCounters()
 	client.SetCounters(counters)
 	var cdcMu sync.Mutex
@@ -298,7 +299,7 @@ func main() {
 						waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
 						log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
 						time.Sleep(waitFor)
-						if err := lib.DestructFiles(log, options, client, destructFilesState, groupShards); err != nil {
+						if err := lib.DestructFiles(log, client, destructFilesState, groupShards); err != nil {
 							log.RaiseAlert("could not destruct files: %v", err)
 						}
 						wg.Done()
@@ -350,7 +351,8 @@ func main() {
 					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
 					time.Sleep(waitFor)
-					if err := lib.ScrubFiles(log, client, scrubState, true, groupShards); err != nil {
+					// retry forever
+					if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 0}, scrubState, groupShards); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
 					wg.Done()

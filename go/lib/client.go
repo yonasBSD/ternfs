@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -113,59 +114,6 @@ func (counters *ClientCounters) Log(log *Logger) {
 
 }
 
-type ReqTimeouts struct {
-	Initial time.Duration // the first timeout
-	Max     time.Duration // the max timeout -- 0 for never
-	Overall time.Duration // the max overall waiting time for a request
-	Growth  float64
-	Jitter  float64 // in percentage, e.g. 0.10 for a 10% jitter
-	rand    wyhash.Rand
-}
-
-func NewReqTimeouts(initial time.Duration, max time.Duration, overall time.Duration, growth float64, jitter float64) *ReqTimeouts {
-	if initial <= 0 {
-		panic(fmt.Errorf("initial (%v) <= 0", initial))
-	}
-	if max <= 0 {
-		panic(fmt.Errorf("max (%v) <= 0", max))
-	}
-	if overall < 0 {
-		panic(fmt.Errorf("overall (%v) < 0", overall))
-	}
-	if growth <= 1.0 {
-		panic(fmt.Errorf("growth (%v) <= 1.0", growth))
-	}
-	if jitter < 0.0 {
-		panic(fmt.Errorf("jitter (%v) < 0.0", jitter))
-	}
-	return &ReqTimeouts{
-		Initial: initial,
-		Max:     max,
-		Overall: overall,
-		Growth:  growth,
-		Jitter:  jitter,
-		rand:    *wyhash.New(rand.Uint64()),
-	}
-}
-
-// If 0, time's up.
-func (r *ReqTimeouts) NextNow(startedAt time.Time, now time.Time) time.Duration {
-	elapsed := now.Sub(startedAt)
-	if r.Overall > 0 && elapsed >= r.Overall {
-		return time.Duration(0)
-	}
-	g := r.Growth + r.Growth*r.Jitter*(r.rand.Float64()-0.5)
-	timeout := r.Initial + startedAt.Add(time.Duration(float64(elapsed/1000000)*g)*1000000).Sub(now) // compute in milliseconds to avoid inf
-	if timeout > r.Max {
-		timeout = r.Max
-	}
-	return timeout
-}
-
-func (r *ReqTimeouts) Next(startedAt time.Time) time.Duration {
-	return r.NextNow(startedAt, time.Now())
-}
-
 var DefaultShardTimeout = ReqTimeouts{
 	Initial: 100 * time.Millisecond,
 	Max:     2 * time.Second,
@@ -179,6 +127,15 @@ var DefaultCDCTimeout = ReqTimeouts{
 	Initial: time.Second,
 	Max:     10 * time.Second,
 	Overall: time.Minute,
+	Growth:  1.5,
+	Jitter:  0.1,
+	rand:    wyhash.Rand{State: 0},
+}
+
+var DefaultBlockTimeout = ReqTimeouts{
+	Initial: time.Second,
+	Max:     10 * time.Second,
+	Overall: 5 * time.Minute,
 	Growth:  1.5,
 	Jitter:  0.1,
 	rand:    wyhash.Rand{State: 0},
@@ -473,40 +430,49 @@ func (procs *blocksProcessors) init(what string) {
 	procs.what = what
 }
 
+type sendArgs struct {
+	blockService       msgs.BlockServiceId
+	ip1                [4]byte
+	port1              uint16
+	ip2                [4]byte
+	port2              uint16
+	req                msgs.BlocksRequest
+	reqAdditionalBody  io.Reader
+	resp               msgs.BlocksResponse
+	respAdditionalBody io.ReaderFrom
+	extra              any
+}
+
+// This currently never fails (everything network related happens in
+// the processor loops), keeping error since it might fail in the future
 func (procs *blocksProcessors) send(
 	log *Logger,
-	blockService msgs.BlockServiceId,
-	ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16,
-	breq msgs.BlocksRequest,
-	breqAdditionalBody io.Reader,
-	bresp msgs.BlocksResponse,
-	brespAdditionalBody io.ReaderFrom,
-	extra any,
+	args *sendArgs,
 	completionChan chan *BlockCompletion,
 ) error {
-	if port1 == 0 && port2 == 0 {
-		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", blockService, ip1, port1, ip2, port2))
+	if args.port1 == 0 && args.port2 == 0 {
+		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.ip1, args.port1, args.ip2, args.port2))
 	}
 	resp := &clientBlockResponse{
-		req:                  breq,
-		resp:                 bresp,
-		additionalBodyWriter: brespAdditionalBody,
+		req:                  args.req,
+		resp:                 args.resp,
+		additionalBodyWriter: args.respAdditionalBody,
 		completionChan:       completionChan,
-		extra:                extra,
+		extra:                args.extra,
 	}
 	req := &clientBlockRequest{
-		blockService:         blockService,
-		req:                  breq,
-		additionalBodyReader: breqAdditionalBody,
+		blockService:         args.blockService,
+		req:                  args.req,
+		additionalBodyReader: args.reqAdditionalBody,
 		resp:                 resp,
 	}
 	key := blocksProcessorKey{
-		ip1:   ip1,
-		port1: port1,
-		ip2:   ip2,
-		port2: port2,
+		ip1:   args.ip1,
+		port1: args.port1,
+		ip2:   args.ip2,
+		port2: args.port2,
 	}
-	key.blockServiceKey = uint64(blockService) & ((1 << uint64(procs.blockServiceBits)) - 1)
+	key.blockServiceKey = uint64(args.blockService) & ((1 << uint64(procs.blockServiceBits)) - 1)
 	// likely case, we already have something. we could
 	// LoadOrStore directly but this saves us allocating new
 	// chans
@@ -519,8 +485,8 @@ func (procs *blocksProcessors) send(
 	procAny, loaded := procs.processors.LoadOrStore(key, &blocksProcessor{
 		reqChan:         make(chan *clientBlockRequest, 128),
 		inFlightReqChan: make(chan clientBlockResponseWithGeneration, 128),
-		addr1:           net.TCPAddr{IP: net.IP(ip1[:]), Port: int(port1)},
-		addr2:           net.TCPAddr{IP: net.IP(ip2[:]), Port: int(port2)},
+		addr1:           net.TCPAddr{IP: net.IP(args.ip1[:]), Port: int(args.port1)},
+		addr2:           net.TCPAddr{IP: net.IP(args.ip2[:]), Port: int(args.port2)},
 		what:            procs.what,
 		_conn:           &blocksProcessorConn{},
 	})
@@ -554,6 +520,7 @@ type Client struct {
 	checkBlockProcessors blocksProcessors
 	shardTimeout         *ReqTimeouts
 	cdcTimeout           *ReqTimeouts
+	blockTimeout         *ReqTimeouts
 	requestIdCounter     uint64
 }
 
@@ -612,6 +579,10 @@ func (c *Client) SetShardTimeouts(t *ReqTimeouts) {
 
 func (c *Client) SetCDCTimeouts(t *ReqTimeouts) {
 	c.cdcTimeout = t
+}
+
+func (c *Client) SetBlockTimeout(t *ReqTimeouts) {
+	c.blockTimeout = t
 }
 
 var clientMtu uint16 = 1472
@@ -738,6 +709,7 @@ func NewClientDirectNoAddrs(
 	}
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
+	c.blockTimeout = &DefaultBlockTimeout
 	if err := c.clientMetadata.init(log); err != nil {
 		return nil, err
 	}
@@ -948,10 +920,12 @@ func (client *Client) ResolvePath(log *Logger, path string) (msgs.InodeId, error
 	return id, err
 }
 
-func (client *Client) StartWriteBlock(log *Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
-	resp := &msgs.WriteBlockResp{}
-	return client.writeBlockProcessors.send(
-		log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any) *sendArgs {
+	return &sendArgs{
+		block.BlockServiceId,
+		block.BlockServiceIp1,
+		block.BlockServicePort1,
+		block.BlockServiceIp2, block.BlockServicePort2,
 		&msgs.WriteBlockReq{
 			BlockId:     block.BlockId,
 			Crc:         crc,
@@ -959,114 +933,152 @@ func (client *Client) StartWriteBlock(log *Logger, block *msgs.AddSpanInitiateBl
 			Certificate: block.Certificate,
 		},
 		r,
-		resp,
+		&msgs.WriteBlockResp{},
 		nil,
 		extra,
-		completion,
-	)
+	}
 }
 
-func (client *Client) WriteBlock(log *Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
-	ch := make(chan *BlockCompletion, 1)
-	err = client.StartWriteBlock(log, block, r, size, crc, nil, ch)
+func (client *Client) StartWriteBlock(log *Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+	return client.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
+}
+
+func RetriableBlockError(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
+func (client *Client) singleBlockReq(log *Logger, timeouts *ReqTimeouts, processor *blocksProcessors, args *sendArgs) (msgs.BlocksResponse, error) {
+	if timeouts == nil {
+		timeouts = client.blockTimeout
+	}
+	timeoutAlert := log.NewNCAlert(0)
+	defer log.ClearNC(timeoutAlert)
+	startedAt := time.Now()
+	for {
+		ch := make(chan *BlockCompletion, 1)
+		err := processor.send(log, args, ch)
+		if err != nil {
+			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			return nil, err
+		}
+		resp := <-ch
+		err = resp.Error
+		if err == nil {
+			return resp.Resp, nil
+		}
+		if RetriableBlockError(err) {
+			next := timeouts.Next(startedAt)
+			if next == 0 {
+				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+				return nil, err
+			}
+			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			time.Sleep(next)
+		} else {
+			return nil, err
+		}
+	}
+}
+
+func (client *Client) WriteBlock(log *Logger, timeouts *ReqTimeouts, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
+	resp, err := client.singleBlockReq(log, timeouts, &client.writeBlockProcessors, writeBlockSendArgs(block, r, size, crc, nil))
 	if err != nil {
-		var proof [8]byte
 		return proof, err
 	}
-	resp := <-ch
-	if resp.Error != nil {
-		return proof, resp.Error
-	}
-	return resp.Resp.(*msgs.WriteBlockResp).Proof, nil
+	return resp.(*msgs.WriteBlockResp).Proof, nil
 }
 
-func (client *Client) StartFetchBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
-	resp := &msgs.FetchBlockResp{}
-	return client.fetchBlockProcessors.send(
-		log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any) *sendArgs {
+	return &sendArgs{
+		blockService.Id,
+		blockService.Ip1,
+		blockService.Port1,
+		blockService.Ip2,
+		blockService.Port2,
 		&msgs.FetchBlockReq{
 			BlockId: blockId,
 			Offset:  offset,
 			Count:   count,
 		},
 		nil,
-		resp,
+		&msgs.FetchBlockResp{},
 		w,
 		extra,
-		completion,
-	)
+	}
+}
+
+func (client *Client) StartFetchBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
+	return client.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
 func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 	c.fetchBlockBufs.Put(body)
 }
 
-func (client *Client) FetchBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
-	ch := make(chan *BlockCompletion, 1)
+func (client *Client) FetchBlock(log *Logger, timeouts *ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
 	buf := client.fetchBlockBufs.Get().(*bytes.Buffer)
 	buf.Reset()
-	if err := client.StartFetchBlock(log, blockService, blockId, offset, count, buf, nil, ch); err != nil {
-		client.PutFetchedBlock(buf)
+	_, err = client.singleBlockReq(log, timeouts, &client.fetchBlockProcessors, fetchBlockSendArgs(blockService, blockId, offset, count, buf, nil))
+	if err != nil {
 		return nil, err
-	}
-	resp := <-ch
-	if resp.Error != nil {
-		client.PutFetchedBlock(buf)
-		return nil, resp.Error
 	}
 	return buf, nil
 }
 
-func (client *Client) StartEraseBlock(log *Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
-	resp := &msgs.EraseBlockResp{}
-	return client.eraseBlockProcessors.send(
-		log, block.BlockServiceId, block.BlockServiceIp1, block.BlockServicePort1, block.BlockServiceIp2, block.BlockServicePort2,
+func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sendArgs {
+	return &sendArgs{
+		block.BlockServiceId,
+		block.BlockServiceIp1,
+		block.BlockServicePort1,
+		block.BlockServiceIp2,
+		block.BlockServicePort2,
 		&msgs.EraseBlockReq{
 			BlockId:     block.BlockId,
 			Certificate: block.Certificate,
 		},
 		nil,
-		resp,
+		&msgs.EraseBlockResp{},
 		nil,
 		extra,
-		completion,
-	)
+	}
+}
+
+func (client *Client) StartEraseBlock(log *Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
+	return client.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
 }
 
 func (client *Client) EraseBlock(log *Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
-	ch := make(chan *BlockCompletion, 1)
-	if err := client.StartEraseBlock(log, block, nil, ch); err != nil {
+	resp, err := client.singleBlockReq(log, nil, &client.eraseBlockProcessors, eraseBlockSendArgs(block, nil))
+	if err != nil {
 		return proof, err
 	}
-	resp := <-ch
-	if resp.Error != nil {
-		return proof, resp.Error
-	}
-	return resp.Resp.(*msgs.EraseBlockResp).Proof, nil
+	return resp.(*msgs.EraseBlockResp).Proof, nil
 }
 
-func (client *Client) StartCheckBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
-	resp := &msgs.CheckBlockResp{}
-	return client.checkBlockProcessors.send(
-		log, blockService.Id, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2,
+func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any) *sendArgs {
+	return &sendArgs{
+		blockService.Id,
+		blockService.Ip1,
+		blockService.Port1,
+		blockService.Ip2,
+		blockService.Port2,
 		&msgs.CheckBlockReq{
 			BlockId: blockId,
 			Size:    size,
 			Crc:     crc,
 		},
 		nil,
-		resp,
+		&msgs.CheckBlockResp{},
 		nil,
 		extra,
-		completion,
-	)
+	}
+}
+
+func (client *Client) StartCheckBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+	return client.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }
 
 func (client *Client) CheckBlock(log *Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
-	ch := make(chan *BlockCompletion, 1)
-	if err := client.StartCheckBlock(log, blockService, blockId, size, crc, nil, ch); err != nil {
-		return err
-	}
-	resp := <-ch
-	return resp.Error
+	_, err := client.singleBlockReq(log, nil, &client.checkBlockProcessors, checkBlockSendArgs(blockService, blockId, size, crc, nil))
+	return err
 }

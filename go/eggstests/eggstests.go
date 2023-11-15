@@ -573,8 +573,8 @@ func (bsv *blockServiceVictim) start(
 		LogLevel:       log.Level(),
 		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
 		FutureCutoff:   &testBlockFutureCutoff,
-		Addr1:          "127.0.0.1:0",
-		Addr2:          "127.0.0.1:0",
+		Addr1:          fmt.Sprintf("127.0.0.1:%d", port1),
+		Addr2:          fmt.Sprintf("127.0.0.1:%d", port2),
 		Profile:        profile,
 	})
 }
@@ -616,7 +616,10 @@ func killBlockServices(
 					if j >= ix {
 						victim = bsProcs[procId]
 						delete(bsProcs, procId)
-						log.Info("killing %v", victim.path)
+						var failureDomain msgs.FailureDomain
+						copy(failureDomain.Name[:], victim.failureDomain)
+						ports := bsPorts[failureDomain]
+						log.Info("killing %v, ports %v %v", victim.path, ports._1, ports._2)
 						procs.Kill(procId, syscall.SIGKILL)
 						break
 					}
@@ -751,10 +754,13 @@ func main() {
 		*repoDir = path.Dir(path.Dir(path.Dir(filename)))
 	}
 
-	// in tests where we intentionally drop packets this makes things _much_
+	// In tests where we intentionally drop packets this makes things _much_
 	// faster
 	lib.DefaultShardTimeout.Initial = 5 * time.Millisecond
 	lib.DefaultCDCTimeout.Initial = 10 * time.Millisecond
+	// Retry block stuff quickly to avoid being starved by the block service
+	// killer (and also to go faster)
+	lib.DefaultBlockTimeout.Max = time.Second
 
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File

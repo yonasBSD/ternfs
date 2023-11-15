@@ -230,7 +230,7 @@ func main() {
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
-			if err := lib.DestructFilesInAllShards(log, client, &lib.GCOptions{}); err != nil {
+			if err := lib.DestructFilesInAllShards(log, client); err != nil {
 				panic(err)
 			}
 		} else {
@@ -893,7 +893,7 @@ func main() {
 			shards[i] = msgs.ShardId(i)
 		}
 		stats := lib.ScrubState{}
-		if err := lib.ScrubFiles(log, client, &stats, true, shards); err != nil {
+		if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 5}, &stats, shards); err != nil {
 			panic(err)
 		}
 	}

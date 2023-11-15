@@ -16,6 +16,10 @@ type ScrubState struct {
 	Cursors        [256]msgs.InodeId
 }
 
+type ScrubOptions struct {
+	MaximumCheckAttempts uint // 0 = infinite
+}
+
 func scrubFileInternal(
 	log *Logger,
 	client *Client,
@@ -44,13 +48,14 @@ type scrubCheckInfo struct {
 	size           uint32
 	crc            msgs.Crc
 	canIgnoreError bool
+	attempts       uint
 }
 
 func scrubChecker(
 	log *Logger,
 	client *Client,
+	opts *ScrubOptions,
 	stats *ScrubState,
-	retryOnFailure bool,
 	scratchFiles map[msgs.ShardId]*scratchFile,
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
@@ -74,33 +79,20 @@ func scrubChecker(
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
 			}
-			// don't delay queue processing
+			// Scrub in separate thread to avoid delaying queue processing
 			outstandingScrubbings.Add(1)
 			go func() {
 				defer outstandingScrubbings.Done()
 				scrubbingMu.Lock() // scrubbings don't work in parallel
 				defer scrubbingMu.Unlock()
-				alert := log.NewNCAlert(0)
 				log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
-				if retryOnFailure {
-					for {
-						err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file)
-						if err == nil {
-							log.ClearNC(alert)
-							break
-						}
-						log.RaiseNC(alert, "could not scrub file %v, will try again in a second: %v", info.file, err)
-						time.Sleep(time.Second)
+				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
+					log.Info("could not scrub file %v, will terminate: %v", info.file, err)
+					select {
+					case terminateChan <- err:
+					default:
 					}
-				} else {
-					if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
-						log.Info("could not scrub file %v, will terminate: %v", info.file, err)
-						select {
-						case terminateChan <- err:
-						default:
-						}
-						return
-					}
+					return
 				}
 				log.Info("migration finished for file %v", info.file)
 			}()
@@ -111,31 +103,34 @@ func scrubChecker(
 		} else if err != nil {
 			if info.canIgnoreError {
 				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)
-			} else if retryOnFailure {
-				outstandingScrubbings.Add(1)
-				go func() {
-					defer outstandingScrubbings.Done()
-					if info.alert == nil {
-						info.alert = log.NewNCAlert(0)
-					}
-					log.RaiseNC(info.alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
-					time.Sleep(time.Second)
-					for {
-						err := client.StartCheckBlock(log, &info.blockService, info.block, info.size, info.crc, info, checkerChan)
-						if err == nil {
-							break
-						}
-						log.RaiseNC(info.alert, "could not start checking block %v in file %v, will retry after a second: %v", info.block, info.file, err)
-						time.Sleep(time.Second)
-					}
-				}()
 			} else {
-				log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
-				select {
-				case terminateChan <- err:
-				default:
+				info.attempts++
+				if info.attempts >= opts.MaximumCheckAttempts {
+					log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
+					select {
+					case terminateChan <- err:
+					default:
+					}
+					return
+				} else {
+					outstandingScrubbings.Add(1)
+					go func() {
+						defer outstandingScrubbings.Done()
+						if info.alert == nil {
+							info.alert = log.NewNCAlert(0)
+						}
+						log.RaiseNC(info.alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
+						time.Sleep(time.Second)
+						for {
+							err := client.StartCheckBlock(log, &info.blockService, info.block, info.size, info.crc, info, checkerChan)
+							if err == nil {
+								break
+							}
+							log.RaiseNC(info.alert, "could not start checking block %v in file %v, will retry after a second: %v", info.block, info.file, err)
+							time.Sleep(time.Second)
+						}
+					}()
 				}
-				return
 			}
 		} else {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
@@ -159,7 +154,6 @@ func scrubSender(
 	log *Logger,
 	client *Client,
 	stats *ScrubState,
-	retryOnFailure bool,
 	sendChan chan *scrubRequest,
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
@@ -181,26 +175,16 @@ func scrubSender(
 			crc:            req.crc,
 			canIgnoreError: canIgnoreError,
 		}
-	TryAgain:
 		err := client.StartCheckBlock(log, &req.blockService, req.block, req.size, req.crc, info, checkerChan)
 		if err == nil {
 			log.ClearNC(alert)
 		} else {
-			if canIgnoreError {
-				// migration takes care of this, not scrubbing
-				log.Info("skipping block %v in file %v because of its block service flags %v: %v", req.block, req.file, req.blockService.Flags, err)
-			} else if retryOnFailure {
-				log.RaiseNC(alert, "could not start checking block %v in file %v, will retry after a second: %v", req.block, req.file, err)
-				time.Sleep(time.Second)
-				goto TryAgain
-			} else {
-				log.Info("could not start checking block %v in file %v, terminating: %v", req.block, req.file, err)
-				select {
-				case terminateChan <- err:
-				default:
-				}
-				return
+			log.Info("could not start checking block %v in file %v, terminating: %v", req.block, req.file, err)
+			select {
+			case terminateChan <- err:
+			default:
 			}
+			return
 		}
 	}
 }
@@ -209,7 +193,6 @@ func scrubScraper(
 	log *Logger,
 	client *Client,
 	stats *ScrubState,
-	retryOnFailure bool,
 	terminateChan chan any,
 	sendChan chan *scrubRequest,
 	shards []msgs.ShardId,
@@ -299,8 +282,8 @@ func ScrubFile(
 func ScrubFiles(
 	log *Logger,
 	client *Client,
+	opts *ScrubOptions,
 	stats *ScrubState,
-	retryOnFailure bool,
 	shards []msgs.ShardId,
 ) error {
 	log.Info("starting to scrub files in shards %+v", shards)
@@ -321,7 +304,7 @@ func ScrubFiles(
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubScraper(log, client, stats, retryOnFailure, terminateChan, sendChan, shards)
+		scrubScraper(log, client, stats, terminateChan, sendChan, shards)
 	}()
 
 	numSenders := 10_000
@@ -330,7 +313,7 @@ func ScrubFiles(
 	for i := 0; i < numSenders; i++ {
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			scrubSender(log, client, stats, retryOnFailure, sendChan, checkChan, terminateChan)
+			scrubSender(log, client, stats, sendChan, checkChan, terminateChan)
 			sendersWg.Done()
 		}()
 	}
@@ -342,7 +325,7 @@ func ScrubFiles(
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubChecker(log, client, stats, retryOnFailure, scratchFiles, checkChan, terminateChan)
+		scrubChecker(log, client, opts, stats, scratchFiles, checkChan, terminateChan)
 		log.Info("checker terminated")
 		select {
 		case terminateChan <- nil:
@@ -359,10 +342,10 @@ func ScrubFiles(
 	}
 }
 
-func ScrubFilesInAllShards(log *Logger, client *Client, retryOnFailure bool, stats *ScrubState) error {
+func ScrubFilesInAllShards(log *Logger, client *Client, opts *ScrubOptions, stats *ScrubState) error {
 	var shards [256]msgs.ShardId
 	for i := range shards {
 		shards[i] = msgs.ShardId(i)
 	}
-	return ScrubFiles(log, client, stats, retryOnFailure, shards[:])
+	return ScrubFiles(log, client, opts, stats, shards[:])
 }

@@ -33,7 +33,8 @@ func fetchBlock(
 	block *msgs.FetchedBlock,
 ) (*bytes.Buffer, error) {
 	blockService := &blockServices[block.BlockServiceIx]
-	data, err := client.FetchBlock(log, blockService, block.BlockId, 0, blockSize)
+	// fail immediately to other block services
+	data, err := client.FetchBlock(log, &NoTimeouts, blockService, block.BlockId, 0, blockSize)
 	if err != nil {
 		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
 		return nil, err
@@ -82,61 +83,34 @@ func writeBlock(
 		Reference: file,
 	}
 
-	maxAttempts := 4 // 4 = block services we currently kill in testing
-	for attempt := 0; ; attempt++ {
-		var err error
-		initiateSpanResp := msgs.AddSpanInitiateWithReferenceResp{}
-		if err := client.ShardRequest(log, scratch.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
-			return 0, 0, err
-		}
-		dstBlock := &initiateSpanResp.Resp.Blocks[0]
-		var writeProof [8]byte
-		writeProof, err = client.WriteBlock(log, dstBlock, newContents, blockSize, block.Crc)
-		certifySpanResp := msgs.AddSpanCertifyResp{}
-		if err != nil {
-			log.Info("could not write to block service, might retry: %v", err)
-			goto FailedAttempt
-		}
-		err = client.ShardRequest(
-			log,
-			scratch.id.Shard(),
-			&msgs.AddSpanCertifyReq{
-				FileId:     scratch.id,
-				Cookie:     scratch.cookie,
-				ByteOffset: scratch.size,
-				Proofs:     []msgs.BlockProof{{BlockId: dstBlock.BlockId, Proof: writeProof}},
-			},
-			&certifySpanResp,
-		)
-		scratch.size += uint64(blockSize)
-		if err != nil {
-			return 0, 0, err
-		}
-		return dstBlock.BlockId, dstBlock.BlockServiceId, nil
-
-	FailedAttempt:
-		if attempt >= maxAttempts {
-			return 0, 0, err
-		}
-		err = nil
-		// create temp file, move the bad span there, then we can restart
-		constructResp := &msgs.ConstructFileResp{}
-		if err := client.ShardRequest(log, scratch.id.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE, Note: "bad_write_block_attempt"}, constructResp); err != nil {
-			return 0, 0, err
-		}
-		moveSpanReq := &msgs.MoveSpanReq{
-			FileId1:     scratch.id,
-			ByteOffset1: initiateSpanReq.Req.ByteOffset,
-			Cookie1:     scratch.cookie,
-			FileId2:     constructResp.Id,
-			ByteOffset2: 0,
-			Cookie2:     constructResp.Cookie,
-			SpanSize:    blockSize,
-		}
-		if err := client.ShardRequest(log, scratch.id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
-			return 0, 0, err
-		}
+	var err error
+	initiateSpanResp := msgs.AddSpanInitiateWithReferenceResp{}
+	if err := client.ShardRequest(log, scratch.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
+		return 0, 0, err
 	}
+	dstBlock := &initiateSpanResp.Resp.Blocks[0]
+	var writeProof [8]byte
+	writeProof, err = client.WriteBlock(log, nil, dstBlock, newContents, blockSize, block.Crc)
+	certifySpanResp := msgs.AddSpanCertifyResp{}
+	if err != nil {
+		return 0, 0, err
+	}
+	err = client.ShardRequest(
+		log,
+		scratch.id.Shard(),
+		&msgs.AddSpanCertifyReq{
+			FileId:     scratch.id,
+			Cookie:     scratch.cookie,
+			ByteOffset: scratch.size,
+			Proofs:     []msgs.BlockProof{{BlockId: dstBlock.BlockId, Proof: writeProof}},
+		},
+		&certifySpanResp,
+	)
+	scratch.size += uint64(blockSize)
+	if err != nil {
+		return 0, 0, err
+	}
+	return dstBlock.BlockId, dstBlock.BlockServiceId, nil
 }
 
 // the bool is whether we found an error that we can retry

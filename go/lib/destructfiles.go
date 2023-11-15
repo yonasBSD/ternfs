@@ -3,7 +3,6 @@ package lib
 import (
 	"fmt"
 	"sync/atomic"
-	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -59,38 +58,22 @@ func DestructFile(
 		if len(initResp.Blocks) > 0 {
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
-			acceptFailure := make([]bool, len(initResp.Blocks))
-			eraseChan := make(chan *BlockCompletion, len(initResp.Blocks))
-			// first start all erase reqs at once
-			for i, block := range initResp.Blocks {
+			for i := range initResp.Blocks {
+				block := &initResp.Blocks[i]
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
-				acceptFailure[i] = block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
-				if err := client.StartEraseBlock(log, &block, i, eraseChan); err != nil {
-					if acceptFailure[i] {
+				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
+				proof, err := client.EraseBlock(log, block)
+				if err != nil {
+					if acceptFailure {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						atomic.AddUint64(&stats.SkippedSpans, 1)
 						return nil
 					}
 					return err
 				}
-			}
-			// then wait for them
-			for range initResp.Blocks {
-				completion := <-eraseChan
-				i := completion.Extra.(int)
-				block := initResp.Blocks[i]
-				if completion.Error != nil {
-					if acceptFailure[i] {
-						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
-						atomic.AddUint64(&stats.SkippedSpans, 1)
-						return nil
-					}
-					return err
-				}
-				resp := completion.Resp.(*msgs.EraseBlockResp)
 				certifyReq.Proofs[i].BlockId = block.BlockId
-				certifyReq.Proofs[i].Proof = resp.Proof
+				certifyReq.Proofs[i].Proof = proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
 			}
 			err = client.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
@@ -115,11 +98,8 @@ func destructFilesInternal(
 	log *Logger,
 	client *Client,
 	state *DestructFilesState,
-	retryOnFailure bool,
 	shards []msgs.ShardId,
 ) error {
-	alert := log.NewNCAlert(10 * time.Second)
-	timeouts := NewReqTimeouts(time.Second, 10*time.Second, 0, 1.5, 0.2)
 	reqs := make([]msgs.VisitTransientFilesReq, len(shards))
 	for i := range reqs {
 		reqs[i].BeginId = state.Cursors[shards[i]]
@@ -142,23 +122,10 @@ func destructFilesInternal(
 			}
 			for ix := range resp.Files {
 				file := &resp.Files[ix]
-				if retryOnFailure {
-					startedAt := time.Now()
-					for {
-						if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-							log.RaiseNC(alert, "%+v: error while destructing file, will retry: %v", file, err)
-							time.Sleep(timeouts.Next(startedAt))
-						} else {
-							log.ClearNC(alert)
-							break
-						}
-					}
-				} else {
-					if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-						log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-						atomic.AddUint64(&state.Stats.FailedFiles, 1)
-						someErrored = true
-					}
+				if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
+					log.RaiseAlert("%+v: error while destructing file: %v", file, err)
+					atomic.AddUint64(&state.Stats.FailedFiles, 1)
+					someErrored = true
 				}
 			}
 			state.Cursors[shid] = resp.NextId
@@ -178,13 +145,12 @@ func destructFilesInternal(
 // all files have been traversed. Useful for testing a single iteration.
 func DestructFiles(
 	log *Logger,
-	options *GCOptions,
 	client *Client,
 	stats *DestructFilesState,
 	shards []msgs.ShardId,
 ) error {
 	log.Info("starting to destruct files in shards %+v", shards)
-	if err := destructFilesInternal(log, client, stats, options.RetryOnDestructFailure, shards); err != nil {
+	if err := destructFilesInternal(log, client, stats, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one destruct files iteration: %+v", stats)
@@ -194,7 +160,6 @@ func DestructFiles(
 func DestructFilesInAllShards(
 	log *Logger,
 	client *Client,
-	options *GCOptions,
 ) error {
 	state := DestructFilesState{}
 	shards := make([]msgs.ShardId, 256)
@@ -202,7 +167,7 @@ func DestructFilesInAllShards(
 		shards[i] = msgs.ShardId(i)
 	}
 	someErrored := false
-	if err := destructFilesInternal(log, client, &state, options.RetryOnDestructFailure, shards); err != nil {
+	if err := destructFilesInternal(log, client, &state, shards); err != nil {
 		// `destructFilesInternal` itself raises an alert, no need to raise two.
 		log.Info("destructing files in shards %+v failed: %v", shards, err)
 		someErrored = true

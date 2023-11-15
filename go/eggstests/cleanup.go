@@ -50,8 +50,6 @@ func cleanupAfterTest(
 	counters *lib.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	pauseBlockServiceKiller.Lock()
-	defer pauseBlockServiceKiller.Unlock() // otherwise we won't be able to collect
 	cleanupStartedAt := time.Now()
 	client, err := lib.NewClient(log, nil, shuckleAddress)
 	if err != nil {
@@ -72,7 +70,7 @@ func cleanupAfterTest(
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
 	log.Info("deadlines passed, collecting")
-	if err := lib.DestructFilesInAllShards(log, client, &lib.GCOptions{Counters: counters}); err != nil {
+	if err := lib.DestructFilesInAllShards(log, client); err != nil {
 		panic(err)
 	}
 	// Make sure nothing is left after collection

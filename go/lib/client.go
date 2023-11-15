@@ -944,7 +944,7 @@ func (client *Client) StartWriteBlock(log *Logger, block *msgs.AddSpanInitiateBl
 }
 
 func RetriableBlockError(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED)
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE)
 }
 
 func (client *Client) singleBlockReq(log *Logger, timeouts *ReqTimeouts, processor *blocksProcessors, args *sendArgs) (msgs.BlocksResponse, error) {

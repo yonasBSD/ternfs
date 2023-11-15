@@ -85,10 +85,8 @@ ssh -p 2222 -i image-key fmazzol@localhost "sudo sh -c 'echo 1 > /sys/kernel/tra
 ssh -p 2222 -i image-key fmazzol@localhost "sudo cat /sys/kernel/tracing/trace_pipe" > trace &
 trace_pid=$!
 
-# Run tests (split in multiple executions so that tmp dir doesn't get too large)
-# -block-service-killer does not fully work with migration and scrubbing right now,
-# because that code is not robustly written with regards to block service migrations.
-# We test that code in the non-kmod tests anyway.
+# Do not test migrations/scrubbing since we test this outside qemu anyway
+# (it's completely independent from the kmod code)
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out

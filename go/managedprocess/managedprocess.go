@@ -525,6 +525,7 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		mpArgs.Args = append(
 			[]string{
 				"--exit-on-first-error=yes",
+				"--leak-check=yes",
 				"-q",
 				fmt.Sprintf("--suppressions=%s", path.Join(cppDir, "valgrind-suppressions")),
 				"--error-exitcode=1",

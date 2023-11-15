@@ -3307,10 +3307,10 @@ struct ShardDBImpl {
         _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId2, +1);
         _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId2, -1);
         // Finally, swap the blocks
-        char* tmp = (char*)malloc(decltype(block1)::SIZE); ALWAYS_ASSERT(tmp);
-        memcpy(tmp, block1._data, decltype(block1)::SIZE);
+        std::vector<char> tmp(decltype(block1)::SIZE);
+        memcpy(tmp.data(), block1._data, decltype(block1)::SIZE);
         memcpy(block1._data, block2._data, decltype(block1)::SIZE);
-        memcpy(block2._data, tmp, decltype(block1)::SIZE);
+        memcpy(block2._data, tmp.data(), decltype(block1)::SIZE);
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span1.toSlice()));
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
         return NO_ERROR;

@@ -1320,6 +1320,22 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	return hppOut.Bytes(), cppOut.Bytes()
 }
 
+// Useful to not have spurious rebuilds that depend on mtime
+func writeIfChanged(filepath string, contents []byte) {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		data = []byte{}
+	}
+
+	if bytes.Equal(data, contents) {
+		return
+	}
+
+	if err := os.WriteFile(filepath, contents, 0666); err != nil {
+		panic(err)
+	}
+}
+
 func main() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1763,43 +1779,13 @@ func main() {
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
-	goOutFile, err := os.Create(goOutFileName)
-	if err != nil {
-		panic(err)
-	}
-	defer goOutFile.Close()
-	goOutFile.Write(goCode)
+	writeIfChanged(goOutFileName, goCode)
 
-	kmodHOutFilename := fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd)
-	kmodHOutFile, err := os.Create(kmodHOutFilename)
-	if err != nil {
-		panic(err)
-	}
-	defer kmodHOutFile.Close()
-	kmodCOutFilename := fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd)
-	kmodCOutFile, err := os.Create(kmodCOutFilename)
-	if err != nil {
-		panic(err)
-	}
-	defer kmodHOutFile.Close()
 	kmodHBytes, kmodCBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelShuckleReqResps, kernelBlocksReqResps, kernelExtras)
-	kmodHOutFile.Write(kmodHBytes)
-	kmodCOutFile.Write(kmodCBytes)
+	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd), kmodHBytes)
+	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd), kmodCBytes)
 
-	hppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd)
-	hppOutFile, err := os.Create(hppOutFilename)
-	if err != nil {
-		panic(err)
-	}
-	defer hppOutFile.Close()
-	cppOutFilename := fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd)
-	cppOutFile, err := os.Create(cppOutFilename)
-	if err != nil {
-		panic(err)
-	}
-	defer cppOutFile.Close()
 	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
-	hppOutFile.Write(hppBytes)
-	cppOutFile.Write(cppBytes)
-
+	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd), hppBytes)
+	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd), cppBytes)
 }

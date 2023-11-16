@@ -977,12 +977,23 @@ static void write_complete(struct block_request* breq) {
         list_rotate_left(&req->pages);
     }
     req->callback(req->data, &req->pages, req->block_id, be64_to_cpu(req->write_resp.data.proof), atomic_read(&req->breq.err));
+
     BUG_ON(!list_empty(&req->pages)); // the callback must acquire this
 
-    // TODO what if the socket is being read right now? There's probably a race with
+    // What if the socket is being read right now? There's probably a race with
     // that and the free here.
+    //
+    // This function is called in two ways:
+    // * `block_receive` enqueues the write complete work on eggsfs_wq
+    // * `block_work` is cleaning up a broken socket, and it calls this
+    //     function directly through `remove_block_socket`.
+    //
+    // `remove_block_sockets` changes the callbacks, so that by the time
+    // we get to call this function all the `block_receive`s must be done.
+    //
+    // Moreover `block_receive` removes the request from the queue as it
+    // enqueues the work. So this should be safe.
 
-    BUG_ON(!list_empty(&req->pages));
     kmem_cache_free(write_request_cachep, req);
 }
 
@@ -1092,7 +1103,8 @@ static void write_work(struct work_struct* work) {
 static int write_receive_single_req(
     struct block_request* breq,
     struct sk_buff* skb,
-    unsigned int offset, size_t len0
+    unsigned int offset,
+    size_t len0
 ) {
     struct write_request* req = get_write_request(breq);
     size_t len = len0;

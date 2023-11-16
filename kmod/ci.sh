@@ -2,7 +2,6 @@
 set -eu -o pipefail
 
 short=""
-base_img=""
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -11,40 +10,19 @@ while [[ "$#" -gt 0 ]]; do
             shift
             ;;
         *)
-            if [[ -n "$base_img" ]]; then
-                echo "Bad usage -- base image specified twice"
-                exit 2
-            else
-                base_img=$(realpath ${1})
-                shift
-            fi
+            echo "Bad usage -- only accepted flag is -short"
+            exit 2
             ;;
     esac
 done
 
-if [[ -z "$base_img" ]]; then
-    echo "Bad usage -- no base image"
-    exit 2
-fi
-
-echo "Running with base image $base_img, $short"
+echo "Running with short $short"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
-export https_proxy=http://REDACTED
-
-# prepare linux sources
-./fetchlinux.sh
-
-# build linux kernel
-(cd linux && make oldconfig && make prepare && make -j)
-
 # build kernel module
 make "KDIR=${SCRIPT_DIR}/linux" -j kmod
-
-# create vm image
-./createimg.sh "$base_img"
 
 # start VM in the background
 function cleanup {

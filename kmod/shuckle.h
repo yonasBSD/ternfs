@@ -12,7 +12,8 @@ int eggsfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind);
 
 int eggsfs_parse_shuckle_addr(const char* str, atomic64_t* addr1, atomic64_t* addr2);
 
-// Might override addr1/addr2 if we get new stuff from a shuckle proxy.
+// Might override addr1/addr2 if we get new stuff from
+// a shuckle proxy.
 int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct socket** sock);
 
 #endif

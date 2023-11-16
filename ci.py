@@ -12,8 +12,9 @@ parser.add_argument('--functional', action='store_true')
 parser.add_argument('--integration', action='store_true')
 parser.add_argument('--short', action='store_true')
 parser.add_argument('--quiet', action='store_true')
-parser.add_argument('--kmod', default=None, type=str, help='Run the kmod tests with the provided base image')
-parser.add_argument('--no-build', action='store_true')
+parser.add_argument('--kmod', action='store_true')
+parser.add_argument('--build', action='store_true')
+parser.add_argument('--prepare-image', default=None, type=str, help='Build the kmod image given the provided base image')
 args = parser.parse_args()
 
 if sys.stdout.isatty():
@@ -79,7 +80,7 @@ def wait_cmds(ps):
                 continue
             done[i] = wait_cmd(p, timeout=0.1)
 
-if not args.no_build:
+if args.build:
     bold_print('building')
     for r in ['release', 'sanitized', 'valgrind']:
         wait_cmd(run_cmd(['./build.sh', r]))
@@ -105,7 +106,7 @@ if args.integration:
     # of the child processes confuse the FUSE driver).
     tests = [
         ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/sanitized', '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short,
-        ['./go/eggstests/eggstests', '-build-type', 'release', '-binaries-dir', 'build/release', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
+        ['./go/eggstests/eggstests', '-build-type', 'sanitized', '-binaries-dir', 'build/release', '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short,
     ]
     if not args.short:
         # valgrind is super slow, it still surfaced bugs in the past but run the short
@@ -124,6 +125,10 @@ if args.integration:
         [run_cmd(test + ['-shuckle-port', str(port)]) for test, port in zip(tests, ports)],
     )
 
+if args.prepare_image:
+    bold_print('prepare kmod image')
+    wait_cmd(run_cmd(['./kmod/ci_prepare.sh', args.prepare_image]))
+
 if args.kmod:
     bold_print('kmod tests')
-    wait_cmd(run_cmd(['./kmod/ci.sh', args.kmod] + (['-short'] if args.short else [])))
+    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else [])))

@@ -77,6 +77,11 @@ public:
         EggsError err = db.prepareLogEntry(req, logEntry);
         if (err == NO_ERROR) {
             err = _applyLogEntryLocked(req.kind(), logEntry, resp);
+        } else if (req.kind() == ShardMessageKind::SET_TIME && err == EggsError::TIME_TOO_RECENT) {
+            // We don't want errors for this one to the client. We very
+            // often send this request without waiting (to set atime) anyway.
+            resp.setSetTime().clear();
+            return NO_ERROR;
         }
         return err;
     }

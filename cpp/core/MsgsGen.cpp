@@ -190,6 +190,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::BLOCK_PARTIAL_IO_ERROR:
         out << "BLOCK_PARTIAL_IO_ERROR";
         break;
+    case EggsError::TIME_TOO_RECENT:
+        out << "TIME_TOO_RECENT";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

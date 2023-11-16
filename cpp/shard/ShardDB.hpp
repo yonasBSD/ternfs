@@ -28,6 +28,12 @@ constexpr uint32_t MAXIMUM_SPAN_SIZE = 100 << 20;
 
 constexpr Duration DEFAULT_DEADLINE_INTERVAL = 2_hours;
 
+struct ShardDBConfig {
+    ShardId shid;
+    Duration deadlineInterval = DEFAULT_DEADLINE_INTERVAL;
+    Duration minAtimeInterval = std::numeric_limits<std::int64_t>::min();
+};
+
 struct ShardDB {
 private:
     void* _impl;
@@ -36,7 +42,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path, const ShardDBConfig& config);
     ~ShardDB();
 
     // Stuff which might throw, and therefore not well suited to destructor.

@@ -177,6 +177,7 @@ const (
 	BLOCK_TOO_OLD_FOR_WRITE ErrCode = 69
 	BLOCK_IO_ERROR ErrCode = 70
 	BLOCK_PARTIAL_IO_ERROR ErrCode = 71
+	TIME_TOO_RECENT ErrCode = 72
 )
 
 func (err ErrCode) String() string {
@@ -305,6 +306,8 @@ func (err ErrCode) String() string {
 		return "BLOCK_IO_ERROR"
 	case 71:
 		return "BLOCK_PARTIAL_IO_ERROR"
+	case 72:
+		return "TIME_TOO_RECENT"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}

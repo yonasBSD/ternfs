@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include "Msgs.hpp"
 #include "Env.hpp"
 #include "ShardDB.hpp"
@@ -28,6 +30,7 @@ struct ShardOptions {
     bool xmonProd = false;
     bool metrics = false;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
+    Duration minAtimeInterval = std::numeric_limits<int64_t>::min();
 };
 
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);

@@ -37,6 +37,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Enable metrics.\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
+    fprintf(stderr, " -min-atime-interval\n");
+    fprintf(stderr, "    	If set, will only write atime if it's older than the given interval. Useful to remove writes due to atime.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -183,6 +185,8 @@ int main(int argc, char** argv) {
             options.metrics = true;
         } else if (arg == "-transient-deadline-interval") {
             options.transientDeadlineInterval = parseDuration(getNextArg());
+        } else if (arg == "-min-atime-interval") {
+            options.minAtimeInterval = parseDuration(getNextArg());
         } else {
             args.emplace_back(std::move(arg));
         }

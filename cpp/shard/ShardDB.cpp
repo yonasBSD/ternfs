@@ -384,6 +384,7 @@ struct ShardDBImpl {
                     cache.storageClass = v().storageClass();
                     cache.flags = v().flags();
                 }
+                ROCKS_DB_CHECKED(it->status());
             }
         }
     }
@@ -793,6 +794,7 @@ struct ShardDBImpl {
                 auto id = ExternalValue<InodeIdKey>::FromSlice(it->key());
                 resp.ids.els.emplace_back(id().id());
             }
+            ROCKS_DB_CHECKED(it->status());
         }
 
         if (resp.ids.els.size() == maxIds) {
@@ -909,6 +911,7 @@ struct ShardDBImpl {
                     break;
                 }
             }
+            ROCKS_DB_CHECKED(it->status());
         }
 
         // Check if file does not exist when we have no spans
@@ -3481,6 +3484,7 @@ struct ShardDBImpl {
             resp.nextBlockService = key().blockServiceId();
             resp.nextFile = key().fileId();
         } else {
+            ROCKS_DB_CHECKED(it->status());
             LOG_DEBUG(_env, "Done removing zero block service files");
             resp.nextBlockService = 0;
             resp.nextFile = NULL_INODE_ID;

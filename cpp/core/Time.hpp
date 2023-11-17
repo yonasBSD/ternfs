@@ -7,7 +7,7 @@ struct Duration {
     int64_t ns;
 
     constexpr  Duration(): ns(0) {}
-    constexpr Duration(uint64_t ns_): ns(ns_) {}
+    constexpr Duration(int64_t ns_): ns(ns_) {}
 
     bool operator==(Duration rhs) const {
         return ns == rhs.ns;

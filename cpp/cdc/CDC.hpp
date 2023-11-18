@@ -16,9 +16,6 @@ struct CDCOptions {
     Duration shardTimeout = 100_ms;
     bool xmon = false;
     bool xmonProd = false;
-    // currently the maximum CDC throughput is roughly 200req/s, and the max timeout is 2sec,
-    // so storing a maximum of 5sec worth of requests seems like a decent compromise.
-    uint64_t maximumEnqueuedRequests = 1000;
     bool metrics = false;
 };
 

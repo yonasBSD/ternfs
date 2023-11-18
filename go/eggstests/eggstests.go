@@ -550,6 +550,30 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"parallel write",
+		"",
+		func(counters *lib.ClientCounters) {
+			numThreads := 10000
+			bufPool := lib.NewBufPool()
+			dirInfoCache := lib.NewDirInfoCache()
+			var wg sync.WaitGroup
+			wg.Add(numThreads)
+			for i := 0; i < numThreads; i++ {
+				ti := i
+				go func() {
+					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+					if _, err := client.CreateFile(log, bufPool, dirInfoCache, fmt.Sprintf("/%d", ti), bytes.NewReader([]byte{})); err != nil {
+						panic(err)
+					}
+					wg.Done()
+				}()
+			}
+			wg.Wait()
+		},
+	)
+
 	terminateChan <- nil
 }
 

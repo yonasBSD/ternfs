@@ -3631,7 +3631,9 @@ private:
 public:
     ShardReqContainer();
     ShardReqContainer(const ShardReqContainer& other);
+    ShardReqContainer(ShardReqContainer&& other);
     void operator=(const ShardReqContainer& other);
+    void operator=(ShardReqContainer&& other);
 
     ShardMessageKind kind() const { return _kind; }
 
@@ -3727,7 +3729,9 @@ private:
 public:
     ShardRespContainer();
     ShardRespContainer(const ShardRespContainer& other);
+    ShardRespContainer(ShardRespContainer&& other);
     void operator=(const ShardRespContainer& other);
+    void operator=(ShardRespContainer&& other);
 
     ShardMessageKind kind() const { return _kind; }
 
@@ -3823,7 +3827,9 @@ private:
 public:
     CDCReqContainer();
     CDCReqContainer(const CDCReqContainer& other);
+    CDCReqContainer(CDCReqContainer&& other);
     void operator=(const CDCReqContainer& other);
+    void operator=(CDCReqContainer&& other);
 
     CDCMessageKind kind() const { return _kind; }
 
@@ -3857,7 +3863,9 @@ private:
 public:
     CDCRespContainer();
     CDCRespContainer(const CDCRespContainer& other);
+    CDCRespContainer(CDCRespContainer&& other);
     void operator=(const CDCRespContainer& other);
+    void operator=(CDCRespContainer&& other);
 
     CDCMessageKind kind() const { return _kind; }
 
@@ -3891,7 +3899,9 @@ private:
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
+    ShuckleReqContainer(ShuckleReqContainer&& other);
     void operator=(const ShuckleReqContainer& other);
+    void operator=(ShuckleReqContainer&& other);
 
     ShuckleMessageKind kind() const { return _kind; }
 
@@ -3939,7 +3949,9 @@ private:
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
+    ShuckleRespContainer(ShuckleRespContainer&& other);
     void operator=(const ShuckleRespContainer& other);
+    void operator=(ShuckleRespContainer&& other);
 
     ShuckleMessageKind kind() const { return _kind; }
 
@@ -4648,7 +4660,9 @@ private:
 public:
     ShardLogEntryContainer();
     ShardLogEntryContainer(const ShardLogEntryContainer& other);
+    ShardLogEntryContainer(ShardLogEntryContainer&& other);
     void operator=(const ShardLogEntryContainer& other);
+    void operator=(ShardLogEntryContainer&& other);
 
     ShardLogEntryKind kind() const { return _kind; }
 

@@ -90,7 +90,18 @@ public:
     // not be necessary. If it is not, then it is certainly necessary.
     //
     // As usual, if an error is returned, the contents of `resp` should be ignored.
-    EggsError applyLogEntry(bool sync, ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
+    //
+    // This function does NOT persist the changes (in fact it doesn't even write
+    // to the WAL). You need to call flush(). But this allows you to apply many
+    // log entries without any write/fsync.
+    EggsError applyLogEntry(ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
+
+    // Flushes the changes to the WAL, and persists it if sync=true (won't be
+    // required when we have a distributed log).
+    //
+    // Before calling this function the writes up to the previous flush() will
+    // not be visible to reads (but they will be visible to writes).
+    void flush(bool sync);
 
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;

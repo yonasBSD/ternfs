@@ -1,9 +1,11 @@
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/snapshot.h>
 #include <rocksdb/statistics.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/table.h>
@@ -11,6 +13,7 @@
 #include <xxhash.h>
 #include <type_traits>
 #include <fstream>
+#include <memory>
 
 #include "Bincode.hpp"
 #include "Common.hpp"
@@ -86,13 +89,6 @@
 
 static constexpr uint64_t EGGSFS_PAGE_SIZE = 4096;
 
-static auto wrappedSnapshot(rocksdb::DB* db) {
-    auto deleter = [db](const rocksdb::Snapshot* snapshot) {
-        db->ReleaseSnapshot(snapshot);
-    };
-    return std::unique_ptr<const rocksdb::Snapshot, decltype(deleter)>(db->GetSnapshot(), deleter);
-}
-
 static uint64_t computeHash(HashMode mode, const BincodeBytesRef& bytes) {
     switch (mode) {
     case HashMode::XXH3_63:
@@ -153,6 +149,16 @@ static void fillMaxNameChars() {
 }
 static BincodeBytes maxName(maxNameChars, 255);
 
+#if 0
+struct SnapshotDeleter {
+    rocksdb::DB* db;
+
+    void operator()(rocksdb::Snapshot* snapshot) {
+        db->ReleaseSnapshot(snapshot);
+    }
+};
+#endif
+
 struct ShardDBImpl {
     Env _env;
 
@@ -188,6 +194,8 @@ struct ShardDBImpl {
 
     AssertiveLock _applyLogEntryLock;
 
+    std::shared_ptr<const rocksdb::Snapshot> _currentReadSnapshot;
+
     // ----------------------------------------------------------------
     // initialization
 
@@ -215,6 +223,8 @@ struct ShardDBImpl {
         // single machine this is appropriate.
         options.max_open_files = 1000;
         options.statistics = _dbStatistics;
+        // We batch writes and flush manually.
+        options.manual_wal_flush = true;
 
         rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
         blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
@@ -244,11 +254,14 @@ struct ShardDBImpl {
         _blockServicesToFilesCf = familiesHandles[6];
 
         _initDb();
+        _updateCurrentReadSnapshot();
     }
 
     ~ShardDBImpl() {
 
-        LOG_INFO(_env, "destroying column families and closing database");
+        LOG_INFO(_env, "destroying read snapshot, column families and closing database");
+
+        _currentReadSnapshot.reset();
 
         const auto gentleRocksDBChecked = [this](const std::string& what, rocksdb::Status status) {
             if (!status.ok()) {
@@ -394,10 +407,10 @@ struct ShardDBImpl {
     // ----------------------------------------------------------------
     // read-only path
 
-    EggsError _statFile(const StatFileReq& req, StatFileResp& resp) {
+    EggsError _statFile(const rocksdb::ReadOptions& options, const StatFileReq& req, StatFileResp& resp) {
         std::string fileValue;
         ExternalValue<FileBody> file;
-        EggsError err = _getFile({}, req.id, fileValue, file);
+        EggsError err = _getFile(options, req.id, fileValue, file);
         if (err != NO_ERROR) {
             return err;
         }
@@ -407,11 +420,11 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _statTransientFile(const StatTransientFileReq& req, StatTransientFileResp& resp) {
+    EggsError _statTransientFile(const rocksdb::ReadOptions& options, const StatTransientFileReq& req, StatTransientFileResp& resp) {
         std::string fileValue;
         {
             auto k = InodeIdKey::Static(req.id);
-            auto status = _db->Get({}, _transientCf, k.toSlice(), &fileValue);
+            auto status = _db->Get(options, _transientCf, k.toSlice(), &fileValue);
             if (status.IsNotFound()) {
                 return EggsError::FILE_NOT_FOUND;
             }
@@ -424,11 +437,11 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _statDirectory(const StatDirectoryReq& req, StatDirectoryResp& resp) {
+    EggsError _statDirectory(const rocksdb::ReadOptions& options, const StatDirectoryReq& req, StatDirectoryResp& resp) {
         std::string dirValue;
         ExternalValue<DirectoryBody> dir;
         // allowSnapshot=true, the caller can very easily detect if it's snapshot or not
-        EggsError err = _getDirectory({}, req.id, true, dirValue, dir);
+        EggsError err = _getDirectory(options, req.id, true, dirValue, dir);
         if (err != NO_ERROR) {
             return err;
         }
@@ -438,14 +451,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _readDir(const ReadDirReq& req, ReadDirResp& resp) {
-        // snapshot probably not strictly needed -- it's for the possible lookup if we
-        // got no results. even if returned a false positive/negative there it probably
-        // wouldn't matter. but it's more pleasant.
-        auto snapshot = wrappedSnapshot(_db);
-        rocksdb::ReadOptions options;
-        options.snapshot = snapshot.get();
-
+    EggsError _readDir(rocksdb::ReadOptions& options, const ReadDirReq& req, ReadDirResp& resp) {
         // we don't want snapshot directories, so check for that early
         {
             std::string dirValue;
@@ -675,7 +681,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _fullReadDir(const FullReadDirReq& req, FullReadDirResp& resp) {
+    EggsError _fullReadDir(rocksdb::ReadOptions& options, const FullReadDirReq& req, FullReadDirResp& resp) {
         bool sameName = !!(req.flags&FULL_READ_DIR_SAME_NAME);
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
         bool forwards = !(req.flags&FULL_READ_DIR_BACKWARDS);
@@ -683,13 +689,6 @@ struct ShardDBImpl {
         // TODO proper errors at validation
         ALWAYS_ASSERT(!(sameName && req.startName.packedSize() == 0));
         ALWAYS_ASSERT(!(current && req.startTime != 0));
-
-        // snapshot probably not strictly needed -- it's for the possible lookup if we
-        // got no results. even if returned a false positive/negative there it probably
-        // wouldn't matter. but it's more pleasant.
-        auto snapshot = wrappedSnapshot(_db);
-        rocksdb::ReadOptions options;
-        options.snapshot = snapshot.get();
 
         HashMode hashMode;
         {
@@ -718,11 +717,7 @@ struct ShardDBImpl {
         }
     }
 
-    EggsError _lookup(const LookupReq& req, LookupResp& resp) {
-        auto snapshot = wrappedSnapshot(_db);
-        rocksdb::ReadOptions options;
-        options.snapshot = snapshot.get();
-
+    EggsError _lookup(const rocksdb::ReadOptions& options, const LookupReq& req, LookupResp& resp) {
         uint64_t nameHash;
         {
             EggsError err = _getDirectoryAndHash(options, req.dirId, false, req.name.ref(), nameHash);
@@ -750,11 +745,11 @@ struct ShardDBImpl {
         return NO_ERROR;        
     }
 
-    EggsError _visitTransientFiles(const VisitTransientFilesReq& req, VisitTransientFilesResp& resp) {
+    EggsError _visitTransientFiles(const rocksdb::ReadOptions& options, const VisitTransientFilesReq& req, VisitTransientFilesResp& resp) {
         resp.nextId = NULL_INODE_ID;
 
         {
-            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _transientCf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _transientCf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - VisitTransientFilesResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
@@ -780,13 +775,13 @@ struct ShardDBImpl {
     }
 
     template<typename Req, typename Resp>
-    EggsError _visitInodes(rocksdb::ColumnFamilyHandle* cf, const Req& req, Resp& resp) {
+    EggsError _visitInodes(const rocksdb::ReadOptions& options, rocksdb::ColumnFamilyHandle* cf, const Req& req, Resp& resp) {
         resp.nextId = NULL_INODE_ID;
 
         int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - Resp::STATIC_SIZE;
         int maxIds = (budget/8) + 1; // include next inode
         {
-            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, cf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, cf));
             auto beginKey = InodeIdKey::Static(req.beginId);
             for (
                 it->Seek(beginKey.toSlice());
@@ -807,18 +802,11 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _visitDirectories(const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
-        return _visitInodes(_directoriesCf, req, resp);
+    EggsError _visitDirectories(const rocksdb::ReadOptions& options, const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
+        return _visitInodes(options, _directoriesCf, req, resp);
     }
     
-    EggsError _fileSpans(const FileSpansReq& req, FileSpansResp& resp) {
-        // snapshot probably not strictly needed -- it's for the possible lookup if we
-        // got no results. even if returned a false positive/negative there it probably
-        // wouldn't matter. but it's more pleasant.
-        auto snapshot = wrappedSnapshot(_db);
-        rocksdb::ReadOptions options;
-        options.snapshot = snapshot.get();
-
+    EggsError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
         lowerKey().setOffset(~(uint64_t)0);
@@ -943,7 +931,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _blockServiceFiles(const BlockServiceFilesReq& req, BlockServiceFilesResp& resp) {
+    EggsError _blockServiceFiles(rocksdb::ReadOptions& options, const BlockServiceFilesReq& req, BlockServiceFilesResp& resp) {
         int maxFiles = (DEFAULT_UDP_MTU - ShardResponseHeader::STATIC_SIZE - BlockServiceFilesResp::STATIC_SIZE) / 8;
         resp.fileIds.els.reserve(maxFiles);
 
@@ -955,7 +943,6 @@ struct ShardDBImpl {
         endKey().setFileId(NULL_INODE_ID);
         auto endKeySlice = endKey.toSlice();
 
-        rocksdb::ReadOptions options;
         options.iterate_upper_bound = &endKeySlice;
         std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _blockServicesToFilesCf));
         for (
@@ -975,8 +962,8 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _visitFiles(const VisitFilesReq& req, VisitFilesResp& resp) {
-        return _visitInodes(_filesCf, req, resp);
+    EggsError _visitFiles(const rocksdb::ReadOptions& options, const VisitFilesReq& req, VisitFilesResp& resp) {
+        return _visitInodes(options, _filesCf, req, resp);
     }
 
     EggsError read(const ShardReqContainer& req, ShardRespContainer& resp) {
@@ -985,39 +972,43 @@ struct ShardDBImpl {
         EggsError err = NO_ERROR;
         resp.clear();
 
+        auto snapshot = _getCurrentReadSnapshot();
+        rocksdb::ReadOptions options;
+        options.snapshot = snapshot.get();
+
         switch (req.kind()) {
         case ShardMessageKind::STAT_FILE:
-            err = _statFile(req.getStatFile(), resp.setStatFile());
+            err = _statFile(options, req.getStatFile(), resp.setStatFile());
             break;
         case ShardMessageKind::READ_DIR:
-            err = _readDir(req.getReadDir(), resp.setReadDir());
+            err = _readDir(options, req.getReadDir(), resp.setReadDir());
             break;
         case ShardMessageKind::STAT_DIRECTORY:
-            err = _statDirectory(req.getStatDirectory(), resp.setStatDirectory());
+            err = _statDirectory(options, req.getStatDirectory(), resp.setStatDirectory());
             break;
         case ShardMessageKind::STAT_TRANSIENT_FILE:
-            err = _statTransientFile(req.getStatTransientFile(), resp.setStatTransientFile());
+            err = _statTransientFile(options, req.getStatTransientFile(), resp.setStatTransientFile());
             break;
         case ShardMessageKind::LOOKUP:
-            err = _lookup(req.getLookup(), resp.setLookup());
+            err = _lookup(options, req.getLookup(), resp.setLookup());
             break;
         case ShardMessageKind::VISIT_TRANSIENT_FILES:
-            err = _visitTransientFiles(req.getVisitTransientFiles(), resp.setVisitTransientFiles());
+            err = _visitTransientFiles(options, req.getVisitTransientFiles(), resp.setVisitTransientFiles());
             break;
         case ShardMessageKind::FULL_READ_DIR:
-            err = _fullReadDir(req.getFullReadDir(), resp.setFullReadDir());
+            err = _fullReadDir(options, req.getFullReadDir(), resp.setFullReadDir());
             break;
         case ShardMessageKind::VISIT_DIRECTORIES:
-            err = _visitDirectories(req.getVisitDirectories(), resp.setVisitDirectories());
+            err = _visitDirectories(options, req.getVisitDirectories(), resp.setVisitDirectories());
             break;
         case ShardMessageKind::FILE_SPANS:
-            err = _fileSpans(req.getFileSpans(), resp.setFileSpans());
+            err = _fileSpans(options, req.getFileSpans(), resp.setFileSpans());
             break;
         case ShardMessageKind::BLOCK_SERVICE_FILES:
-            err = _blockServiceFiles(req.getBlockServiceFiles(), resp.setBlockServiceFiles());
+            err = _blockServiceFiles(options, req.getBlockServiceFiles(), resp.setBlockServiceFiles());
             break;
         case ShardMessageKind::VISIT_FILES:
-            err = _visitFiles(req.getVisitFiles(), resp.setVisitFiles());
+            err = _visitFiles(options, req.getVisitFiles(), resp.setVisitFiles());
             break;
         default:
             throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
@@ -1389,7 +1380,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareAddSpanInitiate(EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry) {
+    EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1484,7 +1475,7 @@ struct ShardDBImpl {
                 // We should never have many tombstones here (spans aren't really deleted and
                 // re-added apart from rare cases), so the offset upper bound is fine.
                 startK().setOffset(first ? 0 : ~(uint64_t)0);
-                std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator({}, _spansCf));
+                std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _spansCf));
                 it->SeekForPrev(startK.toSlice());
                 if (!it->Valid()) { // nothing to do if we can't find a span
                     if (!it->status().IsNotFound()) {
@@ -1684,6 +1675,10 @@ struct ShardDBImpl {
         logEntry.time = time;
         auto& logEntryBody = logEntry.body;
 
+        auto snapshot = _getCurrentReadSnapshot();
+        rocksdb::ReadOptions options;
+        options.snapshot = snapshot.get();
+
         switch (req.kind()) {
         case ShardMessageKind::CONSTRUCT_FILE:
             err = _prepareConstructFile(time, req.getConstructFile(), logEntryBody.setConstructFile());
@@ -1735,11 +1730,11 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::ADD_SPAN_INITIATE: {
             const auto& addSpanReq = req.getAddSpanInitiate();
-            err = _prepareAddSpanInitiate(time, addSpanReq, addSpanReq.fileId, logEntryBody.setAddSpanInitiate());
+            err = _prepareAddSpanInitiate(options, time, addSpanReq, addSpanReq.fileId, logEntryBody.setAddSpanInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE: {
             const auto& addSpanReq = req.getAddSpanInitiateWithReference();
-            err = _prepareAddSpanInitiate(time, addSpanReq.req, addSpanReq.reference, logEntryBody.setAddSpanInitiate());
+            err = _prepareAddSpanInitiate(options, time, addSpanReq.req, addSpanReq.reference, logEntryBody.setAddSpanInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_CERTIFY:
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
@@ -3467,7 +3462,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError applyLogEntry(bool sync, ShardMessageKind reqKind, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    EggsError applyLogEntry(ShardMessageKind reqKind, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
 
@@ -3589,11 +3584,7 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "applied log entry of kind %s, index %s, writing changes", logEntryBody.kind(), logIndex);
         }
 
-        {
-            rocksdb::WriteOptions options;
-            options.sync = sync;
-            ROCKS_DB_CHECKED(_db->Write(options, &batch));
-        }
+        ROCKS_DB_CHECKED(_db->Write({}, &batch));
 
         return err;
     }
@@ -3702,6 +3693,22 @@ struct ShardDBImpl {
 
         tf = tmpTf;
         return NO_ERROR;
+    }
+
+    std::shared_ptr<const rocksdb::Snapshot> _getCurrentReadSnapshot() {
+        return std::atomic_load(&_currentReadSnapshot);
+    }
+
+    void _updateCurrentReadSnapshot() {
+        const rocksdb::Snapshot* snapshotPtr = _db->GetSnapshot();
+        ALWAYS_ASSERT(snapshotPtr != nullptr);
+        std::shared_ptr<const rocksdb::Snapshot> snapshot(snapshotPtr, [this](const rocksdb::Snapshot* ptr) { _db->ReleaseSnapshot(ptr); });
+        std::atomic_exchange(&_currentReadSnapshot, snapshot);
+    }
+
+    void flush(bool sync) {
+        ROCKS_DB_CHECKED(_db->FlushWAL(sync));
+        _updateCurrentReadSnapshot();
     }
 
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
@@ -3833,8 +3840,8 @@ EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& 
     return ((ShardDBImpl*)_impl)->prepareLogEntry(req, logEntry);
 }
 
-EggsError ShardDB::applyLogEntry(bool sync, ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->applyLogEntry(sync, reqKind, logEntryIx, logEntry, resp);
+EggsError ShardDB::applyLogEntry(ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->applyLogEntry(reqKind, logEntryIx, logEntry, resp);
 }
 
 uint64_t ShardDB::lastAppliedLogEntry() {
@@ -3851,4 +3858,7 @@ void ShardDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
 
 void ShardDB::dumpRocksDBStatistics() {
     return ((ShardDBImpl*)_impl)->dumpRocksDBStatistics();
+}
+void ShardDB::flush(bool sync) {
+    return ((ShardDBImpl*)_impl)->flush(sync);
 }

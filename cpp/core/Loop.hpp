@@ -26,7 +26,7 @@ public:
 
     virtual void step() = 0;
 
-    void run() {
+    [[noreturn]] void run() {
         for (;;) { step(); }
     }
 };

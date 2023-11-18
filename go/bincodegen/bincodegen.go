@@ -1066,7 +1066,9 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(hpp, "public:\n")
 	fmt.Fprintf(hpp, "    %s();\n", name)
 	fmt.Fprintf(hpp, "    %s(const %s& other);\n", name, name)
-	fmt.Fprintf(hpp, "    void operator=(const %s& other);\n\n", name)
+	fmt.Fprintf(hpp, "    %s(%s&& other);\n", name, name)
+	fmt.Fprintf(hpp, "    void operator=(const %s& other);\n", name)
+	fmt.Fprintf(hpp, "    void operator=(%s&& other);\n\n", name)
 	fmt.Fprintf(hpp, "    %s kind() const { return _kind; }\n\n", kindTypeName)
 	for i, typ := range types {
 		fmt.Fprintf(hpp, "    const %s& get%s() const;\n", cppType(typ.typ), typ.name)
@@ -1099,6 +1101,12 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    *this = other;\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
+	fmt.Fprintf(cpp, "%s::%s(%s&& other) {\n", name, name, name)
+	fmt.Fprintf(cpp, "    _data = std::move(other._data);\n")
+	fmt.Fprintf(cpp, "    _kind = other._kind;\n")
+	fmt.Fprintf(cpp, "    other._kind = (%s)0;\n", kindTypeName)
+	fmt.Fprintf(cpp, "}\n\n")
+
 	fmt.Fprintf(cpp, "void %s::operator=(const %s& other) {\n", name, name)
 	fmt.Fprintf(cpp, "    if (other.kind() == (%s)0) { clear(); return; }\n", kindTypeName)
 	fmt.Fprintf(cpp, "    switch (other.kind()) {\n")
@@ -1110,6 +1118,12 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    default:\n")
 	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", other.kind());\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
+	fmt.Fprintf(cpp, "}\n\n")
+
+	fmt.Fprintf(cpp, "void %s::operator=(%s&& other) {\n", name, name)
+	fmt.Fprintf(cpp, "    _data = std::move(other._data);\n")
+	fmt.Fprintf(cpp, "    _kind = other._kind;\n")
+	fmt.Fprintf(cpp, "    other._kind = (%s)0;\n", kindTypeName)
 	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "size_t %s::packedSize() const {\n", name)

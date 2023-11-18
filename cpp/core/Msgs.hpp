@@ -297,7 +297,7 @@ struct ShardRequestHeader {
     // The caller will have to validate.
     ShardMessageKind kind;
 
-    void pack(BincodeBuf& buf) {
+    void pack(BincodeBuf& buf) const {
         buf.packScalar<uint32_t>(SHARD_REQ_PROTOCOL_VERSION);
         buf.packScalar<uint64_t>(requestId);
         buf.packScalar<uint8_t>((uint8_t)kind);
@@ -347,6 +347,9 @@ struct CDCRequestHeader {
     // The caller will have to validate.
     CDCMessageKind kind;
 
+    CDCRequestHeader() = default;
+    CDCRequestHeader(uint64_t requestId_, CDCMessageKind kind_): requestId(requestId_), kind(kind_) {}
+
     void unpack(BincodeBuf& buf) {
         uint32_t version = buf.unpackScalar<uint32_t>();
         if (version != CDC_REQ_PROTOCOL_VERSION) {
@@ -366,7 +369,7 @@ struct CDCResponseHeader {
 
     CDCResponseHeader(uint64_t requestId_, CDCMessageKind kind_): requestId(requestId_), kind(kind_) {}
 
-    void pack(BincodeBuf& buf) {
+    void pack(BincodeBuf& buf) const {
         buf.packScalar<uint32_t>(CDC_RESP_PROTOCOL_VERSION);
         buf.packScalar<uint64_t>(requestId);
         buf.packScalar<uint8_t>((uint8_t)kind);

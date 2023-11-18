@@ -6,14 +6,14 @@
 #include <unistd.h>
 #include <iomanip>
 
-std::ostream& operator<<(std::ostream& out, struct sockaddr_in& addr) {
+std::ostream& operator<<(std::ostream& out, const struct sockaddr_in& addr) {
     char buf[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(buf));
     out << buf << ":" << ntohs(addr.sin_port);
     return out;
 }
 
-std::ostream& operator<<(std::ostream& out, struct in_addr& addr) {
+std::ostream& operator<<(std::ostream& out, const struct in_addr& addr) {
     char buf[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &addr, buf, sizeof(buf));
     out << buf;
@@ -40,7 +40,7 @@ std::ostream& operator<<(std::ostream& out, const GoLangBytesFmt& bytes) {
 std::ostream& goLangQuotedStringFmt(std::ostream& out, const char* data, size_t len) {
     out << "\"";
     for (int i = 0; i < len; i++) {
-        uint8_t ch = data[i];
+        uint8_t ch = static_cast<uint8_t>(data[i]);
         if (isprint(ch)) {
             out << ch;
         } else if (ch == 0) {

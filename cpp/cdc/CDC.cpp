@@ -21,6 +21,7 @@
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Shard.hpp"
 #include "Time.hpp"
 #include "CDCDB.hpp"
@@ -72,7 +73,7 @@ struct InFlightCDCRequest {
     EggsTime receivedAt;
     struct sockaddr_in clientAddr;
     CDCMessageKind kind;
-    int sock;
+    int sockIx;
 };
 
 // these can happen through normal user interaction
@@ -170,7 +171,7 @@ struct CDCReqInfo {
     uint64_t reqId;
     struct sockaddr_in clientAddr;
     EggsTime receivedAt;
-    int sock;
+    int sockIx;
 };
 
 struct CDCServer : Loop {
@@ -179,20 +180,34 @@ private:
     bool _seenShards;
     std::array<IpPort, 2> _ipPorts;
     uint64_t _currentLogIndex;
-    std::vector<char> _recvBuf;
-    std::vector<char> _sendBuf;
+    int _maxUpdateSize;
+    CDCStep _step;
+    uint64_t _shardRequestIdCounter;
+    AES128Key _expandedCDCKey;
+    Duration _shardTimeout;
+
+    // order: CDC, shard, CDC, shard
+    // length will be 2 or 4 depending on whether we have a second ip
+    std::vector<struct pollfd> _socks;
+
+    // reqs data
     std::vector<CDCReqContainer> _cdcReqs;
     std::vector<CDCReqInfo> _cdcReqsInfo;
     std::vector<CDCTxnId> _cdcReqsTxnIds;
     std::vector<CDCShardResp> _shardResps;
-    int _maxUpdateSize;
-    CDCStep _step;
-    uint64_t _shardRequestIdCounter;
-    // order: CDC, shard, CDC, shard
-    // length will be 2 or 4 depending on whether we have a second ip
-    std::vector<struct pollfd> _socks;
-    AES128Key _expandedCDCKey;
-    Duration _shardTimeout;
+
+    // recvmmsg data
+    std::vector<char> _recvBuf;
+    std::vector<struct mmsghdr> _recvHdrs;
+    std::vector<struct sockaddr_in> _recvAddrs;
+    std::vector<struct iovec> _recvVecs;
+
+    // sendmmsg data
+    std::vector<char> _sendBuf;
+    std::array<std::vector<struct mmsghdr>, 4> _sendHdrs; // one per socket
+    std::array<std::vector<struct sockaddr_in>, 4> _sendAddrs;
+    std::array<std::vector<struct iovec>, 4> _sendVecs;
+
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
     std::unordered_map<CDCTxnId, InFlightCDCRequest> _inFlightTxns;
@@ -212,8 +227,6 @@ public:
         _shared(shared),
         _seenShards(false),
         _ipPorts(options.ipPorts),
-        _recvBuf(DEFAULT_UDP_MTU),
-        _sendBuf(DEFAULT_UDP_MTU),
         _maxUpdateSize(500),
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
@@ -238,6 +251,12 @@ public:
         _cdcReqsInfo.clear();
         _cdcReqsTxnIds.clear();
         _shardResps.clear();
+        _sendBuf.clear();
+        for (int i = 0; i < _sendHdrs.size(); i++) {
+            _sendHdrs[i].clear();
+            _sendAddrs[i].clear();
+            _sendVecs[i].clear();
+        }
 
         // Process CDC requests and shard responses
         {
@@ -256,8 +275,7 @@ public:
         }
 
         LOG_DEBUG(_env, "Blocking to wait for readable sockets");
-        int ret = poll(_socks.data(), _socks.size(), -1);
-        if (ret < 0) {
+        if (unlikely(poll(_socks.data(), _socks.size(), -1) < 0)) {
             throw SYSCALL_EXCEPTION("poll");
         }
 
@@ -266,13 +284,13 @@ public:
         for (int i = 1; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
             if (sock.revents & (POLLIN|POLLHUP|POLLERR)) {
-                _drainShardSock(sock.fd);
+                _drainShardSock(i);
             }
         }
         for (int i = 0; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
             if (sock.revents & (POLLIN|POLLHUP|POLLERR)) {
-                _drainCDCSock(sock.fd);
+                _drainCDCSock(i);
             }
         }
         // If anything happened, update the db and write down the in flight CDCs
@@ -291,11 +309,34 @@ public:
                 inFlight.clientAddr = reqInfo.clientAddr;
                 inFlight.kind = req.kind();
                 inFlight.receivedAt = reqInfo.receivedAt;
-                inFlight.sock = reqInfo.sock;
+                inFlight.sockIx = reqInfo.sockIx;
                 _updateInFlightTxns();
                 _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqInfo.reqId, reqInfo.clientAddr));
             }
             _processStep();
+        }
+        // send everything there is to send in one go
+        for (int i = 0; i < _sendHdrs.size(); i++) {
+            if (_sendHdrs[i].size() == 0) { continue; }
+            for (int j = 0; j < _sendHdrs[i].size(); j++) {
+                auto& vec = _sendVecs[i][j];
+                vec.iov_base = &_sendBuf[(size_t)vec.iov_base];
+                auto& hdr = _sendHdrs[i][j];
+                hdr.msg_hdr.msg_iov = &vec;
+                hdr.msg_hdr.msg_name = &_sendAddrs[i][j];
+            }
+            int ret = sendmmsg(_socks[i].fd, &_sendHdrs[i][0], _sendHdrs[i].size(), 0);
+            if (unlikely(ret < 0)) {
+                // we get EPERM when nf drops packets
+                if (errno == EPERM) {
+                    LOG_INFO(_env, "we got EPERM when trying to send %s messages, will drop them, they'll time out and get resent", _sendHdrs[i].size());
+                } else {
+                    throw SYSCALL_EXCEPTION("sendmmsg");
+                }
+            }
+            if (unlikely(ret < _sendHdrs[i].size())) {
+                LOG_INFO(_env, "could only send %s out of %s messages, is the send buffer jammed?", ret, _sendHdrs[i].size());
+            }
         }
     }
 
@@ -318,7 +359,7 @@ private:
             }
         }
         if (badShard) {
-            (10_ms).sleep();
+            (100_ms).sleep();
             return false;
         }
 
@@ -365,6 +406,7 @@ private:
         // Create sockets. We create one socket for listening to client requests and one for listening
         // the the shard's responses. If we have two IPs we do this twice.
         _socks.resize((_ipPorts[1].ip == 0) ? 2 : 4);
+        LOG_DEBUG(_env, "initializing %s sockets", _socks.size());
         for (int i = 0; i < _socks.size(); i++) {
             int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
             _socks[i].fd = sock;
@@ -412,6 +454,21 @@ private:
     
         LOG_INFO(_env, "running on ports %s and %s", _shared.ownPorts[0].load(), _shared.ownPorts[1].load());
 
+        // setup receive buffers
+        _recvBuf.resize(DEFAULT_UDP_MTU*_maxUpdateSize);
+        _recvHdrs.resize(_maxUpdateSize);
+        memset(_recvHdrs.data(), 0, sizeof(_recvHdrs[0])*_maxUpdateSize);
+        _recvAddrs.resize(_maxUpdateSize);
+        _recvVecs.resize(_maxUpdateSize);
+        for (int j = 0; j < _recvVecs.size(); j++) {
+            _recvVecs[j].iov_base = &_recvBuf[j*DEFAULT_UDP_MTU];
+            _recvVecs[j].iov_len = DEFAULT_UDP_MTU;
+            _recvHdrs[j].msg_hdr.msg_iov = &_recvVecs[j];
+            _recvHdrs[j].msg_hdr.msg_iovlen = 1;
+            _recvHdrs[j].msg_hdr.msg_namelen = sizeof(_recvAddrs[j]);
+            _recvHdrs[j].msg_hdr.msg_name = &_recvAddrs[j];
+        }
+
         // If we've got dangling transactions, immediately start processing it
         _shared.db.bootstrap(true, _advanceLogIndex(), _step);
         _processStep();
@@ -421,23 +478,23 @@ private:
         return _cdcReqs.size() + _shardResps.size();
     }
 
-    void _drainCDCSock(int sock) {
-        struct sockaddr_in clientAddr;
+    void _drainCDCSock(int sockIx) {    
+        int startUpdateSize = _updateSize();
+        if (startUpdateSize >= _maxUpdateSize) { return; }
 
-        while (_updateSize() < _maxUpdateSize) {
-            // Read one request
-            memset(&clientAddr, 0, sizeof(clientAddr));
-            socklen_t addrLen = sizeof(clientAddr);
-            ssize_t read = recvfrom(sock, &_recvBuf[0], _recvBuf.size(), 0, (struct sockaddr*)&clientAddr, &addrLen);
-            if (read < 0 && errno == EAGAIN) {
-                return;
-            }
-            if (read < 0) {
-                throw SYSCALL_EXCEPTION("recvfrom");
-            }
-            LOG_DEBUG(_env, "received CDC request from %s", clientAddr);
+        int sock = _socks[sockIx].fd;
 
-            BincodeBuf reqBbuf(&_recvBuf[0], read);
+        int ret = recvmmsg(sock, &_recvHdrs[startUpdateSize], _maxUpdateSize-startUpdateSize, 0, nullptr);
+        if (unlikely(ret < 0)) {
+            throw SYSCALL_EXCEPTION("recvmmsg");
+        }
+        LOG_DEBUG(_env, "received %s CDC requests", ret);
+        
+        for (int i = 0; i < ret; i++) {
+            auto& hdr = _recvHdrs[startUpdateSize+i];
+            const struct sockaddr_in& clientAddr = *(struct sockaddr_in*)hdr.msg_hdr.msg_name;
+
+            BincodeBuf reqBbuf((char*)hdr.msg_hdr.msg_iov[0].iov_base, hdr.msg_len);
             
             // First, try to parse the header
             CDCRequestHeader reqHeader;
@@ -485,30 +542,29 @@ private:
                     .reqId = reqHeader.requestId,
                     .clientAddr = clientAddr,
                     .receivedAt = receivedAt,
-                    .sock = sock,
+                    .sockIx = sockIx,
                 });
             } else {
                 // We couldn't parse, reply immediately with an error
                 RAISE_ALERT(_env, "request %s failed before enqueue with error %s", cdcReq.kind(), err);
-                _sendError(sock, reqHeader.requestId, err, clientAddr);
+                _packCDCResponseError(sockIx, clientAddr, reqHeader, err);
                 _cdcReqs.pop_back(); // let's just forget all about this
             }
         }
     }
 
-    void _drainShardSock(int sock) {
-        while (_updateSize() < _maxUpdateSize) {
-            ssize_t read = recv(sock, &_recvBuf[0], _recvBuf.size(), 0);
-            if (read < 0 && errno == EAGAIN) {
-                return;
-            }
-            if (read < 0) {
-                throw SYSCALL_EXCEPTION("recv");
-            }
-        
+    void _drainShardSock(int sockIx) {
+        int startUpdateSize = _updateSize();
+        if (startUpdateSize >= _maxUpdateSize) { return; }
+
+        int ret = recvmmsg(_socks[sockIx].fd, &_recvHdrs[startUpdateSize], _maxUpdateSize-startUpdateSize, 0, nullptr);
+        if (unlikely(ret < 0)) {
+            throw SYSCALL_EXCEPTION("recvmsg");
+        }
+        for (int i = 0; i < ret; i++) {
             LOG_DEBUG(_env, "received response from shard");
-    
-            BincodeBuf reqBbuf(&_recvBuf[0], read);
+            auto& hdr = _recvHdrs[startUpdateSize+i];
+            BincodeBuf reqBbuf((char*)hdr.msg_hdr.msg_iov[0].iov_base, hdr.msg_len);
 
             ShardResponseHeader respHeader;
             try {
@@ -567,15 +623,12 @@ private:
             if (inFlight->second.hasClient) {
                 _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
                 _shared.errors[(int)inFlight->second.kind].add(resp.err);
+                CDCResponseHeader respHeader(inFlight->second.cdcRequestId, inFlight->second.kind);
                 if (resp.err != NO_ERROR) {
-                    _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, resp.err, inFlight->second.clientAddr);
+                    _packCDCResponseError(inFlight->second.sockIx, inFlight->second.clientAddr, CDCRequestHeader(respHeader.requestId, respHeader.kind), resp.err);
                 } else {
                     LOG_DEBUG(_env, "sending response with req id %s, kind %s, back to %s", inFlight->second.cdcRequestId, inFlight->second.kind, inFlight->second.clientAddr);
-                    BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
-                    CDCResponseHeader respHeader(inFlight->second.cdcRequestId, inFlight->second.kind);
-                    respHeader.pack(bbuf);
-                    resp.resp.pack(bbuf);
-                    _send(inFlight->second.sock, inFlight->second.clientAddr, (const char*)bbuf.data, bbuf.len());
+                    _packCDCResponse(inFlight->second.sockIx, inFlight->second.clientAddr, respHeader, resp.resp);
                 }
                 _inFlightCDCReqs.erase(InFlightCDCRequestKey(inFlight->second.cdcRequestId, inFlight->second.clientAddr));
             }
@@ -586,7 +639,6 @@ private:
         for (const auto& [txnId, shardReq]: _step.runningTxns) {
             CDCShardReq prevReq;
             LOG_TRACE(_env, "txn %s needs shard %s, req %s", txnId, shardReq.shid, shardReq.req);
-            BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
             // Header
             ShardRequestHeader shardReqHeader;
             // Do not allocate new req id for repeated requests, so that we'll just accept
@@ -608,14 +660,7 @@ private:
                 shardReqHeader.requestId = _freshShardReqId();
             }
             shardReqHeader.kind = shardReq.req.kind();
-            shardReqHeader.pack(bbuf);
-            // Body
-            shardReq.req.pack(bbuf);
-            // MAC, if necessary
-            if (isPrivilegedRequestKind(shardReqHeader.kind)) {
-                bbuf.packFixedBytes<8>({cbcmac(_expandedCDCKey, bbuf.data, bbuf.len())});
-            }
-            // Send
+            // Pack
             struct sockaddr_in shardAddr;
             memset(&shardAddr, 0, sizeof(shardAddr));
             _shared.shardsMutex.lock();
@@ -629,7 +674,7 @@ private:
             static_assert(sizeof(shardAddr.sin_addr) == sizeof(shardInfo.ip1));
             memcpy(&shardAddr.sin_addr, (whichShardAddr ? shardInfo.ip2 : shardInfo.ip1).data.data(), sizeof(shardAddr.sin_addr));
             LOG_DEBUG(_env, "sending request for txn %s with req id %s to shard %s (%s)", txnId, shardReqHeader.requestId, shardReq.shid, shardAddr);
-            _send(_socks[whichSock*2 + 1].fd, shardAddr, (const char*)bbuf.data, bbuf.len());
+            _packShardRequest(whichSock*2 + 1, shardAddr, shardReqHeader, shardReq.req);
             // Record the in-flight req
             _inFlightShardReqs.insert(shardReqHeader.requestId, InFlightShardRequest{
                 .txnId = txnId,
@@ -640,16 +685,65 @@ private:
         }
     }
     
-    void _sendError(int sock, uint64_t requestId, EggsError err, struct sockaddr_in& clientAddr) {
-        BincodeBuf respBbuf(&_sendBuf[0], _sendBuf.size());
-        CDCResponseHeader(requestId, CDCMessageKind::ERROR).pack(respBbuf);
-        respBbuf.packScalar<uint16_t>((uint16_t)err);
-        // We're sending an error back to a user, so always send it from the CDC sock.
-        _send(sock, clientAddr, (const char*)respBbuf.data, respBbuf.len());
-        LOG_DEBUG(_env, "sent error %s to %s", err, clientAddr);
+    template<typename Fill>
+    void _pack(int sockIx, const sockaddr_in& addrIn, Fill fill) {
+        // serialize
+        size_t sendBufBegin = _sendBuf.size();
+        _sendBuf.resize(sendBufBegin + DEFAULT_UDP_MTU);
+        size_t used = fill(&_sendBuf[sendBufBegin], DEFAULT_UDP_MTU);
+        _sendBuf.resize(sendBufBegin + used);
+
+        // sendmmsg structures -- we can't store references directly
+        // here because the vectors might get resized
+        auto& hdr = _sendHdrs[sockIx].emplace_back();
+        hdr.msg_len = used;
+        hdr.msg_hdr = {
+            .msg_namelen = sizeof(addrIn),
+            .msg_iovlen = 1,
+        };
+        _sendAddrs[sockIx].emplace_back(addrIn);
+        auto& vec = _sendVecs[sockIx].emplace_back();
+        vec.iov_len = used;
+        vec.iov_base = (void*)sendBufBegin;
     }
 
-    void _send(int sock, struct sockaddr_in& dest, const char* data, size_t len) {
+    void _packCDCResponseError(int sockIx, const sockaddr_in& clientAddr, const CDCRequestHeader& reqHeader, EggsError err) {
+        LOG_DEBUG(_env, "will send error %s to %s", err, clientAddr);
+        if (err != EggsError::DIRECTORY_NOT_EMPTY && err != EggsError::EDGE_NOT_FOUND) {
+            RAISE_ALERT(_env, "request %s of kind %s from client %s failed with err %s", reqHeader.requestId, reqHeader.kind, clientAddr, err);
+        }
+        _pack(sockIx, clientAddr, [&reqHeader, err](char* buf, size_t bufLen) {
+            BincodeBuf respBbuf(buf, bufLen);
+            CDCResponseHeader(reqHeader.requestId, CDCMessageKind::ERROR).pack(respBbuf);
+            respBbuf.packScalar<uint16_t>((uint16_t)err);
+            return respBbuf.len();
+        });
+    }
+
+    void _packCDCResponse(int sockIx, const sockaddr_in& clientAddr, const CDCResponseHeader& respHeader, const CDCRespContainer& resp) {
+        LOG_DEBUG(_env, "will send response to CDC req %s, kind %s, to %s", respHeader.requestId, respHeader.kind, clientAddr);
+        _pack(sockIx, clientAddr, [&respHeader, &resp](char* buf, size_t bufLen) {
+            BincodeBuf bbuf(buf, bufLen);
+            respHeader.pack(bbuf);
+            resp.pack(bbuf);
+            return bbuf.len();
+        });
+    }
+
+    void _packShardRequest(int sockIx, const sockaddr_in& shardAddr, const ShardRequestHeader& reqHeader, const ShardReqContainer& req) {
+        LOG_DEBUG(_env, "will send shard request %s, kind %s, to %s", reqHeader.requestId, reqHeader.kind, shardAddr);
+        _pack(sockIx, shardAddr, [this, &reqHeader, &req](char* buf, size_t bufLen) {
+            BincodeBuf bbuf(buf, bufLen);
+            reqHeader.pack(bbuf);
+            req.pack(bbuf);
+            if (isPrivilegedRequestKind(reqHeader.kind)) {
+                bbuf.packFixedBytes<8>({cbcmac(_expandedCDCKey, bbuf.data, bbuf.len())});
+            }
+            return bbuf.len();
+        });
+    }
+
+    void _packResp(int sock, struct sockaddr_in* dest, const char* data, size_t len) {
         // We need to handle EAGAIN/EPERM when trying to send. Here we take a ...
         // lazy approach and just loop with a delay. This seems to happen when
         // we restart everything while under load, it's not great to block here
@@ -934,9 +1028,6 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     CDCShared shared(db);
 
     threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
-        CDCServer(logger, xmon, options, shared).run();
-    });
-    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
         CDCShardUpdater(logger, xmon, options, shared).run();
     });
     threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
@@ -951,5 +1042,5 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         });
     }
 
-    for (;;) { sleep(60*60*24); }
+    CDCServer(logger, xmon, options, shared).run();
 }

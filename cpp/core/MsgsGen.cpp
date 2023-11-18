@@ -4203,6 +4203,12 @@ ShardReqContainer::ShardReqContainer(const ShardReqContainer& other) {
     *this = other;
 }
 
+ShardReqContainer::ShardReqContainer(ShardReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardMessageKind)0;
+}
+
 void ShardReqContainer::operator=(const ShardReqContainer& other) {
     if (other.kind() == (ShardMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -4320,6 +4326,12 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
     }
+}
+
+void ShardReqContainer::operator=(ShardReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardMessageKind)0;
 }
 
 size_t ShardReqContainer::packedSize() const {
@@ -5183,6 +5195,12 @@ ShardRespContainer::ShardRespContainer(const ShardRespContainer& other) {
     *this = other;
 }
 
+ShardRespContainer::ShardRespContainer(ShardRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardMessageKind)0;
+}
+
 void ShardRespContainer::operator=(const ShardRespContainer& other) {
     if (other.kind() == (ShardMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -5300,6 +5318,12 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
     }
+}
+
+void ShardRespContainer::operator=(ShardRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardMessageKind)0;
 }
 
 size_t ShardRespContainer::packedSize() const {
@@ -5884,6 +5908,12 @@ CDCReqContainer::CDCReqContainer(const CDCReqContainer& other) {
     *this = other;
 }
 
+CDCReqContainer::CDCReqContainer(CDCReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (CDCMessageKind)0;
+}
+
 void CDCReqContainer::operator=(const CDCReqContainer& other) {
     if (other.kind() == (CDCMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -5908,6 +5938,12 @@ void CDCReqContainer::operator=(const CDCReqContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
+}
+
+void CDCReqContainer::operator=(CDCReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (CDCMessageKind)0;
 }
 
 size_t CDCReqContainer::packedSize() const {
@@ -6089,6 +6125,12 @@ CDCRespContainer::CDCRespContainer(const CDCRespContainer& other) {
     *this = other;
 }
 
+CDCRespContainer::CDCRespContainer(CDCRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (CDCMessageKind)0;
+}
+
 void CDCRespContainer::operator=(const CDCRespContainer& other) {
     if (other.kind() == (CDCMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -6113,6 +6155,12 @@ void CDCRespContainer::operator=(const CDCRespContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
+}
+
+void CDCRespContainer::operator=(CDCRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (CDCMessageKind)0;
 }
 
 size_t CDCRespContainer::packedSize() const {
@@ -6357,6 +6405,12 @@ ShuckleReqContainer::ShuckleReqContainer(const ShuckleReqContainer& other) {
     *this = other;
 }
 
+ShuckleReqContainer::ShuckleReqContainer(ShuckleReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShuckleMessageKind)0;
+}
+
 void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     if (other.kind() == (ShuckleMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -6402,6 +6456,12 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
+}
+
+void ShuckleReqContainer::operator=(ShuckleReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShuckleMessageKind)0;
 }
 
 size_t ShuckleReqContainer::packedSize() const {
@@ -6737,6 +6797,12 @@ ShuckleRespContainer::ShuckleRespContainer(const ShuckleRespContainer& other) {
     *this = other;
 }
 
+ShuckleRespContainer::ShuckleRespContainer(ShuckleRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShuckleMessageKind)0;
+}
+
 void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     if (other.kind() == (ShuckleMessageKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -6782,6 +6848,12 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
+}
+
+void ShuckleRespContainer::operator=(ShuckleRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShuckleMessageKind)0;
 }
 
 size_t ShuckleRespContainer::packedSize() const {
@@ -8061,6 +8133,12 @@ ShardLogEntryContainer::ShardLogEntryContainer(const ShardLogEntryContainer& oth
     *this = other;
 }
 
+ShardLogEntryContainer::ShardLogEntryContainer(ShardLogEntryContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardLogEntryKind)0;
+}
+
 void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
     if (other.kind() == (ShardLogEntryKind)0) { clear(); return; }
     switch (other.kind()) {
@@ -8145,6 +8223,12 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
     }
+}
+
+void ShardLogEntryContainer::operator=(ShardLogEntryContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (ShardLogEntryKind)0;
 }
 
 size_t ShardLogEntryContainer::packedSize() const {

@@ -936,6 +936,7 @@ func NewClientDirectNoAddrs(
 	log *Logger,
 ) (c *Client, err error) {
 	c = &Client{
+		// do not catch requests from previous executions
 		requestIdCounter: rand.Uint64(),
 		fetchBlockBufs: sync.Pool{
 			New: func() any {

@@ -1,11 +1,13 @@
 #include <memory>
 #include <rocksdb/db.h>
+#include <rocksdb/iterator.h>
 #include <rocksdb/options.h>
 #include <rocksdb/statistics.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
 #include <fstream>
+#include <unordered_set>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -15,6 +17,7 @@
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
 #include "Time.hpp"
@@ -92,25 +95,48 @@ std::ostream& operator<<(std::ostream& out, const CDCShardReq& x) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, const CDCFinished& x) {
+    out << "CDCFinished(";
+    if (x.err != NO_ERROR) {
+        out << "err=" << x.err;
+    } else {
+        out << "resp=" << x.resp;
+    }
+    out << ")";
+    return out;
+}
+
 std::ostream& operator<<(std::ostream& out, const CDCStep& x) {
-    ALWAYS_ASSERT(!(x.txnFinished != 0 && x.txnNeedsShard != 0));
-    out << "CDCStep(";
-    if (x.txnFinished != 0) {
-        out << "finishedTxn=" << x.txnFinished;
-        if (x.err != NO_ERROR) {
-            out << ", err=" << x.err;
-        } else {
-            out << ", resp=" << x.resp;
-        }
-    }
-    if (x.txnNeedsShard != 0) {
-        out << "txnNeedsShard=" << x.txnNeedsShard << ", shardReq=" << x.shardReq;
-    }
-    if (x.nextTxn != 0) {
-        if (x.txnFinished != 0 || x.txnNeedsShard != 0) {
+    out << "CDCStep(finishedTxns=[";
+    for (int i = 0; i < x.finishedTxns.size(); i++) {
+        if (i > 0) {
             out << ", ";
         }
-        out << "nextTxn=" << x.nextTxn;
+        const auto& txn = x.finishedTxns[i];
+        out << "<" << txn.first << ", " << txn.second << ">";
+    }
+    out << "], runningTxns=[";
+    for (int i = 0; i < x.runningTxns.size(); i++) {
+        if (i > 0) {
+            out << ", ";
+        }
+        const auto& txn = x.runningTxns[i];
+        out << "<" << txn.first << ", " << txn.second << ">";
+    }
+    out << "])";
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, CDCTxnId id) {
+    return out << id.x;
+}
+
+std::ostream& operator<<(std::ostream& out, const CDCShardResp& x) {
+    out << "CDCShardResp(txnId=" << x.txnId << ", ";
+    if (x.err == NO_ERROR) {
+        out << "resp=" << x.resp;
+    } else {
+        out << "err=" << x.err;
     }
     out << ")";
     return out;
@@ -122,26 +148,71 @@ inline bool createCurrentLockedEdgeRetry(EggsError err) {
         err == EggsError::MORE_RECENT_SNAPSHOT_EDGE || err == EggsError::MORE_RECENT_CURRENT_EDGE;
 }
 
+static constexpr InodeId MOVE_DIRECTORY_LOCK = InodeId::FromU64Unchecked(1ull<<63);
+
+// These are all the directories where we'll lock edges given a request.
+// These function _must be pure_! We call it repeatedly as if it's a property
+// of the request more than a function.
+//
+// Technically every well form request will have distinct inode ids, but there
+// are parts in the code where this function is called before we know that the
+// request is valid.
+static std::unordered_set<InodeId> directoriesNeedingLock(const CDCReqContainer& req) {
+    std::unordered_set<InodeId> toLock;
+    switch (req.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        toLock.emplace(req.getMakeDirectory().ownerId);
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        toLock.emplace(req.getRenameFile().oldOwnerId);
+        toLock.emplace(req.getRenameFile().newOwnerId);
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        // TODO I'm pretty sure the target id is fine, as
+        // in, does not need locking.
+        toLock.emplace(req.getSoftUnlinkDirectory().ownerId);
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        toLock.emplace(req.getRenameDirectory().oldOwnerId);
+        toLock.emplace(req.getRenameDirectory().newOwnerId);
+        // Moving directories is special: it can introduce loops if we're not careful.
+        // Instead of trying to not create loops in the context of interleaved transactions,
+        // we instead only allow one move directory at a time.
+        toLock.emplace(MOVE_DIRECTORY_LOCK);
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        toLock.emplace(req.getHardUnlinkDirectory().dirId);
+        break;
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        toLock.emplace(req.getCrossShardHardUnlinkFile().ownerId);
+        break;
+    case CDCMessageKind::ERROR:
+        throw EGGS_EXCEPTION("bad req type error");
+    default:
+        throw EGGS_EXCEPTION("bad req type %s", (uint8_t)req.kind());
+    }
+    return toLock;
+}
+
 struct StateMachineEnv {
     Env& env;
-    rocksdb::OptimisticTransactionDB* db;
     rocksdb::ColumnFamilyHandle* defaultCf;
     rocksdb::ColumnFamilyHandle* parentCf;
     rocksdb::Transaction& dbTxn;
-    EggsTime time;
-    uint64_t txnId;
+    CDCTxnId txnId;
     uint8_t txnStep;
     CDCStep& cdcStep;
+    bool finished;
 
     StateMachineEnv(
-        Env& env_, rocksdb::OptimisticTransactionDB* db_, rocksdb::ColumnFamilyHandle* defaultCf_, rocksdb::ColumnFamilyHandle* parentCf_, rocksdb::Transaction& dbTxn_, EggsTime time_, uint64_t txnId_, uint8_t step_, CDCStep& cdcStep_
+        Env& env_, rocksdb::ColumnFamilyHandle* defaultCf_, rocksdb::ColumnFamilyHandle* parentCf_, rocksdb::Transaction& dbTxn_, CDCTxnId txnId_, uint8_t step_, CDCStep& cdcStep_
     ):
-        env(env_), db(db_), defaultCf(defaultCf_), parentCf(parentCf_), dbTxn(dbTxn_), time(time_), txnId(txnId_), txnStep(step_), cdcStep(cdcStep_)
+        env(env_), defaultCf(defaultCf_), parentCf(parentCf_), dbTxn(dbTxn_), txnId(txnId_), txnStep(step_), cdcStep(cdcStep_), finished(false)
     {}
 
-    InodeId nextDirectoryId() {
+    InodeId nextDirectoryId(rocksdb::Transaction& dbTxn) {
         std::string v;
-        ROCKS_DB_CHECKED(db->Get({}, defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), &v));
+        ROCKS_DB_CHECKED(dbTxn.Get({}, defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), &v));
         ExternalValue<InodeIdValue> nextId(v);
         InodeId id = nextId().id();
         nextId().setId(InodeId::FromU64(id.u64 + 1));
@@ -151,24 +222,27 @@ struct StateMachineEnv {
 
     ShardReqContainer& needsShard(uint8_t step, ShardId shid, bool repeated) {
         txnStep = step;
-        cdcStep.txnFinished = 0;
-        cdcStep.txnNeedsShard = txnId;
-        cdcStep.shardReq.shid = shid;
-        cdcStep.shardReq.repeated = repeated;
-        return cdcStep.shardReq.req;
+        auto& running = cdcStep.runningTxns.emplace_back();
+        running.first = txnId;
+        running.second.shid = shid;
+        running.second.repeated = repeated;
+        return running.second.req;
     }
 
     CDCRespContainer& finish() {
-        cdcStep.txnFinished = txnId;
-        cdcStep.err = NO_ERROR;
-        return cdcStep.resp;
+        this->finished = true;
+        auto& finished = cdcStep.finishedTxns.emplace_back();
+        finished.first = txnId;
+        finished.second.err = NO_ERROR;
+        return finished.second.resp;
     }
 
     void finishWithError(EggsError err) {
+        this->finished = true;
         ALWAYS_ASSERT(err != NO_ERROR);
-        cdcStep.txnFinished = txnId;
-        cdcStep.err = err;
-        cdcStep.txnNeedsShard = 0;
+        auto& errored = cdcStep.finishedTxns.emplace_back();
+        errored.first = txnId;
+        errored.second.err = err;
     }
 };
 
@@ -234,7 +308,7 @@ struct MakeDirectoryStateMachine {
     }
 
     void start() {
-        state.setDirId(env.nextDirectoryId());
+        state.setDirId(env.nextDirectoryId(env.dbTxn));
         lookup();
     }
 
@@ -1217,22 +1291,32 @@ struct UnpackCDCReq {
 struct CDCDBImpl {
     Env _env;
 
-    // TODO it would be good to store basically all of the metadata in memory,
-    // so that we'd just read from it, but this requires a bit of care when writing
-    // if we want to be able to not write the batch at the end.
+    // The reason why we insist in storing everything in RocksDB is that we can do
+    // everything in a single transaction, so it's easier to reason about atomic
+    // modifications. _dirsToTxnsCf for example would be much simpler as a
+    // simple unordered_map.
+    //
+    // It also has the nice advantage that we don't need to reconstruct the state
+    // when starting up, it's all already there.
 
     rocksdb::OptimisticTransactionDB* _db;
     rocksdb::ColumnFamilyHandle* _defaultCf;
-    rocksdb::ColumnFamilyHandle* _reqQueueCf;
     rocksdb::ColumnFamilyHandle* _parentCf;
+    rocksdb::ColumnFamilyHandle* _enqueuedCf; // V1, txnId -> CDC req, only for executing or waiting to be executed requests
+    rocksdb::ColumnFamilyHandle* _executingCf; // V1, txnId -> CDC state machine, for requests that are executing
+    // V1, data structure storing a dir to txn ids mapping:
+    // InodeId -> txnId -- sentinel telling us what the first txn in line is. If none, zero.
+    // we need the sentinel to skip over tombstones quickly.
+    // InodeId, txnId set with the queue
+    rocksdb::ColumnFamilyHandle* _dirsToTxnsCf;
+    // rocksdb::ColumnFamilyHandle* _dirsToTxnsCf; // V1, InodeId, txnId set
+    // legacy
+    rocksdb::ColumnFamilyHandle* _reqQueueCfLegacy; // V0, txnId -> CDC req, for all the requests (including historical)
 
     AssertiveLock _processLock;
 
     std::shared_ptr<rocksdb::Statistics> _dbStatistics;
     std::string _dbStatisticsFile;
-
-    // Used to deserialize into
-    CDCReqContainer _cdcReq;
 
     // ----------------------------------------------------------------
     // initialization
@@ -1256,6 +1340,9 @@ struct CDCDBImpl {
             {rocksdb::kDefaultColumnFamilyName, {}},
             {"reqQueue", {}},
             {"parent", {}},
+            {"enqueued", {}},
+            {"executing", {}},
+            {"dirsToTxns", {}},
         };
         std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
         auto dbPath = path + "/db";
@@ -1266,8 +1353,11 @@ struct CDCDBImpl {
         );
         ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
         _defaultCf = familiesHandles[0];
-        _reqQueueCf = familiesHandles[1];
+        _reqQueueCfLegacy = familiesHandles[1];
         _parentCf = familiesHandles[2];
+        _enqueuedCf = familiesHandles[3];
+        _executingCf = familiesHandles[4];
+        _dirsToTxnsCf = familiesHandles[5];
         
         _initDb();
     }
@@ -1276,8 +1366,11 @@ struct CDCDBImpl {
         LOG_INFO(_env, "destroying column families and closing database");
 
         ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_reqQueueCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
         ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_parentCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_enqueuedCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_executingCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_dirsToTxnsCf));
 
         ROCKS_DB_CHECKED(_db->Close());
     }
@@ -1301,16 +1394,33 @@ struct CDCDBImpl {
         }
 
     TXN_ID_SETTER_GETTER(LAST_TXN_KEY, _lastTxn, _setLastTxn)
-    TXN_ID_SETTER_GETTER(FIRST_TXN_IN_QUEUE_KEY, _firstTxnInQueue, _setFirstTxnInQueue)
-    TXN_ID_SETTER_GETTER(LAST_TXN_IN_QUEUE_KEY, _lastTxnInQueue, _setLastTxnInQueue)
-    TXN_ID_SETTER_GETTER(EXECUTING_TXN_KEY, _executingTxn, _setExecutingTxn)
+    TXN_ID_SETTER_GETTER(EXECUTING_TXN_KEY, _executingTxnLegacy, _setExecutingTxnLegacy)
 
     #undef TXN_ID_SETTER_GETTER
 
-    void _initDb() {
-        const auto keyExists = [this](rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key) -> bool {
+    // returns -1 if the version key was not set
+    int64_t _version(rocksdb::Transaction& dbTxn) {
+        std::string value;
+        auto status = dbTxn.Get({}, _defaultCf, cdcMetadataKey(&VERSION_KEY), &value);
+        if (status.IsNotFound()) {
+            return -1;
+        } else {
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<U64Value> vV(value);
+            return vV().u64();
+        }
+    }
+
+    void _setVersion(rocksdb::Transaction& dbTxn, uint64_t version) {
+        auto v = U64Value::Static(version);
+        ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&VERSION_KEY), v.toSlice()));
+    }
+
+    void _initDbV0(rocksdb::Transaction& dbTxn) {
+        LOG_INFO(_env, "initializing V0 db");
+        const auto keyExists = [&dbTxn](rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key) -> bool {
             std::string value;
-            auto status = _db->Get({}, cf, key, &value);
+            auto status = dbTxn.Get({}, cf, key, &value);
             if (status.IsNotFound()) {
                 return false;
             } else {
@@ -1322,15 +1432,15 @@ struct CDCDBImpl {
         if (!keyExists(_defaultCf, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY))) {
             LOG_INFO(_env, "initializing next directory id");
             auto id = InodeIdValue::Static(InodeId::FromU64(ROOT_DIR_INODE_ID.u64 + 1));
-            ROCKS_DB_CHECKED(_db->Put({}, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), id.toSlice()));
+            ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&NEXT_DIRECTORY_ID_KEY), id.toSlice()));
         }
 
-        const auto initZeroValue = [this, &keyExists](const std::string& what, const CDCMetadataKey& key) {
+        const auto initZeroValue = [this, &keyExists, &dbTxn](const std::string& what, const CDCMetadataKey& key) {
             if (!keyExists(_defaultCf, cdcMetadataKey(&key))) {
                 LOG_INFO(_env, "initializing %s", what);
                 StaticValue<U64Value> v;
                 v().setU64(0);
-                ROCKS_DB_CHECKED(_db->Put({}, cdcMetadataKey(&key), v.toSlice()));
+                ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&key), v.toSlice()));
             } 
         };
 
@@ -1339,6 +1449,61 @@ struct CDCDBImpl {
         initZeroValue("last txn in queue", LAST_TXN_IN_QUEUE_KEY);
         initZeroValue("executing txn", EXECUTING_TXN_KEY);
         initZeroValue("last applied log index", LAST_APPLIED_LOG_ENTRY_KEY);
+    }
+
+    void _initDbV1(rocksdb::Transaction& dbTxn) {
+        LOG_INFO(_env, "initializing V1 db");
+        // Pick up the executing txn, if any, and move it to the executing CF.
+        // We preserve the executing txn to preserve integrity.
+        {
+            uint64_t executingTxn = _executingTxnLegacy(dbTxn);
+            if (executingTxn != 0) {
+                LOG_INFO(_env, "migrating txn %s", executingTxn);
+                // _reqQueueCf -> _enqueuedCf
+                auto txnK = CDCTxnIdKey::Static(CDCTxnId(executingTxn));
+                std::string reqV;
+                ROCKS_DB_CHECKED(dbTxn.Get({}, _reqQueueCfLegacy, txnK.toSlice(), &reqV));
+                CDCReqContainer req;
+                UnpackCDCReq ureq(req);
+                bincodeFromRocksValue(reqV, ureq);
+                ROCKS_DB_CHECKED(dbTxn.Put(_enqueuedCf, txnK.toSlice(), reqV));
+                // EXECUTING_TXN_KEY -> _executingCf
+                std::string txnStateV;
+                ROCKS_DB_CHECKED(dbTxn.Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
+                ROCKS_DB_CHECKED(dbTxn.Put(_executingCf, txnK.toSlice(), txnStateV));
+                // Add to _dirsToTxnsCf, will lock since things are empty
+                _addToDirsToTxns(dbTxn, txnK().id(), req);
+            }
+        }
+        
+        // Throw away everything legacy. The clients will just retry.
+        ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&FIRST_TXN_IN_QUEUE_KEY)));
+        ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&LAST_TXN_IN_QUEUE_KEY)));
+        ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&EXECUTING_TXN_KEY)));
+        ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&EXECUTING_TXN_STATE_KEY)));
+        // We could delete the CF itself, but let's do everything in the same transaction
+        std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator({}, _reqQueueCfLegacy));
+        for (it->Seek(""); it->Valid(); it->Next()) {
+            ROCKS_DB_CHECKED(dbTxn.Delete(_reqQueueCfLegacy, it->key()));
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
+
+    void _initDb() {
+        rocksdb::WriteOptions options;
+        options.sync = true;
+        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
+
+        if (_version(*dbTxn), -1) {
+            _initDbV0(*dbTxn);
+            _setVersion(*dbTxn, 0);
+        }
+        if (_version(*dbTxn) == 0) {
+            _initDbV1(*dbTxn);
+            _setVersion(*dbTxn, 1);
+        }
+
+        commitTransaction(*dbTxn);
     }
 
     // ----------------------------------------------------------------
@@ -1375,15 +1540,22 @@ struct CDCDBImpl {
     // Processing
     // ----------------------------------------------------------------
 
-    uint64_t _lastAppliedLogEntry() {
+    uint64_t _lastAppliedLogEntryDB() {
         std::string value;
         ROCKS_DB_CHECKED(_db->Get({}, cdcMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
         ExternalValue<U64Value> v(value);
         return v().u64();
     }
 
+    uint64_t _lastAppliedLogEntry(rocksdb::Transaction& dbTxn) {
+        std::string value;
+        ROCKS_DB_CHECKED(dbTxn.Get({}, cdcMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
+        ExternalValue<U64Value> v(value);
+        return v().u64();
+    }
+
     void _advanceLastAppliedLogEntry(rocksdb::Transaction& dbTxn, uint64_t index) {
-        uint64_t oldIndex = _lastAppliedLogEntry();
+        uint64_t oldIndex = _lastAppliedLogEntry(dbTxn);
         ALWAYS_ASSERT(oldIndex+1 == index, "old index is %s, expected %s, got %s", oldIndex, oldIndex+1, index);
         LOG_DEBUG(_env, "bumping log index from %s to %s", oldIndex, index);
         StaticValue<U64Value> v;
@@ -1391,80 +1563,131 @@ struct CDCDBImpl {
         ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
     }
 
-    // Pushes a new request onto the queue.
-    void _reqQueuePush(rocksdb::Transaction& dbTxn, uint64_t txnId, const CDCReqContainer& req) {
-        // Check metadata
-        uint64_t last = _lastTxnInQueue(dbTxn);
-        ALWAYS_ASSERT(last == 0 || txnId == last + 1);
-        // Write to queue
-        {
-            auto k = U64Key::Static(txnId);
-            std::string v = bincodeToRocksValue(PackCDCReq(req));
-            ROCKS_DB_CHECKED(dbTxn.Put(_reqQueueCf, k.toSlice(), v));
+    void _addToDirsToTxns(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
+        for (const auto dirId: directoriesNeedingLock(req)) {
+            LOG_DEBUG(_env, "adding dir %s for txn %s", dirId, txnId);
+            {
+                // into the set
+                StaticValue<DirsToTxnsKey> k;
+                k().setDirId(dirId);
+                k().setTxnId(txnId);
+                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), ""));                
+            }
+            {
+                // sentinel, if necessary
+                StaticValue<DirsToTxnsKey> k;
+                k().setDirId(dirId);
+                k().setSentinel();
+                std::string v;
+                auto status = dbTxn.Get({}, _dirsToTxnsCf, k.toSlice(), &v);
+                if (status.IsNotFound()) { // we're the first ones here, add the sentinel
+                    auto v = CDCTxnIdValue::Static(txnId);
+                    ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), v.toSlice()));
+                } else {
+                    ROCKS_DB_CHECKED(status);
+                }
+            }
         }
-        // Update metadata
-        if (last == 0) {
-            _setFirstTxnInQueue(dbTxn, txnId);
-        }
-        _setLastTxnInQueue(dbTxn, txnId);
     }
 
-    // Returns 0 if the queue was empty, otherwise what was popped
-    uint64_t _reqQueuePeek(rocksdb::Transaction& dbTxn, CDCReqContainer& req) {
-        uint64_t first = _firstTxnInQueue(dbTxn);
-        if (first == 0) {
-            return 0;
+    // Returns the txn ids that might be free to work now. Note that we don't
+    // know that for sure because they might not hold locks for all dirs. This
+    // function does not check that.
+    void _removeFromDirsToTxns(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req, std::vector<CDCTxnId>& mightBeReady) {
+        for (const auto dirId: directoriesNeedingLock(req)) {
+            LOG_DEBUG(_env, "removing dir %s for txn %s", dirId, txnId);
+            StaticValue<DirsToTxnsKey> k;
+            k().setDirId(dirId);
+            k().setTxnId(txnId);
+            // Check if there's a next key in line. We know that we won't
+            // have to step over many deleted keys here because we go through the
+            // list in order, and we seek from the list element we've just deleted.
+            // It is however important to set the iteration upper bound as of to
+            // not spill over and possibly trip over deleted keys.
+            StaticValue<DirsToTxnsKey> upperBoundK;
+            upperBoundK().setDirId(dirId);
+            upperBoundK().setTxnId(CDCTxnId(~(uint64_t)0));
+            rocksdb::Slice upperBoundSlice = upperBoundK.toSlice();
+            rocksdb::ReadOptions itOptions;
+            itOptions.iterate_upper_bound = &upperBoundSlice;
+            std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator(itOptions, _dirsToTxnsCf));
+            it->Seek(k.toSlice());
+            // we must find the key here -- we're removing it.
+            ALWAYS_ASSERT(it->Valid());
+            {
+                // Additional safety check: the key is what we expect.
+                auto foundKey = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
+                ALWAYS_ASSERT(!foundKey().isSentinel() && foundKey().txnId() == txnId);
+            }
+            // now that we've done our checks, we can remove the key
+            ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, k.toSlice()));
+            // then we look for the next one, if there's anything,
+            // and overwrite/delete the sentinel
+            StaticValue<DirsToTxnsKey> sentinelK;
+            sentinelK().setDirId(dirId);
+            sentinelK().setSentinel();
+            it->Next();
+            if (it->Valid()) { // there's something, set the sentinel
+                auto nextK = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
+                auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
+                LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
+                mightBeReady.emplace_back(nextK().txnId());
+                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, sentinelK.toSlice(), sentinelV.toSlice()));
+            } else { // we were the last ones here, remove sentinel
+                ROCKS_DB_CHECKED(it->status());
+                ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, sentinelK.toSlice()));
+            }
         }
-        // Read
-        {
-            auto k = U64Key::Static(first);
+    }
+
+    // Check if we have a lock on all the directories that matter to the txn id.
+    // It is assumed that the txnId in question is already in _dirsToTxnsCf.
+    bool _isReadyToGo(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
+        for (const auto dirId: directoriesNeedingLock(req)) {
+            // the sentinel _must_ be present -- at the very least us!
+            StaticValue<DirsToTxnsKey> k;
+            k().setDirId(dirId);
+            k().setSentinel();
             std::string v;
-            ROCKS_DB_CHECKED(dbTxn.Get({}, _reqQueueCf, k.toSlice(), &v));
-            UnpackCDCReq ureq(req);
-            bincodeFromRocksValue(v, ureq);
+            ROCKS_DB_CHECKED(dbTxn.Get({}, _dirsToTxnsCf, k.toSlice(), &v));
+            ExternalValue<CDCTxnIdValue> otherTxnId(v);
+            if (otherTxnId().id() != txnId) {
+                return false;
+            }
         }
-        return first;
+        return true;
     }
 
-    // Returns 0 if the queue was empty, otherwise what was popped
-    uint64_t _reqQueuePop(rocksdb::Transaction& dbTxn) {
-        uint64_t first = _firstTxnInQueue(dbTxn);
-        if (first == 0) {
-            LOG_DEBUG(_env, "txn queue empty, returning 0");
-            return 0;
+    // Adds a request to the enqueued requests. Also adds it to dirsToTxns, which will implicitly
+    // acquire locks.
+    void _addToEnqueued(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
+        {
+            auto k = CDCTxnIdKey::Static(txnId);
+            std::string v = bincodeToRocksValue(PackCDCReq(req));
+            ROCKS_DB_CHECKED(dbTxn.Put(_enqueuedCf, k.toSlice(), v));
         }
-        // Update metadata
-        uint64_t last = _lastTxnInQueue(dbTxn);
-        if (first == last) { // empty queue
-            _setFirstTxnInQueue(dbTxn, 0);
-            _setLastTxnInQueue(dbTxn, 0);
-        } else {
-            _setFirstTxnInQueue(dbTxn, first+1);
-        }
-        LOG_DEBUG(_env, "popped txn %s from queue", first);
-        return first;
+        _addToDirsToTxns(dbTxn, txnId, req);
     }
 
     // Moves the state forward, filling in `step` appropriatedly, and writing
     // out the updated state.
-    //
-    // This will _not_ start a new transaction automatically if the old one
-    // finishes. It does return whether the txn was finished though.
     template<template<typename> typename V>
-    bool _advance(
-        EggsTime time,
+    void _advance(
         rocksdb::Transaction& dbTxn,
-        uint64_t txnId,
+        CDCTxnId txnId,
         const CDCReqContainer& req,
         // If `shardRespError` and `shardResp` are null, we're starting to execute.
         // Otherwise, (err == NO_ERROR) == (req != nullptr).
         EggsError shardRespError,
         const ShardRespContainer* shardResp,
         V<TxnState>& state,
-        CDCStep& step
+        CDCStep& step,
+        // to collect things that might be able to start now because
+        // we've finished doing other stuff
+        std::vector<CDCTxnId>& txnIds
     ) {
-        LOG_DEBUG(_env, "advancing txn %s of kind %s", txnId, req.kind());
-        StateMachineEnv sm(_env, _db, _defaultCf, _parentCf, dbTxn, time, txnId, state().step(), step);
+        LOG_DEBUG(_env, "advancing txn %s of kind %s with state", txnId, req.kind());
+        StateMachineEnv sm(_env, _defaultCf, _parentCf, dbTxn, txnId, state().step(), step);
         switch (req.kind()) {
         case CDCMessageKind::MAKE_DIRECTORY:
             MakeDirectoryStateMachine(sm, req.getMakeDirectory(), state().getMakeDirectory()).resume(shardRespError, shardResp);
@@ -1489,155 +1712,162 @@ struct CDCDBImpl {
         }
         state().setStep(sm.txnStep);
 
-        ALWAYS_ASSERT(step.txnFinished == 0 || step.txnFinished == txnId);
-        ALWAYS_ASSERT(step.txnNeedsShard == 0 || step.txnNeedsShard == txnId);
-        ALWAYS_ASSERT(step.txnFinished == txnId || step.txnNeedsShard == txnId);
-        if (step.txnFinished == txnId) {
-            // we're done, clear the transaction from the system
-            ALWAYS_ASSERT(_reqQueuePop(dbTxn) == txnId);
-            _setExecutingTxn(dbTxn, 0);
-            // not strictly necessary, it'll just be overwritten next time, but let's be tidy
-            ROCKS_DB_CHECKED(dbTxn.Delete(_defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY)));
-            // also, fill in whether we've got something next
-            step.nextTxn = _firstTxnInQueue(dbTxn);
-            return true;
+        if (sm.finished) {
+            // we finished immediately
+            LOG_DEBUG(_env, "txn %s with req %s finished", txnId, req);
+            _finishExecuting(dbTxn, txnId, req, txnIds);
         } else {
-            // we're _not_ done, write out the state
-            ROCKS_DB_CHECKED(dbTxn.Put(_defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), state.toSlice()));
+            // we still have something to do, persist
+            _setExecuting(dbTxn, txnId, state);
+        }
+    }
+
+    bool _isExecuting(rocksdb::Transaction& dbTxn, CDCTxnId txnId) {
+        auto k = CDCTxnIdKey::Static(txnId);
+        std::string v;
+        auto status = dbTxn.Get({}, _executingCf, k.toSlice(), &v);
+        if (status.IsNotFound()) {
             return false;
         }
+        ROCKS_DB_CHECKED(status);
+        return true;
     }
 
-    // Starts executing the next transaction in line, if possible. If it managed
-    // to start something, it immediately advances it as well (no point delaying
-    // that). Returns the txn id that was started, if any.
-    uint64_t _startExecuting(EggsTime time, rocksdb::Transaction& dbTxn, CDCStep& step, CDCStatus& status) {
-        uint64_t executingTxn = _executingTxn(dbTxn);
-        if (executingTxn != 0) {
-            LOG_DEBUG(_env, "another transaction %s is already executing, can't start", executingTxn);
-            return 0;
-        }
-
-        uint64_t txnToExecute = _reqQueuePeek(dbTxn, _cdcReq);
-        if (txnToExecute == 0) {
-            LOG_DEBUG(_env, "no transactions in queue found, can't start");
-            return 0;
-        }
-
-        _setExecutingTxn(dbTxn, txnToExecute);
-        LOG_DEBUG(_env, "starting to execute txn %s with req %s", txnToExecute, _cdcReq);
-        StaticValue<TxnState> txnState;
-        txnState().start(_cdcReq.kind());
-        bool stillRunning = _advance(time, dbTxn, txnToExecute, _cdcReq, NO_ERROR, nullptr, txnState, step);
-
-        if (stillRunning) {
-            status.runningTxn = txnToExecute;
-            status.runningTxnKind = _cdcReq.kind();
-        }
-
-        return txnToExecute;
+    template<template<typename> typename V>
+    void _setExecuting(rocksdb::Transaction& dbTxn, CDCTxnId txnId, V<TxnState>& state) {
+        auto k = CDCTxnIdKey::Static(txnId);
+        ROCKS_DB_CHECKED(dbTxn.Put(_executingCf, k.toSlice(), state.toSlice()));
     }
 
-    uint64_t processCDCReq(
-        bool sync,
-        EggsTime time,
-        uint64_t logIndex,
-        const CDCReqContainer& req,
-        CDCStep& step,
-        CDCStatus& status
-    ) {
-        status.reset();
-    
-        auto locked = _processLock.lock();
-
-        rocksdb::WriteOptions options;
-        options.sync = sync;
-        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
-
-        step.clear();
-
-        _advanceLastAppliedLogEntry(*dbTxn, logIndex);
-
-        // Enqueue req
-        uint64_t txnId;
+    void _finishExecuting(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req, std::vector<CDCTxnId>& txnIds) {
         {
-            // Generate new txn id
-            txnId = _lastTxn(*dbTxn) + 1;
-            _setLastTxn(*dbTxn, txnId);
-            // Push to queue
-            _reqQueuePush(*dbTxn, txnId, req);
-            LOG_DEBUG(_env, "enqueued CDC req %s with txn id %s", req.kind(), txnId);
+            // delete from _executingCf
+            auto k = CDCTxnIdKey::Static(txnId);
+            ROCKS_DB_CHECKED(dbTxn.Delete(_executingCf, k.toSlice()));
         }
-
-        // Start executing, if we can
-        _startExecuting(time, *dbTxn, step, status);
-
-        LOG_DEBUG(_env, "committing transaction");
-        commitTransaction(*dbTxn);
-
-        return txnId;
+        // delete from dirsToTxnIds
+        _removeFromDirsToTxns(dbTxn, txnId, req, txnIds);
     }
 
-    void processShardResp(
-        bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
-        EggsTime time,
-        uint64_t logIndex,
-        EggsError respError,
+    // Starts executing the given transactions, if possible. If it managed
+    // to start something, it immediately advances it as well (no point delaying
+    // that).
+    //
+    // It modifies `txnIds` with new transactions we looked at if we immediately
+    // finish executing txns that we start here.
+    void _startExecuting(rocksdb::Transaction& dbTxn, std::vector<CDCTxnId>& txnIds, CDCStep& step) {
+        CDCReqContainer req;
+        for (int i = 0; i < txnIds.size(); i++) {
+            CDCTxnId txnId = txnIds[i];
+            auto reqK = CDCTxnIdKey::Static(txnId);
+            std::string reqV;
+            ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCf, reqK.toSlice(), &reqV));
+            UnpackCDCReq ureq(req);
+            bincodeFromRocksValue(reqV, ureq);
+            if (!_isExecuting(dbTxn, txnId)) {
+                if (_isReadyToGo(dbTxn, txnId, req)) {
+                    LOG_DEBUG(_env, "starting to execute txn %s with req %s, since it is ready to go and not executing already", txnId, req);
+                    StaticValue<TxnState> txnState;
+                    txnState().start(req.kind());
+                    _setExecuting(dbTxn, txnId, txnState);
+                    _advance(dbTxn, txnId, req, NO_ERROR, nullptr, txnState, step, txnIds);
+                } else {
+                    LOG_DEBUG(_env, "waiting before executing txn %s with req %s, since it is not ready to go", txnId, req);
+                }
+            }
+        }
+    }
+
+    void _enqueueCDCReqs(
+        rocksdb::Transaction& dbTxn,
+        const std::vector<CDCReqContainer>& reqs,
+        CDCStep& step,
+        // we need two lists because one (`cdcReqsTxnIds`) is specifically
+        // to return to the user, while the other is used for other purposes,
+        // too.
+        std::vector<CDCTxnId>& txnIdsToStart,
+        std::vector<CDCTxnId>& cdcReqsTxnIds
+    ) {
+        for (const auto& req: reqs) {
+            uint64_t txnId;
+            {
+                // Generate new txn id
+                txnId = _lastTxn(dbTxn) + 1;
+                _setLastTxn(dbTxn, txnId);
+                // Push to queue
+                _addToEnqueued(dbTxn, txnId, req);
+                LOG_DEBUG(_env, "enqueued CDC req %s with txn id %s", req.kind(), txnId);
+            }
+
+            txnIdsToStart.emplace_back(txnId);
+            cdcReqsTxnIds.emplace_back(txnId);
+        }
+    }
+
+    void _advanceWithResp(
+        rocksdb::Transaction& dbTxn,
+        CDCTxnId txnId,
+        EggsError err,
         const ShardRespContainer* resp,
         CDCStep& step,
-        CDCStatus& status
+        std::vector<CDCTxnId>& txnIdsToStart
     ) {
-        status.reset();
-    
-        auto locked = _processLock.lock();
-
-        rocksdb::WriteOptions options;
-        options.sync = sync;
-        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
-
-        step.clear();
-
-        _advanceLastAppliedLogEntry(*dbTxn, logIndex);
-
-        // Find the txn
-        uint64_t txnId = _executingTxn(*dbTxn);
-        ALWAYS_ASSERT(txnId != 0);
+        auto txnIdK = CDCTxnIdKey::Static(txnId);
 
         // Get the req
+        CDCReqContainer cdcReq;
         {
-            auto k = U64Key::Static(txnId);
             std::string reqV;
-            ROCKS_DB_CHECKED(dbTxn->Get({}, _reqQueueCf, k.toSlice(), &reqV));
-            UnpackCDCReq ureq(_cdcReq);
+            ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCf, txnIdK.toSlice(), &reqV));
+            UnpackCDCReq ureq(cdcReq);
             bincodeFromRocksValue(reqV, ureq);
         }
 
         // Get the state
         std::string txnStateV;
-        ROCKS_DB_CHECKED(dbTxn->Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
+        ROCKS_DB_CHECKED(dbTxn.Get({}, _executingCf, txnIdK.toSlice(), &txnStateV));
         ExternalValue<TxnState> txnState(txnStateV);
 
-        // Advance
-        bool stillRunning = _advance(time, *dbTxn, txnId, _cdcReq, respError, resp, txnState, step);
+        // Advance with response
+        _advance(dbTxn, txnId, cdcReq, err, resp, txnState, step, txnIdsToStart);
+    }
 
-        if (stillRunning) {
-            // Store status
-            status.runningTxn = txnId;
-            status.runningTxnKind = _cdcReq.kind();
+    void update(
+        bool sync,
+        uint64_t logIndex,
+        const std::vector<CDCReqContainer>& cdcReqs,
+        const std::vector<CDCShardResp>& shardResps,
+        CDCStep& step,
+        std::vector<CDCTxnId>& cdcReqsTxnIds
+    ) {
+        auto locked = _processLock.lock();
+
+        rocksdb::WriteOptions options;
+        options.sync = sync;
+        std::unique_ptr<rocksdb::Transaction> dbTxn(_db->BeginTransaction(options));
+
+        _advanceLastAppliedLogEntry(*dbTxn, logIndex);
+
+        step.clear();
+        cdcReqsTxnIds.clear();
+
+        {
+            std::vector<CDCTxnId> txnIdsToStart;
+            _enqueueCDCReqs(*dbTxn, cdcReqs, step, txnIdsToStart, cdcReqsTxnIds);
+            for (const auto& resp: shardResps) {
+                _advanceWithResp(*dbTxn, resp.txnId, resp.err, &resp.resp, step, txnIdsToStart);
+            }
+            _startExecuting(*dbTxn, txnIdsToStart, step);
         }
 
         commitTransaction(*dbTxn);
     }
 
-    void startNextTransaction(
-        bool sync, // Whether to persist synchronously. Unneeded if log entries are persisted already.
-        EggsTime time,
+    void bootstrap(
+        bool sync,
         uint64_t logIndex,
-        CDCStep& step,
-        CDCStatus& status
+        CDCStep& step
     ) {
-        status.reset();
-    
         auto locked = _processLock.lock();
 
         rocksdb::WriteOptions options;
@@ -1647,31 +1877,17 @@ struct CDCDBImpl {
         step.clear();
 
         _advanceLastAppliedLogEntry(*dbTxn, logIndex);
-        uint64_t txnId = _startExecuting(time, *dbTxn, step, status);
-        if (txnId == 0) {
-            // no txn could be started, see if one is executing already to fill in the `step`
-            txnId = _executingTxn(*dbTxn);
-            if (txnId != 0) {
-                LOG_DEBUG(_env, "transaction %s is already executing, will resume it", txnId);
-                // Get the req
-                {
-                    auto k = U64Key::Static(txnId);
-                    std::string reqV;
-                    ROCKS_DB_CHECKED(dbTxn->Get({}, _reqQueueCf, k.toSlice(), &reqV));
-                    UnpackCDCReq ureq(_cdcReq);
-                    bincodeFromRocksValue(reqV, ureq);
-                }
-                // Store status
-                status.runningTxn = txnId;
-                status.runningTxnKind = _cdcReq.kind();
-                // Get the state
-                std::string txnStateV;
-                ROCKS_DB_CHECKED(dbTxn->Get({}, _defaultCf, cdcMetadataKey(&EXECUTING_TXN_STATE_KEY), &txnStateV));
-                ExternalValue<TxnState> txnState(txnStateV);
-                // Advance
-                _advance(time, *dbTxn, txnId, _cdcReq, NO_ERROR, nullptr, txnState, step);
-            }
+
+        std::vector<CDCTxnId> txnIdsToStart;
+        // Just collect all executing txns, and run them
+        std::unique_ptr<rocksdb::Iterator> it(dbTxn->GetIterator({}, _executingCf));
+        for (it->Seek(""); it->Valid(); it->Next()) {
+            auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
+            _advanceWithResp(*dbTxn, txnIdK().id(), NO_ERROR, nullptr, step, txnIdsToStart);
         }
+        ROCKS_DB_CHECKED(it->status());
+
+        _startExecuting(*dbTxn, txnIdsToStart, step);
          
         commitTransaction(*dbTxn);
     }
@@ -1699,20 +1915,16 @@ CDCDB::~CDCDB() {
     delete ((CDCDBImpl*)_impl);
 }
 
-uint64_t CDCDB::processCDCReq(bool sync, EggsTime time, uint64_t logIndex, const CDCReqContainer& req, CDCStep& step, CDCStatus& status) {
-    return ((CDCDBImpl*)_impl)->processCDCReq(sync, time, logIndex, req, step, status);
+void CDCDB::bootstrap(bool sync, uint64_t logIndex, CDCStep& step) {
+    return ((CDCDBImpl*)_impl)->bootstrap(sync, logIndex, step);
 }
 
-void CDCDB::processShardResp(bool sync, EggsTime time, uint64_t logIndex, EggsError respError, const ShardRespContainer* resp, CDCStep& step, CDCStatus& status) {
-    return ((CDCDBImpl*)_impl)->processShardResp(sync, time, logIndex, respError, resp, step, status);
-}
-
-void CDCDB::startNextTransaction(bool sync, EggsTime time, uint64_t logIndex, CDCStep& step, CDCStatus& status) {
-    return ((CDCDBImpl*)_impl)->startNextTransaction(sync, time, logIndex, step, status);
+void CDCDB::update(bool sync, uint64_t logIndex, const std::vector<CDCReqContainer>& cdcReqs, const std::vector<CDCShardResp>& shardResps, CDCStep& step, std::vector<CDCTxnId>& cdcReqsTxnIds) {
+    return ((CDCDBImpl*)_impl)->update(sync, logIndex, cdcReqs, shardResps, step, cdcReqsTxnIds);
 }
 
 uint64_t CDCDB::lastAppliedLogEntry() {
-    return ((CDCDBImpl*)_impl)->_lastAppliedLogEntry();
+    return ((CDCDBImpl*)_impl)->_lastAppliedLogEntryDB();
 }
 
 void CDCDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values) {

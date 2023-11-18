@@ -11,6 +11,7 @@
 #include "RocksDBUtils.hpp"
 #include "Msgs.hpp"
 #include "Time.hpp"
+#include "CDCDB.hpp"
 
 enum class CDCMetadataKey : uint8_t {
     LAST_APPLIED_LOG_ENTRY = 0,
@@ -20,18 +21,91 @@ enum class CDCMetadataKey : uint8_t {
     EXECUTING_TXN = 4,
     EXECUTING_TXN_STATE = 6,
     LAST_DIRECTORY_ID = 7,
+    VERSION = 8,
 };
-constexpr CDCMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = CDCMetadataKey::LAST_APPLIED_LOG_ENTRY;
-constexpr CDCMetadataKey LAST_TXN_KEY = CDCMetadataKey::LAST_TXN;
-constexpr CDCMetadataKey FIRST_TXN_IN_QUEUE_KEY = CDCMetadataKey::FIRST_TXN_IN_QUEUE;
-constexpr CDCMetadataKey LAST_TXN_IN_QUEUE_KEY = CDCMetadataKey::LAST_TXN_IN_QUEUE;
-constexpr CDCMetadataKey EXECUTING_TXN_KEY = CDCMetadataKey::EXECUTING_TXN;
-constexpr CDCMetadataKey EXECUTING_TXN_STATE_KEY = CDCMetadataKey::EXECUTING_TXN_STATE;
-constexpr CDCMetadataKey NEXT_DIRECTORY_ID_KEY = CDCMetadataKey::LAST_DIRECTORY_ID;
+constexpr CDCMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = CDCMetadataKey::LAST_APPLIED_LOG_ENTRY; // V0, V1
+constexpr CDCMetadataKey LAST_TXN_KEY = CDCMetadataKey::LAST_TXN; // V0, V1
+constexpr CDCMetadataKey FIRST_TXN_IN_QUEUE_KEY = CDCMetadataKey::FIRST_TXN_IN_QUEUE; // V0
+constexpr CDCMetadataKey LAST_TXN_IN_QUEUE_KEY = CDCMetadataKey::LAST_TXN_IN_QUEUE; // V0
+constexpr CDCMetadataKey EXECUTING_TXN_KEY = CDCMetadataKey::EXECUTING_TXN; // V0
+constexpr CDCMetadataKey EXECUTING_TXN_STATE_KEY = CDCMetadataKey::EXECUTING_TXN_STATE; // V0
+constexpr CDCMetadataKey NEXT_DIRECTORY_ID_KEY = CDCMetadataKey::LAST_DIRECTORY_ID; // V0, V1
+constexpr CDCMetadataKey VERSION_KEY = CDCMetadataKey::VERSION; // V1
 
 inline rocksdb::Slice cdcMetadataKey(const CDCMetadataKey* k) {
     return rocksdb::Slice((const char*)k, sizeof(*k));
 }
+
+struct CDCTxnIdKey {
+    FIELDS(
+        BE, CDCTxnId, id, setIdUnchecked,
+        END_STATIC
+    )
+
+    void setId(CDCTxnId i) {
+        ALWAYS_ASSERT(i.x != 0);
+        setIdUnchecked(i);
+    }
+
+    static StaticValue<CDCTxnIdKey> Static(CDCTxnId id) {
+        auto x = StaticValue<CDCTxnIdKey>();
+        x().setId(id);
+        return x;
+    }
+};
+
+struct CDCTxnIdValue {
+    FIELDS(
+        LE, CDCTxnId, id, setIdUnchecked,
+        END_STATIC
+    )
+
+    void setId(CDCTxnId i) {
+        ALWAYS_ASSERT(i.x != 0);
+        setIdUnchecked(i);
+    }
+
+    static StaticValue<CDCTxnIdValue> Static(CDCTxnId id) {
+        auto x = StaticValue<CDCTxnIdValue>();
+        x().setId(id);
+        return x;
+    }
+};
+
+// This data structure, conceptually, is std::unordered_map<InodeId, std::vector<CDCTxnId>>.
+//
+// To encode this in RocksDB, we store (InodeId, CDCTxnId) keys with no values. Txn ids are
+// increasing so the order will be naturally what we want.
+//
+// We also store a sentinel with the head of the list. This is to avoid having to step on many
+// deleted keys when checking if a dir is already locked.
+//
+// The functions adding/removing elements to the list are tasked with bookeeping the sentinel.
+struct DirsToTxnsKey {
+    FIELDS(
+        BE, InodeId,  dirId, setDirId,
+        BE, uint64_t, maybeTxnId, setMaybeTxnId, // if 0, it's a sentinel
+        END_STATIC
+    )
+
+    bool isSentinel() const {
+        return maybeTxnId() == 0;
+    }
+
+    CDCTxnId txnId() const {
+        ALWAYS_ASSERT(maybeTxnId() != 0);
+        return maybeTxnId();
+    }
+
+    void setTxnId(CDCTxnId txnId) {
+        ALWAYS_ASSERT(txnId.x != 0);
+        setMaybeTxnId(txnId.x);
+    }
+
+    void setSentinel() {
+        setMaybeTxnId(0);
+    }
+};
 
 struct MakeDirectoryState {
     FIELDS(

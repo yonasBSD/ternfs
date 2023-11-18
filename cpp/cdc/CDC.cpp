@@ -6,13 +6,14 @@
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <atomic>
-#include <sys/epoll.h>
 #include <fcntl.h>
 #include <optional>
 #include <thread>
 #include <unordered_map>
 #include <arpa/inet.h>
 #include <unordered_set>
+#include <map>
+#include <poll.h>
 
 #include "Bincode.hpp"
 #include "CDC.hpp"
@@ -41,9 +42,6 @@ struct CDCShared {
     std::array<ShardInfo, 256> shards;
     // How long it took us to process the entire request, from parse to response.
     std::array<Timings, maxCDCMessageKind+1> timingsTotal;
-    // How long it took to process the request, from when it exited the queue to
-    // when it finished executing.
-    std::array<Timings, maxCDCMessageKind+1> timingsProcess;
     std::array<ErrorCount, maxCDCMessageKind+1> errors;
     // right now we have a max of 200req/s and we send the metrics every minute or so, so
     // this should cover us for at least 1.5mins. Power of two is good for mod.
@@ -57,7 +55,6 @@ struct CDCShared {
         ownPorts[1].store(0);
         for (CDCMessageKind kind : allCDCMessageKind) {
             timingsTotal[(int)kind] = Timings::Standard();
-            timingsProcess[(int)kind] = Timings::Standard();
         }
         for (int i = 0; i < inFlightTxnsWindow.size(); i++) {
             inFlightTxnsWindow[i] = 0;
@@ -66,13 +63,15 @@ struct CDCShared {
 };
 
 struct InFlightShardRequest {
-    uint64_t txnId; // the txn id that requested this shard request
+    CDCTxnId txnId; // the txn id that requested this shard request
     EggsTime sentAt;
-    uint64_t shardRequestId;
     ShardId shid;
 };
 
 struct InFlightCDCRequest {
+    bool hasClient;
+    uint64_t lastSentRequestId;
+    // if hasClient=false, the following is all garbage.
     uint64_t cdcRequestId;
     EggsTime receivedAt;
     struct sockaddr_in clientAddr;
@@ -114,8 +113,68 @@ struct InFlightCDCRequestKey {
 template <>
 struct std::hash<InFlightCDCRequestKey> {
     std::size_t operator()(const InFlightCDCRequestKey& key) const {
-        return key.requestId ^ (((uint64_t)key.port << 32) | ((uint64_t)key.ip));
+        return std::hash<uint64_t>{}(key.requestId ^ (((uint64_t)key.port << 32) | ((uint64_t)key.ip)));
     }
+};
+
+struct InFlightShardRequests {
+private:
+    using RequestsMap = std::unordered_map<uint64_t, InFlightShardRequest>;
+    RequestsMap _reqs;
+
+    std::map<EggsTime, uint64_t> _pq;
+
+public:
+    size_t size() const {
+        return _reqs.size();
+    }
+
+    RequestsMap::const_iterator oldest() const {
+        ALWAYS_ASSERT(size() > 0);
+        auto reqByTime = _pq.begin();
+        return _reqs.find(reqByTime->second);
+    }
+
+    RequestsMap::const_iterator find(uint64_t reqId) const {
+        return _reqs.find(reqId);
+    }
+
+    RequestsMap::const_iterator end() {
+        return _reqs.end();
+    }
+
+    void erase(RequestsMap::const_iterator iterator) {
+        _pq.erase(iterator->second.sentAt);
+        _reqs.erase(iterator);
+    }
+
+    void insert(uint64_t reqId, const InFlightShardRequest& req) {
+        auto [reqIt, inserted] = _reqs.insert({reqId, req});
+
+        // TODO i think we can just assert inserted, we never need this
+        // functionality
+
+        if (inserted) {            
+            // we have never seen this shard request.
+            // technically we could get the same time twice, but in practice
+            // we won't, so just assert it.
+            ALWAYS_ASSERT(_pq.insert({req.sentAt, reqId}).second);
+        } else {
+            // we had already seen this. make sure it's for the same stuff, and update pq.
+            ALWAYS_ASSERT(reqIt->second.txnId == req.txnId);
+            ALWAYS_ASSERT(reqIt->second.shid == req.shid);
+            ALWAYS_ASSERT(_pq.erase(reqIt->second.sentAt) == 1);   // must be already present
+            ALWAYS_ASSERT(_pq.insert({req.sentAt, reqId}).second); // insert with new time
+            reqIt->second.sentAt = req.sentAt; // update time in existing entry
+        }
+    }
+};
+
+struct CDCReqInfo {
+    uint64_t reqId;
+    struct sockaddr_in clientAddr;
+    EggsTime receivedAt;
+    int sock;
 };
 
 struct CDCServer : Loop {
@@ -126,19 +185,21 @@ private:
     uint64_t _currentLogIndex;
     std::vector<char> _recvBuf;
     std::vector<char> _sendBuf;
-    CDCReqContainer _cdcReqContainer;
-    ShardRespContainer _shardRespContainer;
+    std::vector<CDCReqContainer> _cdcReqs;
+    std::vector<CDCReqInfo> _cdcReqsInfo;
+    std::vector<CDCTxnId> _cdcReqsTxnIds;
+    std::vector<CDCShardResp> _shardResps;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
-    int _epoll;
-    std::array<int, 4> _socks;
-    struct epoll_event _events[4];
+    // order: CDC, shard, CDC, shard
+    // length will be 2 or 4 depending on whether we have a second ip
+    std::vector<struct pollfd> _socks;
     AES128Key _expandedCDCKey;
     Duration _shardTimeout;
     uint64_t _maximumEnqueuedRequests;
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
-    std::unordered_map<uint64_t, InFlightCDCRequest> _inFlightTxns;
+    std::unordered_map<CDCTxnId, InFlightCDCRequest> _inFlightTxns;
     uint64_t _inFlightTxnsWindowCursor;
     // The enqueued requests, but indexed by req id + ip + port. We
     // store this so that we can drop repeated requests which are
@@ -148,27 +209,7 @@ private:
     // a useful optimization for now that we live with it.
     std::unordered_set<InFlightCDCRequestKey> _inFlightCDCReqs;
     // The _shard_ request we're currently waiting for, if any.
-    std::optional<InFlightShardRequest> _inFlightShardReq;
-    // This is just used to calculate the timings
-    uint64_t _runningTxn;
-    CDCMessageKind _runningTxnKind;
-    EggsTime _runningTxnStartedAt;
-    CDCStatus _status;
-
-    void _updateProcessTimings() {
-        if (_status.runningTxn != _runningTxn) { // we've got something new
-            EggsTime now = eggsNow();
-            if (_runningTxn != 0) { // something has finished running
-                _shared.timingsProcess[(int)_runningTxnKind].add(now - _runningTxnStartedAt);
-                _runningTxn = 0;
-            }
-            if (_status.runningTxn != 0) { // something has started running
-                _runningTxn = _status.runningTxn;
-                _runningTxnKind = _status.runningTxnKind;
-                _runningTxnStartedAt = now;
-            }
-        }
-    }
+    InFlightShardRequests _inFlightShardReqs;
 
 public:
     CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared) :
@@ -178,14 +219,13 @@ public:
         _ipPorts(options.ipPorts),
         _recvBuf(DEFAULT_UDP_MTU),
         _sendBuf(DEFAULT_UDP_MTU),
-        _shardRequestIdCounter(0),
+        // important to not catch stray requests from previous executions
+        _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout),
         _maximumEnqueuedRequests(options.maximumEnqueuedRequests),
-        _inFlightTxnsWindowCursor(0),
-        _runningTxn(0)
+        _inFlightTxnsWindowCursor(0)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
-        memset(&_socks[0], 0, sizeof(_socks));
         expandKey(CDCKey, _expandedCDCKey);
     }
 
@@ -201,31 +241,69 @@ public:
             _seenShards = true;
             _initAfterShardsSeen();
         }
+        
+        // clear internal buffers
+        _cdcReqs.clear();
+        _cdcReqsInfo.clear();
+        _cdcReqsTxnIds.clear();
+        _shardResps.clear();
 
         // Process CDC requests and shard responses
         {
             auto now = eggsNow();
-            if (_inFlightShardReq && (now - _inFlightShardReq->sentAt) > _shardTimeout) {
-                LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, timing out (%s > %s)", _inFlightShardReq->shardRequestId, _inFlightShardReq->sentAt, now, (now - _inFlightShardReq->sentAt), _shardTimeout);
-                auto shid = _inFlightShardReq->shid;
-                _inFlightShardReq.reset();
-                _handleShardError(shid, EggsError::TIMEOUT);
+            for (;;) {
+                if (_inFlightShardReqs.size() == 0) { break; }
+                auto oldest = _inFlightShardReqs.oldest();
+                if ((now - oldest->second.sentAt) < _shardTimeout) { break; }
+
+                LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, will time out (%s > %s)", oldest->first, oldest->second.sentAt, now, (now - oldest->second.sentAt), _shardTimeout);
+                auto resp = _prepareCDCShardResp(oldest->first); // erases `oldest`
+                ALWAYS_ASSERT(resp != nullptr); // must be there, we've just timed it out
+                resp->err = EggsError::TIMEOUT;
             }
         }
 
         // 10ms timeout for prompt termination and for shard resps timeouts
-        int nfds = epoll_wait(_epoll, _events, _socks.size(), 10 /*milliseconds*/);
-        if (nfds < 0) {
-            throw SYSCALL_EXCEPTION("epoll_wait");
+        int ret = poll(_socks.data(), _socks.size(), 10);
+        if (ret < 0) {
+            throw SYSCALL_EXCEPTION("poll");
         }
 
-        for (int i = 0; i < nfds; i++) {
-            const auto& event = _events[i];
-            if (event.data.u64%2 == 0) {
-                _drainCDCSock(_socks[event.data.u64]);
-            } else {
-                _drainShardSock(_socks[event.data.u64]);
+        // drain sockets
+        // TODO drain shard sockets first, put an upper bound on the number
+        // of accepted packets, so that we prioritize completing outstanding
+        // txns.
+        for (int i = 0; i < _socks.size(); i++) {
+            const auto& pollFd = _socks[i];
+            if (pollFd.events & POLLIN) {
+                if (i%2 == 0) {
+                    _drainCDCSock(pollFd.fd);
+                } else {
+                    _drainShardSock(pollFd.fd);
+                }
             }
+        }
+
+        if (_cdcReqs.size() > 0 || _shardResps.size() > 0) {
+            // process everything in a single batch
+            _shared.db.update(true, _advanceLogIndex(), _cdcReqs, _shardResps, _step, _cdcReqsTxnIds);
+            // record txn ids etc. for newly received requests
+            for (int i = 0; i < _cdcReqs.size(); i++) {
+                const auto& req = _cdcReqs[i];
+                const auto& reqInfo = _cdcReqsInfo[i];
+                CDCTxnId txnId = _cdcReqsTxnIds[i];
+                ALWAYS_ASSERT(_inFlightTxns.find(txnId) == _inFlightTxns.end());
+                auto& inFlight = _inFlightTxns[txnId];
+                inFlight.hasClient = true;
+                inFlight.cdcRequestId = reqInfo.reqId;
+                inFlight.clientAddr = reqInfo.clientAddr;
+                inFlight.kind = req.kind();
+                inFlight.receivedAt = reqInfo.receivedAt;
+                inFlight.sock = reqInfo.sock;
+                _updateInFlightTxns();
+                _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqInfo.reqId, reqInfo.clientAddr));
+            }
+            _processStep();
         }
     }
 
@@ -261,17 +339,34 @@ private:
         return true;
     }
 
+    // To be called when we have a shard response with given `reqId`.
+    // Searches it in the in flight map, removes it from it, and
+    // adds a CDCShardResp to `_shardResps`.
+    // nullptr if we couldn't find the in flight response. Fills in txnId,
+    // and nothing else.
+    CDCShardResp* _prepareCDCShardResp(uint64_t reqId) {
+        // If it's not the request we wanted, skip
+        auto reqIt = _inFlightShardReqs.find(reqId);
+        if (reqIt == _inFlightShardReqs.end()) {
+            LOG_INFO(_env, "got unexpected shard request id %s, dropping", reqId);
+            return nullptr;
+        }
+        CDCTxnId txnId = reqIt->second.txnId;
+        auto& resp = _shardResps.emplace_back();
+        resp.txnId = reqIt->second.txnId;
+        _inFlightShardReqs.erase(reqIt); // not in flight anymore
+        return &resp;
+    }
+
     void _initAfterShardsSeen() {
         // initialize everything after having seen the shards
         // Create sockets. We create one socket for listening to client requests and one for listening
         // the the shard's responses. If we have two IPs we do this twice.
+        _socks.resize((_ipPorts[1].ip == 0) ? 2 : 4);
         for (int i = 0; i < _socks.size(); i++) {
-            if (i > 1 && _ipPorts[1].ip == 0) { // we don't have a second IP
-                _socks[i] = -1;
-                continue;
-            }
             int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            _socks[i] = sock;
+            _socks[i].fd = sock;
+            _socks[i].events = POLLIN;
             if (sock < 0) {
                 throw SYSCALL_EXCEPTION("cannot create socket");
             }
@@ -305,32 +400,12 @@ private:
                 LOG_DEBUG(_env, "bound shard %s sock to port %s", i/2, ntohs(addr.sin_port));
             }
         }
-
-        // create epoll structure
-        // TODO I did this when I had more sockets, we could just use select now that it's 4
-        // of them...
-        _epoll = epoll_create1(0);
-        if (_epoll < 0) {
-            throw SYSCALL_EXCEPTION("epoll");
-        }
-        for (int i = 0; i < _socks.size(); i++) {
-            if (i > 1 && _ipPorts[1].ip == 0) { // we don't have a second IP
-                break;
-            }
-            auto& event = _events[i];
-            event.data.u64 = i;
-            event.events = EPOLLIN | EPOLLET;
-            if (epoll_ctl(_epoll, EPOLL_CTL_ADD, _socks[i], &event) == -1) {
-                throw SYSCALL_EXCEPTION("epoll_ctl");
-            }
-        }
-
+    
         LOG_INFO(_env, "running on ports %s and %s", _shared.ownPorts[0].load(), _shared.ownPorts[1].load());
 
-        // If we've got a dangling transaction, immediately start processing it
-        _shared.db.startNextTransaction(true, eggsNow(), _advanceLogIndex(), _step, _status);
-        _updateProcessTimings();
-        _processStep(_step);
+        // If we've got dangling transactions, immediately start processing it
+        _shared.db.bootstrap(true, _advanceLogIndex(), _step);
+        _processStep();
     }
 
     void _drainCDCSock(int sock) {
@@ -381,9 +456,10 @@ private:
             EggsError err = NO_ERROR;
 
             // Now, try to parse the body
+            auto& cdcReq = _cdcReqs.emplace_back();
             try {
-                _cdcReqContainer.unpack(reqBbuf, reqHeader.kind);
-                LOG_DEBUG(_env, "parsed request: %s", _cdcReqContainer);
+                cdcReq.unpack(reqBbuf, reqHeader.kind);
+                LOG_DEBUG(_env, "parsed request: %s", cdcReq);
             } catch (const BincodeException& exc) {
                 LOG_ERROR(_env, "could not parse: %s", exc.what());
                 RAISE_ALERT(_env, "could not parse CDC request of kind %s from %s, will reply with error.", reqHeader.kind, clientAddr);
@@ -397,24 +473,18 @@ private:
             }
 
             if (err == NO_ERROR) {
-                // If things went well, process the request
-                LOG_DEBUG(_env, "CDC request %s successfully parsed, will now process", _cdcReqContainer.kind());
-                uint64_t txnId = _shared.db.processCDCReq(true, eggsNow(), _advanceLogIndex(), _cdcReqContainer, _step, _status);
-                _updateProcessTimings();
-                auto& inFlight = _inFlightTxns[txnId];
-                inFlight.cdcRequestId = reqHeader.requestId;
-                inFlight.clientAddr = clientAddr;
-                inFlight.kind = reqHeader.kind;
-                inFlight.sock = sock;
-                inFlight.receivedAt = receivedAt;
-                _updateInFlightTxns();
-                _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqHeader.requestId, clientAddr));
-                // Go forward
-                _processStep(_step);
+                LOG_DEBUG(_env, "CDC request %s successfully parsed, will process soon", cdcReq.kind());
+                _cdcReqsInfo.emplace_back(CDCReqInfo{
+                    .reqId = reqHeader.requestId,
+                    .clientAddr = clientAddr,
+                    .receivedAt = receivedAt,
+                    .sock = sock,
+                });
             } else {
-                // Otherwise we can immediately reply with an error
-                RAISE_ALERT(_env, "request %s failed before enqueue with error %s", _cdcReqContainer.kind(), err);
+                // We couldn't parse, reply immediately with an error
+                RAISE_ALERT(_env, "request %s failed before enqueue with error %s", cdcReq.kind(), err);
                 _sendError(sock, reqHeader.requestId, err, clientAddr);
+                _cdcReqs.pop_back(); // let's just forget all about this
             }
         }
     }
@@ -448,100 +518,90 @@ private:
             // control all the code in this codebase, and the header is good, and we're a
             // bit lazy.
 
-            // If it's not the request we wanted, skip
-            if (!_inFlightShardReq) {
-                LOG_INFO(_env, "got unexpected shard request id %s, kind %s, from shard, dropping", respHeader.requestId, respHeader.kind);
+            auto shardResp = _prepareCDCShardResp(respHeader.requestId);
+            if (shardResp == nullptr) {
+                // we couldn't find it
                 continue;
             }
-            if (_inFlightShardReq->shardRequestId != respHeader.requestId) {
-                LOG_INFO(_env, "got unexpected shard request id %s (expected %s), kind %s, from shard %s, dropping", respHeader.requestId, _inFlightShardReq->shardRequestId, respHeader.kind, _inFlightShardReq->shid);
-                continue;
-            }
-            uint64_t txnId = _inFlightShardReq->txnId;
-
-            // We can forget about this, we're going to process it right now
-            _inFlightShardReq.reset();
 
             // We got an error
             if (respHeader.kind == (ShardMessageKind)0) {
-                EggsError err = reqBbuf.unpackScalar<EggsError>();
-                _handleShardError(_inFlightShardReq->shid, err);
+                shardResp->err = reqBbuf.unpackScalar<EggsError>();
+                LOG_DEBUG(_env, "got error %s for response id %s", shardResp->err, respHeader.requestId);
                 continue;
             }
 
             // Otherwise, parse the body
-            _shardRespContainer.unpack(reqBbuf, respHeader.kind);
-            LOG_DEBUG(_env, "parsed shard response: %s", _shardRespContainer);
+            shardResp->resp.unpack(reqBbuf, respHeader.kind);
+            LOG_DEBUG(_env, "parsed shard response: %s", shardResp->resp);
             ALWAYS_ASSERT(reqBbuf.remaining() == 0);
 
             // If all went well, advance with the newly received request
-            LOG_DEBUG(_env, "successfully parsed shard response %s with kind %s, will now process", respHeader.requestId, respHeader.kind);
-            _shared.db.processShardResp(true, eggsNow(), _advanceLogIndex(), NO_ERROR, &_shardRespContainer, _step, _status);
-            _updateProcessTimings();
-            _processStep(_step);
+            LOG_DEBUG(_env, "successfully parsed shard response %s with kind %s, process soon", respHeader.requestId, respHeader.kind);
         }
     }
 
-    void _handleShardError(ShardId shid, EggsError err) {
-        if (innocuousShardError(err)) {
-            LOG_DEBUG(_env, "got innocuous shard error %s from shard %s", err, shid);
-        } else if (rareInnocuousShardError(err)) {
-            LOG_INFO(_env, "got rare innocuous shard error %s from shard %s", err, shid);
-        } else {
-            RAISE_ALERT(_env, "got shard error %s from shard %s", err, shid);
-        }
-        _shared.db.processShardResp(true, eggsNow(), _advanceLogIndex(), err, nullptr, _step, _status);
-        _updateProcessTimings();
-        _processStep(_step);
-    }
-
-    void _processStep(const CDCStep& step) {
-        LOG_DEBUG(_env, "processing step %s", step);
-        if (step.txnFinished != 0) {
-            LOG_DEBUG(_env, "txn %s finished", step.txnFinished);
+    void _processStep() {
+        LOG_DEBUG(_env, "processing step %s", _step);
+        // finished txns
+        for (const auto& [txnId, resp]: _step.finishedTxns) {
+            LOG_DEBUG(_env, "txn %s finished", txnId);
             // we need to send the response back to the client
-            auto inFlight = _inFlightTxns.find(step.txnFinished);
-            if (inFlight == _inFlightTxns.end()) {
-                LOG_INFO(_env, "Could not find in-flight request %s, this might be because the CDC was restarted in the middle of a transaction.", step.txnFinished);
-            } else {
+            auto inFlight = _inFlightTxns.find(txnId);
+            if (inFlight->second.hasClient) {
                 _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
-                _shared.errors[(int)inFlight->second.kind].add(_step.err);
-                if (step.err != NO_ERROR) {
-                    if (rareInnocuousShardError(step.err)) {
-                        LOG_INFO(_env, "txn %s, req id %s, finished with rare innocuous error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
-                    } else if (!innocuousShardError(step.err)) {
-                        RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", step.txnFinished, inFlight->second.cdcRequestId, step.err);
+                _shared.errors[(int)inFlight->second.kind].add(resp.err);
+                if (resp.err != NO_ERROR) {
+                    if (innocuousShardError(resp.err)) {
+                        LOG_INFO(_env, "txn %s, req id %s, finished with innocuous error %s", txnId, inFlight->second.cdcRequestId, resp.err);
+                    } else if (rareInnocuousShardError(resp.err)) {
+                        LOG_INFO(_env, "txn %s, req id %s, finished with rare innocuous error %s", txnId, inFlight->second.cdcRequestId, resp.err);
+                    } else {
+                        RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", txnId, inFlight->second.cdcRequestId, resp.err);
                     }
-                    _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, step.err, inFlight->second.clientAddr);
+                    _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, resp.err, inFlight->second.clientAddr);
                 } else {
                     LOG_DEBUG(_env, "sending response with req id %s, kind %s, back to %s", inFlight->second.cdcRequestId, inFlight->second.kind, inFlight->second.clientAddr);
                     BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
                     CDCResponseHeader respHeader(inFlight->second.cdcRequestId, inFlight->second.kind);
                     respHeader.pack(bbuf);
-                    step.resp.pack(bbuf);
+                    resp.resp.pack(bbuf);
                     _send(inFlight->second.sock, inFlight->second.clientAddr, (const char*)bbuf.data, bbuf.len());
                 }
                 _inFlightCDCReqs.erase(InFlightCDCRequestKey(inFlight->second.cdcRequestId, inFlight->second.clientAddr));
-                _inFlightTxns.erase(inFlight);
-                _updateInFlightTxns();
             }
+            _inFlightTxns.erase(inFlight);
+            _updateInFlightTxns();
         }
-        if (step.txnNeedsShard != 0) {
+        // in flight txns
+        for (const auto& [txnId, shardReq]: _step.runningTxns) {
             CDCShardReq prevReq;
-            LOG_TRACE(_env, "txn %s needs shard %s, req %s", step.txnNeedsShard, step.shardReq.shid, step.shardReq.req);
+            LOG_TRACE(_env, "txn %s needs shard %s, req %s", txnId, shardReq.shid, shardReq.req);
             BincodeBuf bbuf(&_sendBuf[0], _sendBuf.size());
             // Header
             ShardRequestHeader shardReqHeader;
             // Do not allocate new req id for repeated requests, so that we'll just accept
-            // the first one that comes back.
-            if (!step.shardReq.repeated) {
+            // the first one that comes back. There's a chance for the txnId to not be here
+            // yet: if we have just restarted the CDC. In this case we fill it in here, but
+            // obviously without client addr.
+            auto inFlightTxn = _inFlightTxns.find(txnId);
+            if (inFlightTxn == _inFlightTxns.end()) {
+                LOG_INFO(_env, "Could not find in-flight transaction %s, this might be because the CDC was restarted in the middle of a transaction.", txnId);
+                InFlightCDCRequest req;
+                req.hasClient = false;
+                req.lastSentRequestId = _freshShardReqId();
+                inFlightTxn = _inFlightTxns.emplace(txnId, req).first;
+                _updateInFlightTxns();
+            } else if (shardReq.repeated) {
+                shardReqHeader.requestId = inFlightTxn->second.lastSentRequestId;
+            } else {
                 _shardRequestIdCounter++;
+                shardReqHeader.requestId = _shardRequestIdCounter;
             }
-            shardReqHeader.requestId = _shardRequestIdCounter;
-            shardReqHeader.kind = step.shardReq.req.kind();
+            shardReqHeader.kind = shardReq.req.kind();
             shardReqHeader.pack(bbuf);
             // Body
-            step.shardReq.req.pack(bbuf);
+            shardReq.req.pack(bbuf);
             // MAC, if necessary
             if (isPrivilegedRequestKind(shardReqHeader.kind)) {
                 bbuf.packFixedBytes<8>({cbcmac(_expandedCDCKey, bbuf.data, bbuf.len())});
@@ -550,7 +610,7 @@ private:
             struct sockaddr_in shardAddr;
             memset(&shardAddr, 0, sizeof(shardAddr));
             _shared.shardsMutex.lock();
-            ShardInfo shardInfo = _shared.shards[step.shardReq.shid.u8];
+            ShardInfo shardInfo = _shared.shards[shardReq.shid.u8];
             _shared.shardsMutex.unlock();
             auto now = eggsNow(); // randomly pick one of the shard addrs and one of our sockets
             int whichShardAddr = now.ns & !!shardInfo.port2;
@@ -559,21 +619,15 @@ private:
             shardAddr.sin_port = htons(whichShardAddr ? shardInfo.port2 : shardInfo.port1);
             static_assert(sizeof(shardAddr.sin_addr) == sizeof(shardInfo.ip1));
             memcpy(&shardAddr.sin_addr, (whichShardAddr ? shardInfo.ip2 : shardInfo.ip1).data.data(), sizeof(shardAddr.sin_addr));
-            LOG_DEBUG(_env, "sending request with req id %s to shard %s (%s)", shardReqHeader.requestId, step.shardReq.shid, shardAddr);
-            _send(_socks[whichSock*2 + 1], shardAddr, (const char*)bbuf.data, bbuf.len());
+            LOG_DEBUG(_env, "sending request for txn %s with req id %s to shard %s (%s)", txnId, shardReqHeader.requestId, shardReq.shid, shardAddr);
+            _send(_socks[whichSock*2 + 1].fd, shardAddr, (const char*)bbuf.data, bbuf.len());
             // Record the in-flight req
-            ALWAYS_ASSERT(!_inFlightShardReq);
-            auto& inFlight = _inFlightShardReq.emplace();
-            inFlight.shardRequestId = shardReqHeader.requestId;
-            inFlight.sentAt = now;
-            inFlight.txnId = step.txnNeedsShard;
-            inFlight.shid = step.shardReq.shid;
-        }
-        if (step.nextTxn != 0) {
-            LOG_DEBUG(_env, "we have txn %s lined up, starting it", step.nextTxn);
-            _shared.db.startNextTransaction(true, eggsNow(), _advanceLogIndex(), _step, _status);
-            _updateProcessTimings();
-            _processStep(_step);
+            _inFlightShardReqs.insert(shardReqHeader.requestId, InFlightShardRequest{
+                .txnId = txnId,
+                .sentAt = now,
+                .shid = shardReq.shid,
+            });
+            inFlightTxn->second.lastSentRequestId = shardReqHeader.requestId;
         }
     }
     
@@ -730,11 +784,6 @@ public:
                 _shared.timingsTotal[(int)kind].toStats(prefix.str(), _stats);
                 _shared.errors[(int)kind].toStats(prefix.str(), _stats);
             }
-            {
-                std::ostringstream prefix;
-                prefix << "cdc." << kind << ".process";
-                _shared.timingsProcess[(int)kind].toStats(prefix.str(), _stats);
-            }
         }
         err = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
         _stats.clear();
@@ -743,7 +792,6 @@ public:
             for (CDCMessageKind kind : allCDCMessageKind) {
                 _shared.timingsTotal[(int)kind].reset();
                 _shared.errors[(int)kind].reset();
-                _shared.timingsProcess[(int)kind].reset();
             }
             return true;
         } else {

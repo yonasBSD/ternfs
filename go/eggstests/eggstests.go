@@ -302,6 +302,15 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"parallel dirs",
+		"",
+		func(counters *lib.ClientCounters) {
+			parallelDirsTest(log, r.shuckleAddress(), counters)
+		},
+	)
+
 	largeFileOpts := largeFileTestOpts{
 		fileSize: 1 << 30, // 1GiB
 	}
@@ -311,15 +320,6 @@ func (r *RunTests) run(
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
 		func(counters *lib.ClientCounters) {
 			largeFileTest(log, &largeFileOpts, r.mountPoint)
-		},
-	)
-
-	r.test(
-		log,
-		"parallel dirs",
-		"",
-		func(counters *lib.ClientCounters) {
-			parallelDirsTest(log, r.shuckleAddress(), counters)
 		},
 	)
 

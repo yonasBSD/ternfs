@@ -7,6 +7,11 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +50,31 @@ static void wyhash64_bytes(uint64_t* state, uint8_t* bytes, size_t len) {
     for (bytes = (uint8_t*)words; bytes < end; bytes++) {
         *bytes = wyhash64(state) & 0xFF;
     }
+}
+
+// Not specific to wyhash, just handy
+__attribute__((unused))
+static uint64_t wyhash64_rand() {
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "could not open /dev/urandom: %d", errno);
+        exit(1);
+    }
+    uint64_t x;
+    ssize_t r = read(fd, &x, sizeof(x));
+    if (r < 0) {
+        fprintf(stderr, "could read /dev/urandom: %d", errno);
+        exit(1);
+    }
+    if (r != sizeof(x)) {
+        fprintf(stderr, "expected %ld bytes from /dev/urandom, got %ld", sizeof(x), r);
+        exit(1);
+    }
+    if (close(fd) < 0) {
+        fprintf(stderr, "could not close /dev/urandom: %d", errno);
+        exit(1);
+    }
+    return x;
 }
 
 #ifdef __cplusplus

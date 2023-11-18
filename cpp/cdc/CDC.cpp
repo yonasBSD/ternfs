@@ -189,6 +189,7 @@ private:
     std::vector<CDCReqInfo> _cdcReqsInfo;
     std::vector<CDCTxnId> _cdcReqsTxnIds;
     std::vector<CDCShardResp> _shardResps;
+    int _maxUpdateSize;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
     // order: CDC, shard, CDC, shard
@@ -218,6 +219,7 @@ public:
         _ipPorts(options.ipPorts),
         _recvBuf(DEFAULT_UDP_MTU),
         _sendBuf(DEFAULT_UDP_MTU),
+        _maxUpdateSize(500),
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout),
@@ -249,7 +251,7 @@ public:
         // Process CDC requests and shard responses
         {
             auto now = eggsNow();
-            for (;;) {
+            while (_updateSize() < _maxUpdateSize) {
                 if (_inFlightShardReqs.size() == 0) { break; }
                 auto oldest = _inFlightShardReqs.oldest();
                 if ((now - oldest->second.sentAt) < _shardTimeout) { break; }
@@ -267,21 +269,22 @@ public:
             throw SYSCALL_EXCEPTION("poll");
         }
 
-        // drain sockets
-        // TODO drain shard sockets first, put an upper bound on the number
-        // of accepted packets, so that we prioritize completing outstanding
-        // txns.
-        for (int i = 0; i < _socks.size(); i++) {
-            const auto& pollFd = _socks[i];
-            if (pollFd.events & POLLIN) {
-                if (i%2 == 0) {
-                    _drainCDCSock(pollFd.fd);
-                } else {
-                    _drainShardSock(pollFd.fd);
-                }
+        // Drain sockets, first the shard resps ones (so we clear existing txns
+        // first), then the CDC reqs ones.
+        int maxUpdateSize = 100;
+        for (int i = 1; i < _socks.size(); i += 2) {
+            const auto& sock = _socks[i];
+            if (sock.events & POLLIN) {
+                _drainShardSock(sock.fd);
             }
         }
-
+        for (int i = 0; i < _socks.size(); i += 2) {
+            const auto& sock = _socks[i];
+            if (sock.events & POLLIN) {
+                _drainCDCSock(sock.fd);
+            }
+        }
+        // If anything happened, update the db and write down the in flight CDCs
         if (_cdcReqs.size() > 0 || _shardResps.size() > 0) {
             // process everything in a single batch
             _shared.db.update(true, _advanceLogIndex(), _cdcReqs, _shardResps, _step, _cdcReqsTxnIds);
@@ -406,10 +409,14 @@ private:
         _processStep();
     }
 
+    size_t _updateSize() const {
+        return _cdcReqs.size() + _shardResps.size();
+    }
+
     void _drainCDCSock(int sock) {
         struct sockaddr_in clientAddr;
 
-        for (;;) {
+        while (_updateSize() < _maxUpdateSize) {
             // Read one request
             memset(&clientAddr, 0, sizeof(clientAddr));
             socklen_t addrLen = sizeof(clientAddr);
@@ -482,7 +489,7 @@ private:
     }
 
     void _drainShardSock(int sock) {
-        for (;;) {
+        while (_updateSize() < _maxUpdateSize) {
             ssize_t read = recv(sock, &_recvBuf[0], _recvBuf.size(), 0);
             if (read < 0 && errno == EAGAIN) {
                 return;

@@ -540,6 +540,14 @@ private:
         }
     }
 
+    #ifdef __clang__
+    __attribute__((no_sanitize("integer"))) // might wrap around (it's initialized randomly)
+    #endif
+    inline uint64_t _freshShardReqId() {
+        _shardRequestIdCounter++;
+        return _shardRequestIdCounter;
+    }
+
     void _processStep() {
         LOG_DEBUG(_env, "processing step %s", _step);
         // finished txns
@@ -594,8 +602,7 @@ private:
             } else if (shardReq.repeated) {
                 shardReqHeader.requestId = inFlightTxn->second.lastSentRequestId;
             } else {
-                _shardRequestIdCounter++;
-                shardReqHeader.requestId = _shardRequestIdCounter;
+                shardReqHeader.requestId = _freshShardReqId();
             }
             shardReqHeader.kind = shardReq.req.kind();
             shardReqHeader.pack(bbuf);

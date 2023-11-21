@@ -72,7 +72,7 @@ func parallelDirsTest(
 						panic(err)
 					}
 					fullName := fmt.Sprintf("%v/%v", ownerIx, entityName(tid, i))
-					log.Info("creating %q", fullName)
+					log.Debug("creating %q", fullName)
 					dirs[tid][fullName] = createdDir{
 						id:           resp.Id,
 						creationTime: resp.CreationTime,
@@ -120,7 +120,7 @@ func parallelDirsTest(
 						NewName:         entityName(tid, i),
 					}
 					newFullName := fmt.Sprintf("%v/%v", newOwnerIx, entityName(tid, i))
-					log.Info("renaming %q to %q", oldFullName, newFullName)
+					log.Debug("renaming %q to %q", oldFullName, newFullName)
 					resp := &msgs.RenameDirectoryResp{}
 					if err := client.CDCRequest(log, req, resp); err != nil {
 						panic(err)

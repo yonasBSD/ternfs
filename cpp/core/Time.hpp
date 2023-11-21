@@ -85,6 +85,11 @@ struct EggsTime {
         return EggsTime(ns + d.ns);
     }
 
+    // Two positive times might give one negative
+    // duration.
+    #ifdef __clang__
+    __attribute__((no_sanitize("integer")))
+    #endif
     Duration operator-(EggsTime d) {
         return Duration(ns - d.ns);
     }

@@ -265,7 +265,8 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 	buf := bytes.NewBuffer([]byte{})
 	for {
 		req := <-cm.incoming
-		log.Debug("sending request %v req id %v to shard %v", req.req, req.requestId, req.shard)
+		dontWait := req.resp == nil
+		log.Debug("sending request %+v req id %v to shard %v", req.req, req.requestId, req.shard)
 		buf.Reset()
 		var addrs *[2]net.UDPAddr
 		var kind uint8
@@ -299,18 +300,22 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
 		if err != nil {
 			log.RaiseAlert("could not send request %v to shard %v addr %v, will quit: %v", req.req, req.shard, addr, err)
-			req.respCh <- &metadataProcessorResponse{
-				requestId: req.requestId,
-				err:       err,
-				resp:      nil,
+			if !dontWait {
+				req.respCh <- &metadataProcessorResponse{
+					requestId: req.requestId,
+					err:       err,
+					resp:      nil,
+				}
 			}
 			return
 		}
 		if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
 		}
-		req.deadline = time.Now().Add(req.timeout)
-		cm.inFlight <- req
+		if !dontWait {
+			req.deadline = time.Now().Add(req.timeout)
+			cm.inFlight <- req
+		}
 	}
 }
 

@@ -314,6 +314,15 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"parallel dirs",
+		"",
+		func(counters *lib.ClientCounters) {
+			parallelDirsTest(log, r.shuckleAddress(), counters)
+		},
+	)
+
 	rsyncOpts := rsyncTestOpts{
 		maxFileSize: 200 << 20, // 200MiB
 		numFiles:    100,       // 20GiB

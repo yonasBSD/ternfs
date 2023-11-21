@@ -717,9 +717,6 @@ int eggsfs_shard_add_span_initiate(
 
     size_t msg_size = MSG_SIZE(B, stripes, blacklist_length);
     char req[EGGSFS_SHARD_HEADER_SIZE + MSG_SIZE(EGGSFS_MAX_BLOCKS, EGGSFS_MAX_STRIPES, EGGSFS_MAX_BLACKLIST_LENGTH)];
-    if (req == NULL) {
-        return -ENOMEM;
-    }
 
 #undef MSG_SIZE
 

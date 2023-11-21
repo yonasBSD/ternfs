@@ -3,6 +3,7 @@
 
 #include "inode.h"
 
+extern unsigned eggsfs_atime_update_interval_sec;
 extern unsigned eggsfs_max_write_span_attempts;
 extern int eggsfs_file_refresh_time_jiffies; // this is only relevant for mtime/atime updates
 

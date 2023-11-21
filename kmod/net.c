@@ -285,14 +285,14 @@ struct sk_buff* eggsfs_metadata_request(
 // format is nicer and makes the buckets a bit more precise.
 // |1 below drops the 0 value to the smallest bucket
 #define INC_LATENCY_BUCKET ({ \
-	u64 hist_bucket = 0; \
-	u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1; \
-	__asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs)); \
-	if (shard_id < 0) { \
-	    atomic64_add(1, (atomic64_t*)&cdc_latencies[latencies_idx + hist_bucket]); \
-	} else { \
-	    atomic64_add(1, (atomic64_t*)&shard_latencies[latencies_idx + hist_bucket]); \
-	} \
+        u64 hist_bucket = 0; \
+        u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1; \
+        __asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs)); \
+        if (shard_id < 0) { \
+            atomic64_add(1, (atomic64_t*)&cdc_latencies[latencies_idx + hist_bucket]); \
+        } else { \
+            atomic64_add(1, (atomic64_t*)&shard_latencies[latencies_idx + hist_bucket]); \
+        } \
     });
 
     for (;;) {
@@ -310,13 +310,26 @@ struct sk_buff* eggsfs_metadata_request(
         insert_shard_request(sock, &req);
         spin_unlock_bh(&sock->lock);
 
+        timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
         eggsfs_debug("sending: " LOG_STR, LOG_ARGS)
         eggsfs_debug("sending to sock=%p iov=%p len=%u", sock->sock, p, len);
         err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
         if (err < 0) {
             INC_STAT_COUNTER(NET_FAILURES)
             eggsfs_info("could not send: " LOG_STR " err=%d", LOG_ARGS, err);
-            goto out_unregister;
+            spin_lock_bh(&sock->lock);
+            // TODO what are the circumstances where this can be true? That is, kernel_sendmsg returns
+            // an error, but we get a fill from the shard?
+            BUG_ON(req.skb);
+            rb_erase(&req.node, &sock->requests);
+            spin_unlock_bh(&sock->lock);
+            elapsed = get_jiffies_64() - start_t;
+
+            if (err == -ENETUNREACH && elapsed < overall_timeout) {
+                msleep(timeout);
+                continue;
+            }
+            goto out;
         }
 
         err = wait_for_request(sock, &req, timeout);
@@ -324,7 +337,6 @@ struct sk_buff* eggsfs_metadata_request(
         elapsed = t - start_t;
         (*attempts)++;
         INC_STAT_COUNTER(ATTEMPTED)
-        timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
         if (!err) {
             eggsfs_debug("got response");
             BUG_ON(!req.skb);
@@ -359,16 +371,6 @@ struct sk_buff* eggsfs_metadata_request(
             goto out_err;
         }
     }
-
-out_unregister:
-    spin_lock_bh(&sock->lock);
-    // TODO what are the circumstances where this can be true? That is, kernel_sendmsg returns
-    // an error, but we get a fill from the shard?
-    BUG_ON(req.skb);
-    rb_erase(&req.node, &sock->requests);
-    spin_unlock_bh(&sock->lock);
-    elapsed = get_jiffies_64() - start_t;
-    goto out;
 
 out_err:
     WARN_LATE

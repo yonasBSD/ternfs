@@ -191,6 +191,7 @@ func dirSeekTest(log *lib.Logger, shuckleAddress string, mountPoint string) {
 	if err != nil {
 		panic(err)
 	}
+	defer C.close(dirFd)
 	// get dents
 	bufsize := 500
 	dents, err := getAllDents(bufsize, dirFd)

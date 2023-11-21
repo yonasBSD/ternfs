@@ -517,7 +517,7 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
 		StderrFile:      path.Join(opts.Dir, "stderr"),
 		TerminateOnExit: true,
-		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1"},
+		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1", "ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer"},
 	}
 	if opts.Valgrind {
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)
@@ -601,7 +601,7 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
 		StderrFile:      path.Join(opts.Dir, "stderr"),
 		TerminateOnExit: true,
-		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1"},
+		Env:             []string{"UBSAN_OPTIONS=print_stacktrace=1", "ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer"},
 	}
 	if opts.Valgrind {
 		mpArgs.Name = fmt.Sprintf("%s (valgrind)", mpArgs.Name)

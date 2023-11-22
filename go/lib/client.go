@@ -209,12 +209,12 @@ type clientMetadata struct {
 	requestsByTimeout metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
 	earlyRequests     map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet
 
-	quit          chan struct{}                  // channel to quit the response processor, which in turn closes the socket
-	incoming      chan *metadataProcessorRequest // channel where user requests come in
-	inFlight      chan *metadataProcessorRequest // channel going from request processor to response processor
-	rawResponses  chan rawMetadataResponse       // channel going from the socket drainer to the response processor
-	responsesBufs chan *[]byte                   // channel to store a cache of buffers to read into
-	timeoutTicker *time.Ticker                   // channel to notify the response processor to time out requests
+	quitResponseProcessor chan struct{}                  // channel to quit the response processor, which in turn closes the socket
+	incoming              chan *metadataProcessorRequest // channel where user requests come in
+	inFlight              chan *metadataProcessorRequest // channel going from request processor to response processor
+	rawResponses          chan rawMetadataResponse       // channel going from the socket drainer to the response processor
+	responsesBufs         chan *[]byte                   // channel to store a cache of buffers to read into
+	timeoutTicker         *time.Ticker                   // channel to notify the response processor to time out requests
 }
 
 var whichMetadatataAddr int
@@ -237,7 +237,7 @@ func (cm *clientMetadata) init(log *Logger, client *Client) error {
 	cm.requestsByTimeout = make(metadataRequestsPQ, 0)
 	cm.earlyRequests = make(map[uint64]rawMetadataResponse)
 
-	cm.quit = make(chan struct{})
+	cm.quitResponseProcessor = make(chan struct{})
 	cm.incoming = make(chan *metadataProcessorRequest, 10_000)
 	cm.inFlight = make(chan *metadataProcessorRequest, 10_000)
 	cm.rawResponses = make(chan rawMetadataResponse, 10_000)
@@ -258,13 +258,19 @@ func (cm *clientMetadata) init(log *Logger, client *Client) error {
 
 func (cm *clientMetadata) close() {
 	cm.timeoutTicker.Stop()
-	cm.quit <- struct{}{}
+	cm.quitResponseProcessor <- struct{}{}
+	cm.incoming <- nil
 }
 
+// terminates when cm.incoming gets nil
 func (cm *clientMetadata) processRequests(log *Logger) {
 	buf := bytes.NewBuffer([]byte{})
 	for {
 		req := <-cm.incoming
+		if req == nil {
+			log.Debug("got nil request in request processor, winding down")
+			return
+		}
 		dontWait := req.resp == nil
 		log.Debug("sending request %+v req id %v to shard %v", req.req, req.requestId, req.shard)
 		buf.Reset()
@@ -290,6 +296,7 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 				err:       err,
 				resp:      nil,
 			}
+			// keep running even if the socket is totally broken to process all the requests
 			continue
 		}
 		addr := &addrs[whichMetadatataAddr%2]
@@ -299,7 +306,7 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 		whichMetadatataAddr++
 		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
 		if err != nil {
-			log.RaiseAlert("could not send request %v to shard %v addr %v, will quit: %v", req.req, req.shard, addr, err)
+			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
 			if !dontWait {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
@@ -307,7 +314,6 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 					resp:      nil,
 				}
 			}
-			return
 		}
 		if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
@@ -404,6 +410,7 @@ func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorReques
 	}
 }
 
+// terminates when `cm.quitResponseProcessor` gets a message
 func (cm *clientMetadata) processResponses(log *Logger) {
 	for {
 		select {
@@ -457,13 +464,15 @@ func (cm *clientMetadata) processResponses(log *Logger) {
 					delete(cm.earlyRequests, reqId)
 				}
 			}
-		case <-cm.quit:
-			log.Info("got quit signal, closing socket")
+		case <-cm.quitResponseProcessor:
+			log.Info("got quit signal, closing socket and terminating")
 			cm.sock.Close()
+			return
 		}
 	}
 }
 
+// terminates when the socket is closed
 func (cm *clientMetadata) drainSocket(log *Logger) {
 	for {
 		var buf *[]byte
@@ -480,10 +489,10 @@ func (cm *clientMetadata) drainSocket(log *Logger) {
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				log.Info("socket is closed, winding down")
+				return
 			} else {
-				log.RaiseAlert("got error when reading socket, winding down: %v", err)
+				log.RaiseAlert("got error when reading socket: %v", err)
 			}
-			return
 		}
 		if read < 4+8+1 {
 			log.RaiseAlert("got runt metadata message, expected at least %v bytes, got %v", 4+8+1, read)

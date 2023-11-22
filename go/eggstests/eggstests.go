@@ -846,7 +846,7 @@ func main() {
 		}
 		// low initial timeout for fast packet drop stuff
 		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", lib.DefaultShardTimeout.Initial.Milliseconds()))
-		sysctl("fs.eggsfs.overall_cdc_timeout_ms", fmt.Sprintf("%v", lib.DefaultCDCTimeout.Initial.Milliseconds()))
+		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", lib.DefaultCDCTimeout.Initial.Milliseconds()))
 	}
 
 	// Start cached spans dropper

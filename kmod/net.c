@@ -182,10 +182,13 @@ out_err:
 
 // TODO: congestion control
 
-static void eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
+static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
     u64 v1 = atomic64_read(addr_data);
 
     __be32 ip = eggsfs_get_addr_ip(v1);
+    if (unlikely(ip == 0)) {
+        return false;
+    }
     __be16 port = eggsfs_get_addr_port(v1);
 
     addr->sin_addr.s_addr = ip;
@@ -197,6 +200,7 @@ static void eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* add
     msg->msg_control = NULL;
     msg->msg_controllen = 0;
     msg->msg_flags = 0;
+    return true;
 }
 
 static u64 WHICH_SHARD_IP = 0;
@@ -207,7 +211,9 @@ int eggsfs_metadata_request_nowait(struct eggsfs_shard_socket* sock, u64 req_id,
     if (WHICH_SHARD_IP++ % 2) {
         eggsfs_shard_fill_msghdr(&msg, &addr, addr_data1);
     } else {
-        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data2);
+        if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data2))) {
+            BUG_ON(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data1));
+        }
     }
     struct kvec vec;
     vec.iov_base = p;
@@ -299,7 +305,9 @@ struct sk_buff* eggsfs_metadata_request(
         struct sockaddr_in addr;
         struct msghdr msg;
 
-        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[which_shard_ip%2]);
+        if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[which_shard_ip%2]))) {
+            BUG_ON(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0]));
+        }
         which_shard_ip++;
 
         trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?

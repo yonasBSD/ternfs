@@ -960,6 +960,11 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
             while (*ppos < span_data_end && iov_iter_count(to)) {
                 struct page* page = eggsfs_get_span_page(block_span, page_ix);
                 if (IS_ERR(page)) {
+                    int err = PTR_ERR(page);
+                    if (err == -EINTR) { // we don't want to retry this one
+                        written = err;
+                        goto out;
+                    }
                     if (span_read_attempts == 0) {
                         // The idea behind this is that span structure changes extremely rarely: currently only
                         // when we "defrag" files into a new span structure (note that span boundary never changes).

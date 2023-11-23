@@ -66,7 +66,6 @@ enum class EggsError : uint16_t {
     BLOCK_TOO_OLD_FOR_WRITE = 69,
     BLOCK_IO_ERROR = 70,
     BLOCK_PARTIAL_IO_ERROR = 71,
-    TIME_TOO_RECENT = 72,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -134,10 +133,9 @@ const std::vector<EggsError> allEggsErrors {
     EggsError::BLOCK_TOO_OLD_FOR_WRITE,
     EggsError::BLOCK_IO_ERROR,
     EggsError::BLOCK_PARTIAL_IO_ERROR,
-    EggsError::TIME_TOO_RECENT,
 };
 
-constexpr int maxEggsError = 73;
+constexpr int maxEggsError = 72;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,

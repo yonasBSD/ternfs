@@ -62,7 +62,6 @@ const char* eggsfs_err_str(int err) {
     case 69: return "BLOCK_TOO_OLD_FOR_WRITE";
     case 70: return "BLOCK_IO_ERROR";
     case 71: return "BLOCK_PARTIAL_IO_ERROR";
-    case 72: return "TIME_TOO_RECENT";
     default: return "UNKNOWN";
     }
 }

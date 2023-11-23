@@ -1405,7 +1405,6 @@ func main() {
 		"BLOCK_TOO_OLD_FOR_WRITE",
 		"BLOCK_IO_ERROR",
 		"BLOCK_PARTIAL_IO_ERROR",
-		"TIME_TOO_RECENT",
 	}
 
 	kernelShardReqResps := []reqRespType{

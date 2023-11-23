@@ -158,7 +158,6 @@ struct ShardDBImpl {
 
     ShardId _shid;
     Duration _transientDeadlineInterval;
-    Duration _minAtimeInterval;
     std::array<uint8_t, 16> _secretKey;
     AES128Key _expandedSecretKey;
     
@@ -194,13 +193,12 @@ struct ShardDBImpl {
 
     ShardDBImpl() = delete;
 
-    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path, const ShardDBConfig& config) :
+    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path) :
         _env(logger, xmon, "shard_db"),
-        _shid(config.shid),
-        _transientDeadlineInterval(config.deadlineInterval),
-        _minAtimeInterval(config.minAtimeInterval)
+        _shid(shid),
+        _transientDeadlineInterval(deadlineInterval)
     {
-        LOG_INFO(_env, "will run shard %s in db dir %s", _shid, path);
+        LOG_INFO(_env, "will run shard %s in db dir %s", shid, path);
 
         // TODO actually figure out the best strategy for each family, including the default
         // one.
@@ -1661,30 +1659,6 @@ struct ShardDBImpl {
         if (req.id.shard() != _shid) {
             return EggsError::BAD_SHARD;
         }
-
-        // check if we're within limits
-        {
-            std::string fileValue;
-            ExternalValue<FileBody> file;
-            EggsError err = _getFile({}, req.id, fileValue, file);
-            if (err != NO_ERROR) {
-                return err;
-            }
-            const auto check = [&file](uint64_t entryT, EggsTime (FileBody::*getTime)() const, Duration minInterval) {
-                if (entryT & (1ull<<63)) {
-                    EggsTime t = entryT & ~(1ull<<63);
-                    if ((t - (file().*getTime)()) < minInterval) {
-                        return EggsError::TIME_TOO_RECENT;
-                    }
-                }
-                return NO_ERROR;
-            };
-            err = check(req.atime, &FileBody::atime, _minAtimeInterval);
-            if (err != NO_ERROR) { return err; }
-            err = check(req.mtime, &FileBody::mtime, std::numeric_limits<std::int64_t>::min());
-            if (err != NO_ERROR) { return err; }
-        }
-
         entry.id = req.id;
         entry.atime = req.atime;
         entry.mtime = req.mtime;
@@ -1794,9 +1768,6 @@ struct ShardDBImpl {
         if (err == NO_ERROR) {
             LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s", logEntryBody.kind(), req.kind());
             LOG_TRACE(_env, "log entry body: %s", logEntryBody);
-        } else if (err == EggsError::TIME_TOO_RECENT) {
-            // this is totally legitimate
-            LOG_DEBUG(_env, "could not prepare log entry for request of kind %s: %s", req.kind(), err);
         } else {
             LOG_INFO(_env, "could not prepare log entry for request of kind %s: %s", req.kind(), err);
         }
@@ -3841,8 +3812,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, const std::string& path, const ShardDBConfig& config) {
-    _impl = new ShardDBImpl(logger, agent, path, config);
+ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const std::string& path) {
+    _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, path);
 }
 
 void ShardDB::close() {

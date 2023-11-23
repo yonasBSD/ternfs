@@ -77,11 +77,6 @@ public:
         EggsError err = db.prepareLogEntry(req, logEntry);
         if (err == NO_ERROR) {
             err = _applyLogEntryLocked(req.kind(), logEntry, resp);
-        } else if (req.kind() == ShardMessageKind::SET_TIME && err == EggsError::TIME_TOO_RECENT) {
-            // We don't want errors for this one to the client. We very
-            // often send this request without waiting (to set atime) anyway.
-            resp.setSetTime().clear();
-            return NO_ERROR;
         }
         return err;
     }
@@ -590,7 +585,6 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
-        LOG_INFO(env, "  minAtimeInterval = %s", options.minAtimeInterval);
     }
 
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
@@ -608,11 +602,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
-    ShardDB db(logger, xmon, dbDir, ShardDBConfig{
-        .shid = shid,
-        .deadlineInterval = options.transientDeadlineInterval,
-        .minAtimeInterval = options.minAtimeInterval,
-    });
+    ShardDB db(logger, xmon, shid, options.transientDeadlineInterval, dbDir);
     env.clearAlert(dbInitAlert);
 
     ShardShared shared(db);

@@ -62,7 +62,6 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_BAD_BLOCK_CRC: return true;
     case EGGSFS_ERR_BLOCK_TOO_BIG: return true;
     case EGGSFS_ERR_BLOCK_NOT_FOUND: return true;
-    case EGGSFS_ERR_TIME_TOO_RECENT: return false;
     case -ERESTARTSYS: return false;
     case -ETIMEDOUT: return false;
     case -ECONNREFUSED: return false;

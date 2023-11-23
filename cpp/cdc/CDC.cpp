@@ -274,13 +274,13 @@ public:
         int maxUpdateSize = 100;
         for (int i = 1; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
-            if (sock.events & POLLIN) {
+            if (sock.revents & POLLIN) {
                 _drainShardSock(sock.fd);
             }
         }
         for (int i = 0; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
-            if (sock.events & POLLIN) {
+            if (sock.revents & POLLIN) {
                 _drainCDCSock(sock.fd);
             }
         }

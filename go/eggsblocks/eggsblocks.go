@@ -557,7 +557,7 @@ func handleRequestError(
 	}
 
 	if netErr, ok := rootErr.(net.Error); ok && netErr.Timeout() {
-		log.Info("got timeout from %v, terminating", conn.RemoteAddr())
+		log.Debug("got timeout from %v, terminating", conn.RemoteAddr())
 		return false
 	}
 	if sysErr, ok := rootErr.(syscall.Errno); ok {

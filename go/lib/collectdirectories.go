@@ -2,7 +2,6 @@ package lib
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"xtx/eggsfs/msgs"
 )
@@ -23,7 +22,6 @@ type CollectDirectoriesState struct {
 func applyPolicy(
 	log *Logger,
 	client *Client,
-	cdcMu *sync.Mutex,
 	stats *CollectDirectoriesStats,
 	dirId msgs.InodeId,
 	policy *msgs.SnapshotPolicy,
@@ -60,9 +58,7 @@ func applyPolicy(
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				cdcMu.Lock()
 				err = client.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
-				cdcMu.Unlock()
 			}
 		} else {
 			// non-owned edge, we can just kill it without worrying about much.
@@ -83,7 +79,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
@@ -122,7 +118,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 				hasEdges = true
 			}
 			if len(edges) > 0 && (edges[0].NameHash != result.NameHash || edges[0].Name != result.Name) {
-				allRemoved, err := applyPolicy(log, client, cdcMu, stats, dirId, policy, edges)
+				allRemoved, err := applyPolicy(log, client, stats, dirId, policy, edges)
 				if err != nil {
 					return err
 				}
@@ -133,7 +129,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 		}
 		if stop {
 			if len(edges) > 0 {
-				allRemoved, err := applyPolicy(log, client, cdcMu, stats, dirId, policy, edges)
+				allRemoved, err := applyPolicy(log, client, stats, dirId, policy, edges)
 				if err != nil {
 					return err
 				}
@@ -156,9 +152,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 			req := msgs.HardUnlinkDirectoryReq{
 				DirId: dirId,
 			}
-			cdcMu.Lock()
 			err := client.CDCRequest(log, &req, &msgs.HardUnlinkDirectoryResp{})
-			cdcMu.Unlock()
 			if err != nil {
 				return fmt.Errorf("error while trying to remove directory inode: %w", err)
 			}
@@ -168,7 +162,7 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, c
 	return nil
 }
 
-func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, cdcMu *sync.Mutex, state *CollectDirectoriesState, shards []msgs.ShardId) error {
+func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, state *CollectDirectoriesState, shards []msgs.ShardId) error {
 	log.Info("starting to collect directories in shards %+v", shards)
 	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
 	for i := range reqs {
@@ -195,7 +189,7 @@ func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache,
 				if id.Shard() != shid {
 					panic("bad shard")
 				}
-				if err := CollectDirectory(log, client, dirInfoCache, cdcMu, &state.Stats, id); err != nil {
+				if err := CollectDirectory(log, client, dirInfoCache, &state.Stats, id); err != nil {
 					return fmt.Errorf("error while collecting inode %v: %w", id, err)
 				}
 			}
@@ -212,12 +206,11 @@ func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache,
 
 func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
 	state := CollectDirectoriesState{}
-	var cdcMu sync.Mutex
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	if err := CollectDirectories(log, client, dirInfoCache, &cdcMu, &state, shards); err != nil {
+	if err := CollectDirectories(log, client, dirInfoCache, &state, shards); err != nil {
 		return err
 	}
 	log.Info("stats after one all shards collect directories iteration: %+v", state.Stats)

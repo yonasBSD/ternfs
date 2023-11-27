@@ -334,6 +334,7 @@ struct sk_buff* eggsfs_metadata_request(
             elapsed = get_jiffies_64() - start_t;
 
             if (err == -ENETUNREACH && elapsed < overall_timeout) {
+                eggsfs_warn(LOG_STR " got retryable net error when sending: %d", LOG_ARGS, err);
                 msleep(timeout);
                 continue;
             }

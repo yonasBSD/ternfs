@@ -1079,41 +1079,33 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
-    // Technically we could read/write to enode->file.status using
-    // release/acquire and don't take any lock here and immediately
-    // dispatch to generic_file_llseek, but feeling lazy.
-    //
-    // We could also replicate the logic in generic_file_llseek inline.
+    if (likely(smp_load_acquire(&enode->file.status) != EGGSFS_FILE_STATUS_WRITING)) {
+        return generic_file_llseek(file, offset, whence);
+    }
 
     inode_lock(inode);
 
-    if (enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-        loff_t ppos = enode->inode.i_size;
-        switch (whence) {
-        case SEEK_SET:
-            if (offset < ppos) { goto out_err; }
-            break;
-        case SEEK_CUR:
-        case SEEK_END:
-            if (offset < 0) { goto out_err; }
-            offset = ppos + offset;
-            break;
-        default:
-            goto out_err;
+    loff_t ppos = enode->inode.i_size;
+    switch (whence) {
+    case SEEK_SET:
+        if (offset < ppos) { goto out_err; }
+        break;
+    case SEEK_CUR:
+    case SEEK_END:
+        if (offset < 0) { goto out_err; }
+        offset = ppos + offset;
+        break;
+    default:
+        goto out_err;
+    }
+    while (ppos < offset) {
+        ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, offset - ppos);
+        if (unlikely(written < 0)) {
+            offset = written;
+            goto out;
         }
-        while (ppos < offset) {
-            ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, offset - ppos);
-            if (unlikely(written < 0)) {
-                offset = written;
-                goto out;
-            }
-            file->f_pos = ppos;
-            file->f_version = 0; // what's this for?
-        }
-    } else {
-        // very lazy
-        inode_unlock(inode);
-        return generic_file_llseek(file, offset, whence);
+        file->f_pos = ppos;
+        file->f_version = 0; // what's this for?
     }
 
 out:

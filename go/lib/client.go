@@ -207,7 +207,7 @@ type clientMetadata struct {
 
 	requestsById      map[uint64]*metadataProcessorRequest // requests we've sent, by req id
 	requestsByTimeout metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
-	earlyRequests     map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet
+	earlyRequests     map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet. should be uncommon.
 
 	quitResponseProcessor chan struct{}                  // channel to quit the response processor, which in turn closes the socket
 	incoming              chan *metadataProcessorRequest // channel where user requests come in
@@ -228,7 +228,9 @@ func (cm *clientMetadata) init(log *Logger, client *Client) error {
 		return err
 	}
 	cm.sock = sock.(*net.UDPConn)
-	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
+	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
+	// kinda conservative.
+	if err := cm.sock.SetReadBuffer(1 << 20); err != nil {
 		cm.sock.Close()
 		return err
 	}
@@ -247,7 +249,7 @@ func (cm *clientMetadata) init(log *Logger, client *Client) error {
 		cm.responsesBufs <- &buf
 	}
 
-	cm.timeoutTicker = time.NewTicker(100 * time.Millisecond)
+	cm.timeoutTicker = time.NewTicker(DefaultShardTimeout.Initial / 2)
 
 	go cm.processRequests(log)
 	go cm.processResponses(log)
@@ -291,10 +293,12 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 		binary.Write(buf, binary.LittleEndian, kind)
 		if err := req.req.Pack(buf); err != nil {
 			log.RaiseAlert("could not pack request %v to shard %v: %v", req.req, req.shard, err)
-			req.respCh <- &metadataProcessorResponse{
-				requestId: req.requestId,
-				err:       err,
-				resp:      nil,
+			if !dontWait {
+				req.respCh <- &metadataProcessorResponse{
+					requestId: req.requestId,
+					err:       err,
+					resp:      nil,
+				}
 			}
 			// keep running even if the socket is totally broken to process all the requests
 			continue
@@ -325,7 +329,7 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 	}
 }
 
-func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse) {
+func (cm *clientMetadata) parseResponse(log *Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse) {
 	// discharge the raw request at the end
 	defer func() {
 		select {
@@ -352,11 +356,10 @@ func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorReques
 		heap.Remove(&cm.requestsByTimeout, req.index)
 	}
 	if rawResp.kind == msgs.ERROR {
-		// it's an error
 		var err error
 		if rawResp.respLen != 4+8+1+2 {
 			log.RaiseAlert("bad error response length %v, expected %v", rawResp.respLen, 4+8+1+2)
-			err = msgs.MALFORMED_REQUEST
+			err = msgs.MALFORMED_RESPONSE
 		} else {
 			err = msgs.ErrCode(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
 		}
@@ -373,7 +376,7 @@ func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorReques
 				log.RaiseAlert("got bad cdc kind %v for request id %v, expected %v", msgs.CDCMessageKind(rawResp.kind), req.requestId, expectedKind)
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
-					err:       msgs.MALFORMED_REQUEST,
+					err:       msgs.MALFORMED_RESPONSE,
 					resp:      nil,
 				}
 				return
@@ -384,7 +387,7 @@ func (cm *clientMetadata) parseRequest(log *Logger, req *metadataProcessorReques
 				log.RaiseAlert("got bad shard kind %v for request id %v, shard %v, expected %v", msgs.ShardMessageKind(rawResp.kind), req.requestId, req.shard, expectedKind)
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
-					err:       msgs.MALFORMED_REQUEST,
+					err:       msgs.MALFORMED_RESPONSE,
 					resp:      nil,
 				}
 				return
@@ -417,7 +420,7 @@ func (cm *clientMetadata) processResponses(log *Logger) {
 		case req := <-cm.inFlight:
 			if rawResp, found := cm.earlyRequests[req.requestId]; found {
 				// uncommon case: we have a response for this already.
-				cm.parseRequest(log, req, &rawResp)
+				cm.parseResponse(log, req, &rawResp)
 			} else {
 				// common case: we don't have the response yet, put it in the data structures and wait.
 				// if the request was there before, we remove it from the heap so that we don't have
@@ -431,7 +434,7 @@ func (cm *clientMetadata) processResponses(log *Logger) {
 		case rawResp := <-cm.rawResponses:
 			if req, found := cm.requestsById[rawResp.requestId]; found {
 				// common case, the request is already there
-				cm.parseRequest(log, req, &rawResp)
+				cm.parseResponse(log, req, &rawResp)
 			} else {
 				// uncommon case, the request is missing
 				cm.earlyRequests[rawResp.requestId] = rawResp

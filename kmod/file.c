@@ -1079,7 +1079,7 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
-    if (likely(smp_load_acquire(&enode->file.status) != EGGSFS_FILE_STATUS_WRITING)) {
+    if (likely(smp_load_acquire(&enode->file.status) == EGGSFS_FILE_STATUS_READING)) {
         return generic_file_llseek(file, offset, whence);
     }
 

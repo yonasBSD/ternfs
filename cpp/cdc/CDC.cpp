@@ -271,7 +271,6 @@ public:
 
         // Drain sockets, first the shard resps ones (so we clear existing txns
         // first), then the CDC reqs ones.
-        int maxUpdateSize = 100;
         for (int i = 1; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
             if (sock.revents & POLLIN) {

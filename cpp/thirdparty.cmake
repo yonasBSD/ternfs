@@ -1,5 +1,3 @@
-# We only include things that we care about performance-wise, or that alpine does not
-# have as static libraries.
 find_program(MAKE_EXE NAMES gmake nmake make)
 
 if(${CMAKE_VERSION} VERSION_GREATER "3.23") 

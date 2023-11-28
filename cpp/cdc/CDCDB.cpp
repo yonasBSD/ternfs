@@ -150,41 +150,75 @@ inline bool createCurrentLockedEdgeRetry(EggsError err) {
 
 static constexpr InodeId MOVE_DIRECTORY_LOCK = InodeId::FromU64Unchecked(1ull<<63);
 
+struct DirectoriesNeedingLock {
+private:
+    static constexpr int MAX_SIZE = 3;
+    std::array<InodeId, MAX_SIZE> _ids;
+    int _size;
+
+public:
+    DirectoriesNeedingLock() : _size(0) {
+        memset(_ids.data(), 0, _ids.size()*sizeof(decltype(_ids)::value_type));
+    }
+
+    int size() const {
+        return _size;
+    }
+
+    decltype(_ids)::const_iterator begin() const {
+        return _ids.begin();
+    }
+
+    decltype(_ids)::const_iterator end() const {
+        return _ids.begin() + _size;
+    }
+
+    void add(InodeId id) {
+        ALWAYS_ASSERT(_size != MAX_SIZE);
+        ALWAYS_ASSERT(id != InodeId::FromU64Unchecked(0));
+        for (InodeId otherId : _ids) {
+            if (otherId == id) { return; }
+        }
+        _ids[_size] = id;
+        _size++;
+    }
+};
+
 // These are all the directories where we'll lock edges given a request.
 // These function _must be pure_! We call it repeatedly as if it's a property
 // of the request more than a function.
 //
-// Technically every well form request will have distinct inode ids, but there
+// Technically every well formed request will have distinct inode ids, but there
 // are parts in the code where this function is called before we know that the
-// request is valid.
-static std::unordered_set<InodeId> directoriesNeedingLock(const CDCReqContainer& req) {
-    std::unordered_set<InodeId> toLock;
+// request is valid. Hence the set semantics of DirectoriesNeedingLock.
+static DirectoriesNeedingLock directoriesNeedingLock(const CDCReqContainer& req) {
+    DirectoriesNeedingLock toLock;
     switch (req.kind()) {
     case CDCMessageKind::MAKE_DIRECTORY:
-        toLock.emplace(req.getMakeDirectory().ownerId);
+        toLock.add(req.getMakeDirectory().ownerId);
         break;
     case CDCMessageKind::RENAME_FILE:
-        toLock.emplace(req.getRenameFile().oldOwnerId);
-        toLock.emplace(req.getRenameFile().newOwnerId);
+        toLock.add(req.getRenameFile().oldOwnerId);
+        toLock.add(req.getRenameFile().newOwnerId);
         break;
     case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
         // TODO I'm pretty sure the target id is fine, as
         // in, does not need locking.
-        toLock.emplace(req.getSoftUnlinkDirectory().ownerId);
+        toLock.add(req.getSoftUnlinkDirectory().ownerId);
         break;
     case CDCMessageKind::RENAME_DIRECTORY:
-        toLock.emplace(req.getRenameDirectory().oldOwnerId);
-        toLock.emplace(req.getRenameDirectory().newOwnerId);
+        toLock.add(req.getRenameDirectory().oldOwnerId);
+        toLock.add(req.getRenameDirectory().newOwnerId);
         // Moving directories is special: it can introduce loops if we're not careful.
         // Instead of trying to not create loops in the context of interleaved transactions,
         // we instead only allow one move directory at a time.
-        toLock.emplace(MOVE_DIRECTORY_LOCK);
+        toLock.add(MOVE_DIRECTORY_LOCK);
         break;
     case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        toLock.emplace(req.getHardUnlinkDirectory().dirId);
+        toLock.add(req.getHardUnlinkDirectory().dirId);
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
-        toLock.emplace(req.getCrossShardHardUnlinkFile().ownerId);
+        toLock.add(req.getCrossShardHardUnlinkFile().ownerId);
         break;
     case CDCMessageKind::ERROR:
         throw EGGS_EXCEPTION("bad req type error");

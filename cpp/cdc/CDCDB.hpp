@@ -1,7 +1,6 @@
 #pragma once
 
 #include <unordered_map>
-#include <optional>
 
 #include "Bincode.hpp"
 #include "Msgs.hpp"
@@ -12,7 +11,7 @@
 struct CDCTxnId {
     uint64_t x;
 
-    CDCTxnId() : x(0) {} // txn ids are never zeros
+    CDCTxnId() : x(0) {} // txn ids are never zeros, use it as a null value
     CDCTxnId(uint64_t x_) : x(x_) {}
 
     bool operator==(const CDCTxnId rhs) const {
@@ -95,7 +94,8 @@ public:
     // The functions below cannot be called concurrently.
 
     // Gives you what to do when the CDC is started back up. It'll basically just
-    // tell you to send some requests to shards. You need to run this when starting.
+    // tell you to send some requests to shards. You need to run this when starting
+    // up before proceeding.
     void bootstrap(
         bool sync,
         uint64_t logIndex,
@@ -116,7 +116,8 @@ public:
         const std::vector<CDCReqContainer>& cdcReqs,
         const std::vector<CDCShardResp>& shardResps,
         CDCStep& step,
-        std::vector<CDCTxnId>& cdcReqsTxnIds // output txn ids for all the requests
+        // Output txn ids for all the requests, same length as `cdcReqs`.
+        std::vector<CDCTxnId>& cdcReqsTxnIds
     );
 
     // The index of the last log entry persisted to the DB

@@ -12,7 +12,7 @@ import (
 	"xtx/eggsfs/wyhash"
 )
 
-type createdDir struct {
+type createInode struct {
 	id           msgs.InodeId
 	creationTime msgs.EggsTime
 }
@@ -53,10 +53,10 @@ func parallelDirsTest(
 	var wg sync.WaitGroup
 	wg.Add(numThreads)
 	done := uint64(0)
-	dirs := make([]map[string]createdDir, numThreads)
+	inodes := make([]map[string]createInode, numThreads)
 	for i := 0; i < numThreads; i++ {
 		tid := i
-		dirs[tid] = make(map[string]createdDir)
+		inodes[tid] = make(map[string]createInode)
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			rand := wyhash.New(uint64(tid))
@@ -64,7 +64,7 @@ func parallelDirsTest(
 				which := rand.Float64()
 				// we mostly issue creates since only one dir rename
 				// can exist at the same time.
-				if len(dirs[tid]) < 2 || which < 0.8 { // create
+				if len(inodes[tid]) < 2 || which < 0.7 { // create dir
 					ownerIx := int(rand.Uint32()) % len(rootDirs)
 					owner := rootDirs[ownerIx]
 					resp := &msgs.MakeDirectoryResp{}
@@ -73,16 +73,33 @@ func parallelDirsTest(
 					}
 					fullName := fmt.Sprintf("%v/%v", ownerIx, entityName(tid, i))
 					log.Debug("creating %q", fullName)
-					dirs[tid][fullName] = createdDir{
+					inodes[tid][fullName] = createInode{
 						id:           resp.Id,
 						creationTime: resp.CreationTime,
+					}
+				} else if which < 0.85 { // create file
+					ownerIx := int(rand.Uint32()) % len(rootDirs)
+					owner := rootDirs[ownerIx]
+					fileResp := msgs.ConstructFileResp{}
+					if err := client.ShardRequest(log, owner.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
+						panic(err)
+					}
+					linkResp := msgs.LinkFileResp{}
+					if err := client.ShardRequest(log, owner.Shard(), &msgs.LinkFileReq{FileId: fileResp.Id, Cookie: fileResp.Cookie, OwnerId: owner, Name: entityName(tid, i)}, &linkResp); err != nil {
+						panic(err)
+					}
+					fullName := fmt.Sprintf("%v/%v", ownerIx, entityName(tid, i))
+					log.Debug("creating file %q", fullName)
+					inodes[tid][fullName] = createInode{
+						id:           fileResp.Id,
+						creationTime: linkResp.CreationTime,
 					}
 				} else { // rename
 					// just pick the first one to rename
 					var oldFullName string
 					var targetId msgs.InodeId
 					var oldCreationTime msgs.EggsTime
-					for tmpDirName, x := range dirs[tid] {
+					for tmpDirName, x := range inodes[tid] {
 						oldFullName = tmpDirName
 						targetId = x.id
 						oldCreationTime = x.creationTime
@@ -111,24 +128,46 @@ func parallelDirsTest(
 						}
 					}
 					// do the rename
-					req := &msgs.RenameDirectoryReq{
-						TargetId:        targetId,
-						OldOwnerId:      oldOwner,
-						OldName:         oldName,
-						OldCreationTime: oldCreationTime,
-						NewOwnerId:      newOwner,
-						NewName:         entityName(tid, i),
-					}
-					newFullName := fmt.Sprintf("%v/%v", newOwnerIx, entityName(tid, i))
-					log.Debug("renaming %q to %q", oldFullName, newFullName)
-					resp := &msgs.RenameDirectoryResp{}
-					if err := client.CDCRequest(log, req, resp); err != nil {
-						panic(err)
-					}
-					delete(dirs[tid], oldFullName)
-					dirs[tid][newFullName] = createdDir{
-						id:           targetId,
-						creationTime: resp.CreationTime,
+					if targetId.Type() == msgs.DIRECTORY {
+						req := &msgs.RenameDirectoryReq{
+							TargetId:        targetId,
+							OldOwnerId:      oldOwner,
+							OldName:         oldName,
+							OldCreationTime: oldCreationTime,
+							NewOwnerId:      newOwner,
+							NewName:         entityName(tid, i),
+						}
+						newFullName := fmt.Sprintf("%v/%v", newOwnerIx, entityName(tid, i))
+						log.Debug("renaming dir %q to %q", oldFullName, newFullName)
+						resp := &msgs.RenameDirectoryResp{}
+						if err := client.CDCRequest(log, req, resp); err != nil {
+							panic(err)
+						}
+						delete(inodes[tid], oldFullName)
+						inodes[tid][newFullName] = createInode{
+							id:           targetId,
+							creationTime: resp.CreationTime,
+						}
+					} else {
+						req := &msgs.RenameFileReq{
+							TargetId:        targetId,
+							OldOwnerId:      oldOwner,
+							OldName:         oldName,
+							OldCreationTime: oldCreationTime,
+							NewOwnerId:      newOwner,
+							NewName:         entityName(tid, i),
+						}
+						newFullName := fmt.Sprintf("%v/%v", newOwnerIx, entityName(tid, i))
+						log.Debug("renaming file %q to %q", oldFullName, newFullName)
+						resp := &msgs.RenameFileResp{}
+						if err := client.CDCRequest(log, req, resp); err != nil {
+							panic(err)
+						}
+						delete(inodes[tid], oldFullName)
+						inodes[tid][newFullName] = createInode{
+							id:           targetId,
+							creationTime: resp.CreationTime,
+						}
 					}
 				}
 				if atomic.AddUint64(&done, 1)%256 == 0 {
@@ -154,7 +193,7 @@ func parallelDirsTest(
 	log.Info("checking")
 	expectedDirs := make(map[string]struct{})
 	for i := 0; i < numThreads; i++ {
-		for d := range dirs[i] {
+		for d := range inodes[i] {
 			expectedDirs[d] = struct{}{}
 		}
 	}

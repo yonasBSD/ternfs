@@ -204,7 +204,6 @@ func main() {
 	client.SetBlockTimeout(blockTimeouts)
 	counters := lib.NewClientCounters()
 	client.SetCounters(counters)
-	var cdcMu sync.Mutex
 	terminateChan := make(chan any)
 
 	collectDirectoriesState := &lib.CollectDirectoriesState{}
@@ -273,7 +272,7 @@ func main() {
 						waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 						log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
 						time.Sleep(waitFor)
-						if err := lib.CollectDirectories(log, client, dirInfoCache, &cdcMu, collectDirectoriesState, groupShards); err != nil {
+						if err := lib.CollectDirectories(log, client, dirInfoCache, collectDirectoriesState, groupShards); err != nil {
 							log.RaiseAlert("could not collect directories: %v", err)
 						}
 						wg.Done()

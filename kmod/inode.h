@@ -75,7 +75,6 @@ struct eggsfs_inode_file {
     // This is what we use in our prefetch heuristic.
     atomic64_t prefetch_section;
     atomic_t prefetches_in_flight;
-    wait_queue_head_t prefetches_in_flight_wq;
 
     // On top of sometimes holding references to inodes, we also have this
     // mechanism to try to make sure that every in-flight operation is done

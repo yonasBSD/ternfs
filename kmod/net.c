@@ -132,15 +132,17 @@ static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct e
     // We didn't get a response, it's our job to clean up the request.
     spin_lock_bh(&s->lock);
     // We might have filled the request in the time it took us to get here, in which
-    // case `sock_readable` will have already erased it.
-    if (likely(!req->skb)) {
+    // case `sock_readable` will have already erased it and we're actually good to
+    // go.
+    bool completed = !!req->skb;
+    if (likely(!completed)) {
         rb_erase(&req->node, &s->requests);
     }
     spin_unlock_bh(&s->lock);
     // If the request was filled in the meantime, we also need to free the skb.
-    if (unlikely(req->skb)) {
-        kfree_skb(req->skb);
-        req->skb = NULL;
+    if (completed) {
+        eggsfs_info("got response after waiting for it returned an error or timed out: %d", ret);
+        return 0;
     }
     return ret ? ret : -ETIMEDOUT;
 }
@@ -160,7 +162,7 @@ int eggsfs_init_shard_socket(struct eggsfs_shard_socket* s) {
     write_lock_bh(&s->sock->sk->sk_callback_lock);
     BUG_ON(s->sock->sk->sk_user_data);
     s->sock->sk->sk_user_data = s;
-    s->sock->sk->sk_data_ready = sock_readable; // FIXME: keep around the default one
+    s->sock->sk->sk_data_ready = sock_readable; // TODO: keep around the default one
     write_unlock_bh(&s->sock->sk->sk_callback_lock);
 
     addr.sin_family = AF_INET;

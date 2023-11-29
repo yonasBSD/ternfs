@@ -31,6 +31,7 @@ func (c *Client) metadataRequest(
 	// will keep trying as long as we get timeouts
 	timeoutAlertQuietPeriod := 10 * time.Second
 	timeoutAlert := log.NewNCAlert(timeoutAlertQuietPeriod)
+	defer log.ClearNC(timeoutAlert)
 	if shid < 0 {
 		timeouts = c.cdcTimeout
 		// currently the CDC can be extremely slow as we sync stuff

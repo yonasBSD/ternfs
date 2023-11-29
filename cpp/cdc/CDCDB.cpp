@@ -1489,12 +1489,8 @@ struct CDCDBImpl {
         ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&LAST_TXN_IN_QUEUE_KEY)));
         ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&EXECUTING_TXN_KEY)));
         ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&EXECUTING_TXN_STATE_KEY)));
-        // We could delete the CF itself, but let's do everything in the same transaction
-        std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator({}, _reqQueueCfLegacy));
-        for (it->Seek(""); it->Valid(); it->Next()) {
-            ROCKS_DB_CHECKED(dbTxn.Delete(_reqQueueCfLegacy, it->key()));
-        }
-        ROCKS_DB_CHECKED(it->status());
+        // We delete the _reqQueueCfLegacy CF outside the transaction, because it's just too expensive
+        // to delete here one-by-one.
     }
 
     void _initDb() {
@@ -1512,6 +1508,11 @@ struct CDCDBImpl {
         }
 
         commitTransaction(*dbTxn);
+
+        // This means that it'll be recreated and dropped each time, but that's OK.
+        _dbDontUseDirectly->DropColumnFamily(_reqQueueCfLegacy);
+
+        LOG_INFO(_env, "DB initialization done");
     }
 
     // ----------------------------------------------------------------

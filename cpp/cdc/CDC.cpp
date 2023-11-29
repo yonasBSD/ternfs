@@ -415,6 +415,13 @@ private:
                 _shared.ownPorts[i/2].store(ntohs(addr.sin_port));
             } else {
                 LOG_DEBUG(_env, "bound shard %s sock to port %s", i/2, ntohs(addr.sin_port));
+                // CDC req/resps are very small (say 50bytes), so this gives us space for
+                // 20k responses, which paired with the high timeout we currently set in production
+                // (1s) should give us high throughput without retrying very often.
+                int bufSize = 1<<20;
+                if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (void*)&bufSize, sizeof(bufSize)) < 0) {
+                    throw SYSCALL_EXCEPTION("setsockopt");
+                }
             }
         }
     

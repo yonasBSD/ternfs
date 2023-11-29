@@ -189,7 +189,7 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     if (err != 0) { goto out_socket; }
 
     INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
-    schedule_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
+    queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
 
     eggsfs_info("mount successful");
     return eggsfs_info;

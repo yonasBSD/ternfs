@@ -123,6 +123,10 @@ static void insert_shard_request(struct eggsfs_shard_socket* s, struct eggsfs_sh
 //
 // Once this is done, the request is guaranteed to not be in the tree anymore.
 static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct eggsfs_shard_request* req, u64 timeout_jiffies) {
+    u64 timeout_s = timeout_jiffies/HZ;
+    if (timeout_s > 10) {
+        eggsfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
+    }
     int ret = wait_for_completion_killable_timeout(&req->comp, timeout_jiffies);
     // We got a response, this is the happy path.
     if (likely(ret > 0)) {

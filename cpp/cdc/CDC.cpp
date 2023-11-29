@@ -81,20 +81,20 @@ struct InFlightCDCRequest {
 };
 
 // these can happen through normal user interaction
+//
+// MISMATCHING_CREATION_TIME can happen if we generate a timeout
+// in CDC.cpp, but the edge was actually created, and when we
+// try to recreate it we get a bad creation time.
 static bool innocuousShardError(EggsError err) {
-    return err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_EMPTY;
+    return err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_EMPTY || err == EggsError::MISMATCHING_CREATION_TIME;
 }
 
 // These can happen but should be rare.
 //
 // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
 // it, but somebody else might have created stuff in it in the meantime)
-//
-// MISMATCHING_CREATION_TIME signifies a genuine conflict between when
-// we start the txn and when we step through it. It should be pretty
-// rare.
 static bool rareInnocuousShardError(EggsError err) {
-    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::MISMATCHING_CREATION_TIME;
+    return err == EggsError::DIRECTORY_HAS_OWNER;
 }
 
 struct InFlightCDCRequestKey {

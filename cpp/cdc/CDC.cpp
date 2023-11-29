@@ -46,6 +46,7 @@ struct CDCShared {
     // right now we have a max of 200req/s and we send the metrics every minute or so, so
     // this should cover us for at least 1.5mins. Power of two is good for mod.
     std::array<std::atomic<size_t>, 0x3FFF> inFlightTxnsWindow;
+    ErrorCount shardErrors;
 
     CDCShared(CDCDB& db_) : db(db_) {
         for (auto& shard: shards) {
@@ -89,11 +90,11 @@ static bool innocuousShardError(EggsError err) {
 // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
 // it, but somebody else might have created stuff in it in the meantime)
 //
-// TIMEOUT/MISMATCHING_CREATION_TIME are actually concerning, but right
-// now they happen often and I need a better story for timeouts in general.
-// In the meantime let's not spam a gazillion alerts.
+// MISMATCHING_CREATION_TIME signifies a genuine conflict between when
+// we start the txn and when we step through it. It should be pretty
+// rare.
 static bool rareInnocuousShardError(EggsError err) {
-    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::TIMEOUT || err == EggsError::MISMATCHING_CREATION_TIME;
+    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::MISMATCHING_CREATION_TIME;
 }
 
 struct InFlightCDCRequestKey {
@@ -257,9 +258,10 @@ public:
                 if ((now - oldest->second.sentAt) < _shardTimeout) { break; }
 
                 LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, will time out (%s > %s)", oldest->first, oldest->second.sentAt, now, (now - oldest->second.sentAt), _shardTimeout);
-                auto resp = _prepareCDCShardResp(oldest->first); // erases `oldest`
+                uint64_t requestId = oldest->first;
+                auto resp = _prepareCDCShardResp(requestId); // erases `oldest`
                 ALWAYS_ASSERT(resp != nullptr); // must be there, we've just timed it out
-                resp->err = EggsError::TIMEOUT;
+                _recordCDCShardRespError(requestId, *resp, EggsError::TIMEOUT);
             }
         }
 
@@ -348,7 +350,8 @@ private:
         // If it's not the request we wanted, skip
         auto reqIt = _inFlightShardReqs.find(reqId);
         if (reqIt == _inFlightShardReqs.end()) {
-            LOG_INFO(_env, "got unexpected shard request id %s, dropping", reqId);
+            // This is a fairly common occurrence when timing out
+            LOG_DEBUG(_env, "got unexpected shard request id %s, dropping", reqId);
             return nullptr;
         }
         CDCTxnId txnId = reqIt->second.txnId;
@@ -356,6 +359,20 @@ private:
         resp.txnId = reqIt->second.txnId;
         _inFlightShardReqs.erase(reqIt); // not in flight anymore
         return &resp;
+    }
+
+    void _recordCDCShardRespError(uint64_t requestId, CDCShardResp& resp, EggsError err) {
+        resp.err = err;
+        _shared.shardErrors.add(err);
+        if (resp.err == EggsError::TIMEOUT) {
+            LOG_INFO(_env, "txn %s shard req %s, timed out", resp.txnId, requestId);
+        } else if (innocuousShardError(resp.err)) {
+            LOG_INFO(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, resp.err);
+        } else if (rareInnocuousShardError(resp.err)) {
+            LOG_INFO(_env, "txn %s shard req %s, finished with rare innocuous error %s", resp.txnId, requestId, resp.err);
+        } else {
+            RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", resp.txnId, requestId, resp.err);
+        }
     }
 
     void _initAfterShardsSeen() {
@@ -524,7 +541,7 @@ private:
 
             // We got an error
             if (respHeader.kind == (ShardMessageKind)0) {
-                shardResp->err = reqBbuf.unpackScalar<EggsError>();
+                _recordCDCShardRespError(respHeader.requestId, *shardResp, reqBbuf.unpackScalar<EggsError>());
                 LOG_DEBUG(_env, "got error %s for response id %s", shardResp->err, respHeader.requestId);
                 continue;
             }
@@ -533,6 +550,7 @@ private:
             shardResp->resp.unpack(reqBbuf, respHeader.kind);
             LOG_DEBUG(_env, "parsed shard response: %s", shardResp->resp);
             ALWAYS_ASSERT(reqBbuf.remaining() == 0);
+            _shared.shardErrors.add(NO_ERROR);
 
             // If all went well, advance with the newly received request
             LOG_DEBUG(_env, "successfully parsed shard response %s with kind %s, process soon", respHeader.requestId, respHeader.kind);
@@ -558,13 +576,6 @@ private:
                 _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
                 _shared.errors[(int)inFlight->second.kind].add(resp.err);
                 if (resp.err != NO_ERROR) {
-                    if (innocuousShardError(resp.err)) {
-                        LOG_INFO(_env, "txn %s, req id %s, finished with innocuous error %s", txnId, inFlight->second.cdcRequestId, resp.err);
-                    } else if (rareInnocuousShardError(resp.err)) {
-                        LOG_INFO(_env, "txn %s, req id %s, finished with rare innocuous error %s", txnId, inFlight->second.cdcRequestId, resp.err);
-                    } else {
-                        RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", txnId, inFlight->second.cdcRequestId, resp.err);
-                    }
                     _sendError(inFlight->second.sock, inFlight->second.cdcRequestId, resp.err, inFlight->second.clientAddr);
                 } else {
                     LOG_DEBUG(_env, "sending response with req id %s, kind %s, back to %s", inFlight->second.cdcRequestId, inFlight->second.kind, inFlight->second.clientAddr);
@@ -843,12 +854,20 @@ public:
             }
         }
         {
-            _metricsBuilder.measurement("eggsfs_cdc_queue");
+            _metricsBuilder.measurement("eggsfs_cdc_in_flight_txns");
             uint64_t sum = 0;
             for (size_t x: _shared.inFlightTxnsWindow) {
                 sum += x;
             }
             _metricsBuilder.fieldFloat("size", (double)sum / (double)_shared.inFlightTxnsWindow.size());
+            _metricsBuilder.timestamp(now);
+        }
+        for (int i = 0; i < _shared.shardErrors.count.size(); i++) {
+            uint64_t count = _shared.shardErrors.count[i].load();
+            if (count == 0) { continue; }
+            _metricsBuilder.measurement("eggsfs_cdc_shard_requests");
+            _metricsBuilder.tag("error", (EggsError)i);
+            _metricsBuilder.fieldU64("count", count);
             _metricsBuilder.timestamp(now);
         }
         {

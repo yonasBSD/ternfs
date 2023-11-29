@@ -365,9 +365,9 @@ private:
         resp.err = err;
         _shared.shardErrors.add(err);
         if (resp.err == EggsError::TIMEOUT) {
-            LOG_INFO(_env, "txn %s shard req %s, timed out", resp.txnId, requestId);
+            LOG_DEBUG(_env, "txn %s shard req %s, timed out", resp.txnId, requestId);
         } else if (innocuousShardError(resp.err)) {
-            LOG_INFO(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, resp.err);
+            LOG_DEBUG(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, resp.err);
         } else if (rareInnocuousShardError(resp.err)) {
             LOG_INFO(_env, "txn %s shard req %s, finished with rare innocuous error %s", resp.txnId, requestId, resp.err);
         } else {
@@ -866,7 +866,11 @@ public:
             uint64_t count = _shared.shardErrors.count[i].load();
             if (count == 0) { continue; }
             _metricsBuilder.measurement("eggsfs_cdc_shard_requests");
-            _metricsBuilder.tag("error", (EggsError)i);
+            if (i == 0) {
+                _metricsBuilder.tag("error", "NO_ERROR");
+            } else {
+                _metricsBuilder.tag("error", (EggsError)i);
+            }
             _metricsBuilder.fieldU64("count", count);
             _metricsBuilder.timestamp(now);
         }

@@ -19,6 +19,7 @@ struct eggsfs_shard_socket {
     struct socket* sock;
     struct rb_root requests;
     spinlock_t lock;
+    void (*original_data_ready)(struct sock *sk);
 };
 
 #define EGGSFS_SHARD_ASYNC 1

@@ -229,10 +229,12 @@ static void block_write_space(struct sock* sk) {
 }
 
 // Gets the socket, and acquires a reference to it.
+//
+// If successful, returns with RCU read lock taken.
 static struct block_socket* get_block_socket(
     struct block_ops* ops,
     struct sockaddr_in* addr
-) __acquires(RCU) {
+) {
     u64 key = block_socket_key(addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
 
@@ -320,6 +322,8 @@ static struct block_socket* get_block_socket(
 
     atomic_inc(&ops->len[bucket]);
 
+    // We are holding RCU, let's verify that we also have a socket.
+    BUG_ON(IS_ERR(sock));
     return sock;
 
 out_err:

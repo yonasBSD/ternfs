@@ -149,6 +149,10 @@ static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct e
 
 void eggsfs_net_shard_free_socket(struct eggsfs_shard_socket* s) {
     // TODO anything else?
+    write_lock_bh(&s->sock->sk->sk_callback_lock);
+    s->sock->sk->sk_data_ready = s->original_data_ready;
+    s->original_data_ready = NULL;
+    write_unlock_bh(&s->sock->sk->sk_callback_lock);
     sock_release(s->sock);
 }
 
@@ -162,7 +166,8 @@ int eggsfs_init_shard_socket(struct eggsfs_shard_socket* s) {
     write_lock_bh(&s->sock->sk->sk_callback_lock);
     BUG_ON(s->sock->sk->sk_user_data);
     s->sock->sk->sk_user_data = s;
-    s->sock->sk->sk_data_ready = sock_readable; // TODO: keep around the default one
+    s->original_data_ready = s->sock->sk->sk_data_ready;
+    s->sock->sk->sk_data_ready = sock_readable;
     write_unlock_bh(&s->sock->sk->sk_callback_lock);
 
     addr.sin_family = AF_INET;

@@ -597,6 +597,7 @@ private:
                 req.hasClient = false;
                 req.lastSentRequestId = _freshShardReqId();
                 inFlightTxn = _inFlightTxns.emplace(txnId, req).first;
+                shardReqHeader.requestId = req.lastSentRequestId;
                 _updateInFlightTxns();
             } else if (shardReq.repeated) {
                 shardReqHeader.requestId = inFlightTxn->second.lastSentRequestId;

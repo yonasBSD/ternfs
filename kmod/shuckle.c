@@ -37,8 +37,29 @@ int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct so
     // create socket
     err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, sock);
     if (err < 0) {
-        eggsfs_warn("could not create shuckle socket");
+        eggsfs_warn("could not create shuckle socket: %d", err);
         return err;
+    }
+
+    struct __kernel_sock_timeval tv;
+    tv.tv_sec = 10;
+    tv.tv_usec = 0;
+    err = kernel_setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&tv, sizeof(tv));
+    if (err < 0) {
+        eggsfs_warn("could not set receive timeout on shuckle socket: %d", err);
+        goto out_sock;
+    }
+    err = kernel_setsockopt(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&tv, sizeof(tv));
+    if (err < 0) {
+        eggsfs_warn("could not set send timeout on shuckle socket: %d", err);
+        goto out_sock;
+    }
+
+    int syn_count = 3;
+    err = kernel_setsockopt(*sock, SOL_TCP, TCP_SYNCNT, (char *)&syn_count, sizeof(syn_count));
+    if (err < 0) {
+        eggsfs_warn("could not set TCP_SYNCNT=%d on shuckle socket: %d", syn_count, err);
+        goto out_sock;
     }
 
     u64 start = get_jiffies_64();

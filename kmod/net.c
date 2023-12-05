@@ -389,6 +389,8 @@ struct sk_buff* eggsfs_metadata_request(
                 eggsfs_warn("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
             }
             goto out_err;
+        } else {
+            WARN_LATE
         }
     }
 

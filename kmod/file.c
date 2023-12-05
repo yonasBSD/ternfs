@@ -190,21 +190,22 @@ static int retry_after_block_error(struct eggsfs_transient_span* span) {
     int B = eggsfs_blocks(span->parity);
     int err = 0;
 
-    if (span->attempts < eggsfs_max_write_span_attempts) {
-        eggsfs_info("writing span failed after %d attempts, will try again", span->attempts);
-        return move_span_and_restart(span);
-    } else {
-        for (i = 0; i < B; i++) {
-            if (span->blocks_errs[i]) {
-                if (err) {
-                    eggsfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
-                } else {
-                    err = span->blocks_errs[i];
-                }
+    for (i = 0; i < B; i++) {
+        if (span->blocks_errs[i]) {
+            if (err) {
+                eggsfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
+            } else {
+                err = span->blocks_errs[i];
             }
         }
-        BUG_ON(err == 0);
-        eggsfs_warn("writing span failed after %d attempts with err %d, giving up", span->attempts, err);
+    }
+    BUG_ON(err == 0);
+
+    if (span->attempts < eggsfs_max_write_span_attempts) {
+        eggsfs_info("writing span failed with err %d after %d attempts, will try again", err, span->attempts);
+        return move_span_and_restart(span);
+    } else {
+        eggsfs_warn("writing span failed with err %d after %d attempts, giving up", err, span->attempts);
         return err;
     }
 }

@@ -254,7 +254,8 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
             // if we failed writing blocks, consider retrying
             err = retry_after_block_error(span);
             if (err == 0) {
-                // we've successfully retried, so not done yet.
+                // we've successfully retried, so we shouldn't wake up waiters
+                // (the thing retrying will).
                 goto out;
             }
         }

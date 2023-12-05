@@ -310,10 +310,15 @@ static struct block_socket* get_block_socket(
     hlist_for_each_entry_rcu(other_sock, &ops->sockets[bucket], hnode) { // first we check if somebody didn't get to it first
         if (block_socket_key(&other_sock->addr) == key) {
             // somebody got here before us
+            rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
+            eggsfs_info("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, other_sock->addr.sin_port);
+            // call again rather than trying to `sock_release` with the 
+            // RCU read lock held, this might not be safe while preemption
+            // is disabled.
             sock_release(sock->sock);
             kfree(sock);
-            return other_sock; // exit with read lock held
+            return get_block_socket(ops, addr);
         }
     }
     // Now actually insert.

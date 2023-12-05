@@ -273,21 +273,9 @@ static struct block_socket* get_block_socket(
         } else {
             eggsfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
         }
+        sock_release(sock->sock);
         goto out_err;
     }
-
-    // Important for the callbacks to happen after the connect, see comment about
-    // fastopen above. Also, we want the callbacks to set last, after we've setup
-    // all the state, lest they run before the state is indeed setup.
-    write_lock(&sock->sock->sk->sk_callback_lock);
-    sock->saved_data_ready = sock->sock->sk->sk_data_ready;
-    sock->saved_state_change = sock->sock->sk->sk_state_change;
-    sock->saved_write_space = sock->sock->sk->sk_write_space;
-    sock->sock->sk->sk_user_data = sock;
-    sock->sock->sk->sk_data_ready = ops->data_ready;
-    sock->sock->sk->sk_state_change = block_state_change;
-    sock->sock->sk->sk_write_space = block_write_space;
-    write_unlock(&sock->sock->sk->sk_callback_lock);
 
     INIT_LIST_HEAD(&sock->write);
     spin_lock_init(&sock->write_lock);
@@ -299,6 +287,19 @@ static struct block_socket* get_block_socket(
 
     // now insert
     struct block_socket* other_sock;
+
+    // Important for the callbacks to happen after the connect, see
+    // comment about fastopen above.
+    //
+    // We cannot setup the callbacks before we take the read lock.
+    // They might delete the socket itself. We also cannot just
+    // add them afterwards, otherwise multiple processes racing
+    // to add the same socket might exit this function. So we take
+    // the callback locks now, add the socket, and then change the
+    // callbacks contextually to adding the socket to the hash
+    // map.
+
+    write_lock(&sock->sock->sk->sk_callback_lock);
 
     spin_lock(&ops->locks[bucket]);
     // Take the RCU lock while holding the socket lock so that
@@ -312,18 +313,33 @@ static struct block_socket* get_block_socket(
             // somebody got here before us
             rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
+            write_unlock(&sock->sock->sk->sk_callback_lock);
             eggsfs_info("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, other_sock->addr.sin_port);
             // call again rather than trying to `sock_release` with the 
-            // RCU read lock held, this might not be safe while preemption
-            // is disabled.
+            // RCU read lock held, this might not be safe in atomic context.
             sock_release(sock->sock);
             kfree(sock);
             return get_block_socket(ops, addr);
         }
     }
-    // Now actually insert.
+
+    // Put the new callbacks in
+
+    sock->saved_data_ready = sock->sock->sk->sk_data_ready;
+    sock->saved_state_change = sock->sock->sk->sk_state_change;
+    sock->saved_write_space = sock->sock->sk->sk_write_space;
+    sock->sock->sk->sk_user_data = sock;
+    sock->sock->sk->sk_data_ready = ops->data_ready;
+    sock->sock->sk->sk_state_change = block_state_change;
+    sock->sock->sk->sk_write_space = block_write_space;
+
+    // Insert the socket into the hash map -- anyone else which
+    // will find it will be good to do.
     hlist_add_head_rcu(&sock->hnode, &ops->sockets[bucket]);
+
     spin_unlock(&ops->locks[bucket]);
+
+    write_unlock(&sock->sock->sk->sk_callback_lock);
 
     atomic_inc(&ops->len[bucket]);
 
@@ -361,7 +377,8 @@ static void remove_block_socket(
 
         // Then, change back the callbacks: this will also ensure that no
         // callback is currently running, i.e. that nobody's using the
-        // socket.
+        // socket apart from the default linux callbacks (which we do
+        // not care about).
         write_lock_bh(&socket->sock->sk->sk_callback_lock);
         socket->sock->sk->sk_data_ready = socket->saved_data_ready;
         socket->sock->sk->sk_state_change = socket->saved_state_change;

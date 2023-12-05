@@ -39,9 +39,6 @@ public:
     ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path);
     ~ShardDB();
 
-    // Stuff which might throw, and therefore not well suited to destructor.
-    void close();
-
     // Performs a read-only request, responding immediately. If an error is returned,
     // the contents of `resp` should be ignored.
     EggsError read(const ShardReqContainer& req, ShardRespContainer& resp);

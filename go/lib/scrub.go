@@ -170,6 +170,7 @@ func scrubSender(
 		if req == nil {
 			log.Debug("sender terminating")
 			sendChan <- nil // terminate the other senders, too
+			log.Debug("sender terminated")
 			return
 		}
 		atomic.StoreUint64(&stats.SendQueueSize, uint64(len(sendChan)))

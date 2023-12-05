@@ -161,9 +161,9 @@ func main() {
 		procs.StartBlockService(log, &opts)
 	}
 
-	waitShuckleFor := 5 * time.Second
+	waitShuckleFor := 10 * time.Second
 	if *buildType == "valgrind" || *profile {
-		waitShuckleFor = 30 * time.Second
+		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
 	lib.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)

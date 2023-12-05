@@ -1370,20 +1370,22 @@ struct CDCDBImpl {
         _initDb();
     }
 
-    void close() {
+    ~CDCDBImpl() {
         LOG_INFO(_env, "destroying column families and closing database");
 
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_defaultCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_parentCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_enqueuedCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_executingCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_dirsToTxnsCf));
+        const auto gentleRocksDBChecked = [this](const std::string& what, rocksdb::Status status) {
+            if (!status.ok()) {
+                LOG_INFO(_env, "Could not %s: %s", what, status.ToString());
+            }
+        };
+        gentleRocksDBChecked("destroy default CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_defaultCf));
+        gentleRocksDBChecked("destroy req queue CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
+        gentleRocksDBChecked("destroy parent CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_parentCf));
+        gentleRocksDBChecked("destroy enqueued CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_enqueuedCf));
+        gentleRocksDBChecked("destroy executing CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_executingCf));
+        gentleRocksDBChecked("destroy dirs to txns CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_dirsToTxnsCf));
 
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->Close());
-    }
-
-    ~CDCDBImpl() {
+        gentleRocksDBChecked("close DB", _dbDontUseDirectly->Close());
         delete _dbDontUseDirectly;
     }
 
@@ -1528,7 +1530,7 @@ struct CDCDBImpl {
             }
             if (likely(status.IsTryAgain())) {
                 _env.updateAlert(alert, "got try again in CDC transaction, will sleep for a second and try again");
-                sleepFor(1_sec);
+                (1_sec).sleepRetry();
                 continue;
             }
             // We don't expect any other kind of error. The docs state:
@@ -1914,10 +1916,6 @@ struct CDCDBImpl {
 
 CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
     _impl = new CDCDBImpl(logger, xmon, path);
-}
-
-void CDCDB::close() {
-    ((CDCDBImpl*)_impl)->close();
 }
 
 CDCDB::~CDCDB() {

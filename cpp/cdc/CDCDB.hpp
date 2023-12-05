@@ -85,7 +85,6 @@ public:
 
     CDCDB(Logger& env, std::shared_ptr<XmonAgent>& xmon, const std::string& path);
     ~CDCDB();
-    void close();
 
     // Unlike with ShardDB, we don't have an explicit log preparation step here,
     // because at least for now logs are simply either CDC requests, or shard

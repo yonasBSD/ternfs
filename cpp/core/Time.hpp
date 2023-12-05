@@ -1,5 +1,7 @@
 #pragma once
 
+#include <time.h>
+
 #include "Common.hpp"
 #include "Bincode.hpp"
 
@@ -8,6 +10,7 @@ struct Duration {
 
     constexpr  Duration(): ns(0) {}
     constexpr Duration(int64_t ns_): ns(ns_) {}
+    constexpr Duration(const struct timespec& ts): ns(ts.tv_sec*1'000'000'000ull + ts.tv_nsec) {}
 
     bool operator==(Duration rhs) const {
         return ns == rhs.ns;
@@ -29,13 +32,30 @@ struct Duration {
         return ns <= rhs.ns;
     }
 
-    Duration operator+(Duration d) {
+    Duration operator+(Duration d) const {
         return Duration(ns + d.ns);
     }
 
-    Duration operator-(Duration d) {
+    Duration operator*(int64_t x) const {
+        return Duration(ns * x);
+    }
+
+    Duration operator-(Duration d) const {
         return ns - d.ns;
     }
+
+    struct timespec timespec() const {
+        struct timespec ts;
+        ts.tv_sec = ns / 1'000'000'000ull;
+        ts.tv_nsec = ns % 1'000'000'000ull;
+        return ts;
+    }
+
+    // sleeps, returns a non-zero duration if we were interrupted
+    Duration sleep() const;
+
+    // sleeps, retrying if we get EINTR
+    void sleepRetry() const;
 };
 
 constexpr Duration operator "" _ns   (unsigned long long t) { return Duration(t); }
@@ -98,5 +118,3 @@ struct EggsTime {
 std::ostream& operator<<(std::ostream& out, EggsTime t);
 
 EggsTime eggsNow();
-
-void sleepFor(Duration dt);

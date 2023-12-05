@@ -8,6 +8,7 @@
 #include <thread>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -21,14 +22,14 @@
 #include "CDCKey.hpp"
 #include "Shuckle.hpp"
 #include "Time.hpp"
-#include "Undertaker.hpp"
 #include "Time.hpp"
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
 #include "ErrorCount.hpp"
-#include "Loop.hpp"
+#include "PeriodicLoop.hpp"
 #include "Metrics.hpp"
+#include "Loop.hpp"
 
 // Data needed to synchronize between the different threads
 struct ShardShared {
@@ -106,6 +107,7 @@ struct ShardServer : Loop {
 private:
     // init data
     ShardShared& _shared;
+    bool _initialized;
     ShardId _shid;
     int _ipPortIx;
     uint32_t _ownIp;
@@ -130,6 +132,7 @@ public:
     ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, int ipPortIx, ShardShared& shared) :
         Loop(logger, xmon, "server_" + std::to_string(ipPortIx+1)),
         _shared(shared),
+        _initialized(false),
         _shid(shid),
         _ipPortIx(ipPortIx),
         _ownIp(options.ipPorts[ipPortIx].ip),
@@ -150,7 +153,7 @@ public:
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
     }
 
-    virtual void init() override {
+    void init() {
         expandKey(CDCKey, _expandedCDCKey);
 
         _sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -171,15 +174,6 @@ public:
                 throw SYSCALL_EXCEPTION("getsockname");
             }
         }
-        // 10ms timeout for prompt termination
-        {
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 10'000;
-            if (setsockopt(_sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
-                throw SYSCALL_EXCEPTION("setsockopt");
-            }
-        }
 
         if (_ipPortIx == 0) {
             _shared.ip1.store(ntohl(_serverAddr.sin_addr.s_addr));
@@ -198,13 +192,17 @@ public:
     }
 
     virtual void step() override {
+        if (!_initialized) {
+            init();
+            _initialized = true;
+            return;
+        }
+
         // Read one request
+        LOG_DEBUG(_env, "Blocking to read 1 request in socket %s", _ipPortIx);
         memset(&_clientAddr, 0, sizeof(_clientAddr));
         socklen_t addrLen = sizeof(_clientAddr);
         int read = recvfrom(_sock, _recvBuf.data(), _recvBuf.size(), 0, (struct sockaddr*)&_clientAddr, &addrLen);
-        if (read < 0 && (errno == EAGAIN || errno == EINTR)) {
-            return;
-        }
         if (read < 0) {
             throw SYSCALL_EXCEPTION("recvfrom");
         }
@@ -327,13 +325,6 @@ public:
         }
         LOG_DEBUG(_env, "sent response %s to %s", _respContainer->kind(), _clientAddr);
     }
-
-    // If we're terminating gracefully we're the last ones, close the db nicely
-    void virtual finish() override {
-        if (_ipPortIx == 0) {
-            _shared.db.close();
-        }
-    }
 };
 
 struct ShardRegisterer : PeriodicLoop {
@@ -355,7 +346,7 @@ public:
         _hasSecondIp(options.ipPorts[1].port != 0)
     {}
 
-    virtual void init() {
+    void init() {
         _env.updateAlert(_alert, "Waiting to register ourselves for the first time");
     }
 
@@ -392,14 +383,12 @@ private:
     ShardLogEntry _logEntry;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "block_service_updater", {1_sec, 1_mins}),
+        PeriodicLoop(logger, xmon, "bs_updater", {1_sec, 1_mins}),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
-    {}
-
-    virtual void init() override {
+    {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
     }
 
@@ -441,7 +430,7 @@ private:
     std::vector<Stat> _stats;
 public:
     ShardStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "stats_inserter", {1_mins, 1_hours}),
+        PeriodicLoop(logger, xmon, "stats", {1_mins, 1_hours}),
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
@@ -471,15 +460,11 @@ public:
         }
     }
 
-    virtual void finish() override {
-        periodicStep();
-        for (ShardMessageKind kind : allShardMessageKind) {
-            const auto& timings = _shared.timings[(int)kind];
-            uint64_t count = timings.count();
-            if (count == 0) { continue; }
-            LOG_INFO(_env, "%s: count=%s mean=%s p50=%s p90=%s p99=%s", kind, count, timings.mean(), timings.percentile(0.5), timings.percentile(0.9), timings.percentile(0.99));
-        }
-    }
+    // TODO restore this when we have the functionality to do so
+    // virtual void finish() override {
+    //     LOG_INFO(_env, "insert stats one last time");
+    //     periodicStep();
+    // }
 };
 
 struct ShardMetricsInserter : PeriodicLoop {
@@ -491,7 +476,7 @@ private:
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1.0, 1_mins, 0.1}),
+        PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
         _shid(shid)
     {}
@@ -548,18 +533,14 @@ public:
 };
 
 void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options) {
-    auto undertaker = Undertaker::acquireUndertaker();
-
-    std::ostream* logOut = &std::cout;
-    std::ofstream fileOut;
+    int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
-        fileOut = std::ofstream(options.logFile, std::ios::out | std::ios::app);
-        if (!fileOut.is_open()) {
-            throw EGGS_EXCEPTION("Could not open log file `%s'\n", options.logFile);
+        logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
+        if (logOutFd < 0) {
+            throw SYSCALL_EXCEPTION("open");
         }
-        logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut, options.syslog, true);
+    Logger logger(options.logLevel, logOutFd, options.syslog, true);
 
     std::shared_ptr<XmonAgent> xmon;
     if (options.xmon) {
@@ -587,17 +568,20 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
 
-    // xmon first, so that by the time it shuts down it'll have all the leftover requests
+    std::vector<std::thread> threads;
+
     if (xmon) {
-        XmonConfig config;
-        {
-            std::ostringstream ss;
-            ss << std::setw(3) << std::setfill('0') << shid;
-            config.appInstance = "eggsshard" + ss.str();
-        }
-        config.prod = options.xmonProd;
-        config.appType = "restech_eggsfs.critical";
-        Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
+        threads.emplace_back([&logger, xmon, shid, &options]() mutable {
+            XmonConfig config;
+            {
+                std::ostringstream ss;
+                ss << std::setw(3) << std::setfill('0') << shid;
+                config.appInstance = "eggsshard" + ss.str();
+            }
+            config.prod = options.xmonProd;
+            config.appType = "restech_eggsfs.critical";
+            Xmon(logger, xmon, config).run();
+        });
     }
 
     XmonNCAlert dbInitAlert;
@@ -607,17 +591,29 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     ShardShared shared(db);
 
-    Loop::spawn(*undertaker, std::make_unique<ShardServer>(logger, xmon, shid, options, 0, shared));
+    threads.emplace_back([&logger, xmon, shid, &options, &shared]() mutable {
+        ShardServer(logger, xmon, shid, options, 0, shared).run();
+    });
     if (options.ipPorts[1].ip != 0) {
-        Loop::spawn(*undertaker, std::make_unique<ShardServer>(logger, xmon, shid, options, 1, shared));
+        threads.emplace_back([&logger, xmon, shid, &options, &shared]() mutable {
+            ShardServer(logger, xmon, shid, options, 1, shared).run();
+        });
     }
 
-    Loop::spawn(*undertaker, std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared));
-    Loop::spawn(*undertaker, std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared));
-    Loop::spawn(*undertaker, std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared));
+    threads.emplace_back([&logger, xmon, shid, &options, &shared]() mutable {
+        ShardRegisterer(logger, xmon, shid, options, shared).run();
+    });
+    threads.emplace_back([&logger, xmon, shid, &options, &shared]() mutable {
+        ShardBlockServiceUpdater(logger, xmon, shid, options, shared).run();
+    });
+    threads.emplace_back([&logger, xmon, shid, &options, &shared]() mutable {
+        ShardStatsInserter(logger, xmon, shid, options, shared).run();
+    });
     if (options.metrics) {
-        Loop::spawn(*undertaker, std::make_unique<ShardMetricsInserter>(logger, xmon, shid, shared));
+        threads.emplace_back([&logger, xmon, shid, &shared]() mutable {
+            ShardMetricsInserter(logger, xmon, shid, shared).run();
+        });
     }
 
-    undertaker->reap();
+    for (;;) { sleep(60*60*24); }
 }

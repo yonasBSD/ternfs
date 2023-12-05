@@ -1,5 +1,4 @@
-// #include <bits/types/struct_timespec.h>
-#include <cstdio>
+#include <stdio.h>
 #include <time.h>
 #include <chrono>
 #include <thread>
@@ -23,6 +22,32 @@ std::ostream& operator<<(std::ostream& out, Duration d) {
         out << d.ns/(1'000'000'000ull*60*60) << "." << d.ns%(1'000'000'000ull*60*60) << "h";
     }
     return out;
+}
+
+void Duration::sleepRetry() const {
+    struct timespec ts = timespec();
+    for (;;) {
+        int ret = nanosleep(&ts, &ts);
+        if (likely(ret == 0)) {
+            return;
+        }
+        if (likely(errno == EINTR)) {
+            continue;
+        }
+        throw SYSCALL_EXCEPTION("nanosleep");
+    }
+}
+
+Duration Duration::sleep() const {
+    struct timespec ts = timespec();
+    int ret = nanosleep(&ts, &ts);
+    if (likely(ret == 0)) {
+        return 0;
+    }
+    if (likely(errno == EINTR)) {
+        return Duration(ts);
+    }
+    throw SYSCALL_EXCEPTION("nanosleep");
 }
 
 __attribute__((constructor))

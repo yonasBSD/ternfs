@@ -28,13 +28,13 @@ struct Logger {
 private:
     LogLevel _logLevel;
     LogLevel _savedLogLevel;
-    std::ostream& _out;
+    int _fd;
     std::mutex _mutex;
     bool _syslog;
     bool _usr2ToDebug;
 public:
-    Logger(LogLevel logLevel, std::ostream& out, bool syslog, bool usr2ToDebug):
-        _logLevel(logLevel), _savedLogLevel(logLevel), _out(out), _syslog(syslog), _usr2ToDebug(usr2ToDebug)
+    Logger(LogLevel logLevel, int fd, bool syslog, bool usr2ToDebug):
+        _logLevel(logLevel), _savedLogLevel(logLevel), _fd(fd), _syslog(syslog), _usr2ToDebug(usr2ToDebug)
     {
         if (usr2ToDebug) {
             installLoggerSignalHandler(this);
@@ -49,10 +49,10 @@ public:
 
     template<typename ...Args>
     void _log(LogLevel level, const std::string& prefix, const char* fmt, Args&&... args) {
-        std::stringstream ss;
-        format_pack(ss, fmt, args...);
+        std::stringstream formatSs;
+        std::stringstream outSs;
+        format_pack(formatSs, fmt, args...);
         std::string line;
-        std::scoped_lock lock(_mutex);
         if (likely(_syslog)) {
             int syslogLevel;
             switch (level) {
@@ -66,24 +66,31 @@ public:
                 default:
                     syslogLevel = 3; break; // should be throw?
             }
-            while (std::getline(ss, line)) {
-                _out << "<" << syslogLevel << ">" << prefix << ": " << line << std::endl;
+            while (std::getline(formatSs, line)) {
+                outSs << "<" << syslogLevel << ">" << prefix << ": " << line << std::endl;
             }
         } else {
             auto t = eggsNow();
-            while (std::getline(ss, line)) {
-                _out << t << " " << prefix << " [" << level << "] " << line << std::endl;
+            while (std::getline(formatSs, line)) {
+                outSs << t << " " << prefix << " [" << level << "] " << line << std::endl;
+            }
+        }
+        {
+            std::scoped_lock lock(_mutex);
+            std::string_view v = outSs.view();
+            int remaining = v.size();
+            while (remaining) {
+                int res = write(_fd, v.data(), v.size());
+                if (res < 0) {
+                    throw SYSCALL_EXCEPTION("write");
+                }
+                remaining -= res;
             }
         }
     }
 
     bool _shouldLog(LogLevel level) {
         return level >= _logLevel;
-    }
-
-    void flush() {
-        std::scoped_lock lock(_mutex);
-        _out.flush();
     }
 
     void toggleDebug();
@@ -134,10 +141,6 @@ public:
 
     bool _shouldLog(LogLevel level) {
         return _logger._shouldLog(level);
-    }
-
-    void flush() {
-        _logger.flush();
     }
 };
 

@@ -43,7 +43,6 @@ private:
     std::string _msg;
 };
 
-
 class FatalException : public AbstractException {
 public:
     template <typename ... Args>

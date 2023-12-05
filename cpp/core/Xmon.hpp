@@ -6,11 +6,13 @@
 #include <unordered_map>
 #include <semaphore>
 #include <memory>
+#include <unordered_set>
+#include <poll.h>
 
 #include "Common.hpp"
 #include "Env.hpp"
 #include "XmonAgent.hpp"
-#include "Undertaker.hpp"
+#include "Loop.hpp"
 #include "Stopper.hpp"
 
 struct XmonConfig {
@@ -98,11 +100,8 @@ struct XmonBuf {
     bool readIn(int fd, size_t sz, std::string& errString);
 };
 
-void* runXmon(void*);
-
-struct Xmon : Undertaker::Reapable {
+struct Xmon : Loop {
 private:
-    Env _env;
     Stopper _stopper;
     std::shared_ptr<XmonAgent> _agent;
     std::string _hostname;
@@ -111,34 +110,42 @@ private:
     std::string _xmonHost;
     uint16_t _xmonPort;
 
-    void packLogon(XmonBuf& buf);
-    void packUpdate(XmonBuf& buf);
-    void packRequest(XmonBuf& buf, const XmonRequest& req);
+    // xmon socket, xmon agent pipe read end, timer fd
+    static constexpr int SOCK_FD = 0;
+    static constexpr int PIPE_FD = 1;
+    static constexpr int TIMER_FD = 2;
+    static constexpr int NUM_FDS = 3;
+    struct pollfd _fds[NUM_FDS];
+    // requests we got from the pipe
+    std::deque<XmonRequest> _queuedRequests;
+    // active binnable alerts
+    std::unordered_set<int64_t> _binnableAlerts;
+    // quiet alerts we're waiting to send out
+    struct QuietAlert {
+        EggsTime quietUntil;
+        std::string message;
+    };
+    std::unordered_map<int64_t, QuietAlert> _quietAlerts;
+    // last heartbeat from xmon
+    EggsTime _gotHeartbeatAt;
+    // what the timer fd expiration is currently set to
+    EggsTime _timerExpiresAt;
+
+    XmonBuf _buf;
+
+    void _packLogon(XmonBuf& buf);
+    void _packUpdate(XmonBuf& buf);
+    void _packRequest(XmonBuf& buf, const XmonRequest& req);
+    void _ensureTimer(EggsTime now, EggsTime t);
+
+    EggsTime _stepNextWakeup();
 public:
     Xmon(
         Logger& logger,
         std::shared_ptr<XmonAgent>& agent,
         const XmonConfig& config
     );
+    ~Xmon();
 
-    virtual ~Xmon() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
-    }
-
-    virtual void onAbort() override {
-        _env.flush();
-    }
-
-    void run();
-
-    static void spawn(Undertaker& undertaker, std::unique_ptr<Xmon> xmon) {
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runXmon, &*xmon) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker.checkin(std::move(xmon), tid, "xmon");
-    }
+    virtual void step() override;
 };

@@ -274,7 +274,7 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 			return
 		}
 		dontWait := req.resp == nil
-		log.Debug("sending request %+v req id %v to shard %v", req.req, req.requestId, req.shard)
+		log.Debug("sending request %T %+v req id %v to shard %v", req.req, req.req, req.requestId, req.shard)
 		buf.Reset()
 		var addrs *[2]net.UDPAddr
 		var kind uint8

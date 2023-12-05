@@ -1,106 +1,32 @@
 #pragma once
 
-#include "Undertaker.hpp"
-#include "Stopper.hpp"
+#include <pthread.h>
+
 #include "Env.hpp"
-#include "wyhash.h"
+#include "Exception.hpp"
 
-void* runLoop(void*);
-
-struct Loop : Undertaker::Reapable {
+struct Loop {
 protected:
     Env _env;
-    Stopper _stopper;
+
+private:
     std::string _name;
 
 public:
-    Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name) : _env(logger, xmon, name), _name(name) {}
-
-    const std::string& name() const { return _name; }
-
-    virtual ~Loop() = default;
-
-    virtual void terminate() override {
-        _env.flush();
-        _stopper.stop();
+    Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name) : _env(logger, xmon, name), _name(name) {
+        int ret = pthread_setname_np(pthread_self(), name.c_str());
+        if (ret != 0) {
+            throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthreat_setname_np %s", name);
+        }
     }
 
-    virtual void onAbort() override {
-        _env.flush();
+    const std::string& name() const {
+        return _name;
     }
 
-    virtual void init() {};
     virtual void step() = 0;
-    virtual void finish() {};
 
-    virtual void run() {
-        init();
-        for (;;) {
-            if (_stopper.shouldStop()) {
-                LOG_INFO(_env, "got told to stop, stopping");
-                finish();
-                _stopper.stopDone();
-                return;
-            }
-            step();
-        }
-    }
-
-    static void spawn(Undertaker& undertaker, std::unique_ptr<Loop> loop) {
-        std::string name = loop->name();
-        pthread_t tid;
-        if (pthread_create(&tid, nullptr, &runLoop, &*loop) != 0) {
-            throw SYSCALL_EXCEPTION("pthread_create");
-        }
-        undertaker.checkin(std::move(loop), tid, name);
-    }
-};
-
-struct PeriodicLoopConfig {
-    Duration quantum = 10_ms;
-    Duration failureInterval; // waiting between failures
-    double failureIntervalJitter = 1.0;
-    Duration successInterval; // waiting between successes
-    double successIntervalJitter = 1.0;
-
-    PeriodicLoopConfig(Duration failureInterval_, Duration successInterval_) : failureInterval(failureInterval_), successInterval(successInterval_) {}
-    PeriodicLoopConfig(Duration failureInterval_, double failureIntervalJitter_, Duration successInterval_, double successIntervalJitter_) :
-        failureInterval(failureInterval_), failureIntervalJitter(failureIntervalJitter_), successInterval(successInterval_), successIntervalJitter(successIntervalJitter_)
-    {}
-};
-
-struct PeriodicLoop : Loop {
-private:
-    PeriodicLoopConfig _config;
-    uint64_t _rand;
-    EggsTime _nextStepAt;
-public:
-    PeriodicLoop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name, const PeriodicLoopConfig& config) :
-        Loop(logger, xmon, name),
-        _config(config),
-        _rand(eggsNow().ns),
-        _nextStepAt(0)
-    {}
-
-    // true = success, false = failure
-    virtual bool periodicStep() = 0;
-
-    virtual void step() override {
-        EggsTime t = eggsNow();
-        if (t < _nextStepAt) {
-            sleepFor(_config.quantum);
-            return;
-        }
-
-        LOG_DEBUG(_env, "we're past %s, running periodic step", _nextStepAt);
-
-        bool success = periodicStep();
-        if (success) {
-            _nextStepAt = t + _config.successInterval + Duration((double)_config.successInterval.ns * (_config.successIntervalJitter * wyhash64_double(&_rand)));
-            LOG_DEBUG(_env, "periodic step succeeded, next step at %s", _nextStepAt);
-        } else {
-            _nextStepAt = t + _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * wyhash64_double(&_rand)));
-            LOG_DEBUG(_env, "periodic step failed, next step at %s", _nextStepAt);
-        }
+    void run() {
+        for (;;) { step(); }
     }
 };

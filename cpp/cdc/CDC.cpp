@@ -23,7 +23,6 @@
 #include "Msgs.hpp"
 #include "Shard.hpp"
 #include "Time.hpp"
-#include "Undertaker.hpp"
 #include "CDCDB.hpp"
 #include "Crypto.hpp"
 #include "CDCKey.hpp"
@@ -32,6 +31,7 @@
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
+#include "PeriodicLoop.hpp"
 #include "Loop.hpp"
 #include "ErrorCount.hpp"
 
@@ -228,9 +228,6 @@ public:
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
         expandKey(CDCKey, _expandedCDCKey);
-    }
-
-    virtual void init() override {
         LOG_INFO(_env, "Waiting for shard info to be filled in");
     }
 
@@ -265,8 +262,8 @@ public:
             }
         }
 
-        // 10ms timeout for prompt termination and for shard resps timeouts
-        int ret = poll(_socks.data(), _socks.size(), 10);
+        LOG_DEBUG(_env, "Blocking to wait for readable sockets");
+        int ret = poll(_socks.data(), _socks.size(), -1);
         if (ret < 0) {
             throw SYSCALL_EXCEPTION("poll");
         }
@@ -275,13 +272,13 @@ public:
         // first), then the CDC reqs ones.
         for (int i = 1; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
-            if (sock.revents & POLLIN) {
+            if (sock.revents & (POLLIN|POLLHUP|POLLERR)) {
                 _drainShardSock(sock.fd);
             }
         }
         for (int i = 0; i < _socks.size(); i += 2) {
             const auto& sock = _socks[i];
-            if (sock.revents & POLLIN) {
+            if (sock.revents & (POLLIN|POLLHUP|POLLERR)) {
                 _drainCDCSock(sock.fd);
             }
         }
@@ -309,10 +306,6 @@ public:
         }
     }
 
-    virtual void finish() override {
-        _shared.db.close();
-    }
-
 private:
     void _updateInFlightTxns() {
         _shared.inFlightTxnsWindow[_inFlightTxnsWindowCursor%_shared.inFlightTxnsWindow.size()].store(_inFlightTxns.size());
@@ -333,7 +326,7 @@ private:
             }
         }
         if (badShard) {
-            sleepFor(10_ms);
+            (10_ms).sleep();
             return false;
         }
 
@@ -679,7 +672,7 @@ private:
             // Note that we get EPERM on `sendto` when nf drops packets.
             if (likely(err == EAGAIN || err == EPERM)) {
                 _env.updateAlert(alert, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
-                sleepFor(100_ms);
+                (100_ms).sleepRetry();
             } else {
                 _env.clearAlert(alert);
                 throw EXPLICIT_SYSCALL_EXCEPTION(err, "sendto");
@@ -708,9 +701,7 @@ public:
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
         _alert(10_sec)
-    {}
-
-    virtual void init() override {
+    {
         _env.updateAlert(_alert, "Waiting to get shards");
     }
 
@@ -824,9 +815,11 @@ public:
         }
     }
 
-    virtual void finish() override {
-        periodicStep();
-    }
+    // TODO restore this when we can
+    // virtual void finish() override {
+    //     LOG_INFO(_env, "inserting stats one last time");
+    //     periodicStep();
+    // }
 };
 
 struct CDCMetricsInserter : PeriodicLoop {
@@ -837,7 +830,7 @@ private:
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
 public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
-        PeriodicLoop(logger, xmon, "metrics_inserter", {1_sec, 1.0, 1_mins, 0.1}),
+        PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
         _alert(10_sec)
     {}
@@ -905,63 +898,70 @@ public:
 
 
 void runCDC(const std::string& dbDir, const CDCOptions& options) {
-    auto undertaker = Undertaker::acquireUndertaker();
-
-    std::ostream* logOut = &std::cout;
-    std::ofstream fileOut;
+    int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
-        fileOut = std::ofstream(options.logFile, std::ios::out | std::ios::app);
-        if (!fileOut.is_open()) {
-            throw EGGS_EXCEPTION("Could not open log file `%s'\n", options.logFile);
+        logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
+        if (logOutFd < 0) {
+            throw SYSCALL_EXCEPTION("open");
         }
-        logOut = &fileOut;
     }
-    Logger logger(options.logLevel, *logOut, options.syslog, true);
+    Logger logger(options.logLevel, logOutFd, options.syslog, true);
 
     std::shared_ptr<XmonAgent> xmon;
     if (options.xmon) {
         xmon = std::make_shared<XmonAgent>();
     }
 
-    {
-        Env env(logger, xmon, "startup");
-        LOG_INFO(env, "Running CDC with options:");
-        LOG_INFO(env, "  level = %s", options.logLevel);
-        LOG_INFO(env, "  logFile = '%s'", options.logFile);
-        LOG_INFO(env, "  port = %s", options.port);
-        LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
-        LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
-        for (int i = 0; i < 2; i++) {
-            LOG_INFO(env, "  port%s = %s", i+1, options.ipPorts[0].port);
-            {
-                char ip[INET_ADDRSTRLEN];
-                uint32_t ipN = options.ipPorts[i].ip;
-                LOG_INFO(env, "  ownIp%s = %s", i+1, inet_ntop(AF_INET, &ipN, ip, INET_ADDRSTRLEN));
-            }
+    Env env(logger, xmon, "startup");
+    LOG_INFO(env, "Running CDC with options:");
+    LOG_INFO(env, "  level = %s", options.logLevel);
+    LOG_INFO(env, "  logFile = '%s'", options.logFile);
+    LOG_INFO(env, "  port = %s", options.port);
+    LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
+    LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
+    for (int i = 0; i < 2; i++) {
+        LOG_INFO(env, "  port%s = %s", i+1, options.ipPorts[0].port);
+        {
+            char ip[INET_ADDRSTRLEN];
+            uint32_t ipN = options.ipPorts[i].ip;
+            LOG_INFO(env, "  ownIp%s = %s", i+1, inet_ntop(AF_INET, &ipN, ip, INET_ADDRSTRLEN));
         }
-        LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     }
+    LOG_INFO(env, "  syslog = %s", (int)options.syslog);
+
+    std::vector<std::thread> threads;
 
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
     if (xmon) {
-        XmonConfig config;
-        config.appInstance = "eggscdc";
-        config.appType = "restech_eggsfs.critical";
-        config.prod = options.xmonProd;
-        Xmon::spawn(*undertaker, std::make_unique<Xmon>(logger, xmon, config));
+        threads.emplace_back([&logger, xmon, &options]() mutable {
+            XmonConfig config;
+            config.appInstance = "eggscdc";
+            config.appType = "restech_eggsfs.critical";
+            config.prod = options.xmonProd;
+            Xmon(logger, xmon, config).run();
+        });
     }
 
     CDCDB db(logger, xmon, dbDir);
-    auto shared = std::make_unique<CDCShared>(db);
+    CDCShared shared(db);
 
-    Loop::spawn(*undertaker, std::make_unique<CDCServer>(logger, xmon, options, *shared));
-
-    Loop::spawn(*undertaker, std::make_unique<CDCShardUpdater>(logger, xmon, options, *shared));
-    Loop::spawn(*undertaker, std::make_unique<CDCRegisterer>(logger, xmon, options, *shared));
-    Loop::spawn(*undertaker, std::make_unique<CDCStatsInserter>(logger, xmon, options, *shared));
+    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
+        CDCServer(logger, xmon, options, shared).run();
+    });
+    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
+        CDCShardUpdater(logger, xmon, options, shared).run();
+    });
+    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
+        CDCRegisterer(logger, xmon, options, shared).run();
+    });
+    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
+        CDCStatsInserter(logger, xmon, options, shared).run();
+    });
     if (options.metrics) {
-        Loop::spawn(*undertaker, std::make_unique<CDCMetricsInserter>(logger, xmon, *shared));
+        threads.emplace_back([&logger, xmon, &shared]() mutable {
+            CDCMetricsInserter(logger, xmon, shared).run();
+        });
     }
 
-    undertaker->reap();
+    for (;;) { sleep(60*60*24); }
 }

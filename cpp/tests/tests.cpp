@@ -5,6 +5,7 @@
 #include <rocksdb/db.h>
 #include <sstream>
 #include <random>
+#include <unistd.h>
 
 #include "Common.hpp"
 #include "Bincode.hpp"
@@ -14,7 +15,6 @@
 #include "Crypto.hpp"
 #include "RocksDBUtils.hpp"
 #include "Time.hpp"
-#include "Undertaker.hpp"
 #include "CDCKey.hpp"
 #include "wyhash.h"
 #include "Timings.hpp"
@@ -29,10 +29,6 @@ REGISTER_EXCEPTION_TRANSLATOR(AbstractException& ex) {
     return doctest::String(ss.str().c_str());
 }
 
-__attribute__((constructor))
-void configureErrorHandlersBeforeTests() {
-    Undertaker::configureErrorHandlers();
-}
 
 template<typename A>
 static void bincodeTestScalar() {
@@ -389,7 +385,7 @@ struct TempShardDB {
     ShardId shid;
     std::unique_ptr<ShardDB> db;
 
-    TempShardDB(LogLevel level, ShardId shid_): logger(level, std::cerr, false, false), shid(shid_) {
+    TempShardDB(LogLevel level, ShardId shid_): logger(level, STDERR_FILENO, false, false), shid(shid_) {
         dbDir = std::string("temp-shard-db.XXXXXX");
         if (mkdtemp(dbDir.data()) == nullptr) {
             throw SYSCALL_EXCEPTION("mkdtemp");
@@ -400,7 +396,6 @@ struct TempShardDB {
 
     // useful to test recovery
     void restart() {
-        db->close();
         std::shared_ptr<XmonAgent> xmon;
         db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, dbDir);
     }
@@ -409,11 +404,6 @@ struct TempShardDB {
         std::error_code err;
         if (std::filesystem::remove_all(std::filesystem::path(dbDir), err) < 0) {
             std::cerr << "Could not remove " << dbDir << ": " << err << std::endl;
-        }
-        try {
-            db->close();
-        } catch (...) {
-            std::cerr << "Could not close Shard DB" << std::endl;
         }
     }
 

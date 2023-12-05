@@ -493,12 +493,7 @@ void eggsfs_wait_in_flight(struct eggsfs_inode* enode) {
     long res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, 10 * HZ);
     if (res > 0) { return; }
 
-    // Some processes can be stuck for as long as it takes to process metadata
-    // requests. So wait for at least that much.
-    u64 wait_for = max(eggsfs_overall_shard_timeout_jiffies, eggsfs_overall_cdc_timeout_jiffies)*2;
-    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug, will wait for %llums", enode->inode.i_ino, jiffies64_to_msecs(wait_for));
+    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug, will now wait without timeout", enode->inode.i_ino);
 
-    res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, wait_for);
-    if (res > 0) { return; }
-    eggsfs_warn("waited for %llums for in flight requests for inode %016lx, either some requests are stuck or this is a bug", jiffies64_to_msecs(wait_for), enode->inode.i_ino);
+    wait_event(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0);
 }

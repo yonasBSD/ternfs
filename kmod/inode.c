@@ -500,5 +500,5 @@ void eggsfs_wait_in_flight(struct eggsfs_inode* enode) {
 
     res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, wait_for);
     if (res > 0) { return; }
-    eggsfs_warn("waited for %llu seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug", wait_for, enode->inode.i_ino);
+    eggsfs_warn("waited for %llums for in flight requests for inode %016lx, either some requests are stuck or this is a bug", jiffies64_to_msecs(wait_for), enode->inode.i_ino);
 }

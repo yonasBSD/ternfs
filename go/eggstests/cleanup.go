@@ -100,7 +100,11 @@ func cleanupAfterTest(
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				if err := lib.DestructFiles(log, client, &state, []msgs.ShardId{shid}); err != nil {
+				opts := &lib.DestructFilesOptions{
+					NumWorkers:       10,
+					WorkersQueueSize: 100,
+				}
+				if err := lib.DestructFiles(log, client, opts, &state, []msgs.ShardId{shid}); err != nil {
 					panic(err)
 				}
 				wg.Done()

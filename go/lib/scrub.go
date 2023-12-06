@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,9 @@ type ScrubState struct {
 
 type ScrubOptions struct {
 	MaximumCheckAttempts uint // 0 = infinite
+	NumSenders           int  // how many goroutienes should be sending check request to the block services
+	SendersQueueSize     int
+	CheckerQueueSize     int
 }
 
 func scrubFileInternal(
@@ -290,10 +294,14 @@ func ScrubFiles(
 	stats *ScrubState,
 	shards []msgs.ShardId,
 ) error {
+	if opts.NumSenders <= 0 {
+		panic(fmt.Errorf("the number of senders should be positive, got %v", opts.NumSenders))
+	}
 	log.Info("starting to scrub files in shards %+v", shards)
 	terminateChan := make(chan any, 1)
-	sendChan := make(chan *scrubRequest, 10_000)
-	checkChan := make(chan *BlockCompletion, 1000)
+	numSenders := opts.NumSenders
+	sendChan := make(chan *scrubRequest, opts.SendersQueueSize)
+	checkChan := make(chan *BlockCompletion, opts.CheckerQueueSize)
 	scratchFiles := make(map[msgs.ShardId]*scratchFile)
 	keepAlives := make(map[msgs.ShardId]keepScratchFileAlive)
 	for _, shid := range shards {
@@ -311,7 +319,6 @@ func ScrubFiles(
 		scrubScraper(log, client, stats, terminateChan, sendChan, shards)
 	}()
 
-	numSenders := 10_000
 	var sendersWg sync.WaitGroup
 	sendersWg.Add(numSenders)
 	for i := 0; i < numSenders; i++ {

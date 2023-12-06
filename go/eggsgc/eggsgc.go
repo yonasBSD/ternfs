@@ -87,11 +87,16 @@ func main() {
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
+	destructFilesWorkers := flag.Int("destruct-files-workers", 100, "")
+	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 1000, "")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	scrub := flag.Bool("scrub", false, "scrub")
+	scrubSenders := flag.Int("scrub-senders", 100, "")
+	scrubSendersQueueSize := flag.Int("scrub-senders-queue-size", 1000, "")
+	scrubCheckerQueueSize := flag.Int("scrub-checker-queue-size", 1000, "")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
 
@@ -298,7 +303,11 @@ func main() {
 						waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
 						log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
 						time.Sleep(waitFor)
-						if err := lib.DestructFiles(log, client, destructFilesState, groupShards); err != nil {
+						opts := &lib.DestructFilesOptions{
+							NumWorkers:       *destructFilesWorkers,
+							WorkersQueueSize: *destructFilesWorkersQueueSize,
+						}
+						if err := lib.DestructFiles(log, client, opts, destructFilesState, groupShards); err != nil {
 							log.RaiseAlert("could not destruct files: %v", err)
 						}
 						wg.Done()
@@ -351,7 +360,12 @@ func main() {
 					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
 					time.Sleep(waitFor)
 					// retry forever
-					if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 0}, scrubState, groupShards); err != nil {
+					opts := &lib.ScrubOptions{
+						NumSenders:       *scrubSenders,
+						SendersQueueSize: *scrubSendersQueueSize,
+						CheckerQueueSize: *scrubCheckerQueueSize,
+					}
+					if err := lib.ScrubFiles(log, client, opts, scrubState, groupShards); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
 					wg.Done()
@@ -380,6 +394,7 @@ func main() {
 					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&destructFilesState.Stats.SkippedSpans))
 					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&destructFilesState.Stats.DestructedBlocks))
 					metrics.FieldU64("failed_files", atomic.LoadUint64(&destructFilesState.Stats.FailedFiles))
+					metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkerQueueSize))
 				}
 				if *collectDirectories {
 					metrics.FieldU64("visited_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedDirectories))

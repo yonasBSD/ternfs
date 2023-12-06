@@ -2,6 +2,7 @@ package lib
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"xtx/eggsfs/msgs"
 )
@@ -16,8 +17,9 @@ type DestructFilesStats struct {
 }
 
 type DestructFilesState struct {
-	Stats   DestructFilesStats
-	Cursors [256]msgs.InodeId
+	Stats           DestructFilesStats
+	WorkerQueueSize uint64
+	Cursors         [256]msgs.InodeId
 }
 
 func DestructFile(
@@ -29,7 +31,8 @@ func DestructFile(
 	cookie [8]byte,
 ) error {
 	log.Debug("%v: destructing file, cookie=%v", id, cookie)
-	atomic.AddUint64(&stats.VisitedFiles, 1)
+	// we've already checked this, but it might have expired
+	// while in the queue
 	now := msgs.Now()
 	if now < deadline {
 		log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", id, deadline, now)
@@ -94,18 +97,53 @@ func DestructFile(
 	return nil
 }
 
-func destructFilesInternal(
+type destructFileRequest struct {
+	id       msgs.InodeId
+	deadline msgs.EggsTime
+	cookie   [8]byte
+}
+
+func destructFilesWorker(
+	log *Logger,
+	client *Client,
+	stats *DestructFilesState,
+	workersChan chan *destructFileRequest,
+	terminateChan chan any,
+) {
+	for {
+		req := <-workersChan
+		if req == nil {
+			log.Debug("worker terminating")
+			workersChan <- nil // terminate the other senders, too
+			log.Debug("worker terminated")
+			return
+		}
+		atomic.StoreUint64(&stats.WorkerQueueSize, uint64(len(workersChan)))
+		if err := DestructFile(log, client, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
+			log.Info("could not destruct file %v, terminating: %v", req.id, err)
+			select {
+			case terminateChan <- err:
+			default:
+			}
+			return
+		}
+	}
+
+}
+
+func destructFilesScraper(
 	log *Logger,
 	client *Client,
 	state *DestructFilesState,
+	terminateChan chan any,
+	sendChan chan *destructFileRequest,
 	shards []msgs.ShardId,
-) error {
+) {
 	reqs := make([]msgs.VisitTransientFilesReq, len(shards))
 	for i := range reqs {
 		reqs[i].BeginId = state.Cursors[shards[i]]
 	}
 	resps := make([]msgs.VisitTransientFilesResp, len(shards))
-	someErrored := false
 	for i := 0; ; i++ {
 		allDone := true
 		for j, shid := range shards {
@@ -118,66 +156,95 @@ func destructFilesInternal(
 			log.Debug("visiting files with %+v", req)
 			err := client.ShardRequest(log, shid, req, resp)
 			if err != nil {
-				return fmt.Errorf("could not visit transient files: %w", err)
+				log.Info("could not visit transient files: %w", err)
+				select {
+				case terminateChan <- err:
+				default:
+				}
+				return
 			}
+			now := msgs.Now()
 			for ix := range resp.Files {
+				atomic.AddUint64(&state.Stats.VisitedFiles, 1)
 				file := &resp.Files[ix]
-				if err := DestructFile(log, client, &state.Stats, file.Id, file.DeadlineTime, file.Cookie); err != nil {
-					log.RaiseAlert("%+v: error while destructing file: %v", file, err)
-					atomic.AddUint64(&state.Stats.FailedFiles, 1)
-					someErrored = true
+				if now < file.DeadlineTime {
+					log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", file.Id, file.DeadlineTime, now)
+					continue
+				}
+				sendChan <- &destructFileRequest{
+					id:       file.Id,
+					deadline: file.DeadlineTime,
+					cookie:   file.Cookie,
 				}
 			}
 			state.Cursors[shid] = resp.NextId
 			req.BeginId = resp.NextId
 		}
 		if allDone {
-			break
+			// this will terminate all the senders
+			log.Debug("file scraping done, terminating senders")
+			sendChan <- nil
+			return
 		}
 	}
-	if someErrored {
-		return fmt.Errorf("destructing some files failed, see logs")
-	}
-	return nil
 }
 
-// Collects dead transient files, and expunges them. Stops when
-// all files have been traversed. Useful for testing a single iteration.
+type DestructFilesOptions struct {
+	NumWorkers       int
+	WorkersQueueSize int
+}
+
 func DestructFiles(
 	log *Logger,
 	client *Client,
+	opts *DestructFilesOptions,
 	stats *DestructFilesState,
 	shards []msgs.ShardId,
 ) error {
-	log.Info("starting to destruct files in shards %+v", shards)
-	if err := destructFilesInternal(log, client, stats, shards); err != nil {
-		return err
+	if opts.NumWorkers <= 0 {
+		panic(fmt.Errorf("the number of workers should be positive, got %v", opts.NumWorkers))
 	}
-	log.Info("stats after one destruct files iteration: %+v", stats)
-	return nil
+	terminateChan := make(chan any, 1)
+	workersChan := make(chan *destructFileRequest, opts.WorkersQueueSize)
+
+	go func() {
+		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+		destructFilesScraper(log, client, stats, terminateChan, workersChan, shards)
+	}()
+
+	var workersWg sync.WaitGroup
+	workersWg.Add(opts.NumWorkers)
+	for i := 0; i < opts.NumWorkers; i++ {
+		go func() {
+			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			destructFilesWorker(log, client, stats, workersChan, terminateChan)
+			workersWg.Done()
+		}()
+	}
+	go func() {
+		workersWg.Wait()
+		log.Info("all workers terminated, we're done")
+		terminateChan <- nil
+	}()
+
+	err := <-terminateChan
+	if err == nil {
+		return nil
+	} else {
+		log.Info("could not scrub files: %v", err)
+		return err.(error)
+	}
 }
 
 func DestructFilesInAllShards(
 	log *Logger,
 	client *Client,
+	opts *DestructFilesOptions,
 ) error {
-	state := DestructFilesState{}
+	state := &DestructFilesState{}
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	someErrored := false
-	if err := destructFilesInternal(log, client, &state, shards); err != nil {
-		// `destructFilesInternal` itself raises an alert, no need to raise two.
-		log.Info("destructing files in shards %+v failed: %v", shards, err)
-		someErrored = true
-	}
-	if someErrored {
-		return fmt.Errorf("failed to destruct %v files, see logs", state.Stats.FailedFiles)
-	}
-	if state.Stats.SkippedSpans > 0 {
-		log.RaiseAlert("skipped over %v spans, this is normal if some servers are (or were) down while garbage collecting", state.Stats.SkippedSpans)
-	}
-	log.Info("stats after one destruct files iteration in all shards: %+v", state.Stats)
-	return nil
+	return DestructFiles(log, client, opts, state, shards)
 }

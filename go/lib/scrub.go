@@ -65,85 +65,102 @@ func scrubChecker(
 	terminateChan chan any,
 ) {
 	bufPool := NewBufPool()
-	outstandingScrubbings := &sync.WaitGroup{}
 	var scrubbingMu sync.Mutex
+	terminal := false
+	outstandingScrubbings := 0
+	outstandingScrubbingsChan := make(chan struct{}, 10)
 
 	for {
-
-		completion := <-checkerChan
-		if completion == nil {
-			log.Debug("checker terminating, waiting for outstanding scrubbings")
-			outstandingScrubbings.Wait()
-			log.Debug("checker finished waiting for outstanding scrubbing, terminating")
-			return
-		}
-		atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
-		err := completion.Error
-		info := completion.Extra.(*scrubCheckInfo)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
-			atomic.AddUint64(&stats.CheckedBlocks, 1)
-			if err == msgs.BAD_BLOCK_CRC {
-				atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
-			}
-			// Scrub in separate thread to avoid delaying queue processing
-			outstandingScrubbings.Add(1)
-			go func() {
-				defer outstandingScrubbings.Done()
-				scrubbingMu.Lock() // scrubbings don't work in parallel
-				defer scrubbingMu.Unlock()
-				log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
-				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
-					log.Info("could not scrub file %v, will terminate: %v", info.file, err)
-					select {
-					case terminateChan <- err:
-					default:
-					}
-					return
-				}
-				log.Info("migration finished for file %v", info.file)
-			}()
-		} else if err == msgs.BLOCK_IO_ERROR {
-			// This is almost certainly a broken server. There isn't that much we can do.
-			// The block service will alert.
-			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", info.file, info.block, info.blockService.Id, err)
-		} else if err != nil {
-			if info.canIgnoreError {
-				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)
+		select {
+		case <-outstandingScrubbingsChan:
+			outstandingScrubbings--
+			log.Debug("scrubbing done, outstanding scrubbings: %v", outstandingScrubbings)
+		case completion := <-checkerChan:
+			if completion == nil {
+				terminal = true
+				log.Debug("checker terminating, waiting for outstanding scrubbings")
 			} else {
-				info.attempts++
-				if info.attempts >= opts.MaximumCheckAttempts {
-					log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
-					select {
-					case terminateChan <- err:
-					default:
+				atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
+				err := completion.Error
+				info := completion.Extra.(*scrubCheckInfo)
+				if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
+					atomic.AddUint64(&stats.CheckedBlocks, 1)
+					if err == msgs.BAD_BLOCK_CRC {
+						atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
 					}
-					return
-				} else {
-					outstandingScrubbings.Add(1)
+					// Scrub in separate thread to avoid delaying queue processing
+					outstandingScrubbings++
 					go func() {
-						defer outstandingScrubbings.Done()
-						if info.alert == nil {
-							info.alert = log.NewNCAlert(0)
-						}
-						log.RaiseNC(info.alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
-						time.Sleep(time.Second)
-						for {
-							err := client.StartCheckBlock(log, &info.blockService, info.block, info.size, info.crc, info, checkerChan)
-							if err == nil {
-								break
+						defer func() {
+							log.Debug("finished scrubbing file %v", info.file)
+							outstandingScrubbingsChan <- struct{}{}
+						}()
+						log.Debug("starting to scrub file %v", info.file)
+						scrubbingMu.Lock() // scrubbings don't work in parallel
+						defer scrubbingMu.Unlock()
+						log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
+						if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
+							log.Info("could not scrub file %v, will terminate: %v", info.file, err)
+							select {
+							case terminateChan <- err:
+							default:
 							}
-							log.RaiseNC(info.alert, "could not start checking block %v in file %v, will retry after a second: %v", info.block, info.file, err)
-							time.Sleep(time.Second)
+							return
 						}
+						log.Info("migration finished for file %v", info.file)
 					}()
+				} else if err == msgs.BLOCK_IO_ERROR {
+					// This is almost certainly a broken server. There isn't that much we can do.
+					// The block service will alert.
+					log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", info.file, info.block, info.blockService.Id, err)
+				} else if err != nil {
+					if info.canIgnoreError {
+						log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)
+					} else {
+						info.attempts++
+						if info.attempts >= opts.MaximumCheckAttempts {
+							log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
+							select {
+							case terminateChan <- err:
+							default:
+							}
+							return
+						} else {
+							outstandingScrubbings++
+							go func() {
+								defer func() {
+									log.Debug("finished checking block %v for file %v again", info.block, info.file)
+									outstandingScrubbingsChan <- struct{}{}
+								}()
+								log.Debug("starting to check block %v for file %v again", info.block, info.file)
+								if info.alert == nil {
+									info.alert = log.NewNCAlert(0)
+								}
+								log.RaiseNC(info.alert, "could not check block %v in file %v, will wait one second and retry: %v", info.block, info.file, err)
+								time.Sleep(time.Second)
+								for {
+									err := client.StartCheckBlock(log, &info.blockService, info.block, info.size, info.crc, info, checkerChan)
+									if err == nil {
+										break
+									}
+									log.RaiseNC(info.alert, "could not start checking block %v in file %v, will retry after a second: %v", info.block, info.file, err)
+									time.Sleep(time.Second)
+								}
+							}()
+						}
+					}
+				} else {
+					atomic.AddUint64(&stats.CheckedBlocks, 1)
+					atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
+					if info.alert != nil {
+						log.ClearNC(info.alert)
+					}
 				}
 			}
-		} else {
-			atomic.AddUint64(&stats.CheckedBlocks, 1)
-			atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
-			if info.alert != nil {
-				log.ClearNC(info.alert)
-			}
+		}
+		if terminal && outstandingScrubbings == 0 {
+			log.Debug("checker terminal, and no scrubbings outstanding, terminating")
+			return
 		}
 	}
 }

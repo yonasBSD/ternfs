@@ -156,7 +156,7 @@ func destructFilesScraper(
 			log.Debug("visiting files with %+v", req)
 			err := client.ShardRequest(log, shid, req, resp)
 			if err != nil {
-				log.Info("could not visit transient files: %w", err)
+				log.Info("could not visit transient files: %v", err)
 				select {
 				case terminateChan <- err:
 				default:

@@ -159,6 +159,43 @@ struct SnapshotDeleter {
 };
 #endif
 
+struct UnlockedInMemoryBlockServicesData {
+private:
+    std::mutex& _mutex;
+public:
+    std::unordered_map<uint64_t, BlockServiceCache>& blockServices;
+    std::vector<uint64_t>& currentBlockServices;
+
+    UnlockedInMemoryBlockServicesData(
+        std::mutex& mutex,
+        std::unordered_map<uint64_t, BlockServiceCache>& blockServices_,
+        std::vector<uint64_t>& currentBlockServices_
+    ) :
+        _mutex(mutex), blockServices(blockServices_), currentBlockServices(currentBlockServices_)
+    {
+        _mutex.lock();
+    }
+
+    ~UnlockedInMemoryBlockServicesData() {
+        _mutex.unlock();
+    }
+
+    UnlockedInMemoryBlockServicesData(const UnlockedInMemoryBlockServicesData&) = delete;
+};
+
+struct InMemoryBlockServicesData {
+private:
+    std::mutex _mutex;
+    // Cache of all the block services as an in-memory map.
+    std::unordered_map<uint64_t, BlockServiceCache> _blockServices;
+    // The block services that we currently want to write to.
+    std::vector<uint64_t> _currentBlockServices;
+public:
+    UnlockedInMemoryBlockServicesData unlock() {
+        return UnlockedInMemoryBlockServicesData(_mutex, _blockServices, _currentBlockServices);
+    }
+};
+
 struct ShardDBImpl {
     Env _env;
 
@@ -176,9 +213,13 @@ struct ShardDBImpl {
     //
     // Note: we generally need to store all the block services at any time to conjure
     // their full information when getting file spans.
-    std::unordered_map<uint64_t, BlockServiceCache> _blockServicesCache;
-    // The block services we currently want to use.
-    std::vector<uint64_t> _currentBlockServices;
+    //
+    // Readers will read from them while writers write from them. More worryingly,
+    // writers that might not be committed yet might be writing to this while readers
+    // use them.
+    //
+    // However this is fine, since it's OK to have wrong data briefly here.
+    InMemoryBlockServicesData _inMemoryBlockServicesData;
 
     rocksdb::DB* _db;
     rocksdb::ColumnFamilyHandle* _defaultCf;
@@ -372,9 +413,10 @@ struct ShardDBImpl {
             std::string buf;
             ROCKS_DB_CHECKED(_db->Get({}, _defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), &buf));
             ExternalValue<CurrentBlockServicesBody> v(buf);
-            _currentBlockServices.resize(v().length());
+            auto inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
+            inMemoryBlockServicesData.currentBlockServices.resize(v().length());
             for (int i = 0; i < v().length(); i++) {
-                _currentBlockServices[i] = v().at(i);
+                inMemoryBlockServicesData.currentBlockServices[i] = v().at(i);
             }
             {
                 rocksdb::ReadOptions options;
@@ -390,7 +432,7 @@ struct ShardDBImpl {
                     auto k = ExternalValue<BlockServiceKey>::FromSlice(it->key());
                     ALWAYS_ASSERT(k().key() == BLOCK_SERVICE_KEY);
                     auto v = ExternalValue<BlockServiceBody>::FromSlice(it->value());
-                    auto& cache = _blockServicesCache[k().blockServiceId()];
+                    auto& cache = inMemoryBlockServicesData.blockServices[k().blockServiceId()];
                     cache.ip1 = v().ip1();
                     cache.port1 = v().port1();
                     cache.ip2 = v().ip2();
@@ -819,9 +861,11 @@ struct ShardDBImpl {
         auto upperKeySlice = upperKey.toSlice();
         options.iterate_upper_bound = &upperKeySlice;
 
+        UnlockedInMemoryBlockServicesData inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
+
         int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
-        const auto addBlockService = [this, &resp, &budget](BlockServiceId blockServiceId) -> int {
+        const auto addBlockService = [&resp, &budget, &inMemoryBlockServicesData](BlockServiceId blockServiceId) -> int {
             // See if we've placed it already
             for (int i = 0; i < resp.blockServices.els.size(); i++) {
                 if (resp.blockServices.els.at(i).id == blockServiceId) {
@@ -834,7 +878,7 @@ struct ShardDBImpl {
                 return -1;
             }
             auto& blockService = resp.blockServices.els.emplace_back();
-            const auto& cache = _blockServicesCache.at(blockServiceId.u64);
+            const auto& cache = inMemoryBlockServicesData.blockServices.at(blockServiceId.u64);
             blockService.id = blockServiceId;
             blockService.ip1 = cache.ip1;
             blockService.port1 = cache.port1;
@@ -1433,12 +1477,13 @@ struct ShardDBImpl {
         // Currently things are spread out in faiure domains nicely by just having the current
         // block services to be all on different failure domains.
         {
+            UnlockedInMemoryBlockServicesData inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
             std::vector<BlockServiceId> candidateBlockServices;
-            candidateBlockServices.reserve(_currentBlockServices.size());
-            LOG_DEBUG(_env, "Starting out with %s current block services", _currentBlockServices.size());
+            candidateBlockServices.reserve(inMemoryBlockServicesData.currentBlockServices.size());
+            LOG_DEBUG(_env, "Starting out with %s current block services", candidateBlockServices.size());
             {
-                for (BlockServiceId id: _currentBlockServices) {
-                    const auto& cache = _blockServicesCache.at(id.u64);
+                for (BlockServiceId id: inMemoryBlockServicesData.currentBlockServices) {
+                    const auto& cache = inMemoryBlockServicesData.blockServices.at(id.u64);
                     if (cache.storageClass != entry.storageClass) {
                         LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
                         continue;
@@ -1497,7 +1542,7 @@ struct ShardDBImpl {
                     if (isCandidate == candidateBlockServices.end()) {
                         continue;
                     }
-                    LOG_DEBUG(_env, "(1) Picking block service candidate %s, failure domain %s", spanBlock.blockService(), GoLangQuotedStringFmt((const char*)_blockServicesCache.at(spanBlock.blockService().u64).failureDomain.data(), 16));
+                    LOG_DEBUG(_env, "(1) Picking block service candidate %s, failure domain %s", spanBlock.blockService(), GoLangQuotedStringFmt((const char*)inMemoryBlockServicesData.blockServices.at(spanBlock.blockService().u64).failureDomain.data(), 16));
                     BlockServiceId blockServiceId = spanBlock.blockService();
                     pickedBlockServices.emplace_back(blockServiceId);
                     std::iter_swap(isCandidate, candidateBlockServices.end()-1);
@@ -1512,7 +1557,7 @@ struct ShardDBImpl {
                 uint64_t rand = time.ns;
                 while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
                     uint64_t ix = wyhash64(&rand) % candidateBlockServices.size();
-                    LOG_DEBUG(_env, "(2) Picking block service candidate %s, failure domain %s", candidateBlockServices[ix], GoLangQuotedStringFmt((const char*)_blockServicesCache.at(candidateBlockServices[ix].u64).failureDomain.data(), 16));
+                    LOG_DEBUG(_env, "(2) Picking block service candidate %s, failure domain %s", candidateBlockServices[ix], GoLangQuotedStringFmt((const char*)inMemoryBlockServicesData.blockServices.at(candidateBlockServices[ix].u64).failureDomain.data(), 16));
                     pickedBlockServices.emplace_back(candidateBlockServices[ix]);
                     std::iter_swap(candidateBlockServices.begin()+ix, candidateBlockServices.end()-1);
                     candidateBlockServices.pop_back();
@@ -2642,26 +2687,33 @@ struct ShardDBImpl {
         }
 
         // Fill in the response blocks
-        resp.blocks.els.reserve(blocks.parity().blocks());
-        for (int i = 0; i < blocks.parity().blocks(); i++) {
-            const auto block = blocks.block(i);
-            const auto& cache = _blockServicesCache.at(block.blockService().u64);
-            auto& respBlock = resp.blocks.els.emplace_back();
-            respBlock.blockServiceIp1 = cache.ip1;
-            respBlock.blockServicePort1 = cache.port1;
-            respBlock.blockServiceIp2 = cache.ip2;
-            respBlock.blockServicePort2 = cache.port2;
-            respBlock.blockServiceId = block.blockService();
-            respBlock.blockId = block.blockId();
-            respBlock.blockServiceFlags = cache.flags;
-            respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
+        {
+            resp.blocks.els.reserve(blocks.parity().blocks());
+            UnlockedInMemoryBlockServicesData inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                const auto block = blocks.block(i);
+                const auto& cache = inMemoryBlockServicesData.blockServices.at(block.blockService().u64);
+                auto& respBlock = resp.blocks.els.emplace_back();
+                respBlock.blockServiceIp1 = cache.ip1;
+                respBlock.blockServicePort1 = cache.port1;
+                respBlock.blockServiceIp2 = cache.ip2;
+                respBlock.blockServicePort2 = cache.port2;
+                respBlock.blockServiceId = block.blockService();
+                respBlock.blockId = block.blockId();
+                respBlock.blockServiceFlags = cache.flags;
+                respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
+            }
         }
 
         return NO_ERROR;
     }
 
-    void _updateCurrentBlockServices(EggsTime time, rocksdb::WriteBatch& batch) {
-        _currentBlockServices.clear();
+    // Note that we do not need _currentBlockServices to be in sync, since it's just used
+    // to prepare log entries. In fact they are in a sense never in sync in the sense
+    // that when we prepare log entries we might read block services that have not
+    // been committed yet.
+    void _updateCurrentBlockServices(EggsTime time, rocksdb::WriteBatch& batch, UnlockedInMemoryBlockServicesData& inMemoryBlockServiceData) {
+        inMemoryBlockServiceData.currentBlockServices.clear();
         // The scheme below is a very cheap way to always pick different failure domains
         // for our block services: we just set the current block services to be all of
         // different failure domains, sharded by storage type.
@@ -2671,7 +2723,7 @@ struct ShardDBImpl {
 
         // storage class -> failure domain -> block service ids
         std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<uint64_t>>> blockServicesByFailureDomain;
-        for (const auto& [blockServiceId, blockService]: _blockServicesCache) {
+        for (const auto& [blockServiceId, blockService]: inMemoryBlockServiceData.blockServices) {
             if (blockService.flags & BLOCK_SERVICE_DONT_WRITE) { continue; }
             __int128 failureDomain;
             static_assert(sizeof(failureDomain) == sizeof(blockService.failureDomain));
@@ -2681,21 +2733,23 @@ struct ShardDBImpl {
         uint64_t rand = time.ns;
         for (const auto& [storageClass, byFailureDomain]: blockServicesByFailureDomain) {
             for (const auto& [failureDomain, blockServices]: byFailureDomain) {
-                _currentBlockServices.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]);
+                inMemoryBlockServiceData.currentBlockServices.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]);
             }
         }
-        ALWAYS_ASSERT(_currentBlockServices.size() < 256); // TODO handle this properly
-        OwnedValue<CurrentBlockServicesBody> currentBody(_currentBlockServices.size());
-        for (int i = 0; i < _currentBlockServices.size(); i++) {
-            currentBody().set(i, _currentBlockServices[i]);
+        ALWAYS_ASSERT(inMemoryBlockServiceData.currentBlockServices.size() < 256); // TODO handle this properly
+        OwnedValue<CurrentBlockServicesBody> currentBody(inMemoryBlockServiceData.currentBlockServices.size());
+        for (int i = 0; i < inMemoryBlockServiceData.currentBlockServices.size(); i++) {
+            currentBody().set(i, inMemoryBlockServiceData.currentBlockServices[i]);
         }
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
     }
 
-    // Important for this to never error: we rely on the write to go through since 
-    // we write _currentBlockServices/_blockServicesCache, which we rely to be in
-    // sync with RocksDB.
+    // Important for this to never error: we rely on the write to go through since
+    // we write _blockServicesCache, which we rely to be in sync with RocksDB.
+    // TODO we might fail to commit the transaction! We should really keep that
+    // data directly in RocksDB.
     void _applyUpdateBlockServices(EggsTime time, rocksdb::WriteBatch& batch, const UpdateBlockServicesEntry& entry) {
+        UnlockedInMemoryBlockServicesData inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
         StaticValue<BlockServiceKey> blockKey;
         blockKey().setKey(BLOCK_SERVICE_KEY);
         StaticValue<BlockServiceBody> blockBody;
@@ -2713,7 +2767,7 @@ struct ShardDBImpl {
             blockBody().setSecretKey(entryBlock.secretKey.data);
             blockBody().setFlags(entryBlock.flags);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
-            auto& cache = _blockServicesCache[entryBlock.id.u64];
+            auto& cache = inMemoryBlockServicesData.blockServices[entryBlock.id.u64];
             expandKey(entryBlock.secretKey.data, cache.secretKey);
             cache.ip1 = entryBlock.ip1.data;
             cache.port1 = entryBlock.port1;
@@ -2723,7 +2777,7 @@ struct ShardDBImpl {
             cache.failureDomain = entryBlock.failureDomain.name.data;
             cache.flags = entryBlock.flags;
         }
-        _updateCurrentBlockServices(time, batch);
+        _updateCurrentBlockServices(time, batch, inMemoryBlockServicesData);
     }
 
     uint64_t _getNextBlockId() {
@@ -2747,12 +2801,13 @@ struct ShardDBImpl {
     void _fillInAddSpanInitiate(const SpanBlocksBody blocks, AddSpanInitiateResp& resp) {
         resp.blocks.els.reserve(blocks.parity().blocks());
         BlockBody block;
+        UnlockedInMemoryBlockServicesData inMemoryBlockServiceData = _inMemoryBlockServicesData.unlock();
         for (int i = 0; i < blocks.parity().blocks(); i++) {
             const BlockBody block = blocks.block(i);
             auto& respBlock = resp.blocks.els.emplace_back();
             respBlock.blockServiceId = block.blockService();
             respBlock.blockId = block.blockId();
-            const auto& cache = _blockServicesCache.at(block.blockService().u64);
+            const auto& cache = inMemoryBlockServiceData.blockServices.at(block.blockService().u64);
             respBlock.blockServiceIp1 = cache.ip1;
             respBlock.blockServicePort1 = cache.port1;
             respBlock.blockServiceIp2 = cache.ip2;
@@ -2965,7 +3020,7 @@ struct ShardDBImpl {
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
-    bool _checkBlockAddProof(BlockServiceId blockServiceId, const BlockProof& proof) {
+    bool _checkBlockAddProof(UnlockedInMemoryBlockServicesData& inMemoryBlockServiceData, BlockServiceId blockServiceId, const BlockProof& proof) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -2974,7 +3029,7 @@ struct ShardDBImpl {
         bbuf.packScalar<char>('W');
         bbuf.packScalar<uint64_t>(proof.blockId);
     
-        const auto& cache = _blockServicesCache.at(blockServiceId.u64);
+        const auto& cache = inMemoryBlockServiceData.blockServices.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
         bool good = proof.proof == expectedProof;
@@ -2998,7 +3053,7 @@ struct ShardDBImpl {
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
-    bool _checkBlockDeleteProof(InodeId fileId, BlockServiceId blockServiceId, const BlockProof& proof) {
+    bool _checkBlockDeleteProof(UnlockedInMemoryBlockServicesData& inMemoryBlockServiceData, InodeId fileId, BlockServiceId blockServiceId, const BlockProof& proof) {
         char buf[32];
         memset(buf, 0, sizeof(buf));
         BincodeBuf bbuf(buf, sizeof(buf));
@@ -3007,7 +3062,7 @@ struct ShardDBImpl {
         bbuf.packScalar<char>('E');
         bbuf.packScalar<uint64_t>(proof.blockId);
     
-        const auto& cache = _blockServicesCache.at(blockServiceId.u64);
+        const auto& cache = inMemoryBlockServiceData.blockServices.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
         bool good = proof.proof == expectedProof;
@@ -3060,10 +3115,11 @@ struct ShardDBImpl {
             if (blocks.parity().blocks() != entry.proofs.els.size()) {
                 return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
             }
+            UnlockedInMemoryBlockServicesData inMemoryBlockServiceData = _inMemoryBlockServicesData.unlock();
             BlockBody block;
             for (int i = 0; i < blocks.parity().blocks(); i++) {
                 auto block = blocks.block(i);
-                if (!_checkBlockAddProof(block.blockService(), entry.proofs.els[i])) {
+                if (!_checkBlockAddProof(inMemoryBlockServiceData, block.blockService(), entry.proofs.els[i])) {
                     return EggsError::BAD_BLOCK_PROOF;
                 }
             }
@@ -3157,18 +3213,21 @@ struct ShardDBImpl {
         if (entry.proofs.els.size() != blocks.parity().blocks()) {
             return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
         }
-        for (int i = 0; i < blocks.parity().blocks(); i++) {
-            const auto block = blocks.block(i);
-            const auto& proof = entry.proofs.els[i];
-            if (block.blockId() != proof.blockId) {
-                RAISE_ALERT(_env, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
-                return EggsError::BAD_BLOCK_PROOF;
+        {
+            UnlockedInMemoryBlockServicesData inMemoryBlockServiceData = _inMemoryBlockServicesData.unlock();
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                const auto block = blocks.block(i);
+                const auto& proof = entry.proofs.els[i];
+                if (block.blockId() != proof.blockId) {
+                    RAISE_ALERT(_env, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
+                    return EggsError::BAD_BLOCK_PROOF;
+                }
+                if (!_checkBlockDeleteProof(inMemoryBlockServiceData, entry.fileId, block.blockService(), proof)) {
+                    return EggsError::BAD_BLOCK_PROOF;
+                }
+                // record balance change in block service to files
+                _addBlockServicesToFiles(batch, block.blockService(), entry.fileId, -1);
             }
-            if (!_checkBlockDeleteProof(entry.fileId, block.blockService(), proof)) {
-                return EggsError::BAD_BLOCK_PROOF;
-            }
-            // record balance change in block service to files
-            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId, -1);
         }
 
         // Delete span, set new size, and go back to clean state

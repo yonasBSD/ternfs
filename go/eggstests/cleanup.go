@@ -61,8 +61,11 @@ func cleanupAfterTest(
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything, making sure that all the deadlines will have passed
 	dirInfoCache := lib.NewDirInfoCache()
-	if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}); err != nil {
-		panic(err)
+	{
+		state := &lib.CollectDirectoriesState{}
+		if err := lib.CollectDirectories(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+			panic(err)
+		}
 	}
 	if err := lib.CollectZeroBlockServiceFilesInAllShards(log, client); err != nil {
 		panic(err)
@@ -70,11 +73,11 @@ func cleanupAfterTest(
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
 	log.Info("deadlines passed, collecting")
-	if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{
-		NumWorkers:       10,
-		WorkersQueueSize: 100,
-	}); err != nil {
-		panic(err)
+	{
+		state := &lib.DestructFilesState{}
+		if err := lib.DestructFiles(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
+			panic(err)
+		}
 	}
 	// Make sure nothing is left after collection
 	for i := 0; i < 256; i++ {

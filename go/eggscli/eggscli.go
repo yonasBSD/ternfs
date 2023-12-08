@@ -203,7 +203,8 @@ func main() {
 	collectRun := func() {
 		dirInfoCache := lib.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}); err != nil {
+			state := &lib.CollectDirectoriesState{}
+			if err := lib.CollectDirectories(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {
@@ -229,7 +230,8 @@ func main() {
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
-			if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{NumWorkers: 10, WorkersQueueSize: 100}); err != nil {
+			state := &lib.DestructFilesState{}
+			if err := lib.DestructFiles(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {

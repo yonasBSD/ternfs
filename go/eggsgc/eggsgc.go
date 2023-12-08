@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -79,11 +78,11 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
-	collectDirectoriesWorkers := flag.Int("collect-directories-workers", 100, "")
-	collectDirectoriesWorkersQueueSize := flag.Int("collect-directories-workers-queue-size", 1000, "")
+	collectDirectoriesWorkersPerShard := flag.Int("collect-directories-workers-per-shard", 10, "")
+	collectDirectoriesWorkersQueueSize := flag.Int("collect-directories-workers-queue-size", 50, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
-	destructFilesWorkers := flag.Int("destruct-files-workers", 100, "")
-	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 1000, "")
+	destructFilesWorkersPerShard := flag.Int("destruct-files-workers-per-shard", 10, "")
+	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 50, "")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
@@ -111,18 +110,7 @@ func main() {
 			shards = append(shards, msgs.ShardId(i))
 		}
 	} else {
-		shardsMap := make(map[uint64]struct{})
-		for _, shStr := range flag.Args() {
-			shid, err := strconv.ParseUint(shStr, 0, 8)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Could not parse %q as shard: %v\n", shStr, err)
-				os.Exit(2)
-			}
-			shardsMap[shid] = struct{}{}
-		}
-		for shid := range shardsMap {
-			shards = append(shards, msgs.ShardId(shid))
-		}
+		panic(fmt.Errorf("only all shards mode supported now"))
 	}
 
 	logOut := os.Stdout
@@ -245,12 +233,12 @@ func main() {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				log.Info("collecting directories in %+v", shards)
+				log.Info("collecting directories")
 				opts := &lib.CollectDirectoriesOpts{
-					NumWorkers:       *collectDirectoriesWorkers,
-					WorkersQueueSize: *collectDirectoriesWorkersQueueSize,
+					NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
+					WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 				}
-				if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, shards); err != nil {
+				if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {
 					log.RaiseAlert("could not collect directories: %v", err)
 				}
 				log.Info("finished collect directories cycle, will restart")
@@ -262,12 +250,12 @@ func main() {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				log.Info("destructing files in %v", shards)
+				log.Info("destructing files")
 				opts := &lib.DestructFilesOptions{
-					NumWorkers:       *destructFilesWorkers,
-					WorkersQueueSize: *destructFilesWorkersQueueSize,
+					NumWorkersPerShard: *destructFilesWorkersPerShard,
+					WorkersQueueSize:   *destructFilesWorkersQueueSize,
 				}
-				if err := lib.DestructFiles(log, client, opts, destructFilesState, shards); err != nil {
+				if err := lib.DestructFiles(log, client, opts, destructFilesState); err != nil {
 					log.RaiseAlert("could not destruct files: %v", err)
 				}
 				log.Info("finished destruct files cycle, will restart")
@@ -329,14 +317,22 @@ func main() {
 					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&destructFilesState.Stats.SkippedSpans))
 					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&destructFilesState.Stats.DestructedBlocks))
 					metrics.FieldU64("failed_files", atomic.LoadUint64(&destructFilesState.Stats.FailedFiles))
-					metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkersQueueSize))
+					queueSize := uint64(0)
+					for i := 0; i < 256; i++ {
+						queueSize += atomic.LoadUint64(&destructFilesState.WorkersQueuesSize[i])
+					}
+					metrics.FieldU64("destruct_files_worker_queue_size", queueSize)
 				}
 				if *collectDirectories {
 					metrics.FieldU64("visited_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedDirectories))
 					metrics.FieldU64("visited_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedEdges))
 					metrics.FieldU64("collected_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.CollectedEdges))
 					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.DestructedDirectories))
-					metrics.FieldU64("collect_directories_worker_queue_size", atomic.LoadUint64(&collectDirectoriesState.WorkersQueueSize))
+					queueSize := uint64(0)
+					for i := 0; i < 256; i++ {
+						queueSize += atomic.LoadUint64(&collectDirectoriesState.WorkersQueuesSize[i])
+					}
+					metrics.FieldU64("collect_directories_worker_queue_size", queueSize)
 				}
 				if *zeroBlockServices {
 					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&zeroBlockServiceFilesStats.ZeroBlockServiceFilesRemoved))

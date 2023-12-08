@@ -22,12 +22,6 @@ import (
 // Right now the DB just stores the counting stats
 func initDb(db *sql.DB) error {
 	var err error
-	for i := 0; i < 256; i++ {
-		_, err = db.Exec("INSERT OR IGNORE INTO count_stats (shid, files, directories, transient_files) VALUES (?, 0, 0, 0)", i)
-		if err != nil {
-			return err
-		}
-	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS state(
 		what TEXT NOT NULL PRIMARY KEY,
 		state BLOB NOT NULL
@@ -342,6 +336,7 @@ func main() {
 					metrics.FieldU64("visited_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedEdges))
 					metrics.FieldU64("collected_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.CollectedEdges))
 					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.DestructedDirectories))
+					metrics.FieldU64("collect_directories_worker_queue_size", atomic.LoadUint64(&collectDirectoriesState.WorkersQueueSize))
 				}
 				if *zeroBlockServices {
 					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&zeroBlockServiceFilesStats.ZeroBlockServiceFilesRemoved))

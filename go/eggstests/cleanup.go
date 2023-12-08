@@ -61,29 +61,8 @@ func cleanupAfterTest(
 	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything, making sure that all the deadlines will have passed
 	dirInfoCache := lib.NewDirInfoCache()
-	{
-		terminateChan := make(chan any)
-		state := lib.CollectDirectoriesState{}
-		var wg sync.WaitGroup
-		wg.Add(256)
-		for i := 0; i < 256; i++ {
-			shid := msgs.ShardId(i)
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				if err := lib.CollectDirectories(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}, &state, []msgs.ShardId{shid}); err != nil {
-					panic(err)
-				}
-				wg.Done()
-			}()
-		}
-		go func() {
-			wg.Wait()
-			terminateChan <- nil
-		}()
-		err := <-terminateChan
-		if err != nil {
-			panic(err)
-		}
+	if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}); err != nil {
+		panic(err)
 	}
 	if err := lib.CollectZeroBlockServiceFilesInAllShards(log, client); err != nil {
 		panic(err)
@@ -91,33 +70,11 @@ func cleanupAfterTest(
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
 	log.Info("deadlines passed, collecting")
-	{
-		terminateChan := make(chan any)
-		state := lib.DestructFilesState{}
-		var wg sync.WaitGroup
-		wg.Add(256)
-		for i := 0; i < 256; i++ {
-			shid := msgs.ShardId(i)
-			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				opts := &lib.DestructFilesOptions{
-					NumWorkers:       10,
-					WorkersQueueSize: 100,
-				}
-				if err := lib.DestructFiles(log, client, opts, &state, []msgs.ShardId{shid}); err != nil {
-					panic(err)
-				}
-				wg.Done()
-			}()
-		}
-		go func() {
-			wg.Wait()
-			terminateChan <- nil
-		}()
-		err := <-terminateChan
-		if err != nil {
-			panic(err)
-		}
+	if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{
+		NumWorkers:       10,
+		WorkersQueueSize: 100,
+	}); err != nil {
+		panic(err)
 	}
 	// Make sure nothing is left after collection
 	for i := 0; i < 256; i++ {

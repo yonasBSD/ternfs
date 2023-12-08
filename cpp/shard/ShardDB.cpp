@@ -149,16 +149,6 @@ static void fillMaxNameChars() {
 }
 static BincodeBytes maxName(maxNameChars, 255);
 
-#if 0
-struct SnapshotDeleter {
-    rocksdb::DB* db;
-
-    void operator()(rocksdb::Snapshot* snapshot) {
-        db->ReleaseSnapshot(snapshot);
-    }
-};
-#endif
-
 struct UnlockedInMemoryBlockServicesData {
 private:
     std::mutex& _mutex;

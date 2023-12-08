@@ -10,7 +10,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/lib"
@@ -92,7 +91,6 @@ func main() {
 	destructFilesWorkers := flag.Int("destruct-files-workers", 100, "")
 	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 1000, "")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
-	parallel := flag.Uint("parallel", 1, "Work will be split in N groups, so for example with -parallel 16 work will be done in groups of 16 shards.")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	scrub := flag.Bool("scrub", false, "scrub")
@@ -109,11 +107,6 @@ func main() {
 
 	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics && !*scrub {
 		fmt.Fprintf(os.Stderr, "Nothing to do!\n")
-		os.Exit(2)
-	}
-
-	if *parallel < 1 {
-		fmt.Fprintf(os.Stderr, "-parallel must be at least 1.\n")
 		os.Exit(2)
 	}
 
@@ -136,15 +129,6 @@ func main() {
 		for shid := range shardsMap {
 			shards = append(shards, msgs.ShardId(shid))
 		}
-	}
-
-	if int(*parallel) > len(shards) {
-		fmt.Fprintf(os.Stderr, "-parallel can't be greater than %v (number of shards).\n", len(shards))
-		os.Exit(2)
-	}
-	if len(shards)%int(*parallel) != 0 {
-		fmt.Fprintf(os.Stderr, "-parallel does not divide %v (number of shards).\n", len(shards))
-		os.Exit(2)
 	}
 
 	logOut := os.Stdout
@@ -263,123 +247,74 @@ func main() {
 		}
 	}()
 
-	shardsPerGroup := len(shards) / int(*parallel)
-
 	if *collectDirectories {
 		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				var wg sync.WaitGroup
-				wg.Add(int(*parallel))
-				for group0 := 0; group0 < int(*parallel); group0++ {
-					group := group0
-					rand := wyhash.New(uint64(group))
-					go func() {
-						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-						waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
-						log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
-						time.Sleep(waitFor)
-						opts := &lib.CollectDirectoriesOpts{
-							NumWorkers:       *collectDirectoriesWorkers,
-							WorkersQueueSize: *collectDirectoriesWorkersQueueSize,
-						}
-						if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, groupShards); err != nil {
-							log.RaiseAlert("could not collect directories: %v", err)
-						}
-						wg.Done()
-					}()
+				log.Info("collecting directories in %+v", shards)
+				opts := &lib.CollectDirectoriesOpts{
+					NumWorkers:       *collectDirectoriesWorkers,
+					WorkersQueueSize: *collectDirectoriesWorkersQueueSize,
 				}
-				wg.Wait()
-				log.Info("finished collect directories cycle")
+				if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, shards); err != nil {
+					log.RaiseAlert("could not collect directories: %v", err)
+				}
+				log.Info("finished collect directories cycle, will restart")
 				*collectDirectoriesState = lib.CollectDirectoriesState{}
 			}
 		}()
 	}
 	if *destructFiles {
 		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				var wg sync.WaitGroup
-				wg.Add(int(*parallel))
-				for group0 := 0; group0 < int(*parallel); group0++ {
-					group := group0
-					rand := wyhash.New(uint64(group))
-					go func() {
-						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-						waitFor := time.Millisecond * time.Duration(rand.Uint64()%(30_000))
-						log.Info("waiting %v before destructing files in %v", waitFor, groupShards)
-						time.Sleep(waitFor)
-						opts := &lib.DestructFilesOptions{
-							NumWorkers:       *destructFilesWorkers,
-							WorkersQueueSize: *destructFilesWorkersQueueSize,
-						}
-						if err := lib.DestructFiles(log, client, opts, destructFilesState, groupShards); err != nil {
-							log.RaiseAlert("could not destruct files: %v", err)
-						}
-						wg.Done()
-					}()
+				log.Info("destructing files in %v", shards)
+				opts := &lib.DestructFilesOptions{
+					NumWorkers:       *destructFilesWorkers,
+					WorkersQueueSize: *destructFilesWorkersQueueSize,
 				}
-				wg.Wait()
-				log.Info("finished destruct files cycle")
+				if err := lib.DestructFiles(log, client, opts, destructFilesState, shards); err != nil {
+					log.RaiseAlert("could not destruct files: %v", err)
+				}
+				log.Info("finished destruct files cycle, will restart")
 				*destructFilesState = lib.DestructFilesState{}
 			}
 		}()
 	}
 	if *zeroBlockServices {
 		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				var wg sync.WaitGroup
-				wg.Add(int(*parallel))
-				for group0 := 0; group0 < int(*parallel); group0++ {
-					group := group0
-					rand := wyhash.New(uint64(group))
-					go func() {
-						defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-						groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-						// just do that once an hour, we don't need this often.
-						waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-						log.Info("waiting %v before collecting zero block service files in %v", waitFor, groupShards)
-						time.Sleep(waitFor)
-						if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, groupShards); err != nil {
-							log.RaiseAlert("could not collecting zero block service files: %v", err)
-						}
-						wg.Done()
-					}()
+				// just do that once an hour, we don't need this often.
+				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
+				log.Info("waiting %v before collecting zero block service files in %v", waitFor, shards)
+				time.Sleep(waitFor)
+				if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, shards); err != nil {
+					log.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
-				wg.Wait()
-				log.Info("finished zero block services cycle")
+				log.Info("finished zero block services cycle, will restart")
 				*zeroBlockServiceFilesStats = lib.ZeroBlockServiceFilesStats{}
+
 			}
 		}()
 	}
 	if *scrub {
 		go func() {
-			var wg sync.WaitGroup
-			wg.Add(int(*parallel))
-			for group0 := 0; group0 < int(*parallel); group0++ {
-				group := group0
-				rand := wyhash.New(uint64(group))
-				go func() {
-					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					groupShards := shards[shardsPerGroup*group : shardsPerGroup*(group+1)]
-					waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
-					log.Info("waiting %v before scrubbing files in %+v", waitFor, groupShards)
-					time.Sleep(waitFor)
-					// retry forever
-					opts := &lib.ScrubOptions{
-						NumSenders:       *scrubSenders,
-						SendersQueueSize: *scrubSendersQueueSize,
-						CheckerQueueSize: *scrubCheckerQueueSize,
-					}
-					if err := lib.ScrubFiles(log, client, opts, scrubState, groupShards); err != nil {
-						log.RaiseAlert("could not scrub files: %v", err)
-					}
-					wg.Done()
-				}()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				log.Info("scrubbing files in %+v", shards)
+				// retry forever
+				opts := &lib.ScrubOptions{
+					NumSenders:       *scrubSenders,
+					SendersQueueSize: *scrubSendersQueueSize,
+					CheckerQueueSize: *scrubCheckerQueueSize,
+				}
+				if err := lib.ScrubFiles(log, client, opts, scrubState, shards); err != nil {
+					log.RaiseAlert("could not scrub files: %v", err)
+				}
+				log.Info("finished scrubbing cycle")
+				*scrubState = lib.ScrubState{}
 			}
-			wg.Wait()
-			log.Info("finished scrubbing cycle")
-			*scrubState = lib.ScrubState{}
 		}()
 	}
 	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub) {

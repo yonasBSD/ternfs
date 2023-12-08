@@ -98,7 +98,7 @@ std::string sendMetrics(Duration timeout, const std::string& payload) {
     const auto res = cli.Post(path, payload, "text/plain");
     if (res.error() != httplib::Error::Success) {
         std::ostringstream ss;
-        ss << "Could not insert metrics to " << influxDBUrl << path << ": " << res;
+        ss << "Could not insert metrics to " << influxDBUrl << path << ": " << res.error();
         return ss.str();
     }
     return {};

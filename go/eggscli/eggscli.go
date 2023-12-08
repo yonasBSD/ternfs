@@ -203,7 +203,7 @@ func main() {
 	collectRun := func() {
 		dirInfoCache := lib.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache); err != nil {
+			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}); err != nil {
 				panic(err)
 			}
 		} else {

@@ -70,7 +70,7 @@ func cleanupAfterTest(
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				if err := lib.CollectDirectories(log, client, dirInfoCache, &state, []msgs.ShardId{shid}); err != nil {
+				if err := lib.CollectDirectories(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkers: 10, WorkersQueueSize: 100}, &state, []msgs.ShardId{shid}); err != nil {
 					panic(err)
 				}
 				wg.Done()

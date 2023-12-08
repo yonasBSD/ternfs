@@ -17,9 +17,9 @@ type DestructFilesStats struct {
 }
 
 type DestructFilesState struct {
-	Stats           DestructFilesStats
-	WorkerQueueSize uint64
-	Cursors         [256]msgs.InodeId
+	Stats            DestructFilesStats
+	WorkersQueueSize uint64
+	Cursors          [256]msgs.InodeId
 }
 
 func DestructFile(
@@ -114,11 +114,11 @@ func destructFilesWorker(
 		req := <-workersChan
 		if req == nil {
 			log.Debug("worker terminating")
-			workersChan <- nil // terminate the other senders, too
+			workersChan <- nil // terminate the other workers, too
 			log.Debug("worker terminated")
 			return
 		}
-		atomic.StoreUint64(&stats.WorkerQueueSize, uint64(len(workersChan)))
+		atomic.StoreUint64(&stats.WorkersQueueSize, uint64(len(workersChan)))
 		if err := DestructFile(log, client, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
 			log.Info("could not destruct file %v, terminating: %v", req.id, err)
 			select {
@@ -128,7 +128,6 @@ func destructFilesWorker(
 			return
 		}
 	}
-
 }
 
 func destructFilesScraper(

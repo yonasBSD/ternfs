@@ -2,6 +2,7 @@ package lib
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"xtx/eggsfs/msgs"
 )
@@ -14,8 +15,9 @@ type CollectDirectoriesStats struct {
 }
 
 type CollectDirectoriesState struct {
-	Stats   CollectDirectoriesStats
-	Cursors [256]msgs.InodeId
+	Stats            CollectDirectoriesStats
+	WorkersQueueSize uint64
+	Cursors          [256]msgs.InodeId
 }
 
 // returns whether all the edges were removed
@@ -162,8 +164,42 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 	return nil
 }
 
-func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache, state *CollectDirectoriesState, shards []msgs.ShardId) error {
-	log.Info("starting to collect directories in shards %+v", shards)
+func collectDirectoriesWorker(
+	log *Logger,
+	client *Client,
+	dirInfoCache *DirInfoCache,
+	stats *CollectDirectoriesState,
+	workersChan chan msgs.InodeId,
+	terminateChan chan any,
+) {
+	for {
+		dir := <-workersChan
+		if dir == msgs.NULL_INODE_ID {
+			log.Debug("worker terminating")
+			workersChan <- msgs.NULL_INODE_ID // terminate the other workers, too
+			log.Debug("worker terminated")
+			return
+		}
+		atomic.StoreUint64(&stats.WorkersQueueSize, uint64(len(workersChan)))
+		if err := CollectDirectory(log, client, dirInfoCache, &stats.Stats, dir); err != nil {
+			log.Info("could not destruct directory %v, terminating: %v", dir, err)
+			select {
+			case terminateChan <- err:
+			default:
+			}
+			return
+		}
+	}
+}
+
+func collectDirectoriesScraper(
+	log *Logger,
+	client *Client,
+	state *CollectDirectoriesState,
+	terminateChan chan any,
+	sendChan chan msgs.InodeId,
+	shards []msgs.ShardId,
+) {
 	reqs := make([]msgs.VisitDirectoriesReq, len(shards))
 	for i := range reqs {
 		reqs[i].BeginId = state.Cursors[shards[i]]
@@ -180,39 +216,85 @@ func CollectDirectories(log *Logger, client *Client, dirInfoCache *DirInfoCache,
 			allDone = false
 			err := client.ShardRequest(log, shid, req, resp)
 			if err != nil {
-				return fmt.Errorf("could not visit directories: %w", err)
+				select {
+				case terminateChan <- fmt.Errorf("could not visit directories: %w", err):
+				default:
+				}
+				return
 			}
 			for _, id := range resp.Ids {
-				if id.Type() != msgs.DIRECTORY {
-					panic(fmt.Errorf("bad directory inode %v", id))
-				}
-				if id.Shard() != shid {
-					panic("bad shard")
-				}
-				if err := CollectDirectory(log, client, dirInfoCache, &state.Stats, id); err != nil {
-					return fmt.Errorf("error while collecting inode %v: %w", id, err)
-				}
+				sendChan <- id
 			}
 			state.Cursors[shid] = resp.NextId
 			req.BeginId = resp.NextId
 		}
 		if allDone {
-			break
+			log.Debug("directory scraping done, terminating workers")
+			sendChan <- msgs.NULL_INODE_ID
+			return
 		}
 	}
-	log.Info("stats after one collect directories iteration: %+v", state)
-	return nil
 }
 
-func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache) error {
+type CollectDirectoriesOpts struct {
+	NumWorkers       int
+	WorkersQueueSize int
+}
+
+func CollectDirectories(
+	log *Logger,
+	client *Client,
+	dirInfoCache *DirInfoCache,
+	opts *CollectDirectoriesOpts,
+	state *CollectDirectoriesState,
+	shards []msgs.ShardId,
+) error {
+	log.Info("starting to collect directories in shards %+v", shards)
+
+	if opts.NumWorkers <= 0 {
+		panic(fmt.Errorf("the number of workers should be positive, got %v", opts.NumWorkers))
+	}
+	terminateChan := make(chan any, 1)
+	workersChan := make(chan msgs.InodeId, opts.WorkersQueueSize)
+
+	go func() {
+		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+		collectDirectoriesScraper(log, client, state, terminateChan, workersChan, shards)
+	}()
+
+	var workersWg sync.WaitGroup
+	workersWg.Add(opts.NumWorkers)
+	for i := 0; i < opts.NumWorkers; i++ {
+		go func() {
+			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			collectDirectoriesWorker(log, client, dirInfoCache, state, workersChan, terminateChan)
+			workersWg.Done()
+		}()
+	}
+	go func() {
+		workersWg.Wait()
+		log.Info("all workers terminated, we're done")
+		terminateChan <- nil
+	}()
+
+	err := <-terminateChan
+	if err == nil {
+		log.Info("stats after one collect directories iteration: %+v", state)
+		return nil
+	} else {
+		log.Info("could not scrub files: %v", err)
+		return err.(error)
+	}
+}
+
+func CollectDirectoriesInAllShards(log *Logger, client *Client, dirInfoCache *DirInfoCache, opts *CollectDirectoriesOpts) error {
 	state := CollectDirectoriesState{}
 	shards := make([]msgs.ShardId, 256)
 	for i := 0; i < 256; i++ {
 		shards[i] = msgs.ShardId(i)
 	}
-	if err := CollectDirectories(log, client, dirInfoCache, &state, shards); err != nil {
+	if err := CollectDirectories(log, client, dirInfoCache, opts, &state, shards); err != nil {
 		return err
 	}
-	log.Info("stats after one all shards collect directories iteration: %+v", state.Stats)
 	return nil
 }

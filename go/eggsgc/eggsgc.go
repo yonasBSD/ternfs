@@ -86,6 +86,8 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
+	collectDirectoriesWorkers := flag.Int("collect-directories-workers", 100, "")
+	collectDirectoriesWorkersQueueSize := flag.Int("collect-directories-workers-queue-size", 1000, "")
 	destructFiles := flag.Bool("destruct-files", false, "")
 	destructFilesWorkers := flag.Int("destruct-files-workers", 100, "")
 	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 1000, "")
@@ -277,7 +279,11 @@ func main() {
 						waitFor := time.Millisecond * time.Duration(rand.Uint64()%30_000)
 						log.Info("waiting %v before collecting directories in %+v", waitFor, groupShards)
 						time.Sleep(waitFor)
-						if err := lib.CollectDirectories(log, client, dirInfoCache, collectDirectoriesState, groupShards); err != nil {
+						opts := &lib.CollectDirectoriesOpts{
+							NumWorkers:       *collectDirectoriesWorkers,
+							WorkersQueueSize: *collectDirectoriesWorkersQueueSize,
+						}
+						if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, groupShards); err != nil {
 							log.RaiseAlert("could not collect directories: %v", err)
 						}
 						wg.Done()
@@ -394,7 +400,7 @@ func main() {
 					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&destructFilesState.Stats.SkippedSpans))
 					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&destructFilesState.Stats.DestructedBlocks))
 					metrics.FieldU64("failed_files", atomic.LoadUint64(&destructFilesState.Stats.FailedFiles))
-					metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkerQueueSize))
+					metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkersQueueSize))
 				}
 				if *collectDirectories {
 					metrics.FieldU64("visited_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedDirectories))

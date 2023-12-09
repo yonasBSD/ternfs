@@ -12,6 +12,7 @@
 #include "Xmon.hpp"
 #include "Connect.hpp"
 #include "XmonAgent.hpp"
+#include "strerror.h"
 
 enum struct XmonMood : int32_t {
     Happy = 0,
@@ -219,8 +220,8 @@ EggsTime Xmon::_stepNextWakeup() {
 #define CHECK_ERR_STRING(__what) \
     if (errString.size()) { \
         LOG_INFO(_env, "could not %s: %s, will reconnect", __what, errString); \
-        if (close(_fds[SOCK_FD].fd) < 0) { \
-            throw SYSCALL_EXCEPTION("close"); \
+        if (_fds[SOCK_FD].fd >= 0 && close(_fds[SOCK_FD].fd) < 0) { \
+            LOG_INFO(_env, "could not close xmon socket after error: %s (%s)", errno, safe_strerror(errno)); \
         } \
         _fds[SOCK_FD].fd = -1; \
         (1_sec).sleep(); \

@@ -4374,13 +4374,15 @@ std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x);
 
 struct UpdateBlockServicesEntry {
     BincodeList<BlockServiceInfo> blockServices;
+    BincodeList<BlockServiceId> currentBlockServices;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE; // blockServices
+    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE + BincodeList<BlockServiceId>::STATIC_SIZE; // blockServices + currentBlockServices
 
     UpdateBlockServicesEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
+        _size += currentBlockServices.packedSize(); // currentBlockServices
         return _size;
     }
     void pack(BincodeBuf& buf) const;

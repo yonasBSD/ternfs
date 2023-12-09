@@ -1562,7 +1562,10 @@ type BlockServiceInfo struct {
 }
 
 type UpdateBlockServicesEntry struct {
+	// all the block services
 	BlockServices []BlockServiceInfo
+	// block services this shard should use right now
+	CurrentBlockServices []BlockServiceId
 }
 
 type EntryNewBlockInfo struct {

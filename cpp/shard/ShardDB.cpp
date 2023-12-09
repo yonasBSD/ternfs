@@ -2698,48 +2698,13 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    // Note that we do not need _currentBlockServices to be in sync, since it's just used
-    // to prepare log entries. In fact they are in a sense never in sync in the sense
-    // that when we prepare log entries we might read block services that have not
-    // been committed yet.
-    void _updateCurrentBlockServices(EggsTime time, rocksdb::WriteBatch& batch, UnlockedInMemoryBlockServicesData& inMemoryBlockServiceData) {
-        inMemoryBlockServiceData.currentBlockServices.clear();
-        // The scheme below is a very cheap way to always pick different failure domains
-        // for our block services: we just set the current block services to be all of
-        // different failure domains, sharded by storage type.
-        //
-        // It does require having at least 14 failure domains (to do RS(10,4)), and gives
-        // very little slack with the current situation of 17 failure domains.
-
-        // storage class -> failure domain -> block service ids
-        std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<uint64_t>>> blockServicesByFailureDomain;
-        for (const auto& [blockServiceId, blockService]: inMemoryBlockServiceData.blockServices) {
-            if (blockService.flags & BLOCK_SERVICE_DONT_WRITE) { continue; }
-            __int128 failureDomain;
-            static_assert(sizeof(failureDomain) == sizeof(blockService.failureDomain));
-            memcpy(&failureDomain, &blockService.failureDomain[0], sizeof(failureDomain));
-            blockServicesByFailureDomain[blockService.storageClass][failureDomain].emplace_back(blockServiceId);
-        }
-        uint64_t rand = time.ns;
-        for (const auto& [storageClass, byFailureDomain]: blockServicesByFailureDomain) {
-            for (const auto& [failureDomain, blockServices]: byFailureDomain) {
-                inMemoryBlockServiceData.currentBlockServices.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]);
-            }
-        }
-        ALWAYS_ASSERT(inMemoryBlockServiceData.currentBlockServices.size() < 256); // TODO handle this properly
-        OwnedValue<CurrentBlockServicesBody> currentBody(inMemoryBlockServiceData.currentBlockServices.size());
-        for (int i = 0; i < inMemoryBlockServiceData.currentBlockServices.size(); i++) {
-            currentBody().set(i, inMemoryBlockServiceData.currentBlockServices[i]);
-        }
-        ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
-    }
-
     // Important for this to never error: we rely on the write to go through since
     // we write _blockServicesCache, which we rely to be in sync with RocksDB.
     // TODO we might fail to commit the transaction! We should really keep that
     // data directly in RocksDB.
     void _applyUpdateBlockServices(EggsTime time, rocksdb::WriteBatch& batch, const UpdateBlockServicesEntry& entry) {
         UnlockedInMemoryBlockServicesData inMemoryBlockServicesData = _inMemoryBlockServicesData.unlock();
+        // fill in main cache first
         StaticValue<BlockServiceKey> blockKey;
         blockKey().setKey(BLOCK_SERVICE_KEY);
         StaticValue<BlockServiceBody> blockBody;
@@ -2767,7 +2732,17 @@ struct ShardDBImpl {
             cache.failureDomain = entryBlock.failureDomain.name.data;
             cache.flags = entryBlock.flags;
         }
-        _updateCurrentBlockServices(time, batch, inMemoryBlockServicesData);
+        // then the current block services
+        ALWAYS_ASSERT(entry.currentBlockServices.els.size() < 256); // TODO handle this properly
+        inMemoryBlockServicesData.currentBlockServices.clear();
+        for (BlockServiceId id: entry.currentBlockServices.els) {
+            inMemoryBlockServicesData.currentBlockServices.emplace_back(id.u64);
+        }
+        OwnedValue<CurrentBlockServicesBody> currentBody(inMemoryBlockServicesData.currentBlockServices.size());
+        for (int i = 0; i < inMemoryBlockServicesData.currentBlockServices.size(); i++) {
+            currentBody().set(i, inMemoryBlockServicesData.currentBlockServices[i]);
+        }
+        ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
     }
 
     uint64_t _getNextBlockId() {

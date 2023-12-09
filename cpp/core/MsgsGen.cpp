@@ -7551,19 +7551,23 @@ std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x) {
 
 void UpdateBlockServicesEntry::pack(BincodeBuf& buf) const {
     buf.packList<BlockServiceInfo>(blockServices);
+    buf.packList<BlockServiceId>(currentBlockServices);
 }
 void UpdateBlockServicesEntry::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockServiceInfo>(blockServices);
+    buf.unpackList<BlockServiceId>(currentBlockServices);
 }
 void UpdateBlockServicesEntry::clear() {
     blockServices.clear();
+    currentBlockServices.clear();
 }
 bool UpdateBlockServicesEntry::operator==(const UpdateBlockServicesEntry& rhs) const {
     if (blockServices != rhs.blockServices) { return false; };
+    if (currentBlockServices != rhs.currentBlockServices) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x) {
-    out << "UpdateBlockServicesEntry(" << "BlockServices=" << x.blockServices << ")";
+    out << "UpdateBlockServicesEntry(" << "BlockServices=" << x.blockServices << ", " << "CurrentBlockServices=" << x.currentBlockServices << ")";
     return out;
 }
 

@@ -441,7 +441,7 @@ func (r *RunTests) run(
 			if _, err := ioutil.ReadFile(fn); err != nil {
 				panic(err)
 			}
-			time.Sleep(10 * time.Millisecond) // make sure the write has gone through
+			time.Sleep(100 * time.Millisecond) // make sure the write has gone through
 			info, err = os.Stat(fn)
 			if err != nil {
 				panic(err)

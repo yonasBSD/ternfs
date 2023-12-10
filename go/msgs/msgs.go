@@ -3,6 +3,7 @@ package msgs
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,6 +33,7 @@ type BlockServiceId uint64
 type BlockServiceFlags uint8
 type Crc uint32
 type NameHash uint64
+type Cookie [8]byte
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -219,6 +221,22 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*id = InodeId(idu)
+	return nil
+}
+
+func (id Cookie) MarshalJSON() ([]byte, error) {
+	idB := [8]byte(id)
+	return marshalJSONId(binary.LittleEndian.Uint64(idB[:]))
+}
+
+func (id *Cookie) UnmarshalJSON(b []byte) error {
+	idu, err := unmarshalJSONId(b)
+	if err != nil {
+		return err
+	}
+	var idB [8]byte
+	binary.LittleEndian.PutUint64(idB[:], idu)
+	*id = Cookie(idB)
 	return nil
 }
 
@@ -543,12 +561,12 @@ type ConstructFileReq struct {
 
 type ConstructFileResp struct {
 	Id     InodeId
-	Cookie [8]byte
+	Cookie Cookie
 }
 
 type AddInlineSpanReq struct {
 	FileId       InodeId
-	Cookie       [8]byte
+	Cookie       Cookie
 	StorageClass StorageClass // Either EMPTY_STORAGE or INLINE_STORAGE
 	ByteOffset   uint64
 	Size         uint32
@@ -607,7 +625,7 @@ type BlacklistEntry struct {
 // The storage class must not be EMPTY_STORAGE or INLINE_STORAGE.
 type AddSpanInitiateReq struct {
 	FileId       InodeId
-	Cookie       [8]byte
+	Cookie       Cookie
 	ByteOffset   uint64
 	Size         uint32
 	Crc          Crc
@@ -663,7 +681,7 @@ type BlockProof struct {
 // certify span. again, the file must be transient.
 type AddSpanCertifyReq struct {
 	FileId     InodeId
-	Cookie     [8]byte
+	Cookie     Cookie
 	ByteOffset uint64
 	Proofs     []BlockProof
 }
@@ -672,7 +690,7 @@ type AddSpanCertifyResp struct{}
 
 type RemoveSpanInitiateReq struct {
 	FileId InodeId
-	Cookie [8]byte
+	Cookie Cookie
 }
 
 type RemoveSpanInitiateBlockInfo struct {
@@ -696,7 +714,7 @@ type RemoveSpanInitiateResp struct {
 
 type RemoveSpanCertifyReq struct {
 	FileId     InodeId
-	Cookie     [8]byte
+	Cookie     Cookie
 	ByteOffset uint64
 	Proofs     []BlockProof
 }
@@ -713,7 +731,7 @@ type RemoveSpanCertifyResp struct{}
 // An expired transient file is considered gone.
 type LinkFileReq struct {
 	FileId  InodeId
-	Cookie  [8]byte
+	Cookie  Cookie
 	OwnerId InodeId
 	Name    string
 }
@@ -869,7 +887,7 @@ type VisitTransientFilesReq struct {
 
 type TransientFile struct {
 	Id           InodeId
-	Cookie       [8]byte
+	Cookie       Cookie
 	DeadlineTime EggsTime
 }
 
@@ -1118,10 +1136,10 @@ type MoveSpanReq struct {
 	SpanSize    uint32
 	FileId1     InodeId
 	ByteOffset1 uint64
-	Cookie1     [8]byte
+	Cookie1     Cookie
 	FileId2     InodeId
 	ByteOffset2 uint64
-	Cookie2     [8]byte
+	Cookie2     Cookie
 }
 
 type MoveSpanResp struct{}
@@ -1623,10 +1641,10 @@ type MoveSpanEntry struct {
 	SpanSize    uint32
 	FileId1     InodeId
 	ByteOffset1 uint64
-	Cookie1     [8]byte
+	Cookie1     Cookie
 	FileId2     InodeId
 	ByteOffset2 uint64
-	Cookie2     [8]byte
+	Cookie2     Cookie
 }
 
 type SetTimeEntry struct {

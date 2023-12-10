@@ -574,12 +574,13 @@ export function renderTransientFiles() {
 
         const rows = [];
         if (transientFiles !== null) {
-            for (const {Id, DeadlineTime} of transientFiles) {
-                rows.push([Id, DeadlineTime]);
+            for (const {Id, Cookie, DeadlineTime} of transientFiles) {
+                rows.push([Id, Cookie, DeadlineTime]);
             }    
         }
         const cols = [
             {name: 'Id', render: t => p.h('a', {href: `/browse?id=${t}`}, p.h('code', {}, t))},
+            {name: 'Cookie', render: t => p.h('code', {}, t)},
             {name: 'Deadline', render: t => p.h('code', {}, t)},
         ]
 

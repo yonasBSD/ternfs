@@ -264,7 +264,7 @@ EggsTime Xmon::_stepNextWakeup() {
             errString.clear();
             bool success = _buf.readIn(_fds[SOCK_FD].fd, 4, errString);
             CHECK_ERR_STRING("read message type");
-            if (!success) { return nextWakeup; }
+            if (!success) { break; }
             int32_t msgType = _buf.unpackScalar<int32_t>();
             switch (msgType) {
             case 0x0: {

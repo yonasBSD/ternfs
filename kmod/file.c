@@ -15,6 +15,7 @@
 #include "span.h"
 #include "wq.h"
 #include "bincode.h"
+#include "dir.h"
 
 unsigned eggsfs_atime_update_interval_sec = 0;
 
@@ -866,6 +867,10 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     // Switch the file to a normal file
     enode->file.status = EGGSFS_FILE_STATUS_READING;
     enode->mtime_expiry = 0;
+
+    // expire the directory listing -- we know for a fact that it
+    // is wrong, it now contains this file.
+    eggsfs_dir_drop_cache(EGGSFS_I(d_inode(dget_parent(dentry))));
 
 out:
     if (err) {

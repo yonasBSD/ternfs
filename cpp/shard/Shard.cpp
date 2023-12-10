@@ -628,8 +628,9 @@ public:
             // for our block services: we just set the current block services to be all of
             // different failure domains, sharded by storage type.
             //
-            // It does require having at least 14 failure domains (to do RS(10,4)), and gives
-            // very little slack with the current situation of 17 failure domains.
+            // It does require having at least 14 failure domains (to do RS(10,4)), which is
+            // easy right now since we have ~100 failure domains in iceland.
+
             // storage class -> failure domain -> block service ids
             std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<const BlockServiceInfo*>>> blockServicesByFailureDomain;
             for (const auto& blockService: logEntry.logEntry.body.getUpdateBlockServices().blockServices.els) {

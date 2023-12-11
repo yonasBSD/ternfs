@@ -889,12 +889,8 @@ func main() {
 
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
-		shards := make([]msgs.ShardId, 256)
-		for i := 0; i < 256; i++ {
-			shards[i] = msgs.ShardId(i)
-		}
 		stats := lib.ScrubState{}
-		if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 5, NumSenders: 10}, &stats, shards); err != nil {
+		if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 5, NumSenders: 10}, &stats); err != nil {
 			panic(err)
 		}
 	}

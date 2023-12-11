@@ -60,7 +60,7 @@ func scrubChecker(
 	client *Client,
 	opts *ScrubOptions,
 	stats *ScrubState,
-	scratchFiles map[msgs.ShardId]*scratchFile,
+	scratchFiles []*scratchFile,
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
 ) {
@@ -220,23 +220,22 @@ func scrubScraper(
 	stats *ScrubState,
 	terminateChan chan any,
 	sendChan chan *scrubRequest,
-	shards []msgs.ShardId,
 ) {
-	fileReqs := make([]msgs.VisitFilesReq, len(shards))
+	var fileReqs [256]msgs.VisitFilesReq
 	for i := range fileReqs {
-		fileReqs[i].BeginId = stats.Cursors[shards[i]]
+		fileReqs[i].BeginId = stats.Cursors[i]
 	}
-	fileResps := make([]msgs.VisitFilesResp, len(shards))
+	var fileResps [256]msgs.VisitFilesResp
 	for i := 0; ; i++ {
 		allDone := true
-		for j, shid := range shards {
-			fileReq := &fileReqs[j]
-			fileResp := &fileResps[j]
+		for shid := 0; shid < 256; shid++ {
+			fileReq := &fileReqs[shid]
+			fileResp := &fileResps[shid]
 			if i > 0 && fileReq.BeginId == 0 {
 				continue
 			}
 			allDone = false
-			if err := client.ShardRequest(log, shid, fileReq, fileResp); err != nil {
+			if err := client.ShardRequest(log, msgs.ShardId(shid), fileReq, fileResp); err != nil {
 				log.Info("could not get files: %v", err)
 				select {
 				case terminateChan <- err:
@@ -310,19 +309,18 @@ func ScrubFiles(
 	client *Client,
 	opts *ScrubOptions,
 	stats *ScrubState,
-	shards []msgs.ShardId,
 ) error {
 	if opts.NumSenders <= 0 {
 		panic(fmt.Errorf("the number of senders should be positive, got %v", opts.NumSenders))
 	}
-	log.Info("starting to scrub files in shards %+v", shards)
+	log.Info("starting to scrub files")
 	terminateChan := make(chan any, 1)
 	numSenders := opts.NumSenders
 	sendChan := make(chan *scrubRequest, opts.SendersQueueSize)
 	checkChan := make(chan *BlockCompletion, opts.CheckerQueueSize)
-	scratchFiles := make(map[msgs.ShardId]*scratchFile)
-	keepAlives := make(map[msgs.ShardId]keepScratchFileAlive)
-	for _, shid := range shards {
+	var scratchFiles [256]*scratchFile
+	var keepAlives [256]keepScratchFileAlive
+	for shid := 0; shid < 256; shid++ {
 		scratchFiles[shid] = &scratchFile{}
 		keepAlives[shid] = startToKeepScratchFileAlive(log, client, scratchFiles[shid])
 	}
@@ -334,7 +332,7 @@ func ScrubFiles(
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubScraper(log, client, stats, terminateChan, sendChan, shards)
+		scrubScraper(log, client, stats, terminateChan, sendChan)
 	}()
 
 	var sendersWg sync.WaitGroup
@@ -354,7 +352,7 @@ func ScrubFiles(
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubChecker(log, client, opts, stats, scratchFiles, checkChan, terminateChan)
+		scrubChecker(log, client, opts, stats, scratchFiles[:], checkChan, terminateChan)
 		log.Info("checker terminated")
 		select {
 		case terminateChan <- nil:
@@ -369,12 +367,4 @@ func ScrubFiles(
 		log.Info("could not scrub files: %v", err)
 		return err.(error)
 	}
-}
-
-func ScrubFilesInAllShards(log *Logger, client *Client, opts *ScrubOptions, stats *ScrubState) error {
-	var shards [256]msgs.ShardId
-	for i := range shards {
-		shards[i] = msgs.ShardId(i)
-	}
-	return ScrubFiles(log, client, opts, stats, shards[:])
 }

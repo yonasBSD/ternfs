@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"strings"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/lib"
@@ -103,14 +102,9 @@ func main() {
 		os.Exit(2)
 	}
 
-	shards := []msgs.ShardId{}
-
-	if flag.NArg() < 1 { // all shards
-		for i := 0; i < 256; i++ {
-			shards = append(shards, msgs.ShardId(i))
-		}
-	} else {
-		panic(fmt.Errorf("only all shards mode supported now"))
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "Unexpected extra arguments %v\n", flag.Args())
+		os.Exit(2)
 	}
 
 	logOut := os.Stdout
@@ -131,17 +125,13 @@ func main() {
 		level = lib.TRACE
 	}
 
-	shardsStrs := []string{}
-	for _, shard := range shards {
-		shardsStrs = append(shardsStrs, fmt.Sprintf("%03d", shard))
-	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: "restech_eggsfs.daytime", AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		lib.SetMTU(*mtu)
 	}
 
-	log.Info("Will run GC in shards %v", strings.Join(shardsStrs, ", "))
+	log.Info("Will run GC in all shards")
 
 	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
 		panic(err)
@@ -269,9 +259,9 @@ func main() {
 			for {
 				// just do that once an hour, we don't need this often.
 				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-				log.Info("waiting %v before collecting zero block service files in %v", waitFor, shards)
+				log.Info("waiting %v before collecting zero block service files", waitFor)
 				time.Sleep(waitFor)
-				if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats, shards); err != nil {
+				if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats); err != nil {
 					log.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
 				log.Info("finished zero block services cycle, will restart")
@@ -284,14 +274,14 @@ func main() {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				log.Info("scrubbing files in %+v", shards)
+				log.Info("scrubbing files")
 				// retry forever
 				opts := &lib.ScrubOptions{
 					NumSenders:       *scrubSenders,
 					SendersQueueSize: *scrubSendersQueueSize,
 					CheckerQueueSize: *scrubCheckerQueueSize,
 				}
-				if err := lib.ScrubFiles(log, client, opts, scrubState, shards); err != nil {
+				if err := lib.ScrubFiles(log, client, opts, scrubState); err != nil {
 					log.RaiseAlert("could not scrub files: %v", err)
 				}
 				log.Info("finished scrubbing cycle")

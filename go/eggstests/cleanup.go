@@ -67,7 +67,7 @@ func cleanupAfterTest(
 			panic(err)
 		}
 	}
-	if err := lib.CollectZeroBlockServiceFilesInAllShards(log, client); err != nil {
+	if err := lib.CollectZeroBlockServiceFiles(log, client, &lib.ZeroBlockServiceFilesStats{}); err != nil {
 		panic(err)
 	}
 	log.Info("waiting for transient deadlines to have passed")

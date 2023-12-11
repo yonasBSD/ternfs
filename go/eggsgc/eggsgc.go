@@ -222,34 +222,26 @@ func main() {
 	if *collectDirectories {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				log.Info("collecting directories")
-				opts := &lib.CollectDirectoriesOpts{
-					NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
-					WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
-				}
-				if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {
-					log.RaiseAlert("could not collect directories: %v", err)
-				}
-				log.Info("finished collect directories cycle, will restart")
-				*collectDirectoriesState = lib.CollectDirectoriesState{}
+			log.Info("collecting directories")
+			opts := &lib.CollectDirectoriesOpts{
+				NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
+				WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
+			}
+			if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, false); err != nil {
+				panic(fmt.Errorf("could not collect directories: %v", err))
 			}
 		}()
 	}
 	if *destructFiles {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				log.Info("destructing files")
-				opts := &lib.DestructFilesOptions{
-					NumWorkersPerShard: *destructFilesWorkersPerShard,
-					WorkersQueueSize:   *destructFilesWorkersQueueSize,
-				}
-				if err := lib.DestructFiles(log, client, opts, destructFilesState); err != nil {
-					log.RaiseAlert("could not destruct files: %v", err)
-				}
-				log.Info("finished destruct files cycle, will restart")
-				*destructFilesState = lib.DestructFilesState{}
+			log.Info("destructing files")
+			opts := &lib.DestructFilesOptions{
+				NumWorkersPerShard: *destructFilesWorkersPerShard,
+				WorkersQueueSize:   *destructFilesWorkersQueueSize,
+			}
+			if err := lib.DestructFiles(log, client, opts, destructFilesState, false); err != nil {
+				panic(fmt.Errorf("could not destruct files: %v", err))
 			}
 		}()
 	}

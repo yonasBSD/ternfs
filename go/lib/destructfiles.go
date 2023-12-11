@@ -138,6 +138,7 @@ func destructFilesScraper(
 	terminateChan chan any,
 	shid msgs.ShardId,
 	workerChan chan *destructFileRequest,
+	stopWhenDone bool,
 ) {
 	req := &msgs.VisitTransientFilesReq{
 		BeginId: state.Cursors[shid],
@@ -171,10 +172,14 @@ func destructFilesScraper(
 		state.Cursors[shid] = resp.NextId
 		req.BeginId = resp.NextId
 		if req.BeginId == 0 {
-			// this will terminate all the senders
-			log.Debug("file scraping done for shard %v, terminating workers", shid)
-			workerChan <- nil
-			return
+			if stopWhenDone {
+				// this will terminate all the senders
+				log.Debug("file scraping done for shard %v, terminating workers", shid)
+				workerChan <- nil
+				return
+			} else {
+				log.Info("scraping terminating for shard %v, will now restart", shid)
+			}
 		}
 	}
 }
@@ -189,6 +194,7 @@ func DestructFiles(
 	client *Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
+	stopWhenDone bool,
 ) error {
 	if opts.NumWorkersPerShard <= 0 {
 		panic(fmt.Errorf("the number of workers should be positive, got %v", opts.NumWorkersPerShard))
@@ -203,7 +209,7 @@ func DestructFiles(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			destructFilesScraper(log, client, stats, terminateChan, shid, workersChans[shid])
+			destructFilesScraper(log, client, stats, terminateChan, shid, workersChans[shid], stopWhenDone)
 		}()
 	}
 

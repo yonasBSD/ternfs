@@ -201,6 +201,7 @@ func collectDirectoriesScraper(
 	shid msgs.ShardId,
 	workerChan chan msgs.InodeId,
 	terminateChan chan any,
+	stopWhenDone bool,
 ) {
 	req := &msgs.VisitDirectoriesReq{
 		BeginId: state.Cursors[shid],
@@ -221,9 +222,13 @@ func collectDirectoriesScraper(
 		state.Cursors[shid] = resp.NextId
 		req.BeginId = resp.NextId
 		if req.BeginId == 0 {
-			log.Debug("directory scraping done for shard %v, terminating workers", shid)
-			workerChan <- msgs.NULL_INODE_ID
-			return
+			if stopWhenDone {
+				log.Debug("directory scraping done for shard %v, terminating workers", shid)
+				workerChan <- msgs.NULL_INODE_ID
+				return
+			} else {
+				log.Info("directory scraping done for shard %v, will start again", shid)
+			}
 		}
 	}
 }
@@ -239,6 +244,7 @@ func CollectDirectories(
 	dirInfoCache *DirInfoCache,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
+	stopWhenDone bool,
 ) error {
 	log.Info("starting to collect directories in all shards")
 
@@ -256,7 +262,7 @@ func CollectDirectories(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			collectDirectoriesScraper(log, client, state, shid, workersChans[shid], terminateChan)
+			collectDirectoriesScraper(log, client, state, shid, workersChans[shid], terminateChan, stopWhenDone)
 		}()
 	}
 

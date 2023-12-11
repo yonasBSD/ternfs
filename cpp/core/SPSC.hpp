@@ -51,7 +51,7 @@ public:
 
         // update size and wake up puller, if necessary
         uint32_t szBefore = _size.fetch_add(toPush, std::memory_order_release);
-        if (szBefore == 0) {
+        if (unlikely(szBefore == 0)) {
             long ret = syscall(SYS_futex, &_size, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
             if (unlikely(ret < 0)) {
                 throw SYSCALL_EXCEPTION("futex");
@@ -67,7 +67,7 @@ public:
         for (;;) {
             uint32_t sz = _size.load(std::memory_order_acquire);
 
-            if (sz == 0) { // nothing yet, let's wait
+            if (unlikely(sz == 0)) { // nothing yet, let's wait
                 long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, nullptr, nullptr, 0);
                 if (likely(ret == 0 || errno == EAGAIN)) {
                     continue; // try again

@@ -9,12 +9,13 @@ import (
 )
 
 type ScrubState struct {
-	Migrate        MigrateStats
-	CheckedBlocks  uint64
-	CheckedBytes   uint64
-	SendQueueSize  uint64
-	CheckQueueSize uint64
-	Cursors        [256]msgs.InodeId
+	Migrate              MigrateStats
+	CheckedBlocks        uint64
+	CheckedBytes         uint64
+	SendQueueSize        uint64
+	CheckQueueSize       uint64
+	DecommissionedBlocks uint64
+	Cursors              [256]msgs.InodeId
 }
 
 type ScrubOptions struct {
@@ -192,6 +193,9 @@ func scrubSender(
 		}
 		atomic.StoreUint64(&stats.SendQueueSize, uint64(len(sendChan)))
 		canIgnoreError := req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE | msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
+		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
+		}
 		info := &scrubCheckInfo{
 			file:           req.file,
 			blockService:   req.blockService,

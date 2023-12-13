@@ -178,7 +178,7 @@ func destructFilesScraper(
 				workerChan <- nil
 				return
 			} else {
-				log.Info("scraping terminating for shard %v, will now restart", shid)
+				log.Info("scraping done for shard %v, will now restart", shid)
 			}
 		}
 	}

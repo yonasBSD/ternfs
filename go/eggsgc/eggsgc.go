@@ -327,6 +327,7 @@ func main() {
 					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubState.Migrate.MigratedBytes))
 					metrics.FieldU64("scrub_send_queue_size", atomic.LoadUint64(&scrubState.SendQueueSize))
 					metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubState.CheckQueueSize))
+					metrics.FieldU64("decommissioned_blocks", atomic.LoadUint64(&scrubState.DecommissionedBlocks))
 				}
 				metrics.Timestamp(now)
 				// shard requests

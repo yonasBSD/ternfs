@@ -156,9 +156,6 @@ func destructFilesScraper(
 		}
 		now := msgs.Now()
 		for ix := range resp.Files {
-			if atomic.AddUint64(&state.Stats.VisitedFiles, 1)&((uint64(1)<<13)-1) == 0 {
-				log.Info("destructed %v files in shard %v", state.Stats.VisitedFiles, shid)
-			}
 			file := &resp.Files[ix]
 			if now < file.DeadlineTime {
 				log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", file.Id, file.DeadlineTime, now)
@@ -199,7 +196,7 @@ func DestructFiles(
 	terminateChan := make(chan any, 1)
 	workersChan := make(chan *destructFileRequest, opts.WorkersQueueSize)
 
-	log.Info("destructing files in shard %v", shid)
+	log.Debug("destructing files in shard %v", shid)
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
@@ -217,7 +214,7 @@ func DestructFiles(
 	}
 	go func() {
 		workersWg.Wait()
-		log.Info("all workers terminated, we're done with shard %v", shid)
+		log.Debug("all workers terminated, we're done with shard %v", shid)
 		terminateChan <- nil
 	}()
 

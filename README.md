@@ -10,7 +10,7 @@ We don't expect new directories to be created often, and files (or directories) 
 
 - 10EB of logical file storage (i.e. if you sum all file sizes = 10EB)
 - 1 trillion files -- average ~10MB file size
-- 10 billion directories -- average ~100 files per directory
+- 100 billion directories -- average ~10 files per directory
 - 100,000 clients
 
 We want to drive the filesystem with commodity hardware and Ethernet networking.

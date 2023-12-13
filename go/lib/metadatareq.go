@@ -20,7 +20,7 @@ func (c *Client) metadataRequest(
 	msgKind uint8,
 	reqBody bincode.Packable,
 	respBody bincode.Unpackable,
-	counters map[uint8]*ReqCounters,
+	counters *ReqCounters,
 	dontWait bool,
 ) error {
 	attempts := 0
@@ -45,7 +45,7 @@ func (c *Client) metadataRequest(
 			return msgs.TIMEOUT
 		}
 		if counters != nil {
-			atomic.AddUint64(&counters[msgKind].Attempts, 1)
+			atomic.AddUint64(&counters.Attempts, 1)
 		}
 		c.clientMetadata.incoming <- &metadataProcessorRequest{
 			requestId: requestId,
@@ -70,7 +70,7 @@ func (c *Client) metadataRequest(
 		// At this point, we know we've got a response
 		elapsed := time.Since(startedAt)
 		if counters != nil {
-			counters[msgKind].Timings.Add(elapsed)
+			counters.Timings.Add(elapsed)
 		}
 		// If we're past the first attempt, there are cases where errors are not what they seem.
 		var eggsError msgs.ErrCode

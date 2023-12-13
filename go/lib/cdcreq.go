@@ -75,9 +75,9 @@ func (c *Client) CDCRequest(
 	if msgKind != respBody.CDCResponseKind() {
 		panic(fmt.Errorf("mismatching req %T and resp %T", reqBody, respBody))
 	}
-	var counters map[uint8]*ReqCounters
+	var counters *ReqCounters
 	if c.counters != nil {
-		counters = c.counters.CDC
+		counters = c.counters.CDC[uint8(msgKind)]
 	}
 	return c.metadataRequest(logger, -1, c.CDCAddrs(), uint8(msgKind), reqBody, respBody, counters, false)
 }

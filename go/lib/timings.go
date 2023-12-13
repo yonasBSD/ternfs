@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/msgs"
@@ -14,6 +15,18 @@ type Timings struct {
 	// Actual data
 	startedAt time.Time
 	bins      []uint64
+}
+
+func (t1 *Timings) Merge(t2 *Timings) {
+	if !reflect.DeepEqual(t1.histo, t2.histo) {
+		panic(fmt.Errorf("different histos, %+v vs %+v", t1.histo, t2.histo))
+	}
+	if t1.startedAt.After(t2.startedAt) {
+		t1.startedAt = t2.startedAt
+	}
+	for i := 0; i < len(t1.bins); i++ {
+		t1.bins[i] += t2.bins[i]
+	}
 }
 
 type HistogramBin struct {

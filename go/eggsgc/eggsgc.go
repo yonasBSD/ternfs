@@ -226,8 +226,9 @@ func main() {
 			opts := &lib.CollectDirectoriesOpts{
 				NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 				WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
+				QuietPeriod:        0, // immediately start over, it's a long iteration anyway
 			}
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState, false); err != nil {
+			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {
 				panic(fmt.Errorf("could not collect directories: %v", err))
 			}
 		}()
@@ -239,8 +240,9 @@ func main() {
 			opts := &lib.DestructFilesOptions{
 				NumWorkersPerShard: *destructFilesWorkersPerShard,
 				WorkersQueueSize:   *destructFilesWorkersQueueSize,
+				QuietPeriod:        time.Hour,
 			}
-			if err := lib.DestructFilesInAllShards(log, client, opts, destructFilesState, false); err != nil {
+			if err := lib.DestructFilesInAllShards(log, client, opts, destructFilesState); err != nil {
 				panic(fmt.Errorf("could not destruct files: %v", err))
 			}
 		}()
@@ -332,15 +334,18 @@ func main() {
 				metrics.Timestamp(now)
 				// shard requests
 				for _, kind := range msgs.AllShardMessageKind {
-					counter := counters.Shard[uint8(kind)]
-					metrics.Measurement("eggsfs_gc_shard_reqs")
-					if *appInstance != "" {
-						metrics.Tag("instance", *appInstance)
+					for i := 0; i < 256; i++ {
+						counter := &counters.Shard[uint8(kind)][i]
+						metrics.Measurement("eggsfs_gc_shard_reqs")
+						if *appInstance != "" {
+							metrics.Tag("instance", *appInstance)
+						}
+						metrics.Tag("shard", fmt.Sprintf("%d", i))
+						metrics.Tag("kind", kind.String())
+						metrics.FieldU64("attempts", counter.Attempts)
+						metrics.FieldU64("completed", counter.Timings.Count())
+						metrics.Timestamp(now)
 					}
-					metrics.Tag("kind", kind.String())
-					metrics.FieldU64("attempts", counter.Attempts)
-					metrics.FieldU64("completed", counter.Timings.Count())
-					metrics.Timestamp(now)
 				}
 				// CDC requests
 				for _, kind := range msgs.AllCDCMessageKind {

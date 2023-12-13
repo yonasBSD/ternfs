@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -181,6 +182,9 @@ func destructFilesScraper(
 type DestructFilesOptions struct {
 	NumWorkersPerShard int
 	WorkersQueueSize   int
+	// How much we should wait between collection iterations in a single shard.
+	// If negative, we'll stop.
+	QuietPeriod time.Duration
 }
 
 func DestructFiles(
@@ -196,7 +200,7 @@ func DestructFiles(
 	terminateChan := make(chan any, 1)
 	workersChan := make(chan *destructFileRequest, opts.WorkersQueueSize)
 
-	log.Debug("destructing files in shard %v", shid)
+	log.Info("destructing files in shard %v", shid)
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
@@ -214,7 +218,7 @@ func DestructFiles(
 	}
 	go func() {
 		workersWg.Wait()
-		log.Debug("all workers terminated, we're done with shard %v", shid)
+		log.Info("all workers terminated, we're done with shard %v", shid)
 		terminateChan <- nil
 	}()
 
@@ -232,7 +236,6 @@ func DestructFilesInAllShards(
 	client *Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
-	stopWhenDone bool,
 ) error {
 	terminateChan := make(chan any, 1)
 
@@ -246,8 +249,11 @@ func DestructFilesInAllShards(
 				if err := DestructFiles(log, client, opts, stats, shid); err != nil {
 					panic(err)
 				}
-				if stopWhenDone {
+				if opts.QuietPeriod < 0 {
 					break
+				} else {
+					log.Info("waiting for %v before starting to destruct files again in shard %v", opts.QuietPeriod, shid)
+					time.Sleep(opts.QuietPeriod)
 				}
 			}
 			wg.Done()

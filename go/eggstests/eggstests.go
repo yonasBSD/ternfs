@@ -101,11 +101,15 @@ func (r *RunTests) test(
 	run(counters)
 	elapsed := time.Since(t0)
 
-	totalShardRequests := totalRequests(counters.Shard)
+	cumShardCounters := make(map[uint8]*lib.ReqCounters)
+	for shid, c := range counters.Shard {
+		cumShardCounters[shid] = lib.MergeReqCounters(c[:])
+	}
+	totalShardRequests := totalRequests(cumShardCounters)
 	totalCDCRequests := totalRequests(counters.CDC)
 	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard)
+		formatCounters[msgs.ShardMessageKind]("shard", cumShardCounters)
 	}
 	if totalCDCRequests > 0 {
 		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC)
@@ -115,11 +119,15 @@ func (r *RunTests) test(
 	t0 = time.Now()
 	cleanupAfterTest(log, r.shuckleAddress(), counters, r.pauseBlockServiceKiller)
 	elapsed = time.Since(t0)
-	totalShardRequests = totalRequests(counters.Shard)
+	cumShardCounters = make(map[uint8]*lib.ReqCounters)
+	for shid, c := range counters.Shard {
+		cumShardCounters[shid] = lib.MergeReqCounters(c[:])
+	}
+	totalShardRequests = totalRequests(cumShardCounters)
 	totalCDCRequests = totalRequests(counters.CDC)
 	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
-		formatCounters[msgs.ShardMessageKind]("shard", counters.Shard)
+		formatCounters[msgs.ShardMessageKind]("shard", cumShardCounters)
 	}
 	if totalCDCRequests > 0 {
 		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC)

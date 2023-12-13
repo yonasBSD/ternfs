@@ -27,20 +27,31 @@ type ReqCounters struct {
 	Attempts uint64
 }
 
+func MergeReqCounters(cs []ReqCounters) *ReqCounters {
+	counters := cs[0] // important to copy
+	for i := 1; i < len(cs); i++ {
+		counters.Attempts += cs[i].Attempts
+		counters.Timings.Merge(&cs[i].Timings)
+	}
+	return &counters
+}
+
 type ClientCounters struct {
-	Shard map[uint8]*ReqCounters
+	Shard map[uint8]*[256]ReqCounters
 	CDC   map[uint8]*ReqCounters
 }
 
 func NewClientCounters() *ClientCounters {
 	counters := ClientCounters{
-		Shard: make(map[uint8]*ReqCounters),
+		Shard: make(map[uint8]*[256]ReqCounters),
 		CDC:   make(map[uint8]*ReqCounters),
 	}
 	for _, k := range msgs.AllShardMessageKind {
 		// max = ~1min
-		counters.Shard[uint8(k)] = &ReqCounters{
-			Timings: *NewTimings(40, time.Microsecond*10, 1.5),
+		var shards [256]ReqCounters
+		counters.Shard[uint8(k)] = &shards
+		for i := 0; i < 256; i++ {
+			shards[i].Timings = *NewTimings(40, time.Microsecond*10, 1.5)
 		}
 	}
 	for _, k := range msgs.AllCDCMessageKind {
@@ -88,11 +99,13 @@ func (counters *ClientCounters) Log(log *Logger) {
 	}
 	var shardTime time.Duration
 	for _, k := range msgs.AllShardMessageKind {
-		shardTime += counters.Shard[uint8(k)].Timings.TotalTime()
+		for i := 0; i < 256; i++ {
+			shardTime += counters.Shard[uint8(k)][i].Timings.TotalTime()
+		}
 	}
 	log.Info("Shard stats (total shard time %v):", shardTime)
 	for _, k := range msgs.AllShardMessageKind {
-		c := counters.Shard[uint8(k)]
+		c := MergeReqCounters(counters.Shard[uint8(k)][:])
 		if c.Attempts == 0 {
 			continue
 		}

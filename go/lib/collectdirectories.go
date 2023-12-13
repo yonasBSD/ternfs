@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -231,6 +232,9 @@ func collectDirectoriesScraper(
 type CollectDirectoriesOpts struct {
 	NumWorkersPerShard int
 	WorkersQueueSize   int
+	// How much we should wait between collection iterations in a single shard.
+	// If negative, we'll stop.
+	QuietPeriod time.Duration
 }
 
 func CollectDirectories(
@@ -285,7 +289,6 @@ func CollectDirectoriesInAllShards(
 	dirInfoCache *DirInfoCache,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
-	stopWhenDone bool,
 ) error {
 	terminateChan := make(chan any, 1)
 
@@ -299,8 +302,11 @@ func CollectDirectoriesInAllShards(
 				if err := CollectDirectories(log, client, dirInfoCache, opts, state, shid); err != nil {
 					panic(err)
 				}
-				if stopWhenDone {
+				if opts.QuietPeriod < 0 {
 					break
+				} else {
+					log.Info("waiting for %v before starting to destruct files again in shard %v", opts.QuietPeriod, shid)
+					time.Sleep(opts.QuietPeriod)
 				}
 			}
 			wg.Done()

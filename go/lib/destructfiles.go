@@ -235,7 +235,7 @@ func DestructFiles(
 	if err == nil {
 		return nil
 	} else {
-		log.Info("could not scrub files: %v", err)
+		log.Info("could not destruct files: %v", err)
 		return err.(error)
 	}
 }

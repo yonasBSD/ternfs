@@ -201,7 +201,6 @@ func collectDirectoriesScraper(
 	shid msgs.ShardId,
 	workerChan chan msgs.InodeId,
 	terminateChan chan any,
-	stopWhenDone bool,
 ) {
 	req := &msgs.VisitDirectoriesReq{
 		BeginId: state.Cursors[shid],
@@ -222,13 +221,9 @@ func collectDirectoriesScraper(
 		state.Cursors[shid] = resp.NextId
 		req.BeginId = resp.NextId
 		if req.BeginId == 0 {
-			if stopWhenDone {
-				log.Debug("directory scraping done for shard %v, terminating workers", shid)
-				workerChan <- msgs.NULL_INODE_ID
-				return
-			} else {
-				log.Info("directory scraping done for shard %v, will start again", shid)
-			}
+			log.Debug("directory scraping done for shard %v, terminating workers", shid)
+			workerChan <- msgs.NULL_INODE_ID
+			return
 		}
 	}
 }
@@ -244,52 +239,83 @@ func CollectDirectories(
 	dirInfoCache *DirInfoCache,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
-	stopWhenDone bool,
+	shid msgs.ShardId,
 ) error {
-	log.Info("starting to collect directories in all shards")
+	log.Info("starting to collect directories in shard %v", shid)
 
 	if opts.NumWorkersPerShard <= 0 {
 		panic(fmt.Errorf("bad NumWorkersPerShard %v", opts.NumWorkersPerShard))
 	}
 
 	terminateChan := make(chan any, 1)
-	var workersChans [256]chan msgs.InodeId
-	for i := 0; i < 256; i++ {
-		workersChans[i] = make(chan msgs.InodeId, opts.WorkersQueueSize)
-	}
+	workerChan := make(chan msgs.InodeId, opts.WorkersQueueSize)
 
-	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		go func() {
-			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			collectDirectoriesScraper(log, client, state, shid, workersChans[shid], terminateChan, stopWhenDone)
-		}()
-	}
+	go func() {
+		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+		collectDirectoriesScraper(log, client, state, shid, workerChan, terminateChan)
+	}()
 
 	var workersWg sync.WaitGroup
-	workersWg.Add(opts.NumWorkersPerShard * 256)
-	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		for j := 0; j < opts.NumWorkersPerShard; j++ {
-			go func() {
-				defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-				collectDirectoriesWorker(log, client, dirInfoCache, state, shid, workersChans[shid], terminateChan)
-				workersWg.Done()
-			}()
-		}
+	workersWg.Add(opts.NumWorkersPerShard)
+	for j := 0; j < opts.NumWorkersPerShard; j++ {
+		go func() {
+			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			collectDirectoriesWorker(log, client, dirInfoCache, state, shid, workerChan, terminateChan)
+			workersWg.Done()
+		}()
 	}
 	go func() {
 		workersWg.Wait()
-		log.Info("all workers terminated, we're done")
+		log.Info("all workers terminated for shard %v, we're done", shid)
 		terminateChan <- nil
 	}()
 
 	err := <-terminateChan
 	if err == nil {
-		log.Info("stats after one collect directories iteration: %+v", state)
 		return nil
 	} else {
-		log.Info("could not scrub files: %v", err)
+		log.Info("could not collect directories in shard %v: %v", shid, err)
+		return err.(error)
+	}
+}
+
+func CollectDirectoriesInAllShards(
+	log *Logger,
+	client *Client,
+	dirInfoCache *DirInfoCache,
+	opts *CollectDirectoriesOpts,
+	state *CollectDirectoriesState,
+	stopWhenDone bool,
+) error {
+	terminateChan := make(chan any, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(256)
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		go func() {
+			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				if err := CollectDirectories(log, client, dirInfoCache, opts, state, shid); err != nil {
+					panic(err)
+				}
+				if stopWhenDone {
+					break
+				}
+			}
+			wg.Done()
+		}()
+	}
+	go func() {
+		wg.Wait()
+		terminateChan <- nil
+	}()
+
+	err := <-terminateChan
+	if err == nil {
+		return nil
+	} else {
+		log.Info("could not collect directories: %v", err)
 		return err.(error)
 	}
 }

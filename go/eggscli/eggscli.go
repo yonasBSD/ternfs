@@ -204,7 +204,7 @@ func main() {
 		dirInfoCache := lib.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
 			state := &lib.CollectDirectoriesState{}
-			if err := lib.CollectDirectories(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, true); err != nil {
+			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, true); err != nil {
 				panic(err)
 			}
 		} else {
@@ -227,12 +227,21 @@ func main() {
 
 	destructCmd := flag.NewFlagSet("destruct", flag.ExitOnError)
 	destructFileIdU64 := destructCmd.Uint64("file", 0, "Transient file id to destruct. If not present, they'll all be destructed.")
+	destrutcFileShardId := destructCmd.Int("shard", -1, "Shard to destruct into. Will destruct all of them if -1.")
+	destructFileContinuous := destructCmd.Bool("continuous", false, "If given, it'll keep destroying files forever. Has an effect only if you're not selecting a shard and file id.")
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
 			state := &lib.DestructFilesState{}
-			if err := lib.DestructFiles(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state, true); err != nil {
-				panic(err)
+			opts := &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
+			if *destrutcFileShardId < 0 {
+				if err := lib.DestructFilesInAllShards(log, client, opts, state, *destructFileContinuous); err != nil {
+					panic(err)
+				}
+			} else {
+				if err := lib.DestructFiles(log, client, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+					panic(err)
+				}
 			}
 		} else {
 			fileId := msgs.InodeId(*destructFileIdU64)

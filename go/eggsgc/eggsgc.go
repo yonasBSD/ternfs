@@ -227,7 +227,7 @@ func main() {
 				NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 				WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 			}
-			if err := lib.CollectDirectories(log, client, dirInfoCache, opts, collectDirectoriesState, false); err != nil {
+			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState, false); err != nil {
 				panic(fmt.Errorf("could not collect directories: %v", err))
 			}
 		}()
@@ -240,7 +240,7 @@ func main() {
 				NumWorkersPerShard: *destructFilesWorkersPerShard,
 				WorkersQueueSize:   *destructFilesWorkersQueueSize,
 			}
-			if err := lib.DestructFiles(log, client, opts, destructFilesState, false); err != nil {
+			if err := lib.DestructFilesInAllShards(log, client, opts, destructFilesState, false); err != nil {
 				panic(fmt.Errorf("could not destruct files: %v", err))
 			}
 		}()

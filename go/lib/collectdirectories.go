@@ -169,12 +169,16 @@ func collectDirectoriesWorker(
 	log *Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
+	rateLimit *RateLimit,
 	stats *CollectDirectoriesState,
 	shid msgs.ShardId,
 	workersChan chan msgs.InodeId,
 	terminateChan chan any,
 ) {
 	for {
+		if rateLimit != nil {
+			rateLimit.Acquire()
+		}
 		dir := <-workersChan
 		if dir == msgs.NULL_INODE_ID {
 			log.Debug("collect directories worker for shard %v terminating len=%v cap=%v", shid, len(workersChan), cap(workersChan))
@@ -234,13 +238,15 @@ type CollectDirectoriesOpts struct {
 	WorkersQueueSize   int
 	// How much we should wait between collection iterations in a single shard.
 	// If negative, we'll stop.
-	QuietPeriod time.Duration
+	QuietPeriod             time.Duration
+	RateLimitDirectoryVisit *RateLimitOpts
 }
 
 func CollectDirectories(
 	log *Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
+	rateLimit *RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -264,7 +270,7 @@ func CollectDirectories(
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			collectDirectoriesWorker(log, client, dirInfoCache, state, shid, workerChan, terminateChan)
+			collectDirectoriesWorker(log, client, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan)
 			workersWg.Done()
 		}()
 	}
@@ -291,6 +297,11 @@ func CollectDirectoriesInAllShards(
 	state *CollectDirectoriesState,
 ) error {
 	terminateChan := make(chan any, 1)
+	var rateLimit *RateLimit
+	if opts.RateLimitDirectoryVisit != nil {
+		rateLimit = NewRateLimit(opts.RateLimitDirectoryVisit)
+		defer rateLimit.Close()
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(256)
@@ -299,7 +310,7 @@ func CollectDirectoriesInAllShards(
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
-				if err := CollectDirectories(log, client, dirInfoCache, opts, state, shid); err != nil {
+				if err := CollectDirectories(log, client, dirInfoCache, rateLimit, opts, state, shid); err != nil {
 					panic(err)
 				}
 				if opts.QuietPeriod < 0 {

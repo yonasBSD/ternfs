@@ -150,7 +150,7 @@ static void put_transient_span(struct eggsfs_transient_span* span) {
             FREE_PAGES(&span->blocks[b]);
         }
 #undef FREE_PAGES
-        add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
+        atomic_long_add(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
         eggsfs_in_flight_end(span->enode);
         // Free the span itself
         kmem_cache_free(eggsfs_transient_span_cachep, span);
@@ -309,7 +309,7 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
     int i;
     struct eggsfs_inode* enode = span->enode;
     int B = eggsfs_blocks(span->parity);
-    
+
     int cell_size = span->block_size / span->stripes;
 
     eggsfs_debug("add span initiate");
@@ -404,7 +404,7 @@ static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
     if (p == NULL) { return p; }
     // This contributes to OOM score.
-    inc_mm_counter(file->mm, MM_FILEPAGES);
+    atomic_long_inc_return(&file->mm->rss_stat.count[MM_FILEPAGES]);
     return p;
 }
 
@@ -766,7 +766,7 @@ static ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags,
         *ppos += ret;
         count -= ret;
     }
-    
+
     if (span->written >= max_span_size) { // we need to start flushing the span
         // this might block even if it says nonblock, which is unfortunate.
         err = start_flushing(enode, !!(flags&IOCB_NOWAIT));
@@ -808,7 +808,7 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     }
     ssize_t res = eggsfs_file_write(enode, iocb->ki_flags, &iocb->ki_pos, from);
     inode_unlock(inode);
-    
+
     return res;
 }
 

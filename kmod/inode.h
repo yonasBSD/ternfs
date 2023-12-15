@@ -104,7 +104,23 @@ struct eggsfs_inode_file {
     struct mm_struct* mm;
 };
 
-struct eggsfs_dirents;
+struct eggsfs_dirents {
+    // used to know when we need to refresh the dirents
+    u64 mtime;
+    // used to know when we're done quickly
+    u64 max_hash;
+    // to GC this structure
+    atomic_t refcount;
+    // to synchronize between modifications of the reference count
+    struct rcu_head rcu_head;
+    // the list of pages with the dirents in them. always at least
+    // one page in it.
+    //
+    // we use fields of each page to store stuff:
+    // * ->index: number of entries in the page
+    // * ->private: first hash appearing in the page
+    struct list_head pages;
+};
 
 struct eggsfs_inode_dir {
     // In `struct page`, we use:

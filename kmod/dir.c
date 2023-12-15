@@ -16,24 +16,6 @@ int eggsfs_dir_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
 
 static struct kmem_cache* eggsfs_dirents_cachep;
 
-struct eggsfs_dirents {
-    // used to know when we need to refresh the dirents
-    u64 mtime;
-    // used to know when we're done quickly
-    u64 max_hash;
-    // to GC this structure
-    atomic_t refcount;
-    // to synchronize between modifications of the reference count
-    struct rcu_head rcu_head;
-    // the list of pages with the dirents in them. always at least
-    // one page in it.
-    //
-    // we use fields of each page to store stuff:
-    // * ->index: number of entries in the page
-    // * ->private: first hash appearing in the page
-    struct list_head pages;
-};
-
 static inline int eggsfs_dir_entry_size(int name_len) {
     return 8 + 8 + 1 + name_len; // inode + name_hash + len + name
 }

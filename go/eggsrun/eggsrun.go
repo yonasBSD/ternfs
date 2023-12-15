@@ -37,6 +37,7 @@ func main() {
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
 	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
+	noFuse := flag.Bool("no-fuse", false, "")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -211,16 +212,20 @@ func main() {
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
 	lib.WaitForClient(log, shuckleAddress, waitShuckleFor)
 
-	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-		Exe:            goExes.FuseExe,
-		Path:           path.Join(*dataDir, "fuse"),
-		LogLevel:       level,
-		Wait:           true,
-		ShuckleAddress: shuckleAddress,
-		Profile:        *profile,
-	})
+	if !*noFuse {
+		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+			Exe:            goExes.FuseExe,
+			Path:           path.Join(*dataDir, "fuse"),
+			LogLevel:       level,
+			Wait:           true,
+			ShuckleAddress: shuckleAddress,
+			Profile:        *profile,
+		})
 
-	fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
+		fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
+	} else {
+		fmt.Printf("operational\n")
+	}
 
 	err := <-terminateChan
 	if err != nil {

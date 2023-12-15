@@ -86,18 +86,8 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
-	statReq := msgs.StatDirectoryReq{
-		Id: dirId,
-	}
-	statResp := msgs.StatDirectoryResp{}
-	err := client.ShardRequest(log, dirId.Shard(), &statReq, &statResp)
-	if err != nil {
-		return fmt.Errorf("error while stat'ing directory: %w", err)
-	}
-
 	policy := &msgs.SnapshotPolicy{}
-	_, err = client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy)
-	if err != nil {
+	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
 		return err
 	}
 
@@ -148,8 +138,14 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 		req.StartTime = resp.Next.StartTime
 	}
 	if !hasEdges && dirId != msgs.ROOT_DIR_INODE_ID {
-		// Note that there is a race condition -- we do the stat quite a bit before
-		// this. But this call will just fail if the directory has an owner.
+		statReq := msgs.StatDirectoryReq{
+			Id: dirId,
+		}
+		statResp := msgs.StatDirectoryResp{}
+		err := client.ShardRequest(log, dirId.Shard(), &statReq, &statResp)
+		if err != nil {
+			return fmt.Errorf("error while stat'ing directory: %w", err)
+		}
 		if statResp.Owner == msgs.NULL_INODE_ID {
 			log.Debug("%v: removing directory inode, since it has no edges and no owner", dirId)
 			req := msgs.HardUnlinkDirectoryReq{

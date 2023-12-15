@@ -215,7 +215,8 @@ public:
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
     }
 
-    void init() {
+private:
+    void _init() {
         LOG_INFO(_env, "initializing server sockets");
         expandKey(CDCKey, _expandedCDCKey);
 
@@ -274,9 +275,100 @@ public:
         }
     }
 
+    void _handleRequest(int sockIx, struct sockaddr_in* clientAddr, char* buf, size_t len) {
+        LOG_DEBUG(_env, "received message from %s", *clientAddr);
+
+        BincodeBuf reqBbuf(buf, len);
+        
+        // First, try to parse the header
+        ShardRequestHeader reqHeader;
+        try {
+            reqHeader.unpack(reqBbuf);
+        } catch (const BincodeException& err) {
+            LOG_ERROR(_env, "Could not parse: %s", err.what());
+            RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", *clientAddr);
+            return;
+        }
+
+        if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
+            LOG_DEBUG(_env, "artificially dropping request %s", reqHeader.requestId);
+            return;
+        }
+
+        auto t0 = eggsNow();
+
+        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, *clientAddr);
+
+        // If this will be filled in with an actual code, it means that we couldn't process
+        // the request.
+        EggsError err = NO_ERROR;
+
+        // Now, try to parse the body
+        try {
+            _reqContainer.unpack(reqBbuf, reqHeader.kind);
+            if (bigRequest(reqHeader.kind)) {
+                if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
+                    LOG_TRACE(_env, "parsed request: %s", _reqContainer);
+                } else {
+                    LOG_DEBUG(_env, "parsed request: <omitted>");
+                }
+            } else {
+                LOG_DEBUG(_env, "parsed request: %s", _reqContainer);
+            }
+        } catch (const BincodeException& exc) {
+            LOG_ERROR(_env, "Could not parse: %s", exc.what());
+            RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, *clientAddr);
+            err = EggsError::MALFORMED_REQUEST;
+        }
+
+        // authenticate, if necessary
+        if (isPrivilegedRequestKind(reqHeader.kind)) {
+            auto expectedMac = cbcmac(_expandedCDCKey, reqBbuf.data, reqBbuf.cursor - reqBbuf.data);
+            BincodeFixedBytes<8> receivedMac;
+            reqBbuf.unpackFixedBytes<8>(receivedMac);
+            if (expectedMac != receivedMac.data) {
+                err = EggsError::NOT_AUTHORISED;
+            }
+        }
+
+        // Make sure nothing is left
+        if (unlikely(err == NO_ERROR && reqBbuf.remaining() != 0)) {
+            RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", reqBbuf.remaining(), reqHeader.kind, *clientAddr);
+            err = EggsError::MALFORMED_REQUEST;
+        }
+
+        // At this point, if it's a read request, we can process it,
+        // if it's a write request we prepare the log entry and
+        // send it off.
+        if (likely(err == NO_ERROR)) {
+            if (readOnlyShardReq(_reqContainer.kind())) {
+                err = _shared.db.read(_reqContainer, _respContainer);
+            } else {
+                auto& entry = _logEntries.emplace_back();
+                entry.sockIx = sockIx;
+                entry.clientAddr = *clientAddr;
+                entry.receivedAt = t0;
+                entry.requestKind = reqHeader.kind;
+                entry.requestId = reqHeader.requestId;
+                err = _shared.db.prepareLogEntry(_reqContainer, entry.logEntry);
+                if (likely(err == NO_ERROR)) {
+                    return; // we're done here, move along
+                } else {
+                    _logEntries.pop_back(); // back out the log entry
+                }
+            }
+        }
+
+        Duration elapsed = eggsNow() - t0;
+        bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+        packResponse(_env, _shared, _sendBuf, _sendHdrs[sockIx], _sendVecs[sockIx], reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, clientAddr, sockIx, err, _respContainer);
+
+    }
+
+public:
     virtual void step() override {
         if (unlikely(!_initialized)) {
-            init();
+            _init();
             _initialized = true;
         }
 
@@ -312,92 +404,7 @@ public:
             for (int msgIx = 0; msgIx < msgs; msgIx++) {
                 auto& hdr = _recvHdrs[sockIx][msgIx];
                 auto clientAddr = (struct sockaddr_in *)hdr.msg_hdr.msg_name;
-                LOG_DEBUG(_env, "received message from %s", *clientAddr);
-
-                BincodeBuf reqBbuf((char*)hdr.msg_hdr.msg_iov->iov_base, hdr.msg_len);
-                
-                // First, try to parse the header
-                ShardRequestHeader reqHeader;
-                try {
-                    reqHeader.unpack(reqBbuf);
-                } catch (const BincodeException& err) {
-                    LOG_ERROR(_env, "Could not parse: %s", err.what());
-                    RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", *clientAddr);
-                    continue;
-                }
-
-                if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
-                    LOG_DEBUG(_env, "artificially dropping request %s", reqHeader.requestId);
-                    continue;
-                }
-
-                auto t0 = eggsNow();
-
-                LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, *clientAddr);
-
-                // If this will be filled in with an actual code, it means that we couldn't process
-                // the request.
-                EggsError err = NO_ERROR;
-
-                // Now, try to parse the body
-                try {
-                    _reqContainer.unpack(reqBbuf, reqHeader.kind);
-                    if (bigRequest(reqHeader.kind)) {
-                        if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
-                            LOG_TRACE(_env, "parsed request: %s", _reqContainer);
-                        } else {
-                            LOG_DEBUG(_env, "parsed request: <omitted>");
-                        }
-                    } else {
-                        LOG_DEBUG(_env, "parsed request: %s", _reqContainer);
-                    }
-                } catch (const BincodeException& exc) {
-                    LOG_ERROR(_env, "Could not parse: %s", exc.what());
-                    RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, *clientAddr);
-                    err = EggsError::MALFORMED_REQUEST;
-                }
-
-                // authenticate, if necessary
-                if (isPrivilegedRequestKind(reqHeader.kind)) {
-                    auto expectedMac = cbcmac(_expandedCDCKey, reqBbuf.data, reqBbuf.cursor - reqBbuf.data);
-                    BincodeFixedBytes<8> receivedMac;
-                    reqBbuf.unpackFixedBytes<8>(receivedMac);
-                    if (expectedMac != receivedMac.data) {
-                        err = EggsError::NOT_AUTHORISED;
-                    }
-                }
-
-                // Make sure nothing is left
-                if (unlikely(err == NO_ERROR && reqBbuf.remaining() != 0)) {
-                    RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", reqBbuf.remaining(), reqHeader.kind, *clientAddr);
-                    err = EggsError::MALFORMED_REQUEST;
-                }
-
-                // At this point, if it's a read request, we can process it,
-                // if it's a write request we prepare the log entry and
-                // send it off.
-                if (likely(err == NO_ERROR)) {
-                    if (readOnlyShardReq(_reqContainer.kind())) {
-                        err = _shared.db.read(_reqContainer, _respContainer);
-                    } else {
-                        auto& entry = _logEntries.emplace_back();
-                        entry.sockIx = sockIx;
-                        entry.clientAddr = *clientAddr;
-                        entry.receivedAt = t0;
-                        entry.requestKind = reqHeader.kind;
-                        entry.requestId = reqHeader.requestId;
-                        err = _shared.db.prepareLogEntry(_reqContainer, entry.logEntry);
-                        if (likely(err == NO_ERROR)) {
-                            continue; // we're done here, move along
-                        } else {
-                            _logEntries.pop_back(); // back out the log entry
-                        }
-                    }
-                }
-
-                Duration elapsed = eggsNow() - t0;
-                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-                packResponse(_env, _shared, _sendBuf, _sendHdrs[sockIx], _sendVecs[sockIx], reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, clientAddr, sockIx, err, _respContainer);
+                _handleRequest(sockIx, clientAddr, (char*)hdr.msg_hdr.msg_iov->iov_base, hdr.msg_len);
             }
         }
 

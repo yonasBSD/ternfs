@@ -19,15 +19,12 @@ type cachedDirInfoEntry struct {
 }
 
 type DirInfoCache struct {
-	cache map[dirInfoKey]cachedDirInfoEntry
-	mutex *sync.RWMutex
+	// dirInfoKey -> *cachedDirInfoEntry
+	cache sync.Map
 }
 
 func NewDirInfoCache() *DirInfoCache {
-	return &DirInfoCache{
-		cache: map[dirInfoKey]cachedDirInfoEntry{},
-		mutex: new(sync.RWMutex),
-	}
+	return &DirInfoCache{}
 }
 
 // If it couldn't be found, will return NULL_INODE_ID.
@@ -38,14 +35,14 @@ func (env *DirInfoCache) LookupCachedDirInfoEntry(
 ) msgs.InodeId {
 	key := dirInfoKey{id: dirId, tag: entry.Tag()}
 	now := time.Now()
-	env.mutex.RLock()
-	cached := env.cache[key]
-	env.mutex.RUnlock()
+	cachePtr, found := env.cache.Load(key)
+
+	if !found {
+		return msgs.NULL_INODE_ID
+	}
+	cached := cachePtr.(*cachedDirInfoEntry)
 
 	if now.Sub(cached.cachedAt) > time.Hour {
-		env.mutex.Lock()
-		delete(env.cache, key)
-		env.mutex.Unlock()
 		return msgs.NULL_INODE_ID
 	}
 
@@ -66,11 +63,9 @@ func (env *DirInfoCache) LookupCachedDirInfoEntry(
 }
 
 func (env *DirInfoCache) UpdateCachedDirInfo(dirId msgs.InodeId, entry msgs.IsDirectoryInfoEntry, inheritedFrom msgs.InodeId) {
-	env.mutex.Lock()
-	env.cache[dirInfoKey{id: dirId, tag: entry.Tag()}] = cachedDirInfoEntry{
+	env.cache.Store(dirInfoKey{id: dirId, tag: entry.Tag()}, &cachedDirInfoEntry{
 		entry:         entry,
 		inheritedFrom: inheritedFrom,
 		cachedAt:      time.Now(),
-	}
-	env.mutex.Unlock()
+	})
 }

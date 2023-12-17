@@ -1872,7 +1872,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 			activeBlockServices[fd][bs.Path] = struct{}{}
 		}
 		// collect non-replaced decommissioned block services
-		missingBlockServices := []string{}
+		missingBlockServices := make(map[string]struct{})
 		for _, bs := range blockServices {
 			if !bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
@@ -1885,13 +1885,17 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 				continue
 			}
 			if _, found := activeBlockServices[fd][bs.Path]; !found {
-				missingBlockServices = append(missingBlockServices, fmt.Sprintf("%q,%q", fd, bs.Path))
+				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
 			}
 		}
 		if len(missingBlockServices) == 0 {
 			log.ClearNC(alert)
 		} else {
-			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(missingBlockServices, " "))
+			bss := make([]string, 0, len(missingBlockServices))
+			for bs := range missingBlockServices {
+				bss = append(bss, bs)
+			}
+			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
 		}
 		log.Info("checked for missing block services, sleeping for a minute")
 		time.Sleep(time.Minute)

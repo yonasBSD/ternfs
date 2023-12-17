@@ -231,9 +231,9 @@ func main() {
 				// 1.5e9 dirs, that's roughly two days to traverse them all (but really we'll
 				// be bottlenecked by cases where we need to actually collect edges).
 				RateLimitDirectoryVisit: &lib.RateLimitOpts{
-					Interval: time.Second,
-					Amount:   10000,
-					Buffer:   100,
+					RefillInterval: time.Second,
+					Refill:         10000,
+					BucketSize:     10000 * 100,
 				},
 			}
 			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {

@@ -15,21 +15,21 @@ type RateLimit struct {
 }
 
 type RateLimitOpts struct {
-	Interval time.Duration
-	Amount   uint64
-	Buffer   uint64
+	RefillInterval time.Duration
+	BucketSize     uint64
+	Refill         uint64
 }
 
 func NewRateLimit(opts0 *RateLimitOpts) *RateLimit {
 	opts := *opts0
-	if opts.Amount < 1 || opts.Interval < 1 || opts.Buffer < 1 {
+	if opts.BucketSize < 1 || opts.RefillInterval < 1 || opts.Refill < 1 {
 		panic(fmt.Errorf("bad options: %+v", opts))
 	}
 	rl := &RateLimit{
-		available: opts.Amount,
-		max:       opts.Amount * opts.Buffer,
+		available: opts.Refill,
+		max:       opts.BucketSize,
 		wake:      make(chan struct{}),
-		ticker:    *time.NewTicker(opts.Interval),
+		ticker:    *time.NewTicker(opts.RefillInterval),
 		terminate: make(chan struct{}),
 	}
 	go func() {
@@ -40,7 +40,7 @@ func NewRateLimit(opts0 *RateLimitOpts) *RateLimit {
 			case <-rl.ticker.C:
 				for {
 					avail := atomic.LoadUint64(&rl.available)
-					newAvail := avail + opts.Amount
+					newAvail := avail + opts.Refill
 					if newAvail > rl.max {
 						newAvail = rl.max
 					}

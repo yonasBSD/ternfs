@@ -21,8 +21,6 @@
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 int eggsfs_shuckle_refresh_time_jiffies = MSECS_TO_JIFFIES(60000);
 
-static struct eggsfs_fs_info* eggsfs_info;
-
 static void eggsfs_free_fs_info(struct eggsfs_fs_info* info) {
     eggsfs_debug("info=%p", info);
     cancel_delayed_work_sync(&info->shuckle_refresh_work);
@@ -164,19 +162,20 @@ out_sock:
     return err;
 }
 
-static void eggsfs_shuckle_refresh_work(struct work_struct *work) {
-    int err = eggsfs_refresh_fs_info(eggsfs_info);
+static void eggsfs_shuckle_refresh_work(struct work_struct* work) {
+    struct eggsfs_fs_info* info = container_of(container_of(work, struct delayed_work, work), struct eggsfs_fs_info, shuckle_refresh_work);
+    int err = eggsfs_refresh_fs_info(info);
     if (err != 0) {
         eggsfs_warn("failed to refresh shuckle data: %d", err);
     }
     eggsfs_debug("scheduling shuckle data refresh after %dms", jiffies_to_msecs(eggsfs_shuckle_refresh_time_jiffies));
-    queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
+    queue_delayed_work(system_long_wq, &info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
 }
 
 static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     int err;
 
-    eggsfs_info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
+    struct eggsfs_fs_info* eggsfs_info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
     if (!eggsfs_info) { err = -ENOMEM; goto out; }
 
     err = eggsfs_parse_shuckle_addr(dev_name, &eggsfs_info->shuckle_addr1, &eggsfs_info->shuckle_addr2);

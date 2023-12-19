@@ -12,17 +12,19 @@ type ScrubState struct {
 	Migrate              MigrateStats
 	CheckedBlocks        uint64
 	CheckedBytes         uint64
-	SendQueueSize        uint64
-	CheckQueueSize       uint64
+	WorkersQueuesSize    [256]uint64
+	CheckQueuesSize      [256]uint64
 	DecommissionedBlocks uint64
 	Cursors              [256]msgs.InodeId
 }
 
 type ScrubOptions struct {
-	MaximumCheckAttempts uint // 0 = infinite
-	NumSenders           int  // how many goroutienes should be sending check request to the block services
-	SendersQueueSize     int
-	CheckerQueueSize     int
+	MaximumCheckAttempts  uint // 0 = infinite
+	NumWorkers            int  // how many goroutienes should be sending check request to the block services
+	WorkersQueueSize      int
+	CheckerQueueSize      int
+	QuietPeriod           time.Duration
+	RateLimitErasedBlocks *RateLimitOpts
 }
 
 func scrubFileInternal(
@@ -60,8 +62,10 @@ func scrubChecker(
 	log *Logger,
 	client *Client,
 	opts *ScrubOptions,
+	rateLimit *RateLimit,
 	stats *ScrubState,
-	scratchFiles []*scratchFile,
+	shid msgs.ShardId,
+	scratchFiles *scratchFile,
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
 ) {
@@ -81,7 +85,10 @@ func scrubChecker(
 				terminal = true
 				log.Debug("checker terminating, waiting for outstanding scrubbings")
 			} else {
-				atomic.StoreUint64(&stats.CheckQueueSize, uint64(len(checkerChan)))
+				if rateLimit != nil {
+					rateLimit.Acquire()
+				}
+				atomic.StoreUint64(&stats.CheckQueuesSize[shid], uint64(len(checkerChan)))
 				err := completion.Error
 				info := completion.Extra.(*scrubCheckInfo)
 				if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
@@ -100,7 +107,7 @@ func scrubChecker(
 						scrubbingMu.Lock() // scrubbings don't work in parallel
 						defer scrubbingMu.Unlock()
 						log.Info("got bad block error for file %v (block %v, block service %v), starting to migrate: %v", info.file, info.block, info.blockService.Id, err)
-						if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles[info.file.Shard()], info.file); err != nil {
+						if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFiles, info.file); err != nil {
 							log.Info("could not scrub file %v, will terminate: %v", info.file, err)
 							select {
 							case terminateChan <- err:
@@ -151,6 +158,7 @@ func scrubChecker(
 						}
 					}
 				} else {
+					log.Debug("block %v is good", info.block)
 					atomic.AddUint64(&stats.CheckedBlocks, 1)
 					atomic.AddUint64(&stats.CheckedBytes, uint64(info.size))
 					if info.alert != nil {
@@ -174,24 +182,25 @@ type scrubRequest struct {
 	crc          msgs.Crc
 }
 
-func scrubSender(
+func scrubWorker(
 	log *Logger,
 	client *Client,
 	stats *ScrubState,
-	sendChan chan *scrubRequest,
+	shid msgs.ShardId,
+	workerChan chan *scrubRequest,
 	checkerChan chan *BlockCompletion,
 	terminateChan chan any,
 ) {
 	alert := log.NewNCAlert(10 * time.Second)
 	for {
-		req := <-sendChan
+		req := <-workerChan
 		if req == nil {
-			log.Debug("sender terminating")
-			sendChan <- nil // terminate the other senders, too
-			log.Debug("sender terminated")
+			log.Debug("worker terminating")
+			workerChan <- nil // terminate the other workers, too
+			log.Debug("worker terminated")
 			return
 		}
-		atomic.StoreUint64(&stats.SendQueueSize, uint64(len(sendChan)))
+		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workerChan)))
 		canIgnoreError := req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE | msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
@@ -222,74 +231,63 @@ func scrubScraper(
 	log *Logger,
 	client *Client,
 	stats *ScrubState,
+	shid msgs.ShardId,
 	terminateChan chan any,
-	sendChan chan *scrubRequest,
+	workerChan chan *scrubRequest,
 ) {
-	var fileReqs [256]msgs.VisitFilesReq
-	for i := range fileReqs {
-		fileReqs[i].BeginId = stats.Cursors[i]
-	}
-	var fileResps [256]msgs.VisitFilesResp
-	for i := 0; ; i++ {
-		allDone := true
-		for shid := 0; shid < 256; shid++ {
-			fileReq := &fileReqs[shid]
-			fileResp := &fileResps[shid]
-			if i > 0 && fileReq.BeginId == 0 {
-				continue
+	fileReq := &msgs.VisitFilesReq{BeginId: stats.Cursors[shid]}
+	fileResp := &msgs.VisitFilesResp{}
+	for {
+		if err := client.ShardRequest(log, msgs.ShardId(shid), fileReq, fileResp); err != nil {
+			log.Info("could not get files: %v", err)
+			select {
+			case terminateChan <- err:
+			default:
 			}
-			allDone = false
-			if err := client.ShardRequest(log, msgs.ShardId(shid), fileReq, fileResp); err != nil {
-				log.Info("could not get files: %v", err)
-				select {
-				case terminateChan <- err:
-				default:
-				}
-				return
-			}
-			log.Debug("will migrate %d files", len(fileResp.Ids))
-			for _, file := range fileResp.Ids {
-				spansReq := msgs.FileSpansReq{FileId: file}
-				spansResp := msgs.FileSpansResp{}
-				for {
-					if err := client.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
-						log.Info("could not get spans: %v", err)
-						select {
-						case terminateChan <- err:
-						default:
-						}
-						return
-					}
-					for _, span := range spansResp.Spans {
-						if span.Header.StorageClass == msgs.INLINE_STORAGE {
-							continue
-						}
-						body := span.Body.(*msgs.FetchedBlocksSpan)
-						for _, block := range body.Blocks {
-							size := body.CellSize * uint32(body.Stripes)
-							blockService := spansResp.BlockServices[block.BlockServiceIx]
-							sendChan <- &scrubRequest{
-								file:         file,
-								blockService: blockService,
-								block:        block.BlockId,
-								size:         size,
-								crc:          block.Crc,
-							}
-						}
-					}
-					spansReq.ByteOffset = spansResp.NextOffset
-					if spansReq.ByteOffset == 0 {
-						break
-					}
-				}
-			}
-			stats.Cursors[shid] = fileResp.NextId
-			fileReq.BeginId = fileResp.NextId
+			return
 		}
-		if allDone {
-			// this will terminate all the senders
-			log.Debug("file scraping done, terminating senders")
-			sendChan <- nil
+		log.Debug("will migrate %d files", len(fileResp.Ids))
+		for _, file := range fileResp.Ids {
+			spansReq := msgs.FileSpansReq{FileId: file}
+			spansResp := msgs.FileSpansResp{}
+			for {
+				if err := client.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
+					log.Info("could not get spans: %v", err)
+					select {
+					case terminateChan <- err:
+					default:
+					}
+					return
+				}
+				for _, span := range spansResp.Spans {
+					if span.Header.StorageClass == msgs.INLINE_STORAGE {
+						continue
+					}
+					body := span.Body.(*msgs.FetchedBlocksSpan)
+					for _, block := range body.Blocks {
+						size := body.CellSize * uint32(body.Stripes)
+						blockService := spansResp.BlockServices[block.BlockServiceIx]
+						workerChan <- &scrubRequest{
+							file:         file,
+							blockService: blockService,
+							block:        block.BlockId,
+							size:         size,
+							crc:          block.Crc,
+						}
+					}
+				}
+				spansReq.ByteOffset = spansResp.NextOffset
+				if spansReq.ByteOffset == 0 {
+					break
+				}
+			}
+		}
+		stats.Cursors[shid] = fileResp.NextId
+		fileReq.BeginId = fileResp.NextId
+		if fileReq.BeginId == 0 {
+			// this will terminate all the workers
+			log.Debug("file scraping done, terminating workers")
+			workerChan <- nil
 			return
 		}
 	}
@@ -312,56 +310,99 @@ func ScrubFiles(
 	log *Logger,
 	client *Client,
 	opts *ScrubOptions,
+	rateLimit *RateLimit,
 	stats *ScrubState,
+	shid msgs.ShardId,
 ) error {
-	if opts.NumSenders <= 0 {
-		panic(fmt.Errorf("the number of senders should be positive, got %v", opts.NumSenders))
+	if opts.NumWorkers <= 0 {
+		panic(fmt.Errorf("the number of senders should be positive, got %v", opts.NumWorkers))
 	}
 	log.Info("starting to scrub files")
 	terminateChan := make(chan any, 1)
-	numSenders := opts.NumSenders
-	sendChan := make(chan *scrubRequest, opts.SendersQueueSize)
+	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
 	checkChan := make(chan *BlockCompletion, opts.CheckerQueueSize)
-	var scratchFiles [256]*scratchFile
-	var keepAlives [256]keepScratchFileAlive
-	for shid := 0; shid < 256; shid++ {
-		scratchFiles[shid] = &scratchFile{}
-		keepAlives[shid] = startToKeepScratchFileAlive(log, client, scratchFiles[shid])
-	}
+	scratchFile := &scratchFile{}
+	keepAlive := startToKeepScratchFileAlive(log, client, scratchFile)
 	defer func() {
-		for _, keepAlive := range keepAlives {
-			keepAlive.stop()
-		}
+		keepAlive.stop()
 	}()
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubScraper(log, client, stats, terminateChan, sendChan)
+		scrubScraper(log, client, stats, shid, terminateChan, sendChan)
 	}()
 
-	var sendersWg sync.WaitGroup
-	sendersWg.Add(numSenders)
-	for i := 0; i < numSenders; i++ {
+	var workersWg sync.WaitGroup
+	workersWg.Add(opts.NumWorkers)
+	for i := 0; i < opts.NumWorkers; i++ {
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			scrubSender(log, client, stats, sendChan, checkChan, terminateChan)
-			sendersWg.Done()
+			scrubWorker(log, client, stats, shid, sendChan, checkChan, terminateChan)
+			workersWg.Done()
 		}()
 	}
 	go func() {
-		sendersWg.Wait()
-		log.Info("all senders terminated, terminating checker")
+		workersWg.Wait()
+		log.Info("all workers terminated, terminating checker")
 		checkChan <- nil
 	}()
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubChecker(log, client, opts, stats, scratchFiles[:], checkChan, terminateChan)
+		scrubChecker(log, client, opts, rateLimit, stats, shid, scratchFile, checkChan, terminateChan)
 		log.Info("checker terminated")
 		select {
 		case terminateChan <- nil:
 		default:
 		}
+	}()
+
+	err := <-terminateChan
+	if err == nil {
+		return nil
+	} else {
+		log.Info("could not scrub files: %v", err)
+		return err.(error)
+	}
+}
+
+func ScrubFilesInAllShards(
+	log *Logger,
+	client *Client,
+	opts *ScrubOptions,
+	state *ScrubState,
+) error {
+	terminateChan := make(chan any, 1)
+	var rateLimit *RateLimit
+	if opts.RateLimitErasedBlocks != nil {
+		rateLimit = NewRateLimit(opts.RateLimitErasedBlocks)
+		defer rateLimit.Close()
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(256)
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		go func() {
+			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				if err := ScrubFiles(log, client, opts, rateLimit, state, shid); err != nil {
+					panic(err)
+				}
+				if opts.QuietPeriod < 0 {
+					break
+				} else {
+					log.Info("waiting for %v before starting to scrub files again in shard %v", opts.QuietPeriod, shid)
+					time.Sleep(opts.QuietPeriod)
+				}
+			}
+			wg.Done()
+		}()
+	}
+	go func() {
+		wg.Wait()
+		log.Info("scrubbing terminated in all shards")
+		terminateChan <- nil
 	}()
 
 	err := <-terminateChan

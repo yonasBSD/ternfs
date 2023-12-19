@@ -898,7 +898,7 @@ func main() {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := lib.ScrubState{}
-		if err := lib.ScrubFiles(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 5, NumSenders: 10}, &stats); err != nil {
+		if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{MaximumCheckAttempts: 5, NumWorkers: 10, QuietPeriod: -1}, &stats); err != nil {
 			panic(err)
 		}
 	}

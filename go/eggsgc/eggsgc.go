@@ -86,9 +86,9 @@ func main() {
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	scrub := flag.Bool("scrub", false, "scrub")
-	scrubSenders := flag.Int("scrub-senders", 100, "")
-	scrubSendersQueueSize := flag.Int("scrub-senders-queue-size", 1000, "")
-	scrubCheckerQueueSize := flag.Int("scrub-checker-queue-size", 1000, "")
+	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
+	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
+	scrubCheckerQueueSize := flag.Int("scrub-checker-queue-size", 50, "")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
 
@@ -279,11 +279,17 @@ func main() {
 				log.Info("scrubbing files")
 				// retry forever
 				opts := &lib.ScrubOptions{
-					NumSenders:       *scrubSenders,
-					SendersQueueSize: *scrubSendersQueueSize,
+					NumWorkers:       *scrubWorkersPerShard,
+					WorkersQueueSize: *scrubWorkersQueueSize,
 					CheckerQueueSize: *scrubCheckerQueueSize,
+					QuietPeriod:      0, // no pause
+					RateLimitErasedBlocks: &lib.RateLimitOpts{
+						RefillInterval: time.Second,
+						Refill:         50000, // 50k blocks per second scrubs in ~1 month right now (100 billion blocks)
+						BucketSize:     50000 * 100,
+					},
 				}
-				if err := lib.ScrubFiles(log, client, opts, scrubState); err != nil {
+				if err := lib.ScrubFilesInAllShards(log, client, opts, scrubState); err != nil {
 					log.RaiseAlert("could not scrub files: %v", err)
 				}
 				log.Info("finished scrubbing cycle")
@@ -335,8 +341,16 @@ func main() {
 					metrics.FieldU64("scrubbed_files", atomic.LoadUint64(&scrubState.Migrate.MigratedFiles))
 					metrics.FieldU64("scrubbed_blocks", atomic.LoadUint64(&scrubState.Migrate.MigratedBlocks))
 					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubState.Migrate.MigratedBytes))
-					metrics.FieldU64("scrub_send_queue_size", atomic.LoadUint64(&scrubState.SendQueueSize))
-					metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubState.CheckQueueSize))
+					workersQueueSize := uint64(0)
+					for i := 0; i < 256; i++ {
+						workersQueueSize += atomic.LoadUint64(&scrubState.WorkersQueuesSize[i])
+					}
+					metrics.FieldU64("scrub_worker_queue_size", workersQueueSize)
+					checkQueueSize := uint64(0)
+					for i := 0; i < 256; i++ {
+						checkQueueSize += atomic.LoadUint64(&scrubState.CheckQueuesSize[i])
+					}
+					metrics.FieldU64("scrub_check_queue_size", checkQueueSize)
 					metrics.FieldU64("decommissioned_blocks", atomic.LoadUint64(&scrubState.DecommissionedBlocks))
 				}
 				metrics.Timestamp(now)

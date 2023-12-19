@@ -312,7 +312,7 @@ func CollectDirectoriesInAllShards(
 				if opts.QuietPeriod < 0 {
 					break
 				} else {
-					log.Info("waiting for %v before starting to destruct files again in shard %v", opts.QuietPeriod, shid)
+					log.Info("waiting for %v before starting to collect directories again in shard %v", opts.QuietPeriod, shid)
 					time.Sleep(opts.QuietPeriod)
 				}
 			}

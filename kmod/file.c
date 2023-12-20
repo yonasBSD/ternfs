@@ -121,6 +121,10 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     span->span_crc = 0;
     memset(span->cell_crcs, 0, sizeof(span->cell_crcs));
     span->attempts = 0;
+    // We set the parity to zero here so that `put_transient_span`
+    // is always safe to run, since it traverses the blocks to free
+    // the pages, if any.
+    span->parity = 0;
     return span;
 }
 

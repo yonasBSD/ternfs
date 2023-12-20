@@ -126,7 +126,7 @@ func scrubChecker(
 						log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", info.block, info.file, info.blockService.Id, err)
 					} else {
 						info.attempts++
-						if info.attempts >= opts.MaximumCheckAttempts {
+						if opts.MaximumCheckAttempts > 0 && info.attempts >= opts.MaximumCheckAttempts {
 							log.Info("could not check block %v in file %v, terminating: %v", info.block, info.file, err)
 							select {
 							case terminateChan <- err:

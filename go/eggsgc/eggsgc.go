@@ -88,7 +88,6 @@ func main() {
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
-	scrubCheckerQueueSize := flag.Int("scrub-checker-queue-size", 50, "")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	flag.Parse()
 
@@ -279,11 +278,10 @@ func main() {
 				log.Info("scrubbing files")
 				// retry forever
 				opts := &lib.ScrubOptions{
-					NumWorkers:       *scrubWorkersPerShard,
-					WorkersQueueSize: *scrubWorkersQueueSize,
-					CheckerQueueSize: *scrubCheckerQueueSize,
-					QuietPeriod:      0, // no pause
-					RateLimitErasedBlocks: &lib.RateLimitOpts{
+					NumWorkersPerShard: *scrubWorkersPerShard,
+					WorkersQueueSize:   *scrubWorkersQueueSize,
+					QuietPeriod:        0, // no pause
+					RateLimitCheckedBlocks: &lib.RateLimitOpts{
 						RefillInterval: time.Second,
 						Refill:         50000, // 50k blocks per second scrubs in ~1 month right now (100 billion blocks)
 						BucketSize:     50000 * 100,

@@ -19,8 +19,7 @@ type ScrubState struct {
 }
 
 type ScrubOptions struct {
-	MaximumCheckAttempts   uint // 0 = infinite
-	NumWorkersPerShard     int  // how many goroutienes should be sending check request to the block services
+	NumWorkersPerShard     int // how many goroutienes should be sending check request to the block services
 	WorkersQueueSize       int
 	QuietPeriod            time.Duration
 	RateLimitCheckedBlocks *RateLimitOpts
@@ -68,15 +67,10 @@ func scrubWorker(
 	shid msgs.ShardId,
 	workerChan chan *scrubRequest,
 	terminateChan chan any,
+	scratchFile *scratchFile,
 	scrubbingMu *sync.Mutex,
 ) {
-	alert := log.NewNCAlert(10 * time.Second)
 	bufPool := NewBufPool()
-	scratchFile := &scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, client, scratchFile)
-	defer func() {
-		keepAlive.stop()
-	}()
 	for {
 		req := <-workerChan
 		if req == nil {
@@ -93,56 +87,39 @@ func scrubWorker(
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}
-		attempts := uint(0)
-		var err error
-		for {
-			attempts++
-			if opts.MaximumCheckAttempts > 0 && attempts > opts.MaximumCheckAttempts {
-				if err != nil {
-					panic("exiting because of too many bad attempts, but no error")
-				}
-				log.Info("could not check block %v in file %v, terminating: %v", req.block, req.file, err)
+		err := client.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
+		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
+			atomic.AddUint64(&stats.CheckedBlocks, 1)
+			if err == msgs.BAD_BLOCK_CRC {
+				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
+			}
+			if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFile, scrubbingMu, req.file); err != nil {
+				log.Info("could not scrub file %v, will terminate: %v", req.file, err)
 				select {
 				case terminateChan <- err:
 				default:
 				}
 				return
 			}
-			err = client.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
-			if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
-				atomic.AddUint64(&stats.CheckedBlocks, 1)
-				if err == msgs.BAD_BLOCK_CRC {
-					atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
-				}
-				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFile, scrubbingMu, req.file); err != nil {
-					log.Info("could not scrub file %v, will terminate: %v", req.file, err)
-					select {
-					case terminateChan <- err:
-					default:
-					}
-					return
-				}
-				break
-			} else if err == msgs.BLOCK_IO_ERROR {
-				// This is almost certainly a broken server. There isn't that much we can do.
-				// The block service will alert.
-				log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", req.file, req.block, req.blockService.Id, err)
-				break
-			} else if err != nil {
-				if canIgnoreError {
-					log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", req.block, req.file, req.blockService.Id, err)
-					break
-				} else {
-					log.RaiseNC(alert, "could not check block %v in file %v, will wait one second and retry: %v", req.block, req.file, err)
-					time.Sleep(time.Second)
-				}
+		} else if err == msgs.BLOCK_IO_ERROR {
+			// This is almost certainly a broken server. There isn't that much we can do.
+			// The block service will alert.
+			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", req.file, req.block, req.blockService.Id, err)
+		} else if err != nil {
+			if canIgnoreError {
+				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", req.block, req.file, req.blockService.Id, err)
 			} else {
-				atomic.AddUint64(&stats.CheckedBlocks, 1)
-				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
-				break
+				log.Info("could not check block %v for file %v, will terminate: %v", req.block, req.file, err)
+				select {
+				case terminateChan <- err:
+				default:
+				}
+				return
 			}
+		} else {
+			atomic.AddUint64(&stats.CheckedBlocks, 1)
+			atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 		}
-		log.ClearNC(alert)
 	}
 }
 
@@ -240,6 +217,11 @@ func ScrubFiles(
 	log.Info("starting to scrub files for shard %v", shid)
 	terminateChan := make(chan any, 1)
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
+	scratchFile := &scratchFile{}
+	keepAlive := startToKeepScratchFileAlive(log, client, scratchFile)
+	defer func() {
+		keepAlive.stop()
+	}()
 
 	go func() {
 		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
@@ -252,7 +234,7 @@ func ScrubFiles(
 	for i := 0; i < opts.NumWorkersPerShard; i++ {
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			scrubWorker(log, client, opts, stats, rateLimit, shid, sendChan, terminateChan, &scrubbingMu)
+			scrubWorker(log, client, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu)
 			workersWg.Done()
 		}()
 	}

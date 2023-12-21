@@ -803,6 +803,7 @@ func main() {
 	// Retry block stuff quickly to avoid being starved by the block service
 	// killer (and also to go faster)
 	lib.DefaultBlockTimeout.Max = time.Second
+	lib.DefaultBlockTimeout.Overall = 10 * time.Minute // for block service killer tests
 
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File

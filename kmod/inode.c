@@ -383,6 +383,8 @@ struct inode* eggsfs_get_inode(
 ) {
     trace_eggsfs_get_inode_enter(ino);
 
+    struct eggsfs_fs_info* fs_info = (struct eggsfs_fs_info*)sb->s_fs_info;
+
     struct inode* inode = iget_locked(sb, ino); // new_inode when possible?
     if (!inode) {
         trace_eggsfs_get_inode_exit(ino, NULL, false, 0);
@@ -398,7 +400,7 @@ struct inode* eggsfs_get_inode(
         case EGGSFS_INODE_SYMLINK: inode->i_mode = S_IFLNK; break;
         default: BUG();
         }
-        inode->i_mode |= S_ISDIR(inode->i_mode) ? 0777 : 0666;
+        inode->i_mode |= 0777 & ~(S_ISDIR(inode->i_mode) ? fs_info->dmask : fs_info->fmask);
         inode->i_blocks = 0;
         inode->i_size = 0;
 
@@ -429,8 +431,8 @@ struct inode* eggsfs_get_inode(
             init_waitqueue_head(&enode->file.in_flight_wq);
         }
 
-        inode->i_uid = make_kuid(&init_user_ns, 1000);
-        inode->i_gid = make_kgid(&init_user_ns, 1000);
+        inode->i_uid = fs_info->uid;
+        inode->i_gid = fs_info->gid;
 
         // Only == NULL when we're getting the root inode,
         // unless we allow no parent, which is only in the

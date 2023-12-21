@@ -5,6 +5,7 @@
 #include <linux/module.h>
 #include <linux/statfs.h>
 #include <linux/workqueue.h>
+#include <linux/parser.h>
 
 #include "log.h"
 #include "inode.h"
@@ -172,14 +173,89 @@ static void eggsfs_shuckle_refresh_work(struct work_struct* work) {
     queue_delayed_work(system_long_wq, &info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
 }
 
-static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
+enum {
+    Opt_err, Opt_uid, Opt_gid, Opt_umask, Opt_dmask, Opt_fmask
+};
+
+static const match_table_t tokens = {
+    {Opt_uid, "uid=%u"},
+    {Opt_gid, "gid=%u"},
+    {Opt_umask, "umask=%u"},
+    {Opt_dmask, "dmask=%u"},
+    {Opt_fmask, "fmask=%u"},
+    {Opt_err, NULL}
+};
+
+static int eggsfs_parse_options(char* options, struct eggsfs_fs_info* eggsfs_info) {
+    char *p;
+    int option;
+    substring_t args[MAX_OPT_ARGS];
+
+    // defaults
+    eggsfs_info->uid = make_kuid(&init_user_ns, 1000);
+    eggsfs_info->gid = make_kgid(&init_user_ns, 1000);
+    eggsfs_info->dmask = 0000;
+    eggsfs_info->fmask = 0111;
+
+    if (!options)
+        return 0;
+
+    while ((p = strsep(&options, ",")) != NULL) {
+        int token;
+        if (!*p)
+            continue;
+
+        token = match_token(p, tokens, args);
+        switch (token) {
+        case Opt_uid:
+            if (match_int(&args[0], &option))
+                return -EINVAL;
+            eggsfs_info->uid = make_kuid(&init_user_ns, option);
+            if (!uid_valid(eggsfs_info->uid))
+                return -EINVAL;
+            break;
+        case Opt_gid:
+            if (match_int(&args[0], &option))
+                return -EINVAL;
+            eggsfs_info->gid = make_kgid(&init_user_ns, option);
+            if (!gid_valid(eggsfs_info->gid))
+                return -EINVAL;
+            break;
+        case Opt_umask:
+            if (match_octal(&args[0], &option))
+                return -EINVAL;
+            eggsfs_info->fmask = eggsfs_info->dmask = option;
+            break;
+        case Opt_dmask:
+            if (match_octal(&args[0], &option))
+                return -EINVAL;
+            eggsfs_info->dmask = option;
+            break;
+        case Opt_fmask:
+            if (match_octal(&args[0], &option))
+                return -EINVAL;
+            eggsfs_info->fmask = option;
+            break;
+        default:
+            eggsfs_error("Invalid mount option \"%s\"", p);
+            return -EINVAL;
+        }
+    }
+
+    return 0;
+}
+
+static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* options) {
     int err;
 
     struct eggsfs_fs_info* eggsfs_info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
     if (!eggsfs_info) { err = -ENOMEM; goto out; }
 
     err = eggsfs_parse_shuckle_addr(dev_name, &eggsfs_info->shuckle_addr1, &eggsfs_info->shuckle_addr2);
-    if (err) { goto out; }
+    if (err) { goto out_info; }
+
+    err = eggsfs_parse_options(options, eggsfs_info);
+    if (err) { goto out_info; }
 
     err = eggsfs_init_shard_socket(&eggsfs_info->sock);
     if (err) { goto out_info; }
@@ -190,7 +266,6 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name) {
     INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
     queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
 
-    eggsfs_info("mount successful");
     return eggsfs_info;
 
 out_socket:
@@ -324,15 +399,15 @@ static const struct super_operations eggsfs_super_ops = {
     .statfs = eggsfs_statfs,
 };
 
-static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, const char* dev_name, void* data) {    
+static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, const char* dev_name, void* data) {
     int err;
 
     eggsfs_info("mounting at %s", dev_name);
-    eggsfs_debug("fs_type=%p flags=%d dev_name=%s data=%p", fs_type, flags, dev_name, data);
+    eggsfs_debug("fs_type=%p flags=%d dev_name=%s data=%s", fs_type, flags, dev_name, data ? (char*)data : "");
 
-    struct eggsfs_fs_info* info = eggsfs_init_fs_info(dev_name);
+    struct eggsfs_fs_info* info = eggsfs_init_fs_info(dev_name, data);
     if (IS_ERR(info)) { err = PTR_ERR(info); goto out_err; }
-    
+
     struct super_block* sb = sget(fs_type, NULL, set_anon_super, flags, NULL);
     if (IS_ERR(sb)) { err = PTR_ERR(sb); goto out_info; }
 
@@ -355,7 +430,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
 
     struct inode* root = eggsfs_get_inode_normal(sb, NULL, EGGSFS_ROOT_INODE);
     if (IS_ERR(root)) { err = PTR_ERR(root); goto out_sb; }
-    
+
     struct eggsfs_inode* root_enode = EGGSFS_I(root);
 
     err = eggsfs_do_getattr(root_enode);

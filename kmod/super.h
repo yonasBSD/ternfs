@@ -21,6 +21,11 @@ struct eggsfs_fs_info {
     atomic64_t cdc_addr2;
 
     struct delayed_work shuckle_refresh_work;
+
+    kuid_t uid;
+    kgid_t gid;
+    umode_t fmask;
+    umode_t dmask;
 };
 
 int __init eggsfs_fs_init(void);

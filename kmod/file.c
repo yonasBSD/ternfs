@@ -874,7 +874,11 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
 
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
-    eggsfs_dir_drop_cache(EGGSFS_I(d_inode(dget_parent(dentry))));
+    {
+        struct dentry* parent = dget_parent(dentry);
+        eggsfs_dir_drop_cache(EGGSFS_I(d_inode(parent)));
+        dput(parent);
+    }
 
 out:
     if (err) {

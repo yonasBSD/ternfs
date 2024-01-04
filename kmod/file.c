@@ -79,10 +79,10 @@ static int file_open(struct inode* inode, struct file* filp) {
         // also, set atime, if requested
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
-            struct timespec atime_ts = ns_to_timespec(atime_ns);
+            struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
             u64 diff = atime_ts.tv_sec - enode->inode.i_atime.tv_sec;
             if (diff >= eggsfs_atime_update_interval_sec) {
-                int err = eggsfs_shard_set_atime_nowait((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, (u64)atime_ns);
+                int err = eggsfs_shard_set_atime_nowait((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, atime_ns);
                 if (err) {
                     inode_unlock(inode);
                     return err;

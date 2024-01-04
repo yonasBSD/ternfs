@@ -38,10 +38,10 @@ revision.c:
 
 # C=1 builds with sparse
 kmod: revision.c
-	make -C $(KDIR) M=$(PWD) C=1 modules
+	$(MAKE) -C $(KDIR) M=$(PWD) C=1 modules
 
 clean:
-	make -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f bincode_tests rs_tests
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h

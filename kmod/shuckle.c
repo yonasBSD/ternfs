@@ -1,10 +1,15 @@
 #include <asm/unaligned.h>
+#include <linux/version.h>
 
 #include "bincode.h"
 #include "shuckle.h"
 #include "log.h"
 #include "err.h"
 #include "super.h"
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+#define kernel_setsockopt(sock, level, optname, optval, optlen) sock_setsockopt(sock, level, optname, KERNEL_SOCKPTR(optval), optlen)
+#endif
 
 void eggsfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
     put_unaligned_le32(EGGSFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;

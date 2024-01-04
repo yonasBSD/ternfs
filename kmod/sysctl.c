@@ -1,4 +1,5 @@
 #include <linux/sysctl.h>
+#include <linux/version.h>
 
 #include "dir.h"
 #include "span.h"
@@ -9,6 +10,12 @@
 #include "file.h"
 #include "block.h"
 #include "metadata.h"
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+#define __sysctl_buffer __kernel
+#else
+#define __sysctl_buffer __user
+#endif
 
 int eggsfs_debug_output = 0;
 int eggsfs_prefetch = 0;
@@ -25,17 +32,17 @@ int eggsfs_prefetch = 0;
     return 0;
 
 static int drop_cached_spans;
-static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
     eggsfs_do_sysctl(eggsfs_drop_all_spans);
 }
 
 static int drop_fetch_block_sockets;
-static int eggsfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+static int eggsfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
     eggsfs_do_sysctl(eggsfs_drop_fetch_block_sockets);
 }
 
 static int drop_write_block_sockets;
-static int eggsfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __user* buffer, size_t* len, loff_t* ppos) {
+static int eggsfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
     eggsfs_do_sysctl(eggsfs_drop_write_block_sockets);
 }
 

@@ -3,15 +3,7 @@ struct FetchedSpan {
 public:
     FetchedSpanHeader header;
 private:
-    alignas(FetchedInlineSpan) alignas(FetchedBlocksSpan) char* body[std::max(sizeof(FetchedInlineSpan), sizeof(FetchedBlocksSpan))];
-
-    void destructBody() {
-        if (header.storageClass == INLINE_STORAGE) {
-            ((FetchedInlineSpan*)body)->~FetchedInlineSpan();
-        } else if (header.storageClass > INLINE_STORAGE) {
-            ((FetchedBlocksSpan*)body)->~FetchedBlocksSpan();
-        }
-    }
+    std::variant<FetchedInlineSpan, FetchedBlocksSpan> body;
 
 public:
     static constexpr uint16_t STATIC_SIZE = FetchedSpanHeader::STATIC_SIZE;
@@ -20,28 +12,25 @@ public:
 
     const FetchedInlineSpan& getInlineSpan() const {
         ALWAYS_ASSERT(header.storageClass == INLINE_STORAGE);
-        return *(const FetchedInlineSpan*)body;
+        return std::get<0>(body);
     }
     FetchedInlineSpan& setInlineSpan() {
-        destructBody();
         header.storageClass = INLINE_STORAGE;
-        return *(new (body) FetchedInlineSpan());
+        return body.emplace<0>();
     }
 
     const FetchedBlocksSpan& getBlocksSpan() const {
         ALWAYS_ASSERT(header.storageClass > INLINE_STORAGE);
-        return *(const FetchedBlocksSpan*)body;
+        return std::get<1>(body);
     }
     FetchedBlocksSpan& setBlocksSpan(uint8_t s) {
         ALWAYS_ASSERT(s > INLINE_STORAGE);
-        destructBody();
         header.storageClass = s;
-        return *(new (body) FetchedBlocksSpan());
+        return body.emplace<1>();
     }
 
     void clear() {
         header.clear();
-        destructBody();
     }
 
     size_t packedSize() const {

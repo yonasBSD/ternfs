@@ -33,6 +33,19 @@ void LoopThread::stop() {
 Loop::Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name) : _env(logger, xmon, name), _name(name) {}
 
 static void* startLoop(void* rawLoop) {
+    // there's a race between starting the thread and getting the
+    // sigmask, but then again we haven't setup the handler at
+    // that point yet, so the whole process would just go down.
+    //
+    // it would be good to use `pthread_attr_setsigmask_np` but it's
+    // a recent glibc feature (~2020) which musl does not support
+    // yet.
+    {
+        int ret = pthread_sigmask(SIG_SETMASK, &baseSigset, nullptr);
+        if (ret != 0) {
+            throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_sigmask");
+        }
+    }
     std::unique_ptr<Loop> loop((Loop*)rawLoop);
     loop->run();
     return nullptr;
@@ -42,22 +55,9 @@ std::unique_ptr<LoopThread> Loop::Spawn(std::unique_ptr<Loop>&& loop) {
     Loop* rawLoop = loop.release();
     pthread_t thr;
     {
-        pthread_attr_t attr;
-        int res = pthread_attr_init(&attr);
-        if (res != 0) {
-            throw EXPLICIT_SYSCALL_EXCEPTION(res, "pthread_attr_init");
-        }
-        res = pthread_attr_setsigmask_np(&attr, &baseSigset);
-        if (res != 0) {
-            throw EXPLICIT_SYSCALL_EXCEPTION(res, "pthread_attr_setsigmask_np");
-        }
-        res = pthread_create(&thr, &attr, &startLoop, rawLoop);
+        int res = pthread_create(&thr, nullptr, &startLoop, rawLoop);
         if (res != 0) {
             throw EXPLICIT_SYSCALL_EXCEPTION(res, "pthread_create");
-        }
-        res = pthread_attr_destroy(&attr);
-        if (res != 0) {
-            throw EXPLICIT_SYSCALL_EXCEPTION(res, "pthread_attr_destroy");
         }
     }
     return std::make_unique<LoopThread>(thr);

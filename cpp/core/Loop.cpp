@@ -33,6 +33,7 @@ void LoopThread::stop() {
 Loop::Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name) : _env(logger, xmon, name), _name(name) {}
 
 static void* startLoop(void* rawLoop) {
+    std::unique_ptr<Loop> loop((Loop*)rawLoop);
     // there's a race between starting the thread and getting the
     // sigmask, but then again we haven't setup the handler at
     // that point yet, so the whole process would just go down.
@@ -46,7 +47,6 @@ static void* startLoop(void* rawLoop) {
             throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_sigmask");
         }
     }
-    std::unique_ptr<Loop> loop((Loop*)rawLoop);
     loop->run();
     return nullptr;
 }

@@ -1370,22 +1370,16 @@ struct CDCDBImpl {
         _initDb();
     }
 
-    ~CDCDBImpl() {
+    void close() {
         LOG_INFO(_env, "destroying column families and closing database");
 
-        const auto gentleRocksDBChecked = [this](const std::string& what, rocksdb::Status status) {
-            if (!status.ok()) {
-                LOG_INFO(_env, "Could not %s: %s", what, status.ToString());
-            }
-        };
-        gentleRocksDBChecked("destroy default CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_defaultCf));
-        gentleRocksDBChecked("destroy req queue CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
-        gentleRocksDBChecked("destroy parent CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_parentCf));
-        gentleRocksDBChecked("destroy enqueued CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_enqueuedCf));
-        gentleRocksDBChecked("destroy executing CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_executingCf));
-        gentleRocksDBChecked("destroy dirs to txns CF", _dbDontUseDirectly->DestroyColumnFamilyHandle(_dirsToTxnsCf));
-
-        gentleRocksDBChecked("close DB", _dbDontUseDirectly->Close());
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_defaultCf));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_parentCf));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_enqueuedCf));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_executingCf));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_dirsToTxnsCf));
+        ROCKS_DB_CHECKED(_dbDontUseDirectly->Close());
         delete _dbDontUseDirectly;
     }
 
@@ -1916,6 +1910,10 @@ struct CDCDBImpl {
 
 CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
     _impl = new CDCDBImpl(logger, xmon, path);
+}
+
+void CDCDB::close() {
+    ((CDCDBImpl*)_impl)->close();
 }
 
 CDCDB::~CDCDB() {

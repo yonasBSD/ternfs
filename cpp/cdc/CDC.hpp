@@ -19,4 +19,4 @@ struct CDCOptions {
     bool metrics = false;
 };
 
-[[noreturn]] void runCDC(const std::string& dbDir, const CDCOptions& options);
+void runCDC(const std::string& dbDir, const CDCOptions& options);

@@ -145,7 +145,7 @@ public:
         std::shared_ptr<XmonAgent>& agent,
         const XmonConfig& config
     );
-    ~Xmon();
+    virtual ~Xmon();
 
     virtual void step() override;
 };

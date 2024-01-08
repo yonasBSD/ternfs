@@ -288,25 +288,20 @@ struct ShardDBImpl {
         _updateCurrentReadSnapshot();
     }
 
-    ~ShardDBImpl() {
+    void close() {
 
         LOG_INFO(_env, "destroying read snapshot, column families and closing database");
 
         _currentReadSnapshot.reset();
 
-        const auto gentleRocksDBChecked = [this](const std::string& what, rocksdb::Status status) {
-            if (!status.ok()) {
-                LOG_INFO(_env, "Could not %s: %s", what, status.ToString());
-            }
-        };
-        gentleRocksDBChecked("destroy default CF", _db->DestroyColumnFamilyHandle(_defaultCf));
-        gentleRocksDBChecked("destroy files CF", _db->DestroyColumnFamilyHandle(_filesCf));
-        gentleRocksDBChecked("destroy spans CF", _db->DestroyColumnFamilyHandle(_spansCf));
-        gentleRocksDBChecked("destroy transient CF", _db->DestroyColumnFamilyHandle(_transientCf));
-        gentleRocksDBChecked("destroy directories CF", _db->DestroyColumnFamilyHandle(_directoriesCf));
-        gentleRocksDBChecked("destroy edges CF", _db->DestroyColumnFamilyHandle(_edgesCf));
-        gentleRocksDBChecked("destroy block services CF", _db->DestroyColumnFamilyHandle(_blockServicesToFilesCf));
-        gentleRocksDBChecked("close DB", _db->Close());
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_filesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_spansCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_transientCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_directoriesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
+        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_blockServicesToFilesCf));
+        ROCKS_DB_CHECKED(_db->Close());
 
         LOG_INFO(_env, "database closed");
 
@@ -3849,6 +3844,10 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
 
 ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const std::string& path) {
     _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, path);
+}
+
+void ShardDB::close() {
+    ((ShardDBImpl*)_impl)->close();
 }
 
 ShardDB::~ShardDB() {

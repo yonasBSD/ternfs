@@ -275,7 +275,8 @@ public:
         }
 
         LOG_DEBUG(_env, "Blocking to wait for readable sockets");
-        if (unlikely(poll(_socks.data(), _socks.size(), -1) < 0)) {
+        if (unlikely(poll(_socks.data(), _socks.size()) < 0)) {
+            if (errno == EINTR) { return; }
             throw SYSCALL_EXCEPTION("poll");
         }
 
@@ -791,6 +792,8 @@ public:
         _env.updateAlert(_alert, "Waiting to get shards");
     }
 
+    virtual ~CDCShardUpdater() = default;
+
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
         std::string err = fetchShards(_shuckleHost, _shucklePort, 10_sec, _shards);
@@ -842,6 +845,8 @@ public:
         _alert(10_sec)
     {}
 
+    virtual ~CDCRegisterer() = default;
+
     virtual bool periodicStep() override {
         uint16_t port1 = _shared.ownPorts[0].load();
         uint16_t port2 = _shared.ownPorts[1].load();
@@ -875,6 +880,8 @@ public:
         _shucklePort(options.shucklePort),
         _alert(10_sec)
     {}
+
+    virtual ~CDCStatsInserter() = default;
 
     virtual bool periodicStep() override {
         std::string err;
@@ -920,6 +927,8 @@ public:
         _shared(shared),
         _alert(10_sec)
     {}
+
+    virtual ~CDCMetricsInserter() = default;
 
     virtual bool periodicStep() {
         auto now = eggsNow();
@@ -1011,36 +1020,34 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     }
     LOG_INFO(env, "  syslog = %s", (int)options.syslog);
 
-    std::vector<std::thread> threads;
+    std::vector<std::unique_ptr<LoopThread>> threads;
 
     // xmon first, so that by the time it shuts down it'll have all the leftover requests
     if (xmon) {
-        threads.emplace_back([&logger, xmon, &options]() mutable {
-            XmonConfig config;
-            config.appInstance = "eggscdc";
-            config.appType = "restech_eggsfs.critical";
-            config.prod = options.xmonProd;
-            Xmon(logger, xmon, config).run();
-        });
+        XmonConfig config;
+        config.appInstance = "eggscdc";
+        config.appType = "restech_eggsfs.critical";
+        config.prod = options.xmonProd;
+
+        threads.emplace_back(Loop::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
     CDCDB db(logger, xmon, dbDir);
     CDCShared shared(db);
 
-    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
-        CDCShardUpdater(logger, xmon, options, shared).run();
-    });
-    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
-        CDCRegisterer(logger, xmon, options, shared).run();
-    });
-    threads.emplace_back([&logger, xmon, &options, &shared]() mutable {
-        CDCStatsInserter(logger, xmon, options, shared).run();
-    });
-    if (options.metrics) {
-        threads.emplace_back([&logger, xmon, &shared]() mutable {
-            CDCMetricsInserter(logger, xmon, shared).run();
-        });
-    }
+    LOG_INFO(env, "Spawning server threads");
 
-    CDCServer(logger, xmon, options, shared).run();
+    threads.emplace_back(Loop::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
+    threads.emplace_back(Loop::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
+    threads.emplace_back(Loop::Spawn(std::make_unique<CDCStatsInserter>(logger, xmon, options, shared)));
+    if (options.metrics) {
+        threads.emplace_back(Loop::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared)));
+    }
+    threads.emplace_back(Loop::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared)));
+
+    waitUntilStopped(threads);
+
+    db.close();
+
+    LOG_INFO(env, "CDC terminating gracefully, bye.");
 }

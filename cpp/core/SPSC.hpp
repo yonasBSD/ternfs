@@ -21,6 +21,8 @@ struct SPSC {
 private:
     uint32_t _maxSize;
     uint32_t _sizeMask;
+    // If the highest bit of size is set, then the queue is closed,
+    // and push/pull will always return zero.
     alignas(64) std::atomic<uint32_t> _size;
     alignas(64) uint64_t _head;
     alignas(64) uint64_t _tail;
@@ -36,12 +38,26 @@ public:
     {
         ALWAYS_ASSERT(_maxSize > 0);
         ALWAYS_ASSERT((_maxSize&_sizeMask) == 0);
+        ALWAYS_ASSERT(_maxSize < (1ull<<31));
+    }
+
+    // This will interrupt pullers.
+    void close() {
+        _size.fetch_or(1ull<<31, std::memory_order_release);
+        long ret = syscall(SYS_futex, &_size, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+        if (unlikely(ret < 0)) {
+            throw SYSCALL_EXCEPTION("futex");
+        }
     }
 
     // Tries to push all the elements. Returns how many were actually
-    // pushed. First element in `els` gets pushed first.
+    // pushed. First element in `els` gets pushed first. Returns 0
+    // if the queue is closed.
     uint32_t push(std::vector<A>& els) {
         uint32_t sz = _size.load(std::memory_order_acquire);
+
+        // queue is closed
+        if (unlikely(sz & (1ull<31))) { return 0; }
 
         // push as much as possible
         uint32_t toPush = std::min<uint64_t>(els.size(), _maxSize-sz);
@@ -61,7 +77,8 @@ public:
         return toPush;
     }
 
-    // Drains at least one element, blocking if there are no elements.
+    // Drains at least one element, blocking if there are no elements,
+    // unless the queue is closed, in which case it'll return 0.
     // Returns how many we've drained.
     uint32_t pull(std::vector<A>& els, uint32_t max) {
         for (;;) {
@@ -73,6 +90,8 @@ public:
                     continue; // try again
                 }
                 throw SYSCALL_EXCEPTION("futex");
+            } else if (unlikely(sz & (1ull<<31))) { // queue is closed
+                return 0;
             } else { // we've got something to drain
                 uint32_t toDrain = std::min(sz, max);
                 for (uint64_t i = _tail; i < _tail+toDrain; i++) {
@@ -85,7 +104,8 @@ public:
         }
     }
 
+    // don't return misleading numbers for a closed queue
     uint32_t size() const {
-        return _size.load();
+        return _size.load() & ~(1ull<<31);
     }
 };

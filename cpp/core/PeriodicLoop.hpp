@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Exception.hpp"
 #include "Time.hpp"
 #include "Env.hpp"
 #include "Loop.hpp"
@@ -45,7 +46,10 @@ public:
             pause = _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * wyhash64_double(&_rand)));
             LOG_DEBUG(_env, "periodic step failed, next step at %s", t + pause);
         }
-        pause.sleepRetry();
+        if (sleep(pause) < 0) {
+            if (errno == EINTR) { return; }
+            throw SYSCALL_EXCEPTION("sleep");
+        }
         _lastSucceded = periodicStep();
     }
 };

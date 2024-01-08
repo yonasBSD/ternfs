@@ -30,4 +30,4 @@ struct ShardOptions {
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 };
 
-[[noreturn]] void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);
+void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options);

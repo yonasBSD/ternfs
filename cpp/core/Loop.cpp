@@ -114,18 +114,20 @@ void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
     }
 
     // we've been told to stop, tear down all threads
-    for (int i = loops.size()-1; i >= 0; i--) {
-        loops[i]->stop();
+    for (auto& loop : loops) {
+        loop->stop();
+    }
+    for (const auto& loop: loops) {
         struct timespec timeout;
         if (clock_gettime(CLOCK_REALTIME, &timeout) < 0) {
             throw SYSCALL_EXCEPTION("clock_gettime");
         }
         timeout.tv_sec += 10;
-        int ret = pthread_timedjoin_np(loops[i]->thread, nullptr, &timeout);
+        int ret = pthread_timedjoin_np(loop->thread, nullptr, &timeout);
         if (ret != 0 && ret == ETIMEDOUT) {
             char name[16];
             {
-                int ret = pthread_getname_np(loops[i]->thread, name, sizeof(name));
+                int ret = pthread_getname_np(loop->thread, name, sizeof(name));
                 if (ret != 0) {
                     throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_getname_np");
                 }

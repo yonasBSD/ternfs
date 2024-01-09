@@ -880,6 +880,30 @@ func main() {
 		run:   duRun,
 	}
 
+	findCmd := flag.NewFlagSet("find", flag.ExitOnError)
+	findDir := findCmd.String("path", "/", "")
+	findName := findCmd.String("name", "", "")
+	findRun := func() {
+		err := lib.Parwalk(
+			log,
+			client,
+			*findDir,
+			func(parent, id msgs.InodeId, path string) error {
+				if strings.HasSuffix(path, "/"+*findName) {
+					log.Info(path)
+				}
+				return nil
+			},
+		)
+		if err != nil {
+			panic(err)
+		}
+	}
+	commands["find"] = commandSpec{
+		flags: findCmd,
+		run:   findRun,
+	}
+
 	scrubFileCmd := flag.NewFlagSet("scrub-file", flag.ExitOnError)
 	scrubFileId := scrubFileCmd.Uint64("id", 0, "The file to scrub")
 	scrubFileRun := func() {

@@ -1138,6 +1138,8 @@ const struct file_operations eggsfs_file_operations = {
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
     .llseek = file_lseek,
+    .splice_read = generic_file_splice_read,
+    .splice_write = iter_file_splice_write,
 };
 
 int __init eggsfs_file_init(void) {

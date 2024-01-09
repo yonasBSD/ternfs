@@ -903,5 +903,5 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     db.close();
 
-    LOG_INFO(env, "Shard terminating gracefully, bye.");
+    LOG_INFO(env, "shard terminating gracefully, bye.");
 }

@@ -57,7 +57,7 @@ public:
         uint32_t sz = _size.load(std::memory_order_acquire);
 
         // queue is closed
-        if (unlikely(sz & (1ull<31))) { return 0; }
+        if (unlikely(sz & (1ull<<31))) { return 0; }
 
         // push as much as possible
         uint32_t toPush = std::min<uint64_t>(els.size(), _maxSize-sz);

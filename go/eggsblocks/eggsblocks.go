@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -30,6 +31,65 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// #include <unistd.h>
+// #include <fcntl.h>
+// #include <errno.h>
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <sys/syscall.h>
+//
+// struct linux_dirent {
+//     unsigned long  d_ino;
+//     off_t          d_off;
+//     unsigned short d_reclen;
+//     char           d_name[];
+// };
+//
+// // If negative, it's an error code.
+// ssize_t count_blocks(char* base_path) {
+//     int base_fd = -1;
+//     int dir_fd = -1;
+//     ssize_t blocks = 0;
+//     base_fd = open(base_path, O_RDONLY|O_DIRECTORY);
+//     if (base_fd < 0) {
+//         fprintf(stderr, "could not open %s: %d\n", base_path, errno);
+//         blocks = -errno;
+//         goto out;
+//     }
+//     char buf[1024];
+//     for (int i = 0; i < 256; i++) {
+//         char dir_path[3];
+//         snprintf(dir_path, 3, "%02x", i);
+//         if (dir_fd >= 0) { close(dir_fd); }
+//         dir_fd = openat(base_fd, dir_path, O_RDONLY|O_DIRECTORY);
+//         if (dir_fd < 0) {
+//             if (errno == ENOENT) {
+//                 continue;
+//             }
+//             fprintf(stderr, "could not open dir %s/%s: %d\n", base_path, dir_path, errno);
+//             blocks = -errno;
+//             goto out;
+//         }
+//         for (;;) {
+//             long read = syscall(SYS_getdents, dir_fd, buf, sizeof(buf));
+//             if (read < 0) {
+//                 fprintf(stderr, "could not read direntries in %s/%s: %d\n", base_path, dir_path, errno);
+//                 blocks = -errno;
+//                 goto out;
+//             }
+//             if (read == 0) { break; }
+//             for (long bpos = 0; bpos < read; blocks++) {
+//                 bpos += ((struct linux_dirent*)(buf+bpos))->d_reclen;
+//             }
+//         }
+//     }
+// out:
+//     if (dir_fd >= 0) { close(dir_fd); }
+//     if (base_fd >= 0) { close(base_fd); }
+//     return blocks;
+// }
+import "C"
 
 type blockServiceStats struct {
 	blocksWritten uint64
@@ -77,30 +137,21 @@ func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
 	return msgs.BlockServiceId(binary.LittleEndian.Uint64(secretKey[:8]) & uint64(0x7FFFFFFFFFFFFFFF))
 }
 
+// Do this in one go in C to minimize syscall overhead in golang,
+// also I think the busy loop with syscalls in them was starving
+// the goroutines waiting on network stuff, which in turn caused
+// xmon connections to be dropped.
+//
+// Note that `findRunnable` picks up network stuff last:
+// <https://github.com/golang/go/blob/1d45a7ef560a76318ed59dfdb178cecd58caf948/src/runtime/proc.go#L3222-L3242>
 func countBlocks(basePath string) (uint64, error) {
-	blocks := uint64(0)
-	for i := 0; i < 256; i++ {
-		blockDir := fmt.Sprintf("%02x", i)
-		d, err := os.Open(path.Join(basePath, blockDir))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return 0, err
-		}
-		defer d.Close()
-		for {
-			entries, err := d.Readdirnames(1000)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return 0, err
-			}
-			blocks += uint64(len(entries))
-		}
+	cBasePath := C.CString(basePath)
+	defer C.free(unsafe.Pointer(cBasePath))
+	blocks := C.count_blocks(cBasePath)
+	if blocks < 0 {
+		return 0, syscall.Errno(-blocks)
 	}
-	return blocks, nil
+	return uint64(blocks), nil
 }
 
 // either updates `blockService`, or returns an error.

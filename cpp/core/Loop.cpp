@@ -47,6 +47,12 @@ static void* startLoop(void* rawLoop) {
             throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_sigmask");
         }
     }
+    {
+        int ret = pthread_setname_np(pthread_self(), loop->name().c_str());
+        if (ret != 0) {
+            throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_setname_np");
+        }
+    }
     loop->run();
     return nullptr;
 }

@@ -69,14 +69,21 @@ ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-bea
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 ssh -p 2222 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 
-kill $trace_pid
-kill $dmesg_pid
-
 # Unmount
 timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
 
 # Rmmod
 timeout -s KILL 300 ssh -p 2222 -i image-key fmazzol@localhost "sudo rmmod eggsfs"
+
+kill $trace_pid
+kill $dmesg_pid
+
+grep -e BUG -e WARNING dmesg > /dev/null
+if [[ "$?" -eq "0" ]]; then
+    echo "BUG|WARNING found in dmesg:"
+    grep -A 2 -e BUG -e WARNING dmesg | tail -10
+    exit 1
+fi
 
 # sudo sysctl fs.eggsfs.debug=1
 # eggs/eggstests -kmod -filter 'direct' -short -binaries-dir eggs

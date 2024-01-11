@@ -53,5 +53,4 @@ public:
     int sleep(Duration d);
 };
 
-void setupSigmask();
 void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops);

@@ -17,7 +17,6 @@
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
 #include "Time.hpp"

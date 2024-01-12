@@ -40,6 +40,12 @@ revision.c:
 kmod: revision.c
 	$(MAKE) -C $(KDIR) M=$(PWD) C=1 modules
 
+# Target to build the kmod when packaging it up (e.g. via dkms)
+# We'll generate revision.c separatedly, and we also don't want
+# sparse as a dependency.
+kmod_package:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f bincode_tests rs_tests

@@ -1,3 +1,5 @@
 cpp/core/MsgsGen.cpp linguist-generated=true
 cpp/core/MsgsGen.hpp linguist-generated=true
 go/msgs/msgs_bincode.go linguist-generated=true
+kmod/bincodegen.h linguist-generated=true
+kmod/bincodegen.c linguist-generated=true

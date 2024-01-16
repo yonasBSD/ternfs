@@ -44,9 +44,10 @@ struct CDCShared {
     std::array<Timings, maxCDCMessageKind+1> timingsTotal;
     std::array<ErrorCount, maxCDCMessageKind+1> errors;
     std::atomic<double> inFlightTxns;
+    std::atomic<double> updateSize;
     ErrorCount shardErrors;
 
-    CDCShared(CDCDB& db_) : db(db_), inFlightTxns(0) {
+    CDCShared(CDCDB& db_) : db(db_), inFlightTxns(0), updateSize(0) {
         for (auto& shard: shards) {
             memset(&shard, 0, sizeof(shard));
         }
@@ -173,13 +174,14 @@ struct CDCReqInfo {
     int sockIx;
 };
 
+constexpr int MAX_UPDATE_SIZE = 500;
+
 struct CDCServer : Loop {
 private:
     CDCShared& _shared;
     bool _seenShards;
     std::array<IpPort, 2> _ipPorts;
     uint64_t _currentLogIndex;
-    int _maxUpdateSize;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
     AES128Key _expandedCDCKey;
@@ -226,7 +228,6 @@ public:
         _shared(shared),
         _seenShards(false),
         _ipPorts(options.ipPorts),
-        _maxUpdateSize(500),
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout)
@@ -260,7 +261,7 @@ public:
         // Process CDC requests and shard responses
         {
             auto now = eggsNow();
-            while (_updateSize() < _maxUpdateSize) {
+            while (_updateSize() < MAX_UPDATE_SIZE) {
                 if (_inFlightShardReqs.size() == 0) { break; }
                 auto oldest = _inFlightShardReqs.oldest();
                 if ((now - oldest->second.sentAt) < _shardTimeout) { break; }
@@ -293,6 +294,7 @@ public:
                 _drainCDCSock(i);
             }
         }
+        _shared.updateSize = 0.95*_shared.updateSize + 0.05*_updateSize();
         // If anything happened, update the db and write down the in flight CDCs
         if (_cdcReqs.size() > 0 || _shardResps.size() > 0) {
             // process everything in a single batch
@@ -455,11 +457,11 @@ private:
         LOG_INFO(_env, "running on ports %s and %s", _shared.ownPorts[0].load(), _shared.ownPorts[1].load());
 
         // setup receive buffers
-        _recvBuf.resize(DEFAULT_UDP_MTU*_maxUpdateSize);
-        _recvHdrs.resize(_maxUpdateSize);
-        memset(_recvHdrs.data(), 0, sizeof(_recvHdrs[0])*_maxUpdateSize);
-        _recvAddrs.resize(_maxUpdateSize);
-        _recvVecs.resize(_maxUpdateSize);
+        _recvBuf.resize(DEFAULT_UDP_MTU*MAX_UPDATE_SIZE);
+        _recvHdrs.resize(MAX_UPDATE_SIZE);
+        memset(_recvHdrs.data(), 0, sizeof(_recvHdrs[0])*MAX_UPDATE_SIZE);
+        _recvAddrs.resize(MAX_UPDATE_SIZE);
+        _recvVecs.resize(MAX_UPDATE_SIZE);
         for (int j = 0; j < _recvVecs.size(); j++) {
             _recvVecs[j].iov_base = &_recvBuf[j*DEFAULT_UDP_MTU];
             _recvVecs[j].iov_len = DEFAULT_UDP_MTU;
@@ -480,11 +482,11 @@ private:
 
     void _drainCDCSock(int sockIx) {    
         int startUpdateSize = _updateSize();
-        if (startUpdateSize >= _maxUpdateSize) { return; }
+        if (startUpdateSize >= MAX_UPDATE_SIZE) { return; }
 
         int sock = _socks[sockIx].fd;
 
-        int ret = recvmmsg(sock, &_recvHdrs[startUpdateSize], _maxUpdateSize-startUpdateSize, 0, nullptr);
+        int ret = recvmmsg(sock, &_recvHdrs[startUpdateSize], MAX_UPDATE_SIZE-startUpdateSize, 0, nullptr);
         if (unlikely(ret < 0)) {
             throw SYSCALL_EXCEPTION("recvmmsg");
         }
@@ -555,9 +557,9 @@ private:
 
     void _drainShardSock(int sockIx) {
         int startUpdateSize = _updateSize();
-        if (startUpdateSize >= _maxUpdateSize) { return; }
+        if (startUpdateSize >= MAX_UPDATE_SIZE) { return; }
 
-        int ret = recvmmsg(_socks[sockIx].fd, &_recvHdrs[startUpdateSize], _maxUpdateSize-startUpdateSize, 0, nullptr);
+        int ret = recvmmsg(_socks[sockIx].fd, &_recvHdrs[startUpdateSize], MAX_UPDATE_SIZE-startUpdateSize, 0, nullptr);
         if (unlikely(ret < 0)) {
             throw SYSCALL_EXCEPTION("recvmsg");
         }
@@ -917,19 +919,25 @@ public:
 struct CDCMetricsInserter : PeriodicLoop {
 private:
     CDCShared& _shared;
-    XmonNCAlert _alert;
+    XmonNCAlert _sendMetricsAlert;
     MetricsBuilder _metricsBuilder;
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
+    XmonNCAlert _updateSizeAlert;
 public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
-        _alert(10_sec)
+        _sendMetricsAlert(10_sec)
     {}
 
     virtual ~CDCMetricsInserter() = default;
 
     virtual bool periodicStep() {
+        if (std::ceil(_shared.updateSize) >= MAX_UPDATE_SIZE) {
+            _env.updateAlert(_updateSizeAlert, "CDC update queue is full (%s)", _shared.updateSize);
+        } else {
+            _env.clearAlert(_updateSizeAlert);
+        }
         auto now = eggsNow();
         for (CDCMessageKind kind : allCDCMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];
@@ -950,6 +958,11 @@ public:
         {
             _metricsBuilder.measurement("eggsfs_cdc_in_flight_txns");
             _metricsBuilder.fieldFloat("count", _shared.inFlightTxns);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_cdc_update");
+            _metricsBuilder.fieldFloat("size", _shared.updateSize);
             _metricsBuilder.timestamp(now);
         }
         for (int i = 0; i < _shared.shardErrors.count.size(); i++) {
@@ -977,10 +990,10 @@ public:
         _metricsBuilder.reset();
         if (err.empty()) {
             LOG_INFO(_env, "Sent metrics to influxdb");
-            _env.clearAlert(_alert);
+            _env.clearAlert(_sendMetricsAlert);
             return true;
         } else {
-            _env.updateAlert(_alert, "Could not insert metrics: %s", err);
+            _env.updateAlert(_sendMetricsAlert, "Could not insert metrics: %s", err);
             return false;
         }
     }

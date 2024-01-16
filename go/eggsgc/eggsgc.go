@@ -230,7 +230,6 @@ func main() {
 		opts := &lib.CollectDirectoriesOpts{
 			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
-			QuietPeriod:        0, // immediately start over, it's a long iteration anyway
 		}
 		defer rateLimit.Close()
 		for i := 0; i < 256; i++ {
@@ -249,7 +248,6 @@ func main() {
 		opts := &lib.DestructFilesOptions{
 			NumWorkersPerShard: *destructFilesWorkersPerShard,
 			WorkersQueueSize:   *destructFilesWorkersQueueSize,
-			QuietPeriod:        time.Hour,
 		}
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)
@@ -259,6 +257,8 @@ func main() {
 					if err := lib.DestructFiles(log, client, opts, destructFilesState, shid); err != nil {
 						panic(fmt.Errorf("could not destruct files: %v", err))
 					}
+					log.Info("finished destructing in shard %v, sleeping for one hour", shid)
+					time.Sleep(time.Hour)
 				}
 			}()
 		}
@@ -289,7 +289,6 @@ func main() {
 		opts := &lib.ScrubOptions{
 			NumWorkersPerShard: *scrubWorkersPerShard,
 			WorkersQueueSize:   *scrubWorkersQueueSize,
-			QuietPeriod:        0, // no pause
 		}
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)

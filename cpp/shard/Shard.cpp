@@ -48,7 +48,6 @@ struct QueuedShardLogEntry {
 
 // TODO make options
 const int LOG_ENTRIES_QUEUE_SIZE = 8192; // a few megabytes, should be quite a bit bigger than the below
-const int RECVMMSG_LEN = 1000; // how many messages to read at once at most
 const int MAX_WRITES_AT_ONCE = 200; // say that each write is ~100bytes, this gives us 20KB of write
 const int MAX_RECV_MSGS = 100;
 
@@ -729,9 +728,11 @@ struct ShardMetricsInserter : PeriodicLoop {
 private:
     ShardShared& _shared;
     ShardId _shid;
-    XmonNCAlert _alert;
+    XmonNCAlert _sendMetricsAlert;
     MetricsBuilder _metricsBuilder;
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
+    std::array<XmonNCAlert, 2> _sockQueueAlerts;
+    XmonNCAlert _writeQueueAlert;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
@@ -743,6 +744,18 @@ public:
 
     virtual bool periodicStep() {
         _shared.db.dumpRocksDBStatistics();
+        for (int i = 0; i < 2; i++) {
+            if (std::ceil(_shared.receivedRequests[i]) >= MAX_RECV_MSGS) {
+                _env.updateAlert(_sockQueueAlerts[i], "recv queue for sock %s is full (%s)", i, _shared.receivedRequests[i]);
+            } else {
+                _env.clearAlert(_sockQueueAlerts[i]);
+            }
+        }
+        if (std::ceil(_shared.logEntriesQueueSize) >= LOG_ENTRIES_QUEUE_SIZE) {
+            _env.updateAlert(_writeQueueAlert, "write queue is full (%s)", _shared.logEntriesQueueSize);
+        } else {
+            _env.clearAlert(_writeQueueAlert);
+        }
         auto now = eggsNow();
         for (ShardMessageKind kind : allShardMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];
@@ -795,10 +808,10 @@ public:
         _metricsBuilder.reset();
         if (err.empty()) {
             LOG_INFO(_env, "Sent metrics to influxdb");
-            _env.clearAlert(_alert);
+            _env.clearAlert(_sendMetricsAlert);
             return true;
         } else {
-            _env.updateAlert(_alert, "Could not insert metrics: %s", err);
+            _env.updateAlert(_sendMetricsAlert, "Could not insert metrics: %s", err);
             return false;
         }
     }

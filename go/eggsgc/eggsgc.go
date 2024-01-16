@@ -219,40 +219,49 @@ func main() {
 	}()
 
 	if *collectDirectories {
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			log.Info("collecting directories")
-			opts := &lib.CollectDirectoriesOpts{
-				NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
-				WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
-				QuietPeriod:        0, // immediately start over, it's a long iteration anyway
-				// Limit to 25k dirs per second to reduce load in steady state. For our current
-				// 2e9 dirs, that's roughly one day to traverse them all (but really we'll
-				// be bottlenecked by cases where we need to actually collect edges).
-				RateLimitDirectoryVisit: &lib.RateLimitOpts{
-					RefillInterval: time.Second,
-					Refill:         25000,
-					BucketSize:     25000 * 100,
-				},
-			}
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {
-				panic(fmt.Errorf("could not collect directories: %v", err))
-			}
-		}()
+		// Limit to 25k dirs per second to reduce load in steady state. For our current
+		// 2e9 dirs, that's roughly one day to traverse them all (but really we'll
+		// be bottlenecked by cases where we need to actually collect edges).
+		rateLimit := lib.NewRateLimit(&lib.RateLimitOpts{
+			RefillInterval: time.Second,
+			Refill:         25000,
+			BucketSize:     25000 * 100,
+		})
+		opts := &lib.CollectDirectoriesOpts{
+			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
+			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
+			QuietPeriod:        0, // immediately start over, it's a long iteration anyway
+		}
+		defer rateLimit.Close()
+		for i := 0; i < 256; i++ {
+			shid := msgs.ShardId(i)
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					if err := lib.CollectDirectories(log, client, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
+						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
+					}
+				}
+			}()
+		}
 	}
 	if *destructFiles {
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			log.Info("destructing files")
-			opts := &lib.DestructFilesOptions{
-				NumWorkersPerShard: *destructFilesWorkersPerShard,
-				WorkersQueueSize:   *destructFilesWorkersQueueSize,
-				QuietPeriod:        time.Hour,
-			}
-			if err := lib.DestructFilesInAllShards(log, client, opts, destructFilesState); err != nil {
-				panic(fmt.Errorf("could not destruct files: %v", err))
-			}
-		}()
+		opts := &lib.DestructFilesOptions{
+			NumWorkersPerShard: *destructFilesWorkersPerShard,
+			WorkersQueueSize:   *destructFilesWorkersQueueSize,
+			QuietPeriod:        time.Hour,
+		}
+		for i := 0; i < 256; i++ {
+			shid := msgs.ShardId(i)
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				for {
+					if err := lib.DestructFiles(log, client, opts, destructFilesState, shid); err != nil {
+						panic(fmt.Errorf("could not destruct files: %v", err))
+					}
+				}
+			}()
+		}
 	}
 	if *zeroBlockServices {
 		go func() {
@@ -266,34 +275,31 @@ func main() {
 					log.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
 				log.Info("finished zero block services cycle, will restart")
-				*zeroBlockServiceFilesStats = lib.ZeroBlockServiceFilesStats{}
-
 			}
 		}()
 	}
 	if *scrub {
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				log.Info("scrubbing files")
-				// retry forever
-				opts := &lib.ScrubOptions{
-					NumWorkersPerShard: *scrubWorkersPerShard,
-					WorkersQueueSize:   *scrubWorkersQueueSize,
-					QuietPeriod:        0, // no pause
-					RateLimitCheckedBlocks: &lib.RateLimitOpts{
-						RefillInterval: time.Second,
-						Refill:         50000, // 50k blocks per second scrubs in ~1 month right now (100 billion blocks)
-						BucketSize:     50000 * 100,
-					},
-				}
-				if err := lib.ScrubFilesInAllShards(log, client, opts, scrubState); err != nil {
+		rateLimit := lib.NewRateLimit(&lib.RateLimitOpts{
+			RefillInterval: time.Second,
+			Refill:         50000, // 50k blocks per second scrubs in ~1 month right now (100 billion blocks)
+			BucketSize:     50000 * 100,
+		})
+		defer rateLimit.Close()
+		// retry forever
+		opts := &lib.ScrubOptions{
+			NumWorkersPerShard: *scrubWorkersPerShard,
+			WorkersQueueSize:   *scrubWorkersQueueSize,
+			QuietPeriod:        0, // no pause
+		}
+		for i := 0; i < 256; i++ {
+			shid := msgs.ShardId(i)
+			go func() {
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				if err := lib.ScrubFiles(log, client, opts, rateLimit, scrubState, shid); err != nil {
 					log.RaiseAlert("could not scrub files: %v", err)
 				}
-				log.Info("finished scrubbing cycle")
-				*scrubState = lib.ScrubState{}
-			}
-		}()
+			}()
+		}
 	}
 	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub) {
 		// one thing just pushing the stats every minute

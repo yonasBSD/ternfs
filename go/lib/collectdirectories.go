@@ -234,8 +234,7 @@ type CollectDirectoriesOpts struct {
 	WorkersQueueSize   int
 	// How much we should wait between collection iterations in a single shard.
 	// If negative, we'll stop.
-	QuietPeriod             time.Duration
-	RateLimitDirectoryVisit *RateLimitOpts
+	QuietPeriod time.Duration
 }
 
 func CollectDirectories(
@@ -289,15 +288,11 @@ func CollectDirectoriesInAllShards(
 	log *Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
+	rateLimit *RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 ) error {
 	terminateChan := make(chan any, 1)
-	var rateLimit *RateLimit
-	if opts.RateLimitDirectoryVisit != nil {
-		rateLimit = NewRateLimit(opts.RateLimitDirectoryVisit)
-		defer rateLimit.Close()
-	}
 
 	var wg sync.WaitGroup
 	wg.Add(256)

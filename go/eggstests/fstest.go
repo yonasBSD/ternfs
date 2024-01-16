@@ -812,7 +812,7 @@ func fsTestInternal[Id comparable](
 		{
 			// 100 attempts since we might be running with block service killer
 			var stats lib.ScrubState
-			if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100, QuietPeriod: -1}, &stats); err != nil {
+			if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100, QuietPeriod: -1}, nil, &stats); err != nil {
 				panic(err)
 			}
 			if stats.Migrate.MigratedBlocks != corruptedBlocks {

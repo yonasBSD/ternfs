@@ -19,10 +19,9 @@ type ScrubState struct {
 }
 
 type ScrubOptions struct {
-	NumWorkersPerShard     int // how many goroutienes should be sending check request to the block services
-	WorkersQueueSize       int
-	QuietPeriod            time.Duration
-	RateLimitCheckedBlocks *RateLimitOpts
+	NumWorkersPerShard int // how many goroutienes should be sending check request to the block services
+	WorkersQueueSize   int
+	QuietPeriod        time.Duration
 }
 
 func scrubFileInternal(
@@ -260,14 +259,10 @@ func ScrubFilesInAllShards(
 	log *Logger,
 	client *Client,
 	opts *ScrubOptions,
+	rateLimit *RateLimit,
 	state *ScrubState,
 ) error {
 	terminateChan := make(chan any, 1)
-	var rateLimit *RateLimit
-	if opts.RateLimitCheckedBlocks != nil {
-		rateLimit = NewRateLimit(opts.RateLimitCheckedBlocks)
-		defer rateLimit.Close()
-	}
 
 	var wg sync.WaitGroup
 	wg.Add(256)

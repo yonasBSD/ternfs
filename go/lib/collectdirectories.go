@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -232,9 +231,6 @@ func collectDirectoriesScraper(
 type CollectDirectoriesOpts struct {
 	NumWorkersPerShard int
 	WorkersQueueSize   int
-	// How much we should wait between collection iterations in a single shard.
-	// If negative, we'll stop.
-	QuietPeriod time.Duration
 }
 
 func CollectDirectories(
@@ -300,16 +296,8 @@ func CollectDirectoriesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				if err := CollectDirectories(log, client, dirInfoCache, rateLimit, opts, state, shid); err != nil {
-					panic(err)
-				}
-				if opts.QuietPeriod < 0 {
-					break
-				} else {
-					log.Info("waiting for %v before starting to collect directories again in shard %v", opts.QuietPeriod, shid)
-					time.Sleep(opts.QuietPeriod)
-				}
+			if err := CollectDirectories(log, client, dirInfoCache, rateLimit, opts, state, shid); err != nil {
+				panic(err)
 			}
 			wg.Done()
 		}()

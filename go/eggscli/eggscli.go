@@ -204,7 +204,7 @@ func main() {
 		dirInfoCache := lib.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
 			state := &lib.CollectDirectoriesState{}
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100, QuietPeriod: -1}, state); err != nil {
+			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {
@@ -232,7 +232,7 @@ func main() {
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
 			state := &lib.DestructFilesState{}
-			opts := &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100, QuietPeriod: -1}
+			opts := &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
 				if err := lib.DestructFilesInAllShards(log, client, opts, state); err != nil {
 					panic(err)
@@ -922,7 +922,7 @@ func main() {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := lib.ScrubState{}
-		if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10, QuietPeriod: -1}, nil, &stats); err != nil {
+		if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 	}

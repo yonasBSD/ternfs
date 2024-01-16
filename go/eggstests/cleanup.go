@@ -63,7 +63,7 @@ func cleanupAfterTest(
 	dirInfoCache := lib.NewDirInfoCache()
 	{
 		state := &lib.CollectDirectoriesState{}
-		if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100, QuietPeriod: -1}, state); err != nil {
+		if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}
@@ -75,7 +75,7 @@ func cleanupAfterTest(
 	log.Info("deadlines passed, collecting")
 	{
 		state := &lib.DestructFilesState{}
-		if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100, QuietPeriod: -1}, state); err != nil {
+		if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}

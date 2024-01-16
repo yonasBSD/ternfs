@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -21,7 +20,6 @@ type ScrubState struct {
 type ScrubOptions struct {
 	NumWorkersPerShard int // how many goroutienes should be sending check request to the block services
 	WorkersQueueSize   int
-	QuietPeriod        time.Duration
 }
 
 func scrubFileInternal(
@@ -270,16 +268,8 @@ func ScrubFilesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				if err := ScrubFiles(log, client, opts, rateLimit, state, shid); err != nil {
-					panic(err)
-				}
-				if opts.QuietPeriod < 0 {
-					break
-				} else {
-					log.Info("waiting for %v before starting to scrub files again in shard %v", opts.QuietPeriod, shid)
-					time.Sleep(opts.QuietPeriod)
-				}
+			if err := ScrubFiles(log, client, opts, rateLimit, state, shid); err != nil {
+				panic(err)
 			}
 			wg.Done()
 		}()

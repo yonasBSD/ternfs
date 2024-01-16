@@ -226,13 +226,13 @@ func main() {
 				NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 				WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 				QuietPeriod:        0, // immediately start over, it's a long iteration anyway
-				// Limit to 10k dirs per second to reduce load in steady state. For our current
-				// 1.5e9 dirs, that's roughly two days to traverse them all (but really we'll
+				// Limit to 25k dirs per second to reduce load in steady state. For our current
+				// 2e9 dirs, that's roughly one day to traverse them all (but really we'll
 				// be bottlenecked by cases where we need to actually collect edges).
 				RateLimitDirectoryVisit: &lib.RateLimitOpts{
 					RefillInterval: time.Second,
-					Refill:         10000,
-					BucketSize:     10000 * 100,
+					Refill:         25000,
+					BucketSize:     25000 * 100,
 				},
 			}
 			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, opts, collectDirectoriesState); err != nil {

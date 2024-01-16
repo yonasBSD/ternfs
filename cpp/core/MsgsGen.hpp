@@ -260,6 +260,7 @@ enum class ShuckleMessageKind : uint8_t {
     INSERT_STATS = 11,
     SHARD = 12,
     GET_STATS = 13,
+    SHARD_BLOCK_SERVICES = 17,
 };
 
 const std::vector<ShuckleMessageKind> allShuckleMessageKind {
@@ -276,9 +277,10 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::INSERT_STATS,
     ShuckleMessageKind::SHARD,
     ShuckleMessageKind::GET_STATS,
+    ShuckleMessageKind::SHARD_BLOCK_SERVICES,
 };
 
-constexpr int maxShuckleMessageKind = 15;
+constexpr int maxShuckleMessageKind = 17;
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
@@ -3413,6 +3415,44 @@ struct GetStatsResp {
 
 std::ostream& operator<<(std::ostream& out, const GetStatsResp& x);
 
+struct ShardBlockServicesReq {
+    ShardId shardId;
+
+    static constexpr uint16_t STATIC_SIZE = 1; // shardId
+
+    ShardBlockServicesReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // shardId
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardBlockServicesReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesReq& x);
+
+struct ShardBlockServicesResp {
+    BincodeList<BlockServiceId> blockServices;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceId>::STATIC_SIZE; // blockServices
+
+    ShardBlockServicesResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += blockServices.packedSize(); // blockServices
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardBlockServicesResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x);
+
 struct FetchBlockReq {
     uint64_t blockId;
     uint32_t offset;
@@ -3884,7 +3924,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq> _data;
+    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq, ShardBlockServicesReq> _data;
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
@@ -3920,6 +3960,8 @@ public:
     ShardReq& setShard();
     const GetStatsReq& getGetStats() const;
     GetStatsReq& setGetStats();
+    const ShardBlockServicesReq& getShardBlockServices() const;
+    ShardBlockServicesReq& setShardBlockServices();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
@@ -3934,7 +3976,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp> _data;
+    std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp, ShardBlockServicesResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -3970,6 +4012,8 @@ public:
     ShardResp& setShard();
     const GetStatsResp& getGetStats() const;
     GetStatsResp& setGetStats();
+    const ShardBlockServicesResp& getShardBlockServices() const;
+    ShardBlockServicesResp& setShardBlockServices();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 

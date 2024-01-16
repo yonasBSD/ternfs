@@ -642,6 +642,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SHARD"
 	case 13:
 		return "GET_STATS"
+	case 17:
+		return "SHARD_BLOCK_SERVICES"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -662,6 +664,7 @@ const (
 	INSERT_STATS ShuckleMessageKind = 0xB
 	SHARD ShuckleMessageKind = 0xC
 	GET_STATS ShuckleMessageKind = 0xD
+	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x11
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -678,9 +681,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	INSERT_STATS,
 	SHARD,
 	GET_STATS,
+	SHARD_BLOCK_SERVICES,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 15
+const MaxShuckleMessageKind ShuckleMessageKind = 17
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -710,6 +714,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ShardReq{}, &ShardResp{}, nil
 	case k == "GET_STATS":
 		return &GetStatsReq{}, &GetStatsResp{}, nil
+	case k == "SHARD_BLOCK_SERVICES":
+		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4584,6 +4590,55 @@ func (v *GetStatsResp) Unpack(r io.Reader) error {
 	bincode.EnsureLength(&v.Stats, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.Stats[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES
+}
+
+func (v *ShardBlockServicesReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES
+}
+
+func (v *ShardBlockServicesResp) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := bincode.PackScalar(w, uint64(v.BlockServices[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServices[i])); err != nil {
 			return err
 		}
 	}

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <memory>
 #include <netinet/tcp.h>
+#include <unordered_set>
 
 #include "Bincode.hpp"
 #include "Env.hpp"
@@ -134,20 +135,58 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
         return errString;
     }
 
-    ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setAllBlockServices();
-    errString = writeShuckleRequest(sock.fd, reqContainer);
-    if (!errString.empty()) {
-        return errString;
+    // all block services
+    {
+        ShuckleReqContainer reqContainer;
+        auto& req = reqContainer.setAllBlockServices();
+        errString = writeShuckleRequest(sock.fd, reqContainer);
+        if (!errString.empty()) {
+            return errString;
+        }
+
+        ShuckleRespContainer respContainer;
+        errString = readShuckleResponse(sock.fd, respContainer);
+        if (!errString.empty()) {
+            return errString;
+        }
+
+        blocks.blockServices = respContainer.getAllBlockServices().blockServices;
     }
 
-    ShuckleRespContainer respContainer;
-    errString = readShuckleResponse(sock.fd, respContainer);
-    if (!errString.empty()) {
-        return errString;
+    // current block services
+    {
+        ShuckleReqContainer reqContainer;
+        auto& req = reqContainer.setShardBlockServices();
+        req.shardId = shid;
+        errString = writeShuckleRequest(sock.fd, reqContainer);
+        if (!errString.empty()) {
+            return errString;
+        }
+
+        ShuckleRespContainer respContainer;
+        errString = readShuckleResponse(sock.fd, respContainer);
+        if (!errString.empty()) {
+            return errString;
+        }
+
+        blocks.currentBlockServices = respContainer.getShardBlockServices().blockServices;
     }
 
-    blocks.blockServices = respContainer.getAllBlockServices().blockServices;
+    // check that all current block services are known -- there's a small race here
+    // the caller should just retry in these cases.
+    {
+        std::unordered_set<uint64_t> knownBlockServices;
+        for (const auto& bs : blocks.blockServices.els) {
+            knownBlockServices.insert(bs.id.u64);
+        }
+        for (BlockServiceId bsId : blocks.currentBlockServices.els) {
+            if (!knownBlockServices.contains(bsId.u64)) {
+                std::stringstream ss;
+                ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";
+                return ss.str();
+            }
+        }
+    }
 
     return {};
 }

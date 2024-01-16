@@ -1726,6 +1726,11 @@ func main() {
 			reflect.TypeOf(msgs.GetStatsReq{}),
 			reflect.TypeOf(msgs.GetStatsResp{}),
 		},
+		{
+			0x11,
+			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
+			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

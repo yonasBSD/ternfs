@@ -1777,6 +1777,15 @@ type ShuckleResp struct {
 	Port2 uint16
 }
 
+// Gets the block services a shard should use to write
+type ShardBlockServicesReq struct {
+	ShardId ShardId
+}
+
+type ShardBlockServicesResp struct {
+	BlockServices []BlockServiceId
+}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

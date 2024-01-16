@@ -159,14 +159,15 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 	return &msgs.ShardInfo{}, nil
 }
 
-func (s *state) selectBlockServices(id *msgs.BlockServiceId) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+// if flagsFilter&flags is non-zero, things won't be returned
+func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
 	n := sql.Named
 
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
-	q := "SELECT * FROM block_services"
-	args := []any{}
+	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0"
+	args := []any{n("flags", flagsFilter)}
 	if id != nil {
-		q += " WHERE id = :id"
+		q += " AND id = :id"
 		args = append(args, n("id", *id))
 	}
 	rows, err := s.db.Query(q, args...)
@@ -230,7 +231,7 @@ func (st *state) resetTimings() {
 
 func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.selectBlockServices(nil)
+	blockServices, err := s.selectBlockServices(nil, 0)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -247,7 +248,7 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 }
 
 func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
-	blockServices, err := s.selectBlockServices(&req.Id)
+	blockServices, err := s.selectBlockServices(&req.Id, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -281,9 +282,6 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED
 		}
 		flags := bs.Flags
-		if bs.AvailableBytes < s.config.blockServiceMinFreeBytes {
-			flags = flags | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE
-		}
 		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
 		values = append(
 			values,
@@ -508,6 +506,49 @@ func handleInsertStats(log *lib.Logger, s *state, req *msgs.InsertStatsReq) (*ms
 	return &msgs.InsertStatsResp{}, nil
 }
 
+func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
+	// only select block services we're willing to write
+	blockServices, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)
+	if err != nil {
+		log.RaiseAlert("error reading block services: %s", err)
+		return nil, err
+	}
+	// The scheme below is a very cheap way to always pick different failure domains
+	// for our block services: we just set the current block services to be all of
+	// different failure domains, sharded by storage type.
+	//
+	// It does require having at least 14 failure domains (to do RS(10,4)), which is
+	// easy right now since we have ~100 failure domains in iceland.
+	//
+	// It should eventually be replaced with something a bit cleverer, see #44.
+	blockServicesByFailureDomain := make(map[msgs.StorageClass]map[msgs.FailureDomain][]msgs.BlockServiceId)
+	for _, bs := range blockServices {
+		if _, found := blockServicesByFailureDomain[bs.StorageClass]; !found {
+			blockServicesByFailureDomain[bs.StorageClass] = make(map[msgs.FailureDomain][]msgs.BlockServiceId)
+		}
+		if _, found := blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain]; !found {
+			blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain] = []msgs.BlockServiceId{}
+		}
+		if bs.AvailableBytes < s.config.blockServiceMinFreeBytes { // not enough free bytes
+			continue
+		}
+		blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain] = append(blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain], bs.Id)
+	}
+	r := wyhash.New(rand.Uint64())
+	resp := &msgs.ShardBlockServicesResp{
+		BlockServices: []msgs.BlockServiceId{},
+	}
+	for _, byFailureDomain := range blockServicesByFailureDomain {
+		for _, blockServices := range byFailureDomain {
+			resp.BlockServices = append(resp.BlockServices, blockServices[r.Uint64()%uint64(len(blockServices))])
+		}
+	}
+	if len(resp.BlockServices) < 14 { // we need at least as many to create files
+		return nil, msgs.COULD_NOT_PICK_BLOCK_SERVICES
+	}
+	return resp, nil
+}
+
 func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
 	n := sql.Named
 	end := req.EndTime
@@ -589,6 +630,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleGetStats(log, s, whichReq)
 	case *msgs.ShuckleReq:
 		resp, err = handleShuckle(log, s)
+	case *msgs.ShardBlockServicesReq:
+		resp, err = handleShardBlockServices(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -900,7 +943,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.selectBlockServices(nil)
+			blockServices, err := state.selectBlockServices(nil, 0)
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -1848,7 +1891,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 func missingBlockServiceAlert(log *lib.Logger, s *state) {
 	alert := log.NewNCAlert(0)
 	for {
-		blockServices, err := s.selectBlockServices(nil)
+		blockServices, err := s.selectBlockServices(nil, 0)
 		if err != nil {
 			log.RaiseNC(alert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)

@@ -9,6 +9,10 @@
 // (e.g. we cannot connect to the server, or the connection dies), and crash
 // on things that are almost certainly not transient (e.g. bad data on
 // the wire).
+//
+// This function does double duty -- it both gets all the block services
+// (the shard needs to know which ones exist to fill in addrs), but it also
+// fills in the block services for the shard specifically.
 std::string fetchBlockServices(
     const std::string& shuckleHost,
     uint16_t shucklePort,

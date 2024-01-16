@@ -653,30 +653,6 @@ public:
             _env.updateAlert(_alert, "got no block services");
             return false;
         }
-        {
-            // The scheme below is a very cheap way to always pick different failure domains
-            // for our block services: we just set the current block services to be all of
-            // different failure domains, sharded by storage type.
-            //
-            // It does require having at least 14 failure domains (to do RS(10,4)), which is
-            // easy right now since we have ~100 failure domains in iceland.
-
-            // storage class -> failure domain -> block service ids
-            std::unordered_map<uint8_t, std::unordered_map<__int128, std::vector<const BlockServiceInfo*>>> blockServicesByFailureDomain;
-            for (const auto& blockService: logEntry.logEntry.body.getUpdateBlockServices().blockServices.els) {
-                if (blockService.flags & BLOCK_SERVICE_DONT_WRITE) { continue; }
-                __int128 failureDomain;
-                static_assert(sizeof(failureDomain) == sizeof(blockService.failureDomain));
-                memcpy(&failureDomain, &blockService.failureDomain.name.data[0], sizeof(failureDomain));
-                blockServicesByFailureDomain[blockService.storageClass][failureDomain].emplace_back(&blockService);
-            }
-            uint64_t rand = wyhash64_rand();
-            for (const auto& [storageClass, byFailureDomain]: blockServicesByFailureDomain) {
-                for (const auto& [failureDomain, blockServices]: byFailureDomain) {
-                    blockServicesEntry.currentBlockServices.els.emplace_back(blockServices[wyhash64(&rand)%blockServices.size()]->id);
-                }
-            }
-        }
 
         for (;;) {
             uint32_t pushed;

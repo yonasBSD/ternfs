@@ -19,7 +19,7 @@ repo_dir = cpp_dir.parent
 build_dir = cpp_dir / 'build' / build_type
 build_dir.mkdir(parents=True, exist_ok=True)
 
-if build_type in ('ubuntu', 'ubuntudebug', 'alpine', 'alpinedebug') and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
+if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 'alpine', 'alpinedebug') and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
     if build_type.startswith('alpine'):
         container = 'REDACTED'
     else:
@@ -37,6 +37,8 @@ else:
     build_types = {
         'ubuntu': 'release',
         'ubuntudebug': 'debug',
+        'ubuntusanitized': 'sanitized',
+        'ubuntuvalgrind': 'valgrind',
     }
     subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={build_types.get(build_type, build_type)}', '../..'], check=True)
     subprocess.run(['ninja'] + sys.argv[2:], check=True)

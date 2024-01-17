@@ -14,4 +14,4 @@ qemu-system-x86_64 \
     -m 64G \
     -smp 50 \
     -nographic \
-    -nic user,hostfwd=tcp::2222-:22
+    -nic user,hostfwd=tcp::2223-:22

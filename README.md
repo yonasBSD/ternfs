@@ -120,29 +120,27 @@ TODO decorate list below with links drilling down on specific concepts.
 % ./build.sh alpine
 ```
 
-Will build all the artifacts apart from the Kernel module. The output will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked. `./build.sh release` will build outside the container, everything will still be linked statically apart from glibc, which cannot be reliably linked statically.
+Will build all the artifacts apart from the Kernel module. The output will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked.
 
-If you want to build outside the Alpine container (e.g. if you wan to do `go run` as I suggest below), you need to have the right Go in your PATH. On ETD dev boxes this can be accomplished by adding `/opt/go1.18.4/bin` to your path.
+There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container (we use this to build for production), and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine.
 
 ## Testing
 
-CI is currently very long (~40 mins for the "quick" tests, ~3h for the full tests). Therefore you might have to wait a while for it.
-
-If you have a small fix and want to push to `main`, run at least
-
 ```
-% go run . -filter 'mounted' -short -build-type sanitized
+./ci.py --build --integration --short --docker
 ```
 
-In `go/eggstests`. This takes around 3 minutes, and will surface gross mistakes. Note that this does _not_ test the kernel module (CI does).
+Will run the integration tests as CI would (inside a docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take a few minutes.
 
-The equivalent for testing the kmod, from inside the kmod VM, is
+To test the kernel module:
 
 ```
-% ./eggs/eggstests -kmod -binaries-dir eggs -filter mounted 
+% ./ci.py --build --kmod --short
 ```
 
-TODO easy way to run kmod tests locally (just requires a bit of reworking of [ci.sh](kmod/ci.sh), plus pushing Ubuntu base image to artifactory).
+This is _much_ longer (~1hr). Usually when developing the kernel module it's best to use `./kmod/restartsession.sh` to be dropped into qemu, and then run specific tests using `eggstests`.
+
+Note that when merging code modifying eggsfs internals it's very important for the kmod tests to pass as well as the normal integration tests. This is due to the fact that the qemu environment is generally very different from the non-qemu env, which means that sometimes it'll surface issues that the non-qemu environment won't.
 
 ## Playing with a local EggsFS instance
 

@@ -294,8 +294,10 @@ func main() {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				if err := lib.ScrubFiles(log, client, opts, rateLimit, scrubState, shid); err != nil {
-					log.RaiseAlert("could not scrub files: %v", err)
+				for {
+					if err := lib.ScrubFiles(log, client, opts, rateLimit, scrubState, shid); err != nil {
+						log.RaiseAlert("could not scrub files: %v", err)
+					}
 				}
 			}()
 		}

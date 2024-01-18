@@ -50,7 +50,6 @@ func cleanupAfterTest(
 	counters *lib.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	cleanupStartedAt := time.Now()
 	client, err := lib.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
@@ -71,7 +70,7 @@ func cleanupAfterTest(
 		panic(err)
 	}
 	log.Info("waiting for transient deadlines to have passed")
-	time.Sleep(testTransientDeadlineInterval - time.Since(cleanupStartedAt))
+	time.Sleep(testTransientDeadlineInterval)
 	log.Info("deadlines passed, collecting")
 	{
 		state := &lib.DestructFilesState{}

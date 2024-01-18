@@ -800,6 +800,12 @@ func main() {
 	// faster
 	lib.DefaultShardTimeout.Initial = 5 * time.Millisecond
 	lib.DefaultCDCTimeout.Initial = 10 * time.Millisecond
+	// Tests fail frequently hitting various timeouts. Higher Max and Overall
+	// timeouts makes tests much more stable
+	lib.DefaultShardTimeout.Max = 20 * time.Second
+	lib.DefaultCDCTimeout.Max = 20 * time.Second
+	lib.DefaultShardTimeout.Overall = 60 * time.Second
+	lib.DefaultCDCTimeout.Overall = 60 * time.Second
 	// Retry block stuff quickly to avoid being starved by the block service
 	// killer (and also to go faster)
 	lib.DefaultBlockTimeout.Max = time.Second

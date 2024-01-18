@@ -177,17 +177,24 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
 
     BUG_ON(dentry->d_inode);
 
+    if (dentry->d_name.len > EGGSFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
+
     // internal-repo/blob/main/docs/kmod-file-tracking.md
     // This (should) happen only from NFSd. Right now we only re-export on NFS for
     // this reason, so we should never hit this.
-    if (current->group_leader->mm == NULL) {
+    preempt_disable();
+    struct task_struct* owner = current->group_leader;
+    struct mm_struct* mm = owner->mm;
+    if (mm == NULL) {
+        preempt_enable();
         eggsfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
         return ERR_PTR(-EIO);
     }
+    // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
+    mmgrab(mm);
+    preempt_enable();
 
     struct eggsfs_inode* parent_enode = EGGSFS_I(parent);
-
-    if (dentry->d_name.len > EGGSFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
 
     eggsfs_debug("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
 
@@ -196,12 +203,18 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
         (struct eggsfs_fs_info*)parent->i_sb->s_fs_info, eggsfs_inode_shard(parent->i_ino),
         itype, dentry->d_name.name, dentry->d_name.len, &ino, &cookie
     ));
-    if (err) { return ERR_PTR(eggsfs_error_to_linux(err)); }
+    if (err) {
+        err = eggsfs_error_to_linux(err);
+        goto out_err;
+    }
     // make this dentry stick around?
 
     // new_inode
     struct inode* inode = eggsfs_get_inode_transient(parent->i_sb, parent_enode, ino);
-    if (IS_ERR(inode)) { return ERR_PTR(PTR_ERR(inode)); }
+    if (IS_ERR(inode)) {
+        err = PTR_ERR(inode);
+        goto out_err;
+    }
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     enode->file.status = EGGSFS_FILE_STATUS_WRITING;
@@ -211,12 +224,14 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     atomic_set(&enode->file.transient_err, 0);
     enode->file.writing_span = NULL;
     sema_init(&enode->file.flushing_span_sema, 1); // 1 = free to flush
-    enode->file.owner = current->group_leader;
-    enode->file.mm = current->group_leader->mm;
-    // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
-    mmgrab(enode->file.mm);
+    enode->file.owner = owner;
+    enode->file.mm = mm;
 
     return enode;
+
+out_err:
+    mmdrop(mm);
+    return ERR_PTR(err);
 }
 
 static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
@@ -236,7 +251,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     trace_eggsfs_vfs_getattr_enter(inode);
-    
+
     // >= so that eggsfs_dir_refresh_time=0 causes revalidation at every call to this function
     if (get_jiffies_64() >= smp_load_acquire(&enode->mtime_expiry)) {
         int err;

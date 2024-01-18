@@ -331,6 +331,8 @@ func (cm *clientMetadata) processRequests(log *Logger) {
 					resp:      nil,
 				}
 			}
+			// keep running even if the socket is totally broken to process all the requests
+			continue
 		}
 		if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))

@@ -79,8 +79,11 @@ kill $trace_pid
 kill $dmesg_pid
 
 echo 'Checking for BUG/WARNING in dmesg'
-grep -e BUG -e WARNING dmesg > /dev/null
-if [[ "$?" -eq "0" ]]; then
+set +e
+grep -e BUG -e WARNING dmesg >/dev/null
+grep_failed="$?"
+set -e
+if [[ "$grep_failed" -eq "0" ]]; then
     echo "BUG|WARNING found in dmesg:"
     grep -A 2 -e BUG -e WARNING dmesg | tail -10
     exit 1

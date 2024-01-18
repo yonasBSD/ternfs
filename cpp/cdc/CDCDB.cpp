@@ -807,7 +807,7 @@ struct SoftUnlinkDirectoryStateMachine {
     void afterLockEdge(EggsError err, const ShardRespContainer* resp) {
         if (err == EggsError::TIMEOUT) {
             lockEdge(true);
-        } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND) {
+        } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_FOUND) {
             env.finishWithError(err); // no rollback to be done
         } else {
             ALWAYS_ASSERT(err == NO_ERROR);

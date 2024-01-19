@@ -12,6 +12,7 @@ type CollectDirectoriesStats struct {
 	VisitedEdges          uint64
 	CollectedEdges        uint64
 	DestructedDirectories uint64
+	Cycles                [256]uint32
 }
 
 type CollectDirectoriesState struct {
@@ -268,6 +269,7 @@ func CollectDirectories(
 	go func() {
 		workersWg.Wait()
 		log.Info("all workers terminated for shard %v, we're done", shid)
+		atomic.AddUint32(&state.Stats.Cycles[shid], 1)
 		terminateChan <- nil
 	}()
 

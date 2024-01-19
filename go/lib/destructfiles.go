@@ -14,6 +14,7 @@ type DestructFilesStats struct {
 	SkippedSpans     uint64
 	DestructedBlocks uint64
 	FailedFiles      uint64
+	Cycles           [256]uint32
 }
 
 type DestructFilesState struct {
@@ -215,6 +216,7 @@ func DestructFiles(
 	go func() {
 		workersWg.Wait()
 		log.Info("all workers terminated, we're done with shard %v", shid)
+		atomic.AddUint32(&stats.Stats.Cycles[shid], 1)
 		terminateChan <- nil
 	}()
 

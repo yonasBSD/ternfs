@@ -82,6 +82,10 @@ func (b *MetricsBuilder) FieldU64(name string, value uint64) {
 	b.fieldRaw(name, fmt.Sprintf("%vi", value))
 }
 
+func (b *MetricsBuilder) FieldU32(name string, value uint32) {
+	b.fieldRaw(name, fmt.Sprintf("%vi", value))
+}
+
 func (b *MetricsBuilder) Timestamp(t time.Time) {
 	if !(b.state == METRICS_FIELDS) {
 		panic(fmt.Errorf("bad state %v for timestamp", b.state))

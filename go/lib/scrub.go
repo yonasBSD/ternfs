@@ -15,6 +15,7 @@ type ScrubState struct {
 	CheckQueuesSize      [256]uint64
 	DecommissionedBlocks uint64
 	Cursors              [256]msgs.InodeId
+	Cycles               [256]uint32
 }
 
 type ScrubOptions struct {
@@ -180,6 +181,7 @@ func scrubScraper(
 		if fileReq.BeginId == 0 {
 			// this will terminate all the workers
 			log.Debug("file scraping done for shard %v, terminating workers", shid)
+			atomic.AddUint32(&stats.Cycles[shid], 1)
 			workerChan <- nil
 			return
 		}

@@ -320,22 +320,12 @@ func main() {
 					metrics.FieldU64("skipped_spans", atomic.LoadUint64(&destructFilesState.Stats.SkippedSpans))
 					metrics.FieldU64("destructed_blocks", atomic.LoadUint64(&destructFilesState.Stats.DestructedBlocks))
 					metrics.FieldU64("failed_files", atomic.LoadUint64(&destructFilesState.Stats.FailedFiles))
-					queueSize := uint64(0)
-					for i := 0; i < 256; i++ {
-						queueSize += atomic.LoadUint64(&destructFilesState.WorkersQueuesSize[i])
-					}
-					metrics.FieldU64("destruct_files_worker_queue_size", queueSize)
 				}
 				if *collectDirectories {
 					metrics.FieldU64("visited_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedDirectories))
 					metrics.FieldU64("visited_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.VisitedEdges))
 					metrics.FieldU64("collected_edges", atomic.LoadUint64(&collectDirectoriesState.Stats.CollectedEdges))
 					metrics.FieldU64("destructed_directories", atomic.LoadUint64(&collectDirectoriesState.Stats.DestructedDirectories))
-					queueSize := uint64(0)
-					for i := 0; i < 256; i++ {
-						queueSize += atomic.LoadUint64(&collectDirectoriesState.WorkersQueuesSize[i])
-					}
-					metrics.FieldU64("collect_directories_worker_queue_size", queueSize)
 				}
 				if *zeroBlockServices {
 					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&zeroBlockServiceFilesStats.ZeroBlockServiceFilesRemoved))
@@ -346,19 +336,28 @@ func main() {
 					metrics.FieldU64("scrubbed_files", atomic.LoadUint64(&scrubState.Migrate.MigratedFiles))
 					metrics.FieldU64("scrubbed_blocks", atomic.LoadUint64(&scrubState.Migrate.MigratedBlocks))
 					metrics.FieldU64("scrubbed_bytes", atomic.LoadUint64(&scrubState.Migrate.MigratedBytes))
-					workersQueueSize := uint64(0)
-					for i := 0; i < 256; i++ {
-						workersQueueSize += atomic.LoadUint64(&scrubState.WorkersQueuesSize[i])
-					}
-					metrics.FieldU64("scrub_worker_queue_size", workersQueueSize)
-					checkQueueSize := uint64(0)
-					for i := 0; i < 256; i++ {
-						checkQueueSize += atomic.LoadUint64(&scrubState.CheckQueuesSize[i])
-					}
-					metrics.FieldU64("scrub_check_queue_size", checkQueueSize)
 					metrics.FieldU64("decommissioned_blocks", atomic.LoadUint64(&scrubState.DecommissionedBlocks))
 				}
 				metrics.Timestamp(now)
+				// per shard gc metrics
+				for i := 0; i < 256; i++ {
+					metrics.Measurement("eggsfs_gc")
+					metrics.Tag("shard", fmt.Sprintf("%v", i))
+					if *destructFiles {
+						metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkersQueuesSize[i]))
+						metrics.FieldU32("destruct_files_cycles", atomic.LoadUint32(&destructFilesState.Stats.Cycles[i]))
+					}
+					if *collectDirectories {
+						metrics.FieldU64("collect_directories_worker_queue_size", atomic.LoadUint64(&collectDirectoriesState.WorkersQueuesSize[i]))
+						metrics.FieldU32("collect_directories_cycles", atomic.LoadUint32(&collectDirectoriesState.Stats.Cycles[i]))
+					}
+					if *scrub {
+						metrics.FieldU64("scrub_worker_queue_size", atomic.LoadUint64(&scrubState.WorkersQueuesSize[i]))
+						metrics.FieldU64("scrub_check_queue_size", atomic.LoadUint64(&scrubState.CheckQueuesSize[i]))
+						metrics.FieldU32("scrub_cycles", atomic.LoadUint32(&scrubState.Cycles[i]))
+					}
+					metrics.Timestamp(now)
+				}
 				// shard requests
 				for _, kind := range msgs.AllShardMessageKind {
 					for i := 0; i < 256; i++ {

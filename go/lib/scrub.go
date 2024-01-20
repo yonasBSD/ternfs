@@ -86,7 +86,7 @@ func scrubWorker(
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}
 		err := client.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
+		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR || err == msgs.BLOCK_IO_ERROR {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
@@ -99,10 +99,6 @@ func scrubWorker(
 				}
 				return
 			}
-		} else if err == msgs.BLOCK_IO_ERROR {
-			// This is almost certainly a broken server. There isn't that much we can do.
-			// The block service will alert.
-			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", req.file, req.block, req.blockService.Id, err)
 		} else if err != nil {
 			if canIgnoreError {
 				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", req.block, req.file, req.blockService.Id, err)

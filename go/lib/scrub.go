@@ -23,6 +23,10 @@ type ScrubOptions struct {
 	WorkersQueueSize   int
 }
 
+func badBlockError(err error) bool {
+	return err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR || err == msgs.BLOCK_IO_ERROR
+}
+
 func scrubFileInternal(
 	log *Logger,
 	client *Client,
@@ -39,7 +43,7 @@ func scrubFileInternal(
 
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := client.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR {
+		if badBlockError(err) {
 			log.RaiseAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}
@@ -86,7 +90,7 @@ func scrubWorker(
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}
 		err := client.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
-		if err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR || err == msgs.BLOCK_IO_ERROR {
+		if badBlockError(err) {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))

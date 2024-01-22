@@ -24,7 +24,7 @@ type ScrubOptions struct {
 }
 
 func badBlockError(err error) bool {
-	return err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_PARTIAL_IO_ERROR || err == msgs.BLOCK_IO_ERROR
+	return err == msgs.BAD_BLOCK_CRC || err == msgs.BLOCK_NOT_FOUND || err == msgs.BLOCK_IO_ERROR_FILE
 }
 
 func scrubFileInternal(
@@ -103,6 +103,11 @@ func scrubWorker(
 				}
 				return
 			}
+		} else if err == msgs.BLOCK_IO_ERROR_DEVICE {
+			// This is almost certainly a broken server. We want migration to take
+			// care of this -- otherwise the scrubber will be stuck on tons of
+			// these errors.
+			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", req.file, req.block, req.blockService.Id, err)
 		} else if err != nil {
 			if canIgnoreError {
 				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", req.block, req.file, req.blockService.Id, err)

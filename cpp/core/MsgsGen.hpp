@@ -64,8 +64,8 @@ enum class EggsError : uint16_t {
     CANNOT_UNSET_DECOMMISSIONED = 67,
     CANNOT_REGISTER_DECOMMISSIONED = 68,
     BLOCK_TOO_OLD_FOR_WRITE = 69,
-    BLOCK_IO_ERROR = 70,
-    BLOCK_PARTIAL_IO_ERROR = 71,
+    BLOCK_IO_ERROR_DEVICE = 70,
+    BLOCK_IO_ERROR_FILE = 71,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -131,8 +131,8 @@ const std::vector<EggsError> allEggsErrors {
     EggsError::CANNOT_UNSET_DECOMMISSIONED,
     EggsError::CANNOT_REGISTER_DECOMMISSIONED,
     EggsError::BLOCK_TOO_OLD_FOR_WRITE,
-    EggsError::BLOCK_IO_ERROR,
-    EggsError::BLOCK_PARTIAL_IO_ERROR,
+    EggsError::BLOCK_IO_ERROR_DEVICE,
+    EggsError::BLOCK_IO_ERROR_FILE,
 };
 
 constexpr int maxEggsError = 72;

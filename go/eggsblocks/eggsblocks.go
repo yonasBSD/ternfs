@@ -357,7 +357,6 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 }
 
 func getPhysicalBlockSize(path string) (int, error) {
-
 	fs := syscall.Statfs_t{}
 	err := syscall.Statfs(path, &fs)
 	if err != nil {
@@ -401,47 +400,6 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	for cursor < size {
 		read, err := f.Read(*buf)
 		if err != nil {
-			// We try to establish if this is a single broken block, in which case
-			// we leave the disk be, see <internal-repo/issues/115>
-			if isIOErr(err) {
-				log.Info("got IO error for file %v at %v, checking if it's a single block: %v", blockPath, cursor, err)
-				blockSize, blockSizeErr := getPhysicalBlockSize(blockPath)
-				failures := []int64{}
-				if blockSizeErr != nil {
-					log.Info("could not get block size, giving up: %v", blockSizeErr)
-					goto NormalErr
-				}
-				for cursor := int64(0); cursor < int64(size); cursor += int64(blockSize) {
-					// Previous failures might have impeded the file position being bumped,
-					// so use SeekStart
-					if _, seekErr := f.Seek(cursor, io.SeekStart); seekErr != nil {
-						log.Info("could not get block size, giving up: %v", seekErr)
-						goto NormalErr
-					}
-					_, readErr := f.Read((*buf)[:blockSize])
-					if readErr == nil {
-						continue
-					}
-					if isIOErr(readErr) {
-						failures = append(failures, cursor)
-						// The file might not be block-aligned, hence the >2
-						// It might actually be that they're always block aligned in XFS, but I
-						// can't be bothered to properly check
-						if len(failures) > 2 || len(failures) >= (int(size)+blockSize-1)/blockSize {
-							log.Info("got too many failures at %+v, giving up", failures)
-							goto NormalErr
-						}
-					} else {
-						log.Info("could not read, giving up: %v", readErr)
-						goto NormalErr
-					}
-				}
-				if len(failures) <= 2 {
-					log.RaiseAlert("got IO errors for file %v at %+v, will return BLOCK_PARTIAL_IO_ERROR: %v", blockPath, failures, err)
-					return msgs.BLOCK_PARTIAL_IO_ERROR
-				}
-			}
-		NormalErr:
 			log.RaiseAlert("could not read file %v at %v: %v", blockPath, cursor, err)
 			return err
 		}
@@ -584,8 +542,10 @@ const MAX_OBJECT_SIZE uint32 = 100 << 20
 // The bool is whether we should keep going
 func handleRequestError(
 	log *lib.Logger,
+	blockServices map[msgs.BlockServiceId]*blockService,
 	conn *net.TCPConn,
 	lastError *error,
+	blockServiceId msgs.BlockServiceId,
 	req msgs.BlocksMessageKind,
 	err error,
 ) bool {
@@ -622,9 +582,15 @@ func handleRequestError(
 		}
 	}
 
-	if isIOErr(err) {
-		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return BLOCK_IO_ERROR, previous error: %v", err, conn.RemoteAddr(), req, *lastError)
-		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR)
+	if isIOErr(err) && blockServiceId != 0 {
+		blockService := blockServices[blockServiceId]
+		if blockService.couldNotUpdateInfo {
+			err = msgs.BLOCK_IO_ERROR_DEVICE
+		} else {
+			err = msgs.BLOCK_IO_ERROR_FILE
+		}
+		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
+		lib.WriteBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
 	}
 
@@ -670,7 +636,7 @@ func handleSingleRequest(
 	}
 	blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 	if err != nil {
-		return handleRequestError(log, conn, lastError, 0, err)
+		return handleRequestError(log, blockServices, conn, lastError, 0, 0, err)
 	}
 	kind := req.BlocksRequestKind()
 	t := time.Now()
@@ -703,7 +669,7 @@ func handleSingleRequest(
 				}
 				if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-					return handleRequestError(log, conn, lastError, kind, err)
+					return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 				}
 				atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 				return true
@@ -712,21 +678,21 @@ func handleSingleRequest(
 		// In general, refuse to service requests for block services that we
 		// don't have.
 		log.RaiseAlert("received unknown block service id %v", blockServiceId)
-		return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
+		return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
 	}
 	switch whichReq := req.(type) {
 	case *msgs.EraseBlockReq:
 		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != nil {
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
 		now := time.Now()
 		if now.Before(cutoffTime) {
 			log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
-			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 		}
 		if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 
 		resp := msgs.EraseBlockResp{
@@ -734,12 +700,12 @@ func handleSingleRequest(
 		}
 		if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
 		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.WriteBlockReq:
 		pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
@@ -750,31 +716,31 @@ func handleSingleRequest(
 		}
 		if now.After(futureCutoffTime) {
 			log.RaiseAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
-			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
 		}
 		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != nil {
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		if whichReq.Size > MAX_OBJECT_SIZE {
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
-			return handleRequestError(log, conn, lastError, kind, msgs.BLOCK_TOO_BIG)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_BIG)
 		}
 		if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 			log.Info("could not write block: %v", err)
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.CheckBlockReq:
 		if err := checkBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Size, whichReq.Crc, conn); err != nil {
 			log.Info("checking block failed, conn %v, err %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.TestWriteReq:
 		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 			log.Info("could not perform test write: %v", err)
-			return handleRequestError(log, conn, lastError, kind, err)
+			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	default:
-		return handleRequestError(log, conn, lastError, kind, fmt.Errorf("bad request type %T", req))
+		return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, fmt.Errorf("bad request type %T", req))
 	}
 	return true
 }

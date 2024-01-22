@@ -184,11 +184,11 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::BLOCK_TOO_OLD_FOR_WRITE:
         out << "BLOCK_TOO_OLD_FOR_WRITE";
         break;
-    case EggsError::BLOCK_IO_ERROR:
-        out << "BLOCK_IO_ERROR";
+    case EggsError::BLOCK_IO_ERROR_DEVICE:
+        out << "BLOCK_IO_ERROR_DEVICE";
         break;
-    case EggsError::BLOCK_PARTIAL_IO_ERROR:
-        out << "BLOCK_PARTIAL_IO_ERROR";
+    case EggsError::BLOCK_IO_ERROR_FILE:
+        out << "BLOCK_IO_ERROR_FILE";
         break;
     default:
         out << "EggsError(" << ((int)err) << ")";

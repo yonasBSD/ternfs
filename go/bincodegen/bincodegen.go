@@ -1356,6 +1356,10 @@ func main() {
 		panic(err)
 	}
 
+	// The only thing that can be done to this list is append to it, and
+	// modify error names.
+	// If you don't want an error to be used anymore, modify the name of
+	// the error to add DONT_USE or something like that.
 	errors := []string{
 		"INTERNAL_ERROR",
 		"FATAL_ERROR",
@@ -1417,8 +1421,12 @@ func main() {
 		"CANNOT_UNSET_DECOMMISSIONED",
 		"CANNOT_REGISTER_DECOMMISSIONED",
 		"BLOCK_TOO_OLD_FOR_WRITE",
-		"BLOCK_IO_ERROR",
-		"BLOCK_PARTIAL_IO_ERROR",
+		// these two error below are heavily heuristic based. the first one means
+		// "we got a IO error, but the whole disk is probably kaput", the second
+		// means "we got a IO error, and it's probably some isolated bad sectors
+		// in the file".
+		"BLOCK_IO_ERROR_DEVICE",
+		"BLOCK_IO_ERROR_FILE",
 	}
 
 	kernelShardReqResps := []reqRespType{

@@ -175,8 +175,8 @@ const (
 	CANNOT_UNSET_DECOMMISSIONED ErrCode = 67
 	CANNOT_REGISTER_DECOMMISSIONED ErrCode = 68
 	BLOCK_TOO_OLD_FOR_WRITE ErrCode = 69
-	BLOCK_IO_ERROR ErrCode = 70
-	BLOCK_PARTIAL_IO_ERROR ErrCode = 71
+	BLOCK_IO_ERROR_DEVICE ErrCode = 70
+	BLOCK_IO_ERROR_FILE ErrCode = 71
 )
 
 func (err ErrCode) String() string {
@@ -302,9 +302,9 @@ func (err ErrCode) String() string {
 	case 69:
 		return "BLOCK_TOO_OLD_FOR_WRITE"
 	case 70:
-		return "BLOCK_IO_ERROR"
+		return "BLOCK_IO_ERROR_DEVICE"
 	case 71:
-		return "BLOCK_PARTIAL_IO_ERROR"
+		return "BLOCK_IO_ERROR_FILE"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}

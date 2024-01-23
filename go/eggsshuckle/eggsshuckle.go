@@ -1160,6 +1160,7 @@ func handleInode(
 				}
 				id = msgs.InodeId(i)
 			}
+			nameStr := query.Get("name")
 			if id != msgs.NULL_INODE_ID && id != msgs.ROOT_DIR_INODE_ID && path == "/" {
 				path = "" // path not provided
 			}
@@ -1225,7 +1226,7 @@ func handleInode(
 					Id:        fmt.Sprintf("%v", id),
 					AllInline: true,
 				}
-				if len(data.PathSegments) > 0 {
+				if len(pathSegments(path)) > 0 {
 					data.PathSegments = pathSegments(path)
 				}
 				title := fmt.Sprintf("File %v", data.Id)
@@ -1249,10 +1250,11 @@ func handleInode(
 						panic(err)
 					}
 				}
-				if len(data.PathSegments) > 0 {
-					data.DownloadLink = fmt.Sprintf("/files/%v?name=%v", id, data.PathSegments[len(data.PathSegments)-1].Segment)
-				} else {
-					data.DownloadLink = fmt.Sprintf("/files/%v", id)
+				data.DownloadLink = fmt.Sprintf("/files/%v", id)
+				if nameStr != "" {
+					data.DownloadLink = fmt.Sprintf("%s?name=%s", data.DownloadLink, nameStr)
+				} else if len(data.PathSegments) > 0 {
+					data.DownloadLink = fmt.Sprintf("%s?name=%s", data.DownloadLink, data.PathSegments[len(data.PathSegments)-1].Segment)
 				}
 				{
 					req := msgs.FileSpansReq{FileId: id}
@@ -1365,21 +1367,6 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 	)
 }
 
-type clientSpanReader struct {
-	client     *lib.Client
-	spanReader io.ReadCloser
-}
-
-func (r *clientSpanReader) Read(p []byte) (n int, err error) {
-	return r.spanReader.Read(p)
-}
-
-func (r *clientSpanReader) Close() (err error) {
-	err = r.spanReader.Close()
-	r.client.Close()
-	return err
-}
-
 var readSpanBufPool *lib.BufPool
 
 func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
@@ -1429,7 +1416,7 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 			w.Header().Set("Content-Type", mimeType)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fname))
 
-			return &clientSpanReader{client: client, spanReader: r}, int64(statResp.Size), http.StatusOK
+			return r, int64(statResp.Size), http.StatusOK
 		},
 	)
 }

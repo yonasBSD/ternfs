@@ -495,16 +495,16 @@ export function renderDirectoryEdges(id, path) {
                 {
                     name: 'Name',
                     render: (t, row) => {
-                        if (t === NULL_INODE_ID) {
+                        const id = rowCells(row)[3];
+                        if (id === NULL_INODE_ID) {
                             return p.h('code', {}, t);
                         } else {
                             const name = rowCells(row)[1];
                             const typ = rowCells(row)[2];
-                            const id = rowCells(row)[3];
                             if (path && (!showSnapshotEdges || rowCells(row)[5] === 'yes')) { // current
                                 return p.h('a', {href: `/browse${path}${name}`}, p.h('code', {}, t + (typ === 'DIRECTORY' ? '/' : '')));
                             } else {
-                                return p.h('a', {href: `/browse?id=${id}`}, p.h('code', {}, t + (typ === 'DIRECTORY' ? '/' : '')));
+                                return p.h('a', {href: `/browse?id=${id}&name=${t}`}, p.h('code', {}, t + (typ === 'DIRECTORY' ? '/' : '')));
                             }
                         }
                     },

@@ -310,23 +310,13 @@ retry:
         }
     }
 
-    // We need to fetch the spans.
-    err = down_write_killable(&file->spans_lock);
-    if (err) { GET_SPAN_EXIT(ERR_PTR(err)); }
-
-    // Check if somebody go to it first, in which case we can acquire it and
-    // return immediately.
-    {
-        struct eggsfs_span* span = lookup_span(&file->spans, offset);
-        if (unlikely(span)) {
-            if (unlikely(!span_acquire(span))) {
-                up_write(&file->spans_lock);
-                goto retry;
-            }
-            up_write(&file->spans_lock);
-            GET_SPAN_EXIT(span);
-        }
-    }
+    // We need to fetch the spans. Note that if multiple readers are competing
+    // for this span one will win, but both will fetch the span. We prefer
+    // this wasted work to taking the write lock for long, which could cause
+    // ugly situations if the shrinker is called while this is working, which
+    // is possible since `eggsfs_shard_file_spans` allocates in `eggsfs_file_spans_cb_span`.
+    // The `alloc_pages*` functions can invoke the shrinker to get as they try to get
+    // a page, which in turn might invoke the span shrinker, resulting in a deadlock.
 
     // We always get the full set of spans, this simplifies prefetching (we just
     // blindly assume the span is there, and if it's been reclaimed in the meantime
@@ -349,10 +339,20 @@ retry:
                 list_del(&span->lru);
                 free_span(span, NULL);
             }
-            up_write(&file->spans_lock);
             GET_SPAN_EXIT(ERR_PTR(err));
         }
         // add them to enode spans and LRU
+        err = down_write_killable(&file->spans_lock);
+        if (err) {
+            eggsfs_debug("failed to get spans write lock: %d", err);
+            for (;;) {
+                struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
+                if (span == NULL) { break; }
+                list_del(&span->lru);
+                free_span(span, NULL);
+            }
+            GET_SPAN_EXIT(ERR_PTR(err));
+        }
         for (;;) {
             struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
             if (span == NULL) { break; }
@@ -373,12 +373,11 @@ retry:
                 }
             }
         }
+        up_write(&file->spans_lock);
         // stop if we're done
         if (next_offset == 0) { break; }
         spans_offset = next_offset;
     }
-
-    up_write(&file->spans_lock);
 
     // We now restart, we know that the span must be there (unless the shard is broken).
     // It might get reclaimed in the meantime though.

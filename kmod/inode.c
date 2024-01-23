@@ -278,7 +278,53 @@ done:
     return 0;
 }
 
+static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
+    struct inode* inode = dentry->d_inode;
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    BUG_ON(!inode_is_locked(inode));
+
+    if (smp_load_acquire(&enode->file.status) != EGGSFS_FILE_STATUS_WRITING) {
+        return -EINVAL;
+    }
+
+    loff_t ppos = enode->inode.i_size;
+    loff_t epos = attr->ia_size;
+
+    if (epos < ppos) {
+	eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos)
+        return -EINVAL;
+    }
+    if (epos == ppos) {
+        return 0;
+    }
+
+    // any attempt to write after ftruncate() will still result in EINVAL
+    while (ppos < epos) {
+        eggsfs_debug("calling file write with %lld %lld", ppos, epos);
+        ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, epos - ppos);
+        eggsfs_debug("wrriten %ld", written);
+        if (unlikely(written < 0)) {
+            return written;
+        }
+    }
+
+    return 0;
+}
+
 static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
+    // https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L49 is the only
+    // place where ATTR_SIZE is set, which means only when truncating.
+    if (attr->ia_valid & ATTR_SIZE) {
+	// ftruncate() is only allowed to EXTEND the transient files.
+	// We are called here through https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L64
+	// which fills the `newattrs` variable from scratch, setting ctime in
+	// https://elixir.bootlin.com/linux/v5.4/source/fs/attr.c#L268.
+	// Ideally we would continue the execution here and send the SET_TIME
+	// request, but it is not supported for transient files and instead
+        // eggsfs_file_write_internal will modify mtime/ctime if needed.
+        return eggsfs_do_ftruncate(dentry, attr);
+    }
+
     // ATTR_TIMES_SET/ATTR_TOUCH is just to distinguish between a touch
     // and an explicit time set
     // Note that `utimes_common` unconditionally sets ATTR_CTIME, but we

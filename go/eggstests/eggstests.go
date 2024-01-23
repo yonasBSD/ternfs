@@ -582,6 +582,83 @@ func (r *RunTests) run(
 		},
 	)
 
+	r.test(
+		log,
+		"ftruncate",
+		"",
+		func(counters *lib.ClientCounters) {
+			rand := wyhash.New(42)
+			for i := 0; i < 100; i++ {
+				fn := path.Join(r.mountPoint, fmt.Sprintf("test%v", i))
+				f, err := os.OpenFile(fn, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err != nil {
+					panic(err)
+				}
+				sz := int64(rand.Uint64()%100000 + 1)
+
+				data := make([]byte, sz)
+				if _, err := rand.Read(data); err != nil {
+					panic(err)
+				}
+				if _, err := f.Write(data); err != nil {
+					panic(err)
+				}
+
+				var expectedErr bool
+				var bytesAdded int64
+				var expectedSize int64
+				switch rand.Uint32() % 3 {
+				case 0:
+					bytesAdded = 0
+					expectedErr = false
+					expectedSize = sz
+				case 1:
+					bytesAdded = int64(rand.Uint64()%uint64(sz) + 1)
+					expectedErr = false
+					expectedSize = sz + bytesAdded
+					data = append(data, make([]byte, int(bytesAdded))...)
+				case 2:
+					bytesAdded = -1 * int64(rand.Uint64()%uint64(sz)+1)
+					expectedErr = true
+					expectedSize = sz
+				}
+
+				log.Debug("extending %v of size %v with %v zeros using ftruncate", fn, sz, bytesAdded)
+				err = f.Truncate(sz + bytesAdded)
+				if (err != nil) != expectedErr {
+					panic(err)
+				}
+
+				retOffset, err := f.Seek(0, io.SeekCurrent)
+				if err != nil {
+					panic(err)
+				}
+				if retOffset != sz {
+					panic(fmt.Errorf("position changed after ftruncate(): %v %v, expected %v", fn, retOffset, sz))
+				}
+
+				if err := f.Close(); err != nil {
+					panic(err)
+				}
+				// read back
+				readData, err := os.ReadFile(fn)
+				if err != nil {
+					panic(err)
+				}
+				if !bytes.Equal(data, readData) {
+					panic(fmt.Errorf("mismatching data"))
+				}
+				st, err := os.Stat(fn)
+				if err != nil {
+					panic(err)
+				}
+				if st.Size() != expectedSize {
+					panic(fmt.Errorf("expected size after ftruncate: %v, got %v", expectedSize, st.Size()))
+				}
+			}
+		},
+	)
+
 	terminateChan <- nil
 }
 

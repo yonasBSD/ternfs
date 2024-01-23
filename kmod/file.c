@@ -688,7 +688,7 @@ out:
 // To be called with the inode lock.
 //
 // This accepts a NULL `from`, in which case zeros will be written.
-static ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from, size_t count) {
+ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from, size_t count) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     int err;
@@ -1100,7 +1100,12 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
 
     inode_lock(inode);
 
-    loff_t ppos = enode->inode.i_size;
+    loff_t ppos = file->f_pos;
+    // We only support ppos < i_size when reading the current position.
+    if (ppos != enode->inode.i_size && (offset != 0 || whence != SEEK_CUR)) {
+        goto out_err;
+    }
+
     switch (whence) {
     case SEEK_SET:
         if (offset < ppos) { goto out_err; }

@@ -48,9 +48,6 @@ struct CDCShared {
     ErrorCount shardErrors;
 
     CDCShared(CDCDB& db_) : db(db_), inFlightTxns(0), updateSize(0) {
-        for (auto& shard: shards) {
-            memset(&shard, 0, sizeof(shard));
-        }
         ownPorts[0].store(0);
         ownPorts[1].store(0);
         for (CDCMessageKind kind : allCDCMessageKind) {
@@ -151,7 +148,7 @@ public:
         // TODO i think we can just assert inserted, we never need this
         // functionality
 
-        if (inserted) {            
+        if (inserted) {
             // we have never seen this shard request.
             // technically we could get the same time twice, but in practice
             // we won't, so just assert it.
@@ -245,7 +242,7 @@ public:
             _seenShards = true;
             _initAfterShardsSeen();
         }
-        
+
         // clear internal buffers
         _cdcReqs.clear();
         _cdcReqsInfo.clear();
@@ -453,7 +450,7 @@ private:
                 }
             }
         }
-    
+
         LOG_INFO(_env, "running on ports %s and %s", _shared.ownPorts[0].load(), _shared.ownPorts[1].load());
 
         // setup receive buffers
@@ -480,7 +477,7 @@ private:
         return _cdcReqs.size() + _shardResps.size();
     }
 
-    void _drainCDCSock(int sockIx) {    
+    void _drainCDCSock(int sockIx) {
         int startUpdateSize = _updateSize();
         if (startUpdateSize >= MAX_UPDATE_SIZE) { return; }
 
@@ -491,13 +488,13 @@ private:
             throw SYSCALL_EXCEPTION("recvmmsg");
         }
         LOG_DEBUG(_env, "received %s CDC requests", ret);
-        
+
         for (int i = 0; i < ret; i++) {
             auto& hdr = _recvHdrs[startUpdateSize+i];
             const struct sockaddr_in& clientAddr = *(struct sockaddr_in*)hdr.msg_hdr.msg_name;
 
             BincodeBuf reqBbuf((char*)hdr.msg_hdr.msg_iov[0].iov_base, hdr.msg_len);
-            
+
             // First, try to parse the header
             CDCRequestHeader reqHeader;
             try {
@@ -686,7 +683,7 @@ private:
             inFlightTxn->second.lastSentRequestId = shardReqHeader.requestId;
         }
     }
-    
+
     template<typename Fill>
     void _pack(int sockIx, const sockaddr_in& addrIn, Fill fill) {
         // serialize

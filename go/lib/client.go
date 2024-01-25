@@ -659,7 +659,6 @@ func connCheck(conn *net.TCPConn) error {
 func (proc *blocksProcessor) processRequests(log *Logger) {
 	log.Debug("%v: starting request processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
 	// one iteration = one request
-	lastIterationAt := time.Now()
 	for {
 		conn := proc.loadConn()
 		req := <-proc.reqChan
@@ -674,9 +673,9 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 			}
 			return
 		}
-		// empty queue, and haven't done anything in a while, check that conn is alive,
-		// otherwise we might still succeed sending, but inevitably fail when reading.
-		if conn.conn != nil && time.Since(lastIterationAt) > 10*time.Second && len(proc.inFlightReqChan) == 0 {
+		// empty queue, check that conn is alive, otherwise we might still succeed sending,
+		// but inevitably fail when reading.
+		if conn.conn != nil && len(proc.inFlightReqChan) == 0 {
 			if err := connCheck(conn.conn); err != nil {
 				log.Debug("connection for addr1=%+v addr2=%+v is dead: %v", proc.addr1, proc.addr2, err)
 				conn.conn.Close()
@@ -720,7 +719,6 @@ func (proc *blocksProcessor) processRequests(log *Logger) {
 				continue
 			}
 		}
-		lastIterationAt = time.Now()
 		// we wrote it fine, proceed
 		proc.inFlightReqChan <- clientBlockResponseWithGeneration{
 			generation: conn.generation,

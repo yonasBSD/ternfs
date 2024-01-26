@@ -1,4 +1,5 @@
 #include <linux/module.h>
+#include <linux/random.h>
 
 #include "bincode.h"
 #include "inode.h"
@@ -923,9 +924,20 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
             return err;
         }
 
-        // find the next block to download
-        for (i = 0; i < B; i++) {
-            if (!((1ull<<i) & (downloading|failed|succeeded))) { break; }
+        // Find the next block to download. If we're mirrored, download
+        // blocks at random, so that we can use mirrored files to avoid
+        // hotspot for super busy files.
+        if (D == 1) {
+            int start = prandom_u32()%B;
+            int j;
+            for (j = start; j < start + B; j++) {
+                i = j%B;
+                if (!((1ull<<i) & (downloading|failed|succeeded))) { break; }
+            }
+        } else {
+            for (i = 0; i < B; i++) {
+                if (!((1ull<<i) & (downloading|failed|succeeded))) { break; }
+            }
         }
         BUG_ON(i == B); // something _must_ be there given the checks above
 

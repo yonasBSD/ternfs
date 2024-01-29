@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ctime>
 #include <vector>
 #include <stdint.h>
 #include <atomic>
@@ -43,7 +44,7 @@ public:
 
     // This will interrupt pullers.
     void close() {
-        _size.fetch_or(1ull<<31, std::memory_order_release);
+        _size.fetch_or(1ull<<31, std::memory_order_relaxed);
         long ret = syscall(SYS_futex, &_size, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
         if (unlikely(ret < 0)) {
             throw SYSCALL_EXCEPTION("futex");
@@ -54,7 +55,7 @@ public:
     // pushed. First element in `els` gets pushed first. Returns 0
     // if the queue is closed.
     uint32_t push(std::vector<A>& els) {
-        uint32_t sz = _size.load(std::memory_order_acquire);
+        uint32_t sz = _size.load(std::memory_order_relaxed);
 
         // queue is closed
         if (unlikely(sz & (1ull<<31))) { return 0; }
@@ -80,12 +81,13 @@ public:
     // Drains at least one element, blocking if there are no elements,
     // unless the queue is closed, in which case it'll return 0.
     // Returns how many we've drained.
-    uint32_t pull(std::vector<A>& els, uint32_t max) {
+    uint32_t pull(std::vector<A>& els, uint32_t max, Duration timeout = -1) {
         for (;;) {
             uint32_t sz = _size.load(std::memory_order_acquire);
 
             if (unlikely(sz == 0)) { // nothing yet, let's wait
-                long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, nullptr, nullptr, 0);
+                timespec spec = timeout.timespec();
+                long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, &spec, nullptr, 0);
                 if (likely(ret == 0 || errno == EAGAIN)) {
                     continue; // try again
                 }
@@ -97,7 +99,7 @@ public:
                 for (uint64_t i = _tail; i < _tail+toDrain; i++) {
                     els.emplace_back(std::move(_elements[i&_sizeMask]));
                 }
-                _size.fetch_sub(toDrain, std::memory_order_release);
+                _size.fetch_sub(toDrain, std::memory_order_relaxed);
                 _tail += toDrain;
                 return toDrain;
             }
@@ -106,6 +108,6 @@ public:
 
     // don't return misleading numbers for a closed queue
     uint32_t size() const {
-        return _size.load() & ~(1ull<<31);
+        return _size.load(std::memory_order_relaxed) & ~(1ull<<31);
     }
 };

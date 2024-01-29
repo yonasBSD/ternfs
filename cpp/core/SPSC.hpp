@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cerrno>
 #include <ctime>
 #include <vector>
 #include <stdint.h>
@@ -79,7 +80,7 @@ public:
     }
 
     // Drains at least one element, blocking if there are no elements,
-    // unless the queue is closed, in which case it'll return 0.
+    // unless the queue is closed or the operation times out, in which case it'll return 0.
     // Returns how many we've drained.
     uint32_t pull(std::vector<A>& els, uint32_t max, Duration timeout = -1) {
         for (;;) {
@@ -90,6 +91,9 @@ public:
                 long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, timeout < 0 ? nullptr : &spec,  nullptr, 0);
                 if (likely(ret == 0 || errno == EAGAIN)) {
                     continue; // try again
+                }
+                if (likely(errno == ETIMEDOUT)) {
+                    return 0;
                 }
                 throw SYSCALL_EXCEPTION("futex");
             } else if (unlikely(sz & (1ull<<31))) { // queue is closed

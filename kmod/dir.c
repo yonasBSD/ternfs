@@ -59,7 +59,9 @@ static struct eggsfs_dirents* eggsfs_dir_get_cache(struct eggsfs_inode* enode) {
 // Note that ->dirents and ->dir.pages are both holding a reference, so
 // once you clear those you should call `eggsfs_dir_put_cache`.
 static void eggsfs_dir_put_cache(struct eggsfs_dirents* dirents) {
-    if (atomic_dec_and_test(&dirents->refcount)) {
+    int refs = atomic_dec_return(&dirents->refcount);
+    BUG_ON(refs < 0);
+    if (refs == 0) {
         put_pages_list(&dirents->pages);
         kmem_cache_free(eggsfs_dirents_cachep, dirents);
     }
@@ -71,7 +73,7 @@ static void __eggsfs_dir_put_cache_rcu(struct rcu_head* rcu) {
 }
 
 // Removes the cache from ->dir.dirents, and also calls `eggsfs_dir_put_cache` to
-// clear the reference.
+// clear the reference. So calls to this too should be paired to a `eggsfs_dir_get_cache`.
 void eggsfs_dir_drop_cache(struct eggsfs_inode* enode) {
     if (!atomic64_read((atomic64_t*)&enode->dir.dirents)) { return; } // early atomicless exit
     // zero out dirents, and free it up after the grace period.

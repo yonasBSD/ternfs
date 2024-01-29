@@ -876,7 +876,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     // is wrong, it now contains this file.
     {
         struct dentry* parent = dget_parent(dentry);
-        eggsfs_dir_drop_cache(EGGSFS_I(d_inode(parent)));
+        WRITE_ONCE(EGGSFS_I(d_inode(parent))->mtime_expiry, 0);
         dput(parent);
     }
 

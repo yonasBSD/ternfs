@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <stdint.h>
 
 #define die(fmt, ...) do { fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(false)
 

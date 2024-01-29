@@ -11,6 +11,7 @@
 #include <vector>
 #include <array>
 #include <bit>
+#include <stdint.h>
 
 #include "Common.hpp"
 #include "Assert.hpp"

@@ -101,6 +101,9 @@ ExternalProject_Add(make_rocksdb
     # https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
     URL https://REDACTED
     URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
+    # When we upgraded dev boxes to newer arch and therefore newer clang this was
+    # needed. New RocksDB (e.g. 8.10.0) compiles out of the box.
+    PATCH_COMMAND patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
     SOURCE_DIR ${make_rocksdb_SOURCE_DIR}

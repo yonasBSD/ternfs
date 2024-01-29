@@ -73,8 +73,9 @@ void Loop::run() {
     while (!stopLoop.load()) { step(); }
 }
 
-int Loop::poll(struct pollfd* fds, nfds_t nfds) {
-    return ppoll(fds, nfds, nullptr, &blockingSigset);
+int Loop::poll(struct pollfd* fds, nfds_t nfds, Duration timeout) {
+    struct timespec spec = timeout.timespec();
+    return ppoll(fds, nfds, &spec, &blockingSigset);
 }
 
 void Loop::stop() {

@@ -46,8 +46,9 @@ public:
 
     void run();
 
-    // Polls forever with SIGINT/SIGTERM unmasked.
-    int poll(struct pollfd* fds, nfds_t nfds);
+    // Polls forever with SIGINT/SIGTERM unmasked. If timeout < 0, waits forever.
+    // If timeout == 0, returns immediately. If timeout > 0, it'll wait.
+    int poll(struct pollfd* fds, nfds_t nfds, Duration timeout);
 
     // Sleeps with SIGINT/SIGTERM unmasked.
     int sleep(Duration d);

@@ -272,7 +272,8 @@ public:
         }
 
         LOG_DEBUG(_env, "Blocking to wait for readable sockets");
-        if (unlikely(poll(_socks.data(), _socks.size()) < 0)) {
+        // Only timeout if there are outstanding shard requests
+        if (unlikely(poll(_socks.data(), _socks.size(), (_inFlightShardReqs.size() > 0) ? _shardTimeout : -1) < 0)) {
             if (errno == EINTR) { return; }
             throw SYSCALL_EXCEPTION("poll");
         }

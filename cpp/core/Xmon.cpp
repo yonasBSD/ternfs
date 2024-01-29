@@ -251,7 +251,7 @@ EggsTime Xmon::_stepNextWakeup() {
         nextWakeup = std::min(nextWakeup, eggsNow() + HEARTBEAT_INTERVAL*2);
     }
 
-    if (poll(_fds, NUM_FDS) < 0) {
+    if (poll(_fds, NUM_FDS, -1) < 0) {
         if (errno == EINTR) { return nextWakeup; }
         throw SYSCALL_EXCEPTION("poll");
     }

@@ -75,7 +75,7 @@ void Loop::run() {
 
 int Loop::poll(struct pollfd* fds, nfds_t nfds, Duration timeout) {
     struct timespec spec = timeout.timespec();
-    return ppoll(fds, nfds, &spec, &blockingSigset);
+    return ppoll(fds, nfds, timeout < 0 ? nullptr : &spec, &blockingSigset);
 }
 
 void Loop::stop() {

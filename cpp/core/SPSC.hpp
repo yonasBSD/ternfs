@@ -87,7 +87,7 @@ public:
 
             if (unlikely(sz == 0)) { // nothing yet, let's wait
                 timespec spec = timeout.timespec();
-                long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, &spec, nullptr, 0);
+                long ret = syscall(SYS_futex, &_size, FUTEX_WAIT_PRIVATE, 0, timeout < 0 ? nullptr : &spec,  nullptr, 0);
                 if (likely(ret == 0 || errno == EAGAIN)) {
                     continue; // try again
                 }

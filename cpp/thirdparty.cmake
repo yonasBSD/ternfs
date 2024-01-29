@@ -102,7 +102,8 @@ ExternalProject_Add(make_rocksdb
     URL https://REDACTED
     URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
     # When we upgraded dev boxes to newer arch and therefore newer clang this was
-    # needed. New RocksDB (e.g. 8.10.0) compiles out of the box.
+    # needed. New RocksDB (e.g. 8.10.0) compiles out of the box, but we don't have
+    # a great way to test this upgrade on the live cluster.
     PATCH_COMMAND patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""

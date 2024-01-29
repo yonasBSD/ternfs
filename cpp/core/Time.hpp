@@ -10,7 +10,7 @@ struct Duration {
 
     constexpr Duration(): ns(0) {}
     constexpr Duration(int64_t ns_): ns(ns_) {}
-    constexpr Duration(const struct timespec& ts): ns(ts.tv_sec*1'000'000'000ull + ts.tv_nsec) {}
+    constexpr Duration(const struct timespec& ts): ns(ts.tv_sec*1'000'000'000ll + ts.tv_nsec) {}
 
     bool operator==(Duration rhs) const {
         return ns == rhs.ns;

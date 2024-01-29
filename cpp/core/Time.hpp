@@ -46,8 +46,8 @@ struct Duration {
 
     struct timespec timespec() const {
         struct timespec ts;
-        ts.tv_sec = ns / 1'000'000'000ull;
-        ts.tv_nsec = ns % 1'000'000'000ull;
+        ts.tv_sec = ns / 1'000'000'000ll;
+        ts.tv_nsec = ns % 1'000'000'000ll;
         return ts;
     }
 

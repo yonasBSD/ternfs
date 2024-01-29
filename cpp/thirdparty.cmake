@@ -104,7 +104,7 @@ ExternalProject_Add(make_rocksdb
     # When we upgraded dev boxes to newer arch and therefore newer clang this was
     # needed. New RocksDB (e.g. 8.10.0) compiles out of the box, but we don't have
     # a great way to test this upgrade on the live cluster.
-    PATCH_COMMAND patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff
+    PATCH_COMMAND patch -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
     SOURCE_DIR ${make_rocksdb_SOURCE_DIR}

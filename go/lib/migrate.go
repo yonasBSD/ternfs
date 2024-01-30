@@ -451,6 +451,8 @@ func migrateBlocksInternal(
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
+	blockNotFoundAlert := log.NewNCAlert(0)
+	defer log.ClearNC(blockNotFoundAlert)
 	for {
 		if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
 			return fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
@@ -464,8 +466,17 @@ func migrateBlocksInternal(
 			if file == scratchFile.id {
 				continue
 			}
-			if err := migrateBlocksInFileGeneric(log, client, bufPool, stats, timeStats, "migrated", badBlock, &scratchFile, file); err != nil {
-				return err
+			for attempts := 1; ; attempts++ {
+				if err := migrateBlocksInFileGeneric(log, client, bufPool, stats, timeStats, "migrated", badBlock, &scratchFile, file); err != nil {
+					if err == msgs.BLOCK_NOT_FOUND {
+						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
+						time.Sleep(time.Second)
+					} else {
+						return err
+					}
+				} else {
+					break
+				}
 			}
 		}
 		filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1

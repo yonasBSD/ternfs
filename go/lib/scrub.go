@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -73,6 +74,8 @@ func scrubWorker(
 	scrubbingMu *sync.Mutex,
 ) {
 	bufPool := NewBufPool()
+	blockNotFoundAlert := log.NewNCAlert(0)
+	defer log.ClearNC(blockNotFoundAlert)
 	for {
 		req := <-workerChan
 		if req == nil {
@@ -95,13 +98,23 @@ func scrubWorker(
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 			}
-			if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFile, scrubbingMu, req.file); err != nil {
-				log.Info("could not scrub file %v, will terminate: %v", req.file, err)
-				select {
-				case terminateChan <- err:
-				default:
+			for attempts := 1; ; attempts++ {
+				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFile, scrubbingMu, req.file); err != nil {
+					if err == msgs.BLOCK_NOT_FOUND {
+						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
+						time.Sleep(time.Second)
+					} else {
+						log.Info("could not scrub file %v, will terminate: %v", req.file, err)
+						select {
+						case terminateChan <- err:
+						default:
+						}
+						return
+					}
+				} else {
+					log.ClearNC(blockNotFoundAlert)
+					break
 				}
-				return
 			}
 		} else if err == msgs.BLOCK_IO_ERROR_DEVICE {
 			// This is almost certainly a broken server. We want migration to take

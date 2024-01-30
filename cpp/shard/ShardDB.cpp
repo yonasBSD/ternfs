@@ -3300,10 +3300,8 @@ struct ShardDBImpl {
                     return NO_ERROR;
                 }
             }
-            // TODO better error, INTERNAL_ERROR is not for things that can be triggered by users
-            // such as this one
             RAISE_ALERT(_env, "blocks not found when swapping blocks, are you running two migrations at once? fileId1=%s offset1=%s block1=%s fileId2=%s offset2=%s block2=%s", entry.fileId1, entry.byteOffset1, entry.blockId1, entry.fileId2, entry.byteOffset2, entry.blockId2);
-            return EggsError::INTERNAL_ERROR;
+            return EggsError::BLOCK_NOT_FOUND;
         }
         ALWAYS_ASSERT(block1.crc() == block2.crc());
         // Check that we're not creating a situation where we have two blocks in the same block service

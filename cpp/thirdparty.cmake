@@ -104,7 +104,12 @@ ExternalProject_Add(make_rocksdb
     # When we upgraded dev boxes to newer arch and therefore newer clang this was
     # needed. New RocksDB (e.g. 8.10.0) compiles out of the box, but we don't have
     # a great way to test this upgrade on the live cluster.
-    PATCH_COMMAND patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff
+    #
+    # The || true is so that the patch application is idempotent (there's no way to have
+    # patch return 0 when -N skips patches, which is what we want here). This is safe
+    # since the code is hashed anyway, but if you change the RocksDB release (which
+    # you probably shouldn't without some thorough testing) you should keep this in mind.
+    PATCH_COMMAND sh -c "patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff || true"
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
     SOURCE_DIR ${make_rocksdb_SOURCE_DIR}

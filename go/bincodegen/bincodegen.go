@@ -750,7 +750,7 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 }
 
 func cppType(t reflect.Type) string {
-	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" || t.Name() == "BlockServiceId" {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" || t.Name() == "ShardReplicaId" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -827,7 +827,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// pack/unpack
 	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
 	// when unpacking
-	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" || expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" {
+	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" || expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "ShardReplicaId" {
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
@@ -857,7 +857,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// clear/eq
 	switch k {
 	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" {
+		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "ReplicaId" {
 			cg.cline(fmt.Sprintf("%s = %s()", expr.fld, cppType(expr.typ)))
 		} else {
 			cg.cline(fmt.Sprintf("%s = %s(0)", expr.fld, cppType(expr.typ)))
@@ -1427,6 +1427,8 @@ func main() {
 		// in the file".
 		"BLOCK_IO_ERROR_DEVICE",
 		"BLOCK_IO_ERROR_FILE",
+		"INVALID_REPLICA",
+		"DIFFERENT_ADDRS_INFO",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1735,9 +1737,29 @@ func main() {
 			reflect.TypeOf(msgs.GetStatsResp{}),
 		},
 		{
+			0x0E,
+			reflect.TypeOf(msgs.RegisterShardReplicaReq{}),
+			reflect.TypeOf(msgs.RegisterShardReplicaResp{}),
+		},
+		{
+			0x10,
+			reflect.TypeOf(msgs.ShardReplicasReq{}),
+			reflect.TypeOf(msgs.ShardReplicasResp{}),
+		},
+		{
 			0x11,
 			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
 			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
+		},
+		{
+			0x12,
+			reflect.TypeOf(msgs.RegisterCdcReplicaReq{}),
+			reflect.TypeOf(msgs.RegisterCdcReplicaResp{}),
+		},
+		{
+			0x13,
+			reflect.TypeOf(msgs.CdcReplicasReq{}),
+			reflect.TypeOf(msgs.CdcReplicasResp{}),
 		},
 	}...)
 
@@ -1797,7 +1819,7 @@ func main() {
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
-		reflect.TypeOf(msgs.RegisterShardInfo{}),
+		reflect.TypeOf(msgs.AddrsInfo{}),
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),

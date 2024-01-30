@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <ostream>
 #include <variant>
 
 #include "Assert.hpp"
@@ -35,6 +37,71 @@ struct ShardId {
 };
 
 std::ostream& operator<<(std::ostream& out, ShardId shard);
+
+struct ReplicaId {
+    uint8_t u8;
+
+    constexpr ReplicaId(): u8(0) {}
+
+    constexpr ReplicaId(uint8_t id): u8(id) {
+        ALWAYS_ASSERT(valid());
+    }
+
+    bool operator==(ReplicaId rhs) const {
+        return u8 == rhs.u8;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint8_t>(u8);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u8 = buf.unpackScalar<uint8_t>();
+    }
+
+    constexpr bool valid() const {
+        return u8 < 5;
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, ReplicaId replica);
+
+struct ShardReplicaId {
+    uint16_t u16;
+
+    constexpr ShardReplicaId() : u16(0) {}
+
+    constexpr ShardReplicaId(ShardId shid, ReplicaId rid): u16(((uint16_t)rid.u8 << 8) | shid.u8) {}
+
+    bool operator==(ShardReplicaId rhs) const {
+        return u16 == rhs.u16;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint16_t>(u16);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u16 = buf.unpackScalar<uint16_t>();
+        if (unlikely(!valid())) {
+            throw BINCODE_EXCEPTION("bad ShardReplicaId %s", u16);
+        }
+    }
+
+    constexpr ShardId shardId() const {
+        return ShardId(u16 & 0xFF);
+    }
+
+    constexpr ReplicaId replicaId() const {
+        return ReplicaId(u16 >> 8);
+    }
+
+    constexpr bool valid() const {
+        return replicaId().valid();
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid);
 
 // 63-bit:
 // TTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIISSSSSSSS

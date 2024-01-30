@@ -26,6 +26,8 @@ type InodeType uint8
 type InodeId uint64
 type InodeIdExtra uint64 // 64th bit is used to mark whether the inode is owned.
 type ShardId uint8
+type ReplicaId uint8
+type ShardReplicaId uint16
 type StorageClass uint8
 type EggsTime uint64
 type BlockId uint64
@@ -221,6 +223,51 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*id = InodeId(idu)
+	return nil
+}
+
+func MakeShardReplicaId(shard ShardId, replica ReplicaId) ShardReplicaId {
+	return ShardReplicaId((uint16(replica) << 8) | uint16(shard))
+}
+func (id ShardReplicaId) Shard() ShardId {
+	return ShardId(id & 0xFF)
+}
+
+func (id ShardReplicaId) Replica() ReplicaId {
+	return ReplicaId(id >> 8)
+}
+
+func (id ShardReplicaId) String() string {
+	return fmt.Sprintf("%v:%v", id.Shard(), id.Replica())
+}
+
+func (id ShardReplicaId) MarshalJSON() ([]byte, error) {
+	return []byte(id.String()), nil
+}
+
+func (id *ShardReplicaId) UnmarshalJSON(b []byte) error {
+	var shardReplica string
+	err := json.Unmarshal(b, &shardReplica)
+	if err != nil {
+		return err
+	}
+
+	tokens := strings.Split(shardReplica, ":")
+	if len(tokens) != 2 {
+		return fmt.Errorf("can not parse ShardReplicaId(shardId:replicaId) %s", shardReplica)
+	}
+
+	shardId, err := strconv.ParseUint(tokens[0], 10, 8)
+	if err != nil {
+		return err
+	}
+
+	replicaId, err := strconv.ParseUint(tokens[1], 10, 8)
+	if err != nil {
+		return err
+	}
+
+	*id = MakeShardReplicaId(ShardId(shardId), ReplicaId(replicaId))
 	return nil
 }
 
@@ -1709,7 +1756,7 @@ type ShardsResp struct {
 	Shards []ShardInfo
 }
 
-type RegisterShardInfo struct {
+type AddrsInfo struct {
 	Ip1   [4]byte
 	Port1 uint16
 	Ip2   [4]byte
@@ -1718,10 +1765,28 @@ type RegisterShardInfo struct {
 
 type RegisterShardReq struct {
 	Id   ShardId
-	Info RegisterShardInfo
+	Info AddrsInfo
 }
 
 type RegisterShardResp struct{}
+
+type RegisterShardReplicaReq struct {
+	Shrid    ShardReplicaId
+	IsLeader bool
+	Info     AddrsInfo
+}
+
+type RegisterShardReplicaResp struct{}
+
+type ShardReplicasReq struct {
+	Id ShardId
+}
+
+type ShardReplicasResp struct {
+	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
+	// is zeroed.
+	Replicas []AddrsInfo
+}
 
 type RegisterCdcReq struct {
 	Ip1   [4]byte
@@ -1732,6 +1797,14 @@ type RegisterCdcReq struct {
 
 type RegisterCdcResp struct{}
 
+type RegisterCdcReplicaReq struct {
+	Replica  ReplicaId
+	IsLeader bool
+	Info     AddrsInfo
+}
+
+type RegisterCdcReplicaResp struct{}
+
 type CdcReq struct{}
 
 type CdcResp struct {
@@ -1740,6 +1813,14 @@ type CdcResp struct {
 	Ip2      [4]byte
 	Port2    uint16
 	LastSeen EggsTime
+}
+
+type CdcReplicasReq struct{}
+
+type CdcReplicasResp struct {
+	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
+	// is zeroed.
+	Replicas []AddrsInfo
 }
 
 type InfoReq struct{}

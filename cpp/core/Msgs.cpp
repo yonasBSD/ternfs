@@ -7,6 +7,16 @@ std::ostream& operator<<(std::ostream& out, ShardId shard) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, ReplicaId replica) {
+    out << int(replica.u8);
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid) {
+    out << shrid.shardId() << ":" << shrid.replicaId();
+    return out;
+}
+
 std::ostream& operator<<(std::ostream& out, InodeId id) {
     const char cfill = out.fill();
     out << "0x" << std::setfill('0') << std::setw(16) << std::hex << id.u64;

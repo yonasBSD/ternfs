@@ -62,6 +62,8 @@ const char* eggsfs_err_str(int err) {
     case 69: return "BLOCK_TOO_OLD_FOR_WRITE";
     case 70: return "BLOCK_IO_ERROR_DEVICE";
     case 71: return "BLOCK_IO_ERROR_FILE";
+    case 72: return "INVALID_REPLICA";
+    case 73: return "DIFFERENT_ADDRS_INFO";
     default: return "UNKNOWN";
     }
 }

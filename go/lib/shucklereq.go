@@ -44,14 +44,22 @@ func ReadShuckleRequest(
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
+	case msgs.REGISTER_SHARD_REPLICA:
+		req = &msgs.RegisterShardReplicaReq{}
+	case msgs.SHARD_REPLICAS:
+		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
+	case msgs.REGISTER_CDC_REPLICA:
+		req = &msgs.RegisterCdcReplicaReq{}
 	case msgs.CDC:
 		req = &msgs.CdcReq{}
+	case msgs.CDC_REPLICAS:
+		req = &msgs.CdcReplicasReq{}
 	case msgs.INFO:
 		req = &msgs.InfoReq{}
 	case msgs.BLOCK_SERVICE:
@@ -131,14 +139,22 @@ func ReadShuckleResponse(
 		resp = &msgs.ShardsResp{}
 	case msgs.REGISTER_SHARD:
 		resp = &msgs.RegisterShardResp{}
+	case msgs.REGISTER_SHARD_REPLICA:
+		resp = &msgs.RegisterShardReplicaResp{}
+	case msgs.SHARD_REPLICAS:
+		resp = &msgs.ShardReplicasResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		resp = &msgs.SetBlockServiceFlagsResp{}
 	case msgs.REGISTER_CDC:
 		resp = &msgs.RegisterCdcResp{}
+	case msgs.REGISTER_CDC_REPLICA:
+		resp = &msgs.RegisterCdcReplicaResp{}
 	case msgs.CDC:
 		resp = &msgs.CdcResp{}
+	case msgs.CDC_REPLICAS:
+		resp = &msgs.CdcReplicasResp{}
 	case msgs.INFO:
 		resp = &msgs.InfoResp{}
 	case msgs.BLOCK_SERVICE:

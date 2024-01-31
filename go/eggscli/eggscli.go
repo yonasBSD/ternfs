@@ -330,21 +330,22 @@ func main() {
 			}
 		}
 		stats := lib.MigrateStats{}
+		progressReportAlert := log.NewNCAlert(10 * time.Second)
 		for failureDomain, bss := range blockServicesToMigrate {
 			for _, blockServiceId := range *bss {
 				log.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := lib.MigrateBlocksInAllShards(log, client, &stats, blockServiceId); err != nil {
+					if err := lib.MigrateBlocksInAllShards(log, client, &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := lib.MigrateBlocksInFile(log, client, &stats, blockServiceId, fileId); err != nil {
+					if err := lib.MigrateBlocksInFile(log, client, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := lib.MigrateBlocks(log, client, &stats, shid, blockServiceId); err != nil {
+					if err := lib.MigrateBlocks(log, client, &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
@@ -352,6 +353,7 @@ func main() {
 			}
 		}
 		log.Info("finished migrating away from all block services, stats: %+v", stats)
+		log.ClearNC(progressReportAlert)
 	}
 	commands["migrate"] = commandSpec{
 		flags: migrateCmd,
@@ -918,13 +920,13 @@ func main() {
 		flags: scrubFileCmd,
 		run:   scrubFileRun,
 	}
-
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := lib.ScrubState{}
 		if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
+
 	}
 	commands["scrub"] = commandSpec{
 		flags: scrubCmd,

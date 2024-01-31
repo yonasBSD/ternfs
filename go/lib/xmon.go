@@ -398,11 +398,11 @@ const tooManyAlertsAlertId = int64(0)
 
 var alertIdCount = int64(1)
 
-func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
+func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
-	if binnable || quietPeriod == 0 {
-		log.LogLocation(ERROR, file, line, message)
+	if binnable || quietPeriod == 0 || xmon.onlyLogging {
+		log.LogLocation(logLevel, file, line, message)
 	}
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
@@ -429,22 +429,22 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, calldepth int, alertId *int64, binn
 	return message
 }
 
-func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
+func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1+calldepth, &alertId, true, 0, format, v...)
+	xmonRaiseStack(log, x, logLevel, 1+calldepth, &alertId, true, 0, format, v...)
 }
 
-func (x *Xmon) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
+func (x *Xmon) Raise(log *Logger, xmon *Xmon, logLevel LogLevel, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, 1, &alertId, true, 0, format, v...)
+	xmonRaiseStack(log, x, logLevel, 1, &alertId, true, 0, format, v...)
 }
 
-func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, logLevel, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
-func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, 1, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, logLevel LogLevel, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, logLevel, 1, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
 func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {

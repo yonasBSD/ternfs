@@ -1236,10 +1236,10 @@ func (client *Client) singleBlockReq(log *Logger, timeouts *ReqTimeouts, process
 		if RetriableBlockError(err) {
 			next := timeouts.Next(startedAt)
 			if next == 0 {
-				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+				log.RaiseNCStack(timeoutAlert, ERROR, 2, "block request to %v:%v %v:%v failed with retriable error, will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
 				return nil, err
 			}
-			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			log.RaiseNCStack(timeoutAlert, ERROR, 2, "block request to %v:%v %v:%v failed with retriable error, might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
 			time.Sleep(next)
 		} else {
 			return nil, err

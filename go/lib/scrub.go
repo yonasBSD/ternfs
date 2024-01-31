@@ -34,6 +34,7 @@ func scrubFileInternal(
 	bufPool *BufPool,
 	stats *ScrubState,
 	timeStats *timeStats,
+	progressReportAlert *XmonNCAlert,
 	scratchFile *scratchFile,
 	scrubbingMu *sync.Mutex,
 	file msgs.InodeId,
@@ -50,7 +51,7 @@ func scrubFileInternal(
 		}
 		return false, err
 	}
-	return migrateBlocksInFileGeneric(log, client, bufPool, &stats.Migrate, timeStats, "scrubbed", badBlock, scratchFile, file)
+	return migrateBlocksInFileGeneric(log, client, bufPool, &stats.Migrate, timeStats, progressReportAlert, "scrubbed", badBlock, scratchFile, file)
 }
 
 type scrubRequest struct {
@@ -99,7 +100,7 @@ func scrubWorker(
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 			}
 			for attempts := 1; ; attempts++ {
-				if err := scrubFileInternal(log, client, bufPool, stats, nil, scratchFile, scrubbingMu, req.file); err != nil {
+				if err := scrubFileInternal(log, client, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
 					if err == msgs.BLOCK_NOT_FOUND {
 						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
 						time.Sleep(time.Second)
@@ -217,7 +218,7 @@ func ScrubFile(
 	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
 	defer keepAlive.stop()
 	var scrubbingMu sync.Mutex
-	return scrubFileInternal(log, client, bufPool, stats, nil, &scratchFile, &scrubbingMu, file)
+	return scrubFileInternal(log, client, bufPool, stats, nil, nil, &scratchFile, &scrubbingMu, file)
 }
 
 func ScrubFiles(

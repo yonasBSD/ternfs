@@ -85,6 +85,7 @@ func main() {
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
+	migrate := flag.Bool("migrate", false, "migrate")
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
@@ -96,7 +97,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics && !*scrub {
+	if !*destructFiles && !*collectDirectories && !*zeroBlockServices && !*countMetrics && !*scrub && !*migrate {
 		fmt.Fprintf(os.Stderr, "Nothing to do!\n")
 		os.Exit(2)
 	}
@@ -189,6 +190,8 @@ func main() {
 	if err := loadState(db, "count", countState); err != nil {
 		panic(err)
 	}
+
+	migrateState := &lib.MigrateState{}
 
 	// store the state
 	go func() {
@@ -302,6 +305,48 @@ func main() {
 			}()
 		}
 	}
+	if *migrate {
+		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			for {
+				log.Info("requesting block services")
+				blockServicesResp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+				if err != nil {
+					terminateChan <- err
+					return
+				}
+				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+				blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
+				for _, bs := range blockServices.BlockServices {
+					if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+						bss := blockServicesToMigrate[bs.FailureDomain.String()]
+						if bss == nil {
+							bss = &[]msgs.BlockServiceId{}
+							blockServicesToMigrate[bs.FailureDomain.String()] = bss
+						}
+						*bss = append(*bss, bs.Id)
+					}
+				}
+
+				progressReportAlert := log.NewNCAlert(10 * time.Second)
+				for failureDomain, bss := range blockServicesToMigrate {
+					for _, blockServiceId := range *bss {
+						log.RaiseNCInfo(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
+						if err := lib.MigrateBlocksInAllShards(log, client, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
+							terminateChan <- err
+						}
+						log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)
+						log.ClearNC(progressReportAlert)
+					}
+				}
+				if migrateState.Stats.MigratedBlocks > 0 {
+					log.Info("finished migrating away from all block services, stats: %+v", migrateState.Stats)
+				}
+				time.Sleep(time.Minute)
+			}
+		}()
+	}
+
 	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub) {
 		// one thing just pushing the stats every minute
 		go func() {

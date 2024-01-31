@@ -12,3 +12,4 @@ eggsfs-client-*
 linux*
 *.img
 revision.c
+html

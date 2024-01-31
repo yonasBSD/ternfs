@@ -233,19 +233,23 @@ func (l *Logger) NewNCAlert(quietTime time.Duration) *XmonNCAlert {
 }
 
 func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
-	l.xmon.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
+	l.xmon.RaiseStack(l, l.xmon, ERROR, 1+calldepth, format, v...)
 }
 
 func (l *Logger) RaiseAlert(format string, v ...any) {
 	l.RaiseAlertStack(1, format, v...)
 }
 
-func (l *Logger) RaiseNCStack(alert *XmonNCAlert, calldepth int, format string, v ...any) {
-	alert.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
+func (l *Logger) RaiseNCStack(alert *XmonNCAlert, logLevel LogLevel, calldepth int, format string, v ...any) {
+	alert.RaiseStack(l, l.xmon, logLevel, 1+calldepth, format, v...)
 }
 
 func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
-	l.RaiseNCStack(alert, 1, format, v...)
+	l.RaiseNCStack(alert, ERROR, 1, format, v...)
+}
+
+func (l *Logger) RaiseNCInfo(alert *XmonNCAlert, format string, v ...any) {
+	l.RaiseNCStack(alert, INFO, 1, format, v...)
 }
 
 func (l *Logger) ClearNC(alert *XmonNCAlert) {

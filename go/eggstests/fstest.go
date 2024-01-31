@@ -863,8 +863,9 @@ func fsTestInternal[Id comparable](
 			defer client.Close()
 			blockServiceToPurge := findBlockServiceToPurge(log, client)
 			log.Info("will migrate block service %v", blockServiceToPurge)
+			progressReportAlert := log.NewNCAlert(10 * time.Second)
 			migrateStats := lib.MigrateStats{}
-			err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, blockServiceToPurge)
+			err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, progressReportAlert, blockServiceToPurge)
 			if err != nil {
 				panic(fmt.Errorf("could not migrate: %w", err))
 			}

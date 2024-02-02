@@ -38,6 +38,7 @@ type MigrateState struct {
 func fetchBlock(
 	log *Logger,
 	client *Client,
+	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	blockSize uint32,
 	block *msgs.FetchedBlock,
@@ -46,7 +47,7 @@ func fetchBlock(
 	// fail immediately to other block services
 	data, err := client.FetchBlock(log, &NoTimeouts, blockService, block.BlockId, 0, blockSize)
 	if err != nil {
-		log.Info("couldn't fetch block %v in block service %v: %v", block.BlockId, blockService, err)
+		log.Info("couldn't fetch block %v in file %v in block service %v: %v", block.BlockId, fileId, blockService, err)
 		return nil, err
 	}
 	if data.Len() != int(blockSize) {
@@ -135,9 +136,9 @@ func copyBlock(
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 ) (msgs.BlockId, msgs.BlockServiceId, bool, error) {
-	data, err := fetchBlock(log, client, blockServices, blockSize, block)
+	data, err := fetchBlock(log, client, file, blockServices, blockSize, block)
 	if err != nil {
-		return 0, 0, true, nil // might find other block services
+		return 0, 0, true, err // might find other block services
 	}
 	blockId, blockServiceId, err := writeBlock(log, client, scratch, file, blacklist, blockSize, storageClass, block, data)
 	client.PutFetchedBlock(data)
@@ -182,7 +183,7 @@ func reconstructBlock(
 			continue
 		}
 		// try to fetch
-		data, err := fetchBlock(log, client, blockServices, blockSize, block)
+		data, err := fetchBlock(log, client, fileId, blockServices, blockSize, block)
 		if err != nil {
 			log.Info("could not fetch block %v: %v, might try other ones", block.BlockId, err)
 			continue
@@ -351,6 +352,7 @@ func migrateBlocksInFileGeneric(
 						if err := ensureScratchFile(log, client, fileId.Shard(), scratchFile); err != nil {
 							return err
 						}
+						log.Debug("trying block ix %v", blockIx)
 						var err error
 						var canRetry bool
 						var newBlockServiceId msgs.BlockServiceId

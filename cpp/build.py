@@ -29,7 +29,7 @@ if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 
     # the `--pids-limit -1` is not something I hit but it seems
     # like a good idea.
     subprocess.run(
-        ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/eggsfs/cpp/build.py', build_type] + sys.argv[2:],
+        ['docker', 'run', '--network', 'host', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/eggsfs/cpp/build.py', build_type] + sys.argv[2:],
         check=True,
     )
 else:

@@ -25,6 +25,7 @@
 #include "Assert.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
+#include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
@@ -83,7 +84,7 @@
 // Next I did
 //
 //     WAL_DIR=benchmarkdb DB_DIR=benchmarkdb KEY_SIZE=9 VALUE_SIZE=200 NUM_KEYS=5000000000 CACHE_SIZE=6442450944 DURATION=5400 ./benchmark.sh readrandom
-// 
+//
 // TODO fill in results
 
 static constexpr uint64_t EGGSFS_PAGE_SIZE = 4096;
@@ -185,6 +186,22 @@ public:
     }
 };
 
+std::vector<rocksdb::ColumnFamilyDescriptor> ShardDB::getColumnFamilyDescriptors() {
+    // TODO actually figure out the best strategy for each family, including the default
+    // one.
+    rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
+    blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
+    return std::vector<rocksdb::ColumnFamilyDescriptor> {
+            {rocksdb::kDefaultColumnFamilyName, {}},
+            {"files", {}},
+            {"spans", {}},
+            {"transientFiles", {}},
+            {"directories", {}},
+            {"edges", {}},
+            {"blockServicesToFiles", blockServicesToFilesOptions},
+    };
+}
+
 struct ShardDBImpl {
     Env _env;
 
@@ -192,7 +209,7 @@ struct ShardDBImpl {
     Duration _transientDeadlineInterval;
     std::array<uint8_t, 16> _secretKey;
     AES128Key _expandedSecretKey;
-    
+
     // TODO it would be good to store basically all of the metadata in memory,
     // so that we'd just read from it, but this requires a bit of care when writing
     // since we rollback on error.
@@ -219,9 +236,6 @@ struct ShardDBImpl {
     rocksdb::ColumnFamilyHandle* _edgesCf;
     rocksdb::ColumnFamilyHandle* _blockServicesToFilesCf;
 
-    std::shared_ptr<rocksdb::Statistics> _dbStatistics;
-    std::string _dbStatisticsFile;
-
     AssertiveLock _applyLogEntryLock;
 
     std::shared_ptr<const rocksdb::Snapshot> _currentReadSnapshot;
@@ -231,80 +245,27 @@ struct ShardDBImpl {
 
     ShardDBImpl() = delete;
 
-    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path) :
+    ShardDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB) :
         _env(logger, xmon, "shard_db"),
         _shid(shid),
-        _transientDeadlineInterval(deadlineInterval)
+        _transientDeadlineInterval(deadlineInterval),
+        _db(sharedDB.db()),
+        _defaultCf(sharedDB.getCF(rocksdb::kDefaultColumnFamilyName)),
+        _transientCf(sharedDB.getCF("transientFiles")),
+        _filesCf(sharedDB.getCF("files")),
+        _spansCf(sharedDB.getCF("spans")),
+        _directoriesCf(sharedDB.getCF("directories")),
+        _edgesCf(sharedDB.getCF("edges")),
+        _blockServicesToFilesCf(sharedDB.getCF("blockServicesToFiles"))
     {
-        LOG_INFO(_env, "will run shard %s in db dir %s", shid, path);
-
-        // TODO actually figure out the best strategy for each family, including the default
-        // one.
-
-        _dbStatistics = rocksdb::CreateDBStatistics();
-        _dbStatisticsFile = path + "/db-statistics.txt";
-
-        rocksdb::Options options;
-        options.create_if_missing = true;
-        options.create_missing_column_families = true;
-        options.compression = rocksdb::kLZ4Compression;
-        options.bottommost_compression = rocksdb::kZSTD;
-        // 1000*256 = 256k open files at once, given that we currently run on a
-        // single machine this is appropriate.
-        options.max_open_files = 1000;
-        options.statistics = _dbStatistics;
-        // We batch writes and flush manually.
-        options.manual_wal_flush = true;
-
-        rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
-        blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
-        std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
-            {rocksdb::kDefaultColumnFamilyName, {}},
-            {"files", {}},
-            {"spans", {}},
-            {"transientFiles", {}},
-            {"directories", {}},
-            {"edges", {}},
-            {"blockServicesToFiles", blockServicesToFilesOptions},
-        };
-        std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
-        auto dbPath = path + "/db";
-        LOG_INFO(_env, "initializing shard %s RocksDB in %s", _shid, dbPath);
-        ROCKS_DB_CHECKED_MSG(
-            rocksdb::DB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_db),
-            "could not open RocksDB %s", dbPath
-        );
-        ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
-        _defaultCf = familiesHandles[0];
-        _filesCf = familiesHandles[1];
-        _spansCf = familiesHandles[2];
-        _transientCf = familiesHandles[3];
-        _directoriesCf = familiesHandles[4];
-        _edgesCf = familiesHandles[5];
-        _blockServicesToFilesCf = familiesHandles[6];
-
+        LOG_INFO(_env, "initializing shard %s RocksDB", _shid);
         _initDb();
         _updateCurrentReadSnapshot();
     }
 
     void close() {
-
-        LOG_INFO(_env, "destroying read snapshot, column families and closing database");
-
+        LOG_INFO(_env, "destroying read snapshot");
         _currentReadSnapshot.reset();
-
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_defaultCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_filesCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_spansCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_transientCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_directoriesCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_edgesCf));
-        ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(_blockServicesToFilesCf));
-        ROCKS_DB_CHECKED(_db->Close());
-
-        LOG_INFO(_env, "database closed");
-
-        delete _db;
     }
 
     void _initDb() {
@@ -526,7 +487,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(it->status());
         }
 
-        return NO_ERROR;   
+        return NO_ERROR;
     }
 
     // returns whether we're done
@@ -585,9 +546,9 @@ struct ShardDBImpl {
     template<bool forwards>
     EggsError _fullReadDirSameName(const FullReadDirReq& req, rocksdb::ReadOptions& options, HashMode hashMode, FullReadDirResp& resp) {
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
-        
+
         uint64_t nameHash = computeHash(hashMode, req.startName.ref());
-    
+
         int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
 
         // returns whether we're done
@@ -603,7 +564,7 @@ struct ShardDBImpl {
             ExternalValue<CurrentEdgeBody> edge(value);
             return _fullReadDirAdd(req, resp, budget, key, rocksdb::Slice(value));
         };
-    
+
         // begin current
         if (current) { if (lookupCurrent()) { return NO_ERROR; } }
 
@@ -632,7 +593,7 @@ struct ShardDBImpl {
         for (
             forwards ? it->Seek(snapshotStart.toSlice()) : it->SeekForPrev(snapshotStart.toSlice());
             it->Valid();
-            forwards ? it->Next() : it->Prev() 
+            forwards ? it->Next() : it->Prev()
         ) {
             auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
             ALWAYS_ASSERT(key().dirId() == req.dirId);
@@ -670,7 +631,7 @@ struct ShardDBImpl {
         endKey().setNameHash(forwards ? 0 : ~(uint64_t)0);
         endKey().setName(forwards ? BincodeBytes().ref() : maxName.ref());
         endKey().setCreationTime(forwards ? 0 : EggsTime(~(uint64_t)0));
-        rocksdb::Slice endKeySlice = endKey.toSlice();        
+        rocksdb::Slice endKeySlice = endKey.toSlice();
         if (forwards) {
             options.iterate_upper_bound = &endKeySlice;
         } else {
@@ -694,7 +655,7 @@ struct ShardDBImpl {
         for (
             forwards ? it->Seek(startKey.toSlice()) : it->SeekForPrev(startKey.toSlice());
             it->Valid();
-            forwards ? it->Next() : it->Prev() 
+            forwards ? it->Next() : it->Prev()
         ) {
             auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
             ALWAYS_ASSERT(key().dirId() == req.dirId);
@@ -768,7 +729,7 @@ struct ShardDBImpl {
             resp.targetId = edge().targetIdWithLocked().id();
         }
 
-        return NO_ERROR;        
+        return NO_ERROR;
     }
 
     EggsError _visitTransientFiles(const rocksdb::ReadOptions& options, const VisitTransientFilesReq& req, VisitTransientFilesResp& resp) {
@@ -831,7 +792,7 @@ struct ShardDBImpl {
     EggsError _visitDirectories(const rocksdb::ReadOptions& options, const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
         return _visitInodes(options, _directoriesCf, req, resp);
     }
-    
+
     EggsError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
@@ -1385,7 +1346,7 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "inline span has bad storage class %s", req.storageClass);
             return EggsError::BAD_SPAN_BODY;
         }
-    
+
         if (req.byteOffset%EGGSFS_PAGE_SIZE != 0) {
             RAISE_ALERT(_env, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
             return EggsError::BAD_SPAN_BODY;
@@ -2232,7 +2193,7 @@ struct ShardDBImpl {
         }
         if (entry.wasMoved) {
             // We need to move the current edge to snapshot, and create a new snapshot
-            // edge with the deletion. 
+            // edge with the deletion.
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, currentKey.toSlice()));
             StaticValue<EdgeKey> snapshotKey;
             snapshotKey().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
@@ -2262,7 +2223,7 @@ struct ShardDBImpl {
             if (err != NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name.ref());        
+            nameHash = computeHash(dir().hashMode(), entry.name.ref());
         }
 
         StaticValue<EdgeKey> currentKey;
@@ -2555,7 +2516,7 @@ struct ShardDBImpl {
                 return err;
             }
         }
-    
+
         // fetch dir, compute hash
         uint64_t nameHash;
         {
@@ -2624,7 +2585,7 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "exiting early from remove span since file is empty");
             return EggsError::FILE_EMPTY;
         }
-        
+
         LOG_DEBUG(_env, "deleting span from file %s of size %s", entry.fileId, file().fileSize());
 
         // Fetch the last span
@@ -2645,7 +2606,7 @@ struct ShardDBImpl {
         }
         ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
         resp.byteOffset = spanKey().offset();
-    
+
         // If the span is blockless, the only thing we need to to do is remove it
         if (span().storageClass() == INLINE_STORAGE) {
             ROCKS_DB_CHECKED(batch.Delete(_spansCf, spanKey.toSlice()));
@@ -2657,7 +2618,7 @@ struct ShardDBImpl {
             return NO_ERROR;
         }
         const auto blocks = span().blocksBody();
-        
+
         // Otherwise, we need to condemn it first, and then certify the deletion.
         // Note that we allow to remove dirty spans -- this is important to deal well with
         // the case where a writer dies in the middle of adding a span.
@@ -2972,7 +2933,7 @@ struct ShardDBImpl {
         bbuf.packScalar<uint64_t>(block.blockId());
         bbuf.packScalar<uint32_t>(block.crc());
         bbuf.packScalar<uint32_t>(blockSize);
- 
+
         return cbcmac(secretKey, (uint8_t*)buf, sizeof(buf));
     }
 
@@ -2984,7 +2945,7 @@ struct ShardDBImpl {
         bbuf.packScalar<uint64_t>(blockServiceId.u64);
         bbuf.packScalar<char>('W');
         bbuf.packScalar<uint64_t>(proof.blockId);
-    
+
         const auto& cache = inMemoryBlockServiceData.blockServices.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
@@ -3017,7 +2978,7 @@ struct ShardDBImpl {
         bbuf.packScalar<uint64_t>(blockServiceId.u64);
         bbuf.packScalar<char>('E');
         bbuf.packScalar<uint64_t>(proof.blockId);
-    
+
         const auto& cache = inMemoryBlockServiceData.blockServices.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
@@ -3080,7 +3041,7 @@ struct ShardDBImpl {
                 }
             }
         }
-        
+
         // Okay, now we can update the file to mark the last span as clean
         file().setLastSpanState(SpanState::CLEAN);
         {
@@ -3723,16 +3684,6 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(_db->FlushWAL(sync));
         _updateCurrentReadSnapshot();
     }
-
-    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
-        ::rocksDBMetrics(_env, _db, *_dbStatistics, stats);
-    }
-
-    void dumpRocksDBStatistics() {
-        LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
-        std::ofstream file(_dbStatisticsFile);
-        file << _dbStatistics->ToString();
-    }
 };
 
 DirectoryInfo defaultDirectoryInfo() {
@@ -3836,8 +3787,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const std::string& path) {
-    _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, path);
+ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB) {
+    _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, sharedDB);
 }
 
 void ShardDB::close() {
@@ -3869,13 +3820,6 @@ const std::array<uint8_t, 16>& ShardDB::secretKey() const {
     return ((ShardDBImpl*)_impl)->_secretKey;
 }
 
-void ShardDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
-    return ((ShardDBImpl*)_impl)->rocksDBMetrics(stats);
-}
-
-void ShardDB::dumpRocksDBStatistics() {
-    return ((ShardDBImpl*)_impl)->dumpRocksDBStatistics();
-}
 void ShardDB::flush(bool sync) {
     return ((ShardDBImpl*)_impl)->flush(sync);
 }

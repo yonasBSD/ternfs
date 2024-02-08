@@ -1,10 +1,13 @@
 #pragma once
 
-#include "unordered_map"
+#include <array>
+#include <vector>
+#include <rocksdb/db.h>
 
-#include "Common.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
+#include "SharedRocksDB.hpp"
+
 
 struct ShardLogEntry {
     EggsTime time;
@@ -36,7 +39,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const std::string& path);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB);
     ~ShardDB();
     void close();
 
@@ -107,6 +110,5 @@ public:
     // For internal testing
     const std::array<uint8_t, 16>& secretKey() const;
 
-    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
-    void dumpRocksDBStatistics();
+    static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 };

@@ -4,9 +4,6 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
-#include <fstream>
-#include <chrono>
-#include <thread>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -17,11 +14,13 @@
 #include "Common.hpp"
 #include "Crypto.hpp"
 #include "Exception.hpp"
+#include "LogsDB.hpp"
 #include "Msgs.hpp"
 #include "Shard.hpp"
 #include "Env.hpp"
 #include "ShardDB.hpp"
 #include "CDCKey.hpp"
+#include "SharedRocksDB.hpp"
 #include "Shuckle.hpp"
 #include "Time.hpp"
 #include "Time.hpp"
@@ -53,7 +52,8 @@ const int MAX_RECV_MSGS = 100;
 
 
 struct ShardShared {
-    ShardDB& db;
+    SharedRocksDB& sharedDB;
+    ShardDB& shardDB;
     std::array<std::atomic<uint32_t>, 2> ips;
     std::array<std::atomic<uint32_t>, 2> ports;
     std::array<struct pollfd, 2> socks;
@@ -67,7 +67,7 @@ struct ShardShared {
     std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
 
     ShardShared() = delete;
-    ShardShared(ShardDB& db_): db(db_), ips{0, 0}, ports{0, 0}, blockServicesWritten(false), logEntriesQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
+    ShardShared(SharedRocksDB& sharedDB_, ShardDB& shardDB_): sharedDB(sharedDB_), shardDB(shardDB_), ips{0, 0}, ports{0, 0}, blockServicesWritten(false), logEntriesQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
         for (ShardMessageKind kind : allShardMessageKind) {
             timings[(int)kind] = Timings::Standard();
         }
@@ -147,7 +147,7 @@ static void packResponse(
 
     LOG_DEBUG(env, "will send response for req id %s kind %s to %s", requestId, kind, *clientAddr);
 
-    // Prepare sendmmsg stuff. The vectors might be resized by the 
+    // Prepare sendmmsg stuff. The vectors might be resized by the
     // time we get to sending this, so store references when we must
     // -- we'll fix up the actual values later.
     auto& hdr = sendHdrs.emplace_back();
@@ -279,7 +279,7 @@ private:
         LOG_DEBUG(_env, "received message from %s", *clientAddr);
 
         BincodeBuf reqBbuf(buf, len);
-        
+
         // First, try to parse the header
         ShardRequestHeader reqHeader;
         try {
@@ -342,7 +342,7 @@ private:
         // send it off.
         if (likely(err == NO_ERROR)) {
             if (readOnlyShardReq(_reqContainer.kind())) {
-                err = _shared.db.read(_reqContainer, _respContainer);
+                err = _shared.shardDB.read(_reqContainer, _respContainer);
             } else {
                 auto& entry = _logEntries.emplace_back();
                 entry.sockIx = sockIx;
@@ -350,7 +350,7 @@ private:
                 entry.receivedAt = t0;
                 entry.requestKind = reqHeader.kind;
                 entry.requestId = reqHeader.requestId;
-                err = _shared.db.prepareLogEntry(_reqContainer, entry.logEntry);
+                err = _shared.shardDB.prepareLogEntry(_reqContainer, entry.logEntry);
                 if (likely(err == NO_ERROR)) {
                     return; // we're done here, move along
                 } else {
@@ -482,7 +482,7 @@ public:
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
     {
-        _currentLogIndex = _shared.db.lastAppliedLogEntry();
+        _currentLogIndex = _shared.shardDB.lastAppliedLogEntry();
         auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
             if (prob != 0.0) {
                 LOG_INFO(_env, "Will drop %s%% of %s packets", prob*100.0, what);
@@ -526,7 +526,7 @@ public:
                 LOG_DEBUG(_env, "applying request-less log entry");
             }
             _currentLogIndex++;
-            EggsError err = _shared.db.applyLogEntry(logEntry.requestKind, _currentLogIndex, logEntry.logEntry, _respContainer);
+            EggsError err = _shared.shardDB.applyLogEntry(logEntry.requestKind, _currentLogIndex, logEntry.logEntry, _respContainer);
             if (likely(logEntry.requestId)) {
                 Duration elapsed = eggsNow() - logEntry.receivedAt;
                 bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
@@ -543,7 +543,7 @@ public:
         }
         if (pulled > 0) {
             LOG_DEBUG(_env, "flushing and sending %s writes", pulled);
-            _shared.db.flush(true);
+            _shared.shardDB.flush(true);
             // important to send all of them after the flush! otherwise it's not durable yet
             for (int i = 0; i < _sendHdrs.size(); i++) {
                 if (_sendHdrs[i].size() == 0) { continue; }
@@ -598,7 +598,7 @@ public:
     virtual bool periodicStep() {
         uint16_t port1 = _shared.ports[0].load();
         uint16_t port2 = _shared.ports[1].load();
-        // Avoid registering with only one port, so that clients can just wait on 
+        // Avoid registering with only one port, so that clients can just wait on
         // the first port being ready and they always have both.
         if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
             // shard server isn't up yet
@@ -743,7 +743,7 @@ public:
     virtual ~ShardMetricsInserter() = default;
 
     virtual bool periodicStep() {
-        _shared.db.dumpRocksDBStatistics();
+        _shared.sharedDB.dumpRocksDBStatistics();
         for (int i = 0; i < 2; i++) {
             if (std::ceil(_shared.receivedRequests[i]) >= MAX_RECV_MSGS) {
                 _env.updateAlert(_sockQueueAlerts[i], "recv queue for sock %s is full (%s)", i, _shared.receivedRequests[i]);
@@ -796,7 +796,7 @@ public:
         }
         {
             _rocksDBStats.clear();
-            _shared.db.rocksDBMetrics(_rocksDBStats);
+            _shared.sharedDB.rocksDBMetrics(_rocksDBStats);
             for (const auto& [name, value]: _rocksDBStats) {
                 _metricsBuilder.measurement("eggsfs_shard_rocksdb");
                 _metricsBuilder.tag("shard", _shid);
@@ -873,9 +873,25 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
 
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
-    ShardDB db(logger, xmon, shid, options.transientDeadlineInterval, dbDir);
+
+    SharedRocksDB sharedDB(logger, xmon);
+    sharedDB.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDB.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.create_if_missing = true;
+    rocksDBOptions.create_missing_column_families = true;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    // 1000*256 = 256k open files at once, given that we currently run on a
+    // single machine this is appropriate.
+    rocksDBOptions.max_open_files = 1000;
+    // We batch writes and flush manually.
+    rocksDBOptions.manual_wal_flush = true;
+    sharedDB.open(rocksDBOptions, dbDir);
+
+    ShardDB shardDB(logger, xmon, shid, options.transientDeadlineInterval, sharedDB);
     env.clearAlert(dbInitAlert);
-    ShardShared shared(db);
+    ShardShared shared(sharedDB, shardDB);
 
     threads.emplace_back(Loop::Spawn(std::make_unique<ShardServer>(logger, xmon, shid, options, shared)));
     threads.emplace_back(ShardWriter::SpawnWriter(std::make_unique<ShardWriter>(logger, xmon, options, shared)));
@@ -889,7 +905,8 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     // from this point on termination on SIGINT/SIGTERM will be graceful
     waitUntilStopped(threads);
 
-    db.close();
+    shardDB.close();
+    sharedDB.close();
 
     LOG_INFO(env, "shard terminating gracefully, bye.");
 }

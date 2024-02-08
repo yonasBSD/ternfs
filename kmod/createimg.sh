@@ -8,7 +8,7 @@ cd $SCRIPT_DIR
 
 set -x
 
-qemu-img create -f qcow2 -b $base_img ubuntu.img 100G
+qemu-img create -f qcow2 -F qcow2 -b $base_img ubuntu.img 100G
 cloud-localds init.img image-init.yml
 
 # remove existing key if any

@@ -136,7 +136,7 @@ func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 	n := sql.Named
 
-	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = false AND id = :id", n("id", shid))
+	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true AND id = :id", n("id", shid))
 	if err != nil {
 		return nil, fmt.Errorf("error selecting shards: %s", err)
 	}

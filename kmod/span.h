@@ -33,7 +33,7 @@ struct eggsfs_inline_span {
 };
 
 #define EGGSFS_INLINE_SPAN(_span) ({ \
-        BUG_ON(_span->storage_class != EGGSFS_INLINE_STORAGE); \
+        BUG_ON((_span)->storage_class != EGGSFS_INLINE_STORAGE); \
         container_of(_span, struct eggsfs_inline_span, span); \
     })
 
@@ -76,7 +76,7 @@ struct eggsfs_block_span {
 };
 
 #define EGGSFS_BLOCK_SPAN(_span) ({ \
-        BUG_ON(_span->storage_class == EGGSFS_EMPTY_STORAGE || _span->storage_class == EGGSFS_INLINE_STORAGE); \
+        BUG_ON((_span)->storage_class == EGGSFS_EMPTY_STORAGE || (_span)->storage_class == EGGSFS_INLINE_STORAGE); \
         container_of(_span, struct eggsfs_block_span, span); \
     })
 

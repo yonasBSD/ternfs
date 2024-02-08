@@ -317,7 +317,11 @@ struct sk_buff* eggsfs_metadata_request(
         struct msghdr msg;
 
         if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[which_shard_ip%2]))) {
-            BUG_ON(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0]));
+            if (!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
+                eggsfs_warn("could not find any shard addresses! does everything look good in shuckle?");
+                err = -EIO;
+                goto out;
+            }
         }
         which_shard_ip++;
 

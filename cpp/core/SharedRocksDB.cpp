@@ -80,10 +80,9 @@ rocksdb::DB* SharedRocksDB::db() const {
 
 void SharedRocksDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
     ALWAYS_ASSERT(_db.get() != nullptr);
-    LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
-    std::ofstream file(_dbStatisticsFile);
-    file << _dbStatistics->ToString();
+    ::rocksDBMetrics(_env, _db.get(), *_dbStatistics, stats);
 }
+
 void SharedRocksDB::dumpRocksDBStatistics() {
     ALWAYS_ASSERT(_db.get() != nullptr);
     LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);

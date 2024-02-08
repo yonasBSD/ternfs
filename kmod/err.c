@@ -65,6 +65,7 @@ bool eggsfs_unexpected_error(int err) {
     case -ERESTARTSYS: return false;
     case -ETIMEDOUT: return false;
     case -ECONNREFUSED: return false;
+    case -ECONNABORTED: return false;
     case -ECONNRESET: return false;
     default: return true;
     }

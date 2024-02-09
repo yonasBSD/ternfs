@@ -25,6 +25,7 @@ type xmonRequest struct {
 	message     string
 	file        string
 	line        int
+	logLevel    LogLevel
 }
 
 type Xmon struct {
@@ -253,7 +254,7 @@ Reconnect:
 							goto SkipRequest
 						}
 					} else {
-						log.LogLocation(ERROR, req.file, req.line, "creating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+						log.LogLocation(req.logLevel, req.file, req.line, "creating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 					}
 				case XMON_UPDATE:
 					if req.binnable {
@@ -265,7 +266,7 @@ Reconnect:
 						quiet.message = req.message
 						goto SkipRequest
 					}
-					log.LogLocation(ERROR, req.file, req.line, "updating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+					log.LogLocation(req.logLevel, req.file, req.line, "updating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
 				case XMON_CLEAR:
 					if req.binnable {
 						panic(fmt.Errorf("unexpected clear to non-binnable alert"))
@@ -401,7 +402,7 @@ var alertIdCount = int64(1)
 func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
-	if binnable || quietPeriod == 0 || xmon.onlyLogging {
+	if binnable || quietPeriod == 0 {
 		log.LogLocation(logLevel, file, line, message)
 	}
 	if *alertId < 0 {
@@ -414,6 +415,7 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, a
 			message:     message,
 			file:        file,
 			line:        line,
+			logLevel:    logLevel,
 		}
 	} else {
 		xmon.requests <- xmonRequest{
@@ -424,6 +426,7 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, a
 			message:     message,
 			file:        file,
 			line:        line,
+			logLevel:    logLevel,
 		}
 	}
 	return message

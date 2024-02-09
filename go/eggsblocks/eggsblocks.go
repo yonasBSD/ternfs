@@ -543,6 +543,7 @@ const MAX_OBJECT_SIZE uint32 = 100 << 20
 func handleRequestError(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
+	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
 	lastError *error,
 	blockServiceId msgs.BlockServiceId,
@@ -594,8 +595,18 @@ func handleRequestError(
 		return false
 	}
 
+	// In general, refuse to service requests for block services that we
+	// don't have. In the case of checking a dead block, we don't emit
+	// an alert, since it's expected when the scrubber is running.
+	// We still want to know when clients try to read dead block services
+	// since it's an indication that we haven't migrated stuff.
+	if _, isDead := deadBlockServices[blockServiceId]; isDead && req == msgs.CHECK_BLOCK {
+		log.Debug("got check block request for dead block service %v", blockServiceId)
+		return true
+	}
+
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v, previous error %v", err, conn.RemoteAddr(), req, *lastError)
+	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		lib.WriteBlocksResponseError(log, conn, eggsErr)
@@ -636,7 +647,7 @@ func handleSingleRequest(
 	}
 	blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
 	if err != nil {
-		return handleRequestError(log, blockServices, conn, lastError, 0, 0, err)
+		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, 0, 0, err)
 	}
 	kind := req.BlocksRequestKind()
 	t := time.Now()
@@ -661,15 +672,15 @@ func handleSingleRequest(
 	if !found {
 		// Special case: we're erasing a block in a dead block service. Always
 		// succeeds.
-		if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
-			if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
+		if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
+			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
 				log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
 				resp := msgs.EraseBlockResp{
 					Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
 				}
 				if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-					return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+					return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 				}
 				atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
 				return true
@@ -677,22 +688,21 @@ func handleSingleRequest(
 		}
 		// In general, refuse to service requests for block services that we
 		// don't have.
-		log.RaiseAlert("received unknown block service id %v", blockServiceId)
-		return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
+		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
 	}
 	switch whichReq := req.(type) {
 	case *msgs.EraseBlockReq:
 		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != nil {
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
 		now := time.Now()
 		if now.Before(cutoffTime) {
 			log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 		}
 		if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 
 		resp := msgs.EraseBlockResp{
@@ -700,12 +710,12 @@ func handleSingleRequest(
 		}
 		if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
 		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.WriteBlockReq:
 		pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
@@ -716,31 +726,31 @@ func handleSingleRequest(
 		}
 		if now.After(futureCutoffTime) {
 			log.RaiseAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
 		}
 		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != nil {
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		if whichReq.Size > MAX_OBJECT_SIZE {
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_BIG)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_BIG)
 		}
 		if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 			log.Info("could not write block: %v", err)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.CheckBlockReq:
 		if err := checkBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Size, whichReq.Crc, conn); err != nil {
 			log.Info("checking block failed, conn %v, err %v", conn.RemoteAddr(), err)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.TestWriteReq:
 		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 			log.Info("could not perform test write: %v", err)
-			return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	default:
-		return handleRequestError(log, blockServices, conn, lastError, blockServiceId, kind, fmt.Errorf("bad request type %T", req))
+		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, fmt.Errorf("bad request type %T", req))
 	}
 	return true
 }

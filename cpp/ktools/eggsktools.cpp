@@ -210,17 +210,17 @@ static void readFile(int argc, const char** argv) {
                 die("could not posix_madvise: %d (%s)", ret, strerror(ret));
             }
         }
+        start = nanosNow();
         if (backwards) {
             for (ssize_t cursor = pageSize * ((end-1)/pageSize); cursor >= begin; cursor -= pageSize) {
-                printf("reading at %ld\n", cursor);
                 volatile uint8_t x = data[cursor-begin];
             }
         } else {
             for (ssize_t cursor = begin; cursor < end; cursor += pageSize) {
-                printf("reading at %ld\n", cursor);
                 volatile uint8_t x = data[cursor-begin];
             }
         }
+        elapsed = nanosNow() - start;
         if (munmap(data, end-begin) < 0) {
             die("could not munmap: %d (%s)", errno, strerror(errno));
         }

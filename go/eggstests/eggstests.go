@@ -293,6 +293,7 @@ func (r *RunTests) run(
 	}
 	fsTestOpts.corruptFileProb = r.overrides.float64("fsTest.corruptFileProb", 0.1)
 	fsTestOpts.migrate = !r.overrides.flag("fsTest.dontMigrate")
+	fsTestOpts.readWithMmap = r.overrides.flag("fsTest.readWithMmap")
 
 	r.test(
 		log,

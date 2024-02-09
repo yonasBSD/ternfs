@@ -2,6 +2,7 @@
 
 #include <linux/uio.h>
 #include <linux/sched/mm.h>
+#include <linux/mm.h>
 
 #include "bincode.h"
 #include "inode.h"
@@ -973,7 +974,6 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
             while (*ppos < span_data_end && iov_iter_count(to)) {
                 struct page* page = eggsfs_get_span_page(block_span, page_ix);
                 if (IS_ERR(page)) {
-                    int err = PTR_ERR(page);
                     if (span_read_attempts == 0) {
                         // The idea behind this is that span structure changes extremely rarely: currently only
                         // when we "defrag" files into a new span structure (note that span boundary never changes).
@@ -1139,6 +1139,99 @@ const struct file_operations eggsfs_file_operations = {
     .llseek = file_lseek,
     .splice_read = generic_file_splice_read,
     .splice_write = iter_file_splice_write,
+    .mmap = generic_file_readonly_mmap,
+};
+
+static int file_readpage(struct file* filp, struct page* page) {
+    struct inode* inode = file_inode(filp);
+    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    u64 off = page_offset(page);
+    int err = 0;
+
+    // TODO retry like in file_read_iter
+    struct eggsfs_span* span = NULL;
+    int span_read_attempts = 0;
+
+retry:
+    if (span) { eggsfs_put_span(span, false); }
+    span = eggsfs_get_span(enode, off);
+    if (IS_ERR(span)) {
+        eggsfs_debug("eggsfs_get_span_failed at pos %llu", off);
+        err = PTR_ERR(span);
+        span = NULL;
+        goto out;
+    }
+    if (span == NULL) { // out of bounds
+        zero_user_segment(page, 0, PAGE_SIZE);
+        goto out;
+    }
+    if (span->start%PAGE_SIZE != 0) {
+        eggsfs_warn("span start is not a multiple of page size %llu", span->start);
+        eggsfs_put_span(span, false);
+        span = NULL;
+        err = -EIO;
+        goto out;
+    }
+
+    u64 span_offset = off - span->start;
+
+    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+        struct eggsfs_inline_span* inline_span = EGGSFS_INLINE_SPAN(span);
+        size_t to_copy = inline_span->len - span_offset;
+        BUG_ON(to_copy > PAGE_SIZE);
+        char* dst = kmap_atomic(page);
+        memcpy(dst, inline_span->body + span_offset, to_copy);
+        kunmap_atomic(dst);
+    } else {
+        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        if (block_span->cell_size%PAGE_SIZE != 0) {
+            eggsfs_warn("cell size not multiple of page size %u", block_span->cell_size);
+            err = -EIO;
+            goto out;
+        }
+        u32 page_ix = span_offset/PAGE_SIZE;
+        struct page* span_page = NULL;
+        span_page = eggsfs_get_span_page(block_span, page_ix);
+        if (IS_ERR(span_page)) {
+            err = PTR_ERR(span_page);
+            if (span_read_attempts == 0) {
+                // see comment in read_file_iter for rationale here
+                eggsfs_warn("reading page %lld in file %016lx failed with error %ld, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, PTR_ERR(page));
+                u64 span_offset = span->start;
+                eggsfs_put_span(span, false);
+                span = NULL;
+                int err = eggsfs_drop_file_span(enode, span_offset);
+                if (err == 0) {
+                    span_read_attempts++;
+                    goto retry;
+                }
+                eggsfs_warn("dropping span failed: %d", err);
+            }
+            goto out;
+        }
+        char* to_ptr = kmap_atomic(page);
+        char* from_ptr = kmap_atomic(span_page);
+        memcpy(to_ptr, from_ptr, PAGE_SIZE);
+        kunmap_atomic(to_ptr);
+        kunmap_atomic(from_ptr);
+    }
+
+out:
+    if (unlikely(err)) {
+        SetPageError(page);
+    } else {
+        SetPageUptodate(page);
+    }
+    if (span) {
+        eggsfs_put_span(span, true);
+    }
+
+    unlock_page(page);
+    return err;
+}
+
+const struct address_space_operations eggsfs_mmap_operations = {
+    .readpage = file_readpage,
 };
 
 int __init eggsfs_file_init(void) {

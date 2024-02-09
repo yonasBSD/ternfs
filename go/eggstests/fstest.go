@@ -19,6 +19,8 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
+
+	"golang.org/x/sys/unix"
 )
 
 type fsTestOpts struct {
@@ -32,6 +34,7 @@ type fsTestOpts struct {
 	spanSize        int
 	checkThreads    int
 	corruptFileProb float64
+	readWithMmap    bool
 
 	migrate bool
 }
@@ -40,7 +43,6 @@ type fsTestHarness[Id comparable] interface {
 	createDirectory(log *lib.Logger, owner Id, name string) (Id, msgs.EggsTime)
 	rename(log *lib.Logger, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
 	createFile(log *lib.Logger, owner Id, spanSize uint32, name string, size uint64, dataSeed uint64) (Id, msgs.EggsTime)
-	// if false, the harness does not support reading files (e.g. we're mocking block services)
 	checkFileData(log *lib.Logger, id Id, size uint64, dataSeed uint64)
 	// files, directories
 	readDirectory(log *lib.Logger, dir Id) ([]string, []string)
@@ -196,7 +198,8 @@ func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
 type posixFsTestHarness struct {
-	bufPool *lib.BufPool
+	bufPool      *lib.BufPool
+	readWithMmap bool
 }
 
 func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.EggsTime) {
@@ -312,6 +315,15 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 		panic(err)
 	}
 	defer f.Close()
+	var mm []byte
+	if c.readWithMmap && fullSize > 0 {
+		var err error
+		mm, err = unix.Mmap(int(f.Fd()), 0, fullSize, unix.PROT_READ, unix.MAP_PRIVATE)
+		if err != nil {
+			panic(err)
+		}
+		defer unix.Munmap(mm)
+	}
 	log.Debug("checking for file %v of expected len %v", fullFilePath, fullSize)
 	// First do some random reads, hopefully stimulating span caches in some interesting way
 	if fullSize > 1 {
@@ -319,24 +331,34 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 			offset := int(rand.Uint64() % uint64(fullSize-1))
 			size := 1 + int(rand.Uint64()%uint64(fullSize-offset-1))
 			log.Debug("reading from %v to %v in file of size %v", offset, offset+size, fullSize)
-			if _, err := f.Seek(int64(offset), 0); err != nil {
-				panic(err)
+			if !c.readWithMmap {
+				if _, err := f.Seek(int64(offset), 0); err != nil {
+					panic(err)
+				}
 			}
 			expectedPartialData := (*expectedData)[offset : offset+size]
 			actualPartialData := (*actualData)[offset : offset+size]
-			if _, err := io.ReadFull(f, actualPartialData); err != nil {
-				panic(err)
+			if c.readWithMmap {
+				copy(actualPartialData, mm[offset:])
+			} else {
+				if _, err := io.ReadFull(f, actualPartialData); err != nil {
+					panic(err)
+				}
 			}
 			checkFileData(fullFilePath, offset, offset+size, actualPartialData, expectedPartialData)
 		}
 	}
 	// Then we check the whole thing
-	if _, err := f.Seek(0, 0); err != nil {
-		panic(err)
-	}
-	_, err = io.ReadFull(f, *actualData)
-	if err != nil {
-		panic(err)
+	if c.readWithMmap {
+		copy(*actualData, mm)
+	} else {
+		if _, err := f.Seek(0, 0); err != nil {
+			panic(err)
+		}
+		_, err = io.ReadFull(f, *actualData)
+		if err != nil {
+			panic(err)
+		}
 	}
 	checkFileData(fullFilePath, 0, fullSize, *actualData, *expectedData)
 }
@@ -914,7 +936,8 @@ func fsTest(
 		fsTestInternal[msgs.InodeId](log, c, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{
-			bufPool: lib.NewBufPool(),
+			bufPool:      lib.NewBufPool(),
+			readWithMmap: opts.readWithMmap,
 		}
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir

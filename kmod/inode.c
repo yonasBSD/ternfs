@@ -480,6 +480,7 @@ struct inode* eggsfs_get_inode(
                 inode->i_op = &eggsfs_file_inode_ops;
             }
             inode->i_fop = &eggsfs_file_operations;
+            inode->i_mapping->a_ops = &eggsfs_mmap_operations;
 
             enode->file.status = EGGSFS_FILE_STATUS_NONE;
 

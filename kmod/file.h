@@ -17,6 +17,7 @@ void eggsfs_link_destructor(void*);
 char* eggsfs_read_link(struct eggsfs_inode* enode);
 
 extern const struct file_operations eggsfs_file_operations;
+extern const struct address_space_operations eggsfs_mmap_operations;
 
 int __init eggsfs_file_init(void);
 void __cold eggsfs_file_exit(void);

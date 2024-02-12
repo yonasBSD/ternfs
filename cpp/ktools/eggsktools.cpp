@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <stdint.h>
+#include <sys/mman.h>
 
 #define die(fmt, ...) do { fprintf(stderr, fmt "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(false)
 
@@ -124,6 +125,9 @@ static void readFile(int argc, const char** argv) {
     ssize_t bufSize = -1; // if -1, all in one go
     ssize_t begin = -1; // if -1, start of file
     ssize_t end = -1; // if -1, end of file
+    bool useMmap = false;
+    bool mmapRandom = false;
+    bool backwards = false;
     const char* filename = NULL;
 
     for (int i = 0; i < argc; i++) {
@@ -145,10 +149,20 @@ static void readFile(int argc, const char** argv) {
             if (end == ULLONG_MAX) {
                 badUsage("Bad -end: %d (%s)", errno, strerror(errno));
             }
+        } else if (std::string(argv[i]) == "-mmap") {
+            useMmap = true;
+        } else if (std::string(argv[i]) == "-random") {
+            mmapRandom = true;
+        } else if (std::string(argv[i]) == "-backwards") {
+            backwards = true;
         } else {
             if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
             filename = argv[i];
         }
+    }
+
+    if (backwards && !useMmap) {
+        die("-backwards only works with -mmap for now");
     }
 
     size_t fileSize;
@@ -174,29 +188,69 @@ static void readFile(int argc, const char** argv) {
         die("could not open file %s: %d (%s)", filename, errno, strerror(errno));
     }
 
-    uint8_t* buffer = (uint8_t*)malloc(bufSize);
-    if (buffer == NULL) {
-        die("could not allocate: %d (%s)", errno, strerror(errno));
-    }
+    uint64_t start;
+    uint64_t elapsed;
 
-    uint64_t start = nanosNow();
-    
-    if (lseek(fd, begin, SEEK_SET) < 0) {
-        die("could not seek: %d (%s)", errno, strerror(errno));
-    }
-
-    size_t readSize = 0;
-    for (;;) {
-        ssize_t ret = read(fd, buffer, std::min<ssize_t>(bufSize, (end-begin)-readSize));
-        if (ret < 0) {
-            die("could not read file %s: %d (%s)", filename, errno, strerror(errno));
+    if (useMmap) {
+        long pageSize = sysconf(_SC_PAGE_SIZE);
+        if (pageSize < 0) {
+            die("could not get page size: %d (%s)", errno, strerror(errno));
         }
-        if (ret == 0) { break; }
-        readSize += ret;
-    }
+        if (begin%pageSize != 0) {
+            die("begin=%ld is not a multiple of page size %ld", begin, pageSize);
+        }
+        printf("mmapping region of size %ld\n", end-begin);
+        uint8_t* data = (uint8_t*)mmap(nullptr, end-begin, PROT_READ, MAP_PRIVATE, fd, begin);
+        if (data == MAP_FAILED) {
+            die("could not mmap %s: %d (%s)", filename, errno, strerror(errno));
+        }
+        if (mmapRandom) {
+            int ret = posix_madvise(data, end-begin, POSIX_MADV_RANDOM);
+            if (ret != 0) {
+                die("could not posix_madvise: %d (%s)", ret, strerror(ret));
+            }
+        }
+        if (backwards) {
+            for (ssize_t cursor = pageSize * ((end-1)/pageSize); cursor >= begin; cursor -= pageSize) {
+                printf("reading at %ld\n", cursor);
+                volatile uint8_t x = data[cursor-begin];
+            }
+        } else {
+            for (ssize_t cursor = begin; cursor < end; cursor += pageSize) {
+                printf("reading at %ld\n", cursor);
+                volatile uint8_t x = data[cursor-begin];
+            }
+        }
+        if (munmap(data, end-begin) < 0) {
+            die("could not munmap: %d (%s)", errno, strerror(errno));
+        }
+    } else {
+        uint8_t* buffer = (uint8_t*)malloc(bufSize);
+        if (buffer == NULL) {
+            die("could not allocate: %d (%s)", errno, strerror(errno));
+        }
 
-    if (readSize != end-begin) {
-        die("expected to read %lu, but read %lu instead", end-begin, readSize);
+        start = nanosNow();
+        
+        if (lseek(fd, begin, SEEK_SET) < 0) {
+            die("could not seek: %d (%s)", errno, strerror(errno));
+        }
+
+        size_t readSize = 0;
+        for (;;) {
+            ssize_t ret = read(fd, buffer, std::min<ssize_t>(bufSize, (end-begin)-readSize));
+            if (ret < 0) {
+                die("could not read file %s: %d (%s)", filename, errno, strerror(errno));
+            }
+            if (ret == 0) { break; }
+            readSize += ret;
+        }
+
+        if (readSize != end-begin) {
+            die("expected to read %lu, but read %lu instead", end-begin, readSize);
+        }
+
+        elapsed = nanosNow() - start;
     }
 
     printf("finished reading, will now close\n");
@@ -204,8 +258,6 @@ static void readFile(int argc, const char** argv) {
     if (close(fd) < 0) {
         die("couldn't close %s: %d (%s)", filename, errno, strerror(errno));
     }
-
-    uint64_t elapsed = nanosNow() - start;
 
     printf("done (%fGB/s).\n", (double)(end-begin)/(double)elapsed);
 }
@@ -236,6 +288,69 @@ static void readLink(int argc, const char** argv) {
     printf("\"\n");
 }
 
+static void printDelta(int64_t nanos) {
+    if (nanos < 1'000ull) {
+        printf("%ldns", nanos);
+    } else if (nanos < 1'000'000ull) {
+        printf("%.2lfus", ((double)nanos)/1e3);
+    } else if (nanos < 1'000'000'000ull) {
+        printf("%.2lfms", ((double)nanos)/1e6);
+    } else {
+        printf("%.2lfs", ((double)nanos)/1e9);
+    }
+}
+
+// right now just used for timing
+static void statFile(int argc, const char** argv) {
+    const char* filename = NULL;
+    uint64_t iterations = 1;
+
+    for (int i = 0; i < argc; i++) {
+        if (std::string(argv[i]) == "-iterations") {
+            if (i+1 >= argc) { badUsage("No argument after -iterations"); } i++;
+            iterations = strtoull(argv[i], NULL, 0);
+            if (iterations == ULLONG_MAX) {
+                badUsage("Bad -iterations: %d (%s)", errno, strerror(errno));
+            }
+        } else {
+            if (filename != NULL) { badUsage("Filename already specified: %s", filename); }
+            filename = argv[i];
+        }
+    }
+
+    printf("will stat %lu times\n", iterations);
+
+    int64_t avg = 0;
+
+    for (uint64_t i = 0; i < iterations; i++) {
+        struct timespec ts0;
+        clock_gettime(CLOCK_REALTIME, &ts0);
+
+        {
+            struct stat st;
+            if(stat(filename, &st) != 0) {
+                die("couldn't stat %s: %d (%s)", filename, errno, strerror(errno));
+            }
+        }
+        struct timespec ts1;
+        clock_gettime(CLOCK_REALTIME, &ts1);
+
+        int64_t t0 = ts0.tv_sec * 1'000'000'000ull + ts0.tv_nsec;
+        int64_t t1 = ts1.tv_sec * 1'000'000'000ull + ts1.tv_nsec;
+        int64_t d = t1 - t0;
+
+        printf("%lu:\t", i);
+        printDelta(d);
+        printf("\n");
+
+        avg += d/iterations;
+    }
+
+    printf("avg:\t");
+    printDelta(avg);
+    printf("\n");
+}
+
 int main(int argc, const char** argv) {
     exe = argv[0];
 
@@ -248,7 +363,9 @@ int main(int argc, const char** argv) {
     } else if (cmd == "readfile") {
         readFile(argc - 2, argv + 2);
     } else if (cmd == "readlink") {
-        readLink(argc - 2, argv + 2);
+        readLink(argc - 2, argv + 2); 
+    } else if (cmd == "stat") {
+        statFile(argc - 2, argv + 2); 
     } else {
         badUsage("Bad command %s", cmd.c_str());
     }

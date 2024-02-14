@@ -536,7 +536,6 @@ static unsigned long eggsfs_span_shrinker_count(struct shrinker* shrinker, struc
 }
 
 static int eggsfs_span_shrinker_lru_ix = 0;
-static u64 eggsfs_span_shrinker_pages_round = 25600; // We drop at most 100MiB in one shrinker round
 
 static unsigned long eggsfs_span_shrinker_scan(struct shrinker* shrinker, struct shrink_control* sc) {
     drop_spans_start("shrinker");
@@ -544,7 +543,7 @@ static unsigned long eggsfs_span_shrinker_scan(struct shrinker* shrinker, struct
     u64 dropped_pages = 0;
     u64 examined_spans = 0;
     int lru_ix = eggsfs_span_shrinker_lru_ix;
-    for (dropped_pages = 0; dropped_pages < eggsfs_span_shrinker_pages_round;) {
+    for (dropped_pages = 0; dropped_pages < sc->nr_to_scan;) {
         lru_ix = drop_one_span(lru_ix, &examined_spans, &dropped_pages);
         if (lru_ix < 0) { break; }
     }

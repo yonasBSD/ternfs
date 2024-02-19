@@ -31,13 +31,13 @@ func (c *Client) metadataRequest(
 	requestId := c.newRequestId()
 	// will keep trying as long as we get timeouts
 	timeoutAlertQuietPeriod := 10 * time.Second
-	timeoutAlert := log.NewNCAlert(timeoutAlertQuietPeriod)
-	defer log.ClearNC(timeoutAlert)
 	if shid < 0 {
 		timeouts = c.cdcTimeout
 		// currently the CDC can be extremely slow as we sync stuff
 		timeoutAlertQuietPeriod = time.Minute
 	}
+	timeoutAlert := log.NewNCAlert(timeoutAlertQuietPeriod)
+	defer log.ClearNC(timeoutAlert)
 	for {
 		now := time.Now()
 		timeout := timeouts.NextNow(startedAt, now)

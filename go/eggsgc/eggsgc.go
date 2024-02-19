@@ -10,6 +10,7 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/cleanup"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -170,29 +171,29 @@ func main() {
 	c.SetCounters(counters)
 	terminateChan := make(chan any)
 
-	collectDirectoriesState := &client.CollectDirectoriesState{}
+	collectDirectoriesState := &cleanup.CollectDirectoriesState{}
 	if err := loadState(db, "collect_directories", collectDirectoriesState); err != nil {
 		panic(err)
 	}
 
-	destructFilesState := &client.DestructFilesState{}
+	destructFilesState := &cleanup.DestructFilesState{}
 	if err := loadState(db, "destruct_files", destructFilesState); err != nil {
 		panic(err)
 	}
 
-	scrubState := &client.ScrubState{}
+	scrubState := &cleanup.ScrubState{}
 	if err := loadState(db, "scrub", scrubState); err != nil {
 		panic(err)
 	}
 
-	zeroBlockServiceFilesStats := &client.ZeroBlockServiceFilesStats{}
+	zeroBlockServiceFilesStats := &cleanup.ZeroBlockServiceFilesStats{}
 
 	countState := &CountState{}
 	if err := loadState(db, "count", countState); err != nil {
 		panic(err)
 	}
 
-	migrateState := &client.MigrateState{}
+	migrateState := &cleanup.MigrateState{}
 
 	// store the state
 	go func() {
@@ -231,7 +232,7 @@ func main() {
 			Refill:         25000,
 			BucketSize:     25000 * 100,
 		})
-		opts := &client.CollectDirectoriesOpts{
+		opts := &cleanup.CollectDirectoriesOpts{
 			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 		}
@@ -241,7 +242,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := client.CollectDirectories(log, c, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
+					if err := cleanup.CollectDirectories(log, c, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
 						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
 					}
 				}
@@ -249,7 +250,7 @@ func main() {
 		}
 	}
 	if *destructFiles {
-		opts := &client.DestructFilesOptions{
+		opts := &cleanup.DestructFilesOptions{
 			NumWorkersPerShard: *destructFilesWorkersPerShard,
 			WorkersQueueSize:   *destructFilesWorkersQueueSize,
 		}
@@ -258,7 +259,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := client.DestructFiles(log, c, opts, destructFilesState, shid); err != nil {
+					if err := cleanup.DestructFiles(log, c, opts, destructFilesState, shid); err != nil {
 						panic(fmt.Errorf("could not destruct files: %v", err))
 					}
 					log.Info("finished destructing in shard %v, sleeping for one hour", shid)
@@ -275,7 +276,7 @@ func main() {
 				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
 				log.Info("waiting %v before collecting zero block service files", waitFor)
 				time.Sleep(waitFor)
-				if err := client.CollectZeroBlockServiceFiles(log, c, zeroBlockServiceFilesStats); err != nil {
+				if err := cleanup.CollectZeroBlockServiceFiles(log, c, zeroBlockServiceFilesStats); err != nil {
 					log.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
 				log.Info("finished zero block services cycle, will restart")
@@ -290,7 +291,7 @@ func main() {
 		})
 		defer rateLimit.Close()
 		// retry forever
-		opts := &client.ScrubOptions{
+		opts := &cleanup.ScrubOptions{
 			NumWorkersPerShard: *scrubWorkersPerShard,
 			WorkersQueueSize:   *scrubWorkersQueueSize,
 		}
@@ -299,7 +300,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := client.ScrubFiles(log, c, opts, rateLimit, scrubState, shid); err != nil {
+					if err := cleanup.ScrubFiles(log, c, opts, rateLimit, scrubState, shid); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
 				}
@@ -333,7 +334,7 @@ func main() {
 				for failureDomain, bss := range blockServicesToMigrate {
 					for _, blockServiceId := range *bss {
 						log.RaiseNCInfo(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
-						if err := client.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
+						if err := cleanup.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
 							terminateChan <- err
 						}
 						log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)

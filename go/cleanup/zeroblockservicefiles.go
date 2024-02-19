@@ -1,8 +1,9 @@
-package client
+package cleanup
 
 import (
 	"fmt"
 	"sync/atomic"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -12,7 +13,7 @@ type ZeroBlockServiceFilesStats struct {
 	ZeroBlockServiceFilesRemoved uint64
 }
 
-func CollectZeroBlockServiceFiles(log *lib.Logger, client *Client, stats *ZeroBlockServiceFilesStats) error {
+func CollectZeroBlockServiceFiles(log *lib.Logger, c *client.Client, stats *ZeroBlockServiceFilesStats) error {
 	log.Info("starting to collect block services files")
 	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, 256)
 	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, 256)
@@ -25,7 +26,7 @@ func CollectZeroBlockServiceFiles(log *lib.Logger, client *Client, stats *ZeroBl
 				continue
 			}
 			allDone = false
-			err := client.ShardRequest(log, msgs.ShardId(shid), req, resp)
+			err := c.ShardRequest(log, msgs.ShardId(shid), req, resp)
 			if err != nil {
 				return fmt.Errorf("could not remove zero block services: %w", err)
 			}

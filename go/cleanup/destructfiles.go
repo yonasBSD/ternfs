@@ -1,9 +1,10 @@
-package client
+package cleanup
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -26,7 +27,7 @@ type DestructFilesState struct {
 
 func DestructFile(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *DestructFilesStats,
 	id msgs.InodeId,
 	deadline msgs.EggsTime,
@@ -53,7 +54,7 @@ func DestructFile(
 	}
 	certifyResp := msgs.RemoveSpanCertifyResp{}
 	for {
-		err := client.ShardRequest(log, id.Shard(), &initReq, &initResp)
+		err := c.ShardRequest(log, id.Shard(), &initReq, &initResp)
 		if err == msgs.FILE_EMPTY {
 			break // TODO: kinda ugly to rely on this for control flow...
 		}
@@ -68,7 +69,7 @@ func DestructFile(
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
 				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
-				proof, err := client.EraseBlock(log, block)
+				proof, err := c.EraseBlock(log, block)
 				if err != nil {
 					if acceptFailure {
 						log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
@@ -81,7 +82,7 @@ func DestructFile(
 				certifyReq.Proofs[i].Proof = proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
 			}
-			err = client.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
+			err = c.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
 			if err != nil {
 				return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
 			}
@@ -90,7 +91,7 @@ func DestructFile(
 	}
 	// Now purge the inode
 	{
-		err := client.ShardRequest(log, id.Shard(), &msgs.RemoveInodeReq{Id: id}, &msgs.RemoveInodeResp{})
+		err := c.ShardRequest(log, id.Shard(), &msgs.RemoveInodeReq{Id: id}, &msgs.RemoveInodeResp{})
 		if err != nil {
 			return fmt.Errorf("%v: could not remove transient file inode after removing spans: %w", id, err)
 		}
@@ -107,7 +108,7 @@ type destructFileRequest struct {
 
 func destructFilesWorker(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *DestructFilesState,
 	shid msgs.ShardId,
 	workersChan chan *destructFileRequest,
@@ -122,7 +123,7 @@ func destructFilesWorker(
 			return
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
-		if err := DestructFile(log, client, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
+		if err := DestructFile(log, c, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
 			log.Info("could not destruct file %v, terminating: %v", req.id, err)
 			select {
 			case terminateChan <- err:
@@ -135,7 +136,7 @@ func destructFilesWorker(
 
 func destructFilesScraper(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	state *DestructFilesState,
 	terminateChan chan any,
 	shid msgs.ShardId,
@@ -147,7 +148,7 @@ func destructFilesScraper(
 	resp := &msgs.VisitTransientFilesResp{}
 	for {
 		log.Debug("visiting files with %+v", req)
-		err := client.ShardRequest(log, shid, req, resp)
+		err := c.ShardRequest(log, shid, req, resp)
 		if err != nil {
 			log.Info("could not visit transient files: %v", err)
 			select {
@@ -187,7 +188,7 @@ type DestructFilesOptions struct {
 
 func DestructFiles(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
 	shid msgs.ShardId,
@@ -202,7 +203,7 @@ func DestructFiles(
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		destructFilesScraper(log, client, stats, terminateChan, shid, workersChan)
+		destructFilesScraper(log, c, stats, terminateChan, shid, workersChan)
 	}()
 
 	var workersWg sync.WaitGroup
@@ -210,7 +211,7 @@ func DestructFiles(
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			destructFilesWorker(log, client, stats, shid, workersChan, terminateChan)
+			destructFilesWorker(log, c, stats, shid, workersChan, terminateChan)
 			workersWg.Done()
 		}()
 	}
@@ -232,7 +233,7 @@ func DestructFiles(
 
 func DestructFilesInAllShards(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
 ) error {
@@ -244,7 +245,7 @@ func DestructFilesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			if err := DestructFiles(log, client, opts, stats, shid); err != nil {
+			if err := DestructFiles(log, c, opts, stats, shid); err != nil {
 				panic(err)
 			}
 			wg.Done()

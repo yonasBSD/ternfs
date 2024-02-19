@@ -1,7 +1,8 @@
-package client
+package cleanup
 
 import (
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -12,12 +13,12 @@ type scratchFile struct {
 	size   uint64
 }
 
-func ensureScratchFile(log *lib.Logger, client *Client, shard msgs.ShardId, file *scratchFile) error {
+func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
 	resp := msgs.ConstructFileResp{}
-	err := client.ShardRequest(
+	err := c.ShardRequest(
 		log,
 		shard,
 		&msgs.ConstructFileReq{
@@ -43,7 +44,7 @@ type keepScratchFileAlive struct {
 
 func startToKeepScratchFileAlive(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	scratchFile *scratchFile,
 ) keepScratchFileAlive {
 	stopHeartbeat := make(chan struct{})
@@ -60,7 +61,7 @@ func startToKeepScratchFileAlive(
 					Cookie:       scratchFile.cookie,
 					StorageClass: msgs.EMPTY_STORAGE,
 				}
-				if err := client.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddInlineSpanResp{}); err != nil {
+				if err := c.ShardRequest(log, scratchFile.id.Shard(), &req, &msgs.AddInlineSpanResp{}); err != nil {
 					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %v", err)
 				}
 			}

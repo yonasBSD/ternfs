@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"xtx/eggsfs/cleanup"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -812,8 +813,8 @@ func fsTestInternal[Id comparable](
 		log.Info("scrubbing files")
 		{
 			// 100 attempts since we might be running with block service killer
-			var stats client.ScrubState
-			if err := client.ScrubFilesInAllShards(log, c, &client.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, nil, &stats); err != nil {
+			var stats cleanup.ScrubState
+			if err := cleanup.ScrubFilesInAllShards(log, c, &cleanup.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, nil, &stats); err != nil {
 				panic(err)
 			}
 			if stats.Migrate.MigratedBlocks != corruptedBlocks {
@@ -865,8 +866,8 @@ func fsTestInternal[Id comparable](
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 			progressReportAlert := log.NewNCAlert(10 * time.Second)
-			migrateStats := client.MigrateStats{}
-			err = client.MigrateBlocksInAllShards(log, c, &migrateStats, progressReportAlert, blockServiceToPurge)
+			migrateStats := cleanup.MigrateStats{}
+			err = cleanup.MigrateBlocksInAllShards(log, c, &migrateStats, progressReportAlert, blockServiceToPurge)
 			if err != nil {
 				panic(fmt.Errorf("could not migrate: %w", err))
 			}

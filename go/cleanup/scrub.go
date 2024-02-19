@@ -1,10 +1,11 @@
-package client
+package cleanup
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -31,7 +32,7 @@ func badBlockError(err error) bool {
 
 func scrubFileInternal(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	bufPool *lib.BufPool,
 	stats *ScrubState,
 	timeStats *timeStats,
@@ -45,14 +46,14 @@ func scrubFileInternal(
 	defer scrubbingMu.Unlock()
 
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
-		err := client.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
+		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if badBlockError(err) {
 			log.RaiseAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}
 		return false, err
 	}
-	return migrateBlocksInFileGeneric(log, client, bufPool, &stats.Migrate, timeStats, progressReportAlert, "scrubbed", badBlock, scratchFile, file)
+	return migrateBlocksInFileGeneric(log, c, bufPool, &stats.Migrate, timeStats, progressReportAlert, "scrubbed", badBlock, scratchFile, file)
 }
 
 type scrubRequest struct {
@@ -65,7 +66,7 @@ type scrubRequest struct {
 
 func scrubWorker(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	opts *ScrubOptions,
 	stats *ScrubState,
 	rateLimit *lib.RateLimit,
@@ -94,14 +95,14 @@ func scrubWorker(
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}
-		err := client.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
+		err := c.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
 		if badBlockError(err) {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 			}
 			for attempts := 1; ; attempts++ {
-				if err := scrubFileInternal(log, client, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
+				if err := scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
 					if err == msgs.BLOCK_NOT_FOUND {
 						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
 						time.Sleep(time.Second)
@@ -143,7 +144,7 @@ func scrubWorker(
 
 func scrubScraper(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *ScrubState,
 	shid msgs.ShardId,
 	terminateChan chan any,
@@ -152,7 +153,7 @@ func scrubScraper(
 	fileReq := &msgs.VisitFilesReq{BeginId: stats.Cursors[shid]}
 	fileResp := &msgs.VisitFilesResp{}
 	for {
-		if err := client.ShardRequest(log, msgs.ShardId(shid), fileReq, fileResp); err != nil {
+		if err := c.ShardRequest(log, msgs.ShardId(shid), fileReq, fileResp); err != nil {
 			log.Info("could not get files: %v", err)
 			select {
 			case terminateChan <- err:
@@ -165,7 +166,7 @@ func scrubScraper(
 			spansReq := msgs.FileSpansReq{FileId: file}
 			spansResp := msgs.FileSpansResp{}
 			for {
-				if err := client.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
+				if err := c.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
 					log.Info("could not get spans: %v", err)
 					select {
 					case terminateChan <- err:
@@ -210,21 +211,21 @@ func scrubScraper(
 
 func ScrubFile(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *ScrubState,
 	file msgs.InodeId,
 ) error {
 	bufPool := lib.NewBufPool()
 	scratchFile := scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
+	keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
 	defer keepAlive.stop()
 	var scrubbingMu sync.Mutex
-	return scrubFileInternal(log, client, bufPool, stats, nil, nil, &scratchFile, &scrubbingMu, file)
+	return scrubFileInternal(log, c, bufPool, stats, nil, nil, &scratchFile, &scrubbingMu, file)
 }
 
 func ScrubFiles(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	opts *ScrubOptions,
 	rateLimit *lib.RateLimit,
 	stats *ScrubState,
@@ -237,14 +238,14 @@ func ScrubFiles(
 	terminateChan := make(chan any, 1)
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
 	scratchFile := &scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, client, scratchFile)
+	keepAlive := startToKeepScratchFileAlive(log, c, scratchFile)
 	defer func() {
 		keepAlive.stop()
 	}()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		scrubScraper(log, client, stats, shid, terminateChan, sendChan)
+		scrubScraper(log, c, stats, shid, terminateChan, sendChan)
 	}()
 
 	var workersWg sync.WaitGroup
@@ -253,7 +254,7 @@ func ScrubFiles(
 	for i := 0; i < opts.NumWorkersPerShard; i++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			scrubWorker(log, client, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu)
+			scrubWorker(log, c, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu)
 			workersWg.Done()
 		}()
 	}
@@ -277,7 +278,7 @@ func ScrubFiles(
 
 func ScrubFilesInAllShards(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	opts *ScrubOptions,
 	rateLimit *lib.RateLimit,
 	state *ScrubState,
@@ -290,7 +291,7 @@ func ScrubFilesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			if err := ScrubFiles(log, client, opts, rateLimit, state, shid); err != nil {
+			if err := ScrubFiles(log, c, opts, rateLimit, state, shid); err != nil {
 				panic(err)
 			}
 			wg.Done()

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"xtx/eggsfs/cleanup"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -62,20 +63,20 @@ func cleanupAfterTest(
 	// Collect everything, making sure that all the deadlines will have passed
 	dirInfoCache := client.NewDirInfoCache()
 	{
-		state := &client.CollectDirectoriesState{}
-		if err := client.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &client.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+		state := &cleanup.CollectDirectoriesState{}
+		if err := cleanup.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}
-	if err := client.CollectZeroBlockServiceFiles(log, c, &client.ZeroBlockServiceFilesStats{}); err != nil {
+	if err := cleanup.CollectZeroBlockServiceFiles(log, c, &cleanup.ZeroBlockServiceFilesStats{}); err != nil {
 		panic(err)
 	}
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval)
 	log.Info("deadlines passed, collecting")
 	{
-		state := &client.DestructFilesState{}
-		if err := client.DestructFilesInAllShards(log, c, &client.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
+		state := &cleanup.DestructFilesState{}
+		if err := cleanup.DestructFilesInAllShards(log, c, &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}

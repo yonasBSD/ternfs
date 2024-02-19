@@ -11,7 +11,7 @@
 // left to right, which means that the first span will be migrated first, and the shard
 // currently uses the first span to pick up block services. So things should actually
 // work out most of the times.
-package client
+package cleanup
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -38,7 +39,7 @@ type MigrateState struct {
 
 func fetchBlock(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	blockSize uint32,
@@ -46,7 +47,7 @@ func fetchBlock(
 ) (*bytes.Buffer, error) {
 	blockService := &blockServices[block.BlockServiceIx]
 	// fail immediately to other block services
-	data, err := client.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, 0, blockSize)
+	data, err := c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, 0, blockSize)
 	if err != nil {
 		log.Info("couldn't fetch block %v in file %v in block service %v: %v", block.BlockId, fileId, blockService, err)
 		return nil, err
@@ -56,7 +57,7 @@ func fetchBlock(
 	}
 	readCrc := msgs.Crc(crc32c.Sum(0, data.Bytes()))
 	if block.Crc != readCrc {
-		client.PutFetchedBlock(data)
+		c.PutFetchedBlock(data)
 		return nil, fmt.Errorf("read %v CRC instead of %v", readCrc, block.Crc)
 	}
 	return data, nil
@@ -64,7 +65,7 @@ func fetchBlock(
 
 func writeBlock(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	scratch *scratchFile,
 	file msgs.InodeId,
 	blacklist []msgs.BlockServiceId,
@@ -97,17 +98,17 @@ func writeBlock(
 
 	var err error
 	initiateSpanResp := msgs.AddSpanInitiateWithReferenceResp{}
-	if err := client.ShardRequest(log, scratch.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
+	if err := c.ShardRequest(log, scratch.id.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
 		return 0, 0, err
 	}
 	dstBlock := &initiateSpanResp.Resp.Blocks[0]
 	var writeProof [8]byte
-	writeProof, err = client.WriteBlock(log, nil, dstBlock, newContents, blockSize, block.Crc)
+	writeProof, err = c.WriteBlock(log, nil, dstBlock, newContents, blockSize, block.Crc)
 	certifySpanResp := msgs.AddSpanCertifyResp{}
 	if err != nil {
 		return 0, 0, err
 	}
-	err = client.ShardRequest(
+	err = c.ShardRequest(
 		log,
 		scratch.id.Shard(),
 		&msgs.AddSpanCertifyReq{
@@ -128,7 +129,7 @@ func writeBlock(
 // the bool is whether we found an error that we can retry
 func copyBlock(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	scratch *scratchFile,
 	file msgs.InodeId,
 	blockServices []msgs.BlockService,
@@ -137,18 +138,18 @@ func copyBlock(
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 ) (msgs.BlockId, msgs.BlockServiceId, bool, error) {
-	data, err := fetchBlock(log, client, file, blockServices, blockSize, block)
+	data, err := fetchBlock(log, c, file, blockServices, blockSize, block)
 	if err != nil {
 		return 0, 0, true, err // might find other block services
 	}
-	blockId, blockServiceId, err := writeBlock(log, client, scratch, file, blacklist, blockSize, storageClass, block, data)
-	client.PutFetchedBlock(data)
+	blockId, blockServiceId, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, block, data)
+	c.PutFetchedBlock(data)
 	return blockId, blockServiceId, false, err
 }
 
 func reconstructBlock(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	bufPool *lib.BufPool,
 	fileId msgs.InodeId,
 	scratchFile *scratchFile,
@@ -161,7 +162,7 @@ func reconstructBlock(
 	blockToMigrateIx uint8,
 	blocksToMigrateIxs []uint8, // the other blocks to migrate
 ) (msgs.BlockId, msgs.BlockServiceId, error) {
-	if err := ensureScratchFile(log, client, fileId.Shard(), scratchFile); err != nil {
+	if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile); err != nil {
 		return 0, 0, err
 	}
 	D := parity.DataBlocks()
@@ -184,12 +185,12 @@ func reconstructBlock(
 			continue
 		}
 		// try to fetch
-		data, err := fetchBlock(log, client, fileId, blockServices, blockSize, block)
+		data, err := fetchBlock(log, c, fileId, blockServices, blockSize, block)
 		if err != nil {
 			log.Info("could not fetch block %v: %v, might try other ones", block.BlockId, err)
 			continue
 		}
-		defer client.PutFetchedBlock(data)
+		defer c.PutFetchedBlock(data)
 		// we managed to fetch, good
 		haveBlocks = append(haveBlocks, data.Bytes())
 		haveBlocksIxs = append(haveBlocksIxs, uint8(blockIx))
@@ -209,7 +210,7 @@ func reconstructBlock(
 	wantBytes := bufPool.Get(int(blockSize))
 	defer bufPool.Put(wantBytes)
 	rs.RecoverInto(haveBlocksIxs, haveBlocks, blockToMigrateIx, *wantBytes)
-	blockId, blockServiceId, err := writeBlock(log, client, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(*wantBytes))
+	blockId, blockServiceId, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(*wantBytes))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -227,7 +228,7 @@ func newTimeStats() *timeStats {
 	return &timeStats{startedAt: now, lastReportAt: now}
 }
 
-func printStatsLastReport(log *lib.Logger, what string, client *Client, stats *MigrateStats, timeStats *timeStats, progressReportAlert *lib.XmonNCAlert, lastReport int64, now int64) {
+func printStatsLastReport(log *lib.Logger, what string, c *client.Client, stats *MigrateStats, timeStats *timeStats, progressReportAlert *lib.XmonNCAlert, lastReport int64, now int64) {
 	timeSinceLastReport := time.Duration(now - lastReport)
 	timeSinceStart := time.Duration(now - atomic.LoadInt64(&timeStats.startedAt))
 	overallMB := float64(stats.MigratedBytes) / 1e6
@@ -239,15 +240,15 @@ func printStatsLastReport(log *lib.Logger, what string, client *Client, stats *M
 	timeStats.lastReportBytes = stats.MigratedBytes
 }
 
-func printMigrateStats(log *lib.Logger, what string, client *Client, stats *MigrateStats, timeStats *timeStats, progressReportAlert *lib.XmonNCAlert) {
-	printStatsLastReport(log, what, client, stats, timeStats, progressReportAlert, atomic.LoadInt64(&timeStats.lastReportAt), time.Now().UnixNano())
+func printMigrateStats(log *lib.Logger, what string, c *client.Client, stats *MigrateStats, timeStats *timeStats, progressReportAlert *lib.XmonNCAlert) {
+	printStatsLastReport(log, what, c, stats, timeStats, progressReportAlert, atomic.LoadInt64(&timeStats.lastReportAt), time.Now().UnixNano())
 }
 
 // We reuse this functionality for scrubbing, they're basically doing the same
 // thing.
 func migrateBlocksInFileGeneric(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	bufPool *lib.BufPool,
 	stats *MigrateStats,
 	timeStats *timeStats,
@@ -263,16 +264,16 @@ func migrateBlocksInFileGeneric(
 			now := time.Now().UnixNano()
 			if (now - lastReportAt) > time.Minute.Nanoseconds() {
 				if atomic.CompareAndSwapInt64(&timeStats.lastReportAt, lastReportAt, now) {
-					printStatsLastReport(log, what, client, stats, timeStats, progressReportAlert, lastReportAt, now)
+					printStatsLastReport(log, what, c, stats, timeStats, progressReportAlert, lastReportAt, now)
 				}
 			}
 		}()
 	}
 	// do not migrate transient files -- they might have spans not fully written yet
 	{
-		err := client.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &msgs.StatFileResp{})
+		err := c.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &msgs.StatFileResp{})
 		if err == msgs.FILE_NOT_FOUND {
-			if err := client.ShardRequest(log, fileId.Shard(), &msgs.StatTransientFileReq{Id: fileId}, &msgs.StatTransientFileResp{}); err != nil {
+			if err := c.ShardRequest(log, fileId.Shard(), &msgs.StatTransientFileReq{Id: fileId}, &msgs.StatTransientFileResp{}); err != nil {
 				return nil
 			}
 			log.Debug("skipping transient file %v", fileId)
@@ -288,7 +289,7 @@ func migrateBlocksInFileGeneric(
 	}
 	fileSpansResp := msgs.FileSpansResp{}
 	for {
-		if err := client.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+		if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 			return err
 		}
 		for spanIx := range fileSpansResp.Spans {
@@ -350,14 +351,14 @@ func migrateBlocksInFileGeneric(
 						if !goodToCopyFrom {
 							continue
 						}
-						if err := ensureScratchFile(log, client, fileId.Shard(), scratchFile); err != nil {
+						if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile); err != nil {
 							return err
 						}
 						log.Debug("trying block ix %v", blockIx)
 						var err error
 						var canRetry bool
 						var newBlockServiceId msgs.BlockServiceId
-						newBlock, newBlockServiceId, canRetry, err = copyBlock(log, client, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
+						newBlock, newBlockServiceId, canRetry, err = copyBlock(log, c, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
 						if err != nil && !canRetry {
 							return err
 						}
@@ -375,7 +376,7 @@ func migrateBlocksInFileGeneric(
 					var newBlockServiceId msgs.BlockServiceId
 					newBlock, newBlockServiceId, err = reconstructBlock(
 						log,
-						client,
+						c,
 						bufPool,
 						fileId,
 						scratchFile,
@@ -402,7 +403,7 @@ func migrateBlocksInFileGeneric(
 						ByteOffset2: scratchOffset,
 						BlockId2:    newBlock,
 					}
-					if err := client.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
+					if err := c.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
 						return err
 					}
 					atomic.AddUint64(&stats.MigratedBlocks, 1)
@@ -426,26 +427,26 @@ func migrateBlocksInFileGeneric(
 // it'll be recovered from the other. If possible, anyway.
 func MigrateBlocksInFile(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *MigrateStats,
 	progressReportAlert *lib.XmonNCAlert,
 	blockServiceId msgs.BlockServiceId,
 	fileId msgs.InodeId,
 ) error {
 	scratchFile := scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
+	keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
 	defer keepAlive.stop()
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
-	return migrateBlocksInFileGeneric(log, client, lib.NewBufPool(), stats, newTimeStats(), progressReportAlert, "migrated", badBlock, &scratchFile, fileId)
+	return migrateBlocksInFileGeneric(log, c, lib.NewBufPool(), stats, newTimeStats(), progressReportAlert, "migrated", badBlock, &scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
 // shard.
 func migrateBlocksInternal(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	bufPool *lib.BufPool,
 	stats *MigrateStats,
 	timeStats *timeStats,
@@ -454,7 +455,7 @@ func migrateBlocksInternal(
 	blockServiceId msgs.BlockServiceId,
 ) error {
 	scratchFile := scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, client, &scratchFile)
+	keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
 	defer keepAlive.stop()
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
@@ -464,7 +465,7 @@ func migrateBlocksInternal(
 	blockNotFoundAlert := log.NewNCAlert(0)
 	defer log.ClearNC(blockNotFoundAlert)
 	for {
-		if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+		if err := c.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
 			return fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
 		}
 		if len(filesResp.FileIds) == 0 {
@@ -477,7 +478,7 @@ func migrateBlocksInternal(
 				continue
 			}
 			for attempts := 1; ; attempts++ {
-				if err := migrateBlocksInFileGeneric(log, client, bufPool, stats, timeStats, progressReportAlert, "migrated", badBlock, &scratchFile, file); err != nil {
+				if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, "migrated", badBlock, &scratchFile, file); err != nil {
 					if err == msgs.BLOCK_NOT_FOUND {
 						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
 						time.Sleep(time.Second)
@@ -495,7 +496,7 @@ func migrateBlocksInternal(
 
 func MigrateBlocks(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *MigrateStats,
 	progressReportAlert *lib.XmonNCAlert,
 	shid msgs.ShardId,
@@ -503,17 +504,17 @@ func MigrateBlocks(
 ) error {
 	timeStats := newTimeStats()
 	bufPool := lib.NewBufPool()
-	if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, progressReportAlert, shid, blockServiceId); err != nil {
+	if err := migrateBlocksInternal(log, c, bufPool, stats, timeStats, progressReportAlert, shid, blockServiceId); err != nil {
 		return err
 	}
-	printMigrateStats(log, "migrated", client, stats, timeStats, progressReportAlert)
+	printMigrateStats(log, "migrated", c, stats, timeStats, progressReportAlert)
 	log.Info("finished migrating blocks out of %v in shard %v, stats: %+v", blockServiceId, shid, stats)
 	return nil
 }
 
 func MigrateBlocksInAllShards(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *MigrateStats,
 	progressReportAlert *lib.XmonNCAlert,
 	blockServiceId msgs.BlockServiceId,
@@ -526,7 +527,7 @@ func MigrateBlocksInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			if err := migrateBlocksInternal(log, client, bufPool, stats, timeStats, progressReportAlert, shid, blockServiceId); err != nil {
+			if err := migrateBlocksInternal(log, c, bufPool, stats, timeStats, progressReportAlert, shid, blockServiceId); err != nil {
 				log.Info("could not migrate block service %v in shard %v: %v", blockServiceId, shid, err)
 				atomic.StoreInt32(&failed, 1)
 			}
@@ -535,7 +536,7 @@ func MigrateBlocksInAllShards(
 		}()
 	}
 	wg.Wait()
-	printMigrateStats(log, "migrated", client, stats, timeStats, progressReportAlert)
+	printMigrateStats(log, "migrated", c, stats, timeStats, progressReportAlert)
 	log.Info("finished migrating blocks out of %v in all shards, stats: %+v", blockServiceId, stats)
 	if atomic.LoadInt32(&failed) == 1 {
 		return fmt.Errorf("some shards failed to migrate, check logs")

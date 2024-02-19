@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/cleanup"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
@@ -50,7 +51,7 @@ func usage() {
 func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
-	err := client.Parwalk(
+	err := Parwalk(
 		log,
 		c,
 		"/",
@@ -204,8 +205,8 @@ func main() {
 	collectRun := func() {
 		dirInfoCache := client.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
-			state := &client.CollectDirectoriesState{}
-			if err := client.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &client.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+			state := &cleanup.CollectDirectoriesState{}
+			if err := cleanup.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {
@@ -214,8 +215,8 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			defer c.Close()
-			var stats client.CollectDirectoriesStats
-			if err := client.CollectDirectory(log, c, dirInfoCache, &stats, dirId); err != nil {
+			var stats cleanup.CollectDirectoriesStats
+			if err := cleanup.CollectDirectory(log, c, dirInfoCache, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)
@@ -232,14 +233,14 @@ func main() {
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
-			state := &client.DestructFilesState{}
-			opts := &client.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
+			state := &cleanup.DestructFilesState{}
+			opts := &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
-				if err := client.DestructFilesInAllShards(log, c, opts, state); err != nil {
+				if err := cleanup.DestructFilesInAllShards(log, c, opts, state); err != nil {
 					panic(err)
 				}
 			} else {
-				if err := client.DestructFiles(log, c, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+				if err := cleanup.DestructFiles(log, c, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
 					panic(err)
 				}
 			}
@@ -248,10 +249,10 @@ func main() {
 			if fileId.Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
-			stats := client.DestructFilesStats{}
+			stats := cleanup.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-			if err := client.DestructFile(log, c, &stats, fileId, 0, destructFileCookie); err != nil {
+			if err := cleanup.DestructFile(log, c, &stats, fileId, 0, destructFileCookie); err != nil {
 				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
 			}
 			log.Info("finished destructing %v, stats: %+v", fileId, stats)
@@ -330,23 +331,23 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		stats := client.MigrateStats{}
+		stats := cleanup.MigrateStats{}
 		progressReportAlert := log.NewNCAlert(10 * time.Second)
 		for failureDomain, bss := range blockServicesToMigrate {
 			for _, blockServiceId := range *bss {
 				log.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := client.MigrateBlocksInAllShards(log, c, &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocksInAllShards(log, c, &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := client.MigrateBlocksInFile(log, c, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := cleanup.MigrateBlocksInFile(log, c, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := client.MigrateBlocks(log, c, &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocks(log, c, &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
@@ -727,7 +728,7 @@ func main() {
 		analyzedFiles := uint64(0)
 		startedAt := time.Now()
 		go func() {
-			err := client.Parwalk(
+			err := Parwalk(
 				log,
 				c,
 				"/",
@@ -837,7 +838,7 @@ func main() {
 		histoCountBins := make([]uint64, 256)
 		histogram := lib.NewHistogram(len(histoSizeBins), 255, 1.15) // max: ~900PB
 		startedAt := time.Now()
-		err := client.Parwalk(
+		err := Parwalk(
 			log,
 			c,
 			*duDir,
@@ -887,7 +888,7 @@ func main() {
 	findDir := findCmd.String("path", "/", "")
 	findName := findCmd.String("name", "", "")
 	findRun := func() {
-		err := client.Parwalk(
+		err := Parwalk(
 			log,
 			c,
 			*findDir,
@@ -911,8 +912,8 @@ func main() {
 	scrubFileId := scrubFileCmd.Uint64("id", 0, "The file to scrub")
 	scrubFileRun := func() {
 		file := msgs.InodeId(*scrubFileId)
-		stats := &client.ScrubState{}
-		if err := client.ScrubFile(log, c, stats, file); err != nil {
+		stats := &cleanup.ScrubState{}
+		if err := cleanup.ScrubFile(log, c, stats, file); err != nil {
 			panic(err)
 		}
 		log.Info("scrub stats: %+v", stats)
@@ -923,8 +924,8 @@ func main() {
 	}
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
-		stats := client.ScrubState{}
-		if err := client.ScrubFilesInAllShards(log, c, &client.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		stats := cleanup.ScrubState{}
+		if err := cleanup.ScrubFilesInAllShards(log, c, &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 

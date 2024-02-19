@@ -1,9 +1,10 @@
-package client
+package cleanup
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -25,7 +26,7 @@ type CollectDirectoriesState struct {
 // returns whether all the edges were removed
 func applyPolicy(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	stats *CollectDirectoriesStats,
 	dirId msgs.InodeId,
 	policy *msgs.SnapshotPolicy,
@@ -52,7 +53,7 @@ func applyPolicy(
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				err = client.ShardRequest(log, dirId.Shard(), &req, &msgs.SameShardHardFileUnlinkResp{})
+				err = c.ShardRequest(log, dirId.Shard(), &req, &msgs.SameShardHardFileUnlinkResp{})
 			} else {
 				// different shard, we need to go through the CDC
 				log.Debug("%v: removing cross-shard owned edge %+v", dirId, edge)
@@ -62,7 +63,7 @@ func applyPolicy(
 					Name:         edge.Name,
 					CreationTime: edge.CreationTime,
 				}
-				err = client.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
+				err = c.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
 			}
 		} else {
 			// non-owned edge, we can just kill it without worrying about much.
@@ -73,7 +74,7 @@ func applyPolicy(
 				Name:         edge.Name,
 				CreationTime: edge.CreationTime,
 			}
-			err = client.ShardRequest(log, dirId.Shard(), &req, &msgs.RemoveNonOwnedEdgeResp{})
+			err = c.ShardRequest(log, dirId.Shard(), &req, &msgs.RemoveNonOwnedEdgeResp{})
 		}
 		if err != nil {
 			return false, fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
@@ -83,12 +84,12 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
 	policy := &msgs.SnapshotPolicy{}
-	if _, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
 		return err
 	}
 
@@ -99,7 +100,7 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 	resp := msgs.FullReadDirResp{}
 	hasEdges := false
 	for {
-		err := client.ShardRequest(log, dirId.Shard(), &req, &resp)
+		err := c.ShardRequest(log, dirId.Shard(), &req, &resp)
 		if err != nil {
 			return err
 		}
@@ -112,7 +113,7 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 				hasEdges = true
 			}
 			if len(edges) > 0 && (edges[0].NameHash != result.NameHash || edges[0].Name != result.Name) {
-				allRemoved, err := applyPolicy(log, client, stats, dirId, policy, edges)
+				allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
 				if err != nil {
 					return err
 				}
@@ -123,7 +124,7 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 		}
 		if stop {
 			if len(edges) > 0 {
-				allRemoved, err := applyPolicy(log, client, stats, dirId, policy, edges)
+				allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
 				if err != nil {
 					return err
 				}
@@ -143,7 +144,7 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 			Id: dirId,
 		}
 		statResp := msgs.StatDirectoryResp{}
-		err := client.ShardRequest(log, dirId.Shard(), &statReq, &statResp)
+		err := c.ShardRequest(log, dirId.Shard(), &statReq, &statResp)
 		if err != nil {
 			return fmt.Errorf("error while stat'ing directory: %w", err)
 		}
@@ -152,7 +153,7 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 			req := msgs.HardUnlinkDirectoryReq{
 				DirId: dirId,
 			}
-			err := client.CDCRequest(log, &req, &msgs.HardUnlinkDirectoryResp{})
+			err := c.CDCRequest(log, &req, &msgs.HardUnlinkDirectoryResp{})
 			if err != nil {
 				return fmt.Errorf("error while trying to remove directory inode: %w", err)
 			}
@@ -164,8 +165,8 @@ func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCach
 
 func collectDirectoriesWorker(
 	log *lib.Logger,
-	client *Client,
-	dirInfoCache *DirInfoCache,
+	c *client.Client,
+	dirInfoCache *client.DirInfoCache,
 	rateLimit *lib.RateLimit,
 	stats *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -185,7 +186,7 @@ func collectDirectoriesWorker(
 		}
 		log.Debug("received worker request for shard %v len=%v cap=%v", shid, len(workersChan), cap(workersChan))
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
-		if err := CollectDirectory(log, client, dirInfoCache, &stats.Stats, dir); err != nil {
+		if err := CollectDirectory(log, c, dirInfoCache, &stats.Stats, dir); err != nil {
 			log.Info("could not destruct directory %v, terminating: %v", dir, err)
 			select {
 			case terminateChan <- err:
@@ -198,7 +199,7 @@ func collectDirectoriesWorker(
 
 func collectDirectoriesScraper(
 	log *lib.Logger,
-	client *Client,
+	c *client.Client,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
 	workerChan chan msgs.InodeId,
@@ -209,7 +210,7 @@ func collectDirectoriesScraper(
 	}
 	resp := &msgs.VisitDirectoriesResp{}
 	for {
-		err := client.ShardRequest(log, shid, req, resp)
+		err := c.ShardRequest(log, shid, req, resp)
 		if err != nil {
 			select {
 			case terminateChan <- fmt.Errorf("could not visit directories: %w", err):
@@ -237,8 +238,8 @@ type CollectDirectoriesOpts struct {
 
 func CollectDirectories(
 	log *lib.Logger,
-	client *Client,
-	dirInfoCache *DirInfoCache,
+	c *client.Client,
+	dirInfoCache *client.DirInfoCache,
 	rateLimit *lib.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
@@ -255,7 +256,7 @@ func CollectDirectories(
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		collectDirectoriesScraper(log, client, state, shid, workerChan, terminateChan)
+		collectDirectoriesScraper(log, c, state, shid, workerChan, terminateChan)
 	}()
 
 	var workersWg sync.WaitGroup
@@ -263,7 +264,7 @@ func CollectDirectories(
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			collectDirectoriesWorker(log, client, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan)
+			collectDirectoriesWorker(log, c, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan)
 			workersWg.Done()
 		}()
 	}
@@ -285,8 +286,8 @@ func CollectDirectories(
 
 func CollectDirectoriesInAllShards(
 	log *lib.Logger,
-	client *Client,
-	dirInfoCache *DirInfoCache,
+	c *client.Client,
+	dirInfoCache *client.DirInfoCache,
 	rateLimit *lib.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
@@ -299,7 +300,7 @@ func CollectDirectoriesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			if err := CollectDirectories(log, client, dirInfoCache, rateLimit, opts, state, shid); err != nil {
+			if err := CollectDirectories(log, c, dirInfoCache, rateLimit, opts, state, shid); err != nil {
 				panic(err)
 			}
 			wg.Done()

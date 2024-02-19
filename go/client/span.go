@@ -73,7 +73,7 @@ func ensureLen(buf *[]byte, l int) {
 	}
 }
 
-const EGGSFS_PAGE_SIZE int = 4096
+const eggsFsPageSize int = 4096
 
 func prepareSpanInitiateReq(
 	blacklist []msgs.BlacklistEntry,
@@ -106,7 +106,7 @@ func prepareSpanInitiateReq(
 	blockSize := (len(*data) + D - 1) / D
 	cellSize := (blockSize + S - 1) / S
 	// Round up cell to page size
-	cellSize = EGGSFS_PAGE_SIZE * ((cellSize + EGGSFS_PAGE_SIZE - 1) / EGGSFS_PAGE_SIZE)
+	cellSize = eggsFsPageSize * ((cellSize + eggsFsPageSize - 1) / eggsFsPageSize)
 	blockSize = cellSize * S
 	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
 
@@ -405,7 +405,6 @@ func (c *Client) fetchCell(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
 	blockIx uint8,
 	cell uint8,
@@ -451,7 +450,7 @@ func (c *Client) fetchMirroredStripe(
 	for i := 0; i < B && !found; i++ {
 		block := &body.Blocks[i]
 		blockService := &blockServices[block.BlockServiceIx]
-		buf, err = c.fetchCell(log, bufPool, blockServices, span, body, uint8(i), uint8(cell))
+		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(cell))
 		if err != nil {
 			continue
 		}
@@ -494,7 +493,7 @@ func (c *Client) fetchRsStripe(
 	}
 	log.Debug("fetching stripe %v, cell size %v", stripe, body.CellSize)
 	for i := 0; i < B; i++ {
-		buf, err = c.fetchCell(log, bufPool, blockServices, span, body, uint8(i), uint8(stripe))
+		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(stripe))
 		if err != nil {
 			continue
 		}

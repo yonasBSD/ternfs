@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"container/heap"
-	"crypto/cipher"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -21,7 +20,6 @@ import (
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/wyhash"
 )
 
 type ReqCounters struct {
@@ -136,7 +134,6 @@ var DefaultShardTimeout = lib.ReqTimeouts{
 	Overall: 10 * time.Second,
 	Growth:  1.5,
 	Jitter:  0.1,
-	Rand:    wyhash.Rand{State: 0},
 }
 
 var DefaultCDCTimeout = lib.ReqTimeouts{
@@ -145,7 +142,6 @@ var DefaultCDCTimeout = lib.ReqTimeouts{
 	Overall: time.Minute,
 	Growth:  1.5,
 	Jitter:  0.1,
-	Rand:    wyhash.Rand{State: 0},
 }
 
 var DefaultBlockTimeout = lib.ReqTimeouts{
@@ -154,7 +150,6 @@ var DefaultBlockTimeout = lib.ReqTimeouts{
 	Overall: 5 * time.Minute,
 	Growth:  1.5,
 	Jitter:  0.1,
-	Rand:    wyhash.Rand{State: 0},
 }
 
 type metadataProcessorRequest struct {
@@ -295,11 +290,11 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 		var kind uint8
 		var protocol uint32
 		if req.shard >= 0 { // shard
-			addrs = cm.client.ShardAddrs(msgs.ShardId(req.shard))
+			addrs = cm.client.shardAddrs(msgs.ShardId(req.shard))
 			kind = uint8(req.req.(msgs.ShardRequest).ShardRequestKind())
 			protocol = msgs.SHARD_REQ_PROTOCOL_VERSION
 		} else { // CDC
-			addrs = cm.client.CDCAddrs()
+			addrs = cm.client.cdcAddrs()
 			kind = uint8(req.req.(msgs.CDCRequest).CDCRequestKind())
 			protocol = msgs.CDC_REQ_PROTOCOL_VERSION
 		}
@@ -893,7 +888,6 @@ type Client struct {
 	cdcRawAddr           [2]uint64
 	clientMetadata       clientMetadata
 	counters             *ClientCounters
-	cdcKey               cipher.Block
 	writeBlockProcessors blocksProcessors
 	fetchBlockProcessors blocksProcessors
 	fetchBlockBufs       sync.Pool
@@ -948,10 +942,6 @@ func NewClient(
 
 func (c *Client) SetCounters(counters *ClientCounters) {
 	c.counters = counters
-}
-
-func (c *Client) SetCDCKey(cdcKey cipher.Block) {
-	c.cdcKey = cdcKey
 }
 
 func (c *Client) SetShardTimeouts(t *lib.ReqTimeouts) {
@@ -1048,14 +1038,14 @@ func uint64ToUDPAddr(addr uint64) *net.UDPAddr {
 	return udpAddr
 }
 
-func (c *Client) CDCAddrs() *[2]net.UDPAddr {
+func (c *Client) cdcAddrs() *[2]net.UDPAddr {
 	return &[2]net.UDPAddr{
 		*uint64ToUDPAddr(atomic.LoadUint64(&c.cdcRawAddr[0])),
 		*uint64ToUDPAddr(atomic.LoadUint64(&c.cdcRawAddr[1])),
 	}
 }
 
-func (c *Client) ShardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
+func (c *Client) shardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
 	return &[2]net.UDPAddr{
 		*uint64ToUDPAddr(atomic.LoadUint64(&c.shardRawAddrs[shid][0])),
 		*uint64ToUDPAddr(atomic.LoadUint64(&c.shardRawAddrs[shid][1])),

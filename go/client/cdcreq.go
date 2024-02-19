@@ -80,7 +80,7 @@ func (c *Client) CDCRequest(
 	if c.counters != nil {
 		counters = c.counters.CDC[uint8(msgKind)]
 	}
-	return c.metadataRequest(logger, -1, c.CDCAddrs(), uint8(msgKind), reqBody, respBody, counters, false)
+	return c.metadataRequest(logger, -1, reqBody, respBody, counters, false)
 }
 
 func CreateCDCSocket(ip [4]byte, port uint16) (*net.UDPConn, error) {

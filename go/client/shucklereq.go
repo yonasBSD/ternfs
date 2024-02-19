@@ -12,7 +12,6 @@ import (
 	"xtx/eggsfs/bincode"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/wyhash"
 )
 
 const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
@@ -220,7 +219,6 @@ var DefaultShuckleTimeout = lib.ReqTimeouts{
 	Overall: 10 * time.Second,
 	Growth:  1.5,
 	Jitter:  0.1,
-	Rand:    wyhash.Rand{State: 0},
 }
 
 func ShuckleRequest(

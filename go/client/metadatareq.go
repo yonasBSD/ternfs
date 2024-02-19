@@ -1,7 +1,6 @@
 package client
 
 import (
-	"net"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/bincode"
@@ -17,8 +16,6 @@ func (c *Client) newRequestId() uint64 {
 func (c *Client) metadataRequest(
 	log *lib.Logger,
 	shid int16, // -1 for cdc
-	addrs *[2]net.UDPAddr,
-	msgKind uint8,
 	reqBody bincode.Packable,
 	respBody bincode.Unpackable,
 	counters *ReqCounters,

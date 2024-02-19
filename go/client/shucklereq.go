@@ -1,4 +1,4 @@
-package lib
+package client
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
 )
@@ -17,7 +18,7 @@ import (
 const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
 
 func ReadShuckleRequest(
-	log *Logger,
+	log *lib.Logger,
 	r io.Reader,
 ) (msgs.ShuckleRequest, error) {
 	var protocol uint32
@@ -83,7 +84,7 @@ func ReadShuckleRequest(
 	return req, nil
 }
 
-func WriteShuckleRequest(log *Logger, w io.Writer, req msgs.ShuckleRequest) error {
+func WriteShuckleRequest(log *lib.Logger, w io.Writer, req msgs.ShuckleRequest) error {
 	log.Debug("sending request %v to shuckle", req.ShuckleRequestKind())
 	// serialize
 	bytes := bincode.Pack(req)
@@ -104,7 +105,7 @@ func WriteShuckleRequest(log *Logger, w io.Writer, req msgs.ShuckleRequest) erro
 }
 
 func ReadShuckleResponse(
-	log *Logger,
+	log *lib.Logger,
 	r io.Reader,
 ) (msgs.ShuckleResponse, error) {
 	log.Debug("reading response from shuckle")
@@ -175,7 +176,7 @@ func ReadShuckleResponse(
 	return resp, nil
 }
 
-func WriteShuckleResponse(log *Logger, w io.Writer, resp msgs.ShuckleResponse) error {
+func WriteShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleResponse) error {
 	// serialize
 	bytes := bincode.Pack(resp)
 	// write out
@@ -194,7 +195,7 @@ func WriteShuckleResponse(log *Logger, w io.Writer, resp msgs.ShuckleResponse) e
 	return nil
 }
 
-func WriteShuckleResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error {
+func WriteShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
 	log.Debug("writing shuckle error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
@@ -213,18 +214,18 @@ func WriteShuckleResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error
 	return nil
 }
 
-var DefaultShuckleTimeout = ReqTimeouts{
+var DefaultShuckleTimeout = lib.ReqTimeouts{
 	Initial: 100 * time.Millisecond,
 	Max:     1 * time.Second,
 	Overall: 10 * time.Second,
 	Growth:  1.5,
 	Jitter:  0.1,
-	rand:    wyhash.Rand{State: 0},
+	Rand:    wyhash.Rand{State: 0},
 }
 
 func ShuckleRequest(
-	log *Logger,
-	timeout *ReqTimeouts,
+	log *lib.Logger,
+	timeout *lib.ReqTimeouts,
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
@@ -250,7 +251,7 @@ Reconnect:
 		log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
 	}
-	log.RaiseNCStack(alert, ERROR, 1, "could not connect to shuckle, will retry in %v: %v", delay, err)
+	log.RaiseNCStack(alert, lib.ERROR, 1, "could not connect to shuckle, will retry in %v: %v", delay, err)
 	time.Sleep(delay)
 
 ReconnectBegin:

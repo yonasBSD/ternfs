@@ -1,9 +1,10 @@
-package lib
+package client
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -23,7 +24,7 @@ type CollectDirectoriesState struct {
 
 // returns whether all the edges were removed
 func applyPolicy(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	stats *CollectDirectoriesStats,
 	dirId msgs.InodeId,
@@ -82,7 +83,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *lib.Logger, client *Client, dirInfoCache *DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
@@ -162,10 +163,10 @@ func CollectDirectory(log *Logger, client *Client, dirInfoCache *DirInfoCache, s
 }
 
 func collectDirectoriesWorker(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
-	rateLimit *RateLimit,
+	rateLimit *lib.RateLimit,
 	stats *CollectDirectoriesState,
 	shid msgs.ShardId,
 	workersChan chan msgs.InodeId,
@@ -196,7 +197,7 @@ func collectDirectoriesWorker(
 }
 
 func collectDirectoriesScraper(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -235,10 +236,10 @@ type CollectDirectoriesOpts struct {
 }
 
 func CollectDirectories(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
-	rateLimit *RateLimit,
+	rateLimit *lib.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -253,7 +254,7 @@ func CollectDirectories(
 	workerChan := make(chan msgs.InodeId, opts.WorkersQueueSize)
 
 	go func() {
-		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		collectDirectoriesScraper(log, client, state, shid, workerChan, terminateChan)
 	}()
 
@@ -261,7 +262,7 @@ func CollectDirectories(
 	workersWg.Add(opts.NumWorkersPerShard)
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
-			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			collectDirectoriesWorker(log, client, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan)
 			workersWg.Done()
 		}()
@@ -283,10 +284,10 @@ func CollectDirectories(
 }
 
 func CollectDirectoriesInAllShards(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	dirInfoCache *DirInfoCache,
-	rateLimit *RateLimit,
+	rateLimit *lib.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 ) error {
@@ -297,7 +298,7 @@ func CollectDirectoriesInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			if err := CollectDirectories(log, client, dirInfoCache, rateLimit, opts, state, shid); err != nil {
 				panic(err)
 			}

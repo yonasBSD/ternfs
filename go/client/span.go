@@ -1,4 +1,4 @@
-package lib
+package client
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"xtx/eggsfs/crc32c"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/rs"
 )
@@ -31,7 +32,7 @@ func (r *blockReader) Read(p []byte) (int, error) {
 }
 
 func (c *Client) createInlineSpan(
-	log *Logger,
+	log *lib.Logger,
 	id msgs.InodeId,
 	cookie [8]byte,
 	offset uint64,
@@ -209,7 +210,7 @@ func mkBlockReader(
 // for the purpose of splitting things into blocks/stripes. The (possibly modified)
 // buffer is returned, regardless of whether the error is nil or not.
 func (c *Client) CreateSpan(
-	log *Logger,
+	log *lib.Logger,
 	blacklist []msgs.BlacklistEntry,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
@@ -260,7 +261,7 @@ func (c *Client) CreateSpan(
 			var proof [8]byte
 			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
 			// fail immediately to other block services
-			proof, err = c.WriteBlock(log, &NoTimeouts, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
+			proof, err = c.WriteBlock(log, &lib.NoTimeouts, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
 			if err != nil {
 				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
 				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
@@ -303,8 +304,8 @@ func (c *Client) CreateSpan(
 }
 
 func (c *Client) WriteFile(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	dirInfoCache *DirInfoCache,
 	dirId msgs.InodeId, // to get policies
 	fileId msgs.InodeId,
@@ -353,8 +354,8 @@ func (c *Client) WriteFile(
 }
 
 func (c *Client) CreateFile(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	dirInfoCache *DirInfoCache,
 	path string, // must be absolute
 	r io.Reader,
@@ -392,7 +393,7 @@ type FetchedStripe struct {
 	owned bool
 }
 
-func (fs *FetchedStripe) Put(bufPool *BufPool) {
+func (fs *FetchedStripe) Put(bufPool *lib.BufPool) {
 	if !fs.owned {
 		return
 	}
@@ -401,8 +402,8 @@ func (fs *FetchedStripe) Put(bufPool *BufPool) {
 }
 
 func (c *Client) fetchCell(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
@@ -419,7 +420,7 @@ func (c *Client) fetchCell(
 	blockService := &blockServices[block.BlockServiceIx]
 	var data *bytes.Buffer
 	// fail immediately to other block services
-	data, err = c.FetchBlock(log, &NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
+	data, err = c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err
@@ -432,8 +433,8 @@ func (c *Client) fetchCell(
 }
 
 func (c *Client) fetchMirroredStripe(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
@@ -470,8 +471,8 @@ func (c *Client) fetchMirroredStripe(
 }
 
 func (c *Client) fetchRsStripe(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
@@ -544,8 +545,8 @@ func (c *Client) fetchRsStripe(
 // Returns nil, nil if span or stripe cannot be found.
 // Stripe might not be found because
 func (c *Client) FetchStripe(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
 	spans []msgs.FetchedSpan,
 	offset uint64,
@@ -634,7 +635,7 @@ func (c *Client) FetchStripe(
 }
 
 func (c *Client) FetchSpans(
-	log *Logger,
+	log *lib.Logger,
 	fileId msgs.InodeId,
 ) (blockServices []msgs.BlockService, spans []msgs.FetchedSpan, err error) {
 	req := msgs.FileSpansReq{FileId: fileId}
@@ -680,8 +681,8 @@ func (c *Client) FetchSpans(
 
 type fileReader struct {
 	client        *Client
-	log           *Logger
-	bufPool       *BufPool
+	log           *lib.Logger
+	bufPool       *lib.BufPool
 	fileId        msgs.InodeId
 	blockServices []msgs.BlockService
 	spans         []msgs.FetchedSpan
@@ -714,8 +715,8 @@ func (f *fileReader) Read(p []byte) (int, error) {
 }
 
 func (c *Client) ReadFile(
-	log *Logger,
-	bufPool *BufPool,
+	log *lib.Logger,
+	bufPool *lib.BufPool,
 	id msgs.InodeId,
 ) (io.ReadCloser, error) {
 	blockServices, spans, err := c.FetchSpans(log, id)

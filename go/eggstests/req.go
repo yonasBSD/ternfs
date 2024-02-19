@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -20,14 +21,14 @@ type fullEdge struct {
 	creationTime msgs.EggsTime
 }
 
-func shardReq(log *lib.Logger, client *lib.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
+func shardReq(log *lib.Logger, client *client.Client, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) {
 	err := client.ShardRequest(log, shid, reqBody, respBody)
 	if err != nil {
 		panic(err)
 	}
 }
 
-func cdcReq(log *lib.Logger, client *lib.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
+func cdcReq(log *lib.Logger, client *client.Client, reqBody msgs.CDCRequest, respBody msgs.CDCResponse) {
 	err := client.CDCRequest(log, reqBody, respBody)
 	if err != nil {
 		panic(err)
@@ -57,8 +58,8 @@ func createFileData(
 
 func createFile(
 	log *lib.Logger,
-	client *lib.Client,
-	dirInfoCache *lib.DirInfoCache,
+	client *client.Client,
+	dirInfoCache *client.DirInfoCache,
 	dirId msgs.InodeId,
 	spanSize uint32,
 	name string,
@@ -114,7 +115,7 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *lib.Logger, bufPool *lib.BufPool, client *lib.Client, id msgs.InodeId, size uint64) *[]byte {
+func readFile(log *lib.Logger, bufPool *lib.BufPool, client *client.Client, id msgs.InodeId, size uint64) *[]byte {
 	buf := bufPool.Get(int(size))
 	r, err := client.ReadFile(log, bufPool, id)
 	if err != nil {
@@ -138,7 +139,7 @@ func readFile(log *lib.Logger, bufPool *lib.BufPool, client *lib.Client, id msgs
 	return buf
 }
 
-func readDir(log *lib.Logger, client *lib.Client, dir msgs.InodeId) []edge {
+func readDir(log *lib.Logger, client *client.Client, dir msgs.InodeId) []edge {
 	req := msgs.ReadDirReq{
 		DirId:     dir,
 		StartHash: 0,
@@ -161,7 +162,7 @@ func readDir(log *lib.Logger, client *lib.Client, dir msgs.InodeId) []edge {
 	return edges
 }
 
-func fullReadDir(log *lib.Logger, client *lib.Client, dirId msgs.InodeId) []fullEdge {
+func fullReadDir(log *lib.Logger, client *client.Client, dirId msgs.InodeId) []fullEdge {
 	req := msgs.FullReadDirReq{
 		DirId: msgs.ROOT_DIR_INODE_ID,
 	}

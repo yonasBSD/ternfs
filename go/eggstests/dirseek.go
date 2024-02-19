@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 	"unsafe"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -159,7 +160,7 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 }
 
 func dirSeekTest(log *lib.Logger, shuckleAddress string, mountPoint string) {
-	client, err := lib.NewClient(log, nil, shuckleAddress)
+	c, err := client.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
@@ -206,7 +207,7 @@ func dirSeekTest(log *lib.Logger, shuckleAddress string, mountPoint string) {
 		}
 		resp := msgs.ReadDirResp{}
 		for {
-			if err := client.ShardRequest(log, 0, &req, &resp); err != nil {
+			if err := c.ShardRequest(log, 0, &req, &resp); err != nil {
 				panic(err)
 			}
 			for i := range resp.Results {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -152,7 +153,7 @@ func checkCheckpoint(prefix string, files *fileHistoryFiles, allEdges []edge) {
 	}
 }
 
-func runCheckpoint(log *lib.Logger, client *lib.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
+func runCheckpoint(log *lib.Logger, client *client.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
 	edges := readDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	checkCheckpoint(prefix, files, edges)
 	resp := msgs.StatDirectoryResp{}
@@ -162,7 +163,7 @@ func runCheckpoint(log *lib.Logger, client *lib.Client, prefix string, files *fi
 	}
 }
 
-func runStep(log *lib.Logger, client *lib.Client, dirInfoCache *lib.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
+func runStep(log *lib.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
 	case fileHistoryCreateFile:
 		id, creationTime := createFile(log, client, dirInfoCache, msgs.ROOT_DIR_INODE_ID, 0, step.name, 0, 0, nil)
@@ -252,7 +253,7 @@ func replayStep(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, st
 	}
 }
 
-func fileHistoryStepSingle(log *lib.Logger, client *lib.Client, dirInfoCache *lib.DirInfoCache, opts *fileHistoryTestOpts, seed uint64, filePrefix string) {
+func fileHistoryStepSingle(log *lib.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, opts *fileHistoryTestOpts, seed uint64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -320,10 +321,10 @@ func fileHistoryTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	opts *fileHistoryTestOpts,
-	counters *lib.ClientCounters,
+	counters *client.ClientCounters,
 ) {
 	terminateChan := make(chan any, 1)
-	dirInfoCache := lib.NewDirInfoCache()
+	dirInfoCache := client.NewDirInfoCache()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -338,13 +339,13 @@ func fileHistoryTest(
 			seed := uint64(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				client, err := lib.NewClient(log, nil, shuckleAddress)
+				c, err := client.NewClient(log, nil, shuckleAddress)
 				if err != nil {
 					panic(err)
 				}
-				client.SetCounters(counters)
-				defer client.Close()
-				fileHistoryStepSingle(log, client, dirInfoCache, opts, seed, prefix)
+				c.SetCounters(counters)
+				defer c.Close()
+				fileHistoryStepSingle(log, c, dirInfoCache, opts, seed, prefix)
 				wait.Done()
 			}()
 		}

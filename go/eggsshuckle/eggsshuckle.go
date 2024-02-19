@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -72,7 +73,7 @@ type state struct {
 	db       *sql.DB
 	counters map[msgs.ShuckleMessageKind]*lib.Timings
 	config   *shuckleConfig
-	client   *lib.Client
+	client   *client.Client
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -218,7 +219,7 @@ func newState(
 		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
 	var err error
-	st.client, err = lib.NewClientDirectNoAddrs(log)
+	st.client, err = client.NewClientDirectNoAddrs(log)
 	if err != nil {
 		return nil, err
 	}
@@ -831,10 +832,10 @@ func handleError(
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
-		lib.WriteShuckleResponseError(log, conn, eggsErr)
+		client.WriteShuckleResponseError(log, conn, eggsErr)
 		return false
 	} else {
-		lib.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
+		client.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
 		return true
 	}
 }
@@ -843,7 +844,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	defer conn.Close()
 
 	for {
-		req, err := lib.ReadShuckleRequest(log, conn)
+		req, err := client.ReadShuckleRequest(log, conn)
 		if err != nil {
 			if handleError(log, conn, err) {
 				return
@@ -859,7 +860,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			}
 		} else {
 			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
-			if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
+			if err := client.WriteShuckleResponse(log, conn, resp); err != nil {
 				if handleError(log, conn, err) {
 					return
 				}
@@ -1202,7 +1203,7 @@ type directoryData struct {
 	Info         []directoryInfoEntry
 }
 
-func refreshClient(log *lib.Logger, state *state) (*lib.Client, error) {
+func refreshClient(log *lib.Logger, state *state) (*client.Client, error) {
 	shards, err := state.selectShards()
 	if err != nil {
 		return nil, fmt.Errorf("error reading shards: %s", err)
@@ -1244,7 +1245,7 @@ func normalizePath(path string) string {
 	return newPath
 }
 
-func lookup(log *lib.Logger, client *lib.Client, path string) *msgs.InodeId {
+func lookup(log *lib.Logger, client *client.Client, path string) *msgs.InodeId {
 	id := msgs.ROOT_DIR_INODE_ID
 	if path == "" {
 		return &id
@@ -1321,12 +1322,12 @@ func handleInode(
 			if id == msgs.ROOT_DIR_INODE_ID && path != "/" && path != "" {
 				return errorPage(http.StatusBadRequest, "bad root inode id")
 			}
-			client, err := refreshClient(log, state)
+			c, err := refreshClient(log, state)
 			if err != nil {
 				panic(err)
 			}
 			if id == msgs.NULL_INODE_ID {
-				mbId := lookup(log, client, path)
+				mbId := lookup(log, c, path)
 				if mbId == nil {
 					return errorPage(http.StatusNotFound, fmt.Sprintf("path '%v' not found", path))
 				}
@@ -1345,7 +1346,7 @@ func handleInode(
 				title := fmt.Sprintf("Directory %v", data.Id)
 				{
 					resp := msgs.StatDirectoryResp{}
-					if err := client.ShardRequest(log, id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != nil {
+					if err := c.ShardRequest(log, id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != nil {
 						panic(err)
 					}
 					data.Owner = resp.Owner.String()
@@ -1354,9 +1355,9 @@ func handleInode(
 				data.PathSegments = pathSegments(path)
 				{
 					data.Info = []directoryInfoEntry{}
-					dirInfoCache := lib.NewDirInfoCache()
+					dirInfoCache := client.NewDirInfoCache()
 					populateInfo := func(info msgs.IsDirectoryInfoEntry) {
-						inheritedFrom, err := client.ResolveDirectoryInfoEntry(log, dirInfoCache, id, info)
+						inheritedFrom, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, id, info)
 						if err != nil {
 							panic(err)
 						}
@@ -1383,10 +1384,10 @@ func handleInode(
 				title := fmt.Sprintf("File %v", data.Id)
 				{
 					resp := msgs.StatFileResp{}
-					err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
+					err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
 					if err == msgs.FILE_NOT_FOUND {
 						transResp := msgs.StatTransientFileResp{}
-						transErr := client.ShardRequest(log, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &transResp)
+						transErr := c.ShardRequest(log, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &transResp)
 						if transErr == nil {
 							data.Mtime = transResp.Mtime.String()
 							data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(transResp.Size), transResp.Size)
@@ -1411,7 +1412,7 @@ func handleInode(
 					req := msgs.FileSpansReq{FileId: id}
 					resp := msgs.FileSpansResp{}
 					for {
-						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							panic(err)
 						}
 						for _, span := range resp.Spans {
@@ -1502,12 +1503,12 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 				copy(blockService.Ip1[:], ip1[:])
 				copy(blockService.Ip2[:], ip2[:])
 
-				conn, err = lib.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+				conn, err = client.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
 				if err != nil {
 					panic(err)
 				}
 			}
-			if err := lib.FetchBlock(log, conn, &blockService, blockId, 0, uint32(size)); err != nil {
+			if err := client.FetchBlock(log, conn, &blockService, blockId, 0, uint32(size)); err != nil {
 				panic(err)
 			}
 			w.Header().Set("Content-Type", "application/x-binary")
@@ -2394,7 +2395,7 @@ func main() {
 	log.Info("  dataDir = %s", *dataDir)
 
 	if *mtu != 0 {
-		lib.SetMTU(*mtu)
+		client.SetMTU(*mtu)
 	}
 
 	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {

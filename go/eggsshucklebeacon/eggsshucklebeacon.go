@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -39,16 +40,16 @@ func handleError(
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
-		lib.WriteShuckleResponseError(log, conn, eggsErr)
+		client.WriteShuckleResponseError(log, conn, eggsErr)
 	} else {
-		lib.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
+		client.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
 	}
 }
 
 func handleRequest(log *lib.Logger, shuckleResp *msgs.ShuckleResp, conn *net.TCPConn) {
 	defer conn.Close()
 
-	req, err := lib.ReadShuckleRequest(log, conn)
+	req, err := client.ReadShuckleRequest(log, conn)
 	if err != nil {
 		handleError(log, conn, err)
 		return
@@ -60,7 +61,7 @@ func handleRequest(log *lib.Logger, shuckleResp *msgs.ShuckleResp, conn *net.TCP
 		return
 	}
 	log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
-	if err := lib.WriteShuckleResponse(log, conn, resp); err != nil {
+	if err := client.WriteShuckleResponse(log, conn, resp); err != nil {
 		handleError(log, conn, err)
 	}
 }

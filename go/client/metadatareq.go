@@ -1,10 +1,11 @@
-package lib
+package client
 
 import (
 	"net"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -14,7 +15,7 @@ func (c *Client) newRequestId() uint64 {
 }
 
 func (c *Client) metadataRequest(
-	log *Logger,
+	log *lib.Logger,
 	shid int16, // -1 for cdc
 	addrs *[2]net.UDPAddr,
 	msgKind uint8,

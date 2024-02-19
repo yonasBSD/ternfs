@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -243,7 +244,7 @@ func registerPeriodically(
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
-		_, err := lib.ShuckleRequest(log, nil, shuckleAddress, &req)
+		_, err := client.ShuckleRequest(log, nil, shuckleAddress, &req)
 		if err != nil {
 			log.RaiseNC(alert, "could not register block services with %+v: %v", shuckleAddress, err)
 			time.Sleep(100 * time.Millisecond)
@@ -270,7 +271,7 @@ func updateBlockServicesInfoForever(
 }
 
 func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) error {
-	expectedMac, good := lib.CheckBlockEraseCertificate(blockServiceId, cipher, req)
+	expectedMac, good := client.CheckBlockEraseCertificate(blockServiceId, cipher, req)
 	if !good {
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
@@ -279,7 +280,7 @@ func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, 
 }
 
 func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
-	blockPath := lib.BlockIdToPath(basePath, blockId)
+	blockPath := client.BlockIdToPath(basePath, blockId)
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
 		if os.IsNotExist(err) {
@@ -306,7 +307,7 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 }
 
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
-	blockPath := lib.BlockIdToPath(basePath, blockId)
+	blockPath := client.BlockIdToPath(basePath, blockId)
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
@@ -324,18 +325,18 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	remainingSize := int(fi.Size()) - int(offset)
 	if int(count) > remainingSize {
 		log.RaiseAlert("was requested %v bytes, but only got %v", count, remainingSize)
-		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		client.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
 	if remainingSize < 0 {
 		log.RaiseAlert("trying to read beyond EOF")
-		lib.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		client.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
 	if _, err := f.Seek(int64(offset), 0); err != nil {
 		return err
 	}
-	if err := lib.WriteBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
+	if err := client.WriteBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
 		return err
 	}
 	lf := io.LimitedReader{
@@ -374,7 +375,7 @@ func isIOErr(err error) bool {
 }
 
 func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, size uint32, crc msgs.Crc, conn *net.TCPConn) error {
-	blockPath := lib.BlockIdToPath(basePath, blockId)
+	blockPath := client.BlockIdToPath(basePath, blockId)
 	log.Debug("checking block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
@@ -413,14 +414,14 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		log.RaiseAlert("expected crc %v for block %v, got %v instead", crc, blockPath, msgs.Crc(actualCrc))
 		return msgs.BAD_BLOCK_CRC
 	}
-	if err := lib.WriteBlocksResponse(log, conn, &msgs.CheckBlockResp{}); err != nil {
+	if err := client.WriteBlocksResponse(log, conn, &msgs.CheckBlockResp{}); err != nil {
 		return err
 	}
 	return nil
 }
 
 func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
-	expectedMac, good := lib.CheckBlockWriteCertificate(cipher, blockServiceId, req)
+	expectedMac, good := client.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
 		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
@@ -480,7 +481,7 @@ func writeBlock(
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
-	filePath := lib.BlockIdToPath(basePath, blockId)
+	filePath := client.BlockIdToPath(basePath, blockId)
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err
@@ -492,7 +493,7 @@ func writeBlock(
 	if msgs.Crc(crc) != expectedCrc {
 		os.Remove(tmpName)
 		log.RaiseAlert("bad crc for block %v, got %v in req, computed %v", blockId, msgs.Crc(crc), expectedCrc)
-		lib.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
+		client.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 		return nil
 	}
 	if err := os.Rename(tmpName, filePath); err != nil {
@@ -513,7 +514,7 @@ func writeBlock(
 		return err
 	}
 	log.Debug("writing proof")
-	if err := lib.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
+	if err := client.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
 	atomic.AddUint64(&env.stats[blockServiceId].blocksWritten, 1)
@@ -528,7 +529,7 @@ func testWrite(
 		return err
 	}
 	os.Remove(tmpName)
-	if err := lib.WriteBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
+	if err := client.WriteBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
 		return err
 	}
 	return nil
@@ -591,7 +592,7 @@ func handleRequestError(
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
 		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
-		lib.WriteBlocksResponseError(log, conn, err.(msgs.ErrCode))
+		client.WriteBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
 	}
 
@@ -609,7 +610,7 @@ func handleRequestError(
 	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
-		lib.WriteBlocksResponseError(log, conn, eggsErr)
+		client.WriteBlocksResponseError(log, conn, eggsErr)
 		// kill the connection in bad cases
 		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) {
 			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
@@ -620,7 +621,7 @@ func handleRequestError(
 		}
 	} else {
 		// attempt to say goodbye, ignore errors
-		lib.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+		client.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
 		log.Info("tearing down connection from %v after internal error %v", conn.RemoteAddr(), err)
 		return false
 	}
@@ -645,7 +646,7 @@ func handleSingleRequest(
 	if connectionTimeout != 0 {
 		conn.SetReadDeadline(time.Now().Add(connectionTimeout))
 	}
-	blockServiceId, req, err := lib.ReadBlocksRequest(log, conn)
+	blockServiceId, req, err := client.ReadBlocksRequest(log, conn)
 	if err != nil {
 		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, 0, 0, err)
 	}
@@ -678,7 +679,7 @@ func handleSingleRequest(
 				resp := msgs.EraseBlockResp{
 					Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
 				}
-				if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+				if err := client.WriteBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
 					return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 				}
@@ -708,7 +709,7 @@ func handleSingleRequest(
 		resp := msgs.EraseBlockResp{
 			Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 		}
-		if err := lib.WriteBlocksResponse(log, conn, &resp); err != nil {
+		if err := client.WriteBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
@@ -907,7 +908,7 @@ func main() {
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
-	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", time.Minute, "")
@@ -1055,8 +1056,8 @@ func main() {
 		{
 			alert := log.NewNCAlert(0)
 			log.RaiseNC(alert, "fetching block services")
-			timeouts := lib.NewReqTimeouts(lib.DefaultShuckleTimeout.Initial, lib.DefaultShuckleTimeout.Max, 0, lib.DefaultShuckleTimeout.Growth, lib.DefaultShuckleTimeout.Jitter)
-			resp, err := lib.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
+			timeouts := lib.NewReqTimeouts(client.DefaultShuckleTimeout.Initial, client.DefaultShuckleTimeout.Max, 0, client.DefaultShuckleTimeout.Growth, client.DefaultShuckleTimeout.Jitter)
+			resp, err := client.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
 			if err != nil {
 				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 			}

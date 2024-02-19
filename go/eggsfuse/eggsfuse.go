@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 
@@ -20,9 +21,9 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-var client *lib.Client
+var c *client.Client
 var logger *lib.Logger
-var dirInfoCache *lib.DirInfoCache
+var dirInfoCache *client.DirInfoCache
 var bufPool *lib.BufPool
 
 func eggsErrToErrno(err error) syscall.Errno {
@@ -110,7 +111,7 @@ func inodeTypeToMode(typ msgs.InodeType) uint32 {
 }
 
 func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardResponse) syscall.Errno {
-	if err := client.ShardRequest(logger, shid, req, resp); err != nil {
+	if err := c.ShardRequest(logger, shid, req, resp); err != nil {
 		return eggsErrToErrno(err)
 	}
 
@@ -118,7 +119,7 @@ func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardRespo
 }
 
 func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
-	if err := client.CDCRequest(logger, req, resp); err != nil {
+	if err := c.CDCRequest(logger, req, resp); err != nil {
 		switch eggsErr := err.(type) {
 		case msgs.ErrCode:
 			return eggsErrToErrno(eggsErr)
@@ -151,12 +152,12 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 		out.Mtimensec = mtimens
 	} else {
 		resp := msgs.StatFileResp{}
-		err := client.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
+		err := c.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
 
 		// if we tolerate transient files, try that
 		if eggsErr, ok := err.(msgs.ErrCode); ok && eggsErr == msgs.FILE_NOT_FOUND && allowTransient {
 			resp := msgs.StatTransientFileResp{}
-			if newErr := client.ShardRequest(logger, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &resp); newErr != nil {
+			if newErr := c.ShardRequest(logger, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &resp); newErr != nil {
 				logger.Debug("ignoring transient stat error %v", newErr)
 				return eggsErrToErrno(err) // use original error
 			}
@@ -408,7 +409,7 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 		f.data = nil
 	}()
 
-	if err := client.WriteFile(logger, bufPool, dirInfoCache, f.dir, f.id, f.cookie, bytes.NewReader(*f.data)); err != nil {
+	if err := c.WriteFile(logger, bufPool, dirInfoCache, f.dir, f.id, f.cookie, bytes.NewReader(*f.data)); err != nil {
 		f.writeErr = eggsErrToErrno(err)
 		return f.writeErr
 	}
@@ -537,7 +538,7 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	buf := bytes.NewBuffer(*data)
 
 	var r io.ReadCloser
-	r, err = client.ReadFile(logger, bufPool, n.id)
+	r, err = c.ReadFile(logger, bufPool, n.id)
 	if err != nil {
 		return 0, 0, eggsErrToErrno(err)
 	}
@@ -550,7 +551,7 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	data = &bufData
 
 	if flags|syscall.O_NOATIME != 0 {
-		client.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
+		c.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
 			Id:    n.id,
 			Atime: uint64(time.Now().UnixNano()) | (uint64(1) << 63),
 		})
@@ -630,7 +631,7 @@ func (n *eggsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 		return nil, syscall.EINVAL
 	}
 
-	fileReader, err := client.ReadFile(logger, bufPool, n.id)
+	fileReader, err := c.ReadFile(logger, bufPool, n.id)
 	if err != nil {
 		return nil, eggsErrToErrno(err)
 	}
@@ -685,7 +686,7 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
-	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
@@ -732,27 +733,27 @@ func main() {
 		pprof.StartCPUProfile(f) // we stop in terminate()
 	}
 
-	counters := lib.NewClientCounters()
+	counters := client.NewClientCounters()
 
 	var err error
-	client, err = lib.NewClient(logger, nil, *shuckleAddress)
+	c, err = client.NewClient(logger, nil, *shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
-	client.SetCounters(counters)
+	c.SetCounters(counters)
 
-	shardTimeouts := lib.DefaultShardTimeout
+	shardTimeouts := client.DefaultShardTimeout
 	if *initialShardTimeout != 0 {
 		shardTimeouts.Initial = *initialShardTimeout
 	}
-	client.SetShardTimeouts(&shardTimeouts)
-	cdcTimeouts := lib.DefaultCDCTimeout
+	c.SetShardTimeouts(&shardTimeouts)
+	cdcTimeouts := client.DefaultCDCTimeout
 	if *initialCDCTimeout != 0 {
 		shardTimeouts.Initial = *initialCDCTimeout
 	}
-	client.SetCDCTimeouts(&cdcTimeouts)
+	c.SetCDCTimeouts(&cdcTimeouts)
 
-	dirInfoCache = lib.NewDirInfoCache()
+	dirInfoCache = client.NewDirInfoCache()
 
 	bufPool = lib.NewBufPool()
 

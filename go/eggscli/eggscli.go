@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -46,12 +47,12 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
+func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
-	err := lib.Parwalk(
+	err := client.Parwalk(
 		log,
-		client,
+		c,
 		"/",
 		func(parent msgs.InodeId, id msgs.InodeId, path string) error {
 			if id.Type() == msgs.DIRECTORY {
@@ -75,7 +76,7 @@ func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
 			}
 			spansResp := &msgs.FileSpansResp{}
 			for {
-				if err := client.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
+				if err := c.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
 					log.ErrorNoAlert("could not read spans for %v: %v", id, err)
 					return err
 				}
@@ -100,7 +101,7 @@ func outputFullFileSizes(log *lib.Logger, client *lib.Client) {
 	}
 }
 
-func outputBriefFileSizes(log *lib.Logger, client *lib.Client) {
+func outputBriefFileSizes(log *lib.Logger, c *client.Client) {
 	// histogram
 	histoBins := 256
 	histo := lib.NewHistogram(histoBins, 1024, 1.1)
@@ -114,13 +115,13 @@ func outputBriefFileSizes(log *lib.Logger, client *lib.Client) {
 			filesReq := msgs.VisitFilesReq{}
 			filesResp := msgs.VisitFilesResp{}
 			for {
-				if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+				if err := c.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
 					log.ErrorNoAlert("could not get files in shard %v: %v, terminating this shard, results will be incomplete", shid, err)
 					return
 				}
 				for _, file := range filesResp.Ids {
 					statResp := msgs.StatFileResp{}
-					if err := client.ShardRequest(log, shid, &msgs.StatFileReq{Id: file}, &statResp); err != nil {
+					if err := c.ShardRequest(log, shid, &msgs.StatFileReq{Id: file}, &statResp); err != nil {
 						log.ErrorNoAlert("could not stat file %v in shard %v: %v, results will be incomplete", file, shid, err)
 						continue
 					}
@@ -169,7 +170,7 @@ func formatSize(bytes uint64) string {
 
 func main() {
 	flag.Usage = usage
-	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
 	shardInitialTimeout := flag.Duration("shard-initial-timeout", 0, "")
 	shardMaxTimeout := flag.Duration("shard-max-timeout", 0, "")
@@ -181,18 +182,18 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 
 	var log *lib.Logger
-	var client *lib.Client
+	var c *client.Client
 
 	if *mtu != "" {
 		if *mtu == "max" {
-			lib.SetMTU(msgs.MAX_UDP_MTU)
+			client.SetMTU(msgs.MAX_UDP_MTU)
 		} else {
 			mtuU, err := strconv.ParseUint(*mtu, 0, 16)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "could not parse mtu: %v", err)
 				os.Exit(2)
 			}
-			lib.SetMTU(mtuU)
+			client.SetMTU(mtuU)
 		}
 	}
 
@@ -201,10 +202,10 @@ func main() {
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC. If not present, they'll all be collected.")
 	collectRun := func() {
-		dirInfoCache := lib.NewDirInfoCache()
+		dirInfoCache := client.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
-			state := &lib.CollectDirectoriesState{}
-			if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+			state := &client.CollectDirectoriesState{}
+			if err := client.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &client.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {
@@ -212,9 +213,9 @@ func main() {
 			if dirId.Type() != msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
-			defer client.Close()
-			var stats lib.CollectDirectoriesStats
-			if err := lib.CollectDirectory(log, client, dirInfoCache, &stats, dirId); err != nil {
+			defer c.Close()
+			var stats client.CollectDirectoriesStats
+			if err := client.CollectDirectory(log, c, dirInfoCache, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)
@@ -231,14 +232,14 @@ func main() {
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func() {
 		if *destructFileIdU64 == 0 {
-			state := &lib.DestructFilesState{}
-			opts := &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
+			state := &client.DestructFilesState{}
+			opts := &client.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
-				if err := lib.DestructFilesInAllShards(log, client, opts, state); err != nil {
+				if err := client.DestructFilesInAllShards(log, c, opts, state); err != nil {
 					panic(err)
 				}
 			} else {
-				if err := lib.DestructFiles(log, client, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+				if err := client.DestructFiles(log, c, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
 					panic(err)
 				}
 			}
@@ -247,10 +248,10 @@ func main() {
 			if fileId.Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a file/symlink", fileId))
 			}
-			stats := lib.DestructFilesStats{}
+			stats := client.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-			if err := lib.DestructFile(log, client, &stats, fileId, 0, destructFileCookie); err != nil {
+			if err := client.DestructFile(log, c, &stats, fileId, 0, destructFileCookie); err != nil {
 				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
 			}
 			log.Info("finished destructing %v, stats: %+v", fileId, stats)
@@ -282,7 +283,7 @@ func main() {
 			os.Exit(2)
 		}
 		log.Info("requesting block services")
-		blockServicesResp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -329,23 +330,23 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		stats := lib.MigrateStats{}
+		stats := client.MigrateStats{}
 		progressReportAlert := log.NewNCAlert(10 * time.Second)
 		for failureDomain, bss := range blockServicesToMigrate {
 			for _, blockServiceId := range *bss {
 				log.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := lib.MigrateBlocksInAllShards(log, client, &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := client.MigrateBlocksInAllShards(log, c, &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := lib.MigrateBlocksInFile(log, client, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := client.MigrateBlocksInFile(log, c, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := lib.MigrateBlocks(log, client, &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := client.MigrateBlocks(log, c, &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
@@ -373,7 +374,7 @@ func main() {
 			panic(fmt.Errorf("could not decode shard req: %w", err))
 		}
 		shard := msgs.ShardId(*shardReqShard)
-		if err := client.ShardRequest(log, shard, req, resp); err != nil {
+		if err := c.ShardRequest(log, shard, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -412,7 +413,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := client.CDCRequest(log, req, resp); err != nil {
+		if err := c.CDCRequest(log, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -451,7 +452,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := client.MergeDirectoryInfo(log, id, entry); err != nil {
+		if err := c.MergeDirectoryInfo(log, id, entry); err != nil {
 			panic(err)
 		}
 	}
@@ -465,7 +466,7 @@ func main() {
 	removeDirInfoTag := removeDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
 	removeDirInfoRun := func() {
 		id := msgs.InodeId(*removeDirInfoU64)
-		if err := client.RemoveDirectoryInfoEntry(log, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
+		if err := c.RemoveDirectoryInfoEntry(log, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
 			panic(err)
 		}
 	}
@@ -490,7 +491,7 @@ func main() {
 			}
 		}
 		bufPool := lib.NewBufPool()
-		fileId, err := client.CreateFile(log, bufPool, lib.NewDirInfoCache(), path, input)
+		fileId, err := c.CreateFile(log, bufPool, client.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}
@@ -513,12 +514,12 @@ func main() {
 				panic(err)
 			}
 		}
-		id, err := client.ResolvePath(log, *cpOutofInput)
+		id, err := c.ResolvePath(log, *cpOutofInput)
 		if err != nil {
 			panic(err)
 		}
 		bufPool := lib.NewBufPool()
-		r, err := client.ReadFile(log, bufPool, id)
+		r, err := c.ReadFile(log, bufPool, id)
 		if err != nil {
 			panic(err)
 		}
@@ -536,7 +537,7 @@ func main() {
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
 	blockReqRun := func() {
-		resp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -561,7 +562,7 @@ func main() {
 			Crc:     msgs.Crc(crc32c.Sum(0, fileContents)),
 			Size:    uint32(len(fileContents)),
 		}
-		req.Certificate = lib.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
+		req.Certificate = client.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
 		log.Info("request: %+v", req)
 	}
 	commands["write-block-req"] = commandSpec{
@@ -573,7 +574,7 @@ func main() {
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
 	testBlockWriteRun := func() {
-		resp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -598,7 +599,7 @@ func main() {
 		}
 		conns := make([]*net.TCPConn, len(bsInfos))
 		for i := 0; i < len(conns); i++ {
-			conn, err := lib.BlockServiceConnection(log, bsInfos[i].Ip1, bsInfos[i].Port1, bsInfos[i].Ip2, bsInfos[i].Port2)
+			conn, err := client.BlockServiceConnection(log, bsInfos[i].Ip1, bsInfos[i].Port1, bsInfos[i].Ip2, bsInfos[i].Port2)
 			if err != nil {
 				panic(err)
 			}
@@ -612,7 +613,7 @@ func main() {
 			conn := conns[i]
 			bsId := bsInfos[i].Id
 			go func() {
-				thisErr := lib.TestWrite(log, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
+				thisErr := client.TestWrite(log, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
 				if thisErr != nil {
 					err = thisErr
 				}
@@ -655,7 +656,7 @@ func main() {
 		}
 		if *blockserviceFlagsFailureDomain != "" {
 			log.Info("requesting block services")
-			blockServicesResp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+			blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 			if err != nil {
 				panic(err)
 			}
@@ -688,7 +689,7 @@ func main() {
 		}
 		for _, bsId := range blockServiceIds {
 			log.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
-			_, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
+			_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
 				Id:        bsId,
 				Flags:     flag,
 				FlagsMask: mask,
@@ -707,9 +708,9 @@ func main() {
 	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
 	fileSizesRun := func() {
 		if *fileSizesBrief {
-			outputBriefFileSizes(log, client)
+			outputBriefFileSizes(log, c)
 		} else {
-			outputFullFileSizes(log, client)
+			outputFullFileSizes(log, c)
 		}
 	}
 	commands["file-sizes"] = commandSpec{
@@ -726,9 +727,9 @@ func main() {
 		analyzedFiles := uint64(0)
 		startedAt := time.Now()
 		go func() {
-			err := lib.Parwalk(
+			err := client.Parwalk(
 				log,
-				client,
+				c,
 				"/",
 				func(parent, id msgs.InodeId, path string) error {
 					if id.Type() == msgs.DIRECTORY {
@@ -739,7 +740,7 @@ func main() {
 					}
 					resp := msgs.FileSpansResp{}
 					for {
-						if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							log.ErrorNoAlert("could not get spans for file %q, id %v", id, path)
 							return err
 						}
@@ -794,7 +795,7 @@ func main() {
 				req := msgs.VisitFilesReq{}
 				resp := msgs.VisitFilesResp{}
 				for {
-					if err := client.ShardRequest(log, shid, &req, &resp); err != nil {
+					if err := c.ShardRequest(log, shid, &req, &resp); err != nil {
 						ch <- err
 						return
 					}
@@ -836,9 +837,9 @@ func main() {
 		histoCountBins := make([]uint64, 256)
 		histogram := lib.NewHistogram(len(histoSizeBins), 255, 1.15) // max: ~900PB
 		startedAt := time.Now()
-		err := lib.Parwalk(
+		err := client.Parwalk(
 			log,
-			client,
+			c,
 			*duDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if id.Type() == msgs.DIRECTORY {
@@ -846,7 +847,7 @@ func main() {
 					return nil
 				}
 				resp := msgs.StatFileResp{}
-				if err := client.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+				if err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
 					return err
 				}
 				atomic.AddUint64(&totalSize, resp.Size)
@@ -886,9 +887,9 @@ func main() {
 	findDir := findCmd.String("path", "/", "")
 	findName := findCmd.String("name", "", "")
 	findRun := func() {
-		err := lib.Parwalk(
+		err := client.Parwalk(
 			log,
-			client,
+			c,
 			*findDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if strings.HasSuffix(path, "/"+*findName) {
@@ -910,8 +911,8 @@ func main() {
 	scrubFileId := scrubFileCmd.Uint64("id", 0, "The file to scrub")
 	scrubFileRun := func() {
 		file := msgs.InodeId(*scrubFileId)
-		stats := &lib.ScrubState{}
-		if err := lib.ScrubFile(log, client, stats, file); err != nil {
+		stats := &client.ScrubState{}
+		if err := client.ScrubFile(log, c, stats, file); err != nil {
 			panic(err)
 		}
 		log.Info("scrub stats: %+v", stats)
@@ -922,8 +923,8 @@ func main() {
 	}
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
-		stats := lib.ScrubState{}
-		if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		stats := client.ScrubState{}
+		if err := client.ScrubFilesInAllShards(log, c, &client.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 
@@ -959,13 +960,13 @@ func main() {
 	spec.flags.Parse(flag.Args()[1:])
 	noRunawayArgs(spec.flags)
 
-	client, err := lib.NewClient(log, nil, *shuckleAddress)
+	c, err := client.NewClient(log, nil, *shuckleAddress)
 	if err != nil {
 		panic(fmt.Errorf("could not create client: %v", err))
 	}
-	defer client.Close()
+	defer c.Close()
 
-	shardTimeouts := lib.DefaultShardTimeout
+	shardTimeouts := client.DefaultShardTimeout
 	printTimeouts := false
 	if *shardInitialTimeout > 0 {
 		printTimeouts = true
@@ -979,8 +980,8 @@ func main() {
 		printTimeouts = true
 		shardTimeouts.Overall = *shardOverallTimeout
 	}
-	client.SetShardTimeouts(&shardTimeouts)
-	cdcTimeouts := lib.DefaultCDCTimeout
+	c.SetShardTimeouts(&shardTimeouts)
+	cdcTimeouts := client.DefaultCDCTimeout
 	if *cdcInitialTimeout > 0 {
 		printTimeouts = true
 		cdcTimeouts.Initial = *cdcInitialTimeout
@@ -993,7 +994,7 @@ func main() {
 		printTimeouts = true
 		cdcTimeouts.Overall = *cdcOverallTimeout
 	}
-	client.SetCDCTimeouts(&cdcTimeouts)
+	c.SetCDCTimeouts(&cdcTimeouts)
 	if printTimeouts {
 		log.Info("shard timeouts: %+v", shardTimeouts)
 		log.Info("CDC timeouts: %+v", cdcTimeouts)

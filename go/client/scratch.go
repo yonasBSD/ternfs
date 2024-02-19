@@ -1,7 +1,8 @@
-package lib
+package client
 
 import (
 	"time"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -11,7 +12,7 @@ type scratchFile struct {
 	size   uint64
 }
 
-func ensureScratchFile(log *Logger, client *Client, shard msgs.ShardId, file *scratchFile) error {
+func ensureScratchFile(log *lib.Logger, client *Client, shard msgs.ShardId, file *scratchFile) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
@@ -41,7 +42,7 @@ type keepScratchFileAlive struct {
 }
 
 func startToKeepScratchFileAlive(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	scratchFile *scratchFile,
 ) keepScratchFileAlive {

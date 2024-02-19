@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
@@ -167,7 +168,7 @@ func main() {
 		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	lib.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
+	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
 
 	// Start CDC
 	{
@@ -210,7 +211,7 @@ func main() {
 	}
 
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	lib.WaitForClient(log, shuckleAddress, waitShuckleFor)
+	client.WaitForClient(log, shuckleAddress, waitShuckleFor)
 
 	if !*noFuse {
 		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{

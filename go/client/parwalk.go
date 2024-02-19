@@ -4,10 +4,11 @@
 // This code is an MVP, it doesn't properly handle queueing between
 // threads (100,000 queue len mitigates this), and also leaks goroutines
 // blocked forever.
-package lib
+package client
 
 import (
 	"sync"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -24,7 +25,7 @@ type parwalkEnv struct {
 }
 
 func (env *parwalkEnv) visit(
-	log *Logger,
+	log *lib.Logger,
 	parent msgs.InodeId,
 	id msgs.InodeId,
 	path string,
@@ -49,7 +50,7 @@ func (env *parwalkEnv) visit(
 }
 
 func (env *parwalkEnv) process(
-	log *Logger,
+	log *lib.Logger,
 	id msgs.InodeId,
 	path string,
 ) error {
@@ -82,7 +83,7 @@ func (env *parwalkEnv) process(
 }
 
 func Parwalk(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	root string,
 	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error,

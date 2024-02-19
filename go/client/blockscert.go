@@ -1,9 +1,10 @@
-package lib
+package client
 
 import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -14,7 +15,7 @@ func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockService
 	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
 	binary.Write(w, binary.LittleEndian, uint32(req.Crc))
 	binary.Write(w, binary.LittleEndian, uint32(req.Size))
-	return CBCMAC(cipher, w.Bytes())
+	return lib.CBCMAC(cipher, w.Bytes())
 }
 
 func CheckBlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) ([8]byte, bool) {
@@ -28,6 +29,6 @@ func CheckBlockEraseCertificate(blockServiceId msgs.BlockServiceId, cipher ciphe
 	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
 	w.Write([]byte{'e'})
 	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
-	expectedMac := CBCMAC(cipher, w.Bytes())
+	expectedMac := lib.CBCMAC(cipher, w.Bytes())
 	return expectedMac, expectedMac == req.Certificate
 }

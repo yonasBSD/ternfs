@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -20,7 +21,7 @@ type createInode struct {
 func parallelDirsTest(
 	log *lib.Logger,
 	shuckleAddress string,
-	counters *lib.ClientCounters,
+	counters *client.ClientCounters,
 ) {
 	numRootDirs := 10
 	numThreads := 1000
@@ -31,7 +32,7 @@ func parallelDirsTest(
 		return fmt.Sprintf(fmt.Sprintf("%%0%dd-%%d", numThreadsDigits), tid, i)
 	}
 
-	client, err := lib.NewClient(log, nil, shuckleAddress)
+	client, err := client.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}

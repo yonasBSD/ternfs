@@ -1,8 +1,9 @@
-package lib
+package client
 
 import (
 	"fmt"
 	"sync/atomic"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -11,7 +12,7 @@ type ZeroBlockServiceFilesStats struct {
 	ZeroBlockServiceFilesRemoved uint64
 }
 
-func CollectZeroBlockServiceFiles(log *Logger, client *Client, stats *ZeroBlockServiceFilesStats) error {
+func CollectZeroBlockServiceFiles(log *lib.Logger, client *Client, stats *ZeroBlockServiceFilesStats) error {
 	log.Info("starting to collect block services files")
 	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, 256)
 	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, 256)

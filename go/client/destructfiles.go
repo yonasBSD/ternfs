@@ -1,9 +1,10 @@
-package lib
+package client
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
@@ -24,7 +25,7 @@ type DestructFilesState struct {
 }
 
 func DestructFile(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	stats *DestructFilesStats,
 	id msgs.InodeId,
@@ -105,7 +106,7 @@ type destructFileRequest struct {
 }
 
 func destructFilesWorker(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	stats *DestructFilesState,
 	shid msgs.ShardId,
@@ -133,7 +134,7 @@ func destructFilesWorker(
 }
 
 func destructFilesScraper(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	state *DestructFilesState,
 	terminateChan chan any,
@@ -185,7 +186,7 @@ type DestructFilesOptions struct {
 }
 
 func DestructFiles(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
@@ -200,7 +201,7 @@ func DestructFiles(
 	log.Info("destructing files in shard %v", shid)
 
 	go func() {
-		defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		destructFilesScraper(log, client, stats, terminateChan, shid, workersChan)
 	}()
 
@@ -208,7 +209,7 @@ func DestructFiles(
 	workersWg.Add(opts.NumWorkersPerShard)
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
-			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			destructFilesWorker(log, client, stats, shid, workersChan, terminateChan)
 			workersWg.Done()
 		}()
@@ -230,7 +231,7 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log *Logger,
+	log *lib.Logger,
 	client *Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
@@ -242,7 +243,7 @@ func DestructFilesInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			defer func() { HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			if err := DestructFiles(log, client, opts, stats, shid); err != nil {
 				panic(err)
 			}

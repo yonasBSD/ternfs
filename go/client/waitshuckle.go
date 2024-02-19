@@ -1,12 +1,13 @@
-package lib
+package client
 
 import (
 	"fmt"
 	"time"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
-func WaitForBlockServices(ll *Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) []msgs.BlockServiceInfo {
+func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) []msgs.BlockServiceInfo {
 	var err error
 	for {
 		var resp msgs.ShuckleResponse
@@ -32,7 +33,7 @@ func WaitForBlockServices(ll *Logger, shuckleAddress string, expectedBlockServic
 }
 
 // getting a client implies having all shards and cdc.
-func WaitForClient(log *Logger, shuckleAddress string, timeout time.Duration) {
+func WaitForClient(log *lib.Logger, shuckleAddress string, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client

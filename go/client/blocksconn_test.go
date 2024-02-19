@@ -1,4 +1,4 @@
-package lib
+package client
 
 /*
 func TestBlocksConn(t *testing.T) {

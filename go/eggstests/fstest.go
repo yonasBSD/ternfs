@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -47,8 +48,8 @@ type fsTestHarness[Id comparable] interface {
 }
 
 type apiFsTestHarness struct {
-	client       *lib.Client
-	dirInfoCache *lib.DirInfoCache
+	client       *client.Client
+	dirInfoCache *client.DirInfoCache
 	readBufPool  *lib.BufPool
 }
 
@@ -597,7 +598,7 @@ func (d *fsTestDir[Id]) clean(log *lib.Logger, harness fsTestHarness[Id]) {
 }
 
 // Just the first block service id we can find
-func findBlockServiceToPurge(log *lib.Logger, client *lib.Client) msgs.BlockServiceId {
+func findBlockServiceToPurge(log *lib.Logger, client *client.Client) msgs.BlockServiceId {
 	filesReq := msgs.VisitFilesReq{}
 	filesResp := msgs.VisitFilesResp{}
 	for {
@@ -626,13 +627,13 @@ func findBlockServiceToPurge(log *lib.Logger, client *lib.Client) msgs.BlockServ
 func corruptFiles(
 	log *lib.Logger,
 	shuckleAddress string,
-	client *lib.Client,
+	c *client.Client,
 	opts *fsTestOpts,
 	rand *wyhash.Rand,
 ) uint64 {
 	blockServicesToDataDirs := make(map[msgs.BlockServiceId]string)
 	{
-		resp, err := lib.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
+		resp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -646,7 +647,7 @@ func corruptFiles(
 	corrupted := uint64(0)
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
-		if err := client.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+		if err := c.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
 			panic(err)
 		}
 		for _, file := range filesResp.Ids {
@@ -659,7 +660,7 @@ func corruptFiles(
 			}
 			fileSpansResp := msgs.FileSpansResp{}
 			for {
-				if err := client.ShardRequest(log, file.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+				if err := c.ShardRequest(log, file.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 					panic(err)
 				}
 				for spanIx := range fileSpansResp.Spans {
@@ -686,7 +687,7 @@ func corruptFiles(
 					blocksToCorruptIxs = blocksToCorruptIxs[:numBlocksToCorrupt]
 					for ix := range blocksToCorruptIxs {
 						block := body.Blocks[ix]
-						path := lib.BlockIdToPath(blockServicesToDataDirs[fileSpansResp.BlockServices[block.BlockServiceIx].Id], block.BlockId)
+						path := client.BlockIdToPath(blockServicesToDataDirs[fileSpansResp.BlockServices[block.BlockServiceIx].Id], block.BlockId)
 						if rand.Uint64()&1 == 0 {
 							log.Debug("removing block %v at %q", block.BlockId, path)
 							// remove block
@@ -731,11 +732,11 @@ func corruptFiles(
 
 func fsTestInternal[Id comparable](
 	log *lib.Logger,
-	client *lib.Client,
+	c *client.Client,
 	state *fsTestState[Id],
 	shuckleAddress string,
 	opts *fsTestOpts,
-	counters *lib.ClientCounters,
+	counters *client.ClientCounters,
 	harness fsTestHarness[Id],
 	rootId Id,
 ) {
@@ -802,7 +803,7 @@ func fsTestInternal[Id comparable](
 	if opts.corruptFileProb > 0 {
 		// now flip bits in 10% of files, to test scrubbing
 		log.Info("corrupting %v%% of files", opts.corruptFileProb*100)
-		corruptedBlocks := corruptFiles(log, shuckleAddress, client, opts, rand)
+		corruptedBlocks := corruptFiles(log, shuckleAddress, c, opts, rand)
 		log.Info("corrupted %v blocks", corruptedBlocks)
 		// Now, scrub the corrupted blocks away. It would be nice to do this _after_
 		// we've checked the files, so that we also test recovery on the read side,
@@ -811,8 +812,8 @@ func fsTestInternal[Id comparable](
 		log.Info("scrubbing files")
 		{
 			// 100 attempts since we might be running with block service killer
-			var stats lib.ScrubState
-			if err := lib.ScrubFilesInAllShards(log, client, &lib.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, nil, &stats); err != nil {
+			var stats client.ScrubState
+			if err := client.ScrubFilesInAllShards(log, c, &client.ScrubOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, nil, &stats); err != nil {
 				panic(err)
 			}
 			if stats.Migrate.MigratedBlocks != corruptedBlocks {
@@ -855,17 +856,17 @@ func fsTestInternal[Id comparable](
 		// Now, try to migrate away from one block service, to stimulate that code path
 		// in tests somewhere.
 		if opts.maxFileSize > 0 {
-			client, err := lib.NewClient(log, nil, shuckleAddress)
+			c, err := client.NewClient(log, nil, shuckleAddress)
 			if err != nil {
 				panic(err)
 			}
-			client.SetCounters(counters)
-			defer client.Close()
-			blockServiceToPurge := findBlockServiceToPurge(log, client)
+			c.SetCounters(counters)
+			defer c.Close()
+			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 			progressReportAlert := log.NewNCAlert(10 * time.Second)
-			migrateStats := lib.MigrateStats{}
-			err = lib.MigrateBlocksInAllShards(log, client, &migrateStats, progressReportAlert, blockServiceToPurge)
+			migrateStats := client.MigrateStats{}
+			err = client.MigrateBlocksInAllShards(log, c, &migrateStats, progressReportAlert, blockServiceToPurge)
 			if err != nil {
 				panic(fmt.Errorf("could not migrate: %w", err))
 			}
@@ -890,26 +891,26 @@ func fsTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
-	counters *lib.ClientCounters,
+	counters *client.ClientCounters,
 	realFs string, // if non-empty, will run the tests using this mountpoint
 ) {
-	client, err := lib.NewClient(log, nil, shuckleAddress)
+	c, err := client.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
-	defer client.Close()
-	client.SetCounters(counters)
+	defer c.Close()
+	c.SetCounters(counters)
 	if realFs == "" {
 		harness := &apiFsTestHarness{
-			client:       client,
-			dirInfoCache: lib.NewDirInfoCache(),
+			client:       c,
+			dirInfoCache: client.NewDirInfoCache(),
 			readBufPool:  lib.NewBufPool(),
 		}
 		state := fsTestState[msgs.InodeId]{
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 		}
-		fsTestInternal[msgs.InodeId](log, client, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
+		fsTestInternal[msgs.InodeId](log, c, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	} else {
 		harness := &posixFsTestHarness{
 			bufPool: lib.NewBufPool(),
@@ -918,6 +919,6 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(realFs),
 		}
-		fsTestInternal[string](log, client, &state, shuckleAddress, opts, counters, harness, realFs)
+		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, realFs)
 	}
 }

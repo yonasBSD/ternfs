@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
@@ -48,7 +49,7 @@ func formatNanos(nanos uint64) string {
 	return fmt.Sprintf("%7.2f%s", amount, unit)
 }
 
-func formatCounters[K ~uint8](what string, counters map[uint8]*lib.ReqCounters) {
+func formatCounters[K ~uint8](what string, counters map[uint8]*client.ReqCounters) {
 	fmt.Printf("    %s reqs count/attempts/avg/median/total:\n", what)
 	for k, count := range counters {
 		if count.Attempts == 0 {
@@ -58,7 +59,7 @@ func formatCounters[K ~uint8](what string, counters map[uint8]*lib.ReqCounters) 
 	}
 }
 
-func totalRequests[K comparable](cs map[K]*lib.ReqCounters) uint64 {
+func totalRequests[K comparable](cs map[K]*client.ReqCounters) uint64 {
 	total := uint64(0)
 	for _, c := range cs {
 		total += c.Timings.Count()
@@ -86,14 +87,14 @@ func (r *RunTests) test(
 	log *lib.Logger,
 	name string,
 	extra string,
-	run func(counters *lib.ClientCounters),
+	run func(counters *client.ClientCounters),
 ) {
 	if !r.filter.Match([]byte(name)) {
 		fmt.Printf("skipping test %s\n", name)
 		return
 	}
 
-	counters := lib.NewClientCounters()
+	counters := client.NewClientCounters()
 
 	fmt.Printf("running %s test, %s\n", name, extra)
 	log.Info("running %s test, %s\n", name, extra) // also in log to track progress in CI more easily
@@ -101,9 +102,9 @@ func (r *RunTests) test(
 	run(counters)
 	elapsed := time.Since(t0)
 
-	cumShardCounters := make(map[uint8]*lib.ReqCounters)
+	cumShardCounters := make(map[uint8]*client.ReqCounters)
 	for shid, c := range counters.Shard {
-		cumShardCounters[shid] = lib.MergeReqCounters(c[:])
+		cumShardCounters[shid] = client.MergeReqCounters(c[:])
 	}
 	totalShardRequests := totalRequests(cumShardCounters)
 	totalCDCRequests := totalRequests(counters.CDC)
@@ -115,13 +116,13 @@ func (r *RunTests) test(
 		formatCounters[msgs.CDCMessageKind]("CDC", counters.CDC)
 	}
 
-	counters = lib.NewClientCounters()
+	counters = client.NewClientCounters()
 	t0 = time.Now()
 	cleanupAfterTest(log, r.shuckleAddress(), counters, r.pauseBlockServiceKiller)
 	elapsed = time.Since(t0)
-	cumShardCounters = make(map[uint8]*lib.ReqCounters)
+	cumShardCounters = make(map[uint8]*client.ReqCounters)
 	for shid, c := range counters.Shard {
-		cumShardCounters[shid] = lib.MergeReqCounters(c[:])
+		cumShardCounters[shid] = client.MergeReqCounters(c[:])
 	}
 	totalShardRequests = totalRequests(cumShardCounters)
 	totalCDCRequests = totalRequests(counters.CDC)
@@ -230,11 +231,11 @@ func (r *RunTests) run(
 	log *lib.Logger,
 ) {
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	client, err := lib.NewClient(log, nil, r.shuckleAddress())
+	c, err := client.NewClient(log, nil, r.shuckleAddress())
 	if err != nil {
 		panic(err)
 	}
-	defer client.Close()
+	defer c.Close()
 
 	{
 		// We want to immediately clean up everything when we run the GC manually
@@ -244,7 +245,7 @@ func (r *RunTests) run(
 		snapshotPolicy := &msgs.SnapshotPolicy{
 			DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0),
 		}
-		if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
+		if err := c.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
 			panic(err)
 		}
 	}
@@ -265,7 +266,7 @@ func (r *RunTests) run(
 		log,
 		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			fileHistoryTest(log, r.shuckleAddress(), &fileHistoryOpts, counters)
 		},
 	)
@@ -296,7 +297,7 @@ func (r *RunTests) run(
 		log,
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, "")
 		},
 	)
@@ -305,7 +306,7 @@ func (r *RunTests) run(
 		log,
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, r.mountPoint)
 		},
 	)
@@ -314,7 +315,7 @@ func (r *RunTests) run(
 		log,
 		"parallel dirs",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			parallelDirsTest(log, r.shuckleAddress(), counters)
 		},
 	)
@@ -326,7 +327,7 @@ func (r *RunTests) run(
 		log,
 		"large file",
 		fmt.Sprintf("%vGB", float64(largeFileOpts.fileSize)/1e9),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			largeFileTest(log, &largeFileOpts, r.mountPoint)
 		},
 	)
@@ -344,7 +345,7 @@ func (r *RunTests) run(
 		log,
 		"rsync large",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			rsyncTest(log, &rsyncOpts, r.mountPoint)
 		},
 	)
@@ -362,7 +363,7 @@ func (r *RunTests) run(
 		log,
 		"rsync small",
 		fmt.Sprintf("%v files, %v dirs, %vMB file size", rsyncOpts.numFiles, rsyncOpts.numDirs, float64(rsyncOpts.maxFileSize)/1e6),
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			rsyncTest(log, &rsyncOpts, r.mountPoint)
 		},
 	)
@@ -371,7 +372,7 @@ func (r *RunTests) run(
 		log,
 		"cp",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			from := path.Join(r.mountPoint, "test-1")
 			to := path.Join(r.mountPoint, "test-2")
 			contents := []byte("foo")
@@ -416,7 +417,7 @@ func (r *RunTests) run(
 		log,
 		"utime",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			fn := path.Join(r.mountPoint, "test")
 			if err := ioutil.WriteFile(fn, []byte{}, 0644); err != nil {
 				panic(err)
@@ -481,7 +482,7 @@ func (r *RunTests) run(
 		log,
 		"seek to extend",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			rand := wyhash.New(42)
 			for i := 0; i < 100; i++ {
 				fn := path.Join(r.mountPoint, fmt.Sprintf("test%v", i))
@@ -553,7 +554,7 @@ func (r *RunTests) run(
 		log,
 		"dir seek",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			dirSeekTest(log, r.shuckleAddress(), r.mountPoint)
 		},
 	)
@@ -562,17 +563,17 @@ func (r *RunTests) run(
 		log,
 		"parallel write",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			numThreads := 10000
 			bufPool := lib.NewBufPool()
-			dirInfoCache := lib.NewDirInfoCache()
+			dirInfoCache := client.NewDirInfoCache()
 			var wg sync.WaitGroup
 			wg.Add(numThreads)
 			for i := 0; i < numThreads; i++ {
 				ti := i
 				go func() {
 					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					if _, err := client.CreateFile(log, bufPool, dirInfoCache, fmt.Sprintf("/%d", ti), bytes.NewReader([]byte{})); err != nil {
+					if _, err := c.CreateFile(log, bufPool, dirInfoCache, fmt.Sprintf("/%d", ti), bytes.NewReader([]byte{})); err != nil {
 						panic(err)
 					}
 					wg.Done()
@@ -586,7 +587,7 @@ func (r *RunTests) run(
 		log,
 		"ftruncate",
 		"",
-		func(counters *lib.ClientCounters) {
+		func(counters *client.ClientCounters) {
 			rand := wyhash.New(42)
 			for i := 0; i < 100; i++ {
 				fn := path.Join(r.mountPoint, fmt.Sprintf("test%v", i))
@@ -875,18 +876,18 @@ func main() {
 
 	// In tests where we intentionally drop packets this makes things _much_
 	// faster
-	lib.DefaultShardTimeout.Initial = 5 * time.Millisecond
-	lib.DefaultCDCTimeout.Initial = 10 * time.Millisecond
+	client.DefaultShardTimeout.Initial = 5 * time.Millisecond
+	client.DefaultCDCTimeout.Initial = 10 * time.Millisecond
 	// Tests fail frequently hitting various timeouts. Higher Max and Overall
 	// timeouts makes tests much more stable
-	lib.DefaultShardTimeout.Max = 20 * time.Second
-	lib.DefaultCDCTimeout.Max = 20 * time.Second
-	lib.DefaultShardTimeout.Overall = 60 * time.Second
-	lib.DefaultCDCTimeout.Overall = 60 * time.Second
+	client.DefaultShardTimeout.Max = 20 * time.Second
+	client.DefaultCDCTimeout.Max = 20 * time.Second
+	client.DefaultShardTimeout.Overall = 60 * time.Second
+	client.DefaultCDCTimeout.Overall = 60 * time.Second
 	// Retry block stuff quickly to avoid being starved by the block service
 	// killer (and also to go faster)
-	lib.DefaultBlockTimeout.Max = time.Second
-	lib.DefaultBlockTimeout.Overall = 10 * time.Minute // for block service killer tests
+	client.DefaultBlockTimeout.Max = time.Second
+	client.DefaultBlockTimeout.Overall = 10 * time.Minute // for block service killer tests
 
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File
@@ -910,7 +911,7 @@ func main() {
 
 	if *mtu > 0 {
 		log.Info("Setting MTU to %v", *mtu)
-		lib.SetMTU(*mtu)
+		client.SetMTU(*mtu)
 	}
 
 	var cppExes *managedprocess.CppExes
@@ -962,8 +963,8 @@ func main() {
 			sysctl("fs.eggsfs.overall_cdc_timeout_ms", "60000")
 		}
 		// low initial timeout for fast packet drop stuff
-		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", lib.DefaultShardTimeout.Initial.Milliseconds()))
-		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", lib.DefaultCDCTimeout.Initial.Milliseconds()))
+		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", client.DefaultShardTimeout.Initial.Milliseconds()))
+		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", client.DefaultCDCTimeout.Initial.Milliseconds()))
 	}
 
 	// Start cached spans dropper
@@ -1073,7 +1074,7 @@ func main() {
 
 	// wait for block services first, so we know that shards will immediately have all of them
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	blockServices := lib.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	blockServices := client.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
 	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
@@ -1132,7 +1133,7 @@ func main() {
 
 	// now wait for shards/cdc
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	lib.WaitForClient(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
+	client.WaitForClient(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
 
 	var stopBlockServiceKiller chan struct{}
 	var pauseBlockServiceKiller sync.Mutex
@@ -1154,8 +1155,8 @@ func main() {
 		Wait:                true,
 		ShuckleAddress:      shuckleAddress,
 		Profile:             *profile,
-		InitialShardTimeout: lib.DefaultShardTimeout.Initial,
-		InitialCDCTimeout:   lib.DefaultCDCTimeout.Initial,
+		InitialShardTimeout: client.DefaultShardTimeout.Initial,
+		InitialCDCTimeout:   client.DefaultCDCTimeout.Initial,
 	})
 
 	var mountPoint string
@@ -1181,13 +1182,13 @@ func main() {
 	// Start block policy changer -- this is useful to test kmod/policy.c machinery
 	if *changeBlockPolicyEvery != time.Duration(0) {
 		fmt.Printf("will change block policy every %v\n", *dropFetchBlockSocketsEvery)
-		client, err := lib.NewClient(log, nil, shuckleAddress)
+		c, err := client.NewClient(log, nil, shuckleAddress)
 		if err != nil {
 			panic(err)
 		}
-		defer client.Close()
+		defer c.Close()
 		blockPolicy := &msgs.BlockPolicy{}
-		if _, err := client.ResolveDirectoryInfoEntry(log, lib.NewDirInfoCache(), msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+		if _, err := c.ResolveDirectoryInfoEntry(log, client.NewDirInfoCache(), msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
 			panic(err)
 		}
 		if len(blockPolicy.Entries) != 2 || blockPolicy.Entries[0].MinSize != 0 {
@@ -1203,7 +1204,7 @@ func main() {
 				}
 				i++
 				blockPolicy.Entries[1].MinSize = uint32(int(blockPolicy.Entries[1].MinSize) + d) // flip flop between + and -
-				if err := client.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+				if err := c.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
 					terminateChan <- err
 					return
 				}

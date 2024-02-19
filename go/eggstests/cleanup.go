@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
-func deleteDir(log *lib.Logger, client *lib.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
+func deleteDir(log *lib.Logger, client *client.Client, ownerId msgs.InodeId, name string, creationTime msgs.EggsTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
 		DirId: dirId,
 	}
@@ -47,34 +48,34 @@ func deleteDir(log *lib.Logger, client *lib.Client, ownerId msgs.InodeId, name s
 func cleanupAfterTest(
 	log *lib.Logger,
 	shuckleAddress string,
-	counters *lib.ClientCounters,
+	counters *client.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	client, err := lib.NewClient(log, nil, shuckleAddress)
+	c, err := client.NewClient(log, nil, shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
-	client.SetCounters(counters)
-	defer client.Close()
+	c.SetCounters(counters)
+	defer c.Close()
 	// Delete all current things
-	deleteDir(log, client, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
+	deleteDir(log, c, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
 	// Collect everything, making sure that all the deadlines will have passed
-	dirInfoCache := lib.NewDirInfoCache()
+	dirInfoCache := client.NewDirInfoCache()
 	{
-		state := &lib.CollectDirectoriesState{}
-		if err := lib.CollectDirectoriesInAllShards(log, client, dirInfoCache, nil, &lib.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+		state := &client.CollectDirectoriesState{}
+		if err := client.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &client.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}
-	if err := lib.CollectZeroBlockServiceFiles(log, client, &lib.ZeroBlockServiceFilesStats{}); err != nil {
+	if err := client.CollectZeroBlockServiceFiles(log, c, &client.ZeroBlockServiceFilesStats{}); err != nil {
 		panic(err)
 	}
 	log.Info("waiting for transient deadlines to have passed")
 	time.Sleep(testTransientDeadlineInterval)
 	log.Info("deadlines passed, collecting")
 	{
-		state := &lib.DestructFilesState{}
-		if err := lib.DestructFilesInAllShards(log, client, &lib.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
+		state := &client.DestructFilesState{}
+		if err := client.DestructFilesInAllShards(log, c, &client.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}, state); err != nil {
 			panic(err)
 		}
 	}
@@ -83,7 +84,7 @@ func cleanupAfterTest(
 		shid := msgs.ShardId(i)
 		// No dirs
 		visitDirsResp := msgs.VisitDirectoriesResp{}
-		if err := client.ShardRequest(log, shid, &msgs.VisitDirectoriesReq{}, &visitDirsResp); err != nil {
+		if err := c.ShardRequest(log, shid, &msgs.VisitDirectoriesReq{}, &visitDirsResp); err != nil {
 			panic(err)
 		}
 		if len(visitDirsResp.Ids) > 0 && !(len(visitDirsResp.Ids) == 1 && visitDirsResp.Ids[0] == msgs.ROOT_DIR_INODE_ID) {
@@ -91,7 +92,7 @@ func cleanupAfterTest(
 		}
 		// No files
 		visitFilesResp := msgs.VisitFilesResp{}
-		if err := client.ShardRequest(log, shid, &msgs.VisitFilesReq{}, &visitFilesResp); err != nil {
+		if err := c.ShardRequest(log, shid, &msgs.VisitFilesReq{}, &visitFilesResp); err != nil {
 			panic(err)
 		}
 		if len(visitFilesResp.Ids) > 0 {
@@ -103,12 +104,12 @@ func cleanupAfterTest(
 		visitTransientFilesReq := msgs.VisitTransientFilesReq{}
 		visitTransientFilesResp := msgs.VisitTransientFilesResp{}
 		for {
-			if err := client.ShardRequest(log, shid, &visitTransientFilesReq, &visitTransientFilesResp); err != nil {
+			if err := c.ShardRequest(log, shid, &visitTransientFilesReq, &visitTransientFilesResp); err != nil {
 				panic(err)
 			}
 			for _, file := range visitTransientFilesResp.Files {
 				statResp := msgs.StatTransientFileResp{}
-				if err := client.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
+				if err := c.ShardRequest(log, shid, &msgs.StatTransientFileReq{Id: file.Id}, &statResp); err != nil {
 					panic(err)
 				}
 				if statResp.Size > 0 {
@@ -123,7 +124,7 @@ func cleanupAfterTest(
 	}
 	// Nothing in root dir
 	fullReadDirResp := msgs.FullReadDirResp{}
-	if err := client.ShardRequest(log, msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.FullReadDirReq{DirId: msgs.ROOT_DIR_INODE_ID}, &fullReadDirResp); err != nil {
+	if err := c.ShardRequest(log, msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.FullReadDirReq{DirId: msgs.ROOT_DIR_INODE_ID}, &fullReadDirResp); err != nil {
 		panic(err)
 	}
 	if len(fullReadDirResp.Results) != 0 {

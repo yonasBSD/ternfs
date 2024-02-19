@@ -1,13 +1,14 @@
-package lib
+package client
 
 import (
 	"fmt"
 	"net"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
 func (c *Client) checkRepeatedCDCRequestError(
-	logger *Logger,
+	logger *lib.Logger,
 	// these are already filled in by now
 	reqBody msgs.CDCRequest,
 	resp msgs.CDCResponse,
@@ -65,7 +66,7 @@ func (c *Client) checkRepeatedCDCRequestError(
 }
 
 func (c *Client) CDCRequest(
-	logger *Logger,
+	logger *lib.Logger,
 	reqBody msgs.CDCRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.

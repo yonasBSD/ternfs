@@ -1,4 +1,4 @@
-package lib
+package client
 
 import (
 	"bytes"
@@ -7,10 +7,11 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
-func BlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
+func BlockServiceConnection(log *lib.Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
 	if port1 == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
@@ -45,7 +46,7 @@ func BlockServiceConnection(log *Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte,
 }
 
 func ReadBlocksRequest(
-	log *Logger,
+	log *lib.Logger,
 	r io.Reader,
 ) (msgs.BlockServiceId, msgs.BlocksRequest, error) {
 	var protocol uint32
@@ -87,7 +88,7 @@ func ReadBlocksRequest(
 	return msgs.BlockServiceId(blockServiceId), req, nil
 }
 
-func WriteBlocksRequest(log *Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
+func WriteBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
 	// log.Debug("writing blocks request %v for block service id %v: %+v", req.BlocksRequestKind(), blockServiceId, req)
 	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_REQ_PROTOCOL_VERSION); err != nil {
 		return err
@@ -105,7 +106,7 @@ func WriteBlocksRequest(log *Logger, w io.Writer, blockServiceId msgs.BlockServi
 }
 
 func ReadBlocksResponse(
-	log *Logger,
+	log *lib.Logger,
 	r io.Reader,
 	resp msgs.BlocksResponse,
 ) error {
@@ -141,7 +142,7 @@ func ReadBlocksResponse(
 	return nil
 }
 
-func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) error {
+func WriteBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse) error {
 	log.Trace("writing response %T %+v", resp, resp)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
@@ -159,7 +160,7 @@ func WriteBlocksResponse(log *Logger, w io.Writer, resp msgs.BlocksResponse) err
 	return nil
 }
 
-func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error {
+func WriteBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
 	log.Debug("writing blocks error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
@@ -178,7 +179,7 @@ func WriteBlocksResponseError(log *Logger, w io.Writer, err msgs.ErrCode) error 
 }
 
 func WriteBlock(
-	logger *Logger,
+	logger *lib.Logger,
 	conn interface {
 		io.ReaderFrom
 		io.Reader
@@ -223,7 +224,7 @@ func WriteBlock(
 // Note that this function will _not_ check the CRC of the block! You should probably do that
 // before using the block in any meaningful way.
 func FetchBlock(
-	logger *Logger,
+	logger *lib.Logger,
 	conn interface {
 		io.Reader
 		io.Writer
@@ -250,7 +251,7 @@ func FetchBlock(
 }
 
 func EraseBlock(
-	logger *Logger,
+	logger *lib.Logger,
 	conn interface {
 		io.Writer
 		io.Reader
@@ -275,7 +276,7 @@ func EraseBlock(
 }
 
 func TestWrite(
-	logger *Logger,
+	logger *lib.Logger,
 	conn interface {
 		io.ReaderFrom
 		io.Reader

@@ -10,6 +10,7 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
@@ -73,7 +74,7 @@ func main() {
 	appInstance := flag.String("app-instance", "eggsgc", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
-	shuckleAddress := flag.String("shuckle", lib.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
@@ -128,7 +129,7 @@ func main() {
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: "restech_eggsfs.never", AppInstance: *appInstance})
 
 	if *mtu != 0 {
-		lib.SetMTU(*mtu)
+		client.SetMTU(*mtu)
 	}
 
 	log.Info("Will run GC in all shards")
@@ -148,50 +149,50 @@ func main() {
 	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
-	shuckleTimeouts := &lib.DefaultShuckleTimeout
+	shuckleTimeouts := &client.DefaultShuckleTimeout
 	shuckleTimeouts.Overall = 0
-	shardTimeouts := &lib.DefaultShardTimeout
+	shardTimeouts := &client.DefaultShardTimeout
 	shardTimeouts.Overall = 0
-	cdcTimeouts := &lib.DefaultCDCTimeout
+	cdcTimeouts := &client.DefaultCDCTimeout
 	cdcTimeouts.Overall = 0
-	blockTimeouts := &lib.DefaultBlockTimeout
+	blockTimeouts := &client.DefaultBlockTimeout
 	blockTimeouts.Overall = 0
 
-	dirInfoCache := lib.NewDirInfoCache()
-	client, err := lib.NewClient(log, shuckleTimeouts, *shuckleAddress)
+	dirInfoCache := client.NewDirInfoCache()
+	c, err := client.NewClient(log, shuckleTimeouts, *shuckleAddress)
 	if err != nil {
 		panic(err)
 	}
-	client.SetShardTimeouts(shardTimeouts)
-	client.SetCDCTimeouts(cdcTimeouts)
-	client.SetBlockTimeout(blockTimeouts)
-	counters := lib.NewClientCounters()
-	client.SetCounters(counters)
+	c.SetShardTimeouts(shardTimeouts)
+	c.SetCDCTimeouts(cdcTimeouts)
+	c.SetBlockTimeout(blockTimeouts)
+	counters := client.NewClientCounters()
+	c.SetCounters(counters)
 	terminateChan := make(chan any)
 
-	collectDirectoriesState := &lib.CollectDirectoriesState{}
+	collectDirectoriesState := &client.CollectDirectoriesState{}
 	if err := loadState(db, "collect_directories", collectDirectoriesState); err != nil {
 		panic(err)
 	}
 
-	destructFilesState := &lib.DestructFilesState{}
+	destructFilesState := &client.DestructFilesState{}
 	if err := loadState(db, "destruct_files", destructFilesState); err != nil {
 		panic(err)
 	}
 
-	scrubState := &lib.ScrubState{}
+	scrubState := &client.ScrubState{}
 	if err := loadState(db, "scrub", scrubState); err != nil {
 		panic(err)
 	}
 
-	zeroBlockServiceFilesStats := &lib.ZeroBlockServiceFilesStats{}
+	zeroBlockServiceFilesStats := &client.ZeroBlockServiceFilesStats{}
 
 	countState := &CountState{}
 	if err := loadState(db, "count", countState); err != nil {
 		panic(err)
 	}
 
-	migrateState := &lib.MigrateState{}
+	migrateState := &client.MigrateState{}
 
 	// store the state
 	go func() {
@@ -230,7 +231,7 @@ func main() {
 			Refill:         25000,
 			BucketSize:     25000 * 100,
 		})
-		opts := &lib.CollectDirectoriesOpts{
+		opts := &client.CollectDirectoriesOpts{
 			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 		}
@@ -240,7 +241,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := lib.CollectDirectories(log, client, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
+					if err := client.CollectDirectories(log, c, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
 						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
 					}
 				}
@@ -248,7 +249,7 @@ func main() {
 		}
 	}
 	if *destructFiles {
-		opts := &lib.DestructFilesOptions{
+		opts := &client.DestructFilesOptions{
 			NumWorkersPerShard: *destructFilesWorkersPerShard,
 			WorkersQueueSize:   *destructFilesWorkersQueueSize,
 		}
@@ -257,7 +258,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := lib.DestructFiles(log, client, opts, destructFilesState, shid); err != nil {
+					if err := client.DestructFiles(log, c, opts, destructFilesState, shid); err != nil {
 						panic(fmt.Errorf("could not destruct files: %v", err))
 					}
 					log.Info("finished destructing in shard %v, sleeping for one hour", shid)
@@ -274,7 +275,7 @@ func main() {
 				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
 				log.Info("waiting %v before collecting zero block service files", waitFor)
 				time.Sleep(waitFor)
-				if err := lib.CollectZeroBlockServiceFiles(log, client, zeroBlockServiceFilesStats); err != nil {
+				if err := client.CollectZeroBlockServiceFiles(log, c, zeroBlockServiceFilesStats); err != nil {
 					log.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
 				log.Info("finished zero block services cycle, will restart")
@@ -289,7 +290,7 @@ func main() {
 		})
 		defer rateLimit.Close()
 		// retry forever
-		opts := &lib.ScrubOptions{
+		opts := &client.ScrubOptions{
 			NumWorkersPerShard: *scrubWorkersPerShard,
 			WorkersQueueSize:   *scrubWorkersQueueSize,
 		}
@@ -298,7 +299,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := lib.ScrubFiles(log, client, opts, rateLimit, scrubState, shid); err != nil {
+					if err := client.ScrubFiles(log, c, opts, rateLimit, scrubState, shid); err != nil {
 						log.RaiseAlert("could not scrub files: %v", err)
 					}
 				}
@@ -310,7 +311,7 @@ func main() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
 				log.Info("requesting block services")
-				blockServicesResp, err := lib.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
+				blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 				if err != nil {
 					terminateChan <- err
 					return
@@ -332,7 +333,7 @@ func main() {
 				for failureDomain, bss := range blockServicesToMigrate {
 					for _, blockServiceId := range *bss {
 						log.RaiseNCInfo(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
-						if err := lib.MigrateBlocksInAllShards(log, client, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
+						if err := client.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
 							terminateChan <- err
 						}
 						log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)
@@ -456,7 +457,7 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
 							log.RaiseAlert("could not get files for shard %v: %v", shid, err)
 							break
 						}
@@ -484,7 +485,7 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
 							log.RaiseAlert("could not get directories for shard %v: %v", shid, err)
 							break
 						}
@@ -510,7 +511,7 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = client.ShardRequest(log, shid, &req, &resp); err != nil {
+						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
 							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
 							break
 						}

@@ -50,9 +50,9 @@ type LoggerOptions struct {
 	Level            LogLevel
 	Syslog           bool
 	AppInstance      string
-	Xmon             string // "dev", "qa", empty string for no xmon
-	AppType          string // only used for xmon
-	PrintQuietAlerts bool   // whether to print alerts in quiet period
+	Xmon             string      // "dev", "qa", empty string for no xmon
+	AppType          XmonAppType // only used for xmon
+	PrintQuietAlerts bool        // whether to print alerts in quiet period
 }
 
 type Logger struct {
@@ -232,24 +232,28 @@ func (l *Logger) NewNCAlert(quietTime time.Duration) *XmonNCAlert {
 	return l.xmon.NewNCAlert(quietTime)
 }
 
-func (l *Logger) RaiseAlertStack(calldepth int, format string, v ...any) {
-	l.xmon.RaiseStack(l, l.xmon, ERROR, 1+calldepth, format, v...)
+func (l *Logger) RaiseAlertStack(appType XmonAppType, calldepth int, format string, v ...any) {
+	l.xmon.RaiseStack(l, l.xmon, appType, 1+calldepth, format, v...)
+}
+
+func (l *Logger) RaiseAlertAppType(appType XmonAppType, format string, v ...any) {
+	l.RaiseAlertStack(appType, 1, format, v...)
 }
 
 func (l *Logger) RaiseAlert(format string, v ...any) {
-	l.RaiseAlertStack(1, format, v...)
+	l.RaiseAlertStack("", 1, format, v...)
 }
 
-func (l *Logger) RaiseNCStack(alert *XmonNCAlert, logLevel LogLevel, calldepth int, format string, v ...any) {
-	alert.RaiseStack(l, l.xmon, logLevel, 1+calldepth, format, v...)
+func (l *Logger) RaiseNCStack(alert *XmonNCAlert, appType XmonAppType, calldepth int, format string, v ...any) {
+	alert.RaiseStack(l, l.xmon, appType, 1+calldepth, format, v...)
+}
+
+func (l *Logger) RaiseNCAppType(alert *XmonNCAlert, appType XmonAppType, format string, v ...any) {
+	l.RaiseNCStack(alert, appType, 1, format, v...)
 }
 
 func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
-	l.RaiseNCStack(alert, ERROR, 1, format, v...)
-}
-
-func (l *Logger) RaiseNCInfo(alert *XmonNCAlert, format string, v ...any) {
-	l.RaiseNCStack(alert, INFO, 1, format, v...)
+	l.RaiseNCStack(alert, "", 1, format, v...)
 }
 
 func (l *Logger) ClearNC(alert *XmonNCAlert) {

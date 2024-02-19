@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,7 +19,23 @@ const (
 	XMON_CLEAR  int32 = 0x3
 )
 
+type XmonAppType string
+
+const (
+	XMON_NEVER    XmonAppType = "restech_eggsfs.never"
+	XMON_DAYTIME  XmonAppType = "restech_eggsfs.daytime"
+	XMON_CRITICAL XmonAppType = "restech_eggsfs.critical"
+)
+
+var appTypes = []XmonAppType{XMON_NEVER, XMON_DAYTIME, XMON_CRITICAL}
+
+type XmonTroll struct {
+	AppInstance string
+	AppType     XmonAppType
+}
+
 type xmonRequest struct {
+	troll       XmonTroll
 	msgType     int32
 	alertId     int64
 	quietPeriod time.Duration
@@ -29,9 +47,9 @@ type xmonRequest struct {
 }
 
 type Xmon struct {
-	appType          string
-	appInstance      string
 	hostname         string
+	parent           XmonTroll
+	children         []XmonTroll
 	xmonAddr         string
 	requests         chan xmonRequest
 	onlyLogging      bool
@@ -41,10 +59,14 @@ type Xmon struct {
 type XmonConfig struct {
 	// If this is true, the alerts won't actually be sent,
 	// but it'll still log alert creation etc
-	OnlyLogging      bool
-	Prod             bool
+	OnlyLogging bool
+	Prod        bool
+	// This is the "default" app instance/app type. We then
+	// implicitly create instances for all the other app types,
+	// and with the same app instance, so that we can send
+	// alerts of different severity
 	AppInstance      string
-	AppType          string
+	AppType          XmonAppType
 	PrintQuietAlerts bool
 }
 
@@ -56,9 +78,24 @@ func (x *Xmon) packString(buf *bytes.Buffer, s string) {
 	buf.Write([]byte(s))
 }
 
+func (x *Xmon) readString(r io.Reader) (string, error) {
+	var len uint16
+	if err := binary.Read(r, binary.BigEndian, &len); err != nil {
+		return "", err
+	}
+	s := make([]byte, len)
+	if _, err := io.ReadFull(r, s); err != nil {
+		return "", err
+	}
+	return string(s), nil
+}
+
 const heartbeatIntervalSecs uint8 = 5
 
+// sends both the main logon and the child logons.
 func (x *Xmon) packLogon(buf *bytes.Buffer) {
+	buf.Reset()
+
 	// <https://REDACTED>
 	// Name 	Type 	Description
 	// Magic 	int16 	always 'T'
@@ -76,7 +113,6 @@ func (x *Xmon) packLogon(buf *bytes.Buffer) {
 	// Num errors 	int32 	(deprecated)
 	// Mood 	int32 	current mood
 	// Details JSON 	string 	(unused)
-	buf.Reset()
 	binary.Write(buf, binary.BigEndian, int16('T')) // magic
 	binary.Write(buf, binary.BigEndian, int32(4))   // version
 	binary.Write(buf, binary.BigEndian, int32(0x0)) // message type
@@ -85,13 +121,42 @@ func (x *Xmon) packLogon(buf *bytes.Buffer) {
 	buf.Write([]byte{heartbeatIntervalSecs})        // interval
 	buf.Write([]byte{0})                            // unused
 	binary.Write(buf, binary.BigEndian, int16(0))   // unused
-	x.packString(buf, x.appType)                    // app type
-	x.packString(buf, x.appInstance)                // app instance
+	x.packString(buf, string(x.parent.AppType))     // app type
+	x.packString(buf, x.parent.AppInstance)         // app instance
 	binary.Write(buf, binary.BigEndian, int64(0))   // heap size
 	binary.Write(buf, binary.BigEndian, int32(0))   // num threads
 	binary.Write(buf, binary.BigEndian, int32(0))   // num errors
 	binary.Write(buf, binary.BigEndian, int32(0))   // happy mood
 	x.packString(buf, "")                           // details
+
+	for _, child := range x.children {
+		// Message type	int32	0x100
+		// (unused)	int32	must be 0
+		// Hostname	string	your hostname
+		// (unused)	byte	must be 0
+		// (unused)	byte	must be 0
+		// (unused)	int16	must be 0
+		// App type	string	defines rota and schedule
+		// App inst	string	arbitrary identifier
+		// Heap size	int64	(deprecated)
+		// Num threads	int32	(deprecated)
+		// Num errors	int32	(deprecated)
+		// Mood	int32	current mood
+		// Details JSON	string	(unused)
+		binary.Write(buf, binary.BigEndian, int32(0x100)) // msg type
+		binary.Write(buf, binary.BigEndian, int32(0))     // must be 0
+		x.packString(buf, x.hostname)                     // hostname
+		buf.Write([]byte{0})                              // unused
+		buf.Write([]byte{0})                              // unused
+		binary.Write(buf, binary.BigEndian, int16(0))     // unused
+		x.packString(buf, string(child.AppType))          // app type
+		x.packString(buf, child.AppInstance)              // app instance
+		binary.Write(buf, binary.BigEndian, int64(0))     // heap size
+		binary.Write(buf, binary.BigEndian, int32(0))     // num threads
+		binary.Write(buf, binary.BigEndian, int32(0))     // num errors
+		binary.Write(buf, binary.BigEndian, int32(0))     // happy mood
+		x.packString(buf, "")                             // details
+	}
 }
 
 func (x *Xmon) packUpdate(buf *bytes.Buffer) {
@@ -115,11 +180,29 @@ func (x *Xmon) packRequest(buf *bytes.Buffer, req *xmonRequest) {
 		panic(fmt.Errorf("bad alert id %v", req.alertId))
 	}
 	buf.Reset()
-	binary.Write(buf, binary.BigEndian, req.msgType)
-	binary.Write(buf, binary.BigEndian, req.alertId)
-	if req.msgType == XMON_CREATE || req.msgType == XMON_UPDATE {
-		binary.Write(buf, binary.BigEndian, req.binnable)
-		x.packString(buf, req.message)
+	hasMessage := req.msgType == XMON_CREATE || req.msgType == XMON_UPDATE
+	if x.parent == req.troll { // normal
+		binary.Write(buf, binary.BigEndian, req.msgType)
+		binary.Write(buf, binary.BigEndian, req.alertId)
+		if hasMessage {
+			binary.Write(buf, binary.BigEndian, req.binnable)
+			x.packString(buf, req.message)
+		}
+	} else {
+		req.msgType |= 0x100
+		binary.Write(buf, binary.BigEndian, req.msgType)
+		x.packString(buf, string(req.troll.AppType))
+		x.packString(buf, req.troll.AppInstance)
+		x.packString(buf, fmt.Sprintf("%v", req.alertId))
+		if hasMessage {
+			binnable := int32(0)
+			if req.binnable {
+				binnable = 1
+			}
+			binary.Write(buf, binary.BigEndian, binnable)
+			x.packString(buf, req.message)
+			x.packString(buf, "") // json (unused)
+		}
 	}
 }
 
@@ -177,7 +260,7 @@ Reconnect:
 			goto Reconnect
 		}
 		conn = someConn.(*net.TCPConn)
-		// send logon message
+		// send logon message(s)
 		x.packLogon(buffer)
 		if _, err = buffer.WriteTo(conn); err != nil {
 			log.ErrorNoAlert("could not logon to xmon, will reconnect: %v", err)
@@ -327,7 +410,7 @@ Reconnect:
 						log.ErrorNoAlert("cold not send update to xmon: %v", err)
 						goto Reconnect
 					}
-				case 0x1:
+				case 0x1: // alert binned
 					// we need to wait for the rest
 					if err = conn.SetReadDeadline(time.Time{}); err != nil {
 						log.ErrorNoAlert("could not set deadline: %v", err)
@@ -336,6 +419,33 @@ Reconnect:
 					var alertId int64
 					if err = binary.Read(conn, binary.BigEndian, &alertId); err != nil {
 						log.ErrorNoAlert("could not read alert id: %v", err)
+						goto Reconnect
+					}
+					delete(binnableAlerts, alertId)
+					log.Info("UI cleared alert alertId=%v", alertId)
+				case 0x101: // child alert binned
+					// we need to wait for the rest
+					if err = conn.SetReadDeadline(time.Time{}); err != nil {
+						log.ErrorNoAlert("could not set deadline: %v", err)
+						goto Reconnect
+					}
+					// we don't care about which child this is, alert ids are unique anyway
+					if _, err = x.readString(conn); err != nil {
+						log.ErrorNoAlert("could not read child app type: %v", err)
+						goto Reconnect
+					}
+					if _, err = x.readString(conn); err != nil {
+						log.ErrorNoAlert("could not read child app instance: %v", err)
+						goto Reconnect
+					}
+					var alertIdStr string
+					if alertIdStr, err = x.readString(conn); err != nil {
+						log.ErrorNoAlert("could not read child alert id: %v", err)
+						goto Reconnect
+					}
+					var alertId int64
+					if alertId, err = strconv.ParseInt(alertIdStr, 0, 64); err != nil {
+						log.ErrorNoAlert("could not pares child alert id: %v", err)
 						goto Reconnect
 					}
 					delete(binnableAlerts, alertId)
@@ -357,6 +467,17 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 			onlyLogging:      true,
 		}
 	} else {
+		{
+			found := false
+			for _, appType := range appTypes {
+				if appType == config.AppType {
+					found = true
+				}
+			}
+			if !found {
+				panic(fmt.Errorf("unknown app type %q", config.AppType))
+			}
+		}
 		if config.AppInstance == "" {
 			panic(fmt.Errorf("empty app instance"))
 		}
@@ -366,11 +487,23 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 		}
 		hostname = strings.Split(hostname, ".")[0]
 		x = &Xmon{
-			appType:          config.AppType,
-			appInstance:      config.AppInstance + "@" + hostname,
+			parent: XmonTroll{
+				AppType:     config.AppType,
+				AppInstance: config.AppInstance + "@" + hostname,
+			},
 			hostname:         hostname,
 			requests:         make(chan xmonRequest, 4096),
 			printQuietAlerts: config.PrintQuietAlerts,
+			children:         []XmonTroll{},
+		}
+		for _, appType := range appTypes {
+			if appType == config.AppType {
+				continue
+			}
+			x.children = append(x.children, XmonTroll{
+				AppType:     appType,
+				AppInstance: config.AppInstance + "@" + hostname,
+			})
 		}
 		if config.Prod {
 			x.xmonAddr = "REDACTED"
@@ -399,7 +532,28 @@ const tooManyAlertsAlertId = int64(0)
 
 var alertIdCount = int64(1)
 
-func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, alertId *int64, binnable bool, quietPeriod time.Duration, format string, v ...any) string {
+func xmonRaiseStack(
+	log *Logger,
+	xmon *Xmon,
+	appType XmonAppType,
+	calldepth int,
+	alertId *int64,
+	binnable bool,
+	quietPeriod time.Duration,
+	format string,
+	v ...any,
+) string {
+	if appType == "" {
+		appType = xmon.parent.AppType
+	}
+	troll := XmonTroll{
+		AppInstance: xmon.parent.AppInstance,
+		AppType:     appType,
+	}
+	logLevel := ERROR
+	if appType == XMON_NEVER {
+		logLevel = INFO
+	}
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
 	if binnable || quietPeriod == 0 {
@@ -408,6 +562,7 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, a
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
 		xmon.requests <- xmonRequest{
+			troll:       troll,
 			msgType:     XMON_CREATE,
 			alertId:     *alertId,
 			quietPeriod: quietPeriod,
@@ -419,6 +574,7 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, a
 		}
 	} else {
 		xmon.requests <- xmonRequest{
+			troll:       troll,
 			msgType:     XMON_UPDATE,
 			alertId:     *alertId,
 			quietPeriod: quietPeriod,
@@ -432,22 +588,22 @@ func xmonRaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, a
 	return message
 }
 
-func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, format string, v ...any) {
+func (x *Xmon) RaiseStack(log *Logger, xmon *Xmon, appType XmonAppType, calldepth int, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, logLevel, 1+calldepth, &alertId, true, 0, format, v...)
+	xmonRaiseStack(log, x, appType, 1+calldepth, &alertId, true, 0, format, v...)
 }
 
-func (x *Xmon) Raise(log *Logger, xmon *Xmon, logLevel LogLevel, format string, v ...any) {
+func (x *Xmon) Raise(log *Logger, xmon *Xmon, appType XmonAppType, format string, v ...any) {
 	alertId := int64(-1)
-	xmonRaiseStack(log, x, logLevel, 1, &alertId, true, 0, format, v...)
+	xmonRaiseStack(log, x, appType, 1, &alertId, true, 0, format, v...)
 }
 
-func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, logLevel LogLevel, calldepth int, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, logLevel, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, appType XmonAppType, calldepth int, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, appType, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
-func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, logLevel LogLevel, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, logLevel, 1, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, appType XmonAppType, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, appType, 1, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
 func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {

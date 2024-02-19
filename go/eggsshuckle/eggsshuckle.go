@@ -903,7 +903,7 @@ func handleError(
 	}
 
 	// we always raise an alert since this is almost always bad news in shuckle
-	log.RaiseAlertStack(1, "got unexpected error %v from %v", err, conn.RemoteAddr())
+	log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
@@ -2152,7 +2152,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 			for bs := range missingBlockServices {
 				bss = append(bss, bs)
 			}
-			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
+			log.RaiseNCAppType(alert, lib.XMON_NEVER, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
 		}
 		log.Info("checked for missing block services, sleeping for a minute")
 		time.Sleep(time.Minute)

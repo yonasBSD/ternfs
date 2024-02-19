@@ -591,7 +591,7 @@ func handleRequestError(
 		} else {
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
-		log.RaiseAlertStack(1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
+		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
 		client.WriteBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
 	}
@@ -607,7 +607,7 @@ func handleRequestError(
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack(1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
+	log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		client.WriteBlocksResponseError(log, conn, eggsErr)

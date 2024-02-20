@@ -236,6 +236,7 @@ func (r *RunTests) run(
 		panic(err)
 	}
 	defer c.Close()
+	updateTimeouts(c)
 
 	{
 		// We want to immediately clean up everything when we run the GC manually
@@ -794,6 +795,31 @@ func killBlockServices(
 	}()
 }
 
+func updateTimeouts(c *client.Client) {
+	shardTimeout := client.DefaultShardTimeout
+	cdcTimeout := client.DefaultCDCTimeout
+	blockTimeout := client.DefaultBlockTimeout
+
+	// In tests where we intentionally drop packets this makes things _much_
+	// faster
+	shardTimeout.Initial = 5 * time.Millisecond
+	cdcTimeout.Initial = 10 * time.Millisecond
+	// Tests fail frequently hitting various timeouts. Higher Max and Overall
+	// timeouts makes tests much more stable
+	shardTimeout.Max = 20 * time.Second
+	cdcTimeout.Max = 20 * time.Second
+	shardTimeout.Overall = 60 * time.Second
+	cdcTimeout.Overall = 60 * time.Second
+	// Retry block stuff quickly to avoid being starved by the block service
+	// killer (and also to go faster)
+	blockTimeout.Max = time.Second
+	blockTimeout.Overall = 10 * time.Minute // for block service killer tests
+
+	c.SetShardTimeouts(&shardTimeout)
+	c.SetCDCTimeouts(&cdcTimeout)
+	c.SetBlockTimeout(&blockTimeout)
+}
+
 // 0 interval won't do, because otherwise transient files will immediately be
 // expired and not picked.
 var testTransientDeadlineInterval = 30 * time.Second
@@ -873,21 +899,6 @@ func main() {
 		}
 		*repoDir = path.Dir(path.Dir(path.Dir(filename)))
 	}
-
-	// In tests where we intentionally drop packets this makes things _much_
-	// faster
-	client.DefaultShardTimeout.Initial = 5 * time.Millisecond
-	client.DefaultCDCTimeout.Initial = 10 * time.Millisecond
-	// Tests fail frequently hitting various timeouts. Higher Max and Overall
-	// timeouts makes tests much more stable
-	client.DefaultShardTimeout.Max = 20 * time.Second
-	client.DefaultCDCTimeout.Max = 20 * time.Second
-	client.DefaultShardTimeout.Overall = 60 * time.Second
-	client.DefaultCDCTimeout.Overall = 60 * time.Second
-	// Retry block stuff quickly to avoid being starved by the block service
-	// killer (and also to go faster)
-	client.DefaultBlockTimeout.Max = time.Second
-	client.DefaultBlockTimeout.Overall = 10 * time.Minute // for block service killer tests
 
 	logFile := path.Join(*dataDir, "test-log")
 	var logOut *os.File
@@ -1187,6 +1198,7 @@ func main() {
 			panic(err)
 		}
 		defer c.Close()
+		updateTimeouts(c)
 		blockPolicy := &msgs.BlockPolicy{}
 		if _, err := c.ResolveDirectoryInfoEntry(log, client.NewDirInfoCache(), msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
 			panic(err)

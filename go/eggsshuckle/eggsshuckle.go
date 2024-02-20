@@ -1390,7 +1390,7 @@ func refreshClient(log *lib.Logger, state *state) (*client.Client, error) {
 	cdcPorts[0] = cdc.port1
 	cdcIps[1] = cdc.ip2
 	cdcPorts[1] = cdc.port2
-	state.client.UpdateAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	state.client.SetAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
 	return state.client, nil
 }
 

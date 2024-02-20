@@ -44,7 +44,7 @@ func BlockServiceConnection(log *lib.Logger, ip1 [4]byte, port1 uint16, ip2 [4]b
 	panic("impossible")
 }
 
-func WriteBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
+func writeBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
 	// log.Debug("writing blocks request %v for block service id %v: %+v", req.BlocksRequestKind(), blockServiceId, req)
 	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_REQ_PROTOCOL_VERSION); err != nil {
 		return err
@@ -61,7 +61,7 @@ func WriteBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockS
 	return nil
 }
 
-func ReadBlocksResponse(
+func readBlocksResponse(
 	log *lib.Logger,
 	r io.Reader,
 	resp msgs.BlocksResponse,
@@ -112,7 +112,7 @@ func WriteBlock(
 ) ([8]byte, error) {
 	logger.Debug("writing block %+v, size %v, CRC %v", block, size, crc)
 	var proof [8]byte
-	err := WriteBlocksRequest(logger, conn, block.BlockServiceId, &msgs.WriteBlockReq{
+	err := writeBlocksRequest(logger, conn, block.BlockServiceId, &msgs.WriteBlockReq{
 		BlockId:     block.BlockId,
 		Crc:         crc,
 		Size:        size,
@@ -132,7 +132,7 @@ func WriteBlock(
 	}
 	logger.Debug("data written, getting proof")
 	resp := msgs.WriteBlockResp{}
-	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
+	if err := readBlocksResponse(logger, conn, &resp); err != nil {
 		return proof, err
 	}
 	logger.Debug("proof received")
@@ -160,11 +160,11 @@ func FetchBlock(
 		Offset:  offset,
 		Count:   count,
 	}
-	if err := WriteBlocksRequest(logger, conn, blockService.Id, &req); err != nil {
+	if err := writeBlocksRequest(logger, conn, blockService.Id, &req); err != nil {
 		return err
 	}
 	resp := msgs.FetchBlockResp{}
-	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
+	if err := readBlocksResponse(logger, conn, &resp); err != nil {
 		return err
 	}
 	return nil
@@ -184,11 +184,11 @@ func EraseBlock(
 		BlockId:     block.BlockId,
 		Certificate: block.Certificate,
 	}
-	if err := WriteBlocksRequest(logger, conn, block.BlockServiceId, &req); err != nil {
+	if err := writeBlocksRequest(logger, conn, block.BlockServiceId, &req); err != nil {
 		return proof, err
 	}
 	resp := msgs.EraseBlockResp{}
-	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
+	if err := readBlocksResponse(logger, conn, &resp); err != nil {
 		return proof, err
 	}
 	proof = resp.Proof
@@ -207,7 +207,7 @@ func TestWrite(
 	size uint64,
 ) error {
 	logger.Debug("writing request")
-	err := WriteBlocksRequest(logger, conn, bs, &msgs.TestWriteReq{Size: size})
+	err := writeBlocksRequest(logger, conn, bs, &msgs.TestWriteReq{Size: size})
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func TestWrite(
 	}
 	logger.Debug("data written, getting response")
 	resp := msgs.TestWriteResp{}
-	if err := ReadBlocksResponse(logger, conn, &resp); err != nil {
+	if err := readBlocksResponse(logger, conn, &resp); err != nil {
 		return err
 	}
 	logger.Debug("response received")

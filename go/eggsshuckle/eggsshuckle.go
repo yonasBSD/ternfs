@@ -1077,26 +1077,6 @@ func errorPage(status int, body string) (*template.Template, *pageData, int) {
 	return errorTemplate, &pageData{Title: "Error!", Body: body}, status
 }
 
-type indexBlockService struct {
-	Id             msgs.BlockServiceId
-	Addr1          string
-	Addr2          string
-	StorageClass   msgs.StorageClass
-	Flags          string
-	FailureDomain  string
-	CapacityBytes  string
-	AvailableBytes string
-	Path           string
-	Blocks         uint64
-	LastSeen       string
-}
-
-type indexShard struct {
-	Addr1    string
-	Addr2    string
-	LastSeen string
-}
-
 type indexData struct {
 	NumBlockServices    int
 	NumFailureDomains   int
@@ -1264,17 +1244,6 @@ type fileData struct {
 
 //go:embed directory.html
 var directoryTemplateStr string
-
-type directoryEdge struct {
-	Current      bool
-	TargetId     string
-	Owned        bool
-	NameHash     string
-	Name         string
-	CreationTime string
-	Type         string
-	Locked       bool
-}
 
 type directoryInfoEntry struct {
 	Tag           string

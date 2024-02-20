@@ -374,11 +374,8 @@ Reconnect:
 						// note that we haven't removed the request from the ring buffer yet
 						goto Reconnect
 					}
-					switch req.msgType {
-					case XMON_CREATE:
-						if req.binnable {
-							binnableAlerts[req.alertId] = struct{}{}
-						}
+					if req.msgType == XMON_CREATE && req.binnable {
+						binnableAlerts[req.alertId] = struct{}{}
 					}
 				}
 			SkipRequest:

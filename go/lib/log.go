@@ -244,16 +244,12 @@ func (l *Logger) RaiseAlert(format string, v ...any) {
 	l.RaiseAlertStack("", 1, format, v...)
 }
 
-func (l *Logger) RaiseNCStack(alert *XmonNCAlert, appType XmonAppType, calldepth int, format string, v ...any) {
-	alert.RaiseStack(l, l.xmon, appType, 1+calldepth, format, v...)
-}
-
-func (l *Logger) RaiseNCAppType(alert *XmonNCAlert, appType XmonAppType, format string, v ...any) {
-	l.RaiseNCStack(alert, appType, 1, format, v...)
+func (l *Logger) RaiseNCStack(alert *XmonNCAlert, calldepth int, format string, v ...any) {
+	alert.RaiseStack(l, l.xmon, 1+calldepth, format, v...)
 }
 
 func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
-	l.RaiseNCStack(alert, "", 1, format, v...)
+	l.RaiseNCStack(alert, 1, format, v...)
 }
 
 func (l *Logger) ClearNC(alert *XmonNCAlert) {

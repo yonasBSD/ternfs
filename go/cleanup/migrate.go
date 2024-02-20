@@ -235,7 +235,7 @@ func printStatsLastReport(log *lib.Logger, what string, c *client.Client, stats 
 	overallMBs := 1000.0 * overallMB / float64(timeSinceStart.Milliseconds())
 	recentMB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / 1e6
 	recentMBs := 1000.0 * recentMB / float64(timeSinceLastReport.Milliseconds())
-	log.RaiseNCAppType(progressReportAlert, lib.XMON_NEVER, "%s %0.2fMB in %v blocks in %v files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles, recentMBs, overallMBs)
+	log.RaiseNC(progressReportAlert, "%s %0.2fMB in %v blocks in %v files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles, recentMBs, overallMBs)
 	timeStats.lastReportAt = now
 	timeStats.lastReportBytes = stats.MigratedBytes
 }

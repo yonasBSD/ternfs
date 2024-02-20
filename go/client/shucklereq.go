@@ -251,7 +251,7 @@ Reconnect:
 		log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
 	}
-	log.RaiseNCStack(alert, "", 1, "could not connect to shuckle, will retry in %v: %v", delay, err)
+	log.RaiseNCStack(alert, 1, "could not connect to shuckle, will retry in %v: %v", delay, err)
 	time.Sleep(delay)
 
 ReconnectBegin:

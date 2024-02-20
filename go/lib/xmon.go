@@ -317,14 +317,14 @@ Reconnect:
 						if req.binnable {
 							panic(fmt.Errorf("got alert create with quietPeriod=%v, but it is binnable", req.quietPeriod))
 						}
-						log.LogLocation(quietAlertsLevel, req.file, req.line, "quiet non-binnable alertId=%v message=%q quietPeriod=%v, will wait", req.alertId, req.message, req.quietPeriod)
+						log.LogLocation(quietAlertsLevel, req.file, req.line, "quiet non-binnable alertId=%v message=%q quietPeriod=%v troll=%+v, will wait", req.alertId, req.message, req.quietPeriod, req.troll)
 						quietAlerts[req.alertId] = &quietAlert{
 							message:    req.message,
 							quietUntil: now.Add(req.quietPeriod),
 						}
 						goto SkipRequest
 					} else if req.binnable && !x.onlyLogging && len(binnableAlerts) > maxBinnableAlerts {
-						log.LogLocation(ERROR, req.file, req.line, "skipping create alert, alertId=%v binnable=%v message=%q, too many already", req.alertId, req.binnable, req.message)
+						log.LogLocation(ERROR, req.file, req.line, "skipping create alert, alertId=%v binnable=%v message=%q troll=%+v, too many already", req.alertId, req.binnable, req.message, req.troll)
 						// if we don't have the "too many alerts" alert, create it
 						if _, ok := binnableAlerts[tooManyAlertsAlertId]; !ok {
 							req = &xmonRequest{
@@ -337,7 +337,7 @@ Reconnect:
 							goto SkipRequest
 						}
 					} else {
-						log.LogLocation(req.logLevel, req.file, req.line, "creating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+						log.LogLocation(req.logLevel, req.file, req.line, "creating alert, alertId=%v binnable=%v troll=%+v message=%q", req.alertId, req.binnable, req.troll, req.message)
 					}
 				case XMON_UPDATE:
 					if req.binnable {
@@ -345,22 +345,22 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.LogLocation(quietAlertsLevel, req.file, req.line, "skipping update alertId=%v message=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
+						log.LogLocation(quietAlertsLevel, req.file, req.line, "skipping update alertId=%v message=%q troll=%+v since it's quiet until %v", req.alertId, req.message, req.troll, quiet.quietUntil)
 						quiet.message = req.message
 						goto SkipRequest
 					}
-					log.LogLocation(req.logLevel, req.file, req.line, "updating alert, alertId=%v binnable=%v message=%q", req.alertId, req.binnable, req.message)
+					log.LogLocation(req.logLevel, req.file, req.line, "updating alert, alertId=%v binnable=%v message=%q troll=%+v", req.alertId, req.binnable, req.message, req.troll)
 				case XMON_CLEAR:
 					if req.binnable {
 						panic(fmt.Errorf("unexpected clear to non-binnable alert"))
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.LogLocation(DEBUG, req.file, req.line, "skipping clear alertId=%v lastMessage=%q since it's quiet until %v", req.alertId, req.message, quiet.quietUntil)
+						log.LogLocation(DEBUG, req.file, req.line, "skipping clear alertId=%v lastMessage=%q troll=%+v since it's quiet until %v", req.alertId, req.message, req.troll, quiet.quietUntil)
 						delete(quietAlerts, req.alertId)
 						goto SkipRequest
 					}
-					log.LogLocation(INFO, req.file, req.line, "sending clear alert, alertId=%v lastMessage=%v", req.alertId, req.message)
+					log.LogLocation(INFO, req.file, req.line, "sending clear alert, alertId=%v lastMessage=%v troll=%+v", req.alertId, req.message, req.troll)
 				default:
 					panic(fmt.Errorf("bad req type %v", req.msgType))
 				}
@@ -517,8 +517,13 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 
 type XmonNCAlert struct {
 	alertId     int64 // -1 if we haven't got one yet
+	appType     XmonAppType
 	lastMessage string
 	quietPeriod time.Duration
+}
+
+func (x *XmonNCAlert) SetAppType(appType XmonAppType) {
+	x.appType = appType
 }
 
 func (x *Xmon) NewNCAlert(quietPeriod time.Duration) *XmonNCAlert {
@@ -598,19 +603,27 @@ func (x *Xmon) Raise(log *Logger, xmon *Xmon, appType XmonAppType, format string
 	xmonRaiseStack(log, x, appType, 1, &alertId, true, 0, format, v...)
 }
 
-func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, appType XmonAppType, calldepth int, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, appType, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) RaiseStack(log *Logger, xmon *Xmon, calldepth int, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, a.appType, 1+calldepth, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
-func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, appType XmonAppType, format string, v ...any) {
-	a.lastMessage = xmonRaiseStack(log, xmon, appType, 1, &a.alertId, false, a.quietPeriod, format, v...)
+func (a *XmonNCAlert) Raise(log *Logger, xmon *Xmon, format string, v ...any) {
+	a.lastMessage = xmonRaiseStack(log, xmon, a.appType, 1, &a.alertId, false, a.quietPeriod, format, v...)
 }
 
 func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {
 	if a.alertId < 0 {
 		return
 	}
+	troll := XmonTroll{
+		AppInstance: xmon.parent.AppInstance,
+		AppType:     a.appType,
+	}
+	if troll.AppType == "" {
+		troll.AppType = xmon.parent.AppType
+	}
 	xmon.requests <- xmonRequest{
+		troll:   troll,
 		msgType: XMON_CLEAR,
 		alertId: a.alertId,
 		message: a.lastMessage,

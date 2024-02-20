@@ -2104,6 +2104,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 
 func missingBlockServiceAlert(log *lib.Logger, s *state) {
 	alert := log.NewNCAlert(0)
+	alert.SetAppType(lib.XMON_NEVER)
 	for {
 		blockServices, err := s.selectBlockServices(nil, 0)
 		if err != nil {
@@ -2152,7 +2153,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 			for bs := range missingBlockServices {
 				bss = append(bss, bs)
 			}
-			log.RaiseNCAppType(alert, lib.XMON_NEVER, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
+			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
 		}
 		log.Info("checked for missing block services, sleeping for a minute")
 		time.Sleep(time.Minute)

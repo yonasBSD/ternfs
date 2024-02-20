@@ -331,9 +331,10 @@ func main() {
 				}
 
 				progressReportAlert := log.NewNCAlert(10 * time.Second)
+				progressReportAlert.SetAppType(lib.XMON_NEVER)
 				for failureDomain, bss := range blockServicesToMigrate {
 					for _, blockServiceId := range *bss {
-						log.RaiseNCAppType(progressReportAlert, lib.XMON_NEVER, "migrating block service %v, %v", blockServiceId, failureDomain)
+						log.RaiseNC(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
 						if err := cleanup.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
 							terminateChan <- err
 						}

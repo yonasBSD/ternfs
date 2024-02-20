@@ -320,13 +320,13 @@ func main() {
 				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 				blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 				for _, bs := range blockServices.BlockServices {
-					if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
-						bss := blockServicesToMigrate[bs.FailureDomain.String()]
+					if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+						bss := blockServicesToMigrate[bs.Info.FailureDomain.String()]
 						if bss == nil {
 							bss = &[]msgs.BlockServiceId{}
-							blockServicesToMigrate[bs.FailureDomain.String()] = bss
+							blockServicesToMigrate[bs.Info.FailureDomain.String()] = bss
 						}
-						*bss = append(*bss, bs.Id)
+						*bss = append(*bss, bs.Info.Id)
 					}
 				}
 

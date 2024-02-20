@@ -893,7 +893,7 @@ type blockService struct {
 	key                     [16]byte
 	cipher                  cipher.Block
 	storageClass            msgs.StorageClass
-	cachedInfo              msgs.BlockServiceInfo
+	cachedInfo              msgs.RegisterBlockServiceInfo
 	couldNotUpdateInfo      bool
 	couldNotUpdateInfoAlert lib.XmonNCAlert
 }
@@ -1066,35 +1066,35 @@ func main() {
 		}
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]
-			ourBs, weHaveBs := blockServices[bs.Id]
-			sameFailureDomain := bs.FailureDomain.Name == failureDomain
-			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+			ourBs, weHaveBs := blockServices[bs.Info.Id]
+			sameFailureDomain := bs.Info.FailureDomain.Name == failureDomain
+			isDecommissioned := (bs.Info.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
 			// No disagreement on failure domain with shuckle (otherwise we could end up with
 			// a split brain scenario where two eggsblocks processes assume control of two dead
 			// block services)
 			if weHaveBs && !sameFailureDomain {
-				panic(fmt.Errorf("We have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle.", bs.Id, failureDomain, bs.FailureDomain))
+				panic(fmt.Errorf("We have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle.", bs.Info.Id, failureDomain, bs.Info.FailureDomain))
 			}
 			// block services in the same failure domain, which we do not have, must be
 			// decommissioned
 			if !weHaveBs && sameFailureDomain {
 				if !isDecommissioned {
-					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Id, failureDomain))
+					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Info.Id, failureDomain))
 				}
-				cipher, err := aes.NewCipher(bs.SecretKey[:])
+				cipher, err := aes.NewCipher(bs.Info.SecretKey[:])
 				if err != nil {
 					panic(fmt.Errorf("could not create AES-128 key: %w", err))
 				}
-				log.Info("will service erase block requests for decommissioned block service %v", bs.Id)
-				deadBlockServices[bs.Id] = deadBlockService{
+				log.Info("will service erase block requests for decommissioned block service %v", bs.Info.Id)
+				deadBlockServices[bs.Info.Id] = deadBlockService{
 					cipher: cipher,
 				}
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
-				delete(blockServices, bs.Id)
-				deadBlockServices[bs.Id] = deadBlockService{
+				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Info.Id)
+				delete(blockServices, bs.Info.Id)
+				deadBlockServices[bs.Info.Id] = deadBlockService{
 					cipher: ourBs.cipher,
 				}
 			}

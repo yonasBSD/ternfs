@@ -1015,7 +1015,7 @@ std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
     return out;
 }
 
-void BlockServiceInfo::pack(BincodeBuf& buf) const {
+void RegisterBlockServiceInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
     buf.packFixedBytes<4>(ip1);
     buf.packScalar<uint16_t>(port1);
@@ -1031,7 +1031,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     buf.packBytes(path);
     lastSeen.pack(buf);
 }
-void BlockServiceInfo::unpack(BincodeBuf& buf) {
+void RegisterBlockServiceInfo::unpack(BincodeBuf& buf) {
     id.unpack(buf);
     buf.unpackFixedBytes<4>(ip1);
     port1 = buf.unpackScalar<uint16_t>();
@@ -1047,7 +1047,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     buf.unpackBytes(path);
     lastSeen.unpack(buf);
 }
-void BlockServiceInfo::clear() {
+void RegisterBlockServiceInfo::clear() {
     id = BlockServiceId(0);
     ip1.clear();
     port1 = uint16_t(0);
@@ -1063,7 +1063,7 @@ void BlockServiceInfo::clear() {
     path.clear();
     lastSeen = EggsTime();
 }
-bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
+bool RegisterBlockServiceInfo::operator==(const RegisterBlockServiceInfo& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if (ip1 != rhs.ip1) { return false; };
     if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
@@ -1080,8 +1080,30 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x) {
+    out << "RegisterBlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ")";
+    return out;
+}
+
+void BlockServiceInfo::pack(BincodeBuf& buf) const {
+    info.pack(buf);
+    buf.packScalar<bool>(hasFiles);
+}
+void BlockServiceInfo::unpack(BincodeBuf& buf) {
+    info.unpack(buf);
+    hasFiles = buf.unpackScalar<bool>();
+}
+void BlockServiceInfo::clear() {
+    info.clear();
+    hasFiles = bool(0);
+}
+bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
+    if (info != rhs.info) { return false; };
+    if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
+    return true;
+}
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "BlockServiceInfo(" << "Info=" << x.info << ", " << "HasFiles=" << x.hasFiles << ")";
     return out;
 }
 
@@ -3344,10 +3366,10 @@ std::ostream& operator<<(std::ostream& out, const ShuckleResp& x) {
 }
 
 void RegisterBlockServicesReq::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceInfo>(blockServices);
+    buf.packList<RegisterBlockServiceInfo>(blockServices);
 }
 void RegisterBlockServicesReq::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceInfo>(blockServices);
+    buf.unpackList<RegisterBlockServiceInfo>(blockServices);
 }
 void RegisterBlockServicesReq::clear() {
     blockServices.clear();

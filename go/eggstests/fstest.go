@@ -640,7 +640,7 @@ func corruptFiles(
 		}
 		body := resp.(*msgs.AllBlockServicesResp)
 		for _, block := range body.BlockServices {
-			blockServicesToDataDirs[block.Id] = block.Path
+			blockServicesToDataDirs[block.Info.Id] = block.Info.Path
 		}
 	}
 	filesReq := msgs.VisitFilesReq{}

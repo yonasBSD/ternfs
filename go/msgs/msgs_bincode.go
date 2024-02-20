@@ -3803,7 +3803,7 @@ func (v *EntryNewBlockInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *BlockServiceInfo) Pack(w io.Writer) error {
+func (v *RegisterBlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
 	}
@@ -3849,7 +3849,7 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *BlockServiceInfo) Unpack(r io.Reader) error {
+func (v *RegisterBlockServiceInfo) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
 		return err
 	}
@@ -3890,6 +3890,26 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceInfo) Pack(w io.Writer) error {
+	if err := v.Info.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.HasFiles)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceInfo) Unpack(r io.Reader) error {
+	if err := v.Info.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.HasFiles)); err != nil {
 		return err
 	}
 	return nil

@@ -1080,10 +1080,10 @@ func main() {
 		_2 uint16
 	})
 	for _, bs := range blockServices {
-		blockServicesPorts[bs.FailureDomain] = struct {
+		blockServicesPorts[bs.Info.FailureDomain] = struct {
 			_1 uint16
 			_2 uint16
-		}{bs.Port1, bs.Port2}
+		}{bs.Info.Port1, bs.Info.Port2}
 	}
 
 	if *outgoingPacketDrop > 0 {

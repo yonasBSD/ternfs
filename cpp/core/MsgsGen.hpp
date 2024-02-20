@@ -913,7 +913,7 @@ struct EntryNewBlockInfo {
 
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
-struct BlockServiceInfo {
+struct RegisterBlockServiceInfo {
     BlockServiceId id;
     BincodeFixedBytes<4> ip1;
     uint16_t port1;
@@ -931,7 +931,7 @@ struct BlockServiceInfo {
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen
 
-    BlockServiceInfo() { clear(); }
+    RegisterBlockServiceInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -948,6 +948,27 @@ struct BlockServiceInfo {
         _size += 8; // blocks
         _size += path.packedSize(); // path
         _size += 8; // lastSeen
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RegisterBlockServiceInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x);
+
+struct BlockServiceInfo {
+    RegisterBlockServiceInfo info;
+    bool hasFiles;
+
+    static constexpr uint16_t STATIC_SIZE = RegisterBlockServiceInfo::STATIC_SIZE + 1; // info + hasFiles
+
+    BlockServiceInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += info.packedSize(); // info
+        _size += 1; // hasFiles
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3078,9 +3099,9 @@ struct ShuckleResp {
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
 
 struct RegisterBlockServicesReq {
-    BincodeList<BlockServiceInfo> blockServices;
+    BincodeList<RegisterBlockServiceInfo> blockServices;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE; // blockServices
+    static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfo>::STATIC_SIZE; // blockServices
 
     RegisterBlockServicesReq() { clear(); }
     size_t packedSize() const {
@@ -3289,9 +3310,9 @@ struct BlockServiceReq {
 std::ostream& operator<<(std::ostream& out, const BlockServiceReq& x);
 
 struct BlockServiceResp {
-    BlockServiceInfo info;
+    RegisterBlockServiceInfo info;
 
-    static constexpr uint16_t STATIC_SIZE = BlockServiceInfo::STATIC_SIZE; // info
+    static constexpr uint16_t STATIC_SIZE = RegisterBlockServiceInfo::STATIC_SIZE; // info
 
     BlockServiceResp() { clear(); }
     size_t packedSize() const {

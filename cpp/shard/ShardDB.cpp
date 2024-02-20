@@ -2662,27 +2662,27 @@ struct ShardDBImpl {
         StaticValue<BlockServiceBody> blockBody;
         for (int i = 0; i < entry.blockServices.els.size(); i++) {
             const auto& entryBlock = entry.blockServices.els[i];
-            blockKey().setBlockServiceId(entryBlock.id.u64);
+            blockKey().setBlockServiceId(entryBlock.info.id.u64);
             blockBody().setVersion(1);
-            blockBody().setId(entryBlock.id.u64);
-            blockBody().setIp1(entryBlock.ip1.data);
-            blockBody().setPort1(entryBlock.port1);
-            blockBody().setIp2(entryBlock.ip2.data);
-            blockBody().setPort2(entryBlock.port2);
-            blockBody().setStorageClass(entryBlock.storageClass);
-            blockBody().setFailureDomain(entryBlock.failureDomain.name.data);
-            blockBody().setSecretKey(entryBlock.secretKey.data);
-            blockBody().setFlags(entryBlock.flags);
+            blockBody().setId(entryBlock.info.id.u64);
+            blockBody().setIp1(entryBlock.info.ip1.data);
+            blockBody().setPort1(entryBlock.info.port1);
+            blockBody().setIp2(entryBlock.info.ip2.data);
+            blockBody().setPort2(entryBlock.info.port2);
+            blockBody().setStorageClass(entryBlock.info.storageClass);
+            blockBody().setFailureDomain(entryBlock.info.failureDomain.name.data);
+            blockBody().setSecretKey(entryBlock.info.secretKey.data);
+            blockBody().setFlags(entryBlock.info.flags);
             ROCKS_DB_CHECKED(batch.Put(_defaultCf, blockKey.toSlice(), blockBody.toSlice()));
-            auto& cache = inMemoryBlockServicesData.blockServices[entryBlock.id.u64];
-            expandKey(entryBlock.secretKey.data, cache.secretKey);
-            cache.ip1 = entryBlock.ip1.data;
-            cache.port1 = entryBlock.port1;
-            cache.ip2 = entryBlock.ip2.data;
-            cache.port2 = entryBlock.port2;
-            cache.storageClass = entryBlock.storageClass;
-            cache.failureDomain = entryBlock.failureDomain.name.data;
-            cache.flags = entryBlock.flags;
+            auto& cache = inMemoryBlockServicesData.blockServices[entryBlock.info.id.u64];
+            expandKey(entryBlock.info.secretKey.data, cache.secretKey);
+            cache.ip1 = entryBlock.info.ip1.data;
+            cache.port1 = entryBlock.info.port1;
+            cache.ip2 = entryBlock.info.ip2.data;
+            cache.port2 = entryBlock.info.port2;
+            cache.storageClass = entryBlock.info.storageClass;
+            cache.failureDomain = entryBlock.info.failureDomain.name.data;
+            cache.flags = entryBlock.info.flags;
         }
         // then the current block services
         ALWAYS_ASSERT(entry.currentBlockServices.els.size() < 256); // TODO handle this properly

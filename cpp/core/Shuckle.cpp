@@ -177,7 +177,7 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
     {
         std::unordered_set<uint64_t> knownBlockServices;
         for (const auto& bs : blocks.blockServices.els) {
-            knownBlockServices.insert(bs.id.u64);
+            knownBlockServices.insert(bs.info.id.u64);
         }
         for (BlockServiceId bsId : blocks.currentBlockServices.els) {
             if (!knownBlockServices.contains(bsId.u64)) {

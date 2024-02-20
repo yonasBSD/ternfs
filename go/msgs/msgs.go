@@ -1609,7 +1609,7 @@ type AddInlineSpanEntry struct {
 	Body         []byte
 }
 
-type BlockServiceInfo struct {
+type RegisterBlockServiceInfo struct {
 	Id             BlockServiceId
 	Ip1            [4]byte
 	Port1          uint16
@@ -1624,6 +1624,11 @@ type BlockServiceInfo struct {
 	Blocks         uint64 // how many blocks we have
 	Path           string
 	LastSeen       EggsTime
+}
+
+type BlockServiceInfo struct {
+	Info     RegisterBlockServiceInfo
+	HasFiles bool
 }
 
 type UpdateBlockServicesEntry struct {
@@ -1735,7 +1740,7 @@ type AllBlockServicesResp struct {
 }
 
 type RegisterBlockServicesReq struct {
-	BlockServices []BlockServiceInfo
+	BlockServices []RegisterBlockServiceInfo
 }
 
 type RegisterBlockServicesResp struct{}
@@ -1838,7 +1843,7 @@ type BlockServiceReq struct {
 }
 
 type BlockServiceResp struct {
-	Info BlockServiceInfo
+	Info RegisterBlockServiceInfo
 }
 
 type ShardReq struct {

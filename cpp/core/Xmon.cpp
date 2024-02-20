@@ -1,3 +1,4 @@
+#include <limits>
 #include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -6,6 +7,7 @@
 #include <unordered_set>
 #include <sys/timerfd.h>
 
+#include "Common.hpp"
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Time.hpp"
@@ -13,6 +15,21 @@
 #include "Connect.hpp"
 #include "XmonAgent.hpp"
 #include "strerror.h"
+
+static const std::vector<XmonAppType> appTypes = {XmonAppType::NEVER, XmonAppType::DAYTIME, XmonAppType::CRITICAL};
+
+static const char* appTypeString(XmonAppType appType) {
+    switch (appType) {
+    case XmonAppType::NEVER:
+        return "restech_eggsfs.never";
+    case XmonAppType::DAYTIME:
+        return "restech_eggsfs.daytime";
+    case XmonAppType::CRITICAL:
+        return "restech_eggsfs.critical";
+    default:
+        throw EGGS_EXCEPTION("Bad xmon app type %s", (int)appType);
+    }
+}
 
 enum struct XmonMood : int32_t {
     Happy = 0,
@@ -37,11 +54,12 @@ Xmon::Xmon(
 ) :
     Loop(logger, agent, "xmon"),
     _agent(agent),
-    _appType(config.appType),
+    _appInstance(config.appInstance),
+    _parent(config.appType),
     _xmonHost(config.prod ? "REDACTED" : "REDACTED"),
     _xmonPort(5004)
 {
-    if (config.appInstance.empty()) {
+    if (_appInstance.empty()) {
         throw EGGS_EXCEPTION("empty app name");
     }
     {
@@ -53,7 +71,19 @@ Xmon::Xmon(
         _hostname = buf;
         _hostname = _hostname.substr(0, _hostname.find("."));
     }
-    _appInstance = config.appInstance + "@" + _hostname;
+    _appInstance = _appInstance + "@" + _hostname;
+
+    {
+        bool found = false;
+        for (const auto& appType: appTypes) {
+            if (appType == _parent) {
+                found = true;
+                continue;
+            }
+            _children.emplace_back(appType);
+        }
+        ALWAYS_ASSERT(found, "Did not find app type %s", (uint8_t)_parent);
+    }
 
     // xmon socket
     _fds[SOCK_FD].fd = -1;
@@ -71,7 +101,7 @@ Xmon::Xmon(
     // arm initial timer
     {
         auto now = eggsNow();
-        _timerExpiresAt = -1;
+        _timerExpiresAt = std::numeric_limits<uint64_t>::max();
         _ensureTimer(now, now);
     }
 }
@@ -104,6 +134,8 @@ const Duration HEARTBEAT_INTERVAL = 10_sec;
 const uint8_t HEARTBEAT_INTERVAL_SECS = HEARTBEAT_INTERVAL.ns/1'000'000'000ull;
 
 void Xmon::_packLogon(XmonBuf& buf) {
+    buf.reset();
+
     // <https://REDACTED>
     // Name 	Type 	Description
     // Magic 	int16 	always 'T'
@@ -121,7 +153,6 @@ void Xmon::_packLogon(XmonBuf& buf) {
     // Num errors 	int32 	(deprecated)
     // Mood 	int32 	current mood
     // Details JSON 	string 	(unused)
-    buf.reset();
     buf.packScalar<int16_t>('T'); // magic
     buf.packScalar<int32_t>(4);   // version
     buf.packScalar<int32_t>(0x0); // message type
@@ -130,7 +161,7 @@ void Xmon::_packLogon(XmonBuf& buf) {
     buf.packScalar<uint8_t>(HEARTBEAT_INTERVAL_SECS); // default interval
     buf.packScalar<uint8_t>(0); // unused
     buf.packScalar<int16_t>(0); // unused
-    buf.packString(_appType); // app type
+    buf.packString(appTypeString(_parent)); // app type
     buf.packString(_appInstance); // app instance
     buf.packScalar<int64_t>(0); // heap size
     buf.packScalar<int32_t>(0); // num threads
@@ -138,6 +169,23 @@ void Xmon::_packLogon(XmonBuf& buf) {
     buf.packScalar<XmonMood>(XmonMood::Happy); // mood
     std::string details;
     buf.packString(details); // details
+
+    for (const auto& child: _children) {
+        buf.packScalar<int32_t>(0x100); // msg type
+        buf.packScalar<int32_t>(0x0); // must be 0
+        buf.packString(_hostname); // hostname
+        buf.packScalar<uint8_t>(0); // unused
+        buf.packScalar<uint8_t>(0); // unused
+        buf.packScalar<int16_t>(0); // unused
+        buf.packString(appTypeString(child)); // app type
+        buf.packString(_appInstance); // app instance
+        buf.packScalar<int64_t>(0); // heap size
+        buf.packScalar<int32_t>(0); // num threads
+        buf.packScalar<int32_t>(0); // num errors
+        buf.packScalar<XmonMood>(XmonMood::Happy); // mood
+        std::string details;
+        buf.packString(details); // details
+    }
 }
 
 void Xmon::_packUpdate(XmonBuf& buf) {
@@ -158,15 +206,30 @@ void Xmon::_packUpdate(XmonBuf& buf) {
 
 void Xmon::_packRequest(XmonBuf& buf, const XmonRequest& req) {
     buf.reset();
-    buf.packScalar(req.msgType);
-    buf.packScalar(req.alertId);
-    if (req.msgType == XmonRequestType::CREATE || req.msgType == XmonRequestType::UPDATE) {
-        buf.packScalar(req.binnable);
-        buf.packString(req.message);
+
+    bool hasMessage = req.msgType == XmonRequestType::CREATE || req.msgType == XmonRequestType::UPDATE;
+
+    if (_parent == req.appType) {
+        buf.packScalar(req.msgType);
+        buf.packScalar(req.alertId);
+        if (hasMessage) {
+            buf.packScalar(req.binnable);
+            buf.packString(req.message);
+        }
+    } else {
+        buf.packScalar<int32_t>((int32_t)req.msgType | 0x100);
+        buf.packString(appTypeString(req.appType));
+        buf.packString(_appInstance);
+        buf.packString(std::to_string(req.alertId));
+        if (hasMessage) {
+            buf.packScalar((int32_t)req.binnable);
+            buf.packString(req.message);
+            std::string json; // unused
+            buf.packString(json);
+        }
     }
 }
 
-// Automatically keeps going on EAGAIN
 std::string XmonBuf::writeOut(int fd) {
     const char* curr = buf + cur;
     const char* end = buf + len;
@@ -183,27 +246,24 @@ std::string XmonBuf::writeOut(int fd) {
     return {};
 }
 
-bool XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
+void XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
+    errString.clear();
     reset();
     ensureUnpackSizeOrPanic(sz);
     size_t readSoFar = 0;
     while (readSoFar < sz) {
         ssize_t r = read(fd, buf+cur+readSoFar, sz-readSoFar); 
-        if (r < 0 && errno == EAGAIN && readSoFar == 0) {
-            return false;
-        }
         if (unlikely(r < 0)) {
             errString = generateErrString("read in xmon buf", errno);
-            return false;
+            return;
         }
         if (unlikely(r == 0)) {
             errString = "unexpected EOF";
-            return false;
+            return;
         }
         readSoFar += r;
     }
     len += sz;
-    return true;
 }
 
 constexpr int MAX_BINNABLE_ALERTS = 20;
@@ -215,7 +275,7 @@ struct QuietAlert {
 
 EggsTime Xmon::_stepNextWakeup() {
     std::string errString;
-    EggsTime nextWakeup = -1;
+    EggsTime nextWakeup = std::numeric_limits<uint64_t>::max();
 
 #define CHECK_ERR_STRING(__what) \
     if (errString.size()) { \
@@ -236,16 +296,11 @@ EggsTime Xmon::_stepNextWakeup() {
         CHECK_ERR_STRING(errString);
         LOG_INFO(_env, "connected to xmon %s:%s", _xmonHost, _xmonPort);
          
-        // non blocking receive
-        if (fcntl(_fds[SOCK_FD].fd, F_SETFL, O_NONBLOCK) < 0) {
-            throw SYSCALL_EXCEPTION("fcntl");
-        }
-
-        // Send logon message
+        // Send logon message(s)
         _packLogon(_buf);
         errString = _buf.writeOut(_fds[SOCK_FD].fd);
         CHECK_ERR_STRING(errString);
-        LOG_INFO(_env, "sent logon to xmon, appType=%s appInstance=%s", _appType, _appInstance);
+        LOG_INFO(_env, "sent logon to xmon, appType=%s appInstance=%s", appTypeString(_parent), _appInstance);
 
         _gotHeartbeatAt = 0;
         nextWakeup = std::min(nextWakeup, eggsNow() + HEARTBEAT_INTERVAL*2);
@@ -260,40 +315,66 @@ EggsTime Xmon::_stepNextWakeup() {
 
     if (_fds[SOCK_FD].revents & (POLLIN|POLLHUP|POLLERR)) {
         LOG_DEBUG(_env, "got event in sock fd");
-        for (;;) {
-            // Receive everything
-            errString.clear();
-            bool success = _buf.readIn(_fds[SOCK_FD].fd, 4, errString);
-            CHECK_ERR_STRING("read message type");
-            if (!success) { break; }
-            int32_t msgType = _buf.unpackScalar<int32_t>();
-            switch (msgType) {
-            case 0x0: {
-                if (_gotHeartbeatAt == 0) {
-                    LOG_INFO(_env, "got first xmon heartbeat, will start sending requests");
-                } else {
-                    LOG_DEBUG(_env, "got xmon heartbeat");
-                }
-                _gotHeartbeatAt = now;
-                nextWakeup = std::min(nextWakeup, now + HEARTBEAT_INTERVAL*2);
-                _packUpdate(_buf);
-                errString = _buf.writeOut(_fds[SOCK_FD].fd);
-                CHECK_ERR_STRING("send heartbeat");
-                break; }
-            case 0x1: {
-                bool success = false;
-                do {
-                    errString.clear();
-                    success = _buf.readIn(_fds[SOCK_FD].fd, 8, errString);
-                    CHECK_ERR_STRING("reading alert binned id");
-                } while (!success);
-                int64_t alertId = _buf.unpackScalar<int64_t>();
-                LOG_INFO(_env, "got alert %s binned from UI", alertId);
-                _binnableAlerts.erase(alertId);
-                break; }
-            default:
-                throw EGGS_EXCEPTION("unknown message type %s", msgType);
+        // Receive everything
+        _buf.readIn(_fds[SOCK_FD].fd, 4, errString);
+        CHECK_ERR_STRING("read message type");
+        int32_t msgType = _buf.unpackScalar<int32_t>();
+        switch (msgType) {
+        case 0x0: {
+            if (_gotHeartbeatAt == 0) {
+                LOG_INFO(_env, "got first xmon heartbeat, will start sending requests");
+            } else {
+                LOG_DEBUG(_env, "got xmon heartbeat");
             }
+            _gotHeartbeatAt = now;
+            nextWakeup = std::min(nextWakeup, now + HEARTBEAT_INTERVAL*2);
+            _packUpdate(_buf);
+            errString = _buf.writeOut(_fds[SOCK_FD].fd);
+            CHECK_ERR_STRING("send heartbeat");
+            break; }
+        case 0x1: {
+            _buf.readIn(_fds[SOCK_FD].fd, 8, errString);
+            CHECK_ERR_STRING("reading alert binned id");
+            int64_t alertId = _buf.unpackScalar<int64_t>();
+            LOG_INFO(_env, "got alert %s binned from UI", alertId);
+            _binnableAlerts.erase(alertId);
+            break; }
+        case 0x101: {
+            // we don't care about which child this is, alert ids are unique anyway
+            // also this really ain't the best code
+            _buf.readIn(_fds[SOCK_FD].fd, 2, errString);
+            CHECK_ERR_STRING("reading child app type length");
+            {
+                uint16_t appTypeLen = _buf.unpackScalar<uint16_t>();
+                _buf.readIn(_fds[SOCK_FD].fd, appTypeLen, errString);
+                CHECK_ERR_STRING("reading child app type");
+            }
+            _buf.readIn(_fds[SOCK_FD].fd, 2, errString);
+            CHECK_ERR_STRING("reading child app instance length");
+            {
+                uint16_t appInstanceLen = _buf.unpackScalar<uint16_t>();
+                _buf.readIn(_fds[SOCK_FD].fd, appInstanceLen, errString);
+                CHECK_ERR_STRING("reading child app instance");
+            }
+            _buf.readIn(_fds[SOCK_FD].fd, 2, errString);
+            CHECK_ERR_STRING("reading alert id length");
+            int64_t alertId;
+            {
+                uint16_t alertIdLen = _buf.unpackScalar<uint16_t>();
+                _buf.readIn(_fds[SOCK_FD].fd, alertIdLen, errString);
+                CHECK_ERR_STRING("reading alert id");
+                size_t idx;
+                alertId = std::stoll(std::string(_buf.buf, alertIdLen), &idx);
+                if (idx != alertIdLen) {
+                    errString = "could not parse alert id";
+                    CHECK_ERR_STRING("parsing alert id");
+                }
+            }
+            LOG_INFO(_env, "got alert %s binned from UI", alertId);
+            _binnableAlerts.erase(alertId);
+            break; }
+        default:
+            throw EGGS_EXCEPTION("unknown message type %s", msgType);
         }
     }
 
@@ -306,7 +387,7 @@ EggsTime Xmon::_stepNextWakeup() {
                 throw SYSCALL_EXCEPTION("read");
             }
         }
-        _timerExpiresAt = -1; // it just fired
+        _timerExpiresAt = std::numeric_limits<uint64_t>::max(); // it just fired
 
         // check if we're past the deadline
         if (_gotHeartbeatAt > 0) {
@@ -327,11 +408,11 @@ EggsTime Xmon::_stepNextWakeup() {
             if (now >= it->second.quietUntil) {
                 nextWakeup = std::min(nextWakeup, it->second.quietUntil);
                 _queuedRequests.emplace_back(XmonRequest{
-                    .msgType = XmonRequestType::CREATE,
                     .alertId = it->first,
                     .quietPeriod = 0,
-                    .binnable = false,
                     .message = std::move(it->second.message),
+                    .msgType = XmonRequestType::CREATE,
+                    .binnable = false,
                 });
                 it = _quietAlerts.erase(it);
             } else {
@@ -342,12 +423,12 @@ EggsTime Xmon::_stepNextWakeup() {
 
     if (_fds[PIPE_FD].revents & (POLLIN|POLLHUP|POLLERR)) {
         LOG_DEBUG(_env, "got event in pipe FD");
-        // drain pipe
-        for (;;) {
-            XmonRequest req;
-            if (!req.read(_fds[PIPE_FD].fd)) { break; }
-            _queuedRequests.emplace_back(std::move(req));
+        XmonRequest req;
+        req.read(_fds[PIPE_FD].fd);
+        if (req.appType == XmonAppType::DEFAULT) {
+            req.appType = _parent;
         }
+        _queuedRequests.emplace_back(std::move(req));
     }
 
     // Write out all requests, if socket is alive anyway
@@ -373,11 +454,11 @@ EggsTime Xmon::_stepNextWakeup() {
                         LOG_ERROR(_env, "not creating alert, aid=%s binnable=%s message=%s, we're full", req.alertId, req.binnable, req.message);
                         if (_binnableAlerts.count(XmonAgent::TOO_MANY_ALERTS_ALERT_ID) == 0) {
                             XmonRequest req{
-                                .msgType = XmonRequestType::CREATE,
                                 .alertId = XmonAgent::TOO_MANY_ALERTS_ALERT_ID,
                                 .quietPeriod = 0,
-                                .binnable = true,
                                 .message = "too many alerts, alerts dropped",
+                                .msgType = XmonRequestType::CREATE,
+                                .binnable = true,
                             };
                             _packRequest(_buf, req);
                             alertIdToInsert = XmonAgent::TOO_MANY_ALERTS_ALERT_ID;
@@ -407,7 +488,7 @@ EggsTime Xmon::_stepNextWakeup() {
                 }                    
                 LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
             } else {
-                ALWAYS_ASSERT(false, "bad req type %s", (int)req.msgType);
+                throw EGGS_EXCEPTION("bad req type %s", (int)req.msgType);
             }
             _packRequest(_buf, req);
         write_request:

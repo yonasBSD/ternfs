@@ -689,7 +689,8 @@ public:
         _shared(shared),
         _shid(shid),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shucklePort(options.shucklePort),
+        _alert(XmonAppType::DAYTIME)
     {}
 
     virtual ~ShardStatsInserter() = default;
@@ -737,7 +738,9 @@ public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
-        _shid(shid)
+        _shid(shid),
+        _sendMetricsAlert(XmonAppType::DAYTIME),
+        _writeQueueAlert(XmonAppType::NEVER)
     {}
 
     virtual ~ShardMetricsInserter() = default;
@@ -865,7 +868,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
             config.appInstance = "eggsshard" + ss.str();
         }
         config.prod = options.xmonProd;
-        config.appType = "restech_eggsfs.critical";
+        config.appType = XmonAppType::CRITICAL;
         threads.emplace_back(Loop::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 

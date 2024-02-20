@@ -17,8 +17,8 @@
 
 struct XmonConfig {
     bool prod = false;
+    XmonAppType appType = XmonAppType::NEVER;
     std::string appInstance = "";
-    std::string appType = "restech_eggsfs.never";
 };
 
 struct XmonBuf {
@@ -96,8 +96,7 @@ struct XmonBuf {
 
     // returns an error string if it failed
     std::string writeOut(int fd);
-    // if false with empty error string, we got EAGAIN immediately.
-    bool readIn(int fd, size_t sz, std::string& errString);
+    void readIn(int fd, size_t sz, std::string& errString);
 };
 
 struct Xmon : Loop {
@@ -105,8 +104,9 @@ private:
     Stopper _stopper;
     std::shared_ptr<XmonAgent> _agent;
     std::string _hostname;
-    std::string _appType;
     std::string _appInstance;
+    XmonAppType _parent;
+    std::vector<XmonAppType> _children;
     std::string _xmonHost;
     uint16_t _xmonPort;
 

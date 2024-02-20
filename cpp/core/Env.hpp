@@ -110,15 +110,20 @@ public:
     }
 
     template<typename ...Args>
-    void raiseAlert(const char* fmt, Args&&... args) {
+    void raiseAlertAppType(XmonAppType appType, const char* fmt, Args&&... args) {
         std::stringstream ss;
         format_pack(ss, fmt, args...);
         std::string line;
         std::string s = ss.str();
         _log(LogLevel::LOG_ERROR, s.c_str());
         if (likely(_xmon)) {
-            _xmon->raiseAlert(s);
+            _xmon->raiseAlert(appType, s);
         }
+    }
+
+    template<typename ...Args>
+    void raiseAlert(const char* fmt, Args&&... args) {
+        raiseAlertAppType(XmonAppType::DEFAULT, fmt, args...);
     }
 
     template<typename ...Args>
@@ -179,4 +184,9 @@ public:
 #define RAISE_ALERT(env, ...) \
     do { \
         (env).raiseAlert(VALIDATE_FORMAT(__VA_ARGS__)); \
+    } while (false)
+
+#define RAISE_ALERT_APP_TYPE(env, appType, ...) \
+    do { \
+        (env).raiseAlertAppType(appType, VALIDATE_FORMAT(__VA_ARGS__)); \
     } while (false)

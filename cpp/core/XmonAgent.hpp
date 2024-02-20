@@ -17,12 +17,20 @@ enum struct XmonRequestType : int32_t {
     CLEAR  = 0x3,
 };
 
+enum struct XmonAppType : uint8_t {
+    DEFAULT = 0, // same as the parent app type
+    NEVER = 1,
+    DAYTIME = 2,
+    CRITICAL = 3,
+};
+
 struct XmonRequest {
-    XmonRequestType msgType;
     int64_t alertId;
     Duration quietPeriod;
-    bool binnable;
     std::string message;
+    XmonRequestType msgType;
+    XmonAppType appType;
+    bool binnable;
 
     // multiple writers are fine.
     void write(int fd) const;
@@ -35,9 +43,12 @@ struct XmonRequest {
 struct XmonNCAlert {
     int64_t alertId;
     Duration quietPeriod;
+    XmonAppType appType;
 
-    XmonNCAlert() : alertId(-1), quietPeriod(0) {}
-    XmonNCAlert(Duration quietPeriod_) : alertId(-1), quietPeriod(quietPeriod_) {}
+    XmonNCAlert() : alertId(-1), quietPeriod(0), appType(XmonAppType::DEFAULT) {}
+    XmonNCAlert(XmonAppType appType_) : alertId(-1), quietPeriod(0), appType(appType_) {}
+    XmonNCAlert(XmonAppType appType_, Duration quietPeriod_) : alertId(-1), quietPeriod(quietPeriod_), appType(appType_) {}
+    XmonNCAlert(Duration quietPeriod_) : alertId(-1), quietPeriod(quietPeriod_), appType(XmonAppType::DEFAULT) {}
 };
 
 struct XmonAgent {
@@ -53,9 +64,10 @@ private:
         req.write(_writeFd());
     }
 
-    int64_t _createAlert(bool binnable, Duration quietPeriod, const std::string& message) {
+    int64_t _createAlert(XmonAppType appType, bool binnable, Duration quietPeriod, const std::string& message) {
         int64_t aid = _alertId.fetch_add(1);
         XmonRequest req;
+        req.appType = appType;
         req.msgType = XmonRequestType::CREATE;
         req.alertId = aid;
         req.binnable = binnable;
@@ -86,15 +98,16 @@ public:
         }
     }
 
-    void raiseAlert(const std::string& message) {
-        _createAlert(true, 0, message);
+    void raiseAlert(XmonAppType appType, const std::string& message) {
+        _createAlert(appType, true, 0, message);
     }
 
     void updateAlert(XmonNCAlert& aid, const std::string& message) {
         if (aid.alertId < 0) {
-            aid.alertId = _createAlert(false, aid.quietPeriod, message);
+            aid.alertId = _createAlert(aid.appType, false, aid.quietPeriod, message);
         } else {
             XmonRequest req;
+            req.appType = aid.appType;
             req.msgType = XmonRequestType::UPDATE;
             req.alertId = aid.alertId;
             req.binnable = false;
@@ -107,6 +120,7 @@ public:
     void clearAlert(XmonNCAlert& aid) {
         if (likely(aid.alertId < 0)) { return; }
         XmonRequest req;
+        req.appType = aid.appType;
         req.msgType = XmonRequestType::CLEAR;
         req.alertId = aid.alertId;
         req.binnable = false;

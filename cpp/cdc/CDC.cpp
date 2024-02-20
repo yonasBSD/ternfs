@@ -877,7 +877,7 @@ public:
         _shared(shared),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
-        _alert(10_sec)
+        _alert(XmonAppType::DAYTIME, 10_sec)
     {}
 
     virtual ~CDCStatsInserter() = default;
@@ -925,7 +925,7 @@ public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
-        _sendMetricsAlert(10_sec)
+        _sendMetricsAlert(XmonAppType::DAYTIME, 10_sec)
     {}
 
     virtual ~CDCMetricsInserter() = default;
@@ -1036,7 +1036,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     if (xmon) {
         XmonConfig config;
         config.appInstance = "eggscdc";
-        config.appType = "restech_eggsfs.critical";
+        config.appType = XmonAppType::CRITICAL;
         config.prod = options.xmonProd;
 
         threads.emplace_back(Loop::Spawn(std::make_unique<Xmon>(logger, xmon, config)));

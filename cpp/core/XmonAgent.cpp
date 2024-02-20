@@ -3,9 +3,10 @@
 #include "Exception.hpp"
 
 struct XmonRequestHeader {
-    XmonRequestType msgType;
     int64_t alertId;
     Duration quietPeriod;
+    XmonRequestType msgType;
+    XmonAppType appType;
     bool binnable;
     uint16_t messageLen;
 };
@@ -13,9 +14,10 @@ struct XmonRequestHeader {
 void XmonRequest::write(int fd) const {
     ALWAYS_ASSERT(message.size() < 1<<16);
     XmonRequestHeader header = {
-        .msgType = msgType,
         .alertId = alertId,
         .quietPeriod = quietPeriod,
+        .msgType = msgType,
+        .appType = appType,
         .binnable = binnable,
         .messageLen = (uint16_t)message.size(),
     };
@@ -36,11 +38,11 @@ bool XmonRequest::read(int fd) {
     static thread_local char buf[PIPE_BUF];
     XmonRequestHeader header;
     int read = ::read(fd, buf, sizeof(header));
-    if (read < 0 && errno == EAGAIN) { return false; }
     if (read != sizeof(header)) {
         throw SYSCALL_EXCEPTION("read");
     }
     memcpy(&header, buf, sizeof(header));
+    appType = header.appType;
     msgType = header.msgType;
     alertId = header.alertId;
     quietPeriod = header.quietPeriod;

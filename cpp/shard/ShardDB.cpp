@@ -30,6 +30,7 @@
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
 #include "AssertiveLock.hpp"
+#include "XmonAgent.hpp"
 #include "crc32c.h"
 #include "wyhash.h"
 
@@ -1348,7 +1349,7 @@ struct ShardDBImpl {
         }
 
         if (req.byteOffset%EGGSFS_PAGE_SIZE != 0) {
-            RAISE_ALERT(_env, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "req.byteOffset=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, EGGSFS_PAGE_SIZE);
             return EggsError::BAD_SPAN_BODY;
         }
 
@@ -1390,7 +1391,7 @@ struct ShardDBImpl {
             return EggsError::BAD_SPAN_BODY;
         }
         if (req.byteOffset%EGGSFS_PAGE_SIZE != 0 || req.cellSize%EGGSFS_PAGE_SIZE != 0) {
-            RAISE_ALERT(_env, "req.byteOffset=%s or cellSize=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, req.cellSize, EGGSFS_PAGE_SIZE);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "req.byteOffset=%s or cellSize=%s is not a multiple of PAGE_SIZE=%s", req.byteOffset, req.cellSize, EGGSFS_PAGE_SIZE);
             return EggsError::BAD_SPAN_BODY;
         }
         if (!_checkSpanBody(req)) {
@@ -1791,7 +1792,7 @@ struct ShardDBImpl {
         } else if (entry.type == (uint8_t)InodeType::SYMLINK) {
             id = nextFileId(&NEXT_SYMLINK_ID_KEY);
         } else {
-            ALWAYS_ASSERT(false, "Bad type %s", (int)entry.type);
+            throw EGGS_EXCEPTION("Bad type %s", (int)entry.type);
         }
 
         // write to rocks
@@ -1886,7 +1887,7 @@ struct ShardDBImpl {
         // that we have snapshot edges to be uniquely identified by name, hash, creationTime.
         // This should be very uncommon.
         if (tmpDir().mtime() >= time) {
-            RAISE_ALERT(_env, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir().mtime(), time);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "trying to modify dir %s going backwards in time, dir mtime is %s, log entry time is %s", dirId, tmpDir().mtime(), time);
             return EggsError::MTIME_IS_TOO_RECENT;
         }
 
@@ -2952,7 +2953,7 @@ struct ShardDBImpl {
         bool good = proof.proof == expectedProof;
 
         if (!good) {
-            RAISE_ALERT(_env, "bad block write proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), proof);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "bad block write proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), proof);
         }
 
         return good;
@@ -2984,7 +2985,7 @@ struct ShardDBImpl {
 
         bool good = proof.proof == expectedProof;
         if (!good) {
-            RAISE_ALERT(_env, "Bad block delete proof for file %s, block service id %s, expected %s, got %s", fileId, blockServiceId, BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "Bad block delete proof for file %s, block service id %s, expected %s, got %s", fileId, blockServiceId, BincodeFixedBytes<8>(expectedProof), BincodeFixedBytes<8>(proof.proof));
         }
         return good;
     }
@@ -3136,7 +3137,7 @@ struct ShardDBImpl {
                 const auto block = blocks.block(i);
                 const auto& proof = entry.proofs.els[i];
                 if (block.blockId() != proof.blockId) {
-                    RAISE_ALERT(_env, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
+                    RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
                     return EggsError::BAD_BLOCK_PROOF;
                 }
                 if (!_checkBlockDeleteProof(inMemoryBlockServiceData, entry.fileId, block.blockService(), proof)) {
@@ -3261,7 +3262,7 @@ struct ShardDBImpl {
                     return NO_ERROR;
                 }
             }
-            RAISE_ALERT(_env, "blocks not found when swapping blocks, are you running two migrations at once? fileId1=%s offset1=%s block1=%s fileId2=%s offset2=%s block2=%s", entry.fileId1, entry.byteOffset1, entry.blockId1, entry.fileId2, entry.byteOffset2, entry.blockId2);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "blocks not found when swapping blocks, are you running two migrations at once? fileId1=%s offset1=%s block1=%s fileId2=%s offset2=%s block2=%s", entry.fileId1, entry.byteOffset1, entry.blockId1, entry.fileId2, entry.byteOffset2, entry.blockId2);
             return EggsError::BLOCK_NOT_FOUND;
         }
         ALWAYS_ASSERT(block1.crc() == block2.crc());
@@ -3652,7 +3653,7 @@ struct ShardDBImpl {
         // Like with dirs, don't go backwards in time. This is possibly less needed than
         // with directories, but still seems good hygiene.
         if (tmpTf().mtime() >= time) {
-            RAISE_ALERT(_env, "trying to modify transient file %s going backwards in time, file mtime is %s, log entry time is %s", id, tmpTf().mtime(), time);
+            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "trying to modify transient file %s going backwards in time, file mtime is %s, log entry time is %s", id, tmpTf().mtime(), time);
             return EggsError::MTIME_IS_TOO_RECENT;
         }
 

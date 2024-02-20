@@ -1249,7 +1249,7 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 	timeoutAlert := log.NewNCAlert(0)
 	defer log.ClearNC(timeoutAlert)
 	startedAt := time.Now()
-	for {
+	for attempt := 0; ; attempt++ {
 		ch := make(chan *blockCompletion, 1)
 		err := processor.send(log, args, ch)
 		if err != nil {
@@ -1264,10 +1264,10 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 		if retriableBlockError(err) {
 			next := timeouts.Next(startedAt)
 			if next == 0 {
-				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error (attempt %v), will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
 				return nil, err
 			}
-			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error (attempt %v), might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
 			time.Sleep(next)
 		} else {
 			return nil, err

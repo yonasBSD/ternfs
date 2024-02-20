@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -43,49 +42,6 @@ func BlockServiceConnection(log *lib.Logger, ip1 [4]byte, port1 uint16, ip2 [4]b
 		}
 	}
 	panic("impossible")
-}
-
-func ReadBlocksRequest(
-	log *lib.Logger,
-	r io.Reader,
-) (msgs.BlockServiceId, msgs.BlocksRequest, error) {
-	var protocol uint32
-	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
-		return 0, nil, err
-	}
-	if protocol != msgs.BLOCKS_REQ_PROTOCOL_VERSION {
-		log.RaiseAlert("bad blocks protocol, expected %v, got %v", msgs.BLOCKS_REQ_PROTOCOL_VERSION, protocol)
-		return 0, nil, msgs.MALFORMED_REQUEST
-	}
-	var blockServiceId uint64
-	if err := binary.Read(r, binary.LittleEndian, &blockServiceId); err != nil {
-		return 0, nil, err
-	}
-	var kindByte [1]byte
-	if _, err := io.ReadFull(r, kindByte[:]); err != nil {
-		return 0, nil, err
-	}
-	kind := msgs.BlocksMessageKind(kindByte[0])
-	var req msgs.BlocksRequest
-	switch kind {
-	case msgs.ERASE_BLOCK:
-		req = &msgs.EraseBlockReq{}
-	case msgs.FETCH_BLOCK:
-		req = &msgs.FetchBlockReq{}
-	case msgs.WRITE_BLOCK:
-		req = &msgs.WriteBlockReq{}
-	case msgs.TEST_WRITE:
-		req = &msgs.TestWriteReq{}
-	case msgs.CHECK_BLOCK:
-		req = &msgs.CheckBlockReq{}
-	default:
-		log.RaiseAlert("bad blocks request kind %v", kind)
-		return 0, nil, msgs.MALFORMED_REQUEST
-	}
-	if err := req.Unpack(r); err != nil {
-		return 0, nil, err
-	}
-	return msgs.BlockServiceId(blockServiceId), req, nil
 }
 
 func WriteBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
@@ -137,42 +93,6 @@ func ReadBlocksResponse(
 	}
 	if err := resp.Unpack(r); err != nil {
 		log.Info("could not unpack response: %v", err)
-		return err
-	}
-	return nil
-}
-
-func WriteBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse) error {
-	log.Trace("writing response %T %+v", resp, resp)
-	buf := bytes.NewBuffer([]byte{})
-	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
-		return err
-	}
-	if _, err := buf.Write([]byte{uint8(resp.BlocksResponseKind())}); err != nil {
-		return err
-	}
-	if err := resp.Pack(buf); err != nil {
-		return err
-	}
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		return err
-	}
-	return nil
-}
-
-func WriteBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
-	log.Debug("writing blocks error %v", err)
-	buf := bytes.NewBuffer([]byte{})
-	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
-		return err
-	}
-	if _, err := buf.Write([]byte{msgs.ERROR}); err != nil {
-		return err
-	}
-	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
-		return err
-	}
-	if _, err := w.Write(buf.Bytes()); err != nil {
 		return err
 	}
 	return nil

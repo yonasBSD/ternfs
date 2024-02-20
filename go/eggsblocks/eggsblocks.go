@@ -306,6 +306,42 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	return nil
 }
 
+func writeBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse) error {
+	log.Trace("writing response %T %+v", resp, resp)
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if _, err := buf.Write([]byte{uint8(resp.BlocksResponseKind())}); err != nil {
+		return err
+	}
+	if err := resp.Pack(buf); err != nil {
+		return err
+	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
+	log.Debug("writing blocks error %v", err)
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if _, err := buf.Write([]byte{msgs.ERROR}); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
+		return err
+	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return nil
+}
+
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
@@ -325,18 +361,18 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	remainingSize := int(fi.Size()) - int(offset)
 	if int(count) > remainingSize {
 		log.RaiseAlert("was requested %v bytes, but only got %v", count, remainingSize)
-		client.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
 	if remainingSize < 0 {
 		log.RaiseAlert("trying to read beyond EOF")
-		client.WriteBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
 	if _, err := f.Seek(int64(offset), 0); err != nil {
 		return err
 	}
-	if err := client.WriteBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
+	if err := writeBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
 		return err
 	}
 	lf := io.LimitedReader{
@@ -414,7 +450,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		log.RaiseAlert("expected crc %v for block %v, got %v instead", crc, blockPath, msgs.Crc(actualCrc))
 		return msgs.BAD_BLOCK_CRC
 	}
-	if err := client.WriteBlocksResponse(log, conn, &msgs.CheckBlockResp{}); err != nil {
+	if err := writeBlocksResponse(log, conn, &msgs.CheckBlockResp{}); err != nil {
 		return err
 	}
 	return nil
@@ -493,7 +529,7 @@ func writeBlock(
 	if msgs.Crc(crc) != expectedCrc {
 		os.Remove(tmpName)
 		log.RaiseAlert("bad crc for block %v, got %v in req, computed %v", blockId, msgs.Crc(crc), expectedCrc)
-		client.WriteBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
+		writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 		return nil
 	}
 	if err := os.Rename(tmpName, filePath); err != nil {
@@ -514,7 +550,7 @@ func writeBlock(
 		return err
 	}
 	log.Debug("writing proof")
-	if err := client.WriteBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
+	if err := writeBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
 		return err
 	}
 	atomic.AddUint64(&env.stats[blockServiceId].blocksWritten, 1)
@@ -529,7 +565,7 @@ func testWrite(
 		return err
 	}
 	os.Remove(tmpName)
-	if err := client.WriteBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
+	if err := writeBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
 		return err
 	}
 	return nil
@@ -592,7 +628,7 @@ func handleRequestError(
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
 		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
-		client.WriteBlocksResponseError(log, conn, err.(msgs.ErrCode))
+		writeBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
 	}
 
@@ -610,7 +646,7 @@ func handleRequestError(
 	log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
-		client.WriteBlocksResponseError(log, conn, eggsErr)
+		writeBlocksResponseError(log, conn, eggsErr)
 		// kill the connection in bad cases
 		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) {
 			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
@@ -621,7 +657,7 @@ func handleRequestError(
 		}
 	} else {
 		// attempt to say goodbye, ignore errors
-		client.WriteBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
+		writeBlocksResponseError(log, conn, msgs.INTERNAL_ERROR)
 		log.Info("tearing down connection from %v after internal error %v", conn.RemoteAddr(), err)
 		return false
 	}
@@ -629,6 +665,49 @@ func handleRequestError(
 
 type deadBlockService struct {
 	cipher cipher.Block
+}
+
+func readBlocksRequest(
+	log *lib.Logger,
+	r io.Reader,
+) (msgs.BlockServiceId, msgs.BlocksRequest, error) {
+	var protocol uint32
+	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
+		return 0, nil, err
+	}
+	if protocol != msgs.BLOCKS_REQ_PROTOCOL_VERSION {
+		log.RaiseAlert("bad blocks protocol, expected %v, got %v", msgs.BLOCKS_REQ_PROTOCOL_VERSION, protocol)
+		return 0, nil, msgs.MALFORMED_REQUEST
+	}
+	var blockServiceId uint64
+	if err := binary.Read(r, binary.LittleEndian, &blockServiceId); err != nil {
+		return 0, nil, err
+	}
+	var kindByte [1]byte
+	if _, err := io.ReadFull(r, kindByte[:]); err != nil {
+		return 0, nil, err
+	}
+	kind := msgs.BlocksMessageKind(kindByte[0])
+	var req msgs.BlocksRequest
+	switch kind {
+	case msgs.ERASE_BLOCK:
+		req = &msgs.EraseBlockReq{}
+	case msgs.FETCH_BLOCK:
+		req = &msgs.FetchBlockReq{}
+	case msgs.WRITE_BLOCK:
+		req = &msgs.WriteBlockReq{}
+	case msgs.TEST_WRITE:
+		req = &msgs.TestWriteReq{}
+	case msgs.CHECK_BLOCK:
+		req = &msgs.CheckBlockReq{}
+	default:
+		log.RaiseAlert("bad blocks request kind %v", kind)
+		return 0, nil, msgs.MALFORMED_REQUEST
+	}
+	if err := req.Unpack(r); err != nil {
+		return 0, nil, err
+	}
+	return msgs.BlockServiceId(blockServiceId), req, nil
 }
 
 // The bool tells us whether we should keep going
@@ -646,7 +725,7 @@ func handleSingleRequest(
 	if connectionTimeout != 0 {
 		conn.SetReadDeadline(time.Now().Add(connectionTimeout))
 	}
-	blockServiceId, req, err := client.ReadBlocksRequest(log, conn)
+	blockServiceId, req, err := readBlocksRequest(log, conn)
 	if err != nil {
 		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, 0, 0, err)
 	}
@@ -679,7 +758,7 @@ func handleSingleRequest(
 				resp := msgs.EraseBlockResp{
 					Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
 				}
-				if err := client.WriteBlocksResponse(log, conn, &resp); err != nil {
+				if err := writeBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
 					return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 				}
@@ -709,7 +788,7 @@ func handleSingleRequest(
 		resp := msgs.EraseBlockResp{
 			Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 		}
-		if err := client.WriteBlocksResponse(log, conn, &resp); err != nil {
+		if err := writeBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}

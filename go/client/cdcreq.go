@@ -83,7 +83,7 @@ func (c *Client) CDCRequest(
 	return c.metadataRequest(logger, -1, reqBody, respBody, counters, false)
 }
 
-func CreateCDCSocket(ip [4]byte, port uint16) (*net.UDPConn, error) {
+func createCDCSocket(ip [4]byte, port uint16) (*net.UDPConn, error) {
 	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip[:], Port: int(port)})
 	if err != nil {
 		return nil, fmt.Errorf("could not create CDC socket: %w", err)

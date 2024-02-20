@@ -540,7 +540,7 @@ func (cm *clientMetadata) drainSocket(log *lib.Logger) {
 	}
 }
 
-type BlockCompletion struct {
+type blockCompletion struct {
 	Resp  msgs.BlocksResponse
 	Extra any
 	Error error
@@ -555,7 +555,7 @@ type clientBlockResponse struct {
 	// stores the error, if any
 	err error
 	// called when we're done
-	completionChan chan *BlockCompletion
+	completionChan chan *blockCompletion
 }
 
 func (resp *clientBlockResponse) done(log *lib.Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
@@ -563,7 +563,7 @@ func (resp *clientBlockResponse) done(log *lib.Logger, addr1 *net.TCPAddr, addr2
 		log.InfoStack(1, "failing request %T %+v addr1=%+v addr2=%+v extra=%+v: %v", resp.req, resp.req, addr1, addr2, extra, err)
 		resp.err = err
 	}
-	completion := &BlockCompletion{
+	completion := &blockCompletion{
 		Resp:  resp.resp,
 		Error: resp.err,
 		Extra: resp.extra,
@@ -824,7 +824,7 @@ type sendArgs struct {
 func (procs *blocksProcessors) send(
 	log *lib.Logger,
 	args *sendArgs,
-	completionChan chan *BlockCompletion,
+	completionChan chan *blockCompletion,
 ) error {
 	if args.port1 == 0 && args.port2 == 0 {
 		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.ip1, args.port1, args.ip2, args.port2))
@@ -1213,11 +1213,11 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size 
 	}
 }
 
-func (client *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return client.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
 
-func RetriableBlockError(err error) bool {
+func retriableBlockError(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF)
 }
 
@@ -1229,7 +1229,7 @@ func (client *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts,
 	defer log.ClearNC(timeoutAlert)
 	startedAt := time.Now()
 	for {
-		ch := make(chan *BlockCompletion, 1)
+		ch := make(chan *blockCompletion, 1)
 		err := processor.send(log, args, ch)
 		if err != nil {
 			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
@@ -1240,7 +1240,7 @@ func (client *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts,
 		if err == nil {
 			return resp.Resp, nil
 		}
-		if RetriableBlockError(err) {
+		if retriableBlockError(err) {
 			next := timeouts.Next(startedAt)
 			if next == 0 {
 				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error, will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
@@ -1281,7 +1281,7 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 	}
 }
 
-func (client *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
 	return client.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
@@ -1317,7 +1317,7 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 	}
 }
 
-func (client *Client) StartEraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartEraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
 	return client.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
 }
 
@@ -1348,7 +1348,7 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 	}
 }
 
-func (client *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
+func (client *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return client.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }
 

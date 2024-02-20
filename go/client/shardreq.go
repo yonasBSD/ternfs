@@ -162,7 +162,7 @@ func (c *Client) ShardRequest(
 	return c.shardRequestInternal(logger, shid, reqBody, respBody, false)
 }
 
-func CreateShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
+func createShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {
 	socket, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip[:], Port: int(port)})
 	if err != nil {
 		return nil, fmt.Errorf("could not create shard %v socket at %v:%v: %w", shid, ip, port, err)

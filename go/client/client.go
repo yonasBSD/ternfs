@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -322,7 +323,19 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
-		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
+		var written int
+		var err error
+		for {
+			alert := log.NewNCAlert(0)
+			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
+			// We get EPERM when nf drops packets, at least on fsf1/fsf2
+			if os.IsPermission(err) {
+				log.RaiseNC(alert, "could not send metadata packet because of EPERM, will retry in 1 second: %v", err)
+				time.Sleep(time.Second)
+			} else {
+				break
+			}
+		}
 		if err != nil {
 			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
 			if !dontWait {

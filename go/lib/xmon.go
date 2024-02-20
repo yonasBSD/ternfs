@@ -210,6 +210,7 @@ const maxBinnableAlerts int = 20
 
 // alert in quiet period
 type quietAlert struct {
+	troll      XmonTroll
 	quietUntil time.Time
 	message    string
 }
@@ -290,6 +291,7 @@ Reconnect:
 				if alert.quietUntil.Before(now) {
 					delete(quietAlerts, aid)
 					requests[requestsTail&requestsMask] = xmonRequest{
+						troll:    alert.troll,
 						msgType:  XMON_CREATE,
 						alertId:  aid,
 						binnable: false,
@@ -321,6 +323,7 @@ Reconnect:
 						quietAlerts[req.alertId] = &quietAlert{
 							message:    req.message,
 							quietUntil: now.Add(req.quietPeriod),
+							troll:      req.troll,
 						}
 						goto SkipRequest
 					} else if req.binnable && !x.onlyLogging && len(binnableAlerts) > maxBinnableAlerts {
@@ -345,7 +348,7 @@ Reconnect:
 					}
 					quiet := quietAlerts[req.alertId]
 					if quiet != nil {
-						log.LogLocation(quietAlertsLevel, req.file, req.line, "skipping update alertId=%v message=%q troll=%+v since it's quiet until %v", req.alertId, req.message, req.troll, quiet.quietUntil)
+						log.LogLocation(DEBUG, req.file, req.line, "skipping update alertId=%v message=%q troll=%+v since it's quiet until %v", req.alertId, req.message, req.troll, quiet.quietUntil)
 						quiet.message = req.message
 						goto SkipRequest
 					}

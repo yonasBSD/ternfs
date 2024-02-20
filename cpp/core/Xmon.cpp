@@ -268,11 +268,6 @@ void XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
 
 constexpr int MAX_BINNABLE_ALERTS = 20;
 
-struct QuietAlert {
-    EggsTime quietUntil;
-    std::string message;
-};
-
 EggsTime Xmon::_stepNextWakeup() {
     std::string errString;
     EggsTime nextWakeup = std::numeric_limits<uint64_t>::max();
@@ -412,6 +407,7 @@ EggsTime Xmon::_stepNextWakeup() {
                     .quietPeriod = 0,
                     .message = std::move(it->second.message),
                     .msgType = XmonRequestType::CREATE,
+                    .appType = it->second.appType,
                     .binnable = false,
                 });
                 it = _quietAlerts.erase(it);
@@ -445,6 +441,7 @@ EggsTime Xmon::_stepNextWakeup() {
                     nextWakeup = std::min(nextWakeup, quietUntil);
                     _quietAlerts[req.alertId] = QuietAlert{
                         .quietUntil = quietUntil,
+                        .appType = req.appType,
                         .message = std::move(req.message),
                     };
                     goto skip_request;
@@ -458,6 +455,7 @@ EggsTime Xmon::_stepNextWakeup() {
                                 .quietPeriod = 0,
                                 .message = "too many alerts, alerts dropped",
                                 .msgType = XmonRequestType::CREATE,
+                                .appType = XmonAppType::DEFAULT,
                                 .binnable = true,
                             };
                             _packRequest(_buf, req);

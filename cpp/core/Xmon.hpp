@@ -123,6 +123,7 @@ private:
     // quiet alerts we're waiting to send out
     struct QuietAlert {
         EggsTime quietUntil;
+        XmonAppType appType;
         std::string message;
     };
     std::unordered_map<int64_t, QuietAlert> _quietAlerts;

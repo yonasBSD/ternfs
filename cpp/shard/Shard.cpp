@@ -740,6 +740,7 @@ public:
         _shared(shared),
         _shid(shid),
         _sendMetricsAlert(XmonAppType::DAYTIME),
+        _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
         _writeQueueAlert(XmonAppType::NEVER)
     {}
 

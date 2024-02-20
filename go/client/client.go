@@ -325,17 +325,17 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 		whichMetadatataAddr++
 		var written int
 		var err error
-		for {
-			alert := log.NewNCAlert(0)
+		epermAlert := log.NewNCAlert(0)
+		for attempts := 0; ; attempts++ {
 			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
 			var opError *net.OpError
 			// We get EPERM when nf drops packets, at least on fsf1/fsf2.
 			// This is rare.
 			if errors.As(err, &opError) && os.IsPermission(opError.Err) {
-				log.RaiseNC(alert, "could not send metadata packet because of EPERM, will retry in 100ms: %v", err)
+				log.RaiseNC(epermAlert, "could not send metadata packet because of EPERM (attempt %v), will retry in 100ms: %v", attempts, err)
 				time.Sleep(100 * time.Millisecond)
 			} else {
-				log.ClearNC(alert)
+				log.ClearNC(epermAlert)
 				break
 			}
 		}

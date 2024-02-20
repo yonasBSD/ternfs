@@ -271,10 +271,6 @@ Reconnect:
 	}
 	// we're in, start loop
 	gotHeartbeatAt := time.Time{}
-	quietAlertsLevel := DEBUG
-	if x.printQuietAlerts {
-		quietAlertsLevel = ERROR
-	}
 	for {
 		// reconnect when too much time has passed
 		if !x.onlyLogging && !gotHeartbeatAt.Equal(time.Time{}) && time.Since(gotHeartbeatAt) > time.Second*2*time.Duration(heartbeatIntervalSecs) {
@@ -319,7 +315,11 @@ Reconnect:
 						if req.binnable {
 							panic(fmt.Errorf("got alert create with quietPeriod=%v, but it is binnable", req.quietPeriod))
 						}
-						log.LogLocation(quietAlertsLevel, req.file, req.line, "quiet non-binnable alertId=%v message=%q quietPeriod=%v troll=%+v, will wait", req.alertId, req.message, req.quietPeriod, req.troll)
+						level := DEBUG
+						if x.printQuietAlerts {
+							level = req.logLevel
+						}
+						log.LogLocation(level, req.file, req.line, "quiet non-binnable alertId=%v message=%q quietPeriod=%v troll=%+v, will wait", req.alertId, req.message, req.quietPeriod, req.troll)
 						quietAlerts[req.alertId] = &quietAlert{
 							message:    req.message,
 							quietUntil: now.Add(req.quietPeriod),

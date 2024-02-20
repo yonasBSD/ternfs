@@ -386,7 +386,7 @@ export function renderIndex() {
             {name: 'Capacity', string: stringifySize},
             {name: 'Available', string: stringifySize},
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
-            {name: 'HasFiles', render: x => x === true ? "yes" : "no"},
+            {name: 'HasFiles', string: x => x === true ? "yes" : "no"},
         ];
 
         return p.h('div', {},

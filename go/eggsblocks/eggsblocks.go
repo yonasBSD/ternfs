@@ -280,7 +280,7 @@ func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, 
 }
 
 func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
-	blockPath := client.BlockIdToPath(basePath, blockId)
+	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	if err := os.Remove(blockPath); err != nil {
 		if os.IsNotExist(err) {
@@ -307,7 +307,7 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 }
 
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
-	blockPath := client.BlockIdToPath(basePath, blockId)
+	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
@@ -375,7 +375,7 @@ func isIOErr(err error) bool {
 }
 
 func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, size uint32, crc msgs.Crc, conn *net.TCPConn) error {
-	blockPath := client.BlockIdToPath(basePath, blockId)
+	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("checking block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
 	if os.IsNotExist(err) {
@@ -481,7 +481,7 @@ func writeBlock(
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
-	filePath := client.BlockIdToPath(basePath, blockId)
+	filePath := path.Join(basePath, blockId.Path())
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	if err := os.Mkdir(path.Dir(filePath), 0777); err != nil && !os.IsExist(err) {
 		return err

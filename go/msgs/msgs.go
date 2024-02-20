@@ -3,10 +3,12 @@ package msgs
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -375,6 +377,18 @@ func (id BlockServiceId) String() string {
 
 func (id BlockId) String() string {
 	return fmt.Sprintf("0x%016x", uint64(id))
+}
+
+func (id BlockId) Path() string {
+	hex := fmt.Sprintf("%016x", uint64(id))
+	// We want to split the blocks in dirs to avoid trouble with high number of
+	// files in single directory (e.g. birthday paradox stuff). However the block
+	// id is very much _not_ uniformly distributed (it's the time). So we use
+	// the first byte of the SHA1 of the filename of the block id.
+	h := sha1.New()
+	h.Write([]byte(hex))
+	dir := fmt.Sprintf("%02x", h.Sum(nil)[0])
+	return path.Join(dir, hex)
 }
 
 func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {

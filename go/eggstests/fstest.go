@@ -688,7 +688,7 @@ func corruptFiles(
 					blocksToCorruptIxs = blocksToCorruptIxs[:numBlocksToCorrupt]
 					for ix := range blocksToCorruptIxs {
 						block := body.Blocks[ix]
-						path := client.BlockIdToPath(blockServicesToDataDirs[fileSpansResp.BlockServices[block.BlockServiceIx].Id], block.BlockId)
+						path := path.Join(blockServicesToDataDirs[fileSpansResp.BlockServices[block.BlockServiceIx].Id], block.BlockId.Path())
 						if rand.Uint64()&1 == 0 {
 							log.Debug("removing block %v at %q", block.BlockId, path)
 							// remove block

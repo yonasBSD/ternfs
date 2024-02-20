@@ -2084,13 +2084,15 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	}
 }
 
-func missingBlockServiceAlert(log *lib.Logger, s *state) {
-	alert := log.NewNCAlert(0)
-	alert.SetAppType(lib.XMON_NEVER)
+func blockServiceAlerts(log *lib.Logger, s *state) {
+	replaceDecommedAlert := log.NewNCAlert(0)
+	replaceDecommedAlert.SetAppType(lib.XMON_NEVER)
+	migrateDecommedAlert := log.NewNCAlert(0)
+	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
 	for {
 		blockServices, err := s.selectBlockServices(nil, 0)
 		if err != nil {
-			log.RaiseNC(alert, "error reading block services, will try again in one second: %s", err)
+			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)
 			continue
 		}
@@ -2113,6 +2115,7 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 		}
 		// collect non-replaced decommissioned block services
 		missingBlockServices := make(map[string]struct{})
+		decommedWithFiles := make(map[string]struct{})
 		for _, bs := range blockServices {
 			if !bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
@@ -2124,20 +2127,33 @@ func missingBlockServiceAlert(log *lib.Logger, s *state) {
 				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Info.Id, fd)
 				continue
 			}
+			if bs.HasFiles {
+				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Info.Id, fd, bs.Info.Path)] = struct{}{}
+			}
 			if _, found := activeBlockServices[fd][bs.Info.Path]; !found {
 				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Info.Path)] = struct{}{}
 			}
 		}
 		if len(missingBlockServices) == 0 {
-			log.ClearNC(alert)
+			log.ClearNC(replaceDecommedAlert)
 		} else {
 			bss := make([]string, 0, len(missingBlockServices))
 			for bs := range missingBlockServices {
 				bss = append(bss, bs)
 			}
-			log.RaiseNC(alert, "some decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
+			log.RaiseNC(replaceDecommedAlert, "decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
 		}
-		log.Info("checked for missing block services, sleeping for a minute")
+
+		if len(decommedWithFiles) == 0 {
+			log.ClearNC(migrateDecommedAlert)
+		} else {
+			bss := make([]string, 0, len(decommedWithFiles))
+			for bs := range decommedWithFiles {
+				bss = append(bss, bs)
+			}
+			log.RaiseNC(migrateDecommedAlert, "decommissioned block services still have files (including transient): %s", strings.Join(bss, " "))
+		}
+		log.Info("checked block services, sleeping for a minute")
 		time.Sleep(time.Minute)
 	}
 }
@@ -2203,7 +2219,8 @@ func initBlockServicesTable(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// detect and convert old shards table format
+
+	// detect and convert old table format
 	row := db.QueryRow(`
 		SELECT IIF(sql LIKE '%has_files%', 1, 0)
 		FROM sqlite_schema
@@ -2609,7 +2626,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		missingBlockServiceAlert(log, state)
+		blockServiceAlerts(log, state)
 	}()
 
 	go func() {

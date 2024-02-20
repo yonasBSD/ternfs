@@ -224,6 +224,19 @@ func newState(
 	if err != nil {
 		return nil, err
 	}
+	// Take a long time to fail requests so that we don't get spurious failures
+	// on restarts
+	{
+		blockTimeout := client.DefaultBlockTimeout
+		blockTimeout.Overall = 5 * time.Minute
+		st.client.SetBlockTimeout(&blockTimeout)
+		shardTimeout := client.DefaultShardTimeout
+		shardTimeout.Overall = 5 * time.Minute
+		st.client.SetShardTimeouts(&shardTimeout)
+		cdcTimeout := client.DefaultCDCTimeout
+		cdcTimeout.Overall = 5 * time.Minute
+		st.client.SetCDCTimeouts(&cdcTimeout)
+	}
 	return st, err
 }
 

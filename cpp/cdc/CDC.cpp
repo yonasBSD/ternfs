@@ -925,7 +925,8 @@ public:
     CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
-        _sendMetricsAlert(XmonAppType::DAYTIME, 10_sec)
+        _sendMetricsAlert(XmonAppType::DAYTIME, 10_sec),
+        _updateSizeAlert(XmonAppType::NEVER)
     {}
 
     virtual ~CDCMetricsInserter() = default;

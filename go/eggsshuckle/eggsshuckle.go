@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -899,6 +900,44 @@ func isBenignConnTermination(err error) bool {
 	return false
 }
 
+func writeShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleResponse) error {
+	// serialize
+	bytes := bincode.Pack(resp)
+	// write out
+	if err := binary.Write(w, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(1+len(bytes))); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte{uint8(resp.ShuckleResponseKind())}); err != nil {
+		return err
+	}
+	if _, err := w.Write(bytes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
+	log.Debug("writing shuckle error %v", err)
+	buf := bytes.NewBuffer([]byte{})
+	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
+		return err
+	}
+	if err := binary.Write(w, binary.LittleEndian, uint32(1+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write([]byte{msgs.ERROR}); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint16(err)); err != nil {
+		return err
+	}
+	w.Write(buf.Bytes())
+	return nil
+}
+
 // returns whether the connection should be terminated
 func handleError(
 	log *lib.Logger,
@@ -920,19 +959,86 @@ func handleError(
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
-		client.WriteShuckleResponseError(log, conn, eggsErr)
+		writeShuckleResponseError(log, conn, eggsErr)
 		return false
 	} else {
-		client.WriteShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
+		writeShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
 		return true
 	}
+}
+
+func readShuckleRequest(
+	log *lib.Logger,
+	r io.Reader,
+) (msgs.ShuckleRequest, error) {
+	var protocol uint32
+	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
+		return nil, err
+	}
+	if protocol != msgs.SHUCKLE_REQ_PROTOCOL_VERSION {
+		return nil, fmt.Errorf("bad shuckle protocol, expected %08x, got %08x", msgs.SHUCKLE_REQ_PROTOCOL_VERSION, protocol)
+	}
+	var len uint32
+	if err := binary.Read(r, binary.LittleEndian, &len); err != nil {
+		return nil, fmt.Errorf("could not read len: %w", err)
+	}
+	data := make([]byte, len)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, fmt.Errorf("could not read response body: %w", err)
+	}
+	kind := msgs.ShuckleMessageKind(data[0])
+	var req msgs.ShuckleRequest
+	switch kind {
+	case msgs.REGISTER_BLOCK_SERVICES:
+		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.SHARDS:
+		req = &msgs.ShardsReq{}
+	case msgs.REGISTER_SHARD:
+		req = &msgs.RegisterShardReq{}
+	case msgs.REGISTER_SHARD_REPLICA:
+		req = &msgs.RegisterShardReplicaReq{}
+	case msgs.SHARD_REPLICAS:
+		req = &msgs.ShardReplicasReq{}
+	case msgs.ALL_BLOCK_SERVICES:
+		req = &msgs.AllBlockServicesReq{}
+	case msgs.SET_BLOCK_SERVICE_FLAGS:
+		req = &msgs.SetBlockServiceFlagsReq{}
+	case msgs.REGISTER_CDC:
+		req = &msgs.RegisterCdcReq{}
+	case msgs.REGISTER_CDC_REPLICA:
+		req = &msgs.RegisterCdcReplicaReq{}
+	case msgs.CDC:
+		req = &msgs.CdcReq{}
+	case msgs.CDC_REPLICAS:
+		req = &msgs.CdcReplicasReq{}
+	case msgs.INFO:
+		req = &msgs.InfoReq{}
+	case msgs.BLOCK_SERVICE:
+		req = &msgs.BlockServiceReq{}
+	case msgs.INSERT_STATS:
+		req = &msgs.InsertStatsReq{}
+	case msgs.SHARD:
+		req = &msgs.ShardReq{}
+	case msgs.GET_STATS:
+		req = &msgs.GetStatsReq{}
+	case msgs.SHUCKLE:
+		req = &msgs.ShuckleReq{}
+	case msgs.SHARD_BLOCK_SERVICES:
+		req = &msgs.ShardBlockServicesReq{}
+	default:
+		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
+	}
+	if err := bincode.Unpack(data[1:], req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	defer conn.Close()
 
 	for {
-		req, err := client.ReadShuckleRequest(log, conn)
+		req, err := readShuckleRequest(log, conn)
 		if err != nil {
 			if handleError(log, conn, err) {
 				return
@@ -948,7 +1054,7 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			}
 		} else {
 			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
-			if err := client.WriteShuckleResponse(log, conn, resp); err != nil {
+			if err := writeShuckleResponse(log, conn, resp); err != nil {
 				if handleError(log, conn, err) {
 					return
 				}

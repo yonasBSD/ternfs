@@ -26,14 +26,17 @@ static void stopLoopHandler(int signum) {
     stopLoop.store(true, std::memory_order_release);
 }
 
-void LoopThread::stop() {
-    pthread_kill(thread, SIGTERM);
+void LoopThread::sendStop() {
+    _loop->sendStop();
+    pthread_kill(_thread, SIGTERM);
 }
 
 Loop::Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name) : _env(logger, xmon, name), _name(name) {}
 
-static void* startLoop(void* rawLoop) {
-    std::unique_ptr<Loop> loop((Loop*)rawLoop);
+void* LoopThread::runLoop(void* arg) {
+    LoopThread* loopThread = (LoopThread*) arg;
+
+
     // there's a race between starting the thread and getting the
     // sigmask, but then again we haven't setup the handler at
     // that point yet, so the whole process would just go down.
@@ -48,25 +51,24 @@ static void* startLoop(void* rawLoop) {
         }
     }
     {
-        int ret = pthread_setname_np(pthread_self(), loop->name().c_str());
+        int ret = pthread_setname_np(pthread_self(), loopThread->_loop->name().c_str());
         if (ret != 0) {
             throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_setname_np");
         }
     }
-    loop->run();
+    loopThread->_loop->run();
     return nullptr;
 }
 
-std::unique_ptr<LoopThread> Loop::Spawn(std::unique_ptr<Loop>&& loop) {
-    Loop* rawLoop = loop.release();
-    pthread_t thr;
+std::unique_ptr<LoopThread> LoopThread::Spawn(std::unique_ptr<Loop>&& loop) {
+    auto thread = std::unique_ptr<LoopThread>(new LoopThread(std::move(loop)));
     {
-        int res = pthread_create(&thr, nullptr, &startLoop, rawLoop);
+        int res = pthread_create(&thread->_thread, nullptr, &runLoop, thread.get());
         if (res != 0) {
             throw EXPLICIT_SYSCALL_EXCEPTION(res, "pthread_create");
         }
     }
-    return std::make_unique<LoopThread>(thr);
+    return thread;
 }
 
 void Loop::run() {
@@ -87,7 +89,7 @@ int Loop::sleep(Duration d) {
     return ppoll(nullptr, 0, &tspec, &blockingSigset);
 }
 
-void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
+void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
     ALWAYS_ASSERT(getpid() == gettid(), "You can only run this function from the main thread");
 
     // mask signals here too
@@ -122,7 +124,7 @@ void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
 
     // we've been told to stop, tear down all threads
     for (auto& loop : loops) {
-        loop->stop();
+        loop->sendStop();
     }
     for (const auto& loop: loops) {
         struct timespec timeout;
@@ -130,11 +132,11 @@ void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
             throw SYSCALL_EXCEPTION("clock_gettime");
         }
         timeout.tv_sec += 10;
-        int ret = pthread_timedjoin_np(loop->thread, nullptr, &timeout);
+        int ret = pthread_timedjoin_np(loop->_thread, nullptr, &timeout);
         if (ret != 0 && ret == ETIMEDOUT) {
             char name[16];
             {
-                int ret = pthread_getname_np(loop->thread, name, sizeof(name));
+                int ret = pthread_getname_np(loop->_thread, name, sizeof(name));
                 if (ret != 0) {
                     throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_getname_np");
                 }

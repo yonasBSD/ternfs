@@ -1040,7 +1040,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         config.appType = XmonAppType::CRITICAL;
         config.prod = options.xmonProd;
 
-        threads.emplace_back(Loop::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
     CDCDB db(logger, xmon, dbDir);
@@ -1048,15 +1048,15 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
 
     LOG_INFO(env, "Spawning server threads");
 
-    threads.emplace_back(Loop::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
-    threads.emplace_back(Loop::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
-    threads.emplace_back(Loop::Spawn(std::make_unique<CDCStatsInserter>(logger, xmon, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCStatsInserter>(logger, xmon, options, shared)));
     if (options.metrics) {
-        threads.emplace_back(Loop::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared)));
     }
-    threads.emplace_back(Loop::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared)));
 
-    waitUntilStopped(threads);
+    LoopThread::waitUntilStopped(threads);
 
     db.close();
 

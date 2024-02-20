@@ -461,18 +461,9 @@ private:
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
-    struct WriterThread : LoopThread {
-        ShardShared& shared;
-
-        WriterThread(pthread_t thread_, ShardShared& shared_) : LoopThread(thread_), shared(shared_) {}
-        virtual ~WriterThread() = default;
-        WriterThread(const WriterThread&) = delete;
-
-        virtual void stop() {
-            LoopThread::stop();
-            shared.logEntriesQueue.close();
-        }
-    };
+    virtual void sendStop() override {
+        _shared.logEntriesQueue.close();
+    }
 
 public:
     ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const ShardOptions& options, ShardShared& shared) :
@@ -496,12 +487,6 @@ public:
     }
 
     virtual ~ShardWriter() = default;
-
-    // We need a special one since we're waiting on a futex, not with poll
-    static std::unique_ptr<LoopThread> SpawnWriter(std::unique_ptr<ShardWriter>&& loop) {
-        ShardShared& shared = loop->_shared;
-        return std::make_unique<WriterThread>(std::move(Loop::Spawn(std::move(loop))->thread), shared);
-    }
 
     virtual void step() override {
         _logEntries.clear();
@@ -870,7 +855,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         }
         config.prod = options.xmonProd;
         config.appType = XmonAppType::CRITICAL;
-        threads.emplace_back(Loop::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
     // then everything else
@@ -897,17 +882,17 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     env.clearAlert(dbInitAlert);
     ShardShared shared(sharedDB, shardDB);
 
-    threads.emplace_back(Loop::Spawn(std::make_unique<ShardServer>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(ShardWriter::SpawnWriter(std::make_unique<ShardWriter>(logger, xmon, options, shared)));
-    threads.emplace_back(Loop::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(Loop::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(Loop::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared)));
     if (options.metrics) {
-        threads.emplace_back(Loop::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shid, shared)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shid, shared)));
     }
 
     // from this point on termination on SIGINT/SIGTERM will be graceful
-    waitUntilStopped(threads);
+    LoopThread::waitUntilStopped(threads);
 
     shardDB.close();
     sharedDB.close();

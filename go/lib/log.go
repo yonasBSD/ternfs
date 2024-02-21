@@ -110,7 +110,15 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 	}
 
 	log.mu.Lock()
-	log.out.Write(buf.Bytes())
+	bytes := buf.Bytes()
+	for written := 0; written < len(bytes); {
+		w, err := log.out.Write(buf.Bytes())
+		if err != nil {
+			log.mu.Unlock()
+			panic(fmt.Errorf("could not log: %v", err))
+		}
+		written += w
+	}
 	log.mu.Unlock()
 
 	buf.Reset()

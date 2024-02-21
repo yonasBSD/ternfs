@@ -1311,6 +1311,8 @@ const SPAN_POLICY_TAG DirectoryInfoTag = 2
 const BLOCK_POLICY_TAG DirectoryInfoTag = 3
 const STRIPE_POLICY_TAG DirectoryInfoTag = 4
 
+var DirectoryInfoTags = []DirectoryInfoTag{SNAPSHOT_POLICY_TAG, SPAN_POLICY_TAG, BLOCK_POLICY_TAG, STRIPE_POLICY_TAG}
+
 func (d DirectoryInfoTag) String() string {
 	switch d {
 	case SNAPSHOT_POLICY_TAG:

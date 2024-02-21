@@ -21,6 +21,20 @@ func EqualBytes(t *testing.T, x []byte, y []byte) bool {
 	return true
 }
 
+func EqualSlice[A comparable](t *testing.T, x []A, y []A) bool {
+	if len(x) != len(y) {
+		t.Errorf("%v != %v", x, y)
+		return false
+	}
+	for i := 0; i < len(x); i++ {
+		if x[i] != y[i] {
+			t.Errorf("%v != %v", x, y)
+			return false
+		}
+	}
+	return true
+}
+
 func True(t *testing.T, x bool, format string, args ...interface{}) bool {
 	if !x {
 		t.Errorf(format, args...)

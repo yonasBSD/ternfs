@@ -166,7 +166,7 @@ out_sock:
 static void eggsfs_shuckle_refresh_work(struct work_struct* work) {
     struct eggsfs_fs_info* info = container_of(container_of(work, struct delayed_work, work), struct eggsfs_fs_info, shuckle_refresh_work);
     int err = eggsfs_refresh_fs_info(info);
-    if (err != 0) {
+    if (err != 0 && err != -EAGAIN) {
         eggsfs_warn("failed to refresh shuckle data: %d", err);
     }
     eggsfs_debug("scheduling shuckle data refresh after %dms", jiffies_to_msecs(eggsfs_shuckle_refresh_time_jiffies));

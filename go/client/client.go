@@ -1184,8 +1184,14 @@ TraverseDirectories:
 		}
 		statReq.Id = statResp.Owner
 	}
-	for _, id := range visited {
-		dirInfoCache.UpdateCachedDirInfo(id, entry, inheritedFrom)
+	// since we're traversing upwards, and we want to insert the policies first,
+	// update the cache from root to leaf
+	for i := len(visited) - 1; i >= 0; i-- {
+		id := visited[i]
+		if id == inheritedFrom {
+			dirInfoCache.UpdatePolicy(id, entry)
+		}
+		dirInfoCache.UpdateInheritedFrom(dirId, entry.Tag(), inheritedFrom)
 	}
 	return inheritedFrom, nil
 }

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"path"
 	"sync/atomic"
@@ -15,6 +16,9 @@ import (
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
+
+	"net/http"
+	_ "net/http/pprof"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -92,6 +96,7 @@ func main() {
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
+	pprofHttpPort := flag.Int("pprof-http-port", -1, "Port on which to run the pprof HTTP server")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -222,6 +227,19 @@ func main() {
 			time.Sleep(time.Minute)
 		}
 	}()
+
+	if *pprofHttpPort >= 0 {
+		httpListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", *pprofHttpPort))
+		if err != nil {
+			panic(err)
+		}
+		defer httpListener.Close()
+		go func() {
+			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			terminateChan <- http.Serve(httpListener, nil)
+		}()
+		log.Info("http pprof listener started on port %v", httpListener.Addr().(*net.TCPAddr).Port)
+	}
 
 	if *collectDirectories {
 		// Limit to 25k dirs per second to reduce load in steady state. For our current

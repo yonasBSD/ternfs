@@ -158,8 +158,10 @@ func main() {
 	shuckleTimeouts := &client.DefaultShuckleTimeout
 	shuckleTimeouts.Overall = 0
 	shardTimeouts := &client.DefaultShardTimeout
+	shardTimeouts.Initial = 500 * time.Millisecond
 	shardTimeouts.Overall = 0
 	cdcTimeouts := &client.DefaultCDCTimeout
+	cdcTimeouts.Initial = 2 * time.Second
 	cdcTimeouts.Overall = 0
 	blockTimeouts := &client.DefaultBlockTimeout
 	blockTimeouts.Overall = 0

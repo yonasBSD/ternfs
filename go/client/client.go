@@ -223,16 +223,16 @@ type clientMetadata struct {
 	client *Client
 	sock   *net.UDPConn
 
-	requestsById      map[uint64]*metadataProcessorRequest // requests we've sent, by req id
-	requestsByTimeout metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
-	earlyRequests     map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet. should be uncommon.
+	requestsById                 map[uint64]*metadataProcessorRequest // requests we've sent, by req id
+	requestsByTimeout            metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
+	earlyRequests                map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet. should be uncommon.
+	lastCleanedUpEarlyRequestsAt time.Time
 
 	quitResponseProcessor chan struct{}                  // channel to quit the response processor, which in turn closes the socket
 	incoming              chan *metadataProcessorRequest // channel where user requests come in
 	inFlight              chan *metadataProcessorRequest // channel going from request processor to response processor
 	rawResponses          chan rawMetadataResponse       // channel going from the socket drainer to the response processor
 	responsesBufs         chan *[]byte                   // channel to store a cache of buffers to read into
-	timeoutTicker         *time.Ticker                   // channel to notify the response processor to time out requests
 }
 
 var whichMetadatataAddr int
@@ -262,12 +262,10 @@ func (cm *clientMetadata) init(log *lib.Logger, client *Client) error {
 	cm.inFlight = make(chan *metadataProcessorRequest, 10_000)
 	cm.rawResponses = make(chan rawMetadataResponse, 10_000)
 	cm.responsesBufs = make(chan *[]byte, 128)
-	for i := 0; i < len(cm.responsesBufs); i++ {
+	for i := 0; i < cap(cm.responsesBufs); i++ {
 		buf := make([]byte, clientMtu)
 		cm.responsesBufs <- &buf
 	}
-
-	cm.timeoutTicker = time.NewTicker(DefaultShardTimeout.Initial / 2)
 
 	go cm.processRequests(log)
 	go cm.processResponses(log)
@@ -277,7 +275,6 @@ func (cm *clientMetadata) init(log *lib.Logger, client *Client) error {
 }
 
 func (cm *clientMetadata) close() {
-	cm.timeoutTicker.Stop()
 	cm.quitResponseProcessor <- struct{}{}
 	cm.incoming <- nil
 }
@@ -364,12 +361,15 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 	}
 }
 
-func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse) {
-	// discharge the raw request at the end
+func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse, dischargeBuf bool) {
 	defer func() {
+		if !dischargeBuf {
+			return
+		}
 		select {
 		case cm.responsesBufs <- rawResp.buf:
 		default:
+			panic(fmt.Errorf("impossible: could not put back response buffer which we got from socket drainer"))
 		}
 	}()
 	// check protocol
@@ -448,14 +448,77 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 	}
 }
 
+func (cm *clientMetadata) processRawResponse(log *lib.Logger, rawResp *rawMetadataResponse) {
+	if rawResp.buf != nil {
+		if req, found := cm.requestsById[rawResp.requestId]; found {
+			// Common case, the request is already there
+			cm.parseResponse(log, req, rawResp, true)
+		} else {
+			// Uncommon case, the request is missing. In this (rare) case
+			// we still discharge the buffer immediately so that it's already
+			// available for use
+			buf := make([]byte, clientMtu)
+			select {
+			case cm.responsesBufs <- &buf:
+			default:
+				panic(fmt.Errorf("impossible: could not return buffer"))
+			}
+			cm.earlyRequests[rawResp.requestId] = *rawResp
+		}
+	}
+	now := time.Now()
+	// expire requests
+	for len(cm.requestsById) > 0 {
+		first := cm.requestsByTimeout[0]
+		if now.After(first.deadline) {
+			log.Debug("request %v %T to shard %v has timed out", first.requestId, first.req, first.shard)
+			heap.Pop(&cm.requestsByTimeout)
+			delete(cm.requestsById, first.requestId)
+			// consumer might very plausibly be gone by now,
+			// don't risk it
+			go func() {
+				first.respCh <- &metadataProcessorResponse{
+					requestId: first.requestId,
+					err:       msgs.TIMEOUT,
+					resp:      nil,
+				}
+			}()
+		} else {
+			log.Debug("first request %v %T has not passed deadline %v", first.requestId, first.req, first.deadline)
+			break
+		}
+	}
+	// expire request we got past timeouts
+	if now.Sub(cm.lastCleanedUpEarlyRequestsAt) > time.Minute {
+		cm.lastCleanedUpEarlyRequestsAt = now
+		for reqId, rawReq := range cm.earlyRequests {
+			if now.Sub(rawReq.receivedAt) > 10*time.Minute {
+				delete(cm.earlyRequests, reqId)
+			}
+		}
+	}
+}
+
 // terminates when `cm.quitResponseProcessor` gets a message
 func (cm *clientMetadata) processResponses(log *lib.Logger) {
 	for {
+		// prioritize responses to requests, we want to get
+		// them soon to not get spurious timeouts
+		select {
+		case rawResp := <-cm.rawResponses:
+			cm.processRawResponse(log, &rawResp)
+			continue
+		case <-cm.quitResponseProcessor:
+			log.Info("winding down response processor")
+			cm.sock.Close()
+			return
+		default:
+		}
 		select {
 		case req := <-cm.inFlight:
 			if rawResp, found := cm.earlyRequests[req.requestId]; found {
 				// uncommon case: we have a response for this already.
-				cm.parseResponse(log, req, &rawResp)
+				cm.parseResponse(log, req, &rawResp, false)
 			} else {
 				// common case: we don't have the response yet, put it in the data structures and wait.
 				// if the request was there before, we remove it from the heap so that we don't have
@@ -467,43 +530,9 @@ func (cm *clientMetadata) processResponses(log *lib.Logger) {
 				heap.Push(&cm.requestsByTimeout, req)
 			}
 		case rawResp := <-cm.rawResponses:
-			if req, found := cm.requestsById[rawResp.requestId]; found {
-				// common case, the request is already there
-				cm.parseResponse(log, req, &rawResp)
-			} else {
-				// uncommon case, the request is missing
-				cm.earlyRequests[rawResp.requestId] = rawResp
-			}
-		case now := <-cm.timeoutTicker.C:
-			// expire requests
-			for len(cm.requestsById) > 0 {
-				first := cm.requestsByTimeout[0]
-				if now.After(first.deadline) {
-					log.Debug("request %v %T to shard %v has timed out", first.requestId, first.req, first.shard)
-					heap.Pop(&cm.requestsByTimeout)
-					delete(cm.requestsById, first.requestId)
-					// consumer might very plausibly be gone by now,
-					// don't risk it
-					go func() {
-						first.respCh <- &metadataProcessorResponse{
-							requestId: first.requestId,
-							err:       msgs.TIMEOUT,
-							resp:      nil,
-						}
-					}()
-				} else {
-					log.Debug("first request %v %T has not passed deadline %v", first.requestId, first.req, first.deadline)
-					break
-				}
-			}
-			// expire request we got past timeouts -- this map should always be small
-			for reqId, rawReq := range cm.earlyRequests {
-				if now.Sub(rawReq.receivedAt) > 10*time.Minute {
-					delete(cm.earlyRequests, reqId)
-				}
-			}
+			cm.processRawResponse(log, &rawResp)
 		case <-cm.quitResponseProcessor:
-			log.Info("got quit signal, closing socket and terminating")
+			log.Info("winding down response processor")
 			cm.sock.Close()
 			return
 		}
@@ -513,20 +542,18 @@ func (cm *clientMetadata) processResponses(log *lib.Logger) {
 // terminates when the socket is closed
 func (cm *clientMetadata) drainSocket(log *lib.Logger) {
 	for {
-		var buf *[]byte
-		select {
-		case buf = <-cm.responsesBufs:
-		default:
-		}
-		if buf == nil {
-			log.Debug("allocating new MTU buffer")
-			bufv := make([]byte, clientMtu)
-			buf = &bufv
-		}
+		buf := <-cm.responsesBufs
+		cm.sock.SetReadDeadline(time.Now().Add(DefaultShardTimeout.Initial / 2))
 		read, _, err := cm.sock.ReadFromUDP(*buf)
+		if os.IsTimeout(err) {
+			cm.responsesBufs <- buf
+			cm.rawResponses <- rawMetadataResponse{}
+			continue
+		}
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				log.Info("socket is closed, winding down")
+				cm.responsesBufs <- buf
 				return
 			} else {
 				log.RaiseAlert("got error when reading socket: %v", err)
@@ -534,6 +561,7 @@ func (cm *clientMetadata) drainSocket(log *lib.Logger) {
 		}
 		if read < 4+8+1 {
 			log.RaiseAlert("got runt metadata message, expected at least %v bytes, got %v", 4+8+1, read)
+			cm.responsesBufs <- buf
 			continue
 		}
 		rawResp := rawMetadataResponse{

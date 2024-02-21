@@ -384,16 +384,21 @@ func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServic
 }
 
 func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
-	blockServices, err := s.selectBlockServices(nil, 0)
-	if err != nil {
-		ll.RaiseAlert("error reading block services: %s", err)
-	}
-
-	sleepInterval := 1 * time.Minute
+	sleepInterval := time.Minute
+	blockServicesAlert := ll.NewNCAlert(0)
+	blockServicesAlert.SetAppType(lib.XMON_DAYTIME)
 	shids := make([]int, 256)
 	rand.Seed(time.Now().UnixNano())
 
 	for {
+		blockServices, err := s.selectBlockServices(nil, 0)
+		if err != nil {
+			ll.RaiseNC(blockServicesAlert, "error reading block services, will try again in %v: %s", sleepInterval, err)
+			time.Sleep(sleepInterval)
+			continue
+		}
+		ll.ClearNC(blockServicesAlert)
+
 		client, err := refreshClient(ll, s)
 		if err != nil {
 			ll.RaiseAlert("error refreshing client: %v", err)

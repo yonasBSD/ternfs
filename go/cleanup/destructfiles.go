@@ -115,11 +115,9 @@ func destructFilesWorker(
 	terminateChan chan any,
 ) {
 	for {
-		req := <-workersChan
-		if req == nil {
+		req, ok := <-workersChan
+		if !ok {
 			log.Debug("destruct files worker terminating")
-			workersChan <- nil // terminate the other workers, too
-			log.Debug("destruct files worker terminated")
 			return
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
@@ -175,7 +173,7 @@ func destructFilesScraper(
 		if req.BeginId == 0 {
 			// this will terminate all the senders
 			log.Debug("file scraping done for shard %v, terminating workers", shid)
-			workerChan <- nil
+			close(workerChan)
 			return
 		}
 	}

@@ -80,11 +80,9 @@ func scrubWorker(
 	blockNotFoundAlert := log.NewNCAlert(0)
 	defer log.ClearNC(blockNotFoundAlert)
 	for {
-		req := <-workerChan
-		if req == nil {
+		req, ok := <-workerChan
+		if !ok {
 			log.Debug("worker for shard %v terminating", shid)
-			workerChan <- nil // terminate the other workers, too
-			log.Debug("worker for shard %v terminated", shid)
 			return
 		}
 		if rateLimit != nil {
@@ -203,7 +201,7 @@ func scrubScraper(
 			// this will terminate all the workers
 			log.Debug("file scraping done for shard %v, terminating workers", shid)
 			atomic.AddUint32(&stats.Cycles[shid], 1)
-			workerChan <- nil
+			close(workerChan)
 			return
 		}
 	}

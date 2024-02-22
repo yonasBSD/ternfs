@@ -177,10 +177,8 @@ func collectDirectoriesWorker(
 		if rateLimit != nil {
 			rateLimit.Acquire()
 		}
-		dir := <-workersChan
-		if dir == msgs.NULL_INODE_ID {
-			log.Debug("collect directories worker for shard %v terminating len=%v cap=%v", shid, len(workersChan), cap(workersChan))
-			workersChan <- msgs.NULL_INODE_ID // terminate the other workers, too
+		dir, ok := <-workersChan
+		if !ok {
 			log.Debug("collect directories worker for shard %v terminated", shid)
 			return
 		}
@@ -225,7 +223,7 @@ func collectDirectoriesScraper(
 		req.BeginId = resp.NextId
 		if req.BeginId == 0 {
 			log.Debug("directory scraping done for shard %v, terminating workers", shid)
-			workerChan <- msgs.NULL_INODE_ID
+			close(workerChan)
 			return
 		}
 	}

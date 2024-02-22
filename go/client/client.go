@@ -276,18 +276,13 @@ func (cm *clientMetadata) init(log *lib.Logger, client *Client) error {
 
 func (cm *clientMetadata) close() {
 	cm.quitResponseProcessor <- struct{}{}
-	cm.incoming <- nil
+	close(cm.incoming)
 }
 
 // terminates when cm.incoming gets nil
 func (cm *clientMetadata) processRequests(log *lib.Logger) {
 	buf := bytes.NewBuffer([]byte{})
-	for {
-		req := <-cm.incoming
-		if req == nil {
-			log.Debug("got nil request in request processor, winding down")
-			return
-		}
+	for req := range cm.incoming {
 		dontWait := req.resp == nil
 		log.Debug("sending request %T %+v req id %v to shard %v", req.req, req.req, req.requestId, req.shard)
 		buf.Reset()
@@ -359,6 +354,7 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 			cm.inFlight <- req
 		}
 	}
+	log.Debug("got close request in request processor, winding down")
 }
 
 func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse, dischargeBuf bool) {
@@ -709,16 +705,13 @@ func (proc *blocksProcessor) processRequests(log *lib.Logger) {
 	// one iteration = one request
 	for {
 		conn := proc.loadConn()
-		req := <-proc.reqChan
-		if req == nil {
+		req, ok := <-proc.reqChan
+		if !ok {
 			log.Debug("%v: got nil request, tearing down", proc.what)
 			if conn.conn != nil {
 				conn.conn.Close()
 			}
-			proc.inFlightReqChan <- clientBlockResponseWithGeneration{
-				resp:       nil, // this tears down the response processor
-				generation: 0,
-			}
+			close(proc.inFlightReqChan) // this tears down the response processor
 			return
 		}
 		// empty queue, check that conn is alive, otherwise we might still succeed sending,
@@ -778,11 +771,7 @@ func (proc *blocksProcessor) processRequests(log *lib.Logger) {
 func (proc *blocksProcessor) processResponses(log *lib.Logger) {
 	log.Debug("%v: starting response processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
 	// one iteration = one request
-	for {
-		resp := <-proc.inFlightReqChan
-		if resp.resp == nil {
-			return
-		}
+	for resp := range proc.inFlightReqChan {
 		conn := proc.loadConn()
 		connr := conn.conn
 		if connr == nil {
@@ -914,7 +903,7 @@ func (procs *blocksProcessors) send(
 
 func (procs *blocksProcessors) close() {
 	procs.processors.Range(func(key, value any) bool {
-		value.(*blocksProcessor).reqChan <- nil
+		close(value.(*blocksProcessor).reqChan)
 		return true
 	})
 }

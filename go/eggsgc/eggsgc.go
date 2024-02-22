@@ -132,7 +132,7 @@ func main() {
 		level = lib.TRACE
 	}
 
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: "restech_eggsfs.never", AppInstance: *appInstance})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: lib.XMON_DAYTIME, AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		client.SetMTU(*mtu)

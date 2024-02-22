@@ -626,6 +626,7 @@ type blocksProcessor struct {
 	addr1           net.TCPAddr
 	addr2           net.TCPAddr
 	what            string
+	timeout         **lib.ReqTimeouts
 	_conn           *blocksProcessorConn // this must be loaded through loadConn
 }
 
@@ -659,9 +660,11 @@ func (proc *blocksProcessor) connect(log *lib.Logger) (*net.TCPConn, error) {
 			continue
 		}
 		log.Debug("trying to connect to block service %v", addr)
-		var sock *net.TCPConn
-		sock, err = net.DialTCP("tcp4", nil, addr)
+		dialer := net.Dialer{Timeout: (*proc.timeout).Max}
+		var conn net.Conn
+		conn, err = dialer.Dial("tcp4", addr.String())
 		if err == nil {
+			sock := conn.(*net.TCPConn)
 			log.Debug("connected to block service at %v", addr)
 			return sock, nil
 		}
@@ -820,15 +823,17 @@ type blocksProcessorKey struct {
 }
 
 type blocksProcessors struct {
-	what string
+	what     string
+	timeouts **lib.ReqTimeouts
 	// how many bits of the block service id to use for blockServiceKey
 	blockServiceBits uint8
 	// blocksProcessorKey -> *blocksProcessor
 	processors sync.Map
 }
 
-func (procs *blocksProcessors) init(what string) {
+func (procs *blocksProcessors) init(what string, timeouts **lib.ReqTimeouts) {
 	procs.what = what
+	procs.timeouts = timeouts
 }
 
 type sendArgs struct {
@@ -889,6 +894,7 @@ func (procs *blocksProcessors) send(
 		addr1:           net.TCPAddr{IP: net.IP(args.ip1[:]), Port: int(args.port1)},
 		addr2:           net.TCPAddr{IP: net.IP(args.ip2[:]), Port: int(args.port2)},
 		what:            procs.what,
+		timeout:         procs.timeouts,
 		_conn:           &blocksProcessorConn{},
 	})
 	proc := procAny.(*blocksProcessor)
@@ -1037,17 +1043,17 @@ func NewClientDirectNoAddrs(
 	//
 	// (The exact expected number of connections per server is
 	// ~30.7447, I'll let you figure out why.)
-	c.writeBlockProcessors.init("write")
+	c.writeBlockProcessors.init("write", &c.blockTimeout)
 	c.writeBlockProcessors.blockServiceBits = 5
-	c.fetchBlockProcessors.init("fetch")
+	c.fetchBlockProcessors.init("fetch", &c.blockTimeout)
 	c.fetchBlockProcessors.blockServiceBits = 5
-	c.eraseBlockProcessors.init("erase")
+	c.eraseBlockProcessors.init("erase", &c.blockTimeout)
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel.
 	c.eraseBlockProcessors.blockServiceBits = 63
 	// here we're also not constrained by bandwidth, but the requests
 	// take a long time, so have a separate channel from the erase ones.
-	c.checkBlockProcessors.init("check")
+	c.checkBlockProcessors.init("check", &c.blockTimeout)
 	c.checkBlockProcessors.blockServiceBits = 63
 	return c, nil
 }

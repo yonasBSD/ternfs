@@ -10,6 +10,9 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+// A low-level utility for directly communication with block services.
+//
+// Currently this is not used by the main [Client] library at all.
 func BlockServiceConnection(log *lib.Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
 	if port1 == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))

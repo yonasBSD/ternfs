@@ -1224,12 +1224,13 @@ TraverseDirectories:
 	return inheritedFrom, nil
 }
 
-func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (msgs.InodeId, msgs.InodeId, error) {
+// High-level helper function to take a string path and return the inode and parent inode
+func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, parent msgs.InodeId, err error) {
 	if !filepath.IsAbs(path) {
 		return msgs.NULL_INODE_ID, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
 	}
-	parent := msgs.NULL_INODE_ID
-	id := msgs.ROOT_DIR_INODE_ID
+	parent = msgs.NULL_INODE_ID
+	id = msgs.ROOT_DIR_INODE_ID
 	for _, segment := range strings.Split(filepath.Clean(path), "/")[1:] {
 		if segment == "" {
 			continue
@@ -1244,6 +1245,7 @@ func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (msgs.Inode
 	return id, parent, nil
 }
 
+// High-level helper function to take a string path and return the inode
 func (c *Client) ResolvePath(log *lib.Logger, path string) (msgs.InodeId, error) {
 	id, _, err := c.ResolvePathWithParent(log, path)
 	return id, err
@@ -1268,6 +1270,7 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size 
 	}
 }
 
+// An asynchronous version of [StartBlock] that is currently unused.
 func (c *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
@@ -1336,14 +1339,24 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 	}
 }
 
+// An asynchronous version of [FetchBlock] that is currently unused.
 func (c *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
 	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
+// Return a buffer that was provided by [FetchBlock] to the internal pool.
 func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 	c.fetchBlockBufs.Put(body)
 }
 
+// Retrieve a single block from the block server.
+//
+// The block is identified by the BlockService (which holds the id, status flags and ips/ports) and the BlockId.
+// Offset and count control the amount of data that is read and the position within the block.
+// The default timeout is controlled at the client level if timeouts is nil, otherwise a custom timeout can be specified.
+//
+// The function returns a buffer that is allocated from an internal pool. Once you have finished with this buffer it must
+// be returned via the [PutFetchedBlock] function.
 func (c *Client) FetchBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32) (body *bytes.Buffer, err error) {
 	buf := c.fetchBlockBufs.Get().(*bytes.Buffer)
 	buf.Reset()
@@ -1372,6 +1385,7 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 	}
 }
 
+// An asynchronous version of [EraseBlock] that is currently unused.
 func (c *Client) StartEraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
 	return c.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
 }
@@ -1403,6 +1417,7 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 	}
 }
 
+// An asynchronous version of [CheckBlock] that is currently unused.
 func (c *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }

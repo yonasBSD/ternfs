@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -115,7 +116,9 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 		w, err := log.out.Write(buf.Bytes())
 		if err != nil {
 			log.mu.Unlock()
-			panic(fmt.Errorf("could not log: %v", err))
+			if !errors.Is(err, os.ErrClosed) { // we've already torn down the logging system
+				panic(fmt.Errorf("could not log: %v", err))
+			}
 		}
 		written += w
 	}

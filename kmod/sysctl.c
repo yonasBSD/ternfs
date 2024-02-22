@@ -143,6 +143,7 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_INT_JIFFIES(initial_cdc_timeout),
     EGGSFS_CTL_INT_JIFFIES(max_cdc_timeout),
     EGGSFS_CTL_INT_JIFFIES(overall_cdc_timeout),
+    EGGSFS_CTL_INT_JIFFIES(block_service_connect_timeout),
 
     EGGSFS_CTL_UINT(max_write_span_attempts),
     EGGSFS_CTL_UINT(atime_update_interval_sec),

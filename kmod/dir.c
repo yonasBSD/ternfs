@@ -111,8 +111,7 @@ again: // progress: whoever wins the lock either get pages or fails
     if (!dirents) {
         int seqno;
         if (!eggsfs_latch_try_acquire(&enode->dir.dirents_latch, seqno)) {
-            err = eggsfs_latch_wait_killable(&enode->dir.dirents_latch, seqno);
-            if (err) { goto out_err; }
+            eggsfs_latch_wait(&enode->dir.dirents_latch, seqno);
             goto again;
         }
 

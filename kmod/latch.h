@@ -31,5 +31,10 @@ struct eggsfs_latch {
         wait_event_killable((_latch)->wq, atomic64_read(&(_latch)->counter) > goal); \
     })
 
+#define eggsfs_latch_wait(_latch, _seqno) ({ \
+        u64 goal = ((_seqno) | 1); \
+        wait_event((_latch)->wq, atomic64_read(&(_latch)->counter) > goal); \
+    })
+
 #endif
 

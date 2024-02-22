@@ -507,8 +507,7 @@ static int wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
         if (non_blocking) {
             return -EAGAIN;
         }
-        int err = down_killable(&enode->file.flushing_span_sema);
-        if (err < 0) { return err; }
+        down(&enode->file.flushing_span_sema);
     }
 
     return 0;
@@ -838,7 +837,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     // we shouldn't even link the file.
     if (enode->file.owner->mm != enode->file.mm) {
         // abort everything
-        atomic_cmpxchg(&enode->file.transient_err, 0, -EINTR);
+        atomic_cmpxchg(&enode->file.transient_err, 0, -EIO);
         goto out;
     }
 
@@ -848,8 +847,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     err = start_flushing(enode, false);
     if (err < 0) { goto out; }
 
-    err = down_killable(&enode->file.flushing_span_sema);
-    if (err < 0) { goto out; }
+    down(&enode->file.flushing_span_sema);
 
     // the requests might have failed
     err = atomic_read(&enode->file.transient_err);
@@ -976,10 +974,6 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
                 struct page* page = eggsfs_get_span_page(block_span, page_ix);
                 if (IS_ERR(page)) {
                     int err = PTR_ERR(page);
-                    if (err == -EINTR) { // we don't want to retry this one
-                        written = err;
-                        goto out;
-                    }
                     if (span_read_attempts == 0) {
                         // The idea behind this is that span structure changes extremely rarely: currently only
                         // when we "defrag" files into a new span structure (note that span boundary never changes).

@@ -142,6 +142,7 @@ again: // progress: whoever wins the lock won't try again
                 expiry = ~(uint64_t)0; // we take care of this from now on
                 enode->inode.i_size = 0;
                 mtime = 0;
+                err = 0;
             }
         }
         if (err) { err = eggsfs_error_to_linux(err); goto out; }
@@ -165,8 +166,7 @@ out:
         eggsfs_debug("out mtime=%llu mtime_expiry=%llu", enode->mtime, enode->mtime_expiry);
         return err;
     } else {
-        err = eggsfs_latch_wait_killable(&enode->getattr_update_latch, seqno);
-        if (err) { return err; }
+        eggsfs_latch_wait(&enode->getattr_update_latch, seqno);
         if (READ_ONCE(enode->getattr_err)) { goto again; }
         return 0;
     }
@@ -291,7 +291,7 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     loff_t epos = attr->ia_size;
 
     if (epos < ppos) {
-	eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos)
+        eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos)
         return -EINVAL;
     }
     if (epos == ppos) {
@@ -315,12 +315,12 @@ static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
     // https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L49 is the only
     // place where ATTR_SIZE is set, which means only when truncating.
     if (attr->ia_valid & ATTR_SIZE) {
-	// ftruncate() is only allowed to EXTEND the transient files.
-	// We are called here through https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L64
-	// which fills the `newattrs` variable from scratch, setting ctime in
-	// https://elixir.bootlin.com/linux/v5.4/source/fs/attr.c#L268.
-	// Ideally we would continue the execution here and send the SET_TIME
-	// request, but it is not supported for transient files and instead
+        // ftruncate() is only allowed to EXTEND the transient files.
+        // We are called here through https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L64
+        // which fills the `newattrs` variable from scratch, setting ctime in
+        // https://elixir.bootlin.com/linux/v5.4/source/fs/attr.c#L268.
+        // Ideally we would continue the execution here and send the SET_TIME
+        // request, but it is not supported for transient files and instead
         // eggsfs_file_write_internal will modify mtime/ctime if needed.
         return eggsfs_do_ftruncate(dentry, attr);
     }

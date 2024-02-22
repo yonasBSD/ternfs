@@ -127,7 +127,7 @@ static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct e
     if (timeout_s > 10) {
         eggsfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
     }
-    int ret = wait_for_completion_killable_timeout(&req->comp, timeout_jiffies);
+    int ret = wait_for_completion_timeout(&req->comp, timeout_jiffies);
     // We got a response, this is the happy path.
     if (likely(ret > 0)) {
         BUG_ON(!req->skb);

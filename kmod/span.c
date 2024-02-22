@@ -235,8 +235,7 @@ static bool span_acquire(struct eggsfs_span* span) {
 static struct eggsfs_span* lookup_and_acquire_span(struct eggsfs_inode* enode, u64 offset) {
     struct eggsfs_inode_file* file = &enode->file;
 
-    int err = down_read_killable(&enode->file.spans_lock);
-    if (err) { return ERR_PTR(err); }
+    down_read(&enode->file.spans_lock);
 
     struct eggsfs_span* span = lookup_span(&file->spans, offset);
     if (likely(span)) {
@@ -343,17 +342,7 @@ retry:
             GET_SPAN_EXIT(ERR_PTR(err));
         }
         // add them to enode spans and LRU
-        err = down_write_killable(&file->spans_lock);
-        if (err) {
-            eggsfs_debug("failed to get spans write lock: %d", err);
-            for (;;) {
-                struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
-                if (span == NULL) { break; }
-                list_del(&span->lru);
-                free_span(span, NULL);
-            }
-            GET_SPAN_EXIT(ERR_PTR(err));
-        }
+        down_write(&file->spans_lock);
         for (;;) {
             struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
             if (span == NULL) { break; }
@@ -492,11 +481,7 @@ static DEFINE_MUTEX(drop_spans_mu);
 static s64 drop_spans(const char* type) {
     drop_spans_start(type);
 
-    int err = mutex_lock_killable(&drop_spans_mu);
-    if (err) {
-        drop_spans_end(type, 0, 0, err);
-        return err;
-    }
+    mutex_lock(&drop_spans_mu);
 
     u64 dropped_pages = 0;
     u64 examined_spans = 0;
@@ -608,8 +593,7 @@ int eggsfs_drop_file_span(struct eggsfs_inode* enode, u64 offset) {
     int err = 0;
 
 again:
-    err = down_write_killable(&enode->file.spans_lock);
-    if (err) { return err; }
+    down_write(&enode->file.spans_lock);
 
     // Did somebody already clear this? In that case we're done.
     struct eggsfs_span* span = lookup_span(&enode->file.spans, offset);
@@ -1265,8 +1249,7 @@ again:
     // when the fetchers finish (even if this call is interrupted)
     s64 seqno;
     if (!eggsfs_latch_try_acquire(&block_span->stripe_latches[stripe], seqno)) {
-        int err = eggsfs_latch_wait_killable(&block_span->stripe_latches[stripe], seqno);
-        if (err) { GET_PAGE_EXIT(ERR_PTR(err)); }
+        eggsfs_latch_wait(&block_span->stripe_latches[stripe], seqno);
         goto again;
     }
 
@@ -1288,8 +1271,7 @@ again:
     eggsfs_debug("started fetch stripe, waiting");
 
     // Wait for all the block requests
-    err = down_killable(&st->sema);
-    if (err) { goto out_err; }
+    down(&st->sema);
 
     eggsfs_debug("done");
 

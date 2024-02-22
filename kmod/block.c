@@ -2,6 +2,7 @@
 #include <net/tcp.h>
 #include <net/sock.h>
 #include <linux/workqueue.h>
+#include <linux/completion.h>
 
 #include "block.h"
 #include "log.h"
@@ -22,6 +23,7 @@
 
 int eggsfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 int eggsfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
+int eggsfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
 
 static u64 WHICH_BLOCK_IP = 0;
 
@@ -155,6 +157,7 @@ struct block_socket {
     // Read end. "data available" callback does all the work.
     struct list_head read;
     spinlock_t read_lock;
+    struct completion sock_connect;
     // Saved callbacks
     void (*saved_state_change)(struct sock *sk);
     void (*saved_data_ready)(struct sock *sk);
@@ -218,6 +221,19 @@ static void block_state_change(struct sock* sk) {
     saved_state_change(sk);
 }
 
+static void connect_state_change(struct sock* sk) {
+    struct block_socket* socket = sk->sk_user_data;
+    if (sk->sk_state == TCP_ESTABLISHED) {
+       complete_all(&socket->sock_connect);
+    }
+
+    read_lock_bh(&sk->sk_callback_lock);
+    void (*saved_state_change)(struct sock *) = socket->saved_state_change;
+    read_unlock_bh(&sk->sk_callback_lock);
+
+    saved_state_change(sk);
+}
+
 static void block_write_space(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     struct block_socket* socket = (struct block_socket*)sk->sk_user_data;
@@ -260,21 +276,42 @@ static struct block_socket* get_block_socket(
     int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock->sock);
     if (err != 0) { goto out_err; }
 
-    // TFO would be nice, but it doesn't really matter given that we aggressively recycle
-    // connections, and also given that we have our own callbacks which do not play well
-    // at connection opening stage. So open the connection
+    init_completion(&sock->sock_connect);
+
+    // Put the minimal state_change callback in before connecting because it is
+    // needed to finalise the completion when connection becomes established.
     //
-    // TODO actually this might not be relevant anymore, because we now call the original
-    // callbacks in the state change callback (like iscsi does).
-    err = kernel_connect(sock->sock, (struct sockaddr*)&sock->addr, sizeof(sock->addr), 0);
+    // Note that
+    // 1. We save the callbacks just for hygiene -- I'm pretty sure this is actually
+    //     not needed since we call the original callbacks in the state change callback
+    //     anyway. Moreover it's nice to be able to remove the custom callbacks
+    //     when disposing of a socket, since then we know that we're really done with
+    //     that socket (see)
+    // 2. We could use TFO, but we currently don't. It shouldn't really matter anyway
+    //     since we aggressively reuse connection, and also given that we have our own
+    //     callbacks which does not play well at connection opening stage.
+    sock->saved_state_change = sock->sock->sk->sk_state_change;
+    sock->sock->sk->sk_user_data = sock;
+    sock->sock->sk->sk_state_change = connect_state_change;
+
+    err = kernel_connect(sock->sock, (struct sockaddr*)&sock->addr, sizeof(sock->addr), O_NONBLOCK);
     if (err < 0) {
-        if (err == -ERESTARTSYS || err == -ERESTARTNOINTR) {
-            eggsfs_debug("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
-        } else {
+        if (unlikely(err != -EINPROGRESS)) {
             eggsfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
+            sock_release(sock->sock);
+            goto out_err;
+        } else {
+            if (likely(sock->sock->sk->sk_state != TCP_ESTABLISHED)) {
+                eggsfs_debug("waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
+                err = wait_for_completion_timeout(&sock->sock_connect, eggsfs_block_service_connect_timeout_jiffies);
+                if (err <= 0) {
+                    eggsfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
+                    sock_release(sock->sock);
+                    err = -ETIMEDOUT;
+                    goto out_err;
+                }
+            }
         }
-        sock_release(sock->sock);
-        goto out_err;
     }
 
     INIT_LIST_HEAD(&sock->write);
@@ -326,9 +363,7 @@ static struct block_socket* get_block_socket(
     // Put the new callbacks in
 
     sock->saved_data_ready = sock->sock->sk->sk_data_ready;
-    sock->saved_state_change = sock->sock->sk->sk_state_change;
     sock->saved_write_space = sock->sock->sk->sk_write_space;
-    sock->sock->sk->sk_user_data = sock;
     sock->sock->sk->sk_data_ready = ops->data_ready;
     sock->sock->sk->sk_state_change = block_state_change;
     sock->sock->sk->sk_write_space = block_write_space;

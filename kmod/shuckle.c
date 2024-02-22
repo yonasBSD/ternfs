@@ -110,6 +110,7 @@ int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct so
             iov.iov_base = resp_header + read_so_far;
             iov.iov_len = sizeof(resp_header) - read_so_far;
             int read = kernel_recvmsg(*sock, &msg, &iov, 1, iov.iov_len, 0);
+            if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
@@ -127,6 +128,7 @@ int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct so
                 iov.iov_base = (char*)&resp + read_so_far;
                 iov.iov_len = sizeof(resp) - read_so_far;
                 int read = kernel_recvmsg(*sock, &msg, &iov, 1, iov.iov_len, 0);
+                if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
                 if (read < 0) { err = read; goto out_sock; }
                 read_so_far += read;
             }

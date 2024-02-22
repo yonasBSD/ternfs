@@ -244,25 +244,16 @@ func main() {
 	}
 
 	if *collectDirectories {
-		// Limit to 25k dirs per second to reduce load in steady state. For our current
-		// 2e9 dirs, that's roughly one day to traverse them all (but really we'll
-		// be bottlenecked by cases where we need to actually collect edges).
-		rateLimit := lib.NewRateLimit(&lib.RateLimitOpts{
-			RefillInterval: time.Second,
-			Refill:         25000,
-			BucketSize:     25000 * 100,
-		})
 		opts := &cleanup.CollectDirectoriesOpts{
 			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 		}
-		defer rateLimit.Close()
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := cleanup.CollectDirectories(log, c, dirInfoCache, rateLimit, opts, collectDirectoriesState, shid); err != nil {
+					if err := cleanup.CollectDirectories(log, c, dirInfoCache, nil, opts, collectDirectoriesState, shid); err != nil {
 						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
 					}
 				}

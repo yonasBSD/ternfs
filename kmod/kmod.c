@@ -28,6 +28,7 @@ static int __init eggsfs_init(void) {
     int err;
 
     eggsfs_debug("initializing module");
+    eggsfs_info("revision %s", eggsfs_revision);
 
     eggsfs_shard_init();
 

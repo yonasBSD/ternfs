@@ -340,7 +340,7 @@ func main() {
 				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 				blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 				for _, bs := range blockServices.BlockServices {
-					if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+					if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 						bss := blockServicesToMigrate[bs.Info.FailureDomain.String()]
 						if bss == nil {
 							bss = &[]msgs.BlockServiceId{}

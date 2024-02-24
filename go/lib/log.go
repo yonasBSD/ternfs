@@ -115,8 +115,11 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 	for written := 0; written < len(bytes); {
 		w, err := log.out.Write(buf.Bytes())
 		if err != nil {
-			log.mu.Unlock()
-			if !errors.Is(err, os.ErrClosed) { // we've already torn down the logging system
+			if errors.Is(err, os.ErrClosed) {
+				// we've already torn down the logging system
+				break
+			} else {
+				log.mu.Unlock()
 				panic(fmt.Errorf("could not log: %v", err))
 			}
 		}

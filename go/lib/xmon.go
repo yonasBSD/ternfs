@@ -335,6 +335,7 @@ Reconnect:
 								alertId:  tooManyAlertsAlertId,
 								message:  "too many alerts, alerts dropped",
 								binnable: true,
+								troll:    x.parent, // it's unique per application
 							}
 						} else {
 							goto SkipRequest

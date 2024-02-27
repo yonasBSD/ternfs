@@ -1214,7 +1214,7 @@ TraverseDirectories:
 		if id == inheritedFrom {
 			dirInfoCache.UpdatePolicy(id, entry)
 		}
-		dirInfoCache.UpdateInheritedFrom(dirId, entry.Tag(), inheritedFrom)
+		dirInfoCache.UpdateInheritedFrom(id, entry.Tag(), inheritedFrom)
 	}
 	return inheritedFrom, nil
 }

@@ -122,6 +122,9 @@ type DirInfoCache struct {
 	policiesMu sync.RWMutex
 
 	buckets [dirInfoCacheBuckets]dirInfoCacheBucket
+
+	lookups uint64
+	hits    uint64
 }
 
 func dirInfoCachePickBucket(id msgs.InodeId) uint64 {
@@ -149,6 +152,7 @@ func NewDirInfoCache() *DirInfoCache {
 func (env *DirInfoCache) LookupCachedDirInfoEntry(dirId msgs.InodeId, entry msgs.IsDirectoryInfoEntry) msgs.InodeId {
 	key := dirInfoKey{id: dirId, tag: entry.Tag()}
 	now := msgs.Now()
+	atomic.AddUint64(&env.lookups, 1)
 
 	// Check if we have a cached thing at all
 	var inheritedFrom msgs.InodeId
@@ -204,6 +208,7 @@ func (env *DirInfoCache) LookupCachedDirInfoEntry(dirId msgs.InodeId, entry msgs
 			panic(fmt.Errorf("bad entry tag %v", entry.Tag()))
 		}
 
+		atomic.AddUint64(&env.hits, 1)
 		return inheritedFrom
 	}
 }
@@ -269,4 +274,12 @@ func (env *DirInfoCache) UpdateInheritedFrom(dirId msgs.InodeId, tag msgs.Direct
 		cachedAt: now,
 		lruSlot:  slot,
 	}
+}
+
+func (env *DirInfoCache) Hits() uint64 {
+	return env.hits
+}
+
+func (env *DirInfoCache) Lookups() uint64 {
+	return env.lookups
 }

@@ -444,6 +444,16 @@ func main() {
 					metrics.FieldU64("completed", counter.Timings.Count())
 					metrics.Timestamp(now)
 				}
+				// dir info cache
+				{
+					metrics.Measurement("eggsfs_gc_dir_info_cache")
+					if *appInstance != "" {
+						metrics.Tag("instance", *appInstance)
+					}
+					metrics.FieldU64("hits", dirInfoCache.Hits())
+					metrics.FieldU64("lookups", dirInfoCache.Lookups())
+					metrics.Timestamp(now)
+				}
 				err := lib.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)

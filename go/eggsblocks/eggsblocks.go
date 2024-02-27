@@ -346,6 +346,12 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
+	if errors.Is(err, syscall.ENODATA) {
+		// see <internal-repo/issues/106>
+		log.RaiseAlert("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
+		// return io error, downstream code will pick it up
+		return syscall.EIO
+	}
 	if os.IsNotExist(err) {
 		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
@@ -402,18 +408,16 @@ func getPhysicalBlockSize(path string) (int, error) {
 	return int(fs.Bsize), nil
 }
 
-func isIOErr(err error) bool {
-	var pathErr *os.PathError
-	if errors.As(err, &pathErr) && pathErr.Err == syscall.EIO {
-		return true
-	}
-	return false
-}
-
 func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, size uint32, crc msgs.Crc, conn *net.TCPConn) error {
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("checking block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
+	if errors.Is(err, syscall.ENODATA) {
+		// see <internal-repo/issues/106>
+		log.RaiseAlert("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
+		// return io error, downstream code will pick it up
+		return syscall.EIO
+	}
 	if os.IsNotExist(err) {
 		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
@@ -620,7 +624,7 @@ func handleRequestError(
 		}
 	}
 
-	if isIOErr(err) && blockServiceId != 0 {
+	if errors.Is(err, syscall.EIO) && blockServiceId != 0 {
 		blockService := blockServices[blockServiceId]
 		if blockService.couldNotUpdateInfo {
 			err = msgs.BLOCK_IO_ERROR_DEVICE

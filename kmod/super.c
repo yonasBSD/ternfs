@@ -57,7 +57,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
         iov.iov_base = shards_resp_header + read_so_far;
         iov.iov_len = sizeof(shards_resp_header) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+        if (read == 0) { err = -ECONNRESET; goto out_sock; }
         if (read < 0) { err = read; goto out_sock; }
         read_so_far += read;
     }
@@ -82,7 +82,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
             iov.iov_base = shard_info_resp + read_so_far;
             iov.iov_len = sizeof(shard_info_resp) - read_so_far;
             int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-            if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+            if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
@@ -120,7 +120,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
         iov.iov_base = cdc_resp_header + read_so_far;
         iov.iov_len = sizeof(cdc_resp_header) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+        if (read == 0) { err = -ECONNRESET; goto out_sock; }
         if (read < 0) { err = read; goto out_sock; }
         read_so_far += read;
     }
@@ -136,7 +136,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
             iov.iov_base = (char*)&cdc_resp + read_so_far;
             iov.iov_len = sizeof(cdc_resp) - read_so_far;
             int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-            if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+            if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
@@ -323,7 +323,7 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
         iov.iov_base = shuckle_resp_header + read_so_far;
         iov.iov_len = sizeof(shuckle_resp_header) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+        if (read == 0) { err = -ECONNRESET; goto out_sock; }
         if (read < 0) {
             err = read;
             eggsfs_info("could not recv msg err=%d", err);
@@ -347,7 +347,7 @@ static int eggsfs_statfs(struct dentry* dentry, struct kstatfs* stats) {
         iov.iov_base = (char*)&shuckle_resp + read_so_far;
         iov.iov_len = sizeof(shuckle_resp) - read_so_far;
         int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ETIMEDOUT; goto out_sock; }
+        if (read == 0) { err = -ECONNRESET; goto out_sock; }
         if (read < 0) {
             err = read;
             eggsfs_info("could not recv msg err=%d", err);

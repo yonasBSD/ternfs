@@ -1271,7 +1271,7 @@ func (c *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlo
 }
 
 func retriableBlockError(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF)
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)
 }
 
 func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, processor *blocksProcessors, args *sendArgs) (msgs.BlocksResponse, error) {

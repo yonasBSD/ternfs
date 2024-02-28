@@ -647,6 +647,9 @@ func handleRequestError(
 	// since it's an indication that we haven't migrated stuff.
 	if _, isDead := deadBlockServices[blockServiceId]; isDead && req == msgs.CHECK_BLOCK {
 		log.Debug("got check block request for dead block service %v", blockServiceId)
+		if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+			writeBlocksResponseError(log, conn, eggsErr)
+		}
 		return true
 	}
 

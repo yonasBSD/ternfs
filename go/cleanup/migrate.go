@@ -72,7 +72,7 @@ func writeBlock(
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
-	newContents io.Reader,
+	newContents io.ReadSeeker,
 ) (msgs.BlockId, msgs.BlockServiceId, error) {
 	blacklistEntries := make([]msgs.BlacklistEntry, len(blacklist))
 	for i := 0; i < len(blacklistEntries); i++ {
@@ -142,7 +142,7 @@ func copyBlock(
 	if err != nil {
 		return 0, 0, true, err // might find other block services
 	}
-	blockId, blockServiceId, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, block, data)
+	blockId, blockServiceId, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, block, bytes.NewReader(data.Bytes()))
 	c.PutFetchedBlock(data)
 	return blockId, blockServiceId, false, err
 }

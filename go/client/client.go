@@ -843,7 +843,7 @@ type sendArgs struct {
 	ip2                [4]byte
 	port2              uint16
 	req                msgs.BlocksRequest
-	reqAdditionalBody  io.Reader
+	reqAdditionalBody  io.ReadSeeker // this will _only_ be used to seek to start on retries
 	resp               msgs.BlocksResponse
 	respAdditionalBody io.ReaderFrom
 	extra              any
@@ -1246,7 +1246,7 @@ func (c *Client) ResolvePath(log *lib.Logger, path string) (msgs.InodeId, error)
 	return id, err
 }
 
-func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any) *sendArgs {
+func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any) *sendArgs {
 	return &sendArgs{
 		block.BlockServiceId,
 		block.BlockServiceIp1,
@@ -1266,7 +1266,7 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size 
 }
 
 // An asynchronous version of [StartBlock] that is currently unused.
-func (c *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
 
@@ -1300,6 +1300,13 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 				return nil, err
 			}
 			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error (attempt %v), might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
+			if args.reqAdditionalBody != nil {
+				_, err := args.reqAdditionalBody.Seek(0, io.SeekStart)
+				if err != nil {
+					log.RaiseAlert("could not seek req additional body, will fail request: %v", err)
+					return nil, err
+				}
+			}
 			time.Sleep(next)
 		} else {
 			return nil, err
@@ -1307,7 +1314,7 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 	}
 }
 
-func (c *Client) WriteBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, block *msgs.AddSpanInitiateBlockInfo, r io.Reader, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
+func (c *Client) WriteBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
 	resp, err := c.singleBlockReq(log, timeouts, &c.writeBlockProcessors, writeBlockSendArgs(block, r, size, crc, nil))
 	if err != nil {
 		return proof, err

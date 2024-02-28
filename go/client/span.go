@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -13,22 +14,41 @@ import (
 )
 
 type blockReader struct {
-	cells    int
-	cellSize int
-	stride   int
+	cells    int64
+	cellSize int64
+	stride   int64
 	data     []byte
-	cursor   int
+	cursor   int64
 }
 
 func (r *blockReader) Read(p []byte) (int, error) {
-	if r.cursor >= r.cells*r.cellSize {
+	if r.cursor < 0 || r.cursor >= r.cells*r.cellSize {
 		return 0, io.EOF
 	}
 	cell := r.cursor / r.cellSize
 	cellCursor := r.cursor % r.cellSize
 	read := copy(p, r.data[cell*r.stride+cellCursor:cell*r.stride+r.cellSize])
-	r.cursor += read
+	r.cursor += int64(read)
 	return read, nil
+}
+
+func (r *blockReader) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = int64(r.cursor) + offset
+	case io.SeekEnd:
+		abs = int64(r.cells*r.cellSize) + offset
+	default:
+		return 0, errors.New("blockReader.Seek: invalid whence")
+	}
+	if abs < 0 {
+		return 0, errors.New("blockReader.Seek: negative position")
+	}
+	r.cursor = abs
+	return abs, nil
 }
 
 func (c *Client) createInlineSpan(
@@ -169,7 +189,7 @@ func mkBlockReader(
 	req *msgs.AddSpanInitiateReq,
 	data []byte,
 	block int,
-) (msgs.Crc, io.Reader) {
+) (msgs.Crc, io.ReadSeeker) {
 	D := req.Parity.DataBlocks()
 	P := req.Parity.ParityBlocks()
 	B := req.Parity.Blocks()
@@ -185,9 +205,9 @@ func mkBlockReader(
 	} else if block < D {
 		// data block, first section of the blob
 		r := &blockReader{
-			cells:    S,
-			cellSize: cellSize,
-			stride:   cellSize * D,
+			cells:    int64(S),
+			cellSize: int64(cellSize),
+			stride:   int64(cellSize * D),
 			data:     data[block*cellSize:],
 			cursor:   0,
 		}
@@ -195,9 +215,9 @@ func mkBlockReader(
 	} else {
 		// parity block, second section of the blob
 		r := &blockReader{
-			cells:    S,
-			cellSize: cellSize,
-			stride:   cellSize * P,
+			cells:    int64(S),
+			cellSize: int64(cellSize),
+			stride:   int64(cellSize * P),
 			data:     data[D*S*cellSize+(block-D)*cellSize:],
 			cursor:   0,
 		}

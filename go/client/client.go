@@ -1296,10 +1296,10 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 		if retriableBlockError(err) {
 			next := timeouts.Next(startedAt)
 			if next == 0 {
-				log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error (attempt %v), will not retry since time is up: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
+				log.RaiseNCStack(timeoutAlert, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will not retry since time is up: %v", args.blockService, net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
 				return nil, err
 			}
-			log.RaiseNCStack(timeoutAlert, 2, "block request to %v:%v %v:%v failed with retriable error (attempt %v), might retry: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
+			log.RaiseNCStack(timeoutAlert, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will retry in %v: %v", args.blockService, net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, next, err)
 			if args.reqAdditionalBody != nil {
 				_, err := args.reqAdditionalBody.Seek(0, io.SeekStart)
 				if err != nil {

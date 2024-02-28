@@ -219,7 +219,10 @@ func initBlockServicesInfo(
 		bs.cachedInfo.Path = bs.path
 		closureBs := bs
 		go func() {
-			updateBlockServiceInfo(log, closureBs)
+			// only update if it isn't filled it in already from shuckle
+			if closureBs.cachedInfo.Blocks == 0 {
+				updateBlockServiceInfo(log, closureBs)
+			}
 			wg.Done()
 		}()
 	}
@@ -227,6 +230,8 @@ func initBlockServicesInfo(
 	log.ClearNC(alert)
 	return nil
 }
+
+var maximumRegisterInterval time.Duration = time.Minute * 2
 
 func registerPeriodically(
 	log *lib.Logger,
@@ -251,8 +256,7 @@ func registerPeriodically(
 			continue
 		}
 		log.ClearNC(alert)
-		waitForRange := time.Minute * 2
-		waitFor := time.Duration(mrand.Uint64() % uint64(waitForRange.Nanoseconds()))
+		waitFor := time.Duration(mrand.Uint64() % uint64(maximumRegisterInterval.Nanoseconds()))
 		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
 		time.Sleep(waitFor)
 	}
@@ -1180,6 +1184,10 @@ func main() {
 				deadBlockServices[bs.Info.Id] = deadBlockService{
 					cipher: ourBs.cipher,
 				}
+			}
+			// fill in information from shuckle, if it's recent enough
+			if weHaveBs && time.Since(bs.Info.LastSeen.Time()) < maximumRegisterInterval*2 {
+				ourBs.cachedInfo = bs.Info
 			}
 		}
 	}

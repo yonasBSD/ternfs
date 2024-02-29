@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -1371,6 +1372,7 @@ type fileData struct {
 	AllInline     bool
 	Spans         []fileSpan
 	PathSegments  []pathSegment
+	DirectoryLink string
 }
 
 //go:embed directory.html
@@ -1568,6 +1570,7 @@ func handleInode(
 				}
 				if len(pathSegments(path)) > 0 {
 					data.PathSegments = pathSegments(path)
+					data.DirectoryLink = fmt.Sprintf("/browse%s?Name=%s", filepath.Dir("/"+path), url.QueryEscape(filepath.Base(path)))
 				}
 				title := fmt.Sprintf("File %v", data.Id)
 				{

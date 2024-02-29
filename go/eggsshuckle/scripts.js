@@ -76,6 +76,7 @@ function TableInner(props) {
     const { cols, rows, sortByIx: initialSortByIx, elementsPerPage: initialElementsPerPage } = props
     const paginateExtra = props.paginateExtra || [];
     const disableSearch = !!props.disableSearch;
+    const filterFromSearchParams = !!props.filterFromSearchParams;
 
     function computePages(sortByIx, colFilters, elementsPerPage) {
         const colRegexps = colFilters.map(s => new RegExp(s));
@@ -112,6 +113,15 @@ function TableInner(props) {
     }
 
     const initialColFilters = Array.from({length: cols.length}, () => '');
+    if (filterFromSearchParams) {
+        cols.forEach(({name}, ix) => {
+            const v = new URLSearchParams(window.location.search).get(name);
+            if (v !== null) {
+                initialColFilters[ix] = v;
+            }
+        });
+    }
+
     const [{pages, numRows, currentPage, sortByIx, colFilters, elementsPerPage}, setState] = useState({
         pages: [[]],
         numRows: 0,
@@ -523,6 +533,7 @@ export function renderDirectoryEdges(id, path) {
                 rows,
                 cols,
                 elementsPerPage: 100,
+                filterFromSearchParams: true,
                 // the key forces rerender when the number of cols changes
                 key: `edges-${showSnapshotEdges}`,
                 paginateExtra: [p.h('div', {className: 'ms-2 form-check form-check-inline'},

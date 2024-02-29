@@ -3,7 +3,9 @@
         <tbody>
             {{if .Path}}
                 <tr>
-                    <th>Path</th>
+                    <th>
+                        Path — <a href="{{.DirectoryLink}}">Show in directory</a>
+                    </th>
                     <td>
                         <code>
                             <a href="/browse">/</a>
@@ -49,11 +51,6 @@
             <tr>
                 <td><a href="{{.DownloadLink}}">Download</a></td>
             </tr>
-            {{if .DirectoryLink}}
-            <tr>
-                <td><a href="{{.DirectoryLink}}">Show in directory</a></td>
-            </tr>
-            {{end}}
         </tbody>
     </table>
     <h2>Spans</h2>

@@ -1571,6 +1571,7 @@ func handleInode(
 				if len(pathSegments(path)) > 0 {
 					data.PathSegments = pathSegments(path)
 					data.DirectoryLink = fmt.Sprintf("/browse%s?Name=%s", filepath.Dir("/"+path), url.QueryEscape(filepath.Base(path)))
+					data.Path = "/" + path
 				}
 				title := fmt.Sprintf("File %v", data.Id)
 				{

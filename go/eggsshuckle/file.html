@@ -3,15 +3,13 @@
         <tbody>
             {{if .Path}}
                 <tr>
-                    <th>
-                        Path — <a href="{{.DirectoryLink}}">Show in directory</a>
-                    </th>
+                    <th>Path</th>
                     <td>
                         <code>
                             <a href="/browse">/</a>
                             {{range $segment := .PathSegments}}
                                 {{if eq $segment.PathSoFar $.Path}}
-                                    <a href="/browse{{$segment.PathSoFar}}">{{$segment.Segment}}</a>
+                                    <a href="{{$.DirectoryLink}}">{{$segment.Segment}}</a>
                                 {{else}}
                                     <a href="/browse{{$segment.PathSoFar}}">{{$segment.Segment}}</a> /
                                 {{end}}

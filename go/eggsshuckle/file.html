@@ -120,7 +120,7 @@
                                         <tr>
                                             <th>BlockService</th>
                                             {{range $block := $span.BodyBlocks}}
-                                                <td><a href="/#bs-{{$block.BlockService}}"><code>{{$block.BlockService}}</code></a></td>
+                                                <td><a href="/#bs-{{$block.BlockService}}" title="{{$block.Hosts}}"><code>{{$block.BlockService}}</code></a></td>
                                             {{end}}
                                         </tr>
                                     </tbody>

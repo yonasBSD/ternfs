@@ -1342,6 +1342,7 @@ type fileBlock struct {
 	Crc          string
 	BlockService string
 	Link         string
+	Hosts        string
 }
 
 type fileSpan struct {
@@ -1603,6 +1604,7 @@ func handleInode(
 				{
 					req := msgs.FileSpansReq{FileId: id}
 					resp := msgs.FileSpansResp{}
+					blockServiceToHosts := make(map[msgs.BlockServiceId]string)
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							panic(err)
@@ -1626,11 +1628,22 @@ func handleInode(
 								blockSize := body.CellSize * uint32(body.Stripes)
 								for _, block := range body.Blocks {
 									blockService := resp.BlockServices[block.BlockServiceIx]
+									hosts, found := blockServiceToHosts[blockService.Id]
+									if !found {
+										names1, _ := net.LookupAddr(net.IP(blockService.Ip1[:]).String())
+										names2 := []string{}
+										if blockService.Ip2 != [4]byte{0, 0, 0, 0} {
+											names2, _ = net.LookupAddr(net.IP(blockService.Ip2[:]).String())
+										}
+										hosts = strings.Join(append(names1, names2...), ",")
+										blockServiceToHosts[blockService.Id] = hosts
+									}
 									fb := fileBlock{
 										Id:           block.BlockId.String(),
 										BlockService: blockService.Id.String(),
 										Crc:          block.Crc.String(),
 										Link:         fmt.Sprintf("/blocks/%v/%v?size=%v", blockService.Id, block.BlockId, blockSize),
+										Hosts:        hosts,
 									}
 									fs.BodyBlocks = append(fs.BodyBlocks, fb)
 								}

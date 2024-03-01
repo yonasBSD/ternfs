@@ -1003,6 +1003,7 @@ static void block_done(void* data, u64 block_id, struct list_head* pages, int er
 
     bool finished = false;
     if (err) {
+        eggsfs_info("fetching block %016llx in file %016llx failed: %d", block_id, span->span.ino, err);
         atomic_set(&st->last_block_err, err);
         // it failed, try to restore order
         eggsfs_debug("block %016llx ix %d failed with %d", block_id, i, err);

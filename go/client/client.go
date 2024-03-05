@@ -1303,7 +1303,7 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 			if args.reqAdditionalBody != nil {
 				_, err := args.reqAdditionalBody.Seek(0, io.SeekStart)
 				if err != nil {
-					log.RaiseAlert("could not seek req additional body, will fail request: %v", err)
+					log.RaiseAlertStack("", 2, "could not seek req additional body, will fail request: %v", err)
 					return nil, err
 				}
 			}

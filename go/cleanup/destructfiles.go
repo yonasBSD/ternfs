@@ -25,6 +25,12 @@ type DestructFilesState struct {
 	Cursors           [256]msgs.InodeId
 }
 
+type CouldNotReachBlockServices []msgs.BlockServiceId
+
+func (c CouldNotReachBlockServices) Error() string {
+	return fmt.Sprintf("could not reach block services: %+v", c)
+}
+
 func DestructFile(
 	log *lib.Logger,
 	c *client.Client,
@@ -53,6 +59,7 @@ func DestructFile(
 		Cookie: cookie,
 	}
 	certifyResp := msgs.RemoveSpanCertifyResp{}
+	couldNotReachBlockServices := []msgs.BlockServiceId{}
 	for {
 		err := c.ShardRequest(log, id.Shard(), &initReq, &initResp)
 		if err == msgs.FILE_EMPTY {
@@ -61,11 +68,29 @@ func DestructFile(
 		if err != nil {
 			return fmt.Errorf("%v: could not initiate span removal: %w", id, err)
 		}
+		allBlocksErased := true
 		if len(initResp.Blocks) > 0 {
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i := range initResp.Blocks {
 				block := &initResp.Blocks[i]
+				// There's no point trying to erase blocks for stale block services which are
+				// not decommissioned -- they're almost certainly temporarly offline, and we'll
+				// be stuck forever since in GC we run with infinite timeout. Just skip.
+				if block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) && !block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+					log.Debug("skipping block %v in file %v since its block service %v is stale", block.BlockId, id, block.BlockServiceId)
+					allBlocksErased = false
+					found := false
+					for _, otherBlockService := range couldNotReachBlockServices {
+						if otherBlockService == block.BlockServiceId {
+							found = true
+							break
+						}
+					}
+					if !found {
+						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
+					}
+				}
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
 				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
@@ -82,22 +107,28 @@ func DestructFile(
 				certifyReq.Proofs[i].Proof = proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
 			}
-			err = c.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
-			if err != nil {
-				return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
+			if allBlocksErased {
+				err = c.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)
+				if err != nil {
+					return fmt.Errorf("%v: could not certify span removal %+v: %w", id, certifyReq, err)
+				}
 			}
 		}
-		atomic.AddUint64(&stats.DestructedSpans, 1)
+		if len(couldNotReachBlockServices) == 0 {
+			atomic.AddUint64(&stats.DestructedSpans, 1)
+		}
 	}
 	// Now purge the inode
-	{
+	if len(couldNotReachBlockServices) == 0 {
 		err := c.ShardRequest(log, id.Shard(), &msgs.RemoveInodeReq{Id: id}, &msgs.RemoveInodeResp{})
 		if err != nil {
 			return fmt.Errorf("%v: could not remove transient file inode after removing spans: %w", id, err)
 		}
+		atomic.AddUint64(&stats.DestructedFiles, 1)
+		return nil
+	} else {
+		return CouldNotReachBlockServices(couldNotReachBlockServices)
 	}
-	atomic.AddUint64(&stats.DestructedFiles, 1)
-	return nil
 }
 
 type destructFileRequest struct {
@@ -122,12 +153,18 @@ func destructFilesWorker(
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
 		if err := DestructFile(log, c, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
-			log.Info("could not destruct file %v, terminating: %v", req.id, err)
-			select {
-			case terminateChan <- err:
-			default:
+			// this is OK, we'll get there eventually
+			_, isCouldNotReach := err.(CouldNotReachBlockServices)
+			if isCouldNotReach {
+				log.Debug("could not reach block services when destructing %v, ignoring: %+v", req.id, err)
+			} else {
+				log.Info("could not destruct file %v, terminating: %v", req.id, err)
+				select {
+				case terminateChan <- err:
+				default:
+				}
+				return
 			}
-			return
 		}
 	}
 }

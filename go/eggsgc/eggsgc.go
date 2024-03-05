@@ -164,7 +164,10 @@ func main() {
 	cdcTimeouts.Initial = 2 * time.Second
 	cdcTimeouts.Overall = 0
 	blockTimeouts := &client.DefaultBlockTimeout
-	blockTimeouts.Overall = 0
+	// The reason why this is non-infinite is that sometimes block services go down
+	// for a considerable amount of time, and in that case we don't want to be
+	// stuck forever. Rather, we just skip over block services.
+	blockTimeouts.Overall = 10 * time.Minute
 
 	dirInfoCache := client.NewDirInfoCache()
 	c, err := client.NewClient(log, shuckleTimeouts, *shuckleAddress)

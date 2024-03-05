@@ -85,6 +85,12 @@ func scrubWorker(
 			log.Debug("worker for shard %v terminating", shid)
 			return
 		}
+		// block services which are stale but not decomm'd are almost certainly
+		// unavailable, skip
+		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) && !req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			log.Debug("skipping block %v in file %v since its block service %v is stale", req.block, req.file, req.blockService.Id)
+			continue
+		}
 		if rateLimit != nil {
 			rateLimit.Acquire()
 		}

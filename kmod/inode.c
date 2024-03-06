@@ -115,7 +115,7 @@ again: // progress: whoever wins the lock won't try again
                 if (stripe_policy.len) {
                     enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
                 }
-                expiry = ts + eggsfs_dir_refresh_time_jiffies;
+                expiry = get_jiffies_64() + eggsfs_dir_refresh_time_jiffies;
             }
         } else {
             if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
@@ -135,7 +135,7 @@ again: // progress: whoever wins the lock won't try again
                     mtime = 0;
                 } else if (err == 0) {
                     enode->inode.i_size = size;
-                    expiry = ts + eggsfs_file_refresh_time_jiffies;
+                    expiry = get_jiffies_64() + eggsfs_file_refresh_time_jiffies;
                 }
             } else {
                 BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);

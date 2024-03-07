@@ -366,6 +366,7 @@ func main() {
 	shardReqShard := shardReqCmd.Uint("shard", 0, "Shard to send the req too")
 	shardReqKind := shardReqCmd.String("kind", "", "")
 	shardReqReq := shardReqCmd.String("req", "", "Request body, in JSON")
+	shardReqYes := shardReqCmd.Bool("yes", false, "Do not ask for confirmation")
 	shardReqRun := func() {
 		req, resp, err := msgs.MkShardMessage(*shardReqKind)
 		if err != nil {
@@ -375,6 +376,21 @@ func main() {
 			panic(fmt.Errorf("could not decode shard req: %w", err))
 		}
 		shard := msgs.ShardId(*shardReqShard)
+		fmt.Printf("Will send this request to shard %v: %T %+v\n", shard, req, req)
+		if !*shardReqYes {
+			for {
+				var action string
+				fmt.Printf("Proceed? y/n ")
+				fmt.Scanln(&action)
+				if action == "y" {
+					break
+				}
+				if action == "n" {
+					fmt.Printf("BYE\n")
+					os.Exit(0)
+				}
+			}
+		}
 		if err := c.ShardRequest(log, shard, req, resp); err != nil {
 			panic(err)
 		}

@@ -637,6 +637,30 @@ public:
             _env.updateAlert(_alert, "got no block services");
             return false;
         }
+        {
+            std::unordered_map<uint8_t, int> flagCount;
+            for (const auto& blockService: blockServicesEntry.blockServices.els) {
+                flagCount[blockService.info.flags]++;
+            }
+            for (const auto& [flags, count]: flagCount) {
+                if (flags != 0) {
+                    std::string s = "";
+                    for (const auto flag : BLOCK_SERVICE_FLAGS) {
+                        if (flags&flag) {
+                            if (s.size() > 0) { s += "|"; }
+                            switch (flag) {
+                                case BLOCK_SERVICE_STALE: s += "S"; break;
+                                case BLOCK_SERVICE_NO_READ: s += "NR"; break;
+                                case BLOCK_SERVICE_NO_WRITE: s += "NW"; break;
+                                case BLOCK_SERVICE_DECOMMISSIONED: s += "D"; break;
+                                default: s += std::to_string(flag); break;
+                            }
+                        }
+                    }
+                    LOG_INFO(_env, "%s block services have non-zero flag %s", count, s);
+                }
+            }
+        }
 
         for (;;) {
             uint32_t pushed;

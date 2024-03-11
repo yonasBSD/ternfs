@@ -635,7 +635,7 @@ func handleRequestError(
 		} else {
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
-		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, err, *lastError)
+		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, block service %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, blockServiceId, err, *lastError)
 		writeBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
 	}

@@ -1309,7 +1309,8 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 			}
 			time.Sleep(next)
 		} else {
-			log.RaiseAlertStack("", 2, "block request to %v %v:%v %v:%v failed with non-retriable error: %v", args.blockService, net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			// No alert here because there are many circumstances where errors are
+			// expected (e.g. scrubbing), and we want the caller to handle this.
 			return nil, err
 		}
 	}

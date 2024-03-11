@@ -67,6 +67,7 @@ trace_pid=$!
 # (it's completely independent from the kmod code)
 ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
 
 echo 'Unmounting'

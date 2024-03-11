@@ -799,6 +799,9 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 	}
 	for _, byFailureDomain := range blockServicesByFailureDomain {
 		for _, blockServices := range byFailureDomain {
+			if len(blockServices) == 0 {
+				continue
+			}
 			resp.BlockServices = append(resp.BlockServices, blockServices[r.Uint64()%uint64(len(blockServices))])
 		}
 	}

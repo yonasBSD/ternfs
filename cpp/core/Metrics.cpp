@@ -1,3 +1,5 @@
+// See <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/>
+// for docs.
 #include "Metrics.hpp"
 
 #include "Assert.hpp"
@@ -27,13 +29,16 @@ var TeamRestech = &Team{
 
 #endif
 
+// We're being overly conservative here, see
+// <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#special-characters>,
+// but better being safe than sorry.
 static void validMetricsName(const std::string& name) {
     for (auto ch : name) {
         ALWAYS_ASSERT(
             (ch >= 'a' && ch <= 'z') ||
             (ch >= 'A' && ch <= 'Z') ||
             (ch >= '0' && ch <= '9') ||
-            ch == '-' || ch == '_' || ch == '.'
+            ch == '-' || ch == '_' || ch == '.' || ch == ':'
         );
     }
 }

@@ -1,3 +1,5 @@
+// See <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/>
+// for docs.
 package lib
 
 import (
@@ -33,9 +35,12 @@ func (b *MetricsBuilder) Payload() io.Reader {
 	return bytes.NewReader(b.payload.Bytes())
 }
 
+// We're being overly conservative here, see
+// <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#special-characters>,
+// but better being safe than sorry.
 func validMetricsName(name string) {
 	for _, ch := range name {
-		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.') {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == ':') {
 			panic(fmt.Errorf("bad metrics name %q", name))
 		}
 	}

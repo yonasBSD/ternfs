@@ -57,7 +57,7 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
     case EGGSFS_ERR_CANNOT_OVERRIDE_NAME:
         WARN_ON(dentry->d_inode);
         trace_eggsfs_dcache_invalidate_neg_entry(dir, dentry);
-        WRITE_ONCE(EGGSFS_I(dir)->mtime_expiry, 0);
+        WRITE_ONCE(EGGSFS_I(dir)->dir.mtime_expiry, 0);
         d_invalidate(dentry);
         break;
     // TODO is this correct? verify, I've changed the code from an earlier error
@@ -65,7 +65,7 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
     case EGGSFS_ERR_DIRECTORY_NOT_FOUND:
         WARN_ON(dentry->d_inode);
         trace_eggsfs_dcache_delete_inode(dir);
-        WRITE_ONCE(EGGSFS_I(dir)->mtime_expiry, 0);
+        WRITE_ONCE(EGGSFS_I(dir)->dir.mtime_expiry, 0);
         clear_nlink(dir);
         d_invalidate(dentry->d_parent);
         break;
@@ -73,14 +73,14 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
         WARN_ON(!dentry->d_inode);
         if (dentry->d_inode) {
             trace_eggsfs_dcache_invalidate_dir(dentry->d_inode);
-            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->mtime_expiry, 0);
+            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->dir.mtime_expiry, 0);
         }
         break;
     case EGGSFS_ERR_NAME_NOT_FOUND:
         WARN_ON(!dentry->d_inode);
         if (dentry->d_inode) {
             trace_eggsfs_dcache_delete_entry(dir, dentry, dentry->d_inode);
-            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->mtime_expiry, 0);
+            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->dir.mtime_expiry, 0);
             clear_nlink(dentry->d_inode);
             d_invalidate(dentry);
         }
@@ -90,7 +90,7 @@ static void eggsfs_dcache_handle_error(struct inode* dir, struct dentry* dentry,
         WARN_ON(!dentry->d_inode);
         if (dentry->d_inode) {
             trace_eggsfs_dcache_invalidate_entry(dir, dentry, dentry->d_inode);
-            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->mtime_expiry, 0);
+            WRITE_ONCE(EGGSFS_I(dentry->d_inode)->dir.mtime_expiry, 0);
             d_invalidate(dentry);
         }
         break;

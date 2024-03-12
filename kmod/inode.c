@@ -15,6 +15,16 @@
 
 static struct kmem_cache* eggsfs_inode_cachep;
 
+#define MSECS_TO_JIFFIES(_ms) (((u64)_ms * HZ) / 1000ull)
+
+// This is very rarely needed to be up to date, set it to 1hr
+int eggsfs_dir_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
+int eggsfs_file_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
+
+int eggsfs_dir_dentry_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
+
+static void getattr_async_complete(struct work_struct* work);
+
 struct inode* eggsfs_inode_alloc(struct super_block* sb) {
     struct eggsfs_inode* enode;
 
@@ -26,9 +36,10 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
     }
 
     enode->mtime = 0;
-    enode->mtime_expiry = 0;
     enode->edge_creation_time = 0;
     eggsfs_latch_init(&enode->getattr_update_latch);
+    INIT_DELAYED_WORK(&enode->getattr_async_work, &getattr_async_complete);
+    smp_store_release(&enode->getattr_expiry, 0);
 
     eggsfs_debug("done enode=%p", enode);
     return &enode->inode;
@@ -75,17 +86,138 @@ void __cold eggsfs_inode_exit(void) {
     kmem_cache_destroy(eggsfs_inode_cachep);
 }
 
+int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
+    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
-int eggsfs_do_getattr(struct eggsfs_inode* enode) {
+    int ret = 0;
+    if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, enode->getattr_async_seqno)) {
+        u64 ts = get_jiffies_64();
+        if (smp_load_acquire(&enode->getattr_expiry) > ts) {
+            eggsfs_debug("getattr fresh enough, skipping");
+            goto out;
+        }
+
+        if (S_ISDIR(enode->inode.i_mode)) {
+            ret = eggsfs_shard_async_getattr_dir(
+                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+                &enode->getattr_async_req,
+                enode->inode.i_ino
+            );
+            if (ret) { goto out; }
+        } else {
+            if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
+                ret = eggsfs_shard_async_getattr_file(
+                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+                    &enode->getattr_async_req,
+                    enode->inode.i_ino
+                );
+                if (ret) { goto out; }
+            } else {
+                eggsfs_debug("skipping async getattr for non-reading file");
+                goto out;
+            }
+        }
+        ret = 1;
+        ihold(&enode->inode); // we need the request until we're done
+        schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies);
+    } else {
+        // no goto out -- we don't hold the latch
+        return ret;
+    }
+
+out:
+    if (ret <= 0) {
+        eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    }
+    return ret;
+}
+
+static void getattr_async_complete(struct work_struct* work) {
+    struct eggsfs_inode* enode = container_of(to_delayed_work(work), struct eggsfs_inode, getattr_async_work);
+    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+    // if we have a buffer, we're done, otherwise it's a timeout
+    if (enode->getattr_async_req.skb) {
+        int err;
+        // This is consumed by the parse functions below. You need to make sure that those
+        // functions run or consume it yourself.
+        struct sk_buff* skb = enode->getattr_async_req.skb;
+        u64 mtime;
+        u64 expiry;
+        bool has_atime = false;
+        u64 atime;
+        if (S_ISDIR(enode->inode.i_mode)) {
+            u64 owner;
+            struct eggsfs_policy_body block_policy;
+            struct eggsfs_policy_body span_policy;
+            struct eggsfs_policy_body stripe_policy;
+            err = eggsfs_error_to_linux(eggsfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy));
+            if (err == 0) {
+                if (block_policy.len) {
+                    enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
+                }
+                if (span_policy.len) {
+                    enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
+                }
+                if (stripe_policy.len) {
+                    enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                }
+                expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
+            }
+        } else {
+            u64 size;
+            err = eggsfs_shard_parse_getattr_file(skb, &mtime, &atime, &size);
+            has_atime = true;
+            if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
+                enode->inode.i_size = 0;
+                expiry = 0;
+                mtime = 0;
+            } else if (err == 0) {
+                enode->inode.i_size = size;
+                expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
+            }
+            err = eggsfs_error_to_linux(err);
+        }
+
+        if (err) {
+            eggsfs_info("could not perform async stat to 0x%016lx: %d", enode->inode.i_ino, err);
+        } else {
+            WRITE_ONCE(enode->mtime, mtime);
+            enode->inode.i_mtime.tv_sec = mtime / 1000000000;
+            enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
+            if (has_atime) {
+                enode->inode.i_atime.tv_sec = atime / 1000000000;
+                enode->inode.i_atime.tv_nsec = atime % 1000000000;
+            }
+            eggsfs_debug("id=%016lx new_expiry=%llu", enode->inode.i_ino, expiry);
+            smp_store_release(&enode->getattr_expiry, expiry);
+        }
+    }
+    eggsfs_metadata_remove_request(&((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
+    // And release latch, put inode
+    eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    iput(&enode->inode);
+}
+
+int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
     int err;
     s64 seqno;
 
 again: // progress: whoever wins the lock won't try again
-    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld mtime_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->mtime_expiry);
+    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+
+    // we're still managing this file, nothing to do
+    if (!S_ISDIR(enode->inode.i_mode) && enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+        return 0;
+    }
 
     if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
         u64 ts = get_jiffies_64();
-        if (smp_load_acquire(&enode->mtime_expiry) > ts) { err = 0; goto out; }
+        if (for_dir_revalidation) {
+            BUG_ON(!S_ISDIR(enode->inode.i_mode));
+            if (smp_load_acquire(&enode->dir.mtime_expiry) > ts) { err = 0; goto out; }
+        } else {
+            if (smp_load_acquire(&enode->getattr_expiry) > ts) { err = 0; goto out; }
+        }
 
         u64 mtime;
         u64 expiry;
@@ -115,7 +247,7 @@ again: // progress: whoever wins the lock won't try again
                 if (stripe_policy.len) {
                     enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
                 }
-                expiry = get_jiffies_64() + eggsfs_dir_refresh_time_jiffies;
+                expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
             }
         } else {
             if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
@@ -135,35 +267,32 @@ again: // progress: whoever wins the lock won't try again
                     mtime = 0;
                 } else if (err == 0) {
                     enode->inode.i_size = size;
-                    expiry = get_jiffies_64() + eggsfs_file_refresh_time_jiffies;
+                    expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
                 }
             } else {
                 BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
-                expiry = ~(uint64_t)0; // we take care of this from now on
-                enode->inode.i_size = 0;
-                mtime = 0;
-                err = 0;
             }
         }
         if (err) { err = eggsfs_error_to_linux(err); goto out; }
         else {
             WRITE_ONCE(enode->mtime, mtime);
-            eggsfs_debug("got mtime %llu", mtime);
             enode->inode.i_mtime.tv_sec = mtime / 1000000000;
             enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
             if (has_atime) {
-                eggsfs_debug("got atime %llu", mtime);
                 enode->inode.i_atime.tv_sec = atime / 1000000000;
                 enode->inode.i_atime.tv_nsec = atime % 1000000000;
             }
         }
 
-        smp_store_release(&enode->mtime_expiry, expiry);
+        if (S_ISDIR(enode->inode.i_mode)) {
+            smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + eggsfs_dir_dentry_refresh_time_jiffies);
+        }
+        smp_store_release(&enode->getattr_expiry, expiry);
 
 out:
         WRITE_ONCE(enode->getattr_err, err);
         eggsfs_latch_release(&enode->getattr_update_latch, seqno);
-        eggsfs_debug("out mtime=%llu mtime_expiry=%llu", enode->mtime, enode->mtime_expiry);
+        eggsfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
         return err;
     } else {
         eggsfs_latch_wait(&enode->getattr_update_latch, seqno);
@@ -210,7 +339,7 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     // make this dentry stick around?
 
     // new_inode
-    struct inode* inode = eggsfs_get_inode_transient(parent->i_sb, parent_enode, ino);
+    struct inode* inode = eggsfs_get_inode_normal(parent->i_sb, parent_enode, ino);
     if (IS_ERR(inode)) {
         err = PTR_ERR(inode);
         goto out_err;
@@ -218,6 +347,7 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     enode->file.status = EGGSFS_FILE_STATUS_WRITING;
+    enode->inode.i_size = 0;
 
     // Initialize all the transient specific fields
     enode->file.cookie = cookie;
@@ -253,7 +383,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
     trace_eggsfs_vfs_getattr_enter(inode);
 
     // >= so that eggsfs_dir_refresh_time=0 causes revalidation at every call to this function
-    if (get_jiffies_64() >= smp_load_acquire(&enode->mtime_expiry)) {
+    if (get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
         int err;
 
         // FIXME: symlinks
@@ -265,7 +395,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
 
         // dentry refcount also protects the inode (e.g. d_delete will not turn used dentry into a negative one),
         // so no need to grab anything before we start waiting for stuff
-        err = eggsfs_do_getattr(enode);
+        err = eggsfs_do_getattr(enode, false);
         if (err) {
             trace_eggsfs_vfs_getattr_exit(inode, err);
             return err;
@@ -362,7 +492,7 @@ static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
     if (err) { return err; }
 
     // could copy out attributes instead?
-    smp_store_release(&EGGSFS_I(dentry->d_inode)->mtime_expiry, 0);
+    smp_store_release(&EGGSFS_I(dentry->d_inode)->getattr_expiry, 0);
 
     return 0;
 }
@@ -437,7 +567,6 @@ extern struct file_operations eggsfs_dir_operations;
 
 struct inode* eggsfs_get_inode(
     struct super_block* sb,
-    bool transient,
     bool allow_no_parent,
     struct eggsfs_inode* parent,
     u64 ino
@@ -473,6 +602,7 @@ struct inode* eggsfs_get_inode(
 
             rcu_assign_pointer(enode->dir.dirents, NULL);
             eggsfs_latch_init(&enode->dir.dirents_latch);
+            enode->dir.mtime_expiry = 0;
         } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
             if (unlikely(S_ISLNK(inode->i_mode))) {
                 inode->i_op = &eggsfs_symlink_inode_ops;
@@ -533,17 +663,6 @@ struct inode* eggsfs_get_inode(
         }
 
         unlock_new_inode(inode);
-
-        // Make sure attrs are filled in before doing anything else --
-        // e.g. if we do open + lseek we wouldn't have the chance to
-        // getattr anywhere.
-        if (!transient) {
-            int err = eggsfs_do_getattr(enode);
-            if (err) {
-                iput(inode);
-                return ERR_PTR(err);
-            }
-        }
     }
 
     trace_eggsfs_get_inode_exit(ino, inode, new, 0);

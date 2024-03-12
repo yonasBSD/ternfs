@@ -439,7 +439,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
 
     struct eggsfs_inode* root_enode = EGGSFS_I(root);
 
-    err = eggsfs_do_getattr(root_enode);
+    err = eggsfs_do_getattr(root_enode, false);
     if (err) { goto out_sb; }
 
     if (!root_enode->block_policy || !root_enode->span_policy || !root_enode->stripe_policy) {

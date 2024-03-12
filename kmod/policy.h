@@ -17,7 +17,8 @@ struct eggsfs_policy {
     char* __rcu body;
 };
 
-// Creates or update a specific policy.
+// Creates or update a specific policy. Very fast unless the policy is unseen so
+// far, which is a rare occurrence.
 struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int len);
 
 struct eggsfs_policy_body {

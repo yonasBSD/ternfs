@@ -91,6 +91,11 @@ if [[ "$grep_failed" -eq "0" ]]; then
 fi
 
 # sudo sysctl fs.eggsfs.debug=1
-# eggs/eggstests -kmod -filter 'direct' -short -binaries-dir eggs
+# eggs/eggstests -kmod -filter 'mounted' -cfg fsTest.readWithMmap -short -binaries-dir eggs -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=1 -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02
+
+# eggs/eggstests -kmod -filter 'mounted' -short -binaries-dir eggs -cfg fsTest.numFiles=100 -cfg fsTest.numDirs=1 -cfg fsTest.corruptFileProb=0 -cfg fsTests.dontMigrate -outgoing-packet-drop 0.02
+# # echo 1 > /sys/kernel/debug/tracing/events/eggsfs/eggsfs_metadata_request/enable
+# # cat /sys/kernel/debug/tracing/trace_pipe
 
 # ./eggs/eggstests -binaries-dir eggs -filter direct -kmod -shuckle-beacon-port 55556
+# eggs/eggstests -kmod -filter 'seek to extend' -short -binaries-dir eggs -cfg fsTest.corruptFileProb=0 -cfg fsTests.dontMigrate

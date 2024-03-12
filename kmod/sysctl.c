@@ -134,8 +134,9 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
 
     EGGSFS_CTL_BOOL(prefetch),
 
-    EGGSFS_CTL_INT_JIFFIES(dir_refresh_time),
-    EGGSFS_CTL_INT_JIFFIES(file_refresh_time),
+    EGGSFS_CTL_INT_JIFFIES(dir_getattr_refresh_time),
+    EGGSFS_CTL_INT_JIFFIES(dir_dentry_refresh_time),
+    EGGSFS_CTL_INT_JIFFIES(file_getattr_refresh_time),
     EGGSFS_CTL_INT_JIFFIES(shuckle_refresh_time),
     EGGSFS_CTL_INT_JIFFIES(initial_shard_timeout),
     EGGSFS_CTL_INT_JIFFIES(max_shard_timeout),

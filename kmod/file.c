@@ -22,9 +22,6 @@ unsigned eggsfs_atime_update_interval_sec = 0;
 
 unsigned eggsfs_max_write_span_attempts = 5;
 
-int eggsfs_file_refresh_time_jiffies = 0;
-
-
 static struct kmem_cache* eggsfs_transient_span_cachep;
 
 struct eggsfs_transient_span {
@@ -76,7 +73,7 @@ static int file_open(struct inode* inode, struct file* filp) {
         // to files) are attempted. the reason is that some workflows (such as open write +
         // setattr) _will_ work.
         enode->file.status = EGGSFS_FILE_STATUS_READING;
-        smp_store_release(&enode->mtime_expiry, 0);
+        smp_store_release(&enode->getattr_expiry, 0);
         // also, set atime, if requested
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
@@ -869,13 +866,13 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
 
     // Switch the file to a normal file
     enode->file.status = EGGSFS_FILE_STATUS_READING;
-    enode->mtime_expiry = 0;
+    smp_store_release(&enode->getattr_expiry, 0);
 
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
     {
         struct dentry* parent = dget_parent(dentry);
-        WRITE_ONCE(EGGSFS_I(d_inode(parent))->mtime_expiry, 0);
+        WRITE_ONCE(EGGSFS_I(d_inode(parent))->dir.mtime_expiry, 0);
         dput(parent);
     }
 
@@ -1037,7 +1034,7 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
     BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
 
     // size might not be filled in
-    int err = eggsfs_do_getattr(enode);
+    int err = eggsfs_do_getattr(enode, false);
     if (err) { return ERR_PTR(err); }
 
     BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...

@@ -67,6 +67,7 @@ int __init eggsfs_debugfs_init(void) {
     }
 
     // Metrics
+
     shard_counters = (u64 *)vzalloc(EGGSFS_SHARD_COUNTERS_SIZE);
     if (IS_ERR(shard_counters)) {
         err = PTR_ERR(shard_counters);

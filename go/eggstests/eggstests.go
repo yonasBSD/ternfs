@@ -452,7 +452,7 @@ func (r *RunTests) run(
 			if _, err := ioutil.ReadFile(fn); err != nil {
 				panic(err)
 			}
-			time.Sleep(100 * time.Millisecond) // make sure the write has gone through
+			time.Sleep(200 * time.Millisecond) // make sure the write has gone through
 			info, err = os.Stat(fn)
 			if err != nil {
 				panic(err)
@@ -978,6 +978,8 @@ func main() {
 		// low initial timeout for fast packet drop stuff
 		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", client.DefaultShardTimeout.Initial.Milliseconds()))
 		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", client.DefaultCDCTimeout.Initial.Milliseconds()))
+		// low getattr expiry which we rely on in some tests (most notably the utime ones)
+		sysctl("fs.eggsfs.file_getattr_refresh_time_ms", "100")
 	}
 
 	// Start cached spans dropper
@@ -1199,7 +1201,9 @@ func main() {
 		}
 		mountKmod(shuckleAddress, shuckleBeaconAddr, mountPoint)
 		defer func() {
+			log.Info("about to unmount kmod mount")
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
+			log.Info("done unmounting")
 			if err != nil {
 				fmt.Printf("could not umount fs (%v): %s", err, out)
 			}

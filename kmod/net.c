@@ -8,6 +8,7 @@
 #include "err.h"
 #include "debugfs.h"
 #include "metadata.h"
+#include "inode.h"
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
@@ -18,10 +19,12 @@ unsigned eggsfs_initial_cdc_timeout_jiffies = MSECS_TO_JIFFIES(1000);
 unsigned eggsfs_max_cdc_timeout_jiffies = MSECS_TO_JIFFIES(10000);
 unsigned eggsfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(120000);
 
-static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket* s, u64 request_id) __must_hold(s->lock) {
+static u64 WHICH_SHARD_IP = 0;
+
+static struct eggsfs_metadata_request* get_metadata_request(struct eggsfs_metadata_socket* s, u64 request_id) __must_hold(s->lock) {
     struct rb_node* node = s->requests.rb_node;
     while (node) {
-        struct eggsfs_shard_request* req = container_of(node, struct eggsfs_shard_request, node);
+        struct eggsfs_metadata_request* req = container_of(node, struct eggsfs_metadata_request, node);
         if (request_id < req->request_id) { node = node->rb_left; }
         else if (request_id > req->request_id) { node = node->rb_right; }
         else { return req; }
@@ -29,15 +32,57 @@ static struct eggsfs_shard_request* get_shard_request(struct eggsfs_shard_socket
     return NULL;
 }
 
+static void insert_metadata_request(struct eggsfs_metadata_socket* s, struct eggsfs_metadata_request* req) __must_hold(s->lock) {
+    u64 request_id = req->request_id;
+    struct rb_node** new = &s->requests.rb_node;
+    struct rb_node* parent = NULL;
+    while (*new) {
+        struct eggsfs_metadata_request* this = container_of(*new, struct eggsfs_metadata_request, node);
+        parent = *new;
+        if (request_id < this->request_id) { new = &((*new)->rb_left); }
+        else if (request_id > this->request_id) { new = &((*new)->rb_right); }
+        else { eggsfs_error("dup id %lld vs. %lld %p vs. %p\n", request_id, this->request_id, req, this); BUG(); return; }
+    }
+
+    rb_link_node(&req->node, parent, new);
+    rb_insert_color(&req->node, &s->requests);
+}
+
+void eggsfs_metadata_request_init(
+    struct eggsfs_metadata_socket* sock,
+    struct eggsfs_metadata_request* req,
+    struct eggsfs_metadata_request_state* state
+) {
+    state->start_t = get_jiffies_64();
+    state->next_timeout = 0;
+    state->attempts = 0;
+    state->which_addr = WHICH_SHARD_IP++;
+    req->skb = NULL;
+
+    spin_lock_bh(&sock->lock);
+    insert_metadata_request(sock, req);
+    spin_unlock_bh(&sock->lock);
+}
+
+#define INC_STAT_COUNTER(req, kind, _NAME) do { \
+        if ((req)->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) { break; } \
+        u64 stats_idx = ((req)->shard < 0) ? \
+            ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS) : \
+            ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS + (u64)(req)->shard * EGGSFS_SHARD_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS); \
+        if ((req)->shard < 0) { \
+            atomic64_add(1, (atomic64_t*)&cdc_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_NAME]); \
+        } else { \
+            atomic64_add(1, (atomic64_t*)&shard_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_NAME]); \
+        } \
+    } while (0)
+
 static void sock_readable(struct sock* sk) {
-    struct eggsfs_shard_socket* s;
+    struct eggsfs_metadata_socket* s;
     struct sk_buff* skb;
     int err;
-    __le64 request_id_le;
-    u64 request_id;
 
     read_lock_bh(&sk->sk_callback_lock);
-    s = (struct eggsfs_shard_socket*)sk->sk_user_data;
+    s = (struct eggsfs_metadata_socket*)sk->sk_user_data;
     BUG_ON(!s);
     for (;;) {
         skb = skb_recv_udp(sk, 0, 1, &err);
@@ -51,9 +96,9 @@ static void sock_readable(struct sock* sk) {
             goto drop_skb;
         }
 
-        // u32 protocol + u64 req_id. Note that we check the protocol later on.
-        // We just need the request id here.
-        if (unlikely(skb->len < 12)) {
+        // u32 protocol + u64 req_id + u8 kind. Note that we check the protocol later on.
+        // We just need the request id here, and the kind for logging.
+        if (unlikely(skb->len < 13)) {
             eggsfs_warn("dropping runt eggsfs request");
             goto drop_skb;
         }
@@ -61,32 +106,46 @@ static void sock_readable(struct sock* sk) {
             eggsfs_warn("dropping overlong eggsfs request");
             goto drop_skb;
         }
+        u32 resp_len = skb->len;
+        __le64 request_id_le;
         BUG_ON(skb_copy_bits(skb, 4, &request_id_le, 8) != 0);
-        request_id = le64_to_cpu(request_id_le);
-
-        struct eggsfs_shard_request* req;
+        u64 request_id = le64_to_cpu(request_id_le);
+        u8 kind;
+        BUG_ON(skb_copy_bits(skb, 12, &kind, 1) != 0);
+        int bincode_err = 0;
+        if (kind == 0 && skb->len >= (4 + 8 + 1 + 2)) {
+            __le16 err;
+            BUG_ON(skb_copy_bits(skb, 4 + 8 + 1, &err, 2) != 0);
+            bincode_err = le16_to_cpu(err);
+        }
+        struct eggsfs_metadata_request* req;
+        s16 shard;
         spin_lock_bh(&s->lock); {
-            req = get_shard_request(s, request_id);
+            req = get_metadata_request(s, request_id);
             if (req) {
                 BUG_ON(req->skb);
+                shard = req->shard; // We save this here because I think `req` might be gone by the time we trace below.
+                req->skb = skb;     // We could trace while holding the spinlock but I figured it's a bit better to not
+                skb = NULL;         // do that.
                 rb_erase(&req->node, &s->requests);
-                req->skb = skb;
-                skb = NULL;
-                complete(&req->comp);
-#if 0
-                if (!(req->flags & EGGSFS_SHARD_ASYNC)) {
+                if (req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) {
+                    struct eggsfs_inode* getattr_enode = container_of(req, struct eggsfs_inode, getattr_async_req);
+                    bool was_pending = cancel_delayed_work_sync(&getattr_enode->getattr_async_work);
+                    if (was_pending) {
+                        schedule_work(&getattr_enode->getattr_async_work.work);
+                    }
                 } else {
-                    struct eggsfs_shard_async_request* areq = container_of(req, struct eggsfs_shard_async_request, request);
-                    cancel_delayed_work(&areq->work);
-                    queue_work(eggsfs_wq, &areq->callback);
+                    struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
+                    complete(&sreq->comp);
                 }
-#endif
             }
         } spin_unlock_bh(&s->lock);
         if (!req) {
             eggsfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
+        } else {
+            struct sockaddr_in addr = {0};
+            trace_eggsfs_metadata_request(&addr, request_id, 0, shard, kind, 0, resp_len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
         }
-
         if (skb) {
 drop_skb:
             kfree_skb(skb);
@@ -99,59 +158,7 @@ drop_skb:
 // requeue 
 // whoever wants to remove request needs to handle timer and workqueue
 
-static void insert_shard_request(struct eggsfs_shard_socket* s, struct eggsfs_shard_request* req) __must_hold(s->lock) {
-    u64 request_id = req->request_id;
-    struct rb_node** new = &s->requests.rb_node;
-    struct rb_node* parent = NULL;
-    while (*new) {
-        struct eggsfs_shard_request* this = container_of(*new, struct eggsfs_shard_request, node);
-        parent = *new;
-        if (request_id < this->request_id) { new = &((*new)->rb_left); }
-        else if (request_id > this->request_id) { new = &((*new)->rb_right); }
-        else { printk(KERN_ERR "dup id %lld vs. %lld %p vs. %p\n", request_id, this->request_id, req, this); BUG_ON(1); return; }
-    }
-
-    rb_link_node(&req->node, parent, new);
-    rb_insert_color(&req->node, &s->requests);
-}
-
-
-// Returns:
-//
-// * n == 0 for success
-// * n < 0 for error (notable ones being -ETIMEOUT and -ERESTARTSYS)
-//
-// Once this is done, the request is guaranteed to not be in the tree anymore.
-static int __must_check wait_for_request(struct eggsfs_shard_socket* s, struct eggsfs_shard_request* req, u64 timeout_jiffies) {
-    u64 timeout_s = timeout_jiffies/HZ;
-    if (timeout_s > 10) {
-        eggsfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
-    }
-    int ret = wait_for_completion_timeout(&req->comp, timeout_jiffies);
-    // We got a response, this is the happy path.
-    if (likely(ret > 0)) {
-        BUG_ON(!req->skb);
-        return 0;
-    }
-    // We didn't get a response, it's our job to clean up the request.
-    spin_lock_bh(&s->lock);
-    // We might have filled the request in the time it took us to get here, in which
-    // case `sock_readable` will have already erased it and we're actually good to
-    // go.
-    bool completed = !!req->skb;
-    if (likely(!completed)) {
-        rb_erase(&req->node, &s->requests);
-    }
-    spin_unlock_bh(&s->lock);
-    // If the request was filled in the meantime, we also need to free the skb.
-    if (completed) {
-        eggsfs_info("got response after waiting for it returned an error or timed out: %d", ret);
-        return 0;
-    }
-    return ret ? ret : -ETIMEDOUT;
-}
-
-void eggsfs_net_shard_free_socket(struct eggsfs_shard_socket* s) {
+void eggsfs_net_shard_free_socket(struct eggsfs_metadata_socket* s) {
     // TODO anything else?
     write_lock_bh(&s->sock->sk->sk_callback_lock);
     s->sock->sk->sk_data_ready = s->original_data_ready;
@@ -160,7 +167,7 @@ void eggsfs_net_shard_free_socket(struct eggsfs_shard_socket* s) {
     sock_release(s->sock);
 }
 
-int eggsfs_init_shard_socket(struct eggsfs_shard_socket* s) {
+int eggsfs_init_shard_socket(struct eggsfs_metadata_socket* s) {
     struct sockaddr_in addr;
     int err;
 
@@ -191,8 +198,6 @@ out_err:
     return err;
 }
 
-// TODO: congestion control
-
 static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
     u64 v1 = atomic64_read(addr_data);
 
@@ -214,9 +219,7 @@ static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* add
     return true;
 }
 
-static u64 WHICH_SHARD_IP = 0;
-
-int eggsfs_metadata_request_nowait(struct eggsfs_shard_socket* sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2) {
+int eggsfs_metadata_request_nowait(struct eggsfs_metadata_socket* sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2) {
     struct msghdr msg;
     struct sockaddr_in addr;
     if (WHICH_SHARD_IP++ % 2) {
@@ -237,9 +240,175 @@ int eggsfs_metadata_request_nowait(struct eggsfs_shard_socket* sock, u64 req_id,
     return 0;
 }
 
+// #define LOG_STR_NO_ADDR "req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums"
+// #define LOG_STR LOG_STR_NO_ADDR " addr=%pI4:%d"
+// #define LOG_ARGS_NO_ADDR(req, state, kind) (req)->request_id, (state)->shard_id, (((state)->shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind)), kind, (state)->attempts, jiffies64_to_msecs(get_jiffies_64() - (state)->start_t)
+// #define LOG_ARGS(req, state, kind) LOG_ARGS_NO_ADDR(req, state, kind), &(req)addr.sin_addr, ntohs(addr.sin_port)
+
+// jiffies only have millisecond precision, but we still use nanoseconds as the
+// format is nicer and makes the buckets a bit more precise.
+// |1 below drops the 0 value to the smallest bucket
+static void inc_latency_bucket(s16 shard_id, u8 kind, u64 elapsed) {
+    u64 latencies_idx = (shard_id < 0) ?
+        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS) :
+        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS);
+    u64 hist_bucket = 0;
+    u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1;
+    __asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs));
+    if (shard_id < 0) {
+        atomic64_add(1, (atomic64_t*)&cdc_latencies[latencies_idx + hist_bucket]);
+    } else {
+        atomic64_add(1, (atomic64_t*)&shard_latencies[latencies_idx + hist_bucket]);
+    }
+}
+
+int eggsfs_metadata_send_request(
+    struct eggsfs_metadata_socket* sock,
+    const atomic64_t* addr_data1,
+    const atomic64_t* addr_data2,
+    struct eggsfs_metadata_request* req,
+    void* data,
+    u32 len,
+    struct eggsfs_metadata_request_state* state
+) {
+    state->attempts++;
+
+    u8 kind = *((u8*)data + 12);
+
+    int err;
+
+    bool is_cdc = req->shard < 0;
+
+    const atomic64_t* addr_data[2] = {addr_data1, addr_data2};
+
+    unsigned overall_timeout = is_cdc ? eggsfs_overall_cdc_timeout_jiffies : eggsfs_overall_shard_timeout_jiffies;
+    unsigned max_timeout = is_cdc ? eggsfs_max_cdc_timeout_jiffies : eggsfs_max_shard_timeout_jiffies;
+    unsigned initial_timeout = is_cdc ? eggsfs_initial_cdc_timeout_jiffies : eggsfs_initial_shard_timeout_jiffies;
+    if ((get_jiffies_64() - state->start_t) > overall_timeout) {
+        err = -ETIMEDOUT;
+        INC_STAT_COUNTER(req, kind, TIMEOUTS);
+        goto out_err;
+    }
+
+    struct kvec vec;
+    vec.iov_base = data;
+    vec.iov_len = len;
+
+    struct sockaddr_in addr;
+    struct msghdr msg;
+
+    if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[state->which_addr%2]))) {
+        if (!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
+            eggsfs_warn("could not find any shard addresses! does everything look good in shuckle?");
+            err = -EIO;
+            goto out_err_no_trace; // we have no addr
+        }
+    }
+    state->which_addr++;
+
+    trace_eggsfs_metadata_request(&addr, req->request_id, len, req->shard, kind, state->attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0);
+    INC_STAT_COUNTER(req, kind, ATTEMPTED);
+
+    eggsfs_debug("sending: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums addr=%pI4:%d", req->request_id, req->shard,  is_cdc ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind), kind, state->attempts, jiffies64_to_msecs(get_jiffies_64() - state->start_t), &addr.sin_addr, ntohs(addr.sin_port));
+    err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
+    if (unlikely(err < 0)) {
+        INC_STAT_COUNTER(req, kind, NET_FAILURES);
+        // For ENETUNREACH, we pretend to have sent it, and then the timeout
+        // mechanism will retry, since this might be fixed with time.
+        if (err == -ENETUNREACH) {
+            err = 0;
+        } else {
+            goto out_err_no_latency; // we didn't really get a response here, so no sense increasing the latency bucket
+        }
+    }
+    BUG_ON(err != len);
+    err = 0;
+
+    // update next timeout, 1.5 exponential backoff
+    state->next_timeout = (state->next_timeout == 0) ? initial_timeout : min(max_timeout, (state->next_timeout*3)/2);
+
+    BUG_ON(err != 0);
+    return err;
+
+out_err:
+    inc_latency_bucket(req->shard, kind, get_jiffies_64() - state->start_t);
+out_err_no_latency:
+    {
+        struct sockaddr_in addr = {0};
+        trace_eggsfs_metadata_request(&addr, req->request_id, 0, -2, kind, 0, 0, EGGSFS_METADATA_REQUEST_DONE, err);
+    }
+out_err_no_trace:
+    spin_lock_bh(&sock->lock);
+    rb_erase(&req->node, &sock->requests);
+    spin_unlock_bh(&sock->lock);
+    return err;
+}
+
+void eggsfs_metadata_remove_request(struct eggsfs_metadata_socket* sock, u64 request_id) {
+    spin_lock_bh(&sock->lock);
+    struct eggsfs_metadata_request* req = get_metadata_request(sock, request_id);
+    if (req) {
+        rb_erase(&req->node, &sock->requests);
+    }
+    spin_unlock_bh(&sock->lock);
+}
+
+// If this function returns succesfull, we're done, and the request
+// is out of the tree.
+// If it returns -ETIMEDOUT, we should call `eggsfs_metadata_send_request`
+// again.
+// Any other error, we're done and the request is out of the tree.
+static struct sk_buff* eggsfs_metadata_wait_request(
+    struct eggsfs_metadata_socket* sock,
+    struct eggsfs_metadata_sync_request* req,
+    s16 shard,
+    u8 kind,
+    struct eggsfs_metadata_request_state* state
+) {
+    u64 timeout_s = state->next_timeout/HZ;
+    if (timeout_s > 10) {
+        eggsfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
+    }
+    int ret = wait_for_completion_timeout(&req->comp, state->next_timeout);
+    // We got a response, this is the happy path.
+    if (likely(ret > 0)) {
+        BUG_ON(!req->req.skb);
+        u64 elapsed = get_jiffies_64() - state->start_t;
+        u64 late_threshold = (req->req.shard < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
+        if (unlikely(elapsed > late_threshold)) {
+            const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
+            eggsfs_info("late request: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
+        }
+        inc_latency_bucket(shard, kind, elapsed);
+        int bincode_err = 0;
+        if (kind == 0 && req->req.skb->len >= (4 + 8 + 1 + 2)) {
+            __le16 err;
+            BUG_ON(skb_copy_bits(req->req.skb, 4 + 8 + 1, &err, 2) != 0);
+            bincode_err = le16_to_cpu(err);
+        }
+        if (unlikely(bincode_err && eggsfs_unexpected_error(bincode_err))) {
+            INC_STAT_COUNTER(&req->req, kind, FAILURES);
+            const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
+            eggsfs_warn("unexpected error: req_id=%llu shard_id=%d kind_str=%s kind=%d err_str=%s err=%d", req->req.request_id, req->req.shard, kind_str, kind, eggsfs_err_str(bincode_err), bincode_err);
+        }
+        INC_STAT_COUNTER(&req->req, kind, COMPLETED);
+        return req->req.skb;
+    }
+    // Actual error, remove the request
+    if (unlikely(ret)) {
+        eggsfs_warn("could not wait for request %llu: %d", req->req.request_id, ret);
+        spin_lock_bh(&sock->lock);
+        rb_erase(&req->req.node, &sock->requests);
+        spin_unlock_bh(&sock->lock);
+        return ERR_PTR(ret);
+    }
+    // Benign timeout
+    return ERR_PTR(-ETIMEDOUT);
+}
+
 // shard_id is just used for debugging/event tracing, and should be -1 if we're going to the CDC
 struct sk_buff* eggsfs_metadata_request(
-    struct eggsfs_shard_socket* sock,
+    struct eggsfs_metadata_socket* sock,
     s16 shard_id,
     u64 req_id,
     void* p,
@@ -248,175 +417,29 @@ struct sk_buff* eggsfs_metadata_request(
     const atomic64_t* addr_data1,
     const atomic64_t* addr_data2
 ) {
-    u64 which_shard_ip = WHICH_SHARD_IP++;
-    const atomic64_t* addr_data[2] = {addr_data1, addr_data2};
+    struct eggsfs_metadata_sync_request req;
+    init_completion(&req.comp);
+    req.req.request_id = req_id;
+    req.req.flags = 0;
+    req.req.shard = shard_id;
 
-    struct eggsfs_shard_request req;
-    struct kvec vec;
-    int err = -EIO;
+    struct eggsfs_metadata_request_state state;
+
+    eggsfs_metadata_request_init(sock, &req.req, &state);
 
     u8 kind = *((u8*)p + 12);
-    const char* kind_str = (shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
-    // We can think of the contiguous stats array as list of areas for each shard.
-    // Shard area is then split to 4 entries (EGGSFS_COUNTERS_NUM_COUNTERS) per request kind (EGGSFS_SHARD_KIND_MAX).
-    // The expression above is left unminimised to make it easier to understand and match the explanation above.
-    u64 stats_idx = (shard_id < 0) ?
-        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS) :
-        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS);
-
-    u64 latencies_idx = (shard_id < 0) ?
-        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS) :
-        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS);
-
-    req.skb = NULL;
-    req.request_id = req_id;
-    *attempts = 0;
-
-    vec.iov_base = p;
-    vec.iov_len = len;
-
-    unsigned timeout = shard_id < 0 ? eggsfs_initial_cdc_timeout_jiffies : eggsfs_initial_shard_timeout_jiffies;
-    unsigned max_timeout = shard_id < 0 ? eggsfs_max_cdc_timeout_jiffies : eggsfs_max_shard_timeout_jiffies;
-    unsigned overall_timeout = shard_id < 0 ? eggsfs_overall_cdc_timeout_jiffies : eggsfs_overall_shard_timeout_jiffies;
-    u64 start_t = get_jiffies_64();
-    u64 elapsed = 0;
-
-    u64 late_threshold = (shard_id < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
-
-#define LOG_STR_NO_ADDR "req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums"
-#define LOG_STR LOG_STR_NO_ADDR " addr=%pI4:%d"
-#define LOG_ARGS_NO_ADDR req_id, shard_id, kind_str, kind, *attempts, jiffies64_to_msecs(elapsed)
-#define LOG_ARGS LOG_ARGS_NO_ADDR, &addr.sin_addr, ntohs(addr.sin_port)
-#define WARN_LATE if (elapsed > late_threshold) { eggsfs_info("late request: " LOG_STR_NO_ADDR, LOG_ARGS_NO_ADDR); }
-
-    // This should be atomic64_add to be correct, but given that these are
-    // stats, we leave it like this. Almost certainly wouldn't matter.
-#define INC_STAT_COUNTER(_name) \
-    if (shard_id < 0) { \
-        atomic64_add(1, (atomic64_t*)&cdc_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_name]); \
-    } else { \
-        atomic64_add(1, (atomic64_t*)&shard_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_name]); \
-    }
-
-// jiffies only have millisecond precision, but we still use nanoseconds as the
-// format is nicer and makes the buckets a bit more precise.
-// |1 below drops the 0 value to the smallest bucket
-#define INC_LATENCY_BUCKET ({ \
-        u64 hist_bucket = 0; \
-        u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1; \
-        __asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs)); \
-        if (shard_id < 0) { \
-            atomic64_add(1, (atomic64_t*)&cdc_latencies[latencies_idx + hist_bucket]); \
-        } else { \
-            atomic64_add(1, (atomic64_t*)&shard_latencies[latencies_idx + hist_bucket]); \
-        } \
-    });
 
     for (;;) {
-        struct sockaddr_in addr;
-        struct msghdr msg;
-
-        if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[which_shard_ip%2]))) {
-            if (!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
-                eggsfs_warn("could not find any shard addresses! does everything look good in shuckle?");
-                err = -EIO;
-                goto out;
-            }
+        int err = eggsfs_metadata_send_request(sock, addr_data1, addr_data2, &req.req, p, len, &state);
+        if (err < 0) { return ERR_PTR(err); }
+        struct sk_buff* skb = eggsfs_metadata_wait_request(sock, &req, shard_id, kind, &state);
+        if (IS_ERR(skb)) {
+            err = PTR_ERR(skb);
+            if (err == -ETIMEDOUT) { continue; }
+            return ERR_PTR(err);
         }
-        which_shard_ip++;
-
-        trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0); // which socket?
-        init_completion(&req.comp);
-
-        BUG_ON(req.skb);
-        spin_lock_bh(&sock->lock);
-        insert_shard_request(sock, &req);
-        spin_unlock_bh(&sock->lock);
-
-        timeout = min(max_timeout, (timeout * 3) / 2); // 1.5 exponential backoff
-        eggsfs_debug("sending: " LOG_STR, LOG_ARGS)
-        eggsfs_debug("sending to sock=%p iov=%p len=%u", sock->sock, p, len);
-        err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
-        if (err < 0) {
-            INC_STAT_COUNTER(NET_FAILURES)
-            eggsfs_info("could not send: " LOG_STR " err=%d", LOG_ARGS, err);
-            spin_lock_bh(&sock->lock);
-            // TODO what are the circumstances where this can be true? That is, kernel_sendmsg returns
-            // an error, but we get a fill from the shard?
-            BUG_ON(req.skb);
-            rb_erase(&req.node, &sock->requests);
-            spin_unlock_bh(&sock->lock);
-            elapsed = get_jiffies_64() - start_t;
-
-            if (err == -ENETUNREACH && elapsed < overall_timeout) {
-                eggsfs_warn(LOG_STR " got retryable net error when sending: %d", LOG_ARGS, err);
-                msleep(timeout);
-                continue;
-            }
-            goto out;
-        }
-
-        err = wait_for_request(sock, &req, timeout);
-        u64 t = get_jiffies_64();
-        elapsed = t - start_t;
-        (*attempts)++;
-        INC_STAT_COUNTER(ATTEMPTED)
-        if (!err) {
-            eggsfs_debug("got response");
-            BUG_ON(!req.skb);
-            // extract the the error for the benefit of logging
-            int bincode_err = 0;
-            if (req.skb->len >= (4 + 8 + 1)) {
-                uint8_t kind;
-                BUG_ON(skb_copy_bits(req.skb, 4 + 8, &kind, 1) != 0);
-                if (kind == 0 && req.skb->len >= (4 + 8 + 1 + 2)) {
-                    __le16 err;
-                    BUG_ON(skb_copy_bits(req.skb, 4 + 8 + 1, &err, 2) != 0);
-                    bincode_err = le16_to_cpu(err);
-                }
-            }
-            if (bincode_err && eggsfs_unexpected_error(bincode_err)) {
-                INC_STAT_COUNTER(FAILURES)
-                eggsfs_warn("unexpected error: " LOG_STR " err_str=%s err=%d", LOG_ARGS, eggsfs_err_str(bincode_err), bincode_err);
-            }
-            WARN_LATE
-            INC_STAT_COUNTER(COMPLETED)
-            INC_LATENCY_BUCKET
-            trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, req.skb->len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
-            return req.skb;
-        }
-
-        eggsfs_debug("err=%d", err);
-        if (err != -ETIMEDOUT || elapsed >= overall_timeout) {
-            if (err != -ERESTARTSYS) {
-                INC_STAT_COUNTER(TIMEOUTS)
-                eggsfs_warn("giving up (might be that too much time passed): " LOG_STR " overall_timeout=%ums err=%d", LOG_ARGS, overall_timeout, err);
-            }
-            goto out_err;
-        } else {
-            WARN_LATE
-        }
+        return skb;
     }
-
-out_err:
-    WARN_LATE
-    INC_LATENCY_BUCKET
-
-out:
-    {
-        struct sockaddr_in addr = {0};
-        trace_eggsfs_metadata_request(&addr, req_id, len, shard_id, kind, *attempts, 0, EGGSFS_METADATA_REQUEST_DONE, err);
-    }
-    if (err != -ERESTARTSYS) {
-        eggsfs_info("err=%d", err);
-    }
-    return ERR_PTR(err);
-
-#undef LOG_STR
-#undef LOG_ARGS
-#undef WARN_LATE
-#undef INC_STAT_COUNTER
-#undef INC_LATENCY_BUCKET
 }
 
 #if 0
@@ -469,7 +492,7 @@ out_done:
 }
 
 // this layer needs to be capable of picking sockets / though we still need a list of them
-void eggsfs_shard_async_request(struct eggsfs_shard_async_request* req, struct eggsfs_shard_socket* sock, struct msghdr* hdr, u64 req_id, u32 len) {
+void eggsfs_shard_async_request(struct eggsfs_shard_async_request* req, struct eggsfs_metadata_socket* sock, struct msghdr* hdr, u64 req_id, u32 len) {
     eggsfs_debug();
 
     req->socket = sock;

@@ -7,6 +7,7 @@
 
 #include "latch.h"
 #include "bincode.h"
+#include "net.h"
 #include "rs.h"
 #include "policy.h"
 #include "log.h"
@@ -123,6 +124,8 @@ struct eggsfs_dirents {
 };
 
 struct eggsfs_inode_dir {
+    u64 mtime_expiry; // in jiffies
+
     // In `struct page`, we use:
     //
     // ->mapping to store the next page
@@ -140,9 +143,9 @@ struct eggsfs_inode {
     struct inode inode;
 
     // We cache things based on the eggsfs mtime, but we need to decide when the
-    // mtime itself is stale, which we do using `mtime_expiry`.
-    u64 mtime;        // in eggsfs time
-    u64 mtime_expiry; // in jiffies
+    // mtime itself is stale for the purposes of dir lookups, which we do using
+    // `mtime_expiry`.
+    u64 mtime; // in eggsfs time
 
     u64 edge_creation_time; // in eggsfs time, used for operations (re)moving the edge
 
@@ -157,8 +160,19 @@ struct eggsfs_inode {
         struct eggsfs_inode_dir dir;
     };
 
+    // There is always at most one metadata request in flight for getattr.
+    // This is regulated by `getattr_update_latch`. We do getattr in two ways:
+    // 1. Synchronously, so we just take the `getattr_update_latch` and
+    //    do the metadata request normally;
+    // 2. Asynchronously, where we take the `getattr_update_latch` and then
+    //    have `getattr_async_work` complete it, without retries.
+    // Method 2 is used when doing speculative getattrs when opening directories.
+    u64 getattr_expiry;
     struct eggsfs_latch getattr_update_latch;
     int getattr_err;
+    struct eggsfs_metadata_request getattr_async_req;
+    struct delayed_work getattr_async_work;
+    s64 getattr_async_seqno;
 };
 
 #define EGGSFS_I(ptr) container_of(ptr, struct eggsfs_inode, inode)
@@ -177,8 +191,6 @@ static inline u32 eggsfs_inode_shard(u64 ino) {
 
 struct inode* eggsfs_get_inode(
     struct super_block* sb,
-    // Do we expect the `ino` to be a transient file?
-    bool transient,
     // Are we OK with not having `parent`? This is currently only OK
     // in the context of NFS.
     bool allow_no_parent,
@@ -191,15 +203,7 @@ static inline struct inode* eggsfs_get_inode_normal(
     struct eggsfs_inode* parent,
     u64 ino
 ) {
-    return eggsfs_get_inode(sb, false, false, parent, ino);
-}
-
-static inline struct inode* eggsfs_get_inode_transient(
-    struct super_block* sb,
-    struct eggsfs_inode* parent,
-    u64 ino
-) {
-    return eggsfs_get_inode(sb, true, false, parent, ino);
+    return eggsfs_get_inode(sb, false, parent, ino);
 }
 
 static inline struct inode* eggsfs_get_inode_export(
@@ -207,7 +211,7 @@ static inline struct inode* eggsfs_get_inode_export(
     struct eggsfs_inode* parent,
     u64 ino
 ) {
-    return eggsfs_get_inode(sb, false, true, parent, ino);
+    return eggsfs_get_inode(sb, true, parent, ino);
 }
 
 // super ops
@@ -216,7 +220,11 @@ void eggsfs_inode_evict(struct inode* inode);
 void eggsfs_inode_free(struct inode* inode);
 
 // inode ops
-int eggsfs_do_getattr(struct eggsfs_inode* enode);
+int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation);
+// 0: not started
+// 1: started
+// -n: error
+int eggsfs_start_async_getattr(struct eggsfs_inode* enode);
 
 static inline void eggsfs_in_flight_begin(struct eggsfs_inode* enode) {
     ihold(&enode->inode);

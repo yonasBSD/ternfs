@@ -9,11 +9,6 @@
 #include "metadata.h"
 #include "trace.h"
 
-#define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
-
-// sysctls
-int eggsfs_dir_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
-
 static struct kmem_cache* eggsfs_dirents_cachep;
 
 static inline int eggsfs_dir_entry_size(int name_len) {
@@ -93,7 +88,7 @@ static int eggsfs_dir_open(struct inode* inode, struct file* filp) {
 
     trace_eggsfs_vfs_opendir_enter(inode);
 
-    if (get_jiffies_64() >= enode->mtime_expiry) {
+    if (get_jiffies_64() >= enode->dir.mtime_expiry) {
         err = eggsfs_dir_revalidate(enode);
         if (err) { return err; }
     }
@@ -183,11 +178,13 @@ again:
         dentry = d_alloc_parallel(parent, &filename, &wq);
         if (IS_ERR(dentry)) { return; }
     }
+    struct eggsfs_inode* enode = NULL;
     if (!d_in_lookup(dentry)) { // d_alloc_parallel sets in_lookup
         // pre-existing entry
         struct inode* old_inode = d_inode(dentry);
         if (old_inode && old_inode->i_ino == ino) {
             WRITE_ONCE(dentry->d_time, dir_seqno);
+            enode = EGGSFS_I(old_inode);
             goto out;
         }
         d_invalidate(dentry);
@@ -197,7 +194,7 @@ again:
         // new entry
         struct inode* inode = eggsfs_get_inode_normal(parent->d_sb, EGGSFS_I(parent_inode), ino);
         if (!IS_ERR(inode)) {
-            struct eggsfs_inode* enode = EGGSFS_I(inode);
+            enode = EGGSFS_I(inode);
             enode->edge_creation_time = edge_creation_time;
         }
         eggsfs_debug("inode=%p is_err=%d", inode, IS_ERR(inode));
@@ -217,6 +214,14 @@ again:
     }
 
 out:
+    // Speculatively fetch stat info. Note that this will never
+    // block.
+    if (enode) {
+        int err = eggsfs_start_async_getattr(enode);
+        if (err < 0) {
+            eggsfs_warn("could not send async getattr: %d", err);
+        }
+    }
     dput(dentry);
 };
 

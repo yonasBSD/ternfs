@@ -32,17 +32,16 @@ static void eggsfs_put_shard_header(struct eggsfs_bincode_put_ctx* ctx, u64 req_
     eggsfs_bincode_put_u8(ctx, kind);
 }
 
-static void eggsfs_read_shard_header(struct eggsfs_bincode_get_ctx* ctx, u64 req_id, u8 kind) {
+static void eggsfs_read_shard_header(struct eggsfs_bincode_get_ctx* ctx, u8 kind) {
     u32 read_protocol = eggsfs_bincode_get_u32(ctx);
-    u64 read_req_id = eggsfs_bincode_get_u64(ctx);
+    eggsfs_bincode_get_u64(ctx); // req id, we already know it's right since otherwise we wouldn't have found the response
     u8 read_kind = eggsfs_bincode_get_u8(ctx);
     if (likely(ctx->err == 0)) {
         if (unlikely(
             read_protocol != EGGSFS_SHARD_RESP_PROTOCOL_VERSION ||
-            read_req_id != req_id ||
             (read_kind != 0 && read_kind != kind)
         )) {
-            eggsfs_debug("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
+            // eggsfs_debug("protocol=%u read_protocol=%u req_id=%llu read_req_id=%llu kind=%d read_kind=%d", read_protocol, EGGSFS_SHARD_RESP_PROTOCOL_VERSION, req_id, read_req_id, (int)kind, (int)read_kind);
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
         } else if (unlikely(read_kind == 0)) {
             ctx->err = eggsfs_bincode_get_u16(ctx);
@@ -90,16 +89,16 @@ static void prepare_resp_ctx(struct sk_buff* skb, struct eggsfs_bincode_get_ctx*
     ctx->end = ctx->buf + skb->len;
 }
 
-static void prepare_shard_resp_ctx(struct sk_buff* skb, u64 req_id, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
+static void prepare_shard_resp_ctx(struct sk_buff* skb, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
     prepare_resp_ctx(skb, ctx);
     if (likely(ctx->err == 0)) {
-        eggsfs_read_shard_header(ctx, req_id, kind);
+        eggsfs_read_shard_header(ctx, kind);
     };
 }
 
 #define PREPARE_SHARD_RESP_CTX() \
     struct eggsfs_bincode_get_ctx ctx; \
-    prepare_shard_resp_ctx(skb, req_id, kind, &ctx);
+    prepare_shard_resp_ctx(skb, kind, &ctx);
 
 static int finish_resp(struct sk_buff* skb, u8 kind, struct eggsfs_bincode_get_ctx* ctx) {
     if (unlikely(ctx->owned)) {
@@ -475,9 +474,36 @@ int eggsfs_shard_link_file(struct eggsfs_fs_info* info, u64 file, u64 cookie, u6
     return 0;    
 }
 
-int eggsfs_shard_getattr_dir(
+int eggsfs_shard_async_getattr_dir(
     struct eggsfs_fs_info* info,
-    u64 dir,
+    struct eggsfs_metadata_request* metadata_req,
+    u64 dir
+) {
+    struct eggsfs_metadata_request_state state;
+
+    u64 req_id = alloc_request_id();
+    u32 shid = eggsfs_inode_shard(dir);
+
+    metadata_req->flags = EGGSFS_METADATA_REQUEST_ASYNC_GETATTR;
+    metadata_req->request_id = req_id;
+    metadata_req->shard = shid;
+
+    u8 kind = EGGSFS_SHARD_STAT_DIRECTORY;
+    {
+        PREPARE_SHARD_REQ_CTX(EGGSFS_STAT_DIRECTORY_REQ_SIZE);
+        eggsfs_stat_directory_req_put_start(&ctx, start);
+        eggsfs_stat_directory_req_put_id(&ctx, start, dir_id, dir);
+        eggsfs_stat_directory_req_put_end(ctx, dir_id, end);
+        eggsfs_metadata_request_init(&info->sock, metadata_req, &state);
+        int err = eggsfs_metadata_send_request(&info->sock, &info->shard_addrs1[shid], &info->shard_addrs2[shid], metadata_req, ctx.start, ctx.cursor-ctx.start, &state);
+        if (err) { return err; }
+    }
+
+    return 0;
+} 
+
+int eggsfs_shard_parse_getattr_dir(
+    struct sk_buff* skb,
     u64* mtime,
     u64* owner,
     struct eggsfs_policy_body* block_policies,
@@ -488,6 +514,52 @@ int eggsfs_shard_getattr_dir(
     span_policies->len = 0;
     stripe_policy->len = 0;
 
+    u8 kind = EGGSFS_SHARD_STAT_DIRECTORY;
+    PREPARE_SHARD_RESP_CTX();
+    eggsfs_stat_directory_resp_get_start(&ctx, start);
+    eggsfs_stat_directory_resp_get_mtime(&ctx, start, resp_mtime);
+    eggsfs_stat_directory_resp_get_owner(&ctx, resp_mtime, resp_owner);
+    eggsfs_stat_directory_resp_get_info(&ctx, resp_owner, resp_info);
+    eggsfs_directory_info_get_entries(&ctx, resp_info, entries);
+    int i;
+    for (i = 0; i < entries.len; i++) {
+        eggsfs_directory_info_entry_get_start(&ctx, entry_start);
+        eggsfs_directory_info_entry_get_tag(&ctx, entry_start, tag);
+        eggsfs_directory_info_entry_get_body(&ctx, tag, body);
+        eggsfs_directory_info_entry_get_end(&ctx, body, entry_end);
+        eggsfs_bincode_get_finish_list_el(entry_end);
+        if (tag.x == BLOCK_POLICY_TAG) {
+            block_policies->len = body.str.len;
+            memcpy(block_policies->body, body.str.buf, body.str.len);
+        }
+        if (tag.x == SPAN_POLICY_TAG) {
+            span_policies->len = body.str.len;
+            memcpy(span_policies->body, body.str.buf, body.str.len);
+        }
+        if (tag.x == STRIPE_POLICY_TAG) {
+            stripe_policy->len = body.str.len;
+            memcpy(stripe_policy->body, body.str.buf, body.str.len);
+        }
+    }
+    eggsfs_directory_info_get_end(&ctx, entries, info_end);
+    eggsfs_stat_directory_resp_get_end(&ctx, info_end, end);
+    eggsfs_stat_directory_resp_get_finish(&ctx, end);
+    FINISH_RESP();
+    *mtime = resp_mtime.x;
+    *owner = resp_owner.x;
+
+    return 0;
+}
+
+int eggsfs_shard_getattr_dir(
+    struct eggsfs_fs_info* info,
+    u64 dir,
+    u64* mtime,
+    u64* owner,
+    struct eggsfs_policy_body* block_policies,
+    struct eggsfs_policy_body* span_policies,
+    struct eggsfs_policy_body* stripe_policy
+) {
     struct sk_buff* skb;
     u32 attempts;
 
@@ -502,42 +574,50 @@ int eggsfs_shard_getattr_dir(
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
+    return eggsfs_shard_parse_getattr_dir(skb, mtime, owner, block_policies, span_policies, stripe_policy);
+}
+
+int eggsfs_shard_async_getattr_file(struct eggsfs_fs_info* info, struct eggsfs_metadata_request* metadata_req, u64 file) {
+    struct eggsfs_metadata_request_state state;
+
+    u64 req_id = alloc_request_id();
+
+    u32 shid = eggsfs_inode_shard(file);
+
+    metadata_req->flags = EGGSFS_METADATA_REQUEST_ASYNC_GETATTR;
+    metadata_req->request_id = req_id;
+    metadata_req->shard = shid;
+
+    u8 kind = EGGSFS_SHARD_STAT_FILE;
     {
-        PREPARE_SHARD_RESP_CTX();
-        eggsfs_stat_directory_resp_get_start(&ctx, start);
-        eggsfs_stat_directory_resp_get_mtime(&ctx, start, resp_mtime);
-        eggsfs_stat_directory_resp_get_owner(&ctx, resp_mtime, resp_owner);
-        eggsfs_stat_directory_resp_get_info(&ctx, resp_owner, resp_info);
-        eggsfs_directory_info_get_entries(&ctx, resp_info, entries);
-        int i;
-        for (i = 0; i < entries.len; i++) {
-            eggsfs_directory_info_entry_get_start(&ctx, entry_start);
-            eggsfs_directory_info_entry_get_tag(&ctx, entry_start, tag);
-            eggsfs_directory_info_entry_get_body(&ctx, tag, body);
-            eggsfs_directory_info_entry_get_end(&ctx, body, entry_end);
-            eggsfs_bincode_get_finish_list_el(entry_end);
-            if (tag.x == BLOCK_POLICY_TAG) {
-                block_policies->len = body.str.len;
-                memcpy(block_policies->body, body.str.buf, body.str.len);
-            }
-            if (tag.x == SPAN_POLICY_TAG) {
-                span_policies->len = body.str.len;
-                memcpy(span_policies->body, body.str.buf, body.str.len);
-            }
-            if (tag.x == STRIPE_POLICY_TAG) {
-                stripe_policy->len = body.str.len;
-                memcpy(stripe_policy->body, body.str.buf, body.str.len);
-            }
-        }
-        eggsfs_directory_info_get_end(&ctx, entries, info_end);
-        eggsfs_stat_directory_resp_get_end(&ctx, info_end, end);
-        eggsfs_stat_directory_resp_get_finish(&ctx, end);
-        FINISH_RESP();
-        *mtime = resp_mtime.x;
-        *owner = resp_owner.x;
+        PREPARE_SHARD_REQ_CTX(EGGSFS_STAT_FILE_REQ_SIZE);
+        eggsfs_stat_file_req_put_start(&ctx, start);
+        eggsfs_stat_file_req_put_id(&ctx, start, file_id, file);
+        eggsfs_stat_file_req_put_end(ctx, file_id, end);
+        eggsfs_metadata_request_init(&info->sock, metadata_req, &state);
+        int err = eggsfs_metadata_send_request(&info->sock, &info->shard_addrs1[shid], &info->shard_addrs2[shid], metadata_req, ctx.start, ctx.cursor-ctx.start, &state);
+        if (err) { return err; }
     }
 
-    return 0;    
+    return 0;
+}
+
+int eggsfs_shard_parse_getattr_file(struct sk_buff* skb, u64* mtime, u64* atime, u64* size) {
+    u8 kind = EGGSFS_SHARD_STAT_FILE;
+
+    PREPARE_SHARD_RESP_CTX();
+    eggsfs_stat_file_resp_get_start(&ctx, start);
+    eggsfs_stat_file_resp_get_mtime(&ctx, start, resp_mtime);
+    eggsfs_stat_file_resp_get_atime(&ctx, resp_mtime, resp_atime);
+    eggsfs_stat_file_resp_get_size(&ctx, resp_atime, resp_size);
+    eggsfs_stat_file_resp_get_end(&ctx, resp_size, end);
+    eggsfs_stat_file_resp_get_finish(&ctx, end);
+    FINISH_RESP();
+    *mtime = resp_mtime.x;
+    *atime = resp_atime.x;
+    *size = resp_size.x;
+
+    return 0;
 }
 
 int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime, u64* atime, u64* size) {
@@ -555,21 +635,7 @@ int eggsfs_shard_getattr_file(struct eggsfs_fs_info* info, u64 file, u64* mtime,
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
-    {
-        PREPARE_SHARD_RESP_CTX();
-        eggsfs_stat_file_resp_get_start(&ctx, start);
-        eggsfs_stat_file_resp_get_mtime(&ctx, start, resp_mtime);
-        eggsfs_stat_file_resp_get_atime(&ctx, resp_mtime, resp_atime);
-        eggsfs_stat_file_resp_get_size(&ctx, resp_atime, resp_size);
-        eggsfs_stat_file_resp_get_end(&ctx, resp_size, end);
-        eggsfs_stat_file_resp_get_finish(&ctx, end);
-        FINISH_RESP();
-        *mtime = resp_mtime.x;
-        *atime = resp_atime.x;
-        *size = resp_size.x;
-    }
-
-    return 0;    
+    return eggsfs_shard_parse_getattr_file(skb, mtime, atime, size);
 }
 
 int eggsfs_shard_create_file(struct eggsfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie) {

@@ -13,7 +13,7 @@ struct eggsfs_fs_info {
     atomic64_t shuckle_addr1;
     atomic64_t shuckle_addr2;
 
-    struct eggsfs_shard_socket sock;
+    struct eggsfs_metadata_socket sock;
 
     atomic64_t shard_addrs1[256];
     atomic64_t shard_addrs2[256];

@@ -13,7 +13,7 @@ std::ostream& operator<<(std::ostream& out, ReplicaId replica) {
 }
 
 std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid) {
-    out << shrid.shardId() << ":" << shrid.replicaId();
+    out << std::setw(3) << std::setfill('0') << shrid.shardId() << ":" << shrid.replicaId();
     return out;
 }
 

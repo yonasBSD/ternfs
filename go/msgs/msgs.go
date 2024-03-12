@@ -38,6 +38,8 @@ type BlockServiceFlags uint8
 type Crc uint32
 type NameHash uint64
 type Cookie [8]byte
+type LogIdx uint64
+type LeaderToken uint64
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -75,6 +77,14 @@ const BLOCKS_REQ_PROTOCOL_VERSION uint32 = 0x4f4c42
 // >>> format(struct.unpack('<I', b'BLO\1')[0], 'x')
 // '14f4c42'
 const BLOCKS_RESP_PROTOCOL_VERSION uint32 = 0x14f4c42
+
+// >>> format(struct.unpack('<I', b'LOG\0')[0], 'x')
+// '474f4c'
+const LOG_REQ_PROTOCOL_VERSION uint32 = 0x474f4c
+
+// >>> format(struct.unpack('<I', b'LOG\1')[0], 'x')
+// '1474f4c'
+const LOG_RESP_PROTOCOL_VERSION uint32 = 0x1474f4c
 
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
@@ -471,6 +481,8 @@ type CDCMessageKind uint8
 type ShuckleMessageKind uint8
 
 type BlocksMessageKind uint8
+
+type LogMessageKind uint8
 
 const ERROR uint8 = 0
 
@@ -1660,16 +1672,17 @@ type EntryNewBlockInfo struct {
 }
 
 type AddSpanInitiateEntry struct {
-	FileId       InodeId
-	ByteOffset   uint64
-	Size         uint32
-	Crc          Crc
-	StorageClass StorageClass
-	Parity       rs.Parity
-	Stripes      uint8 // [1, 16]
-	CellSize     uint32
-	BodyBlocks   []EntryNewBlockInfo
-	BodyStripes  []Crc // the CRCs
+	WithReference bool
+	FileId        InodeId
+	ByteOffset    uint64
+	Size          uint32
+	Crc           Crc
+	StorageClass  StorageClass
+	Parity        rs.Parity
+	Stripes       uint8 // [1, 16]
+	CellSize      uint32
+	BodyBlocks    []EntryNewBlockInfo
+	BodyStripes   []Crc // the CRCs
 }
 
 type AddSpanCertifyEntry struct {
@@ -1971,4 +1984,86 @@ type GetStatsResp struct {
 	NextTime EggsTime
 	NextName string
 	Stats    []Stat
+}
+
+// --------------------------------------------------------------------
+// Distributed log requests/responses
+
+type LogRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	LogRequestKind() LogMessageKind
+}
+
+type LogResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	LogResponseKind() LogMessageKind
+}
+
+type LogWriteReq struct {
+	Token        LeaderToken
+	LastReleased LogIdx
+	Idx          LogIdx
+	Value        bincode.Blob
+}
+
+type LogWriteResp struct {
+	Result ErrCode
+}
+
+type ReleaseReq struct {
+	Token        LeaderToken
+	LastReleased LogIdx
+}
+
+type ReleaseResp struct {
+	Result ErrCode
+}
+
+type LogReadReq struct {
+	Idx LogIdx
+}
+
+type LogReadResp struct {
+	Result ErrCode
+	Value  bincode.Blob
+}
+
+type NewLeaderReq struct {
+	NomineeToken LeaderToken
+}
+
+type NewLeaderResp struct {
+	Result       ErrCode
+	LastReleased LogIdx
+}
+
+type NewLeaderConfirmReq struct {
+	NomineeToken LeaderToken
+	ReleasedIdx  LogIdx
+}
+
+type NewLeaderConfirmResp struct {
+	Result ErrCode
+}
+
+type LogRecoveryReadReq struct {
+	NomineeToken LeaderToken
+	Idx          LogIdx
+}
+
+type LogRecoveryReadResp struct {
+	Result ErrCode
+	Value  bincode.Blob
+}
+
+type LogRecoveryWriteReq struct {
+	NomineeToken LeaderToken
+	Idx          LogIdx
+	Value        bincode.Blob
+}
+
+type LogRecoveryWriteResp struct {
+	Result ErrCode
 }

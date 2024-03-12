@@ -294,7 +294,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 //go:embed msgs_bincode.go.header
 var goHeader string
 
-func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	out.Write([]byte(goHeader))
@@ -305,6 +305,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	generateGoMsgKind(out, "CDCMessageKind", "CDCRequest", "CDCResponse", "MkCDCMessage", cdcReqResps)
 	generateGoMsgKind(out, "ShuckleMessageKind", "ShuckleRequest", "ShuckleResponse", "MkShuckleMessage", shuckleReqResps)
 	generateGoMsgKind(out, "BlocksMessageKind", "BlocksRequest", "BlocksResponse", "MkBlocksMessage", blocksReqResps)
+	generateGoMsgKind(out, "LogMessageKind", "LogRequest", "LogResponse", "MkLogMessage", logReqResps)
 
 	for _, reqResp := range shardReqResps {
 		generateGoReqResp(out, reqResp, "ShardMessageKind", "ShardRequestKind", "ShardResponseKind")
@@ -320,6 +321,9 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	}
 	for _, reqResp := range blocksReqResps {
 		generateGoReqResp(out, reqResp, "BlocksMessageKind", "BlocksRequestKind", "BlocksResponseKind")
+	}
+	for _, reqResp := range logReqResps {
+		generateGoReqResp(out, reqResp, "LogMessageKind", "LogRequestKind", "LogResponseKind")
 	}
 
 	return out.Bytes()
@@ -750,7 +754,10 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 }
 
 func cppType(t reflect.Type) string {
-	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" || t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" || t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" || t.Name() == "ShardReplicaId" {
+	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" ||
+		t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
+		t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" ||
+		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -827,7 +834,10 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// pack/unpack
 	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
 	// when unpacking
-	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" || expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "ShardReplicaId" {
+	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
+		expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" ||
+		expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" ||
+		expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" {
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
@@ -857,7 +867,9 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// clear/eq
 	switch k {
 	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" || expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "ReplicaId" {
+		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
+			expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardReplicaId" ||
+			expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" {
 			cg.cline(fmt.Sprintf("%s = %s()", expr.fld, cppType(expr.typ)))
 		} else {
 			cg.cline(fmt.Sprintf("%s = %s(0)", expr.fld, cppType(expr.typ)))
@@ -1247,7 +1259,7 @@ func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []re
 //go:embed FetchedSpan.hpp
 var fetchedSpanCpp string
 
-func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
 
@@ -1268,6 +1280,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)
 	generateCppKind(hppOut, cppOut, "Shuckle", shuckleReqResps)
 	generateCppKind(hppOut, cppOut, "Blocks", blocksReqResps)
+	generateCppKind(hppOut, cppOut, "Log", logReqResps)
 
 	for _, typ := range extras {
 		generateCppSingle(hppOut, cppOut, typ)
@@ -1292,10 +1305,15 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
+	for _, reqResp := range logReqResps {
+		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.resp)
+	}
 
 	generateCppReqResp(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppReqResp(hppOut, cppOut, "CDC", cdcReqResps)
 	generateCppReqResp(hppOut, cppOut, "Shuckle", shuckleReqResps)
+	generateCppReqResp(hppOut, cppOut, "Log", logReqResps)
 
 	generateCppLogEntries(
 		hppOut,
@@ -1429,6 +1447,11 @@ func main() {
 		"BLOCK_IO_ERROR_FILE",
 		"INVALID_REPLICA",
 		"DIFFERENT_ADDRS_INFO",
+		"LEADER_PREEMPTED",
+		"LOG_ENTRY_MISSING",
+		"LOG_ENTRY_TRIMMED",
+		"LOG_ENTRY_UNRELEASED",
+		"LOG_ENTRY_RELEASED",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1794,6 +1817,44 @@ func main() {
 		},
 	}...)
 
+	logReqResps := []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.LogWriteReq{}),
+			reflect.TypeOf(msgs.LogWriteResp{}),
+		},
+		{
+			0x02,
+			reflect.TypeOf(msgs.ReleaseReq{}),
+			reflect.TypeOf(msgs.ReleaseResp{}),
+		},
+		{
+			0x03,
+			reflect.TypeOf(msgs.LogReadReq{}),
+			reflect.TypeOf(msgs.LogReadResp{}),
+		},
+		{
+			0x04,
+			reflect.TypeOf(msgs.NewLeaderReq{}),
+			reflect.TypeOf(msgs.NewLeaderResp{}),
+		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.NewLeaderConfirmReq{}),
+			reflect.TypeOf(msgs.NewLeaderConfirmResp{}),
+		},
+		{
+			0x06,
+			reflect.TypeOf(msgs.LogRecoveryReadReq{}),
+			reflect.TypeOf(msgs.LogRecoveryReadResp{}),
+		},
+		{
+			0x07,
+			reflect.TypeOf(msgs.LogRecoveryWriteReq{}),
+			reflect.TypeOf(msgs.LogRecoveryWriteResp{}),
+		},
+	}
+
 	kernelExtras := []reflect.Type{
 		reflect.TypeOf(msgs.DirectoryInfoEntry{}),
 		reflect.TypeOf(msgs.DirectoryInfo{}),
@@ -1827,7 +1888,7 @@ func main() {
 		reflect.TypeOf(msgs.Stat{}),
 	}...)...)
 
-	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	writeIfChanged(goOutFileName, goCode)
 
@@ -1835,7 +1896,7 @@ func main() {
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd), kmodHBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd), kmodCBytes)
 
-	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, extras)
+	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd), hppBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd), cppBytes)
 }

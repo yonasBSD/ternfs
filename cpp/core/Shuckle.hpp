@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 
 // The host here is the scheme + host + port, e.g. `http://localhost:5000`.
 //
@@ -21,25 +22,37 @@ std::string fetchBlockServices(
     UpdateBlockServicesEntry& blocks
 );
 
-std::string registerShard(
+std::string registerShardReplica(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
-    ShardId shid,
-    uint32_t ip1,
-    uint16_t port1,
-    uint32_t ip2,
-    uint16_t port2
+    ShardReplicaId shrid,
+    bool isLeader,
+    const AddrsInfo& info
 );
 
-std::string registerCDC(
+std::string fetchShardReplicas(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
-    uint32_t ip1,
-    uint16_t port1,
-    uint32_t ip2,
-    uint16_t port2
+    ShardReplicaId shrid,
+    std::array<AddrsInfo, 5>& replicas
+);
+
+std::string registerCDCReplica(
+    const std::string& shuckleHost,
+    uint16_t shucklePort,
+    Duration timeout,
+    ReplicaId replicaId,
+    bool isLeader,
+    const AddrsInfo& info
+);
+
+std::string fetchCDCReplicas(
+    const std::string& shuckleHost,
+    uint16_t shucklePort,
+    Duration timeout,
+    std::array<AddrsInfo, 5>& replicas
 );
 
 std::string fetchShards(

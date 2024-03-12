@@ -1,5 +1,5 @@
 #include <arpa/inet.h>
-#include <charconv>
+#include <cstdint>
 #include <pthread.h>
 #include <stdio.h>
 #include <filesystem>
@@ -13,7 +13,7 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
 static void usage(const char* binary) {
-    fprintf(stderr, "Usage: %s DIRECTORY SHARD_ID\n\n", binary);
+    fprintf(stderr, "Usage: %s DIRECTORY SHARD_ID [REPLICA_ID]\n\n", binary);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, " -log-level trace|debug|info|error\n");
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
@@ -37,6 +37,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Enable metrics.\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
+    fprintf(stderr, " -use-logsdb LEADER|FOLLOWER|NONE\n");
+    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER or FOLLOWER or don't use. Default is don't use. Only replica id 0 can be leader. \n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -183,14 +185,33 @@ int main(int argc, char** argv) {
             options.metrics = true;
         } else if (arg == "-transient-deadline-interval") {
             options.transientDeadlineInterval = parseDuration(getNextArg());
+        } else if (arg == "-use-logsdb") {
+            std::string logsDBMode = getNextArg();
+            if (logsDBMode == "LEADER") {
+                options.forceLeader = true;
+                options.avoidBeingLeader = false;
+                options.writeToLogsDB = true;
+                options.initialStart = true;
+            } else if (logsDBMode == "FOLLOWER") {
+                options.writeToLogsDB = true;
+            } else if (logsDBMode == "NONE") {
+            } else {
+                fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
+                dieWithUsage();
+            }
         } else {
             args.emplace_back(std::move(arg));
         }
     }
 
-    if (args.size() != 2) {
-        fprintf(stderr, "Expecting two positional arguments (DIRECTORY SHARD_ID), got %ld.\n", args.size());
+    if (args.size() < 2 || args.size() > 3) {
+        fprintf(stderr, "Expecting two or three positional arguments (DIRECTORY SHARD_ID [REPLICA_ID]), got %ld.\n", args.size());
         dieWithUsage();
+    }
+
+    // Add default 0 for replica id to simplify rollout
+    if (args.size() == 2) {
+        args.emplace_back("0");
     }
 
 #ifndef EGGS_DEBUG
@@ -225,7 +246,26 @@ int main(int argc, char** argv) {
     }
     ShardId shid(shardId);
 
-    runShard(shid, dbDir, options);
+    int replicaId = std::stoi(args.at(2), &processed);
+    if (processed != args.at(2).size() || replicaId < 0 || replicaId > 4) {
+        die("Invalid replicaId '%s', expecting a number between 0 and 4.\n", args.at(2).c_str());
+    }
+
+    ShardReplicaId shrid(shid, replicaId);
+
+    if (options.writeToLogsDB) {
+        if (replicaId == 0) {
+            if (!options.forceLeader) {
+                die("When using LogsDB replica 0 needs to run in LEADER mode");
+            }
+        } else {
+            if (!options.avoidBeingLeader) {
+                die("When using LogsDB replicas other than 0 need to run in FOLLOWER mode");
+            }
+        }
+    }
+
+    runShard(shrid, dbDir, options);
 
     return 0;
 }

@@ -60,3 +60,13 @@ std::ostream& operator<<(std::ostream& out, BlockServiceId id) {
     out << buf;
     return out;
 }
+
+std::ostream& operator<<(std::ostream& out, LogIdx idx) {
+    out << idx.u64;
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, LeaderToken token) {
+    out << token.idx() << ":" << token.replica();
+    return out;
+}

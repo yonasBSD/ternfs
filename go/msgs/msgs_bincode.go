@@ -179,6 +179,11 @@ const (
 	BLOCK_IO_ERROR_FILE ErrCode = 71
 	INVALID_REPLICA ErrCode = 72
 	DIFFERENT_ADDRS_INFO ErrCode = 73
+	LEADER_PREEMPTED ErrCode = 74
+	LOG_ENTRY_MISSING ErrCode = 75
+	LOG_ENTRY_TRIMMED ErrCode = 76
+	LOG_ENTRY_UNRELEASED ErrCode = 77
+	LOG_ENTRY_RELEASED ErrCode = 78
 )
 
 func (err ErrCode) String() string {
@@ -311,6 +316,16 @@ func (err ErrCode) String() string {
 		return "INVALID_REPLICA"
 	case 73:
 		return "DIFFERENT_ADDRS_INFO"
+	case 74:
+		return "LEADER_PREEMPTED"
+	case 75:
+		return "LOG_ENTRY_MISSING"
+	case 76:
+		return "LOG_ENTRY_TRIMMED"
+	case 77:
+		return "LOG_ENTRY_UNRELEASED"
+	case 78:
+		return "LOG_ENTRY_RELEASED"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -799,6 +814,71 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 		return &TestWriteReq{}, &TestWriteResp{}, nil
 	case k == "CHECK_BLOCK":
 		return &CheckBlockReq{}, &CheckBlockResp{}, nil
+	default:
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
+	}
+}
+
+func (k LogMessageKind) String() string {
+	switch k {
+	case 1:
+		return "LOG_WRITE"
+	case 2:
+		return "RELEASE"
+	case 3:
+		return "LOG_READ"
+	case 4:
+		return "NEW_LEADER"
+	case 5:
+		return "NEW_LEADER_CONFIRM"
+	case 6:
+		return "LOG_RECOVERY_READ"
+	case 7:
+		return "LOG_RECOVERY_WRITE"
+	default:
+		return fmt.Sprintf("LogMessageKind(%d)", k)
+	}
+}
+
+
+const (
+	LOG_WRITE LogMessageKind = 0x1
+	RELEASE LogMessageKind = 0x2
+	LOG_READ LogMessageKind = 0x3
+	NEW_LEADER LogMessageKind = 0x4
+	NEW_LEADER_CONFIRM LogMessageKind = 0x5
+	LOG_RECOVERY_READ LogMessageKind = 0x6
+	LOG_RECOVERY_WRITE LogMessageKind = 0x7
+)
+
+var AllLogMessageKind = [...]LogMessageKind{
+	LOG_WRITE,
+	RELEASE,
+	LOG_READ,
+	NEW_LEADER,
+	NEW_LEADER_CONFIRM,
+	LOG_RECOVERY_READ,
+	LOG_RECOVERY_WRITE,
+}
+
+const MaxLogMessageKind LogMessageKind = 7
+
+func MkLogMessage(k string) (LogRequest, LogResponse, error) {
+	switch {
+	case k == "LOG_WRITE":
+		return &LogWriteReq{}, &LogWriteResp{}, nil
+	case k == "RELEASE":
+		return &ReleaseReq{}, &ReleaseResp{}, nil
+	case k == "LOG_READ":
+		return &LogReadReq{}, &LogReadResp{}, nil
+	case k == "NEW_LEADER":
+		return &NewLeaderReq{}, &NewLeaderResp{}, nil
+	case k == "NEW_LEADER_CONFIRM":
+		return &NewLeaderConfirmReq{}, &NewLeaderConfirmResp{}, nil
+	case k == "LOG_RECOVERY_READ":
+		return &LogRecoveryReadReq{}, &LogRecoveryReadResp{}, nil
+	case k == "LOG_RECOVERY_WRITE":
+		return &LogRecoveryWriteReq{}, &LogRecoveryWriteResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5078,6 +5158,324 @@ func (v *CheckBlockResp) Pack(w io.Writer) error {
 }
 
 func (v *CheckBlockResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *LogWriteReq) LogRequestKind() LogMessageKind {
+	return LOG_WRITE
+}
+
+func (v *LogWriteReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Token)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastReleased)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Idx)); err != nil {
+		return err
+	}
+	if err := bincode.PackBlob(w, v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogWriteReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Token)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastReleased)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Idx)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogWriteResp) LogResponseKind() LogMessageKind {
+	return LOG_WRITE
+}
+
+func (v *LogWriteResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogWriteResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReleaseReq) LogRequestKind() LogMessageKind {
+	return RELEASE
+}
+
+func (v *ReleaseReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Token)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastReleased)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReleaseReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Token)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastReleased)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReleaseResp) LogResponseKind() LogMessageKind {
+	return RELEASE
+}
+
+func (v *ReleaseResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReleaseResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogReadReq) LogRequestKind() LogMessageKind {
+	return LOG_READ
+}
+
+func (v *LogReadReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Idx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogReadReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Idx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogReadResp) LogResponseKind() LogMessageKind {
+	return LOG_READ
+}
+
+func (v *LogReadResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.PackBlob(w, v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogReadResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderReq) LogRequestKind() LogMessageKind {
+	return NEW_LEADER
+}
+
+func (v *NewLeaderReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NomineeToken)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NomineeToken)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderResp) LogResponseKind() LogMessageKind {
+	return NEW_LEADER
+}
+
+func (v *NewLeaderResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastReleased)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastReleased)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderConfirmReq) LogRequestKind() LogMessageKind {
+	return NEW_LEADER_CONFIRM
+}
+
+func (v *NewLeaderConfirmReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ReleasedIdx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderConfirmReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ReleasedIdx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderConfirmResp) LogResponseKind() LogMessageKind {
+	return NEW_LEADER_CONFIRM
+}
+
+func (v *NewLeaderConfirmResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *NewLeaderConfirmResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryReadReq) LogRequestKind() LogMessageKind {
+	return LOG_RECOVERY_READ
+}
+
+func (v *LogRecoveryReadReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Idx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryReadReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Idx)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryReadResp) LogResponseKind() LogMessageKind {
+	return LOG_RECOVERY_READ
+}
+
+func (v *LogRecoveryReadResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.PackBlob(w, v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryReadResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryWriteReq) LogRequestKind() LogMessageKind {
+	return LOG_RECOVERY_WRITE
+}
+
+func (v *LogRecoveryWriteReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Idx)); err != nil {
+		return err
+	}
+	if err := bincode.PackBlob(w, v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryWriteReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NomineeToken)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Idx)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryWriteResp) LogResponseKind() LogMessageKind {
+	return LOG_RECOVERY_WRITE
+}
+
+func (v *LogRecoveryWriteResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Result)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *LogRecoveryWriteResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -456,7 +456,7 @@ TEST_CASE("touch file") {
         req.note = "test note";
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         constructTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(ShardMessageKind::CONSTRUCT_FILE, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
         auto& resp = respContainer->getConstructFile();
         id = resp.id;
@@ -479,7 +479,7 @@ TEST_CASE("touch file") {
         req.name = name;
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         linkTime = logEntry->time;
-        NO_EGGS_ERROR(db->applyLogEntry(ShardMessageKind::LINK_FILE, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
     }
     {
@@ -529,7 +529,7 @@ TEST_CASE("override") {
             req.type = (uint8_t)InodeType::FILE;
             req.note = "test note";
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(ShardMessageKind::CONSTRUCT_FILE, ++logEntryIndex, *logEntry, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
             db->flush(false);
             auto& resp = respContainer->getConstructFile();
             id = resp.id;
@@ -547,7 +547,7 @@ TEST_CASE("override") {
             req.ownerId = ROOT_DIR_INODE_ID;
             req.name = name;
             NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR(db->applyLogEntry(ShardMessageKind::LINK_FILE, ++logEntryIndex, *logEntry, *respContainer));
+            NO_EGGS_ERROR(db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
             db->flush(false);
             creationTime = respContainer->getLinkFile().creationTime;
         }
@@ -565,7 +565,7 @@ TEST_CASE("override") {
         req.oldCreationTime = fooCreationTime;
         req.newName = "bar";
         NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(ShardMessageKind::SAME_DIRECTORY_RENAME, ++logEntryIndex, *logEntry, *respContainer));
+        NO_EGGS_ERROR(db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
     }
     {

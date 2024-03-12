@@ -323,6 +323,97 @@ struct BlockServiceId {
 
 std::ostream& operator<<(std::ostream& out, BlockServiceId crc);
 
+// we reserve 3 bits so that we can fit ReplicaId in LeaderToken
+struct LogIdx {
+    uint64_t u64;
+
+
+    constexpr LogIdx(): u64(0) {}
+
+    constexpr LogIdx(uint64_t idx): u64(idx) {
+        ALWAYS_ASSERT(valid());
+    }
+
+    LogIdx operator+(uint64_t offset) const {
+        return u64 + offset;
+    }
+
+    LogIdx& operator++() {
+        ++u64;
+        return *this;
+    }
+
+    bool operator==(LogIdx rhs) const {
+        return u64 == rhs.u64;
+    }
+
+    bool operator<(LogIdx other) const {
+        return u64 < other.u64;
+    }
+
+    bool operator<=(LogIdx other) const {
+        return u64 <= other.u64;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint64_t>(u64);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u64 = buf.unpackScalar<uint64_t>();
+    }
+
+    constexpr bool valid() const {
+        return u64 < 0x2000000000000000ull;
+    }
+};
+
+constexpr LogIdx MAX_LOG_IDX = LogIdx(0xffffffffffffffffull >> 3);
+
+std::ostream& operator<<(std::ostream& out, LogIdx idx);
+
+struct LeaderToken {
+    uint64_t u64;
+
+
+    constexpr LeaderToken(): u64(0) {}
+
+    constexpr LeaderToken(ReplicaId replicaId, LogIdx idx): u64(idx.u64 << 3 | replicaId.u8) {
+        ALWAYS_ASSERT(replicaId.valid() && idx.valid());
+    }
+
+    bool operator==(LeaderToken rhs) const {
+        return u64 == rhs.u64;
+    }
+
+    constexpr bool operator<(LeaderToken rhs) const {
+        return u64 < rhs.u64;
+    }
+
+    constexpr ReplicaId replica() const {
+        return ReplicaId(u64 & 0x7);
+    }
+
+    constexpr LogIdx idx() const {
+        return LogIdx(u64 >> 3);
+    }
+
+    constexpr bool valid() const {
+        // we don't need to check LogIdx is valid as it any value is valid
+        return replica().valid();
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint64_t>(u64);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u64 = buf.unpackScalar<uint64_t>();
+    }
+};
+
+std::ostream& operator<<(std::ostream& out, LeaderToken token);
+
 #include "MsgsGen.hpp"
 
 // We often use this as a optional<EggsError>;
@@ -340,6 +431,10 @@ constexpr uint32_t SHARD_REQ_PROTOCOL_VERSION = 0x414853;
 // '1414853'
 constexpr uint32_t SHARD_RESP_PROTOCOL_VERSION = 0x1414853;
 
+// >>> format(struct.unpack('<I', b'SHA\2')[0], 'x')
+// '2414853'
+constexpr uint32_t SHARD_LOG_PROTOCOL_VERSION = 0x2414853;
+
 // >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
 // '434443'
 constexpr uint32_t CDC_REQ_PROTOCOL_VERSION = 0x434443;
@@ -355,6 +450,14 @@ constexpr uint32_t SHUCKLE_REQ_PROTOCOL_VERSION = 0x554853;
 // >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
 // '1554853'
 constexpr uint32_t SHUCKLE_RESP_PROTOCOL_VERSION = 0x1554853;
+
+// >>> format(struct.unpack('<I', b'LOG\0')[0], 'x')
+// '474f4c'
+constexpr uint32_t  LOG_REQ_PROTOCOL_VERSION = 0x474f4c;
+
+// >>> format(struct.unpack('<I', b'LOG\1')[0], 'x')
+// '1474f4c'
+constexpr uint32_t LOG_RESP_PROTOCOL_VERSION = 0x1474f4c;
 
 // If this doesn't parse, no point in continuing attempting to parse
 // the request.
@@ -440,6 +543,62 @@ struct CDCResponseHeader {
         buf.packScalar<uint32_t>(CDC_RESP_PROTOCOL_VERSION);
         buf.packScalar<uint64_t>(requestId);
         buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+};
+
+
+// If this doesn't parse, no point in continuing attempting to parse
+// the request.
+struct LogRequestHeader {
+    uint64_t requestId;
+    // This is not guaranteed to be a valid log request kind yet.
+    // The caller will have to validate.
+    LogMessageKind kind;
+
+    static constexpr uint16_t STATIC_SIZE = 4 + 8 + 1;
+
+    LogRequestHeader() = default;
+    LogRequestHeader(uint64_t requestId_, LogMessageKind kind_): requestId(requestId_), kind(kind_) {}
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint32_t>(LOG_REQ_PROTOCOL_VERSION);
+        buf.packScalar<uint64_t>(requestId);
+        buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        uint32_t version = buf.unpackScalar<uint32_t>();
+        if (version != LOG_REQ_PROTOCOL_VERSION) {
+            throw BINCODE_EXCEPTION("bad log req protocol version %s, expected %s", version, LOG_REQ_PROTOCOL_VERSION);
+        }
+        requestId = buf.unpackScalar<uint64_t>();
+        kind = (LogMessageKind)buf.unpackScalar<uint8_t>();
+    }
+};
+
+struct LogResponseHeader {
+    uint64_t requestId;
+    LogMessageKind kind;
+
+    // protocol + requestId + kind
+    static constexpr uint16_t STATIC_SIZE = 4 + 8 + 1;
+
+    LogResponseHeader() = default;
+    LogResponseHeader(uint64_t requestId_, LogMessageKind kind_): requestId(requestId_), kind(kind_) {}
+
+    void pack(BincodeBuf& buf) {
+        buf.packScalar<uint32_t>(LOG_RESP_PROTOCOL_VERSION);
+        buf.packScalar<uint64_t>(requestId);
+        buf.packScalar<uint8_t>((uint8_t)kind);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        uint32_t version = buf.unpackScalar<uint32_t>();
+        if (version != LOG_RESP_PROTOCOL_VERSION) {
+            throw BINCODE_EXCEPTION("bad log resp protocol version %s, expected %s", version, LOG_RESP_PROTOCOL_VERSION);
+        }
+        requestId = buf.unpackScalar<uint64_t>();
+        kind = (LogMessageKind)buf.unpackScalar<uint8_t>();
     }
 };
 

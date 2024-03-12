@@ -196,6 +196,21 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::DIFFERENT_ADDRS_INFO:
         out << "DIFFERENT_ADDRS_INFO";
         break;
+    case EggsError::LEADER_PREEMPTED:
+        out << "LEADER_PREEMPTED";
+        break;
+    case EggsError::LOG_ENTRY_MISSING:
+        out << "LOG_ENTRY_MISSING";
+        break;
+    case EggsError::LOG_ENTRY_TRIMMED:
+        out << "LOG_ENTRY_TRIMMED";
+        break;
+    case EggsError::LOG_ENTRY_UNRELEASED:
+        out << "LOG_ENTRY_UNRELEASED";
+        break;
+    case EggsError::LOG_ENTRY_RELEASED:
+        out << "LOG_ENTRY_RELEASED";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;
@@ -432,6 +447,36 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
         break;
     default:
         out << "BlocksMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, LogMessageKind kind) {
+    switch (kind) {
+    case LogMessageKind::LOG_WRITE:
+        out << "LOG_WRITE";
+        break;
+    case LogMessageKind::RELEASE:
+        out << "RELEASE";
+        break;
+    case LogMessageKind::LOG_READ:
+        out << "LOG_READ";
+        break;
+    case LogMessageKind::NEW_LEADER:
+        out << "NEW_LEADER";
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        out << "NEW_LEADER_CONFIRM";
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        out << "LOG_RECOVERY_READ";
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        out << "LOG_RECOVERY_WRITE";
+        break;
+    default:
+        out << "LogMessageKind(" << ((int)kind) << ")";
         break;
     }
     return out;
@@ -4089,6 +4134,302 @@ std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x) {
     return out;
 }
 
+void LogWriteReq::pack(BincodeBuf& buf) const {
+    token.pack(buf);
+    lastReleased.pack(buf);
+    idx.pack(buf);
+    buf.packList<uint8_t>(value);
+}
+void LogWriteReq::unpack(BincodeBuf& buf) {
+    token.unpack(buf);
+    lastReleased.unpack(buf);
+    idx.unpack(buf);
+    buf.unpackList<uint8_t>(value);
+}
+void LogWriteReq::clear() {
+    token = LeaderToken();
+    lastReleased = LogIdx();
+    idx = LogIdx();
+    value.clear();
+}
+bool LogWriteReq::operator==(const LogWriteReq& rhs) const {
+    if ((LeaderToken)this->token != (LeaderToken)rhs.token) { return false; };
+    if ((LogIdx)this->lastReleased != (LogIdx)rhs.lastReleased) { return false; };
+    if ((LogIdx)this->idx != (LogIdx)rhs.idx) { return false; };
+    if (value != rhs.value) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogWriteReq& x) {
+    out << "LogWriteReq(" << "Token=" << x.token << ", " << "LastReleased=" << x.lastReleased << ", " << "Idx=" << x.idx << ", " << "Value=" << x.value << ")";
+    return out;
+}
+
+void LogWriteResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+}
+void LogWriteResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+}
+void LogWriteResp::clear() {
+    result = uint16_t(0);
+}
+bool LogWriteResp::operator==(const LogWriteResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogWriteResp& x) {
+    out << "LogWriteResp(" << "Result=" << x.result << ")";
+    return out;
+}
+
+void ReleaseReq::pack(BincodeBuf& buf) const {
+    token.pack(buf);
+    lastReleased.pack(buf);
+}
+void ReleaseReq::unpack(BincodeBuf& buf) {
+    token.unpack(buf);
+    lastReleased.unpack(buf);
+}
+void ReleaseReq::clear() {
+    token = LeaderToken();
+    lastReleased = LogIdx();
+}
+bool ReleaseReq::operator==(const ReleaseReq& rhs) const {
+    if ((LeaderToken)this->token != (LeaderToken)rhs.token) { return false; };
+    if ((LogIdx)this->lastReleased != (LogIdx)rhs.lastReleased) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ReleaseReq& x) {
+    out << "ReleaseReq(" << "Token=" << x.token << ", " << "LastReleased=" << x.lastReleased << ")";
+    return out;
+}
+
+void ReleaseResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+}
+void ReleaseResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+}
+void ReleaseResp::clear() {
+    result = uint16_t(0);
+}
+bool ReleaseResp::operator==(const ReleaseResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ReleaseResp& x) {
+    out << "ReleaseResp(" << "Result=" << x.result << ")";
+    return out;
+}
+
+void LogReadReq::pack(BincodeBuf& buf) const {
+    idx.pack(buf);
+}
+void LogReadReq::unpack(BincodeBuf& buf) {
+    idx.unpack(buf);
+}
+void LogReadReq::clear() {
+    idx = LogIdx();
+}
+bool LogReadReq::operator==(const LogReadReq& rhs) const {
+    if ((LogIdx)this->idx != (LogIdx)rhs.idx) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogReadReq& x) {
+    out << "LogReadReq(" << "Idx=" << x.idx << ")";
+    return out;
+}
+
+void LogReadResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+    buf.packList<uint8_t>(value);
+}
+void LogReadResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+    buf.unpackList<uint8_t>(value);
+}
+void LogReadResp::clear() {
+    result = uint16_t(0);
+    value.clear();
+}
+bool LogReadResp::operator==(const LogReadResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    if (value != rhs.value) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogReadResp& x) {
+    out << "LogReadResp(" << "Result=" << x.result << ", " << "Value=" << x.value << ")";
+    return out;
+}
+
+void NewLeaderReq::pack(BincodeBuf& buf) const {
+    nomineeToken.pack(buf);
+}
+void NewLeaderReq::unpack(BincodeBuf& buf) {
+    nomineeToken.unpack(buf);
+}
+void NewLeaderReq::clear() {
+    nomineeToken = LeaderToken();
+}
+bool NewLeaderReq::operator==(const NewLeaderReq& rhs) const {
+    if ((LeaderToken)this->nomineeToken != (LeaderToken)rhs.nomineeToken) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewLeaderReq& x) {
+    out << "NewLeaderReq(" << "NomineeToken=" << x.nomineeToken << ")";
+    return out;
+}
+
+void NewLeaderResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+    lastReleased.pack(buf);
+}
+void NewLeaderResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+    lastReleased.unpack(buf);
+}
+void NewLeaderResp::clear() {
+    result = uint16_t(0);
+    lastReleased = LogIdx();
+}
+bool NewLeaderResp::operator==(const NewLeaderResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    if ((LogIdx)this->lastReleased != (LogIdx)rhs.lastReleased) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewLeaderResp& x) {
+    out << "NewLeaderResp(" << "Result=" << x.result << ", " << "LastReleased=" << x.lastReleased << ")";
+    return out;
+}
+
+void NewLeaderConfirmReq::pack(BincodeBuf& buf) const {
+    nomineeToken.pack(buf);
+    releasedIdx.pack(buf);
+}
+void NewLeaderConfirmReq::unpack(BincodeBuf& buf) {
+    nomineeToken.unpack(buf);
+    releasedIdx.unpack(buf);
+}
+void NewLeaderConfirmReq::clear() {
+    nomineeToken = LeaderToken();
+    releasedIdx = LogIdx();
+}
+bool NewLeaderConfirmReq::operator==(const NewLeaderConfirmReq& rhs) const {
+    if ((LeaderToken)this->nomineeToken != (LeaderToken)rhs.nomineeToken) { return false; };
+    if ((LogIdx)this->releasedIdx != (LogIdx)rhs.releasedIdx) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmReq& x) {
+    out << "NewLeaderConfirmReq(" << "NomineeToken=" << x.nomineeToken << ", " << "ReleasedIdx=" << x.releasedIdx << ")";
+    return out;
+}
+
+void NewLeaderConfirmResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+}
+void NewLeaderConfirmResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+}
+void NewLeaderConfirmResp::clear() {
+    result = uint16_t(0);
+}
+bool NewLeaderConfirmResp::operator==(const NewLeaderConfirmResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmResp& x) {
+    out << "NewLeaderConfirmResp(" << "Result=" << x.result << ")";
+    return out;
+}
+
+void LogRecoveryReadReq::pack(BincodeBuf& buf) const {
+    nomineeToken.pack(buf);
+    idx.pack(buf);
+}
+void LogRecoveryReadReq::unpack(BincodeBuf& buf) {
+    nomineeToken.unpack(buf);
+    idx.unpack(buf);
+}
+void LogRecoveryReadReq::clear() {
+    nomineeToken = LeaderToken();
+    idx = LogIdx();
+}
+bool LogRecoveryReadReq::operator==(const LogRecoveryReadReq& rhs) const {
+    if ((LeaderToken)this->nomineeToken != (LeaderToken)rhs.nomineeToken) { return false; };
+    if ((LogIdx)this->idx != (LogIdx)rhs.idx) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogRecoveryReadReq& x) {
+    out << "LogRecoveryReadReq(" << "NomineeToken=" << x.nomineeToken << ", " << "Idx=" << x.idx << ")";
+    return out;
+}
+
+void LogRecoveryReadResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+    buf.packList<uint8_t>(value);
+}
+void LogRecoveryReadResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+    buf.unpackList<uint8_t>(value);
+}
+void LogRecoveryReadResp::clear() {
+    result = uint16_t(0);
+    value.clear();
+}
+bool LogRecoveryReadResp::operator==(const LogRecoveryReadResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    if (value != rhs.value) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogRecoveryReadResp& x) {
+    out << "LogRecoveryReadResp(" << "Result=" << x.result << ", " << "Value=" << x.value << ")";
+    return out;
+}
+
+void LogRecoveryWriteReq::pack(BincodeBuf& buf) const {
+    nomineeToken.pack(buf);
+    idx.pack(buf);
+    buf.packList<uint8_t>(value);
+}
+void LogRecoveryWriteReq::unpack(BincodeBuf& buf) {
+    nomineeToken.unpack(buf);
+    idx.unpack(buf);
+    buf.unpackList<uint8_t>(value);
+}
+void LogRecoveryWriteReq::clear() {
+    nomineeToken = LeaderToken();
+    idx = LogIdx();
+    value.clear();
+}
+bool LogRecoveryWriteReq::operator==(const LogRecoveryWriteReq& rhs) const {
+    if ((LeaderToken)this->nomineeToken != (LeaderToken)rhs.nomineeToken) { return false; };
+    if ((LogIdx)this->idx != (LogIdx)rhs.idx) { return false; };
+    if (value != rhs.value) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteReq& x) {
+    out << "LogRecoveryWriteReq(" << "NomineeToken=" << x.nomineeToken << ", " << "Idx=" << x.idx << ", " << "Value=" << x.value << ")";
+    return out;
+}
+
+void LogRecoveryWriteResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint16_t>(result);
+}
+void LogRecoveryWriteResp::unpack(BincodeBuf& buf) {
+    result = buf.unpackScalar<uint16_t>();
+}
+void LogRecoveryWriteResp::clear() {
+    result = uint16_t(0);
+}
+bool LogRecoveryWriteResp::operator==(const LogRecoveryWriteResp& rhs) const {
+    if ((uint16_t)this->result != (uint16_t)rhs.result) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x) {
+    out << "LogRecoveryWriteResp(" << "Result=" << x.result << ")";
+    return out;
+}
+
 const LookupReq& ShardReqContainer::getLookup() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOOKUP, "%s != %s", _kind, ShardMessageKind::LOOKUP);
     return std::get<0>(_data);
@@ -7541,6 +7882,490 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     return out;
 }
 
+const LogWriteReq& LogReqContainer::getLogWrite() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_WRITE, "%s != %s", _kind, LogMessageKind::LOG_WRITE);
+    return std::get<0>(_data);
+}
+LogWriteReq& LogReqContainer::setLogWrite() {
+    _kind = LogMessageKind::LOG_WRITE;
+    auto& x = _data.emplace<0>();
+    return x;
+}
+const ReleaseReq& LogReqContainer::getRelease() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::RELEASE, "%s != %s", _kind, LogMessageKind::RELEASE);
+    return std::get<1>(_data);
+}
+ReleaseReq& LogReqContainer::setRelease() {
+    _kind = LogMessageKind::RELEASE;
+    auto& x = _data.emplace<1>();
+    return x;
+}
+const LogReadReq& LogReqContainer::getLogRead() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_READ, "%s != %s", _kind, LogMessageKind::LOG_READ);
+    return std::get<2>(_data);
+}
+LogReadReq& LogReqContainer::setLogRead() {
+    _kind = LogMessageKind::LOG_READ;
+    auto& x = _data.emplace<2>();
+    return x;
+}
+const NewLeaderReq& LogReqContainer::getNewLeader() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::NEW_LEADER, "%s != %s", _kind, LogMessageKind::NEW_LEADER);
+    return std::get<3>(_data);
+}
+NewLeaderReq& LogReqContainer::setNewLeader() {
+    _kind = LogMessageKind::NEW_LEADER;
+    auto& x = _data.emplace<3>();
+    return x;
+}
+const NewLeaderConfirmReq& LogReqContainer::getNewLeaderConfirm() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::NEW_LEADER_CONFIRM, "%s != %s", _kind, LogMessageKind::NEW_LEADER_CONFIRM);
+    return std::get<4>(_data);
+}
+NewLeaderConfirmReq& LogReqContainer::setNewLeaderConfirm() {
+    _kind = LogMessageKind::NEW_LEADER_CONFIRM;
+    auto& x = _data.emplace<4>();
+    return x;
+}
+const LogRecoveryReadReq& LogReqContainer::getLogRecoveryRead() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_RECOVERY_READ, "%s != %s", _kind, LogMessageKind::LOG_RECOVERY_READ);
+    return std::get<5>(_data);
+}
+LogRecoveryReadReq& LogReqContainer::setLogRecoveryRead() {
+    _kind = LogMessageKind::LOG_RECOVERY_READ;
+    auto& x = _data.emplace<5>();
+    return x;
+}
+const LogRecoveryWriteReq& LogReqContainer::getLogRecoveryWrite() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_RECOVERY_WRITE, "%s != %s", _kind, LogMessageKind::LOG_RECOVERY_WRITE);
+    return std::get<6>(_data);
+}
+LogRecoveryWriteReq& LogReqContainer::setLogRecoveryWrite() {
+    _kind = LogMessageKind::LOG_RECOVERY_WRITE;
+    auto& x = _data.emplace<6>();
+    return x;
+}
+LogReqContainer::LogReqContainer() {
+    clear();
+}
+
+LogReqContainer::LogReqContainer(const LogReqContainer& other) {
+    *this = other;
+}
+
+LogReqContainer::LogReqContainer(LogReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (LogMessageKind)0;
+}
+
+void LogReqContainer::operator=(const LogReqContainer& other) {
+    if (other.kind() == (LogMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case LogMessageKind::LOG_WRITE:
+        setLogWrite() = other.getLogWrite();
+        break;
+    case LogMessageKind::RELEASE:
+        setRelease() = other.getRelease();
+        break;
+    case LogMessageKind::LOG_READ:
+        setLogRead() = other.getLogRead();
+        break;
+    case LogMessageKind::NEW_LEADER:
+        setNewLeader() = other.getNewLeader();
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        setNewLeaderConfirm() = other.getNewLeaderConfirm();
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        setLogRecoveryRead() = other.getLogRecoveryRead();
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        setLogRecoveryWrite() = other.getLogRecoveryWrite();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", other.kind());
+    }
+}
+
+void LogReqContainer::operator=(LogReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (LogMessageKind)0;
+}
+
+size_t LogReqContainer::packedSize() const {
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        return std::get<0>(_data).packedSize();
+    case LogMessageKind::RELEASE:
+        return std::get<1>(_data).packedSize();
+    case LogMessageKind::LOG_READ:
+        return std::get<2>(_data).packedSize();
+    case LogMessageKind::NEW_LEADER:
+        return std::get<3>(_data).packedSize();
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        return std::get<4>(_data).packedSize();
+    case LogMessageKind::LOG_RECOVERY_READ:
+        return std::get<5>(_data).packedSize();
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        return std::get<6>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+void LogReqContainer::pack(BincodeBuf& buf) const {
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        std::get<0>(_data).pack(buf);
+        break;
+    case LogMessageKind::RELEASE:
+        std::get<1>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_READ:
+        std::get<2>(_data).pack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER:
+        std::get<3>(_data).pack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        std::get<4>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        std::get<5>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        std::get<6>(_data).pack(buf);
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+void LogReqContainer::unpack(BincodeBuf& buf, LogMessageKind kind) {
+    _kind = kind;
+    switch (kind) {
+    case LogMessageKind::LOG_WRITE:
+        _data.emplace<0>().unpack(buf);
+        break;
+    case LogMessageKind::RELEASE:
+        _data.emplace<1>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_READ:
+        _data.emplace<2>().unpack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER:
+        _data.emplace<3>().unpack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        _data.emplace<4>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        _data.emplace<5>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        _data.emplace<6>().unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad LogMessageKind kind %s", kind);
+    }
+}
+
+bool LogReqContainer::operator==(const LogReqContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (LogMessageKind)0) { return true; }
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        return getLogWrite() == other.getLogWrite();
+    case LogMessageKind::RELEASE:
+        return getRelease() == other.getRelease();
+    case LogMessageKind::LOG_READ:
+        return getLogRead() == other.getLogRead();
+    case LogMessageKind::NEW_LEADER:
+        return getNewLeader() == other.getNewLeader();
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        return getNewLeaderConfirm() == other.getNewLeaderConfirm();
+    case LogMessageKind::LOG_RECOVERY_READ:
+        return getLogRecoveryRead() == other.getLogRecoveryRead();
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        return getLogRecoveryWrite() == other.getLogRecoveryWrite();
+    default:
+        throw BINCODE_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const LogReqContainer& x) {
+    switch (x.kind()) {
+    case LogMessageKind::LOG_WRITE:
+        out << x.getLogWrite();
+        break;
+    case LogMessageKind::RELEASE:
+        out << x.getRelease();
+        break;
+    case LogMessageKind::LOG_READ:
+        out << x.getLogRead();
+        break;
+    case LogMessageKind::NEW_LEADER:
+        out << x.getNewLeader();
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        out << x.getNewLeaderConfirm();
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        out << x.getLogRecoveryRead();
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        out << x.getLogRecoveryWrite();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
+const LogWriteResp& LogRespContainer::getLogWrite() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_WRITE, "%s != %s", _kind, LogMessageKind::LOG_WRITE);
+    return std::get<0>(_data);
+}
+LogWriteResp& LogRespContainer::setLogWrite() {
+    _kind = LogMessageKind::LOG_WRITE;
+    auto& x = _data.emplace<0>();
+    return x;
+}
+const ReleaseResp& LogRespContainer::getRelease() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::RELEASE, "%s != %s", _kind, LogMessageKind::RELEASE);
+    return std::get<1>(_data);
+}
+ReleaseResp& LogRespContainer::setRelease() {
+    _kind = LogMessageKind::RELEASE;
+    auto& x = _data.emplace<1>();
+    return x;
+}
+const LogReadResp& LogRespContainer::getLogRead() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_READ, "%s != %s", _kind, LogMessageKind::LOG_READ);
+    return std::get<2>(_data);
+}
+LogReadResp& LogRespContainer::setLogRead() {
+    _kind = LogMessageKind::LOG_READ;
+    auto& x = _data.emplace<2>();
+    return x;
+}
+const NewLeaderResp& LogRespContainer::getNewLeader() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::NEW_LEADER, "%s != %s", _kind, LogMessageKind::NEW_LEADER);
+    return std::get<3>(_data);
+}
+NewLeaderResp& LogRespContainer::setNewLeader() {
+    _kind = LogMessageKind::NEW_LEADER;
+    auto& x = _data.emplace<3>();
+    return x;
+}
+const NewLeaderConfirmResp& LogRespContainer::getNewLeaderConfirm() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::NEW_LEADER_CONFIRM, "%s != %s", _kind, LogMessageKind::NEW_LEADER_CONFIRM);
+    return std::get<4>(_data);
+}
+NewLeaderConfirmResp& LogRespContainer::setNewLeaderConfirm() {
+    _kind = LogMessageKind::NEW_LEADER_CONFIRM;
+    auto& x = _data.emplace<4>();
+    return x;
+}
+const LogRecoveryReadResp& LogRespContainer::getLogRecoveryRead() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_RECOVERY_READ, "%s != %s", _kind, LogMessageKind::LOG_RECOVERY_READ);
+    return std::get<5>(_data);
+}
+LogRecoveryReadResp& LogRespContainer::setLogRecoveryRead() {
+    _kind = LogMessageKind::LOG_RECOVERY_READ;
+    auto& x = _data.emplace<5>();
+    return x;
+}
+const LogRecoveryWriteResp& LogRespContainer::getLogRecoveryWrite() const {
+    ALWAYS_ASSERT(_kind == LogMessageKind::LOG_RECOVERY_WRITE, "%s != %s", _kind, LogMessageKind::LOG_RECOVERY_WRITE);
+    return std::get<6>(_data);
+}
+LogRecoveryWriteResp& LogRespContainer::setLogRecoveryWrite() {
+    _kind = LogMessageKind::LOG_RECOVERY_WRITE;
+    auto& x = _data.emplace<6>();
+    return x;
+}
+LogRespContainer::LogRespContainer() {
+    clear();
+}
+
+LogRespContainer::LogRespContainer(const LogRespContainer& other) {
+    *this = other;
+}
+
+LogRespContainer::LogRespContainer(LogRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (LogMessageKind)0;
+}
+
+void LogRespContainer::operator=(const LogRespContainer& other) {
+    if (other.kind() == (LogMessageKind)0) { clear(); return; }
+    switch (other.kind()) {
+    case LogMessageKind::LOG_WRITE:
+        setLogWrite() = other.getLogWrite();
+        break;
+    case LogMessageKind::RELEASE:
+        setRelease() = other.getRelease();
+        break;
+    case LogMessageKind::LOG_READ:
+        setLogRead() = other.getLogRead();
+        break;
+    case LogMessageKind::NEW_LEADER:
+        setNewLeader() = other.getNewLeader();
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        setNewLeaderConfirm() = other.getNewLeaderConfirm();
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        setLogRecoveryRead() = other.getLogRecoveryRead();
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        setLogRecoveryWrite() = other.getLogRecoveryWrite();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", other.kind());
+    }
+}
+
+void LogRespContainer::operator=(LogRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = (LogMessageKind)0;
+}
+
+size_t LogRespContainer::packedSize() const {
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        return std::get<0>(_data).packedSize();
+    case LogMessageKind::RELEASE:
+        return std::get<1>(_data).packedSize();
+    case LogMessageKind::LOG_READ:
+        return std::get<2>(_data).packedSize();
+    case LogMessageKind::NEW_LEADER:
+        return std::get<3>(_data).packedSize();
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        return std::get<4>(_data).packedSize();
+    case LogMessageKind::LOG_RECOVERY_READ:
+        return std::get<5>(_data).packedSize();
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        return std::get<6>(_data).packedSize();
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+void LogRespContainer::pack(BincodeBuf& buf) const {
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        std::get<0>(_data).pack(buf);
+        break;
+    case LogMessageKind::RELEASE:
+        std::get<1>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_READ:
+        std::get<2>(_data).pack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER:
+        std::get<3>(_data).pack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        std::get<4>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        std::get<5>(_data).pack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        std::get<6>(_data).pack(buf);
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+void LogRespContainer::unpack(BincodeBuf& buf, LogMessageKind kind) {
+    _kind = kind;
+    switch (kind) {
+    case LogMessageKind::LOG_WRITE:
+        _data.emplace<0>().unpack(buf);
+        break;
+    case LogMessageKind::RELEASE:
+        _data.emplace<1>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_READ:
+        _data.emplace<2>().unpack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER:
+        _data.emplace<3>().unpack(buf);
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        _data.emplace<4>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        _data.emplace<5>().unpack(buf);
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        _data.emplace<6>().unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad LogMessageKind kind %s", kind);
+    }
+}
+
+bool LogRespContainer::operator==(const LogRespContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == (LogMessageKind)0) { return true; }
+    switch (_kind) {
+    case LogMessageKind::LOG_WRITE:
+        return getLogWrite() == other.getLogWrite();
+    case LogMessageKind::RELEASE:
+        return getRelease() == other.getRelease();
+    case LogMessageKind::LOG_READ:
+        return getLogRead() == other.getLogRead();
+    case LogMessageKind::NEW_LEADER:
+        return getNewLeader() == other.getNewLeader();
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        return getNewLeaderConfirm() == other.getNewLeaderConfirm();
+    case LogMessageKind::LOG_RECOVERY_READ:
+        return getLogRecoveryRead() == other.getLogRecoveryRead();
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        return getLogRecoveryWrite() == other.getLogRecoveryWrite();
+    default:
+        throw BINCODE_EXCEPTION("bad LogMessageKind kind %s", _kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const LogRespContainer& x) {
+    switch (x.kind()) {
+    case LogMessageKind::LOG_WRITE:
+        out << x.getLogWrite();
+        break;
+    case LogMessageKind::RELEASE:
+        out << x.getRelease();
+        break;
+    case LogMessageKind::LOG_READ:
+        out << x.getLogRead();
+        break;
+    case LogMessageKind::NEW_LEADER:
+        out << x.getNewLeader();
+        break;
+    case LogMessageKind::NEW_LEADER_CONFIRM:
+        out << x.getNewLeaderConfirm();
+        break;
+    case LogMessageKind::LOG_RECOVERY_READ:
+        out << x.getLogRecoveryRead();
+        break;
+    case LogMessageKind::LOG_RECOVERY_WRITE:
+        out << x.getLogRecoveryWrite();
+        break;
+    default:
+        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     switch (err) {
     case ShardLogEntryKind::CONSTRUCT_FILE:
@@ -8049,6 +8874,7 @@ std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x) {
 }
 
 void AddSpanInitiateEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<bool>(withReference);
     fileId.pack(buf);
     buf.packScalar<uint64_t>(byteOffset);
     buf.packScalar<uint32_t>(size);
@@ -8061,6 +8887,7 @@ void AddSpanInitiateEntry::pack(BincodeBuf& buf) const {
     buf.packList<Crc>(bodyStripes);
 }
 void AddSpanInitiateEntry::unpack(BincodeBuf& buf) {
+    withReference = buf.unpackScalar<bool>();
     fileId.unpack(buf);
     byteOffset = buf.unpackScalar<uint64_t>();
     size = buf.unpackScalar<uint32_t>();
@@ -8073,6 +8900,7 @@ void AddSpanInitiateEntry::unpack(BincodeBuf& buf) {
     buf.unpackList<Crc>(bodyStripes);
 }
 void AddSpanInitiateEntry::clear() {
+    withReference = bool(0);
     fileId = InodeId();
     byteOffset = uint64_t(0);
     size = uint32_t(0);
@@ -8085,6 +8913,7 @@ void AddSpanInitiateEntry::clear() {
     bodyStripes.clear();
 }
 bool AddSpanInitiateEntry::operator==(const AddSpanInitiateEntry& rhs) const {
+    if ((bool)this->withReference != (bool)rhs.withReference) { return false; };
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
     if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
@@ -8098,7 +8927,7 @@ bool AddSpanInitiateEntry::operator==(const AddSpanInitiateEntry& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const AddSpanInitiateEntry& x) {
-    out << "AddSpanInitiateEntry(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ", " << "StorageClass=" << (int)x.storageClass << ", " << "Parity=" << x.parity << ", " << "Stripes=" << (int)x.stripes << ", " << "CellSize=" << x.cellSize << ", " << "BodyBlocks=" << x.bodyBlocks << ", " << "BodyStripes=" << x.bodyStripes << ")";
+    out << "AddSpanInitiateEntry(" << "WithReference=" << x.withReference << ", " << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ", " << "StorageClass=" << (int)x.storageClass << ", " << "Parity=" << x.parity << ", " << "Stripes=" << (int)x.stripes << ", " << "CellSize=" << x.cellSize << ", " << "BodyBlocks=" << x.bodyBlocks << ", " << "BodyStripes=" << x.bodyStripes << ")";
     return out;
 }
 

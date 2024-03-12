@@ -68,6 +68,11 @@ enum class EggsError : uint16_t {
     BLOCK_IO_ERROR_FILE = 71,
     INVALID_REPLICA = 72,
     DIFFERENT_ADDRS_INFO = 73,
+    LEADER_PREEMPTED = 74,
+    LOG_ENTRY_MISSING = 75,
+    LOG_ENTRY_TRIMMED = 76,
+    LOG_ENTRY_UNRELEASED = 77,
+    LOG_ENTRY_RELEASED = 78,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -137,9 +142,14 @@ const std::vector<EggsError> allEggsErrors {
     EggsError::BLOCK_IO_ERROR_FILE,
     EggsError::INVALID_REPLICA,
     EggsError::DIFFERENT_ADDRS_INFO,
+    EggsError::LEADER_PREEMPTED,
+    EggsError::LOG_ENTRY_MISSING,
+    EggsError::LOG_ENTRY_TRIMMED,
+    EggsError::LOG_ENTRY_UNRELEASED,
+    EggsError::LOG_ENTRY_RELEASED,
 };
 
-constexpr int maxEggsError = 74;
+constexpr int maxEggsError = 79;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,
@@ -316,6 +326,31 @@ const std::vector<BlocksMessageKind> allBlocksMessageKind {
 constexpr int maxBlocksMessageKind = 6;
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
+
+enum class LogMessageKind : uint8_t {
+    ERROR = 0,
+    LOG_WRITE = 1,
+    RELEASE = 2,
+    LOG_READ = 3,
+    NEW_LEADER = 4,
+    NEW_LEADER_CONFIRM = 5,
+    LOG_RECOVERY_READ = 6,
+    LOG_RECOVERY_WRITE = 7,
+};
+
+const std::vector<LogMessageKind> allLogMessageKind {
+    LogMessageKind::LOG_WRITE,
+    LogMessageKind::RELEASE,
+    LogMessageKind::LOG_READ,
+    LogMessageKind::NEW_LEADER,
+    LogMessageKind::NEW_LEADER_CONFIRM,
+    LogMessageKind::LOG_RECOVERY_READ,
+    LogMessageKind::LOG_RECOVERY_WRITE,
+};
+
+constexpr int maxLogMessageKind = 7;
+
+std::ostream& operator<<(std::ostream& out, LogMessageKind kind);
 
 struct FailureDomain {
     BincodeFixedBytes<16> name;
@@ -3840,6 +3875,294 @@ struct CheckBlockResp {
 
 std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x);
 
+struct LogWriteReq {
+    LeaderToken token;
+    LogIdx lastReleased;
+    LogIdx idx;
+    BincodeList<uint8_t> value;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeList<uint8_t>::STATIC_SIZE; // token + lastReleased + idx + value
+
+    LogWriteReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // token
+        _size += 8; // lastReleased
+        _size += 8; // idx
+        _size += value.packedSize(); // value
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogWriteReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogWriteReq& x);
+
+struct LogWriteResp {
+    uint16_t result;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // result
+
+    LogWriteResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogWriteResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogWriteResp& x);
+
+struct ReleaseReq {
+    LeaderToken token;
+    LogIdx lastReleased;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // token + lastReleased
+
+    ReleaseReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // token
+        _size += 8; // lastReleased
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ReleaseReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ReleaseReq& x);
+
+struct ReleaseResp {
+    uint16_t result;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // result
+
+    ReleaseResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ReleaseResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ReleaseResp& x);
+
+struct LogReadReq {
+    LogIdx idx;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // idx
+
+    LogReadReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // idx
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogReadReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogReadReq& x);
+
+struct LogReadResp {
+    uint16_t result;
+    BincodeList<uint8_t> value;
+
+    static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
+
+    LogReadResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        _size += value.packedSize(); // value
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogReadResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogReadResp& x);
+
+struct NewLeaderReq {
+    LeaderToken nomineeToken;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // nomineeToken
+
+    NewLeaderReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // nomineeToken
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const NewLeaderReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const NewLeaderReq& x);
+
+struct NewLeaderResp {
+    uint16_t result;
+    LogIdx lastReleased;
+
+    static constexpr uint16_t STATIC_SIZE = 2 + 8; // result + lastReleased
+
+    NewLeaderResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        _size += 8; // lastReleased
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const NewLeaderResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const NewLeaderResp& x);
+
+struct NewLeaderConfirmReq {
+    LeaderToken nomineeToken;
+    LogIdx releasedIdx;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // nomineeToken + releasedIdx
+
+    NewLeaderConfirmReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // nomineeToken
+        _size += 8; // releasedIdx
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const NewLeaderConfirmReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmReq& x);
+
+struct NewLeaderConfirmResp {
+    uint16_t result;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // result
+
+    NewLeaderConfirmResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const NewLeaderConfirmResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmResp& x);
+
+struct LogRecoveryReadReq {
+    LeaderToken nomineeToken;
+    LogIdx idx;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // nomineeToken + idx
+
+    LogRecoveryReadReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // nomineeToken
+        _size += 8; // idx
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogRecoveryReadReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogRecoveryReadReq& x);
+
+struct LogRecoveryReadResp {
+    uint16_t result;
+    BincodeList<uint8_t> value;
+
+    static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
+
+    LogRecoveryReadResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        _size += value.packedSize(); // value
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogRecoveryReadResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogRecoveryReadResp& x);
+
+struct LogRecoveryWriteReq {
+    LeaderToken nomineeToken;
+    LogIdx idx;
+    BincodeList<uint8_t> value;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint8_t>::STATIC_SIZE; // nomineeToken + idx + value
+
+    LogRecoveryWriteReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // nomineeToken
+        _size += 8; // idx
+        _size += value.packedSize(); // value
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogRecoveryWriteReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteReq& x);
+
+struct LogRecoveryWriteResp {
+    uint16_t result;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // result
+
+    LogRecoveryWriteResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // result
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LogRecoveryWriteResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x);
+
 struct ShardReqContainer {
 private:
     ShardMessageKind _kind = (ShardMessageKind)0;
@@ -4227,6 +4550,82 @@ public:
 };
 
 std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x);
+
+struct LogReqContainer {
+private:
+    LogMessageKind _kind = (LogMessageKind)0;
+    std::variant<LogWriteReq, ReleaseReq, LogReadReq, NewLeaderReq, NewLeaderConfirmReq, LogRecoveryReadReq, LogRecoveryWriteReq> _data;
+public:
+    LogReqContainer();
+    LogReqContainer(const LogReqContainer& other);
+    LogReqContainer(LogReqContainer&& other);
+    void operator=(const LogReqContainer& other);
+    void operator=(LogReqContainer&& other);
+
+    LogMessageKind kind() const { return _kind; }
+
+    const LogWriteReq& getLogWrite() const;
+    LogWriteReq& setLogWrite();
+    const ReleaseReq& getRelease() const;
+    ReleaseReq& setRelease();
+    const LogReadReq& getLogRead() const;
+    LogReadReq& setLogRead();
+    const NewLeaderReq& getNewLeader() const;
+    NewLeaderReq& setNewLeader();
+    const NewLeaderConfirmReq& getNewLeaderConfirm() const;
+    NewLeaderConfirmReq& setNewLeaderConfirm();
+    const LogRecoveryReadReq& getLogRecoveryRead() const;
+    LogRecoveryReadReq& setLogRecoveryRead();
+    const LogRecoveryWriteReq& getLogRecoveryWrite() const;
+    LogRecoveryWriteReq& setLogRecoveryWrite();
+
+    void clear() { _kind = (LogMessageKind)0; };
+
+    size_t packedSize() const;
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf, LogMessageKind kind);
+    bool operator==(const LogReqContainer& other) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogReqContainer& x);
+
+struct LogRespContainer {
+private:
+    LogMessageKind _kind = (LogMessageKind)0;
+    std::variant<LogWriteResp, ReleaseResp, LogReadResp, NewLeaderResp, NewLeaderConfirmResp, LogRecoveryReadResp, LogRecoveryWriteResp> _data;
+public:
+    LogRespContainer();
+    LogRespContainer(const LogRespContainer& other);
+    LogRespContainer(LogRespContainer&& other);
+    void operator=(const LogRespContainer& other);
+    void operator=(LogRespContainer&& other);
+
+    LogMessageKind kind() const { return _kind; }
+
+    const LogWriteResp& getLogWrite() const;
+    LogWriteResp& setLogWrite();
+    const ReleaseResp& getRelease() const;
+    ReleaseResp& setRelease();
+    const LogReadResp& getLogRead() const;
+    LogReadResp& setLogRead();
+    const NewLeaderResp& getNewLeader() const;
+    NewLeaderResp& setNewLeader();
+    const NewLeaderConfirmResp& getNewLeaderConfirm() const;
+    NewLeaderConfirmResp& setNewLeaderConfirm();
+    const LogRecoveryReadResp& getLogRecoveryRead() const;
+    LogRecoveryReadResp& setLogRecoveryRead();
+    const LogRecoveryWriteResp& getLogRecoveryWrite() const;
+    LogRecoveryWriteResp& setLogRecoveryWrite();
+
+    void clear() { _kind = (LogMessageKind)0; };
+
+    size_t packedSize() const;
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf, LogMessageKind kind);
+    bool operator==(const LogRespContainer& other) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LogRespContainer& x);
 
 enum class ShardLogEntryKind : uint16_t {
     CONSTRUCT_FILE = 1,
@@ -4630,6 +5029,7 @@ struct UpdateBlockServicesEntry {
 std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x);
 
 struct AddSpanInitiateEntry {
+    bool withReference;
     InodeId fileId;
     uint64_t byteOffset;
     uint32_t size;
@@ -4641,11 +5041,12 @@ struct AddSpanInitiateEntry {
     BincodeList<EntryNewBlockInfo> bodyBlocks;
     BincodeList<Crc> bodyStripes;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 4 + 1 + 1 + 1 + 4 + BincodeList<EntryNewBlockInfo>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // fileId + byteOffset + size + crc + storageClass + parity + stripes + cellSize + bodyBlocks + bodyStripes
+    static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + 4 + 4 + 1 + 1 + 1 + 4 + BincodeList<EntryNewBlockInfo>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // withReference + fileId + byteOffset + size + crc + storageClass + parity + stripes + cellSize + bodyBlocks + bodyStripes
 
     AddSpanInitiateEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
+        _size += 1; // withReference
         _size += 8; // fileId
         _size += 8; // byteOffset
         _size += 4; // size

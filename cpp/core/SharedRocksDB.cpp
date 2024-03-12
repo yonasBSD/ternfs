@@ -1,7 +1,10 @@
 #include "SharedRocksDB.hpp"
 
 #include <fstream>
+#include <mutex>
+#include <rocksdb/db.h>
 #include <rocksdb/statistics.h>
+#include <shared_mutex>
 #include <utility>
 
 #include "RocksDBUtils.hpp"
@@ -19,6 +22,7 @@ SharedRocksDB::~SharedRocksDB() {
 }
 
 void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() == nullptr);
     ALWAYS_ASSERT(options.statistics.get() == nullptr);
     _dbStatistics = rocksdb::CreateDBStatistics();
@@ -47,6 +51,7 @@ void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
 }
 
 void SharedRocksDB::close() {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
     if (_db.get() == nullptr) {
         return;
     }
@@ -60,11 +65,13 @@ void SharedRocksDB::close() {
 }
 
 void SharedRocksDB::registerCFDescriptors(const std::vector<rocksdb::ColumnFamilyDescriptor>& cfDescriptors) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() == nullptr);
     _cfDescriptors.insert(_cfDescriptors.end(), cfDescriptors.begin(), cfDescriptors.end());
 }
 
 rocksdb::ColumnFamilyHandle* SharedRocksDB::getCF(const std::string& name) const {
+    std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     auto it = _cfs.find(name);
     if (it == _cfs.end()) {
@@ -73,17 +80,45 @@ rocksdb::ColumnFamilyHandle* SharedRocksDB::getCF(const std::string& name) const
     return it->second;
 }
 
+void SharedRocksDB::deleteCF(const std::string& name) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
+    ALWAYS_ASSERT(_db.get() != nullptr);
+    auto it = _cfs.find(name);
+    if (it == _cfs.end()) {
+        return;
+    }
+    ROCKS_DB_CHECKED(_db->DropColumnFamily(it->second));
+    ROCKS_DB_CHECKED(_db->DestroyColumnFamilyHandle(it->second));
+    _cfs.erase(it);
+}
+
+rocksdb::ColumnFamilyHandle* SharedRocksDB::createCF(const rocksdb::ColumnFamilyDescriptor& descriptor) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
+    ASSERT(_db.get() != nullptr);
+    auto it = _cfs.find(descriptor.name);
+    if (it != _cfs.end()) {
+        return it->second;
+    }
+    rocksdb::ColumnFamilyHandle* handle;
+    ROCKS_DB_CHECKED(_db->CreateColumnFamily(descriptor.options, descriptor.name, &handle));
+    _cfs.emplace(descriptor.name, handle);
+    return handle;
+}
+
 rocksdb::DB* SharedRocksDB::db() const {
+    std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     return _db.get();
 }
 
 void SharedRocksDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
+    std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     ::rocksDBMetrics(_env, _db.get(), *_dbStatistics, stats);
 }
 
 void SharedRocksDB::dumpRocksDBStatistics() {
+    std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
     std::ofstream file(_dbStatisticsFile);

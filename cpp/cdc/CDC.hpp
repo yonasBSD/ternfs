@@ -3,6 +3,7 @@
 #include "Env.hpp"
 #include "Shard.hpp"
 #include "Time.hpp"
+#include <cstdint>
 
 struct CDCOptions {
     LogLevel logLevel = LogLevel::LOG_INFO;
@@ -17,6 +18,8 @@ struct CDCOptions {
     bool xmon = false;
     bool xmonProd = false;
     bool metrics = false;
+    ReplicaId replicaId = 0;
+    ReplicaId leaderReplicaId = 0;
 };
 
 void runCDC(const std::string& dbDir, const CDCOptions& options);

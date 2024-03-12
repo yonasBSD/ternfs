@@ -121,12 +121,15 @@ static int pickMtu(uint16_t mtu) {
 }
 
 void ShardLogEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(SHARD_LOG_PROTOCOL_VERSION);
     time.pack(buf);
     buf.packScalar<uint16_t>((uint16_t)body.kind());
     body.pack(buf);
 }
 
 void ShardLogEntry::unpack(BincodeBuf& buf) {
+    uint32_t protocol = buf.unpackScalar<uint32_t>();
+    ALWAYS_ASSERT(protocol == SHARD_LOG_PROTOCOL_VERSION);
     time.unpack(buf);
     ShardLogEntryKind kind = (ShardLogEntryKind)buf.unpackScalar<uint16_t>();
     body.unpack(buf, kind);
@@ -1370,7 +1373,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry) {
+    EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry, bool withReference) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1399,6 +1402,7 @@ struct ShardDBImpl {
         }
 
         // start filling in entry
+        entry.withReference = withReference;
         entry.fileId = req.fileId;
         entry.byteOffset = req.byteOffset;
         entry.storageClass = req.storageClass;
@@ -1721,11 +1725,11 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::ADD_SPAN_INITIATE: {
             const auto& addSpanReq = req.getAddSpanInitiate();
-            err = _prepareAddSpanInitiate(options, time, addSpanReq, addSpanReq.fileId, logEntryBody.setAddSpanInitiate());
+            err = _prepareAddSpanInitiate(options, time, addSpanReq, addSpanReq.fileId, logEntryBody.setAddSpanInitiate(), false);
             break; }
         case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE: {
             const auto& addSpanReq = req.getAddSpanInitiateWithReference();
-            err = _prepareAddSpanInitiate(options, time, addSpanReq.req, addSpanReq.reference, logEntryBody.setAddSpanInitiate());
+            err = _prepareAddSpanInitiate(options, time, addSpanReq.req, addSpanReq.reference, logEntryBody.setAddSpanInitiate(), true);
             break; }
         case ShardMessageKind::ADD_SPAN_CERTIFY:
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
@@ -3437,7 +3441,7 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError applyLogEntry(ShardMessageKind reqKind, uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    EggsError applyLogEntry(uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
 
@@ -3516,12 +3520,11 @@ struct ShardDBImpl {
             err = _applyAddInlineSpan(time, batch, logEntryBody.getAddInlineSpan(), resp.setAddInlineSpan());
             break;
         case ShardLogEntryKind::ADD_SPAN_INITIATE: {
-            if (reqKind == ShardMessageKind::ADD_SPAN_INITIATE) {
-                err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), resp.setAddSpanInitiate());
-            } else {
-                ALWAYS_ASSERT(reqKind == ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE);
+            if (logEntryBody.getAddSpanInitiate().withReference) {
                 auto& refResp = resp.setAddSpanInitiateWithReference();
                 err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), refResp.resp);
+            } else {
+                err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), resp.setAddSpanInitiate());
             }
             break; }
         case ShardLogEntryKind::ADD_SPAN_CERTIFY:
@@ -3809,8 +3812,8 @@ EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& 
     return ((ShardDBImpl*)_impl)->prepareLogEntry(req, logEntry);
 }
 
-EggsError ShardDB::applyLogEntry(ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->applyLogEntry(reqKind, logEntryIx, logEntry, resp);
+EggsError ShardDB::applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->applyLogEntry(logEntryIx, logEntry, resp);
 }
 
 uint64_t ShardDB::lastAppliedLogEntry() {

@@ -1,3 +1,4 @@
+#include <atomic>
 #include <stdio.h>
 #include <time.h>
 #include <chrono>
@@ -61,7 +62,17 @@ static void checkClockRes() {
     }
 }
 
+static std::atomic<EggsTime> _currentTimeInTest = EggsTime(0);
+
+void _setCurrentTime(EggsTime time) {
+    _currentTimeInTest.store(time, std::memory_order_relaxed);
+}
+
 EggsTime eggsNow() {
+    auto timeInTest = _currentTimeInTest.load(std::memory_order_relaxed);
+    if (unlikely( timeInTest != 0)) {
+        return timeInTest;
+    }
     struct timespec now;
 
     if (clock_gettime(CLOCK_REALTIME, &now) != 0) {

@@ -191,9 +191,9 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
     return {};
 }
 
-std::string registerShard(
-    const std::string& addr, uint16_t port, Duration timeout, ShardId shid,
-    uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2
+std::string registerShardReplica(
+    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, bool isLeader,
+    const AddrsInfo& info
 ) {
     std::string errString;
     auto sock = shuckleSock(addr, port, timeout, errString);
@@ -202,18 +202,10 @@ std::string registerShard(
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setRegisterShard();
-    req.id = shid;
-    {
-        uint32_t ip = htonl(ip1);
-        memcpy(req.info.ip1.data.data(), &ip, 4);
-    }
-    req.info.port1 = port1;
-    {
-        uint32_t ip = htonl(ip2);
-        memcpy(req.info.ip2.data.data(), &ip, 4);
-    }
-    req.info.port2 = port2;
+    auto& req = reqContainer.setRegisterShardReplica();
+    req.shrid = shrid;
+    req.isLeader = isLeader;
+    req.info = info;
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
@@ -224,12 +216,46 @@ std::string registerShard(
     if (!errString.empty()) {
         return errString;
     }
-    respContainer.getRegisterShard();
+    respContainer.getRegisterShardReplica();
 
     return {};
 }
 
-std::string registerCDC(const std::string& host, uint16_t port, Duration timeout, uint32_t ip1, uint16_t port1, uint32_t ip2, uint16_t port2) {
+std::string fetchShardReplicas(
+    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, std::array<AddrsInfo, 5>& replicas
+) {
+    std::string errString;
+    auto sock = shuckleSock(addr, port, timeout, errString);
+    if (sock.fd < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setShardReplicas();
+    req.id = shrid.shardId();
+
+    errString = writeShuckleRequest(sock.fd, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock.fd, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    if (respContainer.getShardReplicas().replicas.els.size() != replicas.size()) {
+        throw EGGS_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getShardReplicas().replicas.els.size());
+    }
+    for (int i = 0; i < replicas.size(); i++) {
+        replicas[i] = respContainer.getShardReplicas().replicas.els[i];
+    }
+
+    return {};
+}
+
+std::string registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, bool isLeader, const AddrsInfo& info) {
     std::string errString;
     auto sock = shuckleSock(host, port, timeout, errString);
     if (sock.fd < 0) {
@@ -237,17 +263,10 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setRegisterCdc();
-    {
-        uint32_t ip = htonl(ip1);
-        memcpy(req.ip1.data.data(), &ip, 4);
-    }
-    req.port1 = port1;
-    {
-        uint32_t ip = htonl(ip2);
-        memcpy(req.ip2.data.data(), &ip, 4);
-    }
-    req.port2 = port2;
+    auto& req = reqContainer.setRegisterCdcReplica();
+    req.replica = replicaId;
+    req.isLeader = isLeader;
+    req.info = info;
     errString = writeShuckleRequest(sock.fd, reqContainer);
     if (!errString.empty()) {
         return errString;
@@ -258,7 +277,40 @@ std::string registerCDC(const std::string& host, uint16_t port, Duration timeout
     if (!errString.empty()) {
         return errString;
     }
-    respContainer.getRegisterCdc();
+    respContainer.getRegisterCdcReplica();
+
+    return {};
+}
+
+std::string fetchCDCReplicas(
+    const std::string& addr, uint16_t port, Duration timeout, std::array<AddrsInfo, 5>& replicas
+) {
+    std::string errString;
+    auto sock = shuckleSock(addr, port, timeout, errString);
+    if (sock.fd < 0) {
+        return errString;
+    }
+
+    ShuckleReqContainer reqContainer;
+    auto& req = reqContainer.setCdcReplicas();
+
+    errString = writeShuckleRequest(sock.fd, reqContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    ShuckleRespContainer respContainer;
+    errString = readShuckleResponse(sock.fd, respContainer);
+    if (!errString.empty()) {
+        return errString;
+    }
+
+    if (respContainer.getCdcReplicas().replicas.els.size() != replicas.size()) {
+        throw EGGS_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getCdcReplicas().replicas.els.size());
+    }
+    for (int i = 0; i < replicas.size(); i++) {
+        replicas[i] = respContainer.getCdcReplicas().replicas.els[i];
+    }
 
     return {};
 }

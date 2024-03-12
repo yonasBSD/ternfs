@@ -101,8 +101,15 @@ struct EggsTime {
         ns = buf.unpackScalar<uint64_t>();
     }
 
-    EggsTime operator+(Duration d) {
+    EggsTime operator+(Duration d) const {
         return EggsTime(ns + d.ns);
+    }
+
+    EggsTime operator-(Duration d) const {
+        if (unlikely(d.ns > ns)) {
+            return 0;
+        }
+        return EggsTime(ns - d.ns);
     }
 
     // Two positive times might give one negative
@@ -116,5 +123,8 @@ struct EggsTime {
 };
 
 std::ostream& operator<<(std::ostream& out, EggsTime t);
+
+// DO NOT USE UNLESS TESTING TIME SENSITIVE BEHAVIOR
+void _setCurrentTime(EggsTime time);
 
 EggsTime eggsNow();

@@ -9,7 +9,7 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
 void usage(const char* binary) {
-    fprintf(stderr, "Usage: %s DIRECTORY\n\n", binary);
+    fprintf(stderr, "Usage: %s DIRECTORY [REPLICA_ID]\n\n", binary);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, " -log-level trace|debug|info|error\n");
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
@@ -29,6 +29,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
+    fprintf(stderr, " -leader-replica-id\n");
+    fprintf(stderr, "    	Specify which replica we consider as leader. 0 by default.\n");
 }
 
 static uint32_t parseIpv4(const char* binary, const std::string& arg) {
@@ -69,10 +71,23 @@ static std::pair<uint32_t, uint16_t> parseIpv4Addr(const char* binary, const std
     return {ip, port};
 }
 
+
+static uint8_t parseReplicaId(const std::string& arg) {
+    size_t idx;
+    unsigned long replicaId = std::stoul(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff character in number %s", arg.c_str());
+    }
+    if (replicaId > 4) {
+        die("Bad replicaId %s", arg.c_str());
+    }
+    return replicaId;
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
-    const auto dieWithUsage = [&argv]() { 
+    const auto dieWithUsage = [&argv]() {
         usage(argv[0]);
         exit(2);
     };
@@ -143,14 +158,19 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
-        } else {
+        } else if (arg == "-leader-replica-id") {
+            options.leaderReplicaId = parseReplicaId(getNextArg());
+        } else{
             args.emplace_back(std::move(arg));
         }
     }
 
-    if (args.size() != 1) {
-        fprintf(stderr, "Expecting one positional argument (DIRECTORY), got %ld.\n", args.size());
+    if (args.size() == 0 || args.size() > 2) {
+        fprintf(stderr, "Expecting one or two positional argument (DIRECTORY) [REPLICA_ID], got %ld.\n", args.size());
         dieWithUsage();
+    }
+    if (args.size() < 2) {
+        args.emplace_back("0");
     }
 
 #ifndef EGGS_DEBUG
@@ -177,6 +197,12 @@ int main(int argc, char** argv) {
             throw EXPLICIT_SYSCALL_EXCEPTION(err.value(), "mkdir");
         }
     }
+    size_t processed;
+    int replicaId = std::stoi(args.at(1), &processed);
+    if (processed != args.at(1).size() || replicaId < 0 || replicaId > 4) {
+        die("Invalid replicaId '%s', expecting a number between 0 and 4.\n", args.at(2).c_str());
+    }
+    options.replicaId = replicaId;
 
     runCDC(dbDir, options);
 

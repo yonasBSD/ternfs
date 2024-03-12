@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <vector>
 #include <rocksdb/db.h>
 
@@ -12,6 +13,10 @@
 struct ShardLogEntry {
     EggsTime time;
     ShardLogEntryContainer body;
+
+    bool operator==(const ShardLogEntry& rhs) const {
+        return time == rhs.time && body == rhs.body;
+    }
 
     void clear() {
         time = 0;
@@ -98,7 +103,7 @@ public:
     // This function does NOT persist the changes (in fact it doesn't even write
     // to the WAL). You need to call flush(). But this allows you to apply many
     // log entries without any write/fsync.
-    EggsError applyLogEntry(ShardMessageKind reqKind, uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
+    EggsError applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
 
     // Flushes the changes to the WAL, and persists it if sync=true (won't be
     // required when we have a distributed log).

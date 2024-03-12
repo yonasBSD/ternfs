@@ -64,6 +64,11 @@ const char* eggsfs_err_str(int err) {
     case 71: return "BLOCK_IO_ERROR_FILE";
     case 72: return "INVALID_REPLICA";
     case 73: return "DIFFERENT_ADDRS_INFO";
+    case 74: return "LEADER_PREEMPTED";
+    case 75: return "LOG_ENTRY_MISSING";
+    case 76: return "LOG_ENTRY_TRIMMED";
+    case 77: return "LOG_ENTRY_UNRELEASED";
+    case 78: return "LOG_ENTRY_RELEASED";
     default: return "UNKNOWN";
     }
 }

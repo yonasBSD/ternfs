@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -18,7 +19,11 @@ public:
     void close();
 
     void registerCFDescriptors(const std::vector<rocksdb::ColumnFamilyDescriptor>& _cfDescriptors);
+
     rocksdb::ColumnFamilyHandle* getCF(const std::string& name) const;
+    void deleteCF(const std::string& name);
+    rocksdb::ColumnFamilyHandle* createCF(const rocksdb::ColumnFamilyDescriptor& descriptor);
+
 
     rocksdb::DB* db() const;
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
@@ -30,5 +35,6 @@ private:
     std::shared_ptr<rocksdb::Statistics> _dbStatistics;
     std::string _dbStatisticsFile;
     std::vector<rocksdb::ColumnFamilyDescriptor> _cfDescriptors;
+    mutable std::shared_mutex _stateMutex;
     std::unordered_map<std::string, rocksdb::ColumnFamilyHandle*> _cfs;
 };

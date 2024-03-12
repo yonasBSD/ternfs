@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <vector>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
@@ -18,6 +19,7 @@
 #include "Msgs.hpp"
 #include "Shard.hpp"
 #include "Env.hpp"
+#include "MultiplexedChannel.hpp"
 #include "ShardDB.hpp"
 #include "CDCKey.hpp"
 #include "SharedRocksDB.hpp"
@@ -65,6 +67,8 @@ struct ShardShared {
     std::atomic<double> logEntriesQueueSize;
     std::array<std::atomic<double>, 2> receivedRequests; // how many requests we got at once from each socket
     std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
+    std::array<AddrsInfo,5> replicas;
+    std::mutex replicasLock;
 
     ShardShared() = delete;
     ShardShared(SharedRocksDB& sharedDB_, ShardDB& shardDB_): sharedDB(sharedDB_), shardDB(shardDB_), ips{0, 0}, ports{0, 0}, blockServicesWritten(false), logEntriesQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
@@ -189,6 +193,7 @@ private:
     std::vector<char> _sendBuf;
     std::array<std::vector<struct mmsghdr>, 2> _sendHdrs; // one per socket
     std::array<std::vector<struct iovec>, 2> _sendVecs;
+    MultiplexedChannel<3, std::array<uint32_t, 3>{SHARD_REQ_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
 
 public:
     ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared) :
@@ -198,7 +203,8 @@ public:
         _ipPorts(options.ipPorts),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
-        _outgoingPacketDropProbability(0)
+        _outgoingPacketDropProbability(0),
+        _channel(_env, MAX_RECV_MSGS * _ipPorts.size())
     {
         auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
             if (prob != 0.0) {
@@ -275,10 +281,8 @@ private:
         }
     }
 
-    void _handleRequest(int sockIx, struct sockaddr_in* clientAddr, char* buf, size_t len) {
+    void _handleRequest(int sockIx, struct sockaddr_in* clientAddr, BincodeBuf& reqBbuf) {
         LOG_DEBUG(_env, "received message from %s", *clientAddr);
-
-        BincodeBuf reqBbuf(buf, len);
 
         // First, try to parse the header
         ShardRequestHeader reqHeader;
@@ -374,6 +378,7 @@ public:
 
         _logEntries.clear();
         _sendBuf.clear();
+        _channel.clear();
         for (int i = 0; i < 2; i++) {
             _sendHdrs[i].clear();
             _sendVecs[i].clear();
@@ -398,11 +403,14 @@ public:
                 _shared.receivedRequests[sockIx] = _shared.receivedRequests[sockIx]*0.95 + ((double)msgs)*0.05;
             }
             for (int msgIx = 0; msgIx < msgs; msgIx++) {
-                auto& hdr = _recvHdrs[sockIx][msgIx];
-                auto clientAddr = (struct sockaddr_in *)hdr.msg_hdr.msg_name;
-                _handleRequest(sockIx, clientAddr, (char*)hdr.msg_hdr.msg_iov->iov_base, hdr.msg_len);
+                _channel.demultiplexMessage(sockIx, _recvHdrs[sockIx][msgIx]);
             }
         }
+
+        for (auto& msg : _channel.getProtocolMessages(SHARD_REQ_PROTOCOL_VERSION)) {
+            _handleRequest(msg.socketId, msg.clientAddr, msg.buf);
+        }
+
 
         // write out write requests to queue
         {
@@ -451,6 +459,12 @@ private:
     uint64_t _currentLogIndex;
     ShardRespContainer _respContainer;
     std::vector<QueuedShardLogEntry> _logEntries;
+    std::vector<LogsDBRequest> _logsdbRequests;
+    std::vector<LogsDBResponse> _logsdbResponses;
+    std::vector<LogsDBRequest *> outRequests;
+    std::vector<LogsDBResponse> outResponses;
+
+    std::unique_ptr<LogsDB> _logsDB;
 
     // sendmmsg data (one per socket)
     std::vector<char> _sendBuf;
@@ -466,7 +480,7 @@ private:
     }
 
 public:
-    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const ShardOptions& options, ShardShared& shared) :
+    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         Loop(logger, xmon, "writer"),
         _shared(shared),
         _packetDropRand(eggsNow().ns),
@@ -484,6 +498,11 @@ public:
         convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _logEntries.reserve(MAX_WRITES_AT_ONCE);
+
+        if (options.writeToLogsDB) {
+            _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontWaitForReplication, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.initialStart, options.initialStart ? _currentLogIndex : 0));
+            _logsDB->processIncomingMessages(_logsdbRequests, _logsdbResponses);
+        }
     }
 
     virtual ~ShardWriter() = default;
@@ -504,6 +523,30 @@ public:
             stop();
         }
 
+        std::vector<LogsDBLogEntry> entries;
+        if (_logsDB) {
+            std::vector<uint8_t> data;
+            data.resize(MAX_UDP_MTU);
+            entries.reserve(_logEntries.size());
+            for (auto& logEntry : _logEntries) {
+                entries.emplace_back();
+                auto& entry = entries.back();
+                BincodeBuf buf((char*)&data[0], MAX_UDP_MTU);
+                logEntry.logEntry.pack(buf);
+                entry.value.assign(buf.data, buf.cursor);
+            }
+
+            auto err = _logsDB->appendEntries(entries);
+            ALWAYS_ASSERT(err == NO_ERROR);
+            _logsDB->processIncomingMessages(_logsdbRequests, _logsdbResponses);
+            _logsDB->getOutgoingMessages(outRequests, outResponses);
+            entries.clear();
+
+            _logsDB->readEntries(entries);
+
+            ALWAYS_ASSERT(entries.size() == _logEntries.size());
+        }
+        size_t entriesIdx = 0;
         for (auto& logEntry : _logEntries) {
             if (likely(logEntry.requestId)) {
                 LOG_DEBUG(_env, "applying log entry for request %s kind %s from %s", logEntry.requestId, logEntry.requestKind, logEntry.clientAddr);
@@ -511,7 +554,19 @@ public:
                 LOG_DEBUG(_env, "applying request-less log entry");
             }
             _currentLogIndex++;
-            EggsError err = _shared.shardDB.applyLogEntry(logEntry.requestKind, _currentLogIndex, logEntry.logEntry, _respContainer);
+            EggsError err = NO_ERROR;
+            if (_logsDB) {
+                auto& logsdbEntry = entries[entriesIdx++];
+                ALWAYS_ASSERT(_currentLogIndex == logsdbEntry.idx);
+                ALWAYS_ASSERT(logsdbEntry.value.size() > 0);
+                BincodeBuf buf((char*)&logsdbEntry.value.front(), logsdbEntry.value.size());
+                ShardLogEntry shardEntry;
+                shardEntry.unpack(buf);
+                ALWAYS_ASSERT(shardEntry == logEntry.logEntry);
+                err = _shared.shardDB.applyLogEntry(logsdbEntry.idx.u64, shardEntry, _respContainer);
+            } else {
+                err = _shared.shardDB.applyLogEntry(_currentLogIndex, logEntry.logEntry, _respContainer);
+            }
             if (likely(logEntry.requestId)) {
                 Duration elapsed = eggsNow() - logEntry.receivedAt;
                 bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
@@ -559,19 +614,26 @@ struct ShardRegisterer : PeriodicLoop {
 private:
     ShardShared& _shared;
     Stopper _stopper;
-    ShardId _shid;
+    ShardReplicaId _shrid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
     bool _hasSecondIp;
     XmonNCAlert _alert;
+    AddrsInfo _info;
+    bool _infoLoaded;
+    bool _registerCompleted;
+    uint8_t _leaderReplicaId;
 public:
-    ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, const ShardOptions& options, ShardShared& shared) :
-        PeriodicLoop(logger, xmon, "registerer", {1_sec, 1_mins}),
+    ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
+        PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
         _shared(shared),
-        _shid(shid),
+        _shrid(shrid),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
-        _hasSecondIp(options.ipPorts[1].port != 0)
+        _hasSecondIp(options.ipPorts[1].port != 0),
+        _infoLoaded(false),
+        _registerCompleted(false),
+        _leaderReplicaId(options.leaderReplicaId)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -581,23 +643,61 @@ public:
     }
 
     virtual bool periodicStep() {
-        uint16_t port1 = _shared.ports[0].load();
-        uint16_t port2 = _shared.ports[1].load();
-        // Avoid registering with only one port, so that clients can just wait on
-        // the first port being ready and they always have both.
-        if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
-            // shard server isn't up yet
-            return false;
+        if (unlikely(!_infoLoaded)) {
+            uint16_t port1 = _shared.ports[0].load();
+            uint16_t port2 = _shared.ports[1].load();
+            // Avoid registering with only one port, so that clients can just wait on
+            // the first port being ready and they always have both.
+            if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
+                // shard server isn't up yet
+                return false;
+            }
+            uint32_t ip1 = _shared.ips[0].load();
+            uint32_t ip2 = _shared.ips[1].load();
+
+            uint32_t ip = htonl(ip1);
+            memcpy(_info.ip1.data.data(), &ip, 4);
+            _info.port1 = port1;
+
+            ip = htonl(ip2);
+            memcpy(_info.ip2.data.data(), &ip, 4);
+            _info.port2 = port2;
+
+            _infoLoaded = true;
         }
-        uint32_t ip1 = _shared.ips[0].load();
-        uint32_t ip2 = _shared.ips[1].load();
-        LOG_INFO(_env, "Registering ourselves (shard %s, %s:%s, %s:%s) with shuckle", _shid, in_addr{htonl(ip1)}, port1, in_addr{htonl(ip2)}, port2);
-        std::string err = registerShard(_shuckleHost, _shucklePort, 10_sec, _shid, ip1, port1, ip2, port2);
+        std::string err;
+        if (likely(_registerCompleted)) {
+            std::array<AddrsInfo, 5> replicas;
+            LOG_INFO(_env, "Fetching replicas for shardId %s from shuckle", _shrid.shardId());
+            err = fetchShardReplicas(_shuckleHost, _shucklePort, 10_sec, _shrid, replicas);
+            if (!err.empty()) {
+                _env.updateAlert(_alert, "Failed getting shard replicas from shuckle: %s", err);
+                return false;
+            }
+            if (_info != replicas[_shrid.replicaId().u8]) {
+                _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_shrid.replicaId().u8], _info);
+                return false;
+            }
+            {
+                std::lock_guard guard(_shared.replicasLock);
+                _shared.replicas = replicas;
+            }
+        }
+
+        LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _info);
+        err = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shrid.replicaId() == _leaderReplicaId, _info);
         if (!err.empty()) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
             return false;
         }
         _env.clearAlert(_alert);
+
+        if (unlikely(!_registerCompleted)){
+            _registerCompleted = true;
+            // Even though we registered successfully we want to do another loop quickly to fetch replica information
+            return false;
+        }
+
         return true;
     }
 };
@@ -830,7 +930,7 @@ public:
     }
 };
 
-void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& options) {
+void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions& options) {
     int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
         logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
@@ -848,7 +948,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     Env env(logger, xmon, "startup");
 
     {
-        LOG_INFO(env, "Running shard %s with options:", shid);
+        LOG_INFO(env, "Running shard %s with options:", shrid);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
         LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
@@ -864,6 +964,14 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
+        if (options.writeToLogsDB) {
+            LOG_INFO(env, "Using LogsDB with options:");
+            LOG_INFO(env, "    dontWaitForReplication = '%s'", options.dontWaitForReplication);
+            LOG_INFO(env, "    dontDoReplication = '%s'", options.dontDoReplication);
+            LOG_INFO(env, "    forceLeader = '%s'", options.forceLeader);
+            LOG_INFO(env, "    avoidBeingLeader = '%s'", options.leaderReplicaId);
+            LOG_INFO(env, "    initialStart = '%s'", options.initialStart);
+        }
     }
 
     // Immediately start xmon: we want the database initializing update to
@@ -874,7 +982,7 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
         XmonConfig config;
         {
             std::ostringstream ss;
-            ss << std::setw(3) << std::setfill('0') << shid;
+            ss << std::setw(5) << std::setfill('0') << shrid;
             config.appInstance = "eggsshard" + ss.str();
         }
         config.prod = options.xmonProd;
@@ -902,21 +1010,22 @@ void runShard(ShardId shid, const std::string& dbDir, const ShardOptions& option
     rocksDBOptions.manual_wal_flush = true;
     sharedDB.open(rocksDBOptions, dbDir);
 
-    ShardDB shardDB(logger, xmon, shid, options.transientDeadlineInterval, sharedDB);
+    ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB);
     env.clearAlert(dbInitAlert);
     ShardShared shared(sharedDB, shardDB);
 
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid.shardId(), options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shrid.shardId(), options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shrid.shardId(), options, shared)));
     if (options.metrics) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shid, shared)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shrid.shardId(), shared)));
     }
 
     // from this point on termination on SIGINT/SIGTERM will be graceful
     LoopThread::waitUntilStopped(threads);
+    threads.clear();
 
     shardDB.close();
     sharedDB.close();

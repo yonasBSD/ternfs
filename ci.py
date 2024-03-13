@@ -28,8 +28,25 @@ if args.build:
 
 if args.functional:
     bold_print('functional tests')
+    if args.docker:
+        bold_print('starting functional tests in docker')
+        container = 'REDACTED'
+        # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
+        # for motivation for `--security-opt seccomp=unconfined`,
+        # the `--pids-limit -1` is not something I hit but it seems
+        # like a good idea.
+        run_cmd_unbuffered(
+            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, './cpp/tests.sh']
+        )
+        run_cmd_unbuffered(
+            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}/go', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, 'go', 'test', './...']
+        )
+        #run_cmd_unbuffered(
+        #    ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}/kmod', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, './bincode_tests']
+        #)
+    # ToDo bincode_tests don't work in container mising libasan.so
     wait_cmds(
-        [run_cmd(['./cpp/tests.sh']), run_cmd(['./bincode_tests'], cwd='kmod'), run_cmd(['go', 'test', './...'], cwd='go')],
+        [run_cmd(['./bincode_tests'], cwd='kmod')] + ([] if args.docker else [run_cmd(['./cpp/tests.sh']), run_cmd(['go', 'test', './...'], cwd='go')]),
     )
 
 if args.integration:

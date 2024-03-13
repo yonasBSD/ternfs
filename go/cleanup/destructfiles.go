@@ -28,7 +28,7 @@ type DestructFilesState struct {
 type CouldNotReachBlockServices []msgs.BlockServiceId
 
 func (c CouldNotReachBlockServices) Error() string {
-	return fmt.Sprintf("could not reach block services: %+v", c)
+	return fmt.Sprintf("could not reach block services: %+v", []msgs.BlockServiceId(c))
 }
 
 func DestructFile(

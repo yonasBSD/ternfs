@@ -1335,7 +1335,6 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
 			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
-			reflect.TypeOf(msgs.UpdateBlockServicesEntry{}),
 			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.AddInlineSpanEntry{}),

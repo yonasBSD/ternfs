@@ -19,7 +19,8 @@ std::string fetchBlockServices(
     uint16_t shucklePort,
     Duration timeout,
     ShardId shid,
-    UpdateBlockServicesEntry& blocks
+    std::vector<BlockServiceInfo>& blockServices,
+    std::vector<BlockServiceId>& currentBlockServices
 );
 
 std::string registerShardReplica(

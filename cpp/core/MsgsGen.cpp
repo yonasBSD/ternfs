@@ -8413,9 +8413,6 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << "REMOVE_SPAN_INITIATE";
         break;
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
-        out << "UPDATE_BLOCK_SERVICES";
-        break;
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
         out << "ADD_SPAN_INITIATE";
         break;
@@ -8848,28 +8845,6 @@ bool RemoveSpanInitiateEntry::operator==(const RemoveSpanInitiateEntry& rhs) con
 }
 std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x) {
     out << "RemoveSpanInitiateEntry(" << "FileId=" << x.fileId << ")";
-    return out;
-}
-
-void UpdateBlockServicesEntry::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceInfo>(blockServices);
-    buf.packList<BlockServiceId>(currentBlockServices);
-}
-void UpdateBlockServicesEntry::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceInfo>(blockServices);
-    buf.unpackList<BlockServiceId>(currentBlockServices);
-}
-void UpdateBlockServicesEntry::clear() {
-    blockServices.clear();
-    currentBlockServices.clear();
-}
-bool UpdateBlockServicesEntry::operator==(const UpdateBlockServicesEntry& rhs) const {
-    if (blockServices != rhs.blockServices) { return false; };
-    if (currentBlockServices != rhs.currentBlockServices) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x) {
-    out << "UpdateBlockServicesEntry(" << "BlockServices=" << x.blockServices << ", " << "CurrentBlockServices=" << x.currentBlockServices << ")";
     return out;
 }
 
@@ -9336,103 +9311,94 @@ RemoveSpanInitiateEntry& ShardLogEntryContainer::setRemoveSpanInitiate() {
     auto& x = _data.emplace<14>();
     return x;
 }
-const UpdateBlockServicesEntry& ShardLogEntryContainer::getUpdateBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShardLogEntryKind::UPDATE_BLOCK_SERVICES, "%s != %s", _kind, ShardLogEntryKind::UPDATE_BLOCK_SERVICES);
-    return std::get<15>(_data);
-}
-UpdateBlockServicesEntry& ShardLogEntryContainer::setUpdateBlockServices() {
-    _kind = ShardLogEntryKind::UPDATE_BLOCK_SERVICES;
-    auto& x = _data.emplace<15>();
-    return x;
-}
 const AddSpanInitiateEntry& ShardLogEntryContainer::getAddSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_INITIATE, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_INITIATE);
-    return std::get<16>(_data);
+    return std::get<15>(_data);
 }
 AddSpanInitiateEntry& ShardLogEntryContainer::setAddSpanInitiate() {
     _kind = ShardLogEntryKind::ADD_SPAN_INITIATE;
-    auto& x = _data.emplace<16>();
+    auto& x = _data.emplace<15>();
     return x;
 }
 const AddSpanCertifyEntry& ShardLogEntryContainer::getAddSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_CERTIFY, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_CERTIFY);
-    return std::get<17>(_data);
+    return std::get<16>(_data);
 }
 AddSpanCertifyEntry& ShardLogEntryContainer::setAddSpanCertify() {
     _kind = ShardLogEntryKind::ADD_SPAN_CERTIFY;
-    auto& x = _data.emplace<17>();
+    auto& x = _data.emplace<16>();
     return x;
 }
 const AddInlineSpanEntry& ShardLogEntryContainer::getAddInlineSpan() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_INLINE_SPAN, "%s != %s", _kind, ShardLogEntryKind::ADD_INLINE_SPAN);
-    return std::get<18>(_data);
+    return std::get<17>(_data);
 }
 AddInlineSpanEntry& ShardLogEntryContainer::setAddInlineSpan() {
     _kind = ShardLogEntryKind::ADD_INLINE_SPAN;
-    auto& x = _data.emplace<18>();
+    auto& x = _data.emplace<17>();
     return x;
 }
 const MakeFileTransientEntry& ShardLogEntryContainer::getMakeFileTransient() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardLogEntryKind::MAKE_FILE_TRANSIENT);
-    return std::get<19>(_data);
+    return std::get<18>(_data);
 }
 MakeFileTransientEntry& ShardLogEntryContainer::setMakeFileTransient() {
     _kind = ShardLogEntryKind::MAKE_FILE_TRANSIENT;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<18>();
     return x;
 }
 const RemoveSpanCertifyEntry& ShardLogEntryContainer::getRemoveSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardLogEntryKind::REMOVE_SPAN_CERTIFY);
-    return std::get<20>(_data);
+    return std::get<19>(_data);
 }
 RemoveSpanCertifyEntry& ShardLogEntryContainer::setRemoveSpanCertify() {
     _kind = ShardLogEntryKind::REMOVE_SPAN_CERTIFY;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::getRemoveOwnedSnapshotFileEdge() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
-    return std::get<21>(_data);
+    return std::get<20>(_data);
 }
 RemoveOwnedSnapshotFileEdgeEntry& ShardLogEntryContainer::setRemoveOwnedSnapshotFileEdge() {
     _kind = ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const SwapBlocksEntry& ShardLogEntryContainer::getSwapBlocks() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::SWAP_BLOCKS, "%s != %s", _kind, ShardLogEntryKind::SWAP_BLOCKS);
-    return std::get<22>(_data);
+    return std::get<21>(_data);
 }
 SwapBlocksEntry& ShardLogEntryContainer::setSwapBlocks() {
     _kind = ShardLogEntryKind::SWAP_BLOCKS;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const MoveSpanEntry& ShardLogEntryContainer::getMoveSpan() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::MOVE_SPAN, "%s != %s", _kind, ShardLogEntryKind::MOVE_SPAN);
-    return std::get<23>(_data);
+    return std::get<22>(_data);
 }
 MoveSpanEntry& ShardLogEntryContainer::setMoveSpan() {
     _kind = ShardLogEntryKind::MOVE_SPAN;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const SetTimeEntry& ShardLogEntryContainer::getSetTime() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::SET_TIME, "%s != %s", _kind, ShardLogEntryKind::SET_TIME);
-    return std::get<24>(_data);
+    return std::get<23>(_data);
 }
 SetTimeEntry& ShardLogEntryContainer::setSetTime() {
     _kind = ShardLogEntryKind::SET_TIME;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const RemoveZeroBlockServiceFilesEntry& ShardLogEntryContainer::getRemoveZeroBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES);
-    return std::get<25>(_data);
+    return std::get<24>(_data);
 }
 RemoveZeroBlockServiceFilesEntry& ShardLogEntryContainer::setRemoveZeroBlockServiceFiles() {
     _kind = ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 ShardLogEntryContainer::ShardLogEntryContainer() {
@@ -9496,9 +9462,6 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         setRemoveSpanInitiate() = other.getRemoveSpanInitiate();
-        break;
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
-        setUpdateBlockServices() = other.getUpdateBlockServices();
         break;
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
         setAddSpanInitiate() = other.getAddSpanInitiate();
@@ -9573,28 +9536,26 @@ size_t ShardLogEntryContainer::packedSize() const {
         return std::get<13>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         return std::get<14>(_data).packedSize();
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
-        return std::get<15>(_data).packedSize();
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
-        return std::get<16>(_data).packedSize();
+        return std::get<15>(_data).packedSize();
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
-        return std::get<17>(_data).packedSize();
+        return std::get<16>(_data).packedSize();
     case ShardLogEntryKind::ADD_INLINE_SPAN:
-        return std::get<18>(_data).packedSize();
+        return std::get<17>(_data).packedSize();
     case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
-        return std::get<19>(_data).packedSize();
+        return std::get<18>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
-        return std::get<20>(_data).packedSize();
+        return std::get<19>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
-        return std::get<21>(_data).packedSize();
+        return std::get<20>(_data).packedSize();
     case ShardLogEntryKind::SWAP_BLOCKS:
-        return std::get<22>(_data).packedSize();
+        return std::get<21>(_data).packedSize();
     case ShardLogEntryKind::MOVE_SPAN:
-        return std::get<23>(_data).packedSize();
+        return std::get<22>(_data).packedSize();
     case ShardLogEntryKind::SET_TIME:
-        return std::get<24>(_data).packedSize();
+        return std::get<23>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
-        return std::get<25>(_data).packedSize();
+        return std::get<24>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -9647,38 +9608,35 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         std::get<14>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
         std::get<15>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         std::get<16>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+    case ShardLogEntryKind::ADD_INLINE_SPAN:
         std::get<17>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::ADD_INLINE_SPAN:
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
         std::get<18>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         std::get<19>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         std::get<20>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardLogEntryKind::SWAP_BLOCKS:
         std::get<21>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::SWAP_BLOCKS:
+    case ShardLogEntryKind::MOVE_SPAN:
         std::get<22>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::MOVE_SPAN:
+    case ShardLogEntryKind::SET_TIME:
         std::get<23>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::SET_TIME:
-        std::get<24>(_data).pack(buf);
-        break;
     case ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
-        std::get<25>(_data).pack(buf);
+        std::get<24>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -9733,38 +9691,35 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf, ShardLogEntryKind kind) {
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
+    case ShardLogEntryKind::ADD_SPAN_INITIATE:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShardLogEntryKind::ADD_SPAN_INITIATE:
+    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
         _data.emplace<16>().unpack(buf);
         break;
-    case ShardLogEntryKind::ADD_SPAN_CERTIFY:
+    case ShardLogEntryKind::ADD_INLINE_SPAN:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShardLogEntryKind::ADD_INLINE_SPAN:
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
+    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardLogEntryKind::SWAP_BLOCKS:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShardLogEntryKind::SWAP_BLOCKS:
+    case ShardLogEntryKind::MOVE_SPAN:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShardLogEntryKind::MOVE_SPAN:
+    case ShardLogEntryKind::SET_TIME:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShardLogEntryKind::SET_TIME:
-        _data.emplace<24>().unpack(buf);
-        break;
     case ShardLogEntryKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
-        _data.emplace<25>().unpack(buf);
+        _data.emplace<24>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", kind);
@@ -9805,8 +9760,6 @@ bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) con
         return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         return getRemoveSpanInitiate() == other.getRemoveSpanInitiate();
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
-        return getUpdateBlockServices() == other.getUpdateBlockServices();
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
         return getAddSpanInitiate() == other.getAddSpanInitiate();
     case ShardLogEntryKind::ADD_SPAN_CERTIFY:
@@ -9878,9 +9831,6 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << x.getRemoveSpanInitiate();
-        break;
-    case ShardLogEntryKind::UPDATE_BLOCK_SERVICES:
-        out << x.getUpdateBlockServices();
         break;
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
         out << x.getAddSpanInitiate();

@@ -128,7 +128,10 @@ static std::string readShuckleResponse(int fd, ShuckleRespContainer& resp) {
     return {};
 }
 
-std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, UpdateBlockServicesEntry& blocks) {
+std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfo>& blockServices, std::vector<BlockServiceId>& currentBlockServices) {
+    blockServices.clear();
+    currentBlockServices.clear();
+
     std::string errString;
     auto sock = shuckleSock(addr, port, timeout, errString);
     if (sock.fd < 0) {
@@ -150,7 +153,7 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
             return errString;
         }
 
-        blocks.blockServices = respContainer.getAllBlockServices().blockServices;
+        blockServices = respContainer.getAllBlockServices().blockServices.els;
     }
 
     // current block services
@@ -169,17 +172,17 @@ std::string fetchBlockServices(const std::string& addr, uint16_t port, Duration 
             return errString;
         }
 
-        blocks.currentBlockServices = respContainer.getShardBlockServices().blockServices;
+        currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
     }
 
     // check that all current block services are known -- there's a small race here
     // the caller should just retry in these cases.
     {
         std::unordered_set<uint64_t> knownBlockServices;
-        for (const auto& bs : blocks.blockServices.els) {
+        for (const auto& bs : blockServices) {
             knownBlockServices.insert(bs.info.id.u64);
         }
-        for (BlockServiceId bsId : blocks.currentBlockServices.els) {
+        for (BlockServiceId bsId : currentBlockServices) {
             if (!knownBlockServices.contains(bsId.u64)) {
                 std::stringstream ss;
                 ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";

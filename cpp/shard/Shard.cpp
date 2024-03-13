@@ -12,6 +12,7 @@
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
+#include "BlockServicesCacheDB.hpp"
 #include "Common.hpp"
 #include "Crypto.hpp"
 #include "Exception.hpp"
@@ -55,15 +56,14 @@ const int MAX_RECV_MSGS = 100;
 
 struct ShardShared {
     SharedRocksDB& sharedDB;
+    BlockServicesCacheDB& blockServicesCache;
     ShardDB& shardDB;
     std::array<std::atomic<uint32_t>, 2> ips;
     std::array<std::atomic<uint32_t>, 2> ports;
     std::array<struct pollfd, 2> socks;
-    std::atomic<bool> blockServicesWritten;
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
     SPSC<QueuedShardLogEntry> logEntriesQueue;
-    std::mutex logEntriesQueuePushLock; // almost always uncontended
     std::atomic<double> logEntriesQueueSize;
     std::array<std::atomic<double>, 2> receivedRequests; // how many requests we got at once from each socket
     std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
@@ -71,7 +71,7 @@ struct ShardShared {
     std::mutex replicasLock;
 
     ShardShared() = delete;
-    ShardShared(SharedRocksDB& sharedDB_, ShardDB& shardDB_): sharedDB(sharedDB_), shardDB(shardDB_), ips{0, 0}, ports{0, 0}, blockServicesWritten(false), logEntriesQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
+    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_): sharedDB(sharedDB_), blockServicesCache(blockServicesCache_), shardDB(shardDB_), ips{0, 0}, ports{0, 0}, logEntriesQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
         for (ShardMessageKind kind : allShardMessageKind) {
             timings[(int)kind] = Timings::Standard();
         }
@@ -371,7 +371,7 @@ private:
 
 public:
     virtual void step() override {
-        if (unlikely(!_shared.blockServicesWritten)) {
+        if (unlikely(!_shared.blockServicesCache.haveBlockServices())) {
             (100_ms).sleepRetry();
             return;
         }
@@ -417,11 +417,7 @@ public:
             size_t numLogEntries = _logEntries.size();
             if (numLogEntries > 0) {
                 LOG_DEBUG(_env, "pushing %s log entries to writer", numLogEntries);
-                uint32_t pushed;
-                {
-                    std::lock_guard guard(_shared.logEntriesQueuePushLock);
-                    pushed = _shared.logEntriesQueue.push(_logEntries);
-                }
+                uint32_t pushed = _shared.logEntriesQueue.push(_logEntries);
                 _shared.logEntriesQueueSize = _shared.logEntriesQueueSize*0.95 + _shared.logEntriesQueue.size()*0.05;
                 if (pushed < numLogEntries) {
                     LOG_INFO(_env, "tried to push %s elements to write queue, but pushed %s instead", numLogEntries, pushed);
@@ -574,12 +570,6 @@ public:
             } else if (unlikely(err != NO_ERROR)) {
                 RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
             }
-            // We can do this before we flush: the other writes will see this
-            // write already, which is what matters.
-            if (logEntry.logEntry.body.kind() == ShardLogEntryKind::UPDATE_BLOCK_SERVICES) {
-                LOG_INFO(_env, "applied block service update");
-                _shared.blockServicesWritten = true;
-            }
         }
         if (pulled > 0) {
             LOG_DEBUG(_env, "flushing and sending %s writes", pulled);
@@ -709,8 +699,8 @@ private:
     std::string _shuckleHost;
     uint16_t _shucklePort;
     XmonNCAlert _alert;
-    ShardRespContainer _respContainer;
-    std::vector<QueuedShardLogEntry> _logEntries;
+    std::vector<BlockServiceInfo> _blockServices;
+    std::vector<BlockServiceId> _currentBlockServices;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared):
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, 1_mins}),
@@ -724,59 +714,19 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
-        _logEntries.clear();
-        auto& logEntry = _logEntries.emplace_back();
-        logEntry.logEntry.time = eggsNow();
-        auto& blockServicesEntry = logEntry.logEntry.body.setUpdateBlockServices();
-        std::string err = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), blockServicesEntry);
+        std::string err = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
         if (!err.empty()) {
             _env.updateAlert(_alert, "could not reach shuckle: %s", err);
             return false;
         }
-        if (blockServicesEntry.blockServices.els.empty()) {
+        if (_blockServices.empty()) {
             _env.updateAlert(_alert, "got no block services");
             return false;
         }
-        {
-            std::unordered_map<uint8_t, int> flagCount;
-            for (const auto& blockService: blockServicesEntry.blockServices.els) {
-                flagCount[blockService.info.flags]++;
-            }
-            for (const auto& [flags, count]: flagCount) {
-                if (flags != 0) {
-                    std::string s = "";
-                    for (const auto flag : BLOCK_SERVICE_FLAGS) {
-                        if (flags&flag) {
-                            if (s.size() > 0) { s += "|"; }
-                            switch (flag) {
-                                case BLOCK_SERVICE_STALE: s += "S"; break;
-                                case BLOCK_SERVICE_NO_READ: s += "NR"; break;
-                                case BLOCK_SERVICE_NO_WRITE: s += "NW"; break;
-                                case BLOCK_SERVICE_DECOMMISSIONED: s += "D"; break;
-                                default: s += std::to_string(flag); break;
-                            }
-                        }
-                    }
-                    LOG_INFO(_env, "%s block services have non-zero flag %s", count, s);
-                }
-            }
-        }
 
-        for (;;) {
-            uint32_t pushed;
-            {
-                std::lock_guard guard(_shared.logEntriesQueuePushLock);
-                pushed = _shared.logEntriesQueue.push(_logEntries);
-            }
-            if (unlikely(pushed == 0)) {
-                _env.updateAlert(_alert, "could not push update block services log entry to queue, will try again");
-                (100_ms).sleepRetry();
-            } else {
-                break;
-            }
-        }
+        _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
 
-        LOG_DEBUG(_env, "pushed block block service update");
+        LOG_DEBUG(_env, "updated block services");
 
         _env.clearAlert(_alert);
 
@@ -998,6 +948,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
     SharedRocksDB sharedDB(logger, xmon);
     sharedDB.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    sharedDB.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
     rocksdb::Options rocksDBOptions;
     rocksDBOptions.create_if_missing = true;
     rocksDBOptions.create_missing_column_families = true;
@@ -1010,9 +961,11 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
     rocksDBOptions.manual_wal_flush = true;
     sharedDB.open(rocksDBOptions, dbDir);
 
-    ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB);
+    BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
+
+    ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
     env.clearAlert(dbInitAlert);
-    ShardShared shared(sharedDB, shardDB);
+    ShardShared shared(sharedDB, blockServicesCache, shardDB);
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));

@@ -5,6 +5,7 @@
 #include <vector>
 #include <rocksdb/db.h>
 
+#include "BlockServicesCacheDB.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
 #include "SharedRocksDB.hpp"
@@ -44,7 +45,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB, const BlockServicesCacheDB& blockServicesCache);
     ~ShardDB();
     void close();
 

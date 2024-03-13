@@ -4643,17 +4643,16 @@ enum class ShardLogEntryKind : uint16_t {
     REMOVE_NON_OWNED_EDGE = 13,
     SAME_SHARD_HARD_FILE_UNLINK = 14,
     REMOVE_SPAN_INITIATE = 15,
-    UPDATE_BLOCK_SERVICES = 16,
-    ADD_SPAN_INITIATE = 17,
-    ADD_SPAN_CERTIFY = 18,
-    ADD_INLINE_SPAN = 19,
-    MAKE_FILE_TRANSIENT = 20,
-    REMOVE_SPAN_CERTIFY = 21,
-    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 22,
-    SWAP_BLOCKS = 23,
-    MOVE_SPAN = 24,
-    SET_TIME = 25,
-    REMOVE_ZERO_BLOCK_SERVICE_FILES = 26,
+    ADD_SPAN_INITIATE = 16,
+    ADD_SPAN_CERTIFY = 17,
+    ADD_INLINE_SPAN = 18,
+    MAKE_FILE_TRANSIENT = 19,
+    REMOVE_SPAN_CERTIFY = 20,
+    REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 21,
+    SWAP_BLOCKS = 22,
+    MOVE_SPAN = 23,
+    SET_TIME = 24,
+    REMOVE_ZERO_BLOCK_SERVICE_FILES = 25,
 };
 
 std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
@@ -5007,27 +5006,6 @@ struct RemoveSpanInitiateEntry {
 
 std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateEntry& x);
 
-struct UpdateBlockServicesEntry {
-    BincodeList<BlockServiceInfo> blockServices;
-    BincodeList<BlockServiceId> currentBlockServices;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE + BincodeList<BlockServiceId>::STATIC_SIZE; // blockServices + currentBlockServices
-
-    UpdateBlockServicesEntry() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += blockServices.packedSize(); // blockServices
-        _size += currentBlockServices.packedSize(); // currentBlockServices
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const UpdateBlockServicesEntry&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const UpdateBlockServicesEntry& x);
-
 struct AddSpanInitiateEntry {
     bool withReference;
     InodeId fileId;
@@ -5295,7 +5273,7 @@ std::ostream& operator<<(std::ostream& out, const RemoveZeroBlockServiceFilesEnt
 struct ShardLogEntryContainer {
 private:
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
-    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, UpdateBlockServicesEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry> _data;
+    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry> _data;
 public:
     ShardLogEntryContainer();
     ShardLogEntryContainer(const ShardLogEntryContainer& other);
@@ -5335,8 +5313,6 @@ public:
     SameShardHardFileUnlinkEntry& setSameShardHardFileUnlink();
     const RemoveSpanInitiateEntry& getRemoveSpanInitiate() const;
     RemoveSpanInitiateEntry& setRemoveSpanInitiate();
-    const UpdateBlockServicesEntry& getUpdateBlockServices() const;
-    UpdateBlockServicesEntry& setUpdateBlockServices();
     const AddSpanInitiateEntry& getAddSpanInitiate() const;
     AddSpanInitiateEntry& setAddSpanInitiate();
     const AddSpanCertifyEntry& getAddSpanCertify() const;

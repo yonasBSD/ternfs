@@ -1,6 +1,6 @@
 include_directories(${eggsfs_SOURCE_DIR}/core ${eggsfs_SOURCE_DIR}/crc32c ${eggsfs_SOURCE_DIR}/wyhash)
 
-add_library(shard Shard.cpp Shard.hpp ShardDB.cpp ShardDB.hpp ShardDBData.cpp ShardDBData.hpp)
+add_library(shard Shard.cpp Shard.hpp ShardDB.cpp ShardDB.hpp ShardDBData.cpp ShardDBData.hpp BlockServicesCacheDB.hpp BlockServicesCacheDB.cpp)
 target_link_libraries(shard PRIVATE core)
 
 add_executable(eggsshard eggsshard.cpp)

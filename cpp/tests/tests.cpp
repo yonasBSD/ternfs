@@ -383,6 +383,7 @@ struct TempShardDB {
     std::unique_ptr<Env> env;
     ShardId shid;
     std::unique_ptr<SharedRocksDB> sharedDB;
+    std::unique_ptr<BlockServicesCacheDB> blockServicesCacheDB;
     std::unique_ptr<ShardDB> db;
 
     TempShardDB(LogLevel level, ShardId shid_): logger(level, STDERR_FILENO, false, false), shid(shid_) {
@@ -393,7 +394,8 @@ struct TempShardDB {
         std::shared_ptr<XmonAgent> xmon;
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
         initSharedDB();
-        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB);
+        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 
     // useful to test recovery
@@ -402,7 +404,8 @@ struct TempShardDB {
         db->close();
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
         initSharedDB();
-        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB);
+        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 
     ~TempShardDB() {
@@ -417,6 +420,7 @@ struct TempShardDB {
     }
 
     void initSharedDB() {
+        sharedDB->registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
         sharedDB->registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
         rocksdb::Options rocksDBOptions;
         rocksDBOptions.create_if_missing = true;

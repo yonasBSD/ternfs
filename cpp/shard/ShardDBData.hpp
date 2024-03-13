@@ -17,19 +17,20 @@ enum class ShardMetadataKey : uint8_t {
     NEXT_FILE_ID = 2,
     NEXT_SYMLINK_ID = 3,
     NEXT_BLOCK_ID = 4,
-    CURRENT_BLOCK_SERVICES = 5,
-    BLOCK_SERVICE = 6, // postfixed with the block service id
+    // These two below are not used anymore, but let's leave them here
+    // to make it clear that you should skip them.
+    CURRENT_BLOCK_SERVICES_DONT_USE = 5,
+    BLOCK_SERVICE_DONT_USE = 6, // postfixed with the block service id
 };
 constexpr ShardMetadataKey SHARD_INFO_KEY = ShardMetadataKey::INFO;
 constexpr ShardMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = ShardMetadataKey::LAST_APPLIED_LOG_ENTRY;
 constexpr ShardMetadataKey NEXT_FILE_ID_KEY = ShardMetadataKey::NEXT_FILE_ID;
 constexpr ShardMetadataKey NEXT_SYMLINK_ID_KEY = ShardMetadataKey::NEXT_SYMLINK_ID;
 constexpr ShardMetadataKey NEXT_BLOCK_ID_KEY = ShardMetadataKey::NEXT_BLOCK_ID;
-constexpr ShardMetadataKey CURRENT_BLOCK_SERVICES_KEY = ShardMetadataKey::CURRENT_BLOCK_SERVICES;
-constexpr ShardMetadataKey BLOCK_SERVICE_KEY = ShardMetadataKey::BLOCK_SERVICE;
+constexpr ShardMetadataKey CURRENT_BLOCK_SERVICES_KEY_DONT_USE = ShardMetadataKey::CURRENT_BLOCK_SERVICES_DONT_USE;
+constexpr ShardMetadataKey BLOCK_SERVICE_KEY_DONT_USE = ShardMetadataKey::BLOCK_SERVICE_DONT_USE;
 
 inline rocksdb::Slice shardMetadataKey(const ShardMetadataKey* k) {
-    ALWAYS_ASSERT(*k != BLOCK_SERVICE_KEY);
     return rocksdb::Slice((const char*)k, sizeof(*k));
 }
 
@@ -37,14 +38,6 @@ struct ShardInfoBody {
     FIELDS(
         LE, ShardId, shardId, setShardId,
         FBYTES, 16,  secretKey, setSecretKey,
-        END_STATIC
-    )
-};
-
-struct BlockServiceKey {
-    FIELDS(
-        BE, ShardMetadataKey, key, setKey, // always BLOCK_SERVICE_KEY
-        BE, uint64_t,         blockServiceId, setBlockServiceId,
         END_STATIC
     )
 };
@@ -86,44 +79,6 @@ struct BlockServiceBody {
     void setFlags(uint8_t f) {
         ALWAYS_ASSERT(version() > 0);
         setFlagsV1(f);
-    }
-};
-
-struct CurrentBlockServicesBody {
-    FIELDS(
-        LE, uint8_t, length, setLength,
-        EMIT_OFFSET, MIN_SIZE,
-        END
-    )
-
-    void checkSize(size_t sz) {
-        ALWAYS_ASSERT(sz >= MIN_SIZE, "sz < MIN_SIZE (%s < %s)", sz, MIN_SIZE);
-        ALWAYS_ASSERT(sz == size(), "sz != size() (%s, %s)", sz, size());
-    }
-
-    static size_t calcSize(uint64_t numBlockServices) {
-        ALWAYS_ASSERT(numBlockServices < 256);
-        return MIN_SIZE + numBlockServices*sizeof(uint64_t);
-    }
-
-    void afterAlloc(uint64_t numBlockServices) {
-        setLength(numBlockServices);
-    }
-
-    size_t size() const {
-        return MIN_SIZE + length()*sizeof(uint64_t);
-    }
-
-    uint64_t at(uint64_t ix) const {
-        ALWAYS_ASSERT(ix < length());
-        uint64_t v;
-        memcpy(&v, _data + MIN_SIZE + (ix*sizeof(uint64_t)), sizeof(uint64_t));
-        return v;
-    }
-
-    void set(uint64_t ix, uint64_t v) {
-        ALWAYS_ASSERT(ix < length());
-        memcpy(_data + MIN_SIZE + (ix*sizeof(uint64_t)), &v, sizeof(uint64_t));
     }
 };
 

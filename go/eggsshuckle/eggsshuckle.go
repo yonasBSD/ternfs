@@ -423,7 +423,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 				filesResp := msgs.BlockServiceFilesResp{}
 
 				if err := client.ShardRequest(ll, shid, &filesReq, &filesResp); err != nil {
-					ll.RaiseAlert("error while trying to get files for block service %v: %w", bsId, err)
+					ll.RaiseAlert("error while trying to get files for block service %v: %v", bsId, err)
 					time.Sleep(sleepInterval)
 					break
 				}

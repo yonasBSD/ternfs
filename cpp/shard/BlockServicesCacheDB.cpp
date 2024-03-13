@@ -106,7 +106,7 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
         BlockServicesCacheKey blockServiceKey = inShardDB ? (BlockServicesCacheKey)BLOCK_SERVICE_KEY_DONT_USE : BLOCK_SERVICE_KEY;
         LOG_INFO(_env, "initializing block services cache (from db)");
         std::string buf;
-        ROCKS_DB_CHECKED(_db->Get({}, defaultCF, currentBlockServicesKey, &buf));
+        ROCKS_DB_CHECKED(_db->Get({}, cf, currentBlockServicesKey, &buf));
         ExternalValue<CurrentBlockServicesBody> v(buf);
         _currentBlockServices.resize(v().length());
         for (int i = 0; i < v().length(); i++) {

@@ -479,12 +479,12 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 		Flags:     msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED,
 		FlagsMask: uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
 	}
-	_, err = handleSetBlockServiceFlags(ll, s, &r)
-	if err == nil {
-		s.lastAutoDecom = time.Now()
-		return &msgs.SetBlockServiceDecommissionedResp{}, nil
+	if _, err := handleSetBlockServiceFlags(ll, s, &r); err != nil {
+		return nil, err
 	}
-	return nil, err
+
+	s.lastAutoDecom = time.Now()
+	return &msgs.SetBlockServiceDecommissionedResp{}, nil
 }
 
 func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
@@ -2687,7 +2687,7 @@ func main() {
 	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
-	minDecomInterval := flag.Duration("min-decom-interval", 30*time.Minute, "Minimum interval between calls to decommission blockservices by automation")
+	minDecomInterval := flag.Duration("min-decom-interval", 2*time.Hour, "Minimum interval between calls to decommission blockservices by automation")
 	maxDecommedWithFiles := flag.Int("max-decommed-with-files", 3, "Maximum number of migrating decommissioned blockservices before rejecting further automated decommissions")
 	scriptsJs := flag.String("scripts-js", "", "")
 

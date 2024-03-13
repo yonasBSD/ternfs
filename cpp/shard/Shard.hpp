@@ -35,6 +35,7 @@ struct ShardOptions {
     bool avoidBeingLeader = true;
     bool initialStart = true;
     bool writeToLogsDB = false;
+    bool clearLogsDBData = false;
 };
 
 void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions& options);

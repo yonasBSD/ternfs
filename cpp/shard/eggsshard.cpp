@@ -38,7 +38,9 @@ static void usage(const char* binary) {
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
     fprintf(stderr, " -use-logsdb LEADER|FOLLOWER|NONE\n");
-    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER or FOLLOWER or don't use. Default is don't use. Only replica id 0 can be leader. \n");
+    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER or FOLLOWER or don't use. Default is don't use. Only replica id 0 can be leader.\n");
+    fprintf(stderr, " -clear-logsdb-data\n");
+    fprintf(stderr, "    	Removes all data in LogsDB. It can not be used in combination with -use-logsdb to avoid accidental use.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -199,9 +201,16 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
                 dieWithUsage();
             }
-        } else {
+        } else if (arg == "-clear-logsdb-data") {
+            options.clearLogsDBData = true;
+        } else{
             args.emplace_back(std::move(arg));
         }
+    }
+
+    if (options.clearLogsDBData && options.writeToLogsDB) {
+        fprintf(stderr, "LogsDB can not be cleared and used for writing in same run.");
+        dieWithUsage();
     }
 
     if (args.size() < 2 || args.size() > 3) {

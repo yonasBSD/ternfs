@@ -967,6 +967,10 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
     env.clearAlert(dbInitAlert);
     ShardShared shared(sharedDB, blockServicesCache, shardDB);
 
+    if (options.clearLogsDBData) {
+        LogsDB::clearAllData(sharedDB);
+    }
+
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));

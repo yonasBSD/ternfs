@@ -63,6 +63,13 @@ std::vector<rocksdb::ColumnFamilyDescriptor> LogsDB::getColumnFamilyDescriptors(
     };
 }
 
+void LogsDB::clearAllData(SharedRocksDB &shardDB) {
+    shardDB.deleteCF(METADATA_CF_NAME);
+    shardDB.deleteCF(DATA_PARTITION_0_NAME);
+    shardDB.deleteCF(DATA_PARTITION_1_NAME);
+    shardDB.db()->FlushWAL(true);
+}
+
 struct LogPartition {
     std::string name;
     LogsDBMetadataKey firstWriteKey;

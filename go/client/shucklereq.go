@@ -77,6 +77,8 @@ func readShuckleResponse(
 		resp = &msgs.AllBlockServicesResp{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		resp = &msgs.SetBlockServiceFlagsResp{}
+	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
+		resp = &msgs.SetBlockServiceDecommissionedResp{}
 	case msgs.REGISTER_CDC:
 		resp = &msgs.RegisterCdcResp{}
 	case msgs.REGISTER_CDC_REPLICA:

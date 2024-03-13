@@ -211,6 +211,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::LOG_ENTRY_RELEASED:
         out << "LOG_ENTRY_RELEASED";
         break;
+    case EggsError::AUTO_DECOMMISSION_FORBIDDEN:
+        out << "AUTO_DECOMMISSION_FORBIDDEN";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;
@@ -423,6 +426,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
         break;
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         out << "SHARDS_WITH_REPLICAS";
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        out << "SET_BLOCK_SERVICE_DECOMMISSIONED";
         break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
@@ -4011,6 +4017,38 @@ std::ostream& operator<<(std::ostream& out, const ShardsWithReplicasResp& x) {
     return out;
 }
 
+void SetBlockServiceDecommissionedReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+}
+void SetBlockServiceDecommissionedReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+}
+void SetBlockServiceDecommissionedReq::clear() {
+    id = BlockServiceId(0);
+}
+bool SetBlockServiceDecommissionedReq::operator==(const SetBlockServiceDecommissionedReq& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedReq& x) {
+    out << "SetBlockServiceDecommissionedReq(" << "Id=" << x.id << ")";
+    return out;
+}
+
+void SetBlockServiceDecommissionedResp::pack(BincodeBuf& buf) const {
+}
+void SetBlockServiceDecommissionedResp::unpack(BincodeBuf& buf) {
+}
+void SetBlockServiceDecommissionedResp::clear() {
+}
+bool SetBlockServiceDecommissionedResp::operator==(const SetBlockServiceDecommissionedResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedResp& x) {
+    out << "SetBlockServiceDecommissionedResp(" << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -7096,6 +7134,15 @@ ShardsWithReplicasReq& ShuckleReqContainer::setShardsWithReplicas() {
     auto& x = _data.emplace<18>();
     return x;
 }
+const SetBlockServiceDecommissionedReq& ShuckleReqContainer::getSetBlockServiceDecommissioned() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED);
+    return std::get<19>(_data);
+}
+SetBlockServiceDecommissionedReq& ShuckleReqContainer::setSetBlockServiceDecommissioned() {
+    _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED;
+    auto& x = _data.emplace<19>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7170,6 +7217,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         setShardsWithReplicas() = other.getShardsWithReplicas();
         break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        setSetBlockServiceDecommissioned() = other.getSetBlockServiceDecommissioned();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7221,6 +7271,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<17>(_data).packedSize();
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return std::get<18>(_data).packedSize();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        return std::get<19>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7284,6 +7336,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         std::get<18>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        std::get<19>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7350,6 +7405,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         _data.emplace<18>().unpack(buf);
         break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        _data.emplace<19>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7397,6 +7455,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getCdcReplicas() == other.getCdcReplicas();
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return getShardsWithReplicas() == other.getShardsWithReplicas();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        return getSetBlockServiceDecommissioned() == other.getSetBlockServiceDecommissioned();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7460,6 +7520,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         out << x.getShardsWithReplicas();
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        out << x.getSetBlockServiceDecommissioned();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -7638,6 +7701,15 @@ ShardsWithReplicasResp& ShuckleRespContainer::setShardsWithReplicas() {
     auto& x = _data.emplace<18>();
     return x;
 }
+const SetBlockServiceDecommissionedResp& ShuckleRespContainer::getSetBlockServiceDecommissioned() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED);
+    return std::get<19>(_data);
+}
+SetBlockServiceDecommissionedResp& ShuckleRespContainer::setSetBlockServiceDecommissioned() {
+    _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED;
+    auto& x = _data.emplace<19>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -7712,6 +7784,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         setShardsWithReplicas() = other.getShardsWithReplicas();
         break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        setSetBlockServiceDecommissioned() = other.getSetBlockServiceDecommissioned();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7763,6 +7838,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<17>(_data).packedSize();
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return std::get<18>(_data).packedSize();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        return std::get<19>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7826,6 +7903,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         std::get<18>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        std::get<19>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7892,6 +7972,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         _data.emplace<18>().unpack(buf);
         break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        _data.emplace<19>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7939,6 +8022,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getCdcReplicas() == other.getCdcReplicas();
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return getShardsWithReplicas() == other.getShardsWithReplicas();
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        return getSetBlockServiceDecommissioned() == other.getSetBlockServiceDecommissioned();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8002,6 +8087,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         out << x.getShardsWithReplicas();
+        break;
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+        out << x.getSetBlockServiceDecommissioned();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

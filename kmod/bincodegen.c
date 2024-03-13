@@ -69,6 +69,7 @@ const char* eggsfs_err_str(int err) {
     case 76: return "LOG_ENTRY_TRIMMED";
     case 77: return "LOG_ENTRY_UNRELEASED";
     case 78: return "LOG_ENTRY_RELEASED";
+    case 79: return "AUTO_DECOMMISSION_FORBIDDEN";
     default: return "UNKNOWN";
     }
 }

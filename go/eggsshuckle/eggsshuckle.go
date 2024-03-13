@@ -78,6 +78,9 @@ type state struct {
 	counters map[msgs.ShuckleMessageKind]*lib.Timings
 	config   *shuckleConfig
 	client   *client.Client
+	// separate mutex to manage `lastAutoDecom`
+	decomMutex    sync.Mutex
+	lastAutoDecom time.Time
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -207,6 +210,8 @@ type shuckleConfig struct {
 	port1                    uint16
 	ip2                      [4]byte
 	port2                    uint16
+	minAutoDecomInterval     time.Duration
+	maxDecommedWithFiles     int
 }
 
 func newState(
@@ -440,6 +445,46 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 		ll.Info("finished checking file presence for all blockservices, sleeping for %s", sleepInterval)
 		time.Sleep(sleepInterval)
 	}
+}
+
+func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.SetBlockServiceDecommissionedReq) (*msgs.SetBlockServiceDecommissionedResp, error) {
+	// This lock effectively prevents decom requests running in parallel
+	// we don't want to take any chances here.
+	s.decomMutex.Lock()
+	defer s.decomMutex.Unlock()
+	ld := time.Since(s.lastAutoDecom)
+	if ld < s.config.minAutoDecomInterval {
+		ll.RaiseAlert("rejecting automated decommissioning of blockservice %v: last decommissioned %v ago", req.Id, ld)
+		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
+	}
+
+	blockServices, err := s.selectBlockServices(nil, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	decommedWithFiles := 0
+	for _, bs := range blockServices {
+		if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
+			decommedWithFiles = decommedWithFiles + 1
+		}
+		if decommedWithFiles >= s.config.maxDecommedWithFiles {
+			ll.RaiseAlert("rejecting automated decommissioning of blockservice %v: at least %d blockservices already decommissioned, but still have files", req.Id, decommedWithFiles)
+			return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
+		}
+	}
+
+	r := msgs.SetBlockServiceFlagsReq{
+		Id:        req.Id,
+		Flags:     msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED,
+		FlagsMask: uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+	}
+	_, err = handleSetBlockServiceFlags(ll, s, &r)
+	if err == nil {
+		s.lastAutoDecom = time.Now()
+		return &msgs.SetBlockServiceDecommissionedResp{}, nil
+	}
+	return nil, err
 }
 
 func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
@@ -901,6 +946,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleRegisterBlockServices(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
+	case *msgs.SetBlockServiceDecommissionedReq:
+		resp, err = handleSetBlockserviceDecommissioned(log, s, whichReq)
 	case *msgs.ShardsReq:
 		resp, err = handleShards(log, s, whichReq)
 	case *msgs.ShardsWithReplicasReq:
@@ -1063,6 +1110,8 @@ func readShuckleRequest(
 		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
+		req = &msgs.SetBlockServiceDecommissionedReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
@@ -2638,6 +2687,8 @@ func main() {
 	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
+	minDecomInterval := flag.Duration("min-decom-interval", 30*time.Minute, "Minimum interval between calls to decommission blockservices by automation")
+	maxDecommedWithFiles := flag.Int("max-decommed-with-files", 3, "Maximum number of migrating decommissioned blockservices before rejecting further automated decommissions")
 	scriptsJs := flag.String("scripts-js", "", "")
 
 	flag.Parse()
@@ -2694,6 +2745,8 @@ func main() {
 	log.Info("  mtu = %v", *mtu)
 	log.Info("  stale = '%v'", *stale)
 	log.Info("  dataDir = %s", *dataDir)
+	log.Info("  minDecomInterval = '%v'", *minDecomInterval)
+	log.Info("  maxDecommedWithFiles = %v", *maxDecommedWithFiles)
 
 	if *mtu != 0 {
 		client.SetMTU(*mtu)
@@ -2745,6 +2798,8 @@ func main() {
 		ip2:                      ownIp2,
 		port2:                    ownPort2,
 		blockServiceMinFreeBytes: *bsMinBytes,
+		minAutoDecomInterval:     *minDecomInterval,
+		maxDecommedWithFiles:     *maxDecommedWithFiles,
 	}
 	state, err := newState(log, db, config)
 	if err != nil {

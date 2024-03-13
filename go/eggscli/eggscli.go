@@ -711,6 +711,27 @@ func main() {
 		run:   blockserviceFlagsRun,
 	}
 
+	decommissionBlockserviceCmd := flag.NewFlagSet("decommission-blockservice", flag.ExitOnError)
+	decommissionBlockserviceId := decommissionBlockserviceCmd.Int64("id", 0, "Block service id")
+	decommissionBlockserviceRun := func() {
+		if *decommissionBlockserviceId == 0 {
+			fmt.Fprintf(os.Stderr, "must provide -id\n")
+			os.Exit(2)
+		}
+		bsId := msgs.BlockServiceId(*decommissionBlockserviceId)
+		log.Info("decommissioning block service %v using separate endpoint", bsId)
+		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceDecommissionedReq{
+			Id: bsId,
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+	commands["decommission-blockservice"] = commandSpec{
+		flags: decommissionBlockserviceCmd,
+		run:   decommissionBlockserviceRun,
+	}
+
 	fileSizesCmd := flag.NewFlagSet("file-sizes", flag.ExitOnError)
 	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
 	fileSizesRun := func() {

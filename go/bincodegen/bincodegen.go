@@ -1451,6 +1451,7 @@ func main() {
 		"LOG_ENTRY_TRIMMED",
 		"LOG_ENTRY_UNRELEASED",
 		"LOG_ENTRY_RELEASED",
+		"AUTO_DECOMMISSION_FORBIDDEN",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1787,6 +1788,11 @@ func main() {
 			0x14,
 			reflect.TypeOf(msgs.ShardsWithReplicasReq{}),
 			reflect.TypeOf(msgs.ShardsWithReplicasResp{}),
+		},
+		{
+			0x15,
+			reflect.TypeOf(msgs.SetBlockServiceDecommissionedReq{}),
+			reflect.TypeOf(msgs.SetBlockServiceDecommissionedResp{}),
 		},
 	}...)
 

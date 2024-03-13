@@ -184,6 +184,7 @@ const (
 	LOG_ENTRY_TRIMMED ErrCode = 76
 	LOG_ENTRY_UNRELEASED ErrCode = 77
 	LOG_ENTRY_RELEASED ErrCode = 78
+	AUTO_DECOMMISSION_FORBIDDEN ErrCode = 79
 )
 
 func (err ErrCode) String() string {
@@ -326,6 +327,8 @@ func (err ErrCode) String() string {
 		return "LOG_ENTRY_UNRELEASED"
 	case 78:
 		return "LOG_ENTRY_RELEASED"
+	case 79:
+		return "AUTO_DECOMMISSION_FORBIDDEN"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -675,6 +678,8 @@ func (k ShuckleMessageKind) String() string {
 		return "CDC_REPLICAS"
 	case 20:
 		return "SHARDS_WITH_REPLICAS"
+	case 21:
+		return "SET_BLOCK_SERVICE_DECOMMISSIONED"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -701,6 +706,7 @@ const (
 	REGISTER_CDC_REPLICA ShuckleMessageKind = 0x12
 	CDC_REPLICAS ShuckleMessageKind = 0x13
 	SHARDS_WITH_REPLICAS ShuckleMessageKind = 0x14
+	SET_BLOCK_SERVICE_DECOMMISSIONED ShuckleMessageKind = 0x15
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -723,9 +729,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	REGISTER_CDC_REPLICA,
 	CDC_REPLICAS,
 	SHARDS_WITH_REPLICAS,
+	SET_BLOCK_SERVICE_DECOMMISSIONED,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 20
+const MaxShuckleMessageKind ShuckleMessageKind = 21
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -767,6 +774,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &CdcReplicasReq{}, &CdcReplicasResp{}, nil
 	case k == "SHARDS_WITH_REPLICAS":
 		return &ShardsWithReplicasReq{}, &ShardsWithReplicasResp{}, nil
+	case k == "SET_BLOCK_SERVICE_DECOMMISSIONED":
+		return &SetBlockServiceDecommissionedReq{}, &SetBlockServiceDecommissionedResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5047,6 +5056,36 @@ func (v *ShardsWithReplicasResp) Unpack(r io.Reader) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func (v *SetBlockServiceDecommissionedReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SET_BLOCK_SERVICE_DECOMMISSIONED
+}
+
+func (v *SetBlockServiceDecommissionedReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SetBlockServiceDecommissionedReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SetBlockServiceDecommissionedResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SET_BLOCK_SERVICE_DECOMMISSIONED
+}
+
+func (v *SetBlockServiceDecommissionedResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *SetBlockServiceDecommissionedResp) Unpack(r io.Reader) error {
 	return nil
 }
 

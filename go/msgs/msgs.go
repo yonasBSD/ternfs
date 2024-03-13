@@ -1748,6 +1748,12 @@ type ShuckleResponse interface {
 	ShuckleResponseKind() ShuckleMessageKind
 }
 
+type SetBlockServiceDecommissionedReq struct {
+	Id BlockServiceId
+}
+
+type SetBlockServiceDecommissionedResp struct{}
+
 type SetBlockServiceFlagsReq struct {
 	Id        BlockServiceId
 	Flags     BlockServiceFlags

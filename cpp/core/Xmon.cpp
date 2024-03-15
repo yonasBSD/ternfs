@@ -252,7 +252,7 @@ void XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
     ensureUnpackSizeOrPanic(sz);
     size_t readSoFar = 0;
     while (readSoFar < sz) {
-        ssize_t r = read(fd, buf+cur+readSoFar, sz-readSoFar); 
+        ssize_t r = read(fd, buf+cur+readSoFar, sz-readSoFar);
         if (unlikely(r < 0)) {
             errString = generateErrString("read in xmon buf", errno);
             return;
@@ -290,7 +290,7 @@ EggsTime Xmon::_stepNextWakeup() {
         _fds[SOCK_FD].fd = connectToHost(_xmonHost, _xmonPort, errString);
         CHECK_ERR_STRING(errString);
         LOG_INFO(_env, "connected to xmon %s:%s", _xmonHost, _xmonPort);
-         
+
         // Send logon message(s)
         _packLogon(_buf);
         errString = _buf.writeOut(_fds[SOCK_FD].fd);
@@ -455,7 +455,7 @@ EggsTime Xmon::_stepNextWakeup() {
                                 .quietPeriod = 0,
                                 .message = "too many alerts, alerts dropped",
                                 .msgType = XmonRequestType::CREATE,
-                                .appType = XmonAppType::DEFAULT,
+                                .appType = _parent,
                                 .binnable = true,
                             };
                             _packRequest(_buf, req);
@@ -483,7 +483,7 @@ EggsTime Xmon::_stepNextWakeup() {
                     LOG_INFO(_env, "skipping clear alertId=%s since it's still quiet", req.alertId);
                     _quietAlerts.erase(quiet);
                     goto skip_request;
-                }                    
+                }
                 LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
             } else {
                 throw EGGS_EXCEPTION("bad req type %s", (int)req.msgType);

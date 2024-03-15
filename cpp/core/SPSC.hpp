@@ -52,6 +52,10 @@ public:
         }
     }
 
+    bool isClosed() {
+        return _size.load(std::memory_order_relaxed) & (1ull<<31);
+    }
+
     // Tries to push all the elements. Returns how many were actually
     // pushed. First element in `els` gets pushed first. Returns 0
     // if the queue is closed.

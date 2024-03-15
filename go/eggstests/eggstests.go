@@ -853,6 +853,7 @@ func main() {
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
 	shuckleBeaconPort := flag.Uint("shuckle-beacon-port", 0, "")
+	useLogsDB := flag.Bool("use-logsdb", false, "Spin up replicas for shard. 0 is leader, rest followers")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -1106,9 +1107,11 @@ func main() {
 	}
 
 	// Start CDC
+
 	cdcOpts := &managedprocess.CDCOpts{
 		Exe:            cppExes.CDCExe,
 		Dir:            path.Join(*dataDir, "cdc"),
+		ReplicaId:      msgs.ReplicaId(0),
 		LogLevel:       level,
 		Valgrind:       *buildType == "valgrind",
 		Perf:           *profile,
@@ -1122,25 +1125,41 @@ func main() {
 	}
 	procs.StartCDC(log, *repoDir, cdcOpts)
 
+	replicaCount := uint8(1)
+	if *useLogsDB {
+		replicaCount = 5
+	}
+
 	// Start shards
 	numShards := 256
 	for i := 0; i < numShards; i++ {
-		shid := msgs.ShardId(i)
-		shopts := managedprocess.ShardOpts{
-			Exe:                       cppExes.ShardExe,
-			Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			LogLevel:                  level,
-			Shid:                      shid,
-			Valgrind:                  *buildType == "valgrind",
-			Perf:                      *profile,
-			IncomingPacketDrop:        *incomingPacketDrop,
-			OutgoingPacketDrop:        *outgoingPacketDrop,
-			ShuckleAddress:            shuckleAddress,
-			Addr1:                     "127.0.0.1:0",
-			Addr2:                     "127.0.0.1:0",
-			TransientDeadlineInterval: &testTransientDeadlineInterval,
+		for r := uint8(0); r < replicaCount; r++ {
+			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
+			shopts := managedprocess.ShardOpts{
+				Exe:                       cppExes.ShardExe,
+				Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+				LogLevel:                  level,
+				Shrid:                     shrid,
+				Valgrind:                  *buildType == "valgrind",
+				Perf:                      *profile,
+				IncomingPacketDrop:        *incomingPacketDrop,
+				OutgoingPacketDrop:        *outgoingPacketDrop,
+				ShuckleAddress:            shuckleAddress,
+				Addr1:                     "127.0.0.1:0",
+				Addr2:                     "127.0.0.1:0",
+				TransientDeadlineInterval: &testTransientDeadlineInterval,
+				UseLogsDB:                 "",
+			}
+			if *useLogsDB {
+				shopts.Dir = path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r))
+				if r == 0 {
+					shopts.UseLogsDB = "LEADER"
+				} else {
+					shopts.UseLogsDB = "FOLLOWER"
+				}
+			}
+			procs.StartShard(log, *repoDir, &shopts)
 		}
-		procs.StartShard(log, *repoDir, &shopts)
 	}
 
 	// now wait for shards/cdc

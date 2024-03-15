@@ -12,6 +12,7 @@
 
 
 struct ShardLogEntry {
+    LogIdx idx;
     EggsTime time;
     ShardLogEntryContainer body;
 

@@ -39,6 +39,7 @@ func main() {
 	xmon := flag.String("xmon", "", "")
 	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
+	useLogsDB := flag.Bool("use-logsdb", false, "Spin up replicas for shard. 0 is leader, rest followers")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -189,25 +190,40 @@ func main() {
 		procs.StartCDC(log, *repoDir, &opts)
 	}
 
+	replicaCount := uint8(1)
+	if *useLogsDB {
+		replicaCount = 5
+	}
 	// Start shards
 	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		opts := managedprocess.ShardOpts{
-			Exe:            cppExes.ShardExe,
-			Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
-			LogLevel:       level,
-			Shid:           shid,
-			Valgrind:       *buildType == "valgrind",
-			ShuckleAddress: shuckleAddress,
-			Perf:           *profile,
-			Xmon:           *xmon,
+		for r := uint8(0); r < replicaCount; r++ {
+			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
+			opts := managedprocess.ShardOpts{
+				Exe:            cppExes.ShardExe,
+				Shrid:          shrid,
+				Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+				LogLevel:       level,
+				Valgrind:       *buildType == "valgrind",
+				ShuckleAddress: shuckleAddress,
+				Perf:           *profile,
+				Xmon:           *xmon,
+				UseLogsDB:      "",
+			}
+			if *useLogsDB {
+				opts.Dir = path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r))
+				if r == 0 {
+					opts.UseLogsDB = "LEADER"
+				} else {
+					opts.UseLogsDB = "FOLLOWER"
+				}
+			}
+			if *startingPort != 0 {
+				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+1+uint16(i)+uint16(r)*256)
+			} else {
+				opts.Addr1 = "127.0.0.1:0"
+			}
+			procs.StartShard(log, *repoDir, &opts)
 		}
-		if *startingPort != 0 {
-			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+1+uint16(i))
-		} else {
-			opts.Addr1 = "127.0.0.1:0"
-		}
-		procs.StartShard(log, *repoDir, &opts)
 	}
 
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)

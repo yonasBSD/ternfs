@@ -360,6 +360,9 @@ struct BincodeBuf {
     template<typename A>
     void unpackList(BincodeList<A>& xs) {
         xs.els.resize(unpackScalar<uint16_t>());
+        if (unlikely(xs.els.size() == 0)) {
+            return;
+        }
         // If it's a number of some sorts, just memcpy it
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             static_assert(std::endian::native == std::endian::little);

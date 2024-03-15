@@ -461,8 +461,8 @@ func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
 type ShardOpts struct {
 	Exe                       string
 	Dir                       string
+	Shrid                     msgs.ShardReplicaId
 	LogLevel                  lib.LogLevel
-	Shid                      msgs.ShardId
 	Valgrind                  bool
 	Perf                      bool
 	IncomingPacketDrop        float64
@@ -472,6 +472,7 @@ type ShardOpts struct {
 	Addr2                     string
 	TransientDeadlineInterval *time.Duration
 	Xmon                      string
+	UseLogsDB                 string
 }
 
 func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
@@ -495,6 +496,9 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
 	}
+	if opts.UseLogsDB != "" {
+		args = append(args, "-use-logsdb", opts.UseLogsDB)
+	}
 	switch opts.LogLevel {
 	case lib.TRACE:
 		args = append(args, "-log-level", "trace")
@@ -507,11 +511,12 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	}
 	args = append(args,
 		opts.Dir,
-		fmt.Sprintf("%d", int(opts.Shid)),
+		fmt.Sprintf("%d", int(opts.Shrid.Shard())),
+		fmt.Sprintf("%d", int(opts.Shrid.Replica())),
 	)
 	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
-		Name:            fmt.Sprintf("shard %v", opts.Shid),
+		Name:            fmt.Sprintf("shard %v", opts.Shrid),
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
@@ -553,6 +558,7 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 type CDCOpts struct {
 	Exe            string
 	Dir            string
+	ReplicaId      msgs.ReplicaId
 	LogLevel       lib.LogLevel
 	Valgrind       bool
 	Perf           bool
@@ -592,10 +598,10 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	case lib.ERROR:
 		args = append(args, "-log-level", "error")
 	}
-	args = append(args, opts.Dir)
+	args = append(args, opts.Dir, fmt.Sprintf("%d", int(opts.ReplicaId)))
 	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
-		Name:            "cdc",
+		Name:            fmt.Sprintf("cdc %v", opts.ReplicaId),
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Dir, "stdout"),

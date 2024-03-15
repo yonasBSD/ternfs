@@ -8,6 +8,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--functional', action='store_true')
 parser.add_argument('--integration', action='store_true')
 parser.add_argument('--short', action='store_true')
+parser.add_argument('--logsdb', action='store_true')
 parser.add_argument('--kmod', action='store_true')
 parser.add_argument('--build', action='store_true')
 parser.add_argument('--docker', action='store_true', help='Build and run in docker image')
@@ -58,11 +59,11 @@ if args.integration:
         # the `--pids-limit -1` is not something I hit but it seems
         # like a good idea.
         run_cmd_unbuffered(
-            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst=/eggsfs', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, '/eggsfs/integration.py', '--docker'] + (['--short'] if args.short else [])
+            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst=/eggsfs', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, '/eggsfs/integration.py', '--docker'] + (['--short'] if args.short else []) + (['--logsdb'] if args.logsdb else [])
         )
     else:
         run_cmd_unbuffered(
-            ['./integration.py'] + (['--short'] if args.short else [])
+            ['./integration.py'] + (['--short'] if args.short else []) + (['--logsdb'] if args.logsdb else [])
         )
 
 if args.prepare_image:
@@ -71,4 +72,4 @@ if args.prepare_image:
 
 if args.kmod:
     bold_print('kmod tests')
-    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else [])))
+    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['--logsdb'] if args.logsdb else [])))

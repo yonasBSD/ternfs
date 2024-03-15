@@ -123,6 +123,7 @@ static int pickMtu(uint16_t mtu) {
 
 void ShardLogEntry::pack(BincodeBuf& buf) const {
     buf.packScalar<uint32_t>(SHARD_LOG_PROTOCOL_VERSION);
+    idx.pack(buf);
     time.pack(buf);
     buf.packScalar<uint16_t>((uint16_t)body.kind());
     body.pack(buf);
@@ -131,6 +132,7 @@ void ShardLogEntry::pack(BincodeBuf& buf) const {
 void ShardLogEntry::unpack(BincodeBuf& buf) {
     uint32_t protocol = buf.unpackScalar<uint32_t>();
     ALWAYS_ASSERT(protocol == SHARD_LOG_PROTOCOL_VERSION);
+    idx.unpack(buf);
     time.unpack(buf);
     ShardLogEntryKind kind = (ShardLogEntryKind)buf.unpackScalar<uint16_t>();
     body.unpack(buf, kind);

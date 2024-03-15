@@ -125,7 +125,7 @@ public:
 
             LogsDBLogEntry entry() const {
                 auto value = _smaller->value();
-                return LogsDBLogEntry{key(), {value.data(), value.data() + value.size()}};
+                return LogsDBLogEntry{key(), {(const uint8_t*)value.data(), (const uint8_t*)value.data() + value.size()}};
             }
 
             void dropEntry() {
@@ -1576,7 +1576,7 @@ public:
 
             // Mismatch in responses could be due to network issues we don't want to crash but we will ignore and retry
             // Mismatch in internal state is asserted on.
-            if (unlikely(request->replicaId != resp.header.requestId)) {
+            if (unlikely(request->replicaId != resp.replicaId)) {
                 LOG_ERROR(_env, "Expected response from replica %s, got it from replica %s. Response: %s", request->replicaId, resp.header.requestId, resp);
                 continue;
             }
@@ -1625,6 +1625,7 @@ public:
                 break;
             case LogMessageKind::LOG_READ:
                 _catchupReader.proccessLogReadRequest(req.replicaId, req.header.requestId, req.requestContainer.getLogRead());
+                break;
             case LogMessageKind::NEW_LEADER:
                 _leaderElection.proccessNewLeaderRequest(req.replicaId, req.header.requestId, req.requestContainer.getNewLeader());
                 break;

@@ -327,7 +327,6 @@ std::ostream& operator<<(std::ostream& out, BlockServiceId crc);
 struct LogIdx {
     uint64_t u64;
 
-
     constexpr LogIdx(): u64(0) {}
 
     constexpr LogIdx(uint64_t idx): u64(idx) {

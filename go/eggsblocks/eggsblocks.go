@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
@@ -18,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -635,6 +637,7 @@ func handleRequestError(
 		} else {
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
+		atomic.AddUint64(&blockService.ioErrors, 1)
 		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, block service %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, blockServiceId, err, *lastError)
 		writeBlocksResponseError(log, conn, err.(msgs.ErrCode))
 		return false
@@ -919,11 +922,61 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 	return key
 }
 
+type diskStats struct {
+	readMs       uint64
+	writeMs      uint64
+	weightedIoMs uint64
+}
+
+func getDiskStats(log *lib.Logger, statsPath string) (map[string]diskStats, error) {
+	file, err := os.Open(statsPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	ret := make(map[string]diskStats)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) < 11 {
+			log.RaiseAlert("malformed disk entry in %v: %v", statsPath, line)
+			continue
+		}
+		devId := fmt.Sprintf("%s:%s", fields[0], fields[1])
+		// https://www.kernel.org/doc/html/v5.4/admin-guide/iostats.html
+		readMs, err := strconv.ParseUint(fields[6], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse reads ms from %s", line)
+		}
+		writeMs, err := strconv.ParseUint(fields[10], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse write ms from %s", line)
+		}
+		weightedIoMs, err := strconv.ParseUint(fields[11], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse weighted IO ms from %s", line)
+		}
+
+		ret[devId] = diskStats{
+			readMs:       readMs,
+			writeMs:      writeMs,
+			weightedIoMs: weightedIoMs,
+		}
+	}
+	return ret, nil
+}
+
 func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
 	alert := log.NewNCAlert(10 * time.Second)
 	for {
+		diskMetrics, err := getDiskStats(log, "/proc/diskstats")
+		if err != nil {
+			log.RaiseAlert("failed reading diskstats: %v", err)
+		}
 		log.Info("sending metrics")
 		metrics.Reset()
 		now := time.Now()
@@ -963,9 +1016,16 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
 			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)
 			metrics.FieldU64("blocks", bsInfo.cachedInfo.Blocks)
+			metrics.FieldU64("io_errors", bsInfo.ioErrors)
+			dm, found := diskMetrics[bsInfo.devId]
+			if found {
+				metrics.FieldU64("read_ms", dm.readMs)
+				metrics.FieldU64("write_ms", dm.writeMs)
+				metrics.FieldU64("weighted_io_ms", dm.weightedIoMs)
+			}
 			metrics.Timestamp(now)
 		}
-		err := lib.SendMetrics(metrics.Payload())
+		err = lib.SendMetrics(metrics.Payload())
 		if err == nil {
 			log.ClearNC(alert)
 			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
@@ -980,12 +1040,37 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 
 type blockService struct {
 	path                    string
+	devId                   string
 	key                     [16]byte
 	cipher                  cipher.Block
 	storageClass            msgs.StorageClass
 	cachedInfo              msgs.RegisterBlockServiceInfo
 	couldNotUpdateInfo      bool
 	couldNotUpdateInfoAlert lib.XmonNCAlert
+	ioErrors                uint64
+}
+
+func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error) {
+	file, err := os.Open(mountsPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+
+	ret := make(map[string]string)
+	for scanner.Scan() {
+		line := scanner.Text()
+		mountFields := strings.Fields(line)
+		if len(mountFields) < 11 {
+			log.RaiseAlert("malformed mount in %v: %v", mountsPath, line)
+			continue
+		}
+		path := mountFields[4]
+		// should be major:minor of the mounted disk
+		ret[path] = mountFields[2]
+	}
+	return ret, nil
 }
 
 func main() {
@@ -1108,6 +1193,11 @@ func main() {
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
 	log.Info("  connectionTimeout = %v", *connectionTimeout)
 
+	mountsInfo, err := getMountsInfo(log, "/proc/self/mountinfo")
+	if err != nil {
+		log.RaiseAlert("Disk stats for mounted paths will not be collected due to failure collecting mount info: %v", err)
+	}
+
 	blockServices := make(map[msgs.BlockServiceId]*blockService)
 	for i := 0; i < flag.NArg(); i += 2 {
 		dir := flag.Args()[i]
@@ -1122,8 +1212,13 @@ func main() {
 		if err != nil {
 			panic(fmt.Errorf("could not create AES-128 key: %w", err))
 		}
+		devId, found := mountsInfo[dir]
+		if !found {
+			devId = ""
+		}
 		blockServices[id] = &blockService{
 			path:                    dir,
+			devId:                   devId,
 			key:                     key,
 			cipher:                  cipher,
 			storageClass:            storageClass,

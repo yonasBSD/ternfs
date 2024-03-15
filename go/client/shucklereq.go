@@ -13,8 +13,6 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-const DEFAULT_SHUCKLE_ADDRESS = "REDACTED"
-
 func writeShuckleRequest(log *lib.Logger, w io.Writer, req msgs.ShuckleRequest) error {
 	log.Debug("sending request %v to shuckle", req.ShuckleRequestKind())
 	// serialize

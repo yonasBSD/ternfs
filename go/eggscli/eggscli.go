@@ -24,6 +24,8 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
+const PROD_SHUCKLE_ADDRESS = "REDACTED"
+
 type commandSpec struct {
 	flags *flag.FlagSet
 	run   func()
@@ -171,7 +173,7 @@ func formatSize(bytes uint64) string {
 
 func main() {
 	flag.Usage = usage
-	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
 	shardInitialTimeout := flag.Duration("shard-initial-timeout", 0, "")
 	shardMaxTimeout := flag.Duration("shard-max-timeout", 0, "")
@@ -181,22 +183,10 @@ func main() {
 	cdcOverallTimeout := flag.Duration("cdc-overall-timeout", -1, "")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
+	prod := flag.Bool("prod", false, "Use production shuckle endpoint.")
 
 	var log *lib.Logger
 	var c *client.Client
-
-	if *mtu != "" {
-		if *mtu == "max" {
-			client.SetMTU(msgs.MAX_UDP_MTU)
-		} else {
-			mtuU, err := strconv.ParseUint(*mtu, 0, 16)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "could not parse mtu: %v", err)
-				os.Exit(2)
-			}
-			client.SetMTU(mtuU)
-		}
-	}
 
 	commands = make(map[string]commandSpec)
 
@@ -952,6 +942,28 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if *prod {
+		*shuckleAddress = PROD_SHUCKLE_ADDRESS
+	}
+
+	if *shuckleAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -shuckle (or -prod).\n")
+		os.Exit(2)
+	}
+
+	if *mtu != "" {
+		if *mtu == "max" {
+			client.SetMTU(msgs.MAX_UDP_MTU)
+		} else {
+			mtuU, err := strconv.ParseUint(*mtu, 0, 16)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "could not parse mtu: %v", err)
+				os.Exit(2)
+			}
+			client.SetMTU(mtuU)
+		}
+	}
 
 	if flag.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "No command provided.\n\n")

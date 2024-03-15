@@ -686,13 +686,18 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
-	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
 	initialCDCTimeout := flag.Duration("initial-cdc-timeout", 0, "")
 	flag.Usage = usage
 	flag.Parse()
+
+	if *shuckleAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -shuckle\n")
+		os.Exit(2)
+	}
 
 	if flag.NArg() != 1 {
 		usage()

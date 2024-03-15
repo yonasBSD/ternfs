@@ -931,7 +931,6 @@ type Client struct {
 }
 
 // Create a new client by acquiring the CDC and Shard connection details from Shuckle.
-// The production Shuckle instance is located at [DEFAULT_SHUCKLE_ADDRESS].
 func NewClient(
 	log *lib.Logger,
 	shuckleTimeout *lib.ReqTimeouts,

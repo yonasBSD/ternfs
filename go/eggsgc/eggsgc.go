@@ -79,7 +79,7 @@ func main() {
 	appInstance := flag.String("app-instance", "eggsgc", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
-	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
@@ -98,6 +98,11 @@ func main() {
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	pprofHttpPort := flag.Int("pprof-http-port", -1, "Port on which to run the pprof HTTP server")
 	flag.Parse()
+
+	if *shuckleAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
+		os.Exit(2)
+	}
 
 	if *dataDir == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")

@@ -1083,7 +1083,7 @@ func main() {
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
-	shuckleAddress := flag.String("shuckle", client.DEFAULT_SHUCKLE_ADDRESS, "Shuckle address (host:port).")
+	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", time.Minute, "")
@@ -1097,6 +1097,11 @@ func main() {
 	if flag.NArg() < 2 {
 		fmt.Fprintf(os.Stderr, "Expected at least one block service.\n\n")
 		usage()
+		os.Exit(2)
+	}
+
+	if *shuckleAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
 		os.Exit(2)
 	}
 

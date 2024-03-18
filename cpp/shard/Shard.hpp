@@ -29,8 +29,8 @@ struct ShardOptions {
     bool metrics = false;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
     uint8_t leaderReplicaId = 0;
-    bool dontWaitForReplication = true;
-    bool dontDoReplication = true;
+    bool dontWaitForReplication = false;
+    bool dontDoReplication = false;
     bool forceLeader = false;
     bool avoidBeingLeader = true;
     bool initialStart = true;

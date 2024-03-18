@@ -39,6 +39,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
     fprintf(stderr, " -use-logsdb LEADER|FOLLOWER|NONE\n");
     fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER or FOLLOWER or don't use. Default is don't use. Only replica id 0 can be leader.\n");
+    fprintf(stderr, " -no-replication\n");
+    fprintf(stderr, "    	Don't do replication or wait for it as LogsDB LEADER\n");
     fprintf(stderr, " -clear-logsdb-data\n");
     fprintf(stderr, "    	Removes all data in LogsDB. It can not be used in combination with -use-logsdb to avoid accidental use.\n");
 }
@@ -201,6 +203,9 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
                 dieWithUsage();
             }
+        } else if (arg == "-no-replication") {
+            options.dontDoReplication = true;
+            options.dontWaitForReplication = true;
         } else if (arg == "-clear-logsdb-data") {
             options.clearLogsDBData = true;
         } else{

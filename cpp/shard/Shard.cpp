@@ -715,6 +715,7 @@ private:
     uint64_t _currentLogIndex;
     ShardRespContainer _respContainer;
     std::vector<ShardWriterRequest> _requests;
+    const size_t _maxWritesAtOnce;
 
     std::vector<QueuedShardLogEntry> _logEntries;
 
@@ -745,6 +746,7 @@ public:
     ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         Loop(logger, xmon, "writer"),
         _shared(shared),
+        _maxWritesAtOnce(options.writeToLogsDB ? LogsDB::IN_FLIGHT_APPEND_WINDOW * 10 : MAX_WRITES_AT_ONCE),
         _dontWaitForReplication(options.dontWaitForReplication),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
@@ -761,7 +763,7 @@ public:
         };
         convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
-        _requests.reserve(MAX_WRITES_AT_ONCE);
+        _requests.reserve(_maxWritesAtOnce);
 
         if (options.writeToLogsDB) {
             _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontWaitForReplication, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.initialStart, options.initialStart ? _currentLogIndex : 0));
@@ -1056,7 +1058,7 @@ public:
             _sendVecs[i].clear();
         }
         _replicaInfo = _shared.replicas;
-        uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, MAX_WRITES_AT_ONCE, _logsDB ? _logsDB->getNextTimeout() : -1);
+        uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, _maxWritesAtOnce, _logsDB ? _logsDB->getNextTimeout() : -1);
         if (likely(pulled > 0)) {
             LOG_DEBUG(_env, "pulled %s requests from write queue", pulled);
             _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)pulled)*0.05;

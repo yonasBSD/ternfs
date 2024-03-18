@@ -780,6 +780,8 @@ public:
         _logsDB->processIncomingMessages(_logsDBRequests,_logsDBResponses);
         _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
 
+        bool droppedDueToInFlightWindow = false;
+
         // If we are leader write any outstanding entries
         std::vector<LogsDBLogEntry> logsDBEntries;
         if (!_logsDB->isLeader()) {
@@ -813,7 +815,7 @@ public:
                 if (logsDBEntries[i].idx == 0) {
                     // if we don't wait for replication the window gets cleared immediately
                     ALWAYS_ASSERT(!_dontWaitForReplication);
-                    ALWAYS_ASSERT(_inFlightEntries.size() == LogsDB::IN_FLIGHT_APPEND_WINDOW);
+                    droppedDueToInFlightWindow = true;
                     LOG_INFO(_env, "Appended %s out of %s shard write requests. Log in flight windows is full. Dropping other entries", i, _logEntries.size());
                     break;
                 }
@@ -882,6 +884,10 @@ public:
                     RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
                 }
             }
+        }
+        if (unlikely(droppedDueToInFlightWindow)) {
+            // We can't check before as we first need to process and remove entries that have been released
+            ALWAYS_ASSERT(_inFlightEntries.size() == LogsDB::IN_FLIGHT_APPEND_WINDOW);
         }
         _shared.shardDB.flush(true);
         _logsDB->flush(true);

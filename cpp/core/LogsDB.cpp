@@ -1423,7 +1423,7 @@ public:
             }
         }
         for (size_t i = countToAppend; i < entries.size(); ++i) {
-            _entries[i].idx = 0;
+            entries[i].idx = 0;
         }
         _entriesEnd += countToAppend;
         return NO_ERROR;

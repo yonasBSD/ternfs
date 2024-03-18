@@ -71,10 +71,11 @@ public:
     static constexpr size_t REPLICA_COUNT = 5;
     static constexpr Duration PARTITION_TIME_SPAN = 12_hours;
     static constexpr Duration RESPONSE_TIMEOUT = 10_ms;
+    static constexpr Duration READ_TIMEOUT = 1_sec;
     static constexpr Duration SEND_RELEASE_INTERVAL = 300_ms;
     static constexpr Duration LEADER_INACTIVE_TIMEOUT = 1_sec;
     static constexpr size_t IN_FLIGHT_APPEND_WINDOW = 1 << 8;
-    static constexpr size_t CATCHUP_WINDOW = 1 << 4 ;
+    static constexpr size_t CATCHUP_WINDOW = 1 << 8 ;
 
     LogsDB() = delete;
 

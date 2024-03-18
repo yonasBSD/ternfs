@@ -544,15 +544,20 @@ class ReqResp {
 
         void resendTimedOutRequests() {
             auto now = eggsNow();
-            auto cutoffTime = now - LogsDB::RESPONSE_TIMEOUT;
+            auto defaultCutoffTime = now - LogsDB::RESPONSE_TIMEOUT;
             auto releaseCutoffTime = now - LogsDB::SEND_RELEASE_INTERVAL;
+            auto readCutoffTime = now - LogsDB::READ_TIMEOUT;
+            auto cutoffTime = now;
             for (auto& r : _requests) {
-                if (unlikely(r.second.header.kind == LogMessageKind::RELEASE)) {
-                    if (r.second.sentTime < releaseCutoffTime) {
-                        r.second.sentTime = now;
-                        _requestsToSend.emplace_back(&r.second);
-                    }
-                    continue;
+                switch (r.second.header.kind) {
+                case LogMessageKind::RELEASE:
+                    cutoffTime = releaseCutoffTime;
+                    break;
+                case LogMessageKind::LOG_READ:
+                    cutoffTime = readCutoffTime;
+                    break;
+                default:
+                    cutoffTime = defaultCutoffTime;
                 }
                 if (r.second.sentTime < cutoffTime) {
                     r.second.sentTime = now;

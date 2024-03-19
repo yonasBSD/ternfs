@@ -126,7 +126,7 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
         }
     };
 
-    if (keyExists(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY))) {
+    if (!keyExists(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY))) {
         LOG_INFO(_env, "initializing current block services (as empty)");
         OwnedValue<CurrentBlockServicesBody> v(0);
         v().setLength(0);

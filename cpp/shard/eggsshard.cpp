@@ -267,18 +267,6 @@ int main(int argc, char** argv) {
 
     ShardReplicaId shrid(shid, replicaId);
 
-    if (options.writeToLogsDB) {
-        if (replicaId == 0) {
-            if (!options.forceLeader) {
-                die("When using LogsDB replica 0 needs to run in LEADER mode");
-            }
-        } else {
-            if (!options.avoidBeingLeader) {
-                die("When using LogsDB replicas other than 0 need to run in FOLLOWER mode");
-            }
-        }
-    }
-
     runShard(shrid, dbDir, options);
 
     return 0;

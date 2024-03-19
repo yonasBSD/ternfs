@@ -1420,11 +1420,11 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
         if (options.writeToLogsDB) {
             LOG_INFO(env, "Using LogsDB with options:");
-            LOG_INFO(env, "    dontWaitForReplication = '%s'", options.dontWaitForReplication);
-            LOG_INFO(env, "    dontDoReplication = '%s'", options.dontDoReplication);
-            LOG_INFO(env, "    forceLeader = '%s'", options.forceLeader);
-            LOG_INFO(env, "    avoidBeingLeader = '%s'", options.leaderReplicaId);
-            LOG_INFO(env, "    initialStart = '%s'", options.initialStart);
+            LOG_INFO(env, "    dontWaitForReplication = '%s'", (int)options.dontWaitForReplication);
+            LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
+            LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
+            LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
+            LOG_INFO(env, "    initialStart = '%s'", (int)options.initialStart);
         }
     }
 

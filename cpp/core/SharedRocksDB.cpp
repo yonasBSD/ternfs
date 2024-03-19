@@ -34,9 +34,34 @@ void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
     cfHandles.reserve(_cfDescriptors.size());
     rocksdb::DB* db;
     auto dbPath = path + "/db";
-    LOG_INFO(_env, "Initializing RocksDB in %s", dbPath);
+    LOG_INFO(_env, "Opening RocksDB in %s", dbPath);
     ROCKS_DB_CHECKED_MSG(
             rocksdb::DB::Open(options, dbPath, _cfDescriptors, &cfHandles, &db),
+            "could not open RocksDB %s", path
+    );
+
+    _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
+    ALWAYS_ASSERT(_cfDescriptors.size() == cfHandles.size());
+
+    for (auto i = 0; i < _cfDescriptors.size(); ++i) {
+        _cfs.insert(std::make_pair(_cfDescriptors[i].name, cfHandles[i]));
+    }
+
+    _cfDescriptors.clear();
+}
+
+void SharedRocksDB::openForReadOnly(rocksdb::Options options, const std::string& path) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
+    ALWAYS_ASSERT(_db.get() == nullptr);
+    options.create_if_missing = false;
+    options.create_missing_column_families = false;
+
+    std::vector<rocksdb::ColumnFamilyHandle*> cfHandles;
+    cfHandles.reserve(_cfDescriptors.size());
+    rocksdb::DB* db;
+    LOG_INFO(_env, "Opening RocksDB as readonly in %s", path);
+    ROCKS_DB_CHECKED_MSG(
+            rocksdb::DB::OpenForReadOnly(options, path, _cfDescriptors, &cfHandles, &db),
             "could not open RocksDB %s", path
     );
 

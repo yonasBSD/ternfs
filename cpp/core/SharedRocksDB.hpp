@@ -16,6 +16,7 @@ public:
     SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon);
     ~SharedRocksDB();
     void open(rocksdb::Options options, const std::string& path);
+    void openForReadOnly(rocksdb::Options options, const std::string& path);
     void close();
 
     void registerCFDescriptors(const std::vector<rocksdb::ColumnFamilyDescriptor>& _cfDescriptors);

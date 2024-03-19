@@ -17,18 +17,12 @@ enum class ShardMetadataKey : uint8_t {
     NEXT_FILE_ID = 2,
     NEXT_SYMLINK_ID = 3,
     NEXT_BLOCK_ID = 4,
-    // These two below are not used anymore, but let's leave them here
-    // to make it clear that you should skip them.
-    CURRENT_BLOCK_SERVICES_DONT_USE = 5,
-    BLOCK_SERVICE_DONT_USE = 6, // postfixed with the block service id
 };
 constexpr ShardMetadataKey SHARD_INFO_KEY = ShardMetadataKey::INFO;
 constexpr ShardMetadataKey LAST_APPLIED_LOG_ENTRY_KEY = ShardMetadataKey::LAST_APPLIED_LOG_ENTRY;
 constexpr ShardMetadataKey NEXT_FILE_ID_KEY = ShardMetadataKey::NEXT_FILE_ID;
 constexpr ShardMetadataKey NEXT_SYMLINK_ID_KEY = ShardMetadataKey::NEXT_SYMLINK_ID;
 constexpr ShardMetadataKey NEXT_BLOCK_ID_KEY = ShardMetadataKey::NEXT_BLOCK_ID;
-constexpr ShardMetadataKey CURRENT_BLOCK_SERVICES_KEY_DONT_USE = ShardMetadataKey::CURRENT_BLOCK_SERVICES_DONT_USE;
-constexpr ShardMetadataKey BLOCK_SERVICE_KEY_DONT_USE = ShardMetadataKey::BLOCK_SERVICE_DONT_USE;
 
 inline rocksdb::Slice shardMetadataKey(const ShardMetadataKey* k) {
     return rocksdb::Slice((const char*)k, sizeof(*k));
@@ -40,46 +34,6 @@ struct ShardInfoBody {
         FBYTES, 16,  secretKey, setSecretKey,
         END_STATIC
     )
-};
-
-struct BlockServiceBody {
-    FIELDS(
-        LE, uint8_t,  version,          setVersion,
-        LE, uint64_t, id,               setId,
-        FBYTES, 4,    ip1,              setIp1,
-        LE, uint16_t, port1,            setPort1,
-        FBYTES, 4,    ip2,              setIp2,
-        LE, uint16_t, port2,            setPort2,
-        LE, uint8_t,  storageClass,     setStorageClass,
-        FBYTES, 16,   failureDomain,    setFailureDomain,
-        FBYTES, 16,   secretKey,        setSecretKey,
-        EMIT_OFFSET, V0_OFFSET,
-        LE, uint8_t, flagsV1, setFlagsV1,
-        EMIT_OFFSET, V1_OFFSET,
-        END
-    )
-
-    static constexpr size_t MAX_SIZE = V1_OFFSET;
-
-    size_t size() const {
-        switch (version()) {
-        case 0: return V0_OFFSET;
-        case 1: return V1_OFFSET;
-        default: throw EGGS_EXCEPTION("bad version %s", version());
-        }
-    }
-
-    void checkSize(size_t s) { ALWAYS_ASSERT(s == size()); }
-
-    uint8_t flags() const {
-        if (unlikely(version() == 0)) { return 0; }
-        return flagsV1();
-    }
-
-    void setFlags(uint8_t f) {
-        ALWAYS_ASSERT(version() > 0);
-        setFlagsV1(f);
-    }
 };
 
 enum class SpanState : uint8_t {

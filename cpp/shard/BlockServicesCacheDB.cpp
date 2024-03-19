@@ -2,7 +2,6 @@
 
 #include "BlockServicesCacheDB.hpp"
 #include "RocksDBUtils.hpp"
-#include "ShardDBData.hpp"
 
 enum class BlockServicesCacheKey : uint8_t {
     CURRENT_BLOCK_SERVICES = 0,
@@ -63,6 +62,46 @@ struct BlockServiceKey {
     )
 };
 
+struct BlockServiceBody {
+    FIELDS(
+        LE, uint8_t,  version,          setVersion,
+        LE, uint64_t, id,               setId,
+        FBYTES, 4,    ip1,              setIp1,
+        LE, uint16_t, port1,            setPort1,
+        FBYTES, 4,    ip2,              setIp2,
+        LE, uint16_t, port2,            setPort2,
+        LE, uint8_t,  storageClass,     setStorageClass,
+        FBYTES, 16,   failureDomain,    setFailureDomain,
+        FBYTES, 16,   secretKey,        setSecretKey,
+        EMIT_OFFSET, V0_OFFSET,
+        LE, uint8_t, flagsV1, setFlagsV1,
+        EMIT_OFFSET, V1_OFFSET,
+        END
+    )
+
+    static constexpr size_t MAX_SIZE = V1_OFFSET;
+
+    size_t size() const {
+        switch (version()) {
+        case 0: return V0_OFFSET;
+        case 1: return V1_OFFSET;
+        default: throw EGGS_EXCEPTION("bad version %s", version());
+        }
+    }
+
+    void checkSize(size_t s) { ALWAYS_ASSERT(s == size()); }
+
+    uint8_t flags() const {
+        if (unlikely(version() == 0)) { return 0; }
+        return flagsV1();
+    }
+
+    void setFlags(uint8_t f) {
+        ALWAYS_ASSERT(version() > 0);
+        setFlagsV1(f);
+    }
+};
+
 std::vector<rocksdb::ColumnFamilyDescriptor> BlockServicesCacheDB::getColumnFamilyDescriptors() {
     return std::vector<rocksdb::ColumnFamilyDescriptor> {{"blockServicesCache", {}}};
 }
@@ -87,26 +126,15 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
         }
     };
 
-    // Before we stored this info in the ShardDB, we look at both here.
-    rocksdb::ColumnFamilyHandle* defaultCF = sharedDB.getCF(rocksdb::kDefaultColumnFamilyName);
-    bool inShardDB = keyExists(defaultCF, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY_DONT_USE));
-    if (inShardDB) {
-        LOG_INFO(_env, "ShardDB data exists, will read from it");
-    }
-    bool inBlockServicesCacheDB = keyExists(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY));
-    if (!inShardDB && !inBlockServicesCacheDB) {
+    if (keyExists(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY))) {
         LOG_INFO(_env, "initializing current block services (as empty)");
         OwnedValue<CurrentBlockServicesBody> v(0);
         v().setLength(0);
         ROCKS_DB_CHECKED(_db->Put({}, _blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), v.toSlice()));
     } else {
-        // Here we'll read from the ShardDB or the BlockServicesCacheDB as appropriate.
-        rocksdb::ColumnFamilyHandle* cf = inShardDB ? defaultCF : _blockServicesCF;
-        rocksdb::Slice currentBlockServicesKey = inShardDB ? shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY_DONT_USE) : blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY);
-        BlockServicesCacheKey blockServiceKey = inShardDB ? (BlockServicesCacheKey)BLOCK_SERVICE_KEY_DONT_USE : BLOCK_SERVICE_KEY;
         LOG_INFO(_env, "initializing block services cache (from db)");
         std::string buf;
-        ROCKS_DB_CHECKED(_db->Get({}, cf, currentBlockServicesKey, &buf));
+        ROCKS_DB_CHECKED(_db->Get({}, _blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), &buf));
         ExternalValue<CurrentBlockServicesBody> v(buf);
         _currentBlockServices.resize(v().length());
         for (int i = 0; i < v().length(); i++) {
@@ -115,16 +143,16 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
         {
             rocksdb::ReadOptions options;
             static_assert(sizeof(BlockServicesCacheKey) == sizeof(uint8_t));
-            auto upperBound = (BlockServicesCacheKey)((uint8_t)blockServiceKey + 1);
+            auto upperBound = (BlockServicesCacheKey)((uint8_t)BLOCK_SERVICE_KEY + 1);
             auto upperBoundSlice = blockServicesCacheKey(&upperBound);
             options.iterate_upper_bound = &upperBoundSlice;
-            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, cf));
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _blockServicesCF));
             StaticValue<BlockServiceKey> beginKey;
-            beginKey().setKey(blockServiceKey);
+            beginKey().setKey(BLOCK_SERVICE_KEY);
             beginKey().setBlockServiceId(0);
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto k = ExternalValue<BlockServiceKey>::FromSlice(it->key());
-                ALWAYS_ASSERT(k().key() == blockServiceKey);
+                ALWAYS_ASSERT(k().key() == BLOCK_SERVICE_KEY);
                 auto v = ExternalValue<BlockServiceBody>::FromSlice(it->value());
                 auto& cache = _blockServices[k().blockServiceId()];
                 cache.ip1 = v().ip1();
@@ -138,26 +166,6 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
             ROCKS_DB_CHECKED(it->status());
         }
         _haveBlockServices = true;
-    }
-
-    // Delete the stuff in ShardDB, if it was still there anyway.
-    ROCKS_DB_CHECKED(_db->Delete({}, defaultCF, shardMetadataKey(&CURRENT_BLOCK_SERVICES_KEY_DONT_USE)));
-    {
-        rocksdb::ReadOptions options;
-        static_assert(sizeof(ShardMetadataKey) == sizeof(uint8_t));
-        auto upperBound = (ShardMetadataKey)((uint8_t)BLOCK_SERVICE_KEY_DONT_USE + 1);
-        auto upperBoundSlice = shardMetadataKey(&upperBound);
-        options.iterate_upper_bound = &upperBoundSlice;
-        std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, defaultCF));
-        StaticValue<BlockServiceKey> beginKey;
-        beginKey().setKey((BlockServicesCacheKey)BLOCK_SERVICE_KEY_DONT_USE);
-        beginKey().setBlockServiceId(0);
-        for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
-            auto k = ExternalValue<BlockServiceKey>::FromSlice(it->key());
-            ALWAYS_ASSERT(k().key() == (BlockServicesCacheKey)BLOCK_SERVICE_KEY_DONT_USE);
-            ROCKS_DB_CHECKED(_db->Delete({}, defaultCF, it->key()));
-        }
-        ROCKS_DB_CHECKED(it->status());
     }
 }
 

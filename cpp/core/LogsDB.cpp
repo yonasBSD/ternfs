@@ -1555,6 +1555,10 @@ public:
         _infoLoggedTime = eggsNow();
     }
 
+    ~LogsDBImpl() {
+        close();
+    }
+
     void close() {
         LOG_INFO(_env,"closing LogsDB, leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
     }
@@ -1576,6 +1580,7 @@ public:
 
     void flush(bool sync) {
         ROCKS_DB_CHECKED(_db->FlushWAL(sync));
+        _maybeLogStatus();
     }
 
     void processIncomingMessages(std::vector<LogsDBRequest>& requests, std::vector<LogsDBResponse>& responses) {
@@ -1657,7 +1662,6 @@ public:
         _appender.maybeMoveRelease();
         _catchupReader.maybeCatchUp();
         _reqResp.resendTimedOutRequests();
-        _maybeLogStatus();
     }
 
     void getOutgoingMessages(std::vector<LogsDBRequest*>& requests, std::vector<LogsDBResponse>& responses) {

@@ -33,11 +33,18 @@ void ShardDBTools::verifyEqual(const std::string &db1Path, const std::string &db
     auto db1 = sharedDb1.db();
     auto db2 = sharedDb2.db();
 
+    size_t totalKeysCompared{0};
+    size_t totalKeySize{0};
+    size_t totalValueSize{0};
+
     for(const auto& cf : ShardDB::getColumnFamilyDescriptors()) {
         LOG_INFO(env, "Starting comparison on CF %s", cf.name);
         auto cf1 = sharedDb1.getCF(cf.name);
         auto cf2 = sharedDb2.getCF(cf.name);
-        size_t keysCompared = 0;
+
+        size_t keysCompared{0};
+        size_t keySize{0};
+        size_t valueSize{0};
 
         auto it1 = db1->NewIterator({}, cf1);
         auto it2 = db2->NewIterator({}, cf2);
@@ -52,12 +59,15 @@ void ShardDBTools::verifyEqual(const std::string &db1Path, const std::string &db
                 LOG_ERROR(env, "Found mismatch in value cf %s", cf.name);
                 return;
             }
-            it1->Next();
-            it2->Next();
             ++keysCompared;
-            if (keysCompared % 1000000 == 0) {
+            keySize += it1->key().size();
+            valueSize += it1->value().size();
+            if (keysCompared % 100000000ull == 0) {
                 LOG_INFO(env, "Compared %s key/value pairs so far and they are identical", keysCompared);
             }
+
+            it1->Next();
+            it2->Next();
         }
         if (it1->Valid()) {
             LOG_ERROR(env, "Database %s has extra keys in cf %s", db1Path, cf.name);
@@ -67,9 +77,13 @@ void ShardDBTools::verifyEqual(const std::string &db1Path, const std::string &db
             LOG_ERROR(env, "Database %s has extra keys in cf %s", db2Path, cf.name);
             return;
         }
-        LOG_INFO(env, "CF %s identical. Compared %s key/value pairs", cf.name, keysCompared);
         delete it1;
         delete it2;
+
+        LOG_INFO(env, "CF %s identical. Compared %s key/value pairs. KeySize: %s, ValueSize: %s", cf.name, keysCompared, keySize, valueSize);
+        totalKeysCompared += keysCompared;
+        totalKeySize += keySize;
+        totalValueSize += valueSize;
     }
-    LOG_INFO(env, "Databases identical!");
+    LOG_INFO(env, "Databases identical! Compared %s cfs, %s key/value pairs. Total key size: %s, Total value size: %s", ShardDB::getColumnFamilyDescriptors().size(), totalKeysCompared, totalKeySize, totalValueSize);
 }

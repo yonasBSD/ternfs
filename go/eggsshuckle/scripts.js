@@ -413,7 +413,7 @@ export function renderIndex() {
     function Shards() {
         const [shards, setShards] = useState(null);
         useEffect(async () => {
-            const resp = await shuckleReq('SHARDS', {});
+            const resp = await shuckleReq('SHARDS_WITH_REPLICAS', {});
             setShards(resp);
         }, []);
     
@@ -423,9 +423,11 @@ export function renderIndex() {
 
         const now = new Date();
         const rows = [];
-        shards.Shards.forEach((shard, ix) => {
+        shards.Shards.forEach(shard => {
             rows.push([
-                ix,
+                parseInt(shard.Id.split(':')[0], 10),
+                parseInt(shard.Id.split(':')[1], 10),
+                shard.IsLeader ? 'yes' : 'no',
                 stringifyAddress(shard.Ip1, shard.Port1),
                 stringifyAddress(shard.Ip2, shard.Port2),
                 shard.LastSeen,
@@ -433,6 +435,8 @@ export function renderIndex() {
         });
         const cols = [
             {name: 'Id', string: i => i.toString().padStart(3, '0'), render: t => p.h('code', {}, t)},
+            {name: 'Replica', render: t => p.h('code', {}, t)},
+            {name: 'Leader', render: s => s === 'yes' ? p.h('strong', {}, s) : s},
             {name: 'Address 1', render: t => p.h('code', {}, t)},
             {name: 'Address 2', render: t => p.h('code', {}, t)},
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},

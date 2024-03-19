@@ -485,6 +485,36 @@ func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsRe
 	return &resp, nil
 }
 
+func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithReplicasReq) (*msgs.ShardsWithReplicasResp, error) {
+	ret := []msgs.ShardWithReplicasInfo{}
+
+	rows, err := s.db.Query("SELECT * FROM shards")
+	if err != nil {
+		return nil, fmt.Errorf("error selecting shards: %s", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		si := msgs.ShardWithReplicasInfo{}
+		var ip1, ip2 []byte
+		var id int
+		var replicaId int
+		err = rows.Scan(&id, &replicaId, &si.IsLeader, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding shard row: %s", err)
+		}
+		if si.Port1 == 0 {
+			continue
+		}
+		si.Id = msgs.MakeShardReplicaId(msgs.ShardId(id), msgs.ReplicaId(replicaId))
+		copy(si.Ip1[:], ip1)
+		copy(si.Ip2[:], ip2)
+		ret = append(ret, si)
+	}
+
+	return &msgs.ShardsWithReplicasResp{Shards: ret}, nil
+}
+
 func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp, error) {
 	info, err := s.selectShard(req.Id)
 	if err != nil {
@@ -872,6 +902,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
 	case *msgs.ShardsReq:
 		resp, err = handleShards(log, s, whichReq)
+	case *msgs.ShardsWithReplicasReq:
+		resp, err = handleShardsWithReplicas(log, s, whichReq)
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
 	case *msgs.RegisterShardReplicaReq:

@@ -421,6 +421,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC_REPLICAS:
         out << "CDC_REPLICAS";
         break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        out << "SHARDS_WITH_REPLICAS";
+        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -1263,6 +1266,48 @@ bool Stat::operator==(const Stat& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const Stat& x) {
     out << "Stat(" << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "Time=" << x.time << ", " << "Value=" << x.value << ")";
+    return out;
+}
+
+void ShardWithReplicasInfo::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    buf.packScalar<bool>(isLeader);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
+    lastSeen.pack(buf);
+}
+void ShardWithReplicasInfo::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    isLeader = buf.unpackScalar<bool>();
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
+    lastSeen.unpack(buf);
+}
+void ShardWithReplicasInfo::clear() {
+    id = ShardReplicaId();
+    isLeader = bool(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
+    lastSeen = EggsTime();
+}
+bool ShardWithReplicasInfo::operator==(const ShardWithReplicasInfo& rhs) const {
+    if ((ShardReplicaId)this->id != (ShardReplicaId)rhs.id) { return false; };
+    if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardWithReplicasInfo& x) {
+    out << "ShardWithReplicasInfo(" << "Id=" << x.id << ", " << "IsLeader=" << x.isLeader << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -3931,6 +3976,38 @@ bool CdcReplicasResp::operator==(const CdcReplicasResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const CdcReplicasResp& x) {
     out << "CdcReplicasResp(" << "Replicas=" << x.replicas << ")";
+    return out;
+}
+
+void ShardsWithReplicasReq::pack(BincodeBuf& buf) const {
+}
+void ShardsWithReplicasReq::unpack(BincodeBuf& buf) {
+}
+void ShardsWithReplicasReq::clear() {
+}
+bool ShardsWithReplicasReq::operator==(const ShardsWithReplicasReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardsWithReplicasReq& x) {
+    out << "ShardsWithReplicasReq(" << ")";
+    return out;
+}
+
+void ShardsWithReplicasResp::pack(BincodeBuf& buf) const {
+    buf.packList<ShardWithReplicasInfo>(shards);
+}
+void ShardsWithReplicasResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<ShardWithReplicasInfo>(shards);
+}
+void ShardsWithReplicasResp::clear() {
+    shards.clear();
+}
+bool ShardsWithReplicasResp::operator==(const ShardsWithReplicasResp& rhs) const {
+    if (shards != rhs.shards) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardsWithReplicasResp& x) {
+    out << "ShardsWithReplicasResp(" << "Shards=" << x.shards << ")";
     return out;
 }
 
@@ -7010,6 +7087,15 @@ CdcReplicasReq& ShuckleReqContainer::setCdcReplicas() {
     auto& x = _data.emplace<17>();
     return x;
 }
+const ShardsWithReplicasReq& ShuckleReqContainer::getShardsWithReplicas() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARDS_WITH_REPLICAS);
+    return std::get<18>(_data);
+}
+ShardsWithReplicasReq& ShuckleReqContainer::setShardsWithReplicas() {
+    _kind = ShuckleMessageKind::SHARDS_WITH_REPLICAS;
+    auto& x = _data.emplace<18>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7081,6 +7167,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::CDC_REPLICAS:
         setCdcReplicas() = other.getCdcReplicas();
         break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        setShardsWithReplicas() = other.getShardsWithReplicas();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7130,6 +7219,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<16>(_data).packedSize();
     case ShuckleMessageKind::CDC_REPLICAS:
         return std::get<17>(_data).packedSize();
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        return std::get<18>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7190,6 +7281,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CDC_REPLICAS:
         std::get<17>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        std::get<18>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7253,6 +7347,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC_REPLICAS:
         _data.emplace<17>().unpack(buf);
         break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        _data.emplace<18>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7298,6 +7395,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getRegisterCdcReplica() == other.getRegisterCdcReplica();
     case ShuckleMessageKind::CDC_REPLICAS:
         return getCdcReplicas() == other.getCdcReplicas();
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        return getShardsWithReplicas() == other.getShardsWithReplicas();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7358,6 +7457,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::CDC_REPLICAS:
         out << x.getCdcReplicas();
+        break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        out << x.getShardsWithReplicas();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -7527,6 +7629,15 @@ CdcReplicasResp& ShuckleRespContainer::setCdcReplicas() {
     auto& x = _data.emplace<17>();
     return x;
 }
+const ShardsWithReplicasResp& ShuckleRespContainer::getShardsWithReplicas() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARDS_WITH_REPLICAS);
+    return std::get<18>(_data);
+}
+ShardsWithReplicasResp& ShuckleRespContainer::setShardsWithReplicas() {
+    _kind = ShuckleMessageKind::SHARDS_WITH_REPLICAS;
+    auto& x = _data.emplace<18>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -7598,6 +7709,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::CDC_REPLICAS:
         setCdcReplicas() = other.getCdcReplicas();
         break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        setShardsWithReplicas() = other.getShardsWithReplicas();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7647,6 +7761,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<16>(_data).packedSize();
     case ShuckleMessageKind::CDC_REPLICAS:
         return std::get<17>(_data).packedSize();
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        return std::get<18>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7707,6 +7823,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CDC_REPLICAS:
         std::get<17>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        std::get<18>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7770,6 +7889,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC_REPLICAS:
         _data.emplace<17>().unpack(buf);
         break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        _data.emplace<18>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7815,6 +7937,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getRegisterCdcReplica() == other.getRegisterCdcReplica();
     case ShuckleMessageKind::CDC_REPLICAS:
         return getCdcReplicas() == other.getCdcReplicas();
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        return getShardsWithReplicas() == other.getShardsWithReplicas();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7875,6 +7999,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::CDC_REPLICAS:
         out << x.getCdcReplicas();
+        break;
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+        out << x.getShardsWithReplicas();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

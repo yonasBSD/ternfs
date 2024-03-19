@@ -241,6 +241,7 @@ func (id *InodeId) UnmarshalJSON(b []byte) error {
 func MakeShardReplicaId(shard ShardId, replica ReplicaId) ShardReplicaId {
 	return ShardReplicaId((uint16(replica) << 8) | uint16(shard))
 }
+
 func (id ShardReplicaId) Shard() ShardId {
 	return ShardId(id & 0xFF)
 }
@@ -254,7 +255,7 @@ func (id ShardReplicaId) String() string {
 }
 
 func (id ShardReplicaId) MarshalJSON() ([]byte, error) {
-	return []byte(id.String()), nil
+	return []byte(fmt.Sprintf("%q", id.String())), nil
 }
 
 func (id *ShardReplicaId) UnmarshalJSON(b []byte) error {
@@ -1892,6 +1893,22 @@ type ShardBlockServicesReq struct {
 
 type ShardBlockServicesResp struct {
 	BlockServices []BlockServiceId
+}
+
+type ShardsWithReplicasReq struct{}
+
+type ShardWithReplicasInfo struct {
+	Id       ShardReplicaId
+	IsLeader bool
+	Ip1      [4]byte
+	Port1    uint16
+	Ip2      [4]byte
+	Port2    uint16
+	LastSeen EggsTime
+}
+
+type ShardsWithReplicasResp struct {
+	Shards []ShardWithReplicasInfo
 }
 
 // --------------------------------------------------------------------

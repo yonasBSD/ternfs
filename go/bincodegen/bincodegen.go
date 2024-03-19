@@ -1783,6 +1783,11 @@ func main() {
 			reflect.TypeOf(msgs.CdcReplicasReq{}),
 			reflect.TypeOf(msgs.CdcReplicasResp{}),
 		},
+		{
+			0x14,
+			reflect.TypeOf(msgs.ShardsWithReplicasReq{}),
+			reflect.TypeOf(msgs.ShardsWithReplicasResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -1885,6 +1890,7 @@ func main() {
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
 		reflect.TypeOf(msgs.Stat{}),
+		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
 	}...)...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)

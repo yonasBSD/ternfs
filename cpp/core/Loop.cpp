@@ -23,6 +23,10 @@ static void setupSigsets() {
 thread_local std::atomic<bool> stopLoop;
 
 static void stopLoopHandler(int signum) {
+    // make sure leader will terminate
+    if (getpid() != gettid()) {
+        pthread_kill(getpid(), SIGTERM);
+    }
     stopLoop.store(true, std::memory_order_release);
 }
 

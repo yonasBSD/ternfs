@@ -139,15 +139,18 @@ void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loop
         for (;;) {
             int ret = pthread_timedjoin_np(loop->_thread, nullptr, &timeout);
             if (ret == EINTR) { continue; }
-            if (ret != 0 && ret == ETIMEDOUT) {
-                char name[16];
-                {
-                    int ret = pthread_getname_np(loop->_thread, name, sizeof(name));
-                    if (ret != 0) {
-                        throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_getname_np");
+            if (ret != 0) {
+                if (ret == ETIMEDOUT) {
+                    char name[16];
+                    {
+                        int ret = pthread_getname_np(loop->_thread, name, sizeof(name));
+                        if (ret != 0) {
+                            throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_getname_np");
+                        }
                     }
+                    throw EGGS_EXCEPTION("loop %s has not terminated in time, aborting", name);
                 }
-                throw EGGS_EXCEPTION("loop %s has not terminated in time, aborting", name);
+                throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_timedjoin_np");
             }
             break;
         }

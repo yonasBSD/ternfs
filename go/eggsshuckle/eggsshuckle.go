@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2374,6 +2375,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			for bs := range missingBlockServices {
 				bss = append(bss, bs)
 			}
+			sort.Strings(bss)
 			log.RaiseNC(replaceDecommedAlert, "decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
 		}
 
@@ -2384,6 +2386,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			for bs := range decommedWithFiles {
 				bss = append(bss, bs)
 			}
+			sort.Strings(bss)
 			log.RaiseNC(migrateDecommedAlert, "decommissioned block services still have files (including transient): %s", strings.Join(bss, " "))
 		}
 		log.Info("checked block services, sleeping for a minute")

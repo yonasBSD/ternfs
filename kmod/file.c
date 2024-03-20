@@ -919,6 +919,10 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
 
     if (unlikely(iocb->ki_flags & IOCB_DIRECT)) { return -ENOSYS; }
 
+    // make sure we have size information
+    int err = eggsfs_do_getattr(enode, false);
+    if (err) { return err; }
+
     eggsfs_debug("start of read loop, *ppos=%llu", *ppos);
     struct eggsfs_span* span = NULL;
     int span_read_attempts = 0;
@@ -1033,7 +1037,7 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
 
     BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
 
-    // size might not be filled in
+    // make sure we have size information
     int err = eggsfs_do_getattr(enode, false);
     if (err) { return ERR_PTR(err); }
 
@@ -1086,6 +1090,9 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     if (likely(smp_load_acquire(&enode->file.status) == EGGSFS_FILE_STATUS_READING)) {
+        // make sure we have size information
+        int err = eggsfs_do_getattr(enode, false);
+        if (err) { return err; }
         return generic_file_llseek(file, offset, whence);
     }
 

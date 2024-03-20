@@ -185,6 +185,14 @@ public:
             })
     {}
 
+    bool isInitialStart() {
+        auto it1 = std::unique_ptr<rocksdb::Iterator>(_sharedDb.db()->NewIterator({},_partitions[0].cf));
+        auto it2 = std::unique_ptr<rocksdb::Iterator>(_sharedDb.db()->NewIterator({},_partitions[1].cf));
+        it1->SeekToFirst();
+        it2->SeekToFirst();
+        return !(it1->Valid() || it2->Valid());
+    }
+
     bool init(bool initialStart) {
         bool initSuccess = true;
         auto metadataCF = _sharedDb.getCF(METADATA_CF_NAME);
@@ -383,6 +391,12 @@ public:
         _nomineeToken(LeaderToken(0,0))
     {}
 
+    bool isInitialStart() {
+        auto it = std::unique_ptr<rocksdb::Iterator>(_sharedDb.db()->NewIterator({},_cf));
+        it->SeekToFirst();
+        return !it->Valid();
+    }
+
     bool init(bool initialStart, LogIdx forcedLastReleased) {
         bool initSuccess = true;
         std::string value;
@@ -402,8 +416,8 @@ public:
             _lastReleased = ExternalValue<U64Value>::FromSlice(value)().u64();
             LOG_INFO(_env, "Loaded last released %s", _lastReleased);
         } else if (initialStart) {
-            LOG_INFO(_env, "Last released not found. Using %s", forcedLastReleased);
-            setLastReleased(forcedLastReleased);
+            LOG_INFO(_env, "Last released not found. Using %s", 0);
+            setLastReleased(0);
         } else {
             initSuccess = false;
             LOG_ERROR(_env, "Last released not found! Possible DB corruption!");
@@ -415,6 +429,11 @@ public:
         } else {
             initSuccess = false;
             LOG_ERROR(_env, "Last released time not found! Possible DB corruption!");
+        }
+        if (forcedLastReleased != 0) {
+            ALWAYS_ASSERT(_lastReleased < forcedLastReleased, "Forcing last released to go backwards is not possible. It would cause data inconsistency");
+            LOG_INFO(_env, "Forcing last released to %s", forcedLastReleased);
+            setLastReleased(forcedLastReleased);
         }
         return initSuccess;
     }
@@ -1336,12 +1355,11 @@ class Appender {
     static constexpr size_t IN_FLIGHT_MASK = LogsDB::IN_FLIGHT_APPEND_WINDOW - 1;
     static_assert((IN_FLIGHT_MASK & LogsDB::IN_FLIGHT_APPEND_WINDOW) == 0);
 public:
-    Appender(Env& env, ReqResp& reqResp, LogMetadata& metadata, LeaderElection& leaderElection, bool dontWaitForReplication, bool dontDoReplication) :
+    Appender(Env& env, ReqResp& reqResp, LogMetadata& metadata, LeaderElection& leaderElection, bool dontDoReplication) :
         _env(env),
         _reqResp(reqResp),
         _metadata(metadata),
         _leaderElection(leaderElection),
-        _donwWaitForReplication(dontWaitForReplication),
         _dontDoReplication(dontDoReplication),
         _currentIsLeader(false),
         _entriesStart(0),
@@ -1366,7 +1384,7 @@ public:
         for (; _entriesStart < _entriesEnd; ++_entriesStart) {
             auto offset = _entriesStart & IN_FLIGHT_MASK;
             auto& requestIds = _requestIds[offset];
-            if (_donwWaitForReplication || ReqResp::isQuorum(requestIds)) {
+            if (_dontDoReplication || ReqResp::isQuorum(requestIds)) {
                 ++newRelease;
                 entriesToWrite.emplace_back(std::move(_entries[offset]));
                 ALWAYS_ASSERT(newRelease == entriesToWrite.back().idx);
@@ -1490,7 +1508,6 @@ private:
     LogMetadata& _metadata;
     LeaderElection& _leaderElection;
 
-    const bool _donwWaitForReplication;
     const bool _dontDoReplication;
     bool _currentIsLeader;
     uint64_t _entriesStart;
@@ -1510,11 +1527,9 @@ public:
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
-        bool dontWaitForReplication,
         bool dontDoReplication,
         bool forceLeader,
         bool avoidBeingLeader,
-        bool initialStart,
         LogIdx forcedLastReleased)
     :
         _env(env),
@@ -1526,16 +1541,12 @@ public:
         _leaderElection(env, forceLeader, avoidBeingLeader, replicaId, _metadata, _partitions, _reqResp),
         _batchWriter(env,_reqResp, _leaderElection),
         _catchupReader(_reqResp, _metadata, _partitions, replicaId, lastRead),
-        _appender(_env, _reqResp, _metadata, _leaderElection, dontWaitForReplication, dontDoReplication)
+        _appender(_env, _reqResp, _metadata, _leaderElection, dontDoReplication)
     {
         LOG_INFO(_env, "Initializing LogsDB");
+        auto initialStart = _metadata.isInitialStart() && _partitions.isInitialStart();
         if (initialStart) {
             LOG_INFO(_env, "Initial start of LogsDB");
-        }
-
-        if (forcedLastReleased != 0) {
-            ALWAYS_ASSERT(initialStart);
-            LOG_INFO(_env, "Forcing last released to %s", forcedLastReleased);
         }
 
         auto initSuccess = _metadata.init(initialStart, forcedLastReleased);
@@ -1713,14 +1724,12 @@ LogsDB::LogsDB(
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
-        bool dontWaitForReplication,
         bool dontDoReplication,
         bool forceLeader,
         bool avoidBeingLeader,
-        bool initialStart,
         LogIdx forcedLastReleased)
 {
-    _impl = new LogsDBImpl(env, sharedDB, replicaId, lastRead, dontWaitForReplication, dontDoReplication, forceLeader, avoidBeingLeader, initialStart, forcedLastReleased);
+    _impl = new LogsDBImpl(env, sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
 }
 
 LogsDB::~LogsDB() {
@@ -1758,4 +1767,20 @@ void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries) {
 
 Duration LogsDB::getNextTimeout() const {
     return _impl->getNextTimeout();
+}
+
+void LogsDB::_getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut)  {
+    DataPartitions data(env, sharedDB);
+    bool initSuccess = data.init(false);
+    LogMetadata metadata(env,sharedDB, 0, data);
+    initSuccess = initSuccess && metadata.init(false, 0);
+    ALWAYS_ASSERT(initSuccess, "Failed to init LogsDB, check if you need to run with \"initialStart\" flag!");
+    lastReleasedOut = metadata.getLastReleased();
+
+    auto it = data.getIterator();
+    it.seek(lastReleasedOut + 1);
+    while(it.valid()) {
+        unreleasedLogEntriesOut.emplace_back(it.key());
+        ++it;
+    }
 }

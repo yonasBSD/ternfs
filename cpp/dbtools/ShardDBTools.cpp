@@ -2,9 +2,11 @@
 
 #include <memory>
 #include <rocksdb/slice.h>
+#include <vector>
 
 #include "Env.hpp"
 #include "LogsDB.hpp"
+#include "LogsDBTools.hpp"
 #include "ShardDB.hpp"
 #include "SharedRocksDB.hpp"
 
@@ -86,4 +88,33 @@ void ShardDBTools::verifyEqual(const std::string &db1Path, const std::string &db
         totalValueSize += valueSize;
     }
     LOG_INFO(env, "Databases identical! Compared %s cfs, %s key/value pairs. Total key size: %s, Total value size: %s", ShardDB::getColumnFamilyDescriptors().size(), totalKeysCompared, totalKeySize, totalValueSize);
+}
+
+std::ostream& operator<<(std::ostream& out, const std::vector<LogIdx>& indices) {
+    out << "[";
+    for (auto idx : indices) {
+        out << idx << ", ";
+    }
+    out << "]";
+    return out;
+}
+
+void ShardDBTools::outputUnreleasedState(const std::string& dbPath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon);
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions, dbPath);
+    LogIdx lastReleased;
+    std::vector<LogIdx> unreleasedLogEntries;
+
+    LogsDBTools::getUnreleasedLogEntries(env, sharedDb, lastReleased, unreleasedLogEntries);
+
+    LOG_INFO(env, "Last released: %s", lastReleased);
+    LOG_INFO(env, "Unreleased entries: %s", unreleasedLogEntries);
 }

@@ -720,7 +720,7 @@ private:
     std::vector<QueuedShardLogEntry> _logEntries;
 
     std::unique_ptr<LogsDB> _logsDB;
-    const bool _dontWaitForReplication;
+    const bool _dontDoReplication;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
     std::vector<LogsDBRequest *> _logsDBOutRequests;
@@ -747,7 +747,7 @@ public:
         Loop(logger, xmon, "writer"),
         _shared(shared),
         _maxWritesAtOnce(options.writeToLogsDB ? LogsDB::IN_FLIGHT_APPEND_WINDOW * 10 : MAX_WRITES_AT_ONCE),
-        _dontWaitForReplication(options.dontWaitForReplication),
+        _dontDoReplication(options.dontDoReplication),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
@@ -766,7 +766,7 @@ public:
         _requests.reserve(_maxWritesAtOnce);
 
         if (options.writeToLogsDB) {
-            _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontWaitForReplication, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.initialStart, options.initialStart ? _currentLogIndex : 0));
+            _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.forcedLastReleased));
             _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
             _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
         } else {
@@ -816,7 +816,7 @@ public:
             for (size_t i = 0; i < _logEntries.size(); ++i) {
                 if (logsDBEntries[i].idx == 0) {
                     // if we don't wait for replication the window gets cleared immediately
-                    ALWAYS_ASSERT(!_dontWaitForReplication);
+                    ALWAYS_ASSERT(!_dontDoReplication);
                     droppedDueToInFlightWindow = true;
                     LOG_INFO(_env, "Appended %s out of %s shard write requests. Log in flight windows is full. Dropping other entries", i, _logEntries.size());
                     break;
@@ -826,7 +826,7 @@ public:
             }
             logsDBEntries.clear();
 
-            if (_dontWaitForReplication) {
+            if (_dontDoReplication) {
                 // usually the state machine is moved by responses if we don't expect any we move it manually
                 _logsDBRequests.clear();
                 _logsDBResponses.clear();
@@ -848,7 +848,7 @@ public:
 
         _logsDB->readEntries(logsDBEntries);
         _outgoingLogEntries.reserve(logsDBEntries.size());
-        if (_dontWaitForReplication && _logsDB->isLeader()) {
+        if (_dontDoReplication && _logsDB->isLeader()) {
             ALWAYS_ASSERT(_inFlightEntries.size() == logsDBEntries.size());
         }
 
@@ -862,7 +862,7 @@ public:
             ALWAYS_ASSERT(_currentLogIndex == shardEntry.idx);
             auto it = _inFlightEntries.find(shardEntry.idx.u64);
 
-            if (_dontWaitForReplication  && _logsDB->isLeader()) {
+            if (_dontDoReplication  && _logsDB->isLeader()) {
                 ALWAYS_ASSERT(it != _inFlightEntries.end());
                 ALWAYS_ASSERT(shardEntry == it->second.logEntry);
             }
@@ -1384,7 +1384,7 @@ public:
     }
 };
 
-void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions& options) {
+void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& options) {
     int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
         logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
@@ -1420,11 +1420,10 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
         if (options.writeToLogsDB) {
             LOG_INFO(env, "Using LogsDB with options:");
-            LOG_INFO(env, "    dontWaitForReplication = '%s'", (int)options.dontWaitForReplication);
             LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
             LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
             LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
-            LOG_INFO(env, "    initialStart = '%s'", (int)options.initialStart);
+            LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
         }
     }
 
@@ -1469,6 +1468,11 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions
 
     ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
     env.clearAlert(dbInitAlert);
+
+    if (options.writeToLogsDB && options.dontDoReplication) {
+        options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
+    }
+
     ShardShared shared(sharedDB, blockServicesCache, shardDB);
 
     if (options.clearLogsDBData) {

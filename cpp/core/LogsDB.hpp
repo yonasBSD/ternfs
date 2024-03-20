@@ -80,18 +80,14 @@ public:
     LogsDB() = delete;
 
     // On start we verify last released data is less than 1.5 * PARTITION_TIME_SPAN old to guarantee we can catchup.
-    // If initialStart is set to true we skip the checks. In this case user is responsible to have their
-    // own state sufficiently up to date to be able to catch up
     LogsDB(
         Env& env,
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
-        bool dontWaitForReplication,
         bool dontDoReplication,
         bool forceLeader,
         bool avoidBeingLeader,
-        bool initialStart,
         LogIdx forcedLastReleased);
 
     ~LogsDB();
@@ -114,5 +110,7 @@ public:
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
     static void clearAllData(SharedRocksDB& shardDB);
 private:
+    friend class LogsDBTools;
+    static void _getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut);
     LogsDBImpl* _impl;
 };

@@ -122,7 +122,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
 TEST_CASE("LogsDBStandAloneLeader") {
     _setCurrentTime(eggsNow());
     LogIdx readUpTo = 100;
-    TempLogsDB db(LogLevel::LOG_ERROR, 0, readUpTo, true, true, true, false, true, readUpTo);
+    TempLogsDB db(LogLevel::LOG_ERROR, 0, readUpTo, true, true, false, readUpTo);
 
     std::vector<LogsDBRequest> inReq;
     std::vector<LogsDBResponse> inResp;
@@ -151,7 +151,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
 
 TEST_CASE("LogsDBAvoidBeingLeader") {
     _setCurrentTime(eggsNow());
-    TempLogsDB db(LogLevel::LOG_ERROR, 0, 0, false, false, false, true);
+    TempLogsDB db(LogLevel::LOG_ERROR, 0, 0, false, false, true);
     REQUIRE_FALSE(db->isLeader());
     std::vector<LogsDBRequest> inReq;
     std::vector<LogsDBResponse> inResp;

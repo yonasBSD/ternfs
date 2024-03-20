@@ -28,13 +28,14 @@ struct ShardOptions {
     bool xmonProd = false;
     bool metrics = false;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
-    bool dontWaitForReplication = false;
+
+    // LogsDB settings
+    bool writeToLogsDB = false;
     bool dontDoReplication = false;
     bool forceLeader = false;
     bool avoidBeingLeader = true;
-    bool initialStart = true;
-    bool writeToLogsDB = false;
+    LogIdx forcedLastReleased = 0;
     bool clearLogsDBData = false;
 };
 
-void runShard(ShardReplicaId shrid, const std::string& dbDir, const ShardOptions& options);
+void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& options);

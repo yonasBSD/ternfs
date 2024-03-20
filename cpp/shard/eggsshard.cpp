@@ -37,10 +37,10 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Enable metrics.\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
-    fprintf(stderr, " -use-logsdb LEADER|FOLLOWER|NONE\n");
-    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER or FOLLOWER or don't use. Default is don't use. Only replica id 0 can be leader.\n");
-    fprintf(stderr, " -no-replication\n");
-    fprintf(stderr, "    	Don't do replication or wait for it as LogsDB LEADER\n");
+    fprintf(stderr, " -use-logsdb LEADER|LEADER_NO_FOLLOWERS|FOLLOWER|NONE\n");
+    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER or don't use. Default is don't use.\n");
+    fprintf(stderr, " -force-last-released LogIdx\n");
+    fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
     fprintf(stderr, " -clear-logsdb-data\n");
     fprintf(stderr, "    	Removes all data in LogsDB. It can not be used in combination with -use-logsdb to avoid accidental use.\n");
 }
@@ -115,6 +115,15 @@ static Duration parseDuration(const std::string& arg) {
     size_t idx;
     uint64_t x = std::stoull(arg, &idx);
     return x * durationUnitMap.at(arg.substr(idx));
+}
+
+static LogIdx parseLogIdx(const std::string& arg) {
+    size_t idx;
+    uint64_t x = std::stoull(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff character in LogIdx %s", arg.c_str());
+    }
+    return x;
 }
 
 int main(int argc, char** argv) {
@@ -195,17 +204,20 @@ int main(int argc, char** argv) {
                 options.forceLeader = true;
                 options.avoidBeingLeader = false;
                 options.writeToLogsDB = true;
-                options.initialStart = true;
             } else if (logsDBMode == "FOLLOWER") {
                 options.writeToLogsDB = true;
+            } else if (logsDBMode == "LEADER_NO_FOLLOWERS") {
+                options.forceLeader = true;
+                options.avoidBeingLeader = false;
+                options.writeToLogsDB = true;
+                options.dontDoReplication = true;
             } else if (logsDBMode == "NONE") {
             } else {
                 fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
                 dieWithUsage();
             }
-        } else if (arg == "-no-replication") {
-            options.dontDoReplication = true;
-            options.dontWaitForReplication = true;
+        } else if (arg == "-force-last-released") {
+            options.forcedLastReleased = parseLogIdx(getNextArg());
         } else if (arg == "-clear-logsdb-data") {
             options.clearLogsDBData = true;
         } else{
@@ -215,6 +227,11 @@ int main(int argc, char** argv) {
 
     if (options.clearLogsDBData && options.writeToLogsDB) {
         fprintf(stderr, "LogsDB can not be cleared and used for writing in same run.");
+        dieWithUsage();
+    }
+
+    if (options.forceLeader && options.forcedLastReleased != 0) {
+        fprintf(stderr, "You can not forward release point on a LEADER replica.");
         dieWithUsage();
     }
 

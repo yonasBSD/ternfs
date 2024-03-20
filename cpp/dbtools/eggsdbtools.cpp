@@ -1,5 +1,6 @@
 
 
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -8,13 +9,20 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
 static void usage(const char* binary) {
-    fprintf(stderr, "Usage: %s verify-equal DB1_PATH DB2_PATH\n\n", binary);
+    fprintf(stderr, "Usage: %s COMMAND ARGS\n\n", binary);
     fprintf(stderr, "Commands:\n");
+    fprintf(stderr, "  verify-equal DB1_PATH DB2_PATH\n");
     fprintf(stderr, "    	Verifies two databases are the same.\n");
-    fprintf(stderr, "  Options:\n");
-    fprintf(stderr, "   -compare-logsdb\n");
-    fprintf(stderr, "    	Include logsdb comparison in verification. Only checks that common tail before release point is equal.\n");
+    fprintf(stderr, "  unreleased-state DB_PATH\n");
+    fprintf(stderr, "    	Outputs state of unreleased entries in DB.\n");
+
 }
+
+enum class Command : uint8_t {
+    NONE,
+    VERIFY_EQUAL,
+    UNRELEASED_STATE,
+};
 
 int main(int argc, char** argv) {
     const auto dieWithUsage = [&argv]() {
@@ -24,6 +32,7 @@ int main(int argc, char** argv) {
     if (argc == 1) {
         dieWithUsage();
     }
+    auto command = Command::NONE;
 
     std::string db1Path;
     std::string db2Path;
@@ -39,13 +48,27 @@ int main(int argc, char** argv) {
         };
         std::string arg = argv[i];
         if (arg == "verify-equal") {
+            command = Command::VERIFY_EQUAL;
             db1Path = getNextArg();
             db2Path = getNextArg();
-        } else {
+        } else if (arg == "unreleased-state") {
+            command = Command::UNRELEASED_STATE;
+            db1Path = getNextArg();
+        } else{
             dieWithUsage();
         }
     }
 
-    ShardDBTools::verifyEqual(db1Path, db2Path);
+    switch (command) {
+    case Command::NONE:
+        dieWithUsage();
+    case Command::VERIFY_EQUAL:
+        ShardDBTools::verifyEqual(db1Path, db2Path);
+      break;
+    case Command::UNRELEASED_STATE:
+        ShardDBTools::outputUnreleasedState(db1Path);
+      break;
+    }
+
     return 0;
 }

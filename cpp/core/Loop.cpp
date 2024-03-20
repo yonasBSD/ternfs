@@ -119,8 +119,7 @@ void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loop
 
     // start waiting
     while (!stopLoop.load()) {
-        struct timespec timeout { .tv_sec = 60*60*24 };
-        int ret = ppoll(nullptr, 0, &timeout, &blockingSigset);
+        int ret = Loop::sleep(1_hours);
         if (ret < 0 && errno != EINTR) {
             throw SYSCALL_EXCEPTION("ppoll");
         }

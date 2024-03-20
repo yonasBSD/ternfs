@@ -46,7 +46,7 @@ public:
             pause = _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * wyhash64_double(&_rand)));
             LOG_DEBUG(_env, "periodic step failed, next step at %s", t + pause);
         }
-        if (sleep(pause) < 0) {
+        if (Loop::sleep(pause) < 0) {
             if (errno == EINTR) { return; }
             throw SYSCALL_EXCEPTION("sleep");
         }

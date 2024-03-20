@@ -635,7 +635,7 @@ public:
             _sendVecs[i].clear();
         }
 
-        if (unlikely(poll(_shared.socks.data(), 1 + (_shared.socks[1].fd != 0), -1) < 0)) {
+        if (unlikely(Loop::poll(_shared.socks.data(), 1 + (_shared.socks[1].fd != 0), -1) < 0)) {
             if (errno == EINTR) { return; }
             throw SYSCALL_EXCEPTION("poll");
         }

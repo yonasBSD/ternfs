@@ -21,11 +21,12 @@ static void setupSigsets() {
 }
 
 thread_local std::atomic<bool> stopLoop;
+static pthread_t mainThread;
 
 static void stopLoopHandler(int signum) {
     // make sure leader will terminate
-    if (getpid() != gettid()) {
-        pthread_kill(getpid(), SIGTERM);
+    if (pthread_self() != mainThread) {
+        pthread_kill(mainThread, SIGTERM);
     }
     stopLoop.store(true, std::memory_order_release);
 }
@@ -103,6 +104,10 @@ void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loop
             throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_sigmask");
         }
     }
+
+    // fill in mainThread -- important to do this _before_
+    // setting up the signal handler
+    mainThread = pthread_self();
 
     // setup signal handler
     {

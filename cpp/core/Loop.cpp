@@ -21,11 +21,11 @@ static void setupSigsets() {
 }
 
 thread_local std::atomic<bool> stopLoop;
-static pthread_t mainThread;
+static std::atomic<pthread_t> mainThread;
 
 static void stopLoopHandler(int signum) {
     // make sure leader will terminate
-    if (pthread_self() != mainThread) {
+    if (pthread_self() != mainThread.load(std::memory_order_acquire)) {
         pthread_kill(mainThread, SIGTERM);
     }
     stopLoop.store(true, std::memory_order_release);
@@ -107,7 +107,7 @@ void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loop
 
     // fill in mainThread -- important to do this _before_
     // setting up the signal handler
-    mainThread = pthread_self();
+    mainThread.store(pthread_self(), std::memory_order_release);
 
     // setup signal handler
     {

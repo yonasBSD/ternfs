@@ -34,12 +34,14 @@ static std::string generateErrString(const std::string& what, int err) {
 
 struct ShuckleSock {
     int fd;
-    ~ShuckleSock() { close(fd); }
+    ShuckleSock(int fd_) : fd(fd_) {}
+    ShuckleSock(const ShuckleSock&) = delete;
+    ShuckleSock(ShuckleSock&& s) : fd(s.fd) { s.fd = -1; }
+    ~ShuckleSock() { if (fd >= 0) { close(fd); } }
 };
 
 static ShuckleSock shuckleSock(const std::string& host, uint16_t port, Duration timeout, std::string& errString) {
-    ShuckleSock sock;
-    sock.fd = connectToHost(host, port, errString);
+    ShuckleSock sock(connectToHost(host, port, errString));
 
     if (sock.fd >= 0) {
         struct timeval tv;

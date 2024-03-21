@@ -95,6 +95,11 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
 
     int ret = 0;
     if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, enode->getattr_async_seqno)) {
+        // Schedule the work immediately, so that we can't end up in the situation where
+        // the async completes before we schedule the work and we run the complete twice.
+        BUG_ON(!schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies));
+        ihold(&enode->inode); // we need the request until we're done
+
         u64 ts = get_jiffies_64();
         if (smp_load_acquire(&enode->getattr_expiry) > ts) {
             eggsfs_debug("getattr fresh enough, skipping");
@@ -122,8 +127,6 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
             }
         }
         ret = 1;
-        ihold(&enode->inode); // we need the request until we're done
-        schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies);
     } else {
         // no goto out -- we don't hold the latch
         return ret;
@@ -131,7 +134,13 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
 
 out:
     if (ret <= 0) {
-        eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+        // The timeout might have already ran, in which case it'll be the one
+        // releasing the latch.
+        bool was_pending = cancel_delayed_work_sync(&enode->getattr_async_work);
+        if (was_pending) {
+            iput(&enode->inode);
+            eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+        }
     }
     return ret;
 }

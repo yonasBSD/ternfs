@@ -383,7 +383,8 @@ int eggsfs_shard_soft_unlink_file(struct eggsfs_fs_info* info, u64 dir, u64 file
         eggsfs_soft_unlink_file_resp_get_delete_creation_time(&ctx, start, delete_creation_time_resp);
         eggsfs_soft_unlink_file_resp_get_end(&ctx, delete_creation_time_resp, end);
         eggsfs_soft_unlink_file_resp_get_finish(&ctx, end);
-        if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+        if (attempts > 1 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+            eggsfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (check_deleted_edge(info, dir, file, name, name_len, creation_time, true)) {
                 ctx.err = 0;
@@ -424,7 +425,8 @@ int eggsfs_shard_rename(
         eggsfs_same_directory_rename_resp_get_end(&ctx, resp_new_creation_time, end);
         eggsfs_same_directory_rename_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+        if (attempts > 1 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+            eggsfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, dir, target, old_name, old_name_len, old_creation_time, false) &&
@@ -1124,7 +1126,8 @@ int eggsfs_cdc_rmdir(struct eggsfs_fs_info* info, u64 owner_dir, u64 target, u64
         eggsfs_soft_unlink_directory_resp_get_start(&ctx, start);
         eggsfs_soft_unlink_directory_resp_get_end(&ctx, start, end);
         eggsfs_soft_unlink_directory_resp_get_finish(&ctx, end);
-        if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+        if (attempts > 1 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+            eggsfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (check_deleted_edge(info, owner_dir, target, name, name_len, creation_time, true)) {
                 ctx.err = 0;
@@ -1168,7 +1171,8 @@ int eggsfs_cdc_rename_directory(
         eggsfs_rename_directory_resp_get_end(&ctx, resp_new_creation_time, end);
         eggsfs_rename_directory_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+        if (attempts > 1 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+            eggsfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&
@@ -1218,7 +1222,8 @@ int eggsfs_cdc_rename_file(
         eggsfs_rename_file_resp_get_end(&ctx, resp_new_creation_time, end);
         eggsfs_rename_file_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 0 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+        if (attempts > 1 && ctx.err == EGGSFS_ERR_EDGE_NOT_FOUND) {
+            eggsfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&

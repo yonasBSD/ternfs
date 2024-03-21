@@ -13,6 +13,8 @@
 #include "wq.h"
 #include "span.h"
 
+// Some services (samba) try to preallocate larger files, but can handle
+// the failure or absence of ftruncate().
 unsigned eggsfs_disable_ftruncate = 0;
 
 static struct kmem_cache* eggsfs_inode_cachep;

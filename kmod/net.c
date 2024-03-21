@@ -375,9 +375,11 @@ static struct sk_buff* eggsfs_metadata_wait_request(
         BUG_ON(!req->req.skb);
         u64 elapsed = get_jiffies_64() - state->start_t;
         u64 late_threshold = (req->req.shard < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
+        const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
         if (unlikely(elapsed > late_threshold)) {
-            const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
             eggsfs_info("late request: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
+        } else {
+            eggsfs_debug("completed request req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
         }
         inc_latency_bucket(shard, kind, elapsed);
         int bincode_err = 0;

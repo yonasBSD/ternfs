@@ -186,7 +186,73 @@ func main() {
 	prod := flag.Bool("prod", false, "Use production shuckle endpoint.")
 
 	var log *lib.Logger
-	var c *client.Client
+	var mbClient *client.Client
+	var clientMu sync.RWMutex
+	defer func() {
+		clientMu.Lock()
+		if mbClient != nil {
+			mbClient.Close()
+		}
+		clientMu.Unlock()
+	}()
+	getClient := func() *client.Client {
+		clientMu.RLock()
+		if mbClient != nil {
+			clientMu.RUnlock()
+			return mbClient
+		}
+		clientMu.Lock()
+		if mbClient != nil {
+			clientMu.Unlock()
+			return mbClient
+		}
+		if *shuckleAddress == "" {
+			clientMu.Unlock()
+			panic("You need to specify -shuckle (or -prod).\n")
+		}
+		var err error
+		c, err := client.NewClient(log, nil, *shuckleAddress)
+		if err != nil {
+			clientMu.Unlock()
+			panic(fmt.Errorf("could not create client: %v", err))
+		}
+		mbClient = c
+		shardTimeouts := client.DefaultShardTimeout
+		printTimeouts := false
+		if *shardInitialTimeout > 0 {
+			printTimeouts = true
+			shardTimeouts.Initial = *shardInitialTimeout
+		}
+		if *shardMaxTimeout > 0 {
+			printTimeouts = true
+			shardTimeouts.Max = *shardMaxTimeout
+		}
+		if *shardOverallTimeout >= 0 {
+			printTimeouts = true
+			shardTimeouts.Overall = *shardOverallTimeout
+		}
+		mbClient.SetShardTimeouts(&shardTimeouts)
+		cdcTimeouts := client.DefaultCDCTimeout
+		if *cdcInitialTimeout > 0 {
+			printTimeouts = true
+			cdcTimeouts.Initial = *cdcInitialTimeout
+		}
+		if *cdcMaxTimeout > 0 {
+			printTimeouts = true
+			cdcTimeouts.Max = *cdcMaxTimeout
+		}
+		if *cdcOverallTimeout >= 0 {
+			printTimeouts = true
+			cdcTimeouts.Overall = *cdcOverallTimeout
+		}
+		mbClient.SetCDCTimeouts(&cdcTimeouts)
+		if printTimeouts {
+			log.Info("shard timeouts: %+v", shardTimeouts)
+			log.Info("CDC timeouts: %+v", cdcTimeouts)
+		}
+		clientMu.Unlock()
+		return mbClient
+	}
 
 	commands = make(map[string]commandSpec)
 
@@ -196,7 +262,7 @@ func main() {
 		dirInfoCache := client.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
 			state := &cleanup.CollectDirectoriesState{}
-			if err := cleanup.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+			if err := cleanup.CollectDirectoriesInAllShards(log, getClient(), dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
 				panic(err)
 			}
 		} else {
@@ -204,9 +270,8 @@ func main() {
 			if dirId.Type() != msgs.DIRECTORY {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
-			defer c.Close()
 			var stats cleanup.CollectDirectoriesStats
-			if err := cleanup.CollectDirectory(log, c, dirInfoCache, &stats, dirId); err != nil {
+			if err := cleanup.CollectDirectory(log, getClient(), dirInfoCache, &stats, dirId); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)
@@ -226,11 +291,11 @@ func main() {
 			state := &cleanup.DestructFilesState{}
 			opts := &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
-				if err := cleanup.DestructFilesInAllShards(log, c, opts, state); err != nil {
+				if err := cleanup.DestructFilesInAllShards(log, getClient(), opts, state); err != nil {
 					panic(err)
 				}
 			} else {
-				if err := cleanup.DestructFiles(log, c, opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+				if err := cleanup.DestructFiles(log, getClient(), opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
 					panic(err)
 				}
 			}
@@ -242,7 +307,7 @@ func main() {
 			stats := cleanup.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-			if err := cleanup.DestructFile(log, c, &stats, fileId, 0, destructFileCookie); err != nil {
+			if err := cleanup.DestructFile(log, getClient(), &stats, fileId, 0, destructFileCookie); err != nil {
 				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
 			}
 			log.Info("finished destructing %v, stats: %+v", fileId, stats)
@@ -327,17 +392,17 @@ func main() {
 			for _, blockServiceId := range *bss {
 				log.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := cleanup.MigrateBlocksInAllShards(log, c, &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocksInAllShards(log, getClient(), &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := cleanup.MigrateBlocksInFile(log, c, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := cleanup.MigrateBlocksInFile(log, getClient(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := cleanup.MigrateBlocks(log, c, &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocks(log, getClient(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
@@ -381,7 +446,7 @@ func main() {
 				}
 			}
 		}
-		if err := c.ShardRequest(log, shard, req, resp); err != nil {
+		if err := getClient().ShardRequest(log, shard, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -420,7 +485,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := c.CDCRequest(log, req, resp); err != nil {
+		if err := getClient().CDCRequest(log, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -459,7 +524,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := c.MergeDirectoryInfo(log, id, entry); err != nil {
+		if err := getClient().MergeDirectoryInfo(log, id, entry); err != nil {
 			panic(err)
 		}
 	}
@@ -473,7 +538,7 @@ func main() {
 	removeDirInfoTag := removeDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
 	removeDirInfoRun := func() {
 		id := msgs.InodeId(*removeDirInfoU64)
-		if err := c.RemoveDirectoryInfoEntry(log, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
+		if err := getClient().RemoveDirectoryInfoEntry(log, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
 			panic(err)
 		}
 	}
@@ -498,7 +563,7 @@ func main() {
 			}
 		}
 		bufPool := lib.NewBufPool()
-		fileId, err := c.CreateFile(log, bufPool, client.NewDirInfoCache(), path, input)
+		fileId, err := getClient().CreateFile(log, bufPool, client.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}
@@ -521,12 +586,12 @@ func main() {
 				panic(err)
 			}
 		}
-		id, err := c.ResolvePath(log, *cpOutofInput)
+		id, err := getClient().ResolvePath(log, *cpOutofInput)
 		if err != nil {
 			panic(err)
 		}
 		bufPool := lib.NewBufPool()
-		r, err := c.ReadFile(log, bufPool, id)
+		r, err := getClient().ReadFile(log, bufPool, id)
 		if err != nil {
 			panic(err)
 		}
@@ -736,9 +801,9 @@ func main() {
 	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
 	fileSizesRun := func() {
 		if *fileSizesBrief {
-			outputBriefFileSizes(log, c)
+			outputBriefFileSizes(log, getClient())
 		} else {
-			outputFullFileSizes(log, c)
+			outputFullFileSizes(log, getClient())
 		}
 	}
 	commands["file-sizes"] = commandSpec{
@@ -757,7 +822,7 @@ func main() {
 		go func() {
 			err := Parwalk(
 				log,
-				c,
+				getClient(),
 				"/",
 				func(parent, id msgs.InodeId, path string) error {
 					if id.Type() == msgs.DIRECTORY {
@@ -768,7 +833,7 @@ func main() {
 					}
 					resp := msgs.FileSpansResp{}
 					for {
-						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := getClient().ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							log.ErrorNoAlert("could not get spans for file %q, id %v", id, path)
 							return err
 						}
@@ -823,7 +888,7 @@ func main() {
 				req := msgs.VisitFilesReq{}
 				resp := msgs.VisitFilesResp{}
 				for {
-					if err := c.ShardRequest(log, shid, &req, &resp); err != nil {
+					if err := getClient().ShardRequest(log, shid, &req, &resp); err != nil {
 						ch <- err
 						return
 					}
@@ -867,7 +932,7 @@ func main() {
 		startedAt := time.Now()
 		err := Parwalk(
 			log,
-			c,
+			getClient(),
 			*duDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if id.Type() == msgs.DIRECTORY {
@@ -875,7 +940,7 @@ func main() {
 					return nil
 				}
 				resp := msgs.StatFileResp{}
-				if err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+				if err := getClient().ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
 					return err
 				}
 				atomic.AddUint64(&totalSize, resp.Size)
@@ -917,7 +982,7 @@ func main() {
 	findRun := func() {
 		err := Parwalk(
 			log,
-			c,
+			getClient(),
 			*findDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if strings.HasSuffix(path, "/"+*findName) {
@@ -940,7 +1005,7 @@ func main() {
 	scrubFileRun := func() {
 		file := msgs.InodeId(*scrubFileId)
 		stats := &cleanup.ScrubState{}
-		if err := cleanup.ScrubFile(log, c, stats, file); err != nil {
+		if err := cleanup.ScrubFile(log, getClient(), stats, file); err != nil {
 			panic(err)
 		}
 		log.Info("scrub stats: %+v", stats)
@@ -952,7 +1017,7 @@ func main() {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := cleanup.ScrubState{}
-		if err := cleanup.ScrubFilesInAllShards(log, c, &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		if err := cleanup.ScrubFilesInAllShards(log, getClient(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 
@@ -962,15 +1027,96 @@ func main() {
 		run:   scrubRun,
 	}
 
+	kernelCountersCmd := flag.NewFlagSet("kernel-counters", flag.ExitOnError)
+	kernelCountersRun := func() {
+		{
+			header, err := parseKernelMetricsHeader("shard")
+			if err != nil {
+				panic(err)
+			}
+			counters, err := parseShardKernelCounters(header)
+			if err != nil {
+				panic(err)
+			}
+			for _, c := range counters {
+				log.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.ShardMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
+			}
+		}
+		{
+			header, err := parseKernelMetricsHeader("cdc")
+			if err != nil {
+				panic(err)
+			}
+			counters, err := parseCDCKernelCounters(header)
+			if err != nil {
+				panic(err)
+			}
+			for _, c := range counters {
+				log.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.CDCMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
+			}
+		}
+	}
+	commands["kernel-counters"] = commandSpec{
+		flags: kernelCountersCmd,
+		run:   kernelCountersRun,
+	}
+
+	kernelLatenciesCmd := flag.NewFlagSet("kernel-latencies", flag.ExitOnError)
+	kernelLatenciesRun := func() {
+		p := func(mh *kernelMetricsHeader, l *kernelLatencies, target float64) time.Duration {
+			totalCount := uint64(0)
+			for _, bin := range l.LatencyBins {
+				totalCount += bin
+			}
+			if totalCount == 0 {
+				return 0
+			}
+			p := float64(0)
+			for i, bin := range l.LatencyBins {
+				p += float64(bin) / float64(totalCount)
+				if p >= target {
+					return time.Duration(mh.UpperBoundValues[i])
+				}
+			}
+			panic("impossible")
+		}
+
+		{
+			header, err := parseKernelMetricsHeader("shard")
+			if err != nil {
+				panic(err)
+			}
+			latencies, err := parseShardKernelLatencies(header)
+			if err != nil {
+				panic(err)
+			}
+			for i := range latencies {
+				log.Info("%v: p50=%v p90=%v p99=%v", msgs.ShardMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
+			}
+		}
+		{
+			header, err := parseKernelMetricsHeader("cdc")
+			if err != nil {
+				panic(err)
+			}
+			latencies, err := parseCDCKernelLatencies(header)
+			if err != nil {
+				panic(err)
+			}
+			for i := range latencies {
+				log.Info("%v: p50=%v p90=%v p99=%v", msgs.CDCMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
+			}
+		}
+	}
+	commands["kernel-latencies"] = commandSpec{
+		flags: kernelLatenciesCmd,
+		run:   kernelLatenciesRun,
+	}
+
 	flag.Parse()
 
 	if *prod {
 		*shuckleAddress = PROD_SHUCKLE_ADDRESS
-	}
-
-	if *shuckleAddress == "" {
-		fmt.Fprintf(os.Stderr, "You need to specify -shuckle (or -prod).\n")
-		os.Exit(2)
 	}
 
 	if *mtu != "" {
@@ -1009,46 +1155,6 @@ func main() {
 	}
 	spec.flags.Parse(flag.Args()[1:])
 	noRunawayArgs(spec.flags)
-
-	c, err := client.NewClient(log, nil, *shuckleAddress)
-	if err != nil {
-		panic(fmt.Errorf("could not create client: %v", err))
-	}
-	defer c.Close()
-
-	shardTimeouts := client.DefaultShardTimeout
-	printTimeouts := false
-	if *shardInitialTimeout > 0 {
-		printTimeouts = true
-		shardTimeouts.Initial = *shardInitialTimeout
-	}
-	if *shardMaxTimeout > 0 {
-		printTimeouts = true
-		shardTimeouts.Max = *shardMaxTimeout
-	}
-	if *shardOverallTimeout >= 0 {
-		printTimeouts = true
-		shardTimeouts.Overall = *shardOverallTimeout
-	}
-	c.SetShardTimeouts(&shardTimeouts)
-	cdcTimeouts := client.DefaultCDCTimeout
-	if *cdcInitialTimeout > 0 {
-		printTimeouts = true
-		cdcTimeouts.Initial = *cdcInitialTimeout
-	}
-	if *cdcMaxTimeout > 0 {
-		printTimeouts = true
-		cdcTimeouts.Max = *cdcMaxTimeout
-	}
-	if *cdcOverallTimeout >= 0 {
-		printTimeouts = true
-		cdcTimeouts.Overall = *cdcOverallTimeout
-	}
-	c.SetCDCTimeouts(&cdcTimeouts)
-	if printTimeouts {
-		log.Info("shard timeouts: %+v", shardTimeouts)
-		log.Info("CDC timeouts: %+v", cdcTimeouts)
-	}
 
 	spec.run()
 }

@@ -14,6 +14,8 @@
 
 #define EGGSFS_ROOT_INODE 0x2000000000000000ull
 
+extern unsigned eggsfs_disable_ftruncate;
+
 struct eggsfs_file_span;
 
 struct eggsfs_inode_policy {

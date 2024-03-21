@@ -13,6 +13,8 @@
 #include "wq.h"
 #include "span.h"
 
+unsigned eggsfs_disable_ftruncate = 0;
+
 static struct kmem_cache* eggsfs_inode_cachep;
 
 #define MSECS_TO_JIFFIES(_ms) (((u64)_ms * HZ) / 1000ull)
@@ -411,6 +413,9 @@ done:
 static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     struct inode* inode = dentry->d_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
+
+    if (eggsfs_disable_ftruncate) { return -ENOSYS; }
+
     BUG_ON(!inode_is_locked(inode));
 
     if (smp_load_acquire(&enode->file.status) != EGGSFS_FILE_STATUS_WRITING) {
@@ -421,7 +426,7 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     loff_t epos = attr->ia_size;
 
     if (epos < ppos) {
-        eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos)
+        eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos);
         return -EINVAL;
     }
     if (epos == ppos) {

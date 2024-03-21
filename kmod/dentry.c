@@ -310,6 +310,7 @@ int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode
     // thought so, but I'm not sure.
     if (!err) {
         old_dentry->d_time = new_creation_time; // used by d_revalidate
+        enode->edge_creation_time = new_creation_time;
         struct eggsfs_inode* new_edir = EGGSFS_I(new_dir);
         enode->block_policy = new_edir->block_policy;
         enode->span_policy = new_edir->span_policy;

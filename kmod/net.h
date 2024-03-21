@@ -72,7 +72,7 @@ int eggsfs_metadata_send_request(
 void eggsfs_metadata_remove_request(struct eggsfs_metadata_socket* sock, u64 request_id);
 
 struct sk_buff* eggsfs_metadata_request(
-    struct eggsfs_metadata_socket* sock, s16 shard_id, u64 req_id, void* p, u32 len, u32* attempts, const atomic64_t* ip_data1, const atomic64_t* ip_data2
+    struct eggsfs_metadata_socket* sock, s16 shard_id, u64 req_id, void* p, u32 len, const atomic64_t* ip_data1, const atomic64_t* ip_data2, u32* attempts
 );
 
 int eggsfs_metadata_request_nowait(struct eggsfs_metadata_socket *sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2);

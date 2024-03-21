@@ -415,9 +415,9 @@ struct sk_buff* eggsfs_metadata_request(
     u64 req_id,
     void* p,
     u32 len,
-    u32* attempts,
     const atomic64_t* addr_data1,
-    const atomic64_t* addr_data2
+    const atomic64_t* addr_data2,
+    u32* attempts
 ) {
     struct eggsfs_metadata_sync_request req;
     init_completion(&req.comp);
@@ -426,6 +426,7 @@ struct sk_buff* eggsfs_metadata_request(
     req.req.shard = shard_id;
 
     struct eggsfs_metadata_request_state state;
+    struct sk_buff* skb = NULL;
 
     eggsfs_metadata_request_init(sock, &req.req, &state);
 
@@ -433,15 +434,21 @@ struct sk_buff* eggsfs_metadata_request(
 
     for (;;) {
         int err = eggsfs_metadata_send_request(sock, addr_data1, addr_data2, &req.req, p, len, &state);
-        if (err < 0) { return ERR_PTR(err); }
-        struct sk_buff* skb = eggsfs_metadata_wait_request(sock, &req, shard_id, kind, &state);
-        if (IS_ERR(skb)) {
-            err = PTR_ERR(skb);
-            if (err == -ETIMEDOUT) { continue; }
-            return ERR_PTR(err);
+        if (err < 0) {
+            skb = ERR_PTR(err);
+            goto out;
         }
-        return skb;
+        skb = eggsfs_metadata_wait_request(sock, &req, shard_id, kind, &state);
+        if (IS_ERR(skb)) {
+            if (PTR_ERR(skb) == -ETIMEDOUT) { continue; }
+            goto out;
+        }
+        break;
     }
+
+out:
+    *attempts = state.attempts;
+    return skb;
 }
 
 #if 0

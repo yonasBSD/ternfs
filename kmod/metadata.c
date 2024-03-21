@@ -120,7 +120,7 @@ static int finish_resp(struct sk_buff* skb, u8 kind, struct eggsfs_bincode_get_c
 
 
 static struct sk_buff* eggsfs_send_shard_req(struct eggsfs_fs_info* info, int shid, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
-    return eggsfs_metadata_request(&info->sock, shid, req_id, ctx->start, ctx->cursor-ctx->start, attempts, &info->shard_addrs1[shid], &info->shard_addrs2[shid]);
+    return eggsfs_metadata_request(&info->sock, shid, req_id, ctx->start, ctx->cursor-ctx->start, &info->shard_addrs1[shid], &info->shard_addrs2[shid], attempts);
 }
 
 #define EGGSFS_CDC_HEADER_SIZE (4 + 8 + 1) // protocol, reqId, kind
@@ -171,7 +171,7 @@ static void prepare_cdc_resp_ctx(struct sk_buff* skb, u64 req_id, u8 kind, struc
     prepare_cdc_resp_ctx(skb, req_id, kind, &ctx);
 
 static struct sk_buff* eggsfs_send_cdc_req(struct eggsfs_fs_info* info, u64 req_id, struct eggsfs_bincode_put_ctx* ctx, u32* attempts) {
-    return eggsfs_metadata_request(&info->sock, -1, req_id, ctx->start, ctx->cursor-ctx->start, attempts, &info->cdc_addr1, &info->cdc_addr2);
+    return eggsfs_metadata_request(&info->sock, -1, req_id, ctx->start, ctx->cursor-ctx->start, &info->cdc_addr1, &info->cdc_addr2, attempts);
 }
 
 int eggsfs_shard_lookup(struct eggsfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time) {

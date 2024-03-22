@@ -2220,12 +2220,15 @@ func statsWriter(ll *lib.Logger, st *state) {
 func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	staleAlert := ll.NewNCAlert(0)
+
+	staleBlockServicesAlerts := make(map[msgs.BlockServiceId]*lib.XmonNCAlert)
+	staleShardsAlerts := make(map[msgs.ShardId]*lib.XmonNCAlert)
+	staleCDCAlert := ll.NewNCAlert(0)
+	staleCDCAlert.SetAppType(lib.XMON_DAYTIME)
 
 	for {
 		<-ticker.C
 
-		alerts := []string{}
 		now := msgs.Now()
 		thresh := uint64(now) - uint64(staleDelta.Nanoseconds())
 
@@ -2234,8 +2237,6 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}
 
 		n := sql.Named
-		var id uint64
-		var ts msgs.EggsTime
 
 		st.mutex.Lock()
 		_, err := st.db.Exec(
@@ -2262,14 +2263,31 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			}
 			defer rows.Close()
 
+			badBlockServices := make(map[msgs.BlockServiceId]struct{})
 			for rows.Next() {
 				var fd []byte
+				var id uint64
+				var ts msgs.EggsTime
 				err = rows.Scan(&id, &fd, &ts)
 				if err != nil {
 					ll.RaiseAlert("error decoding blockService row: %s", err)
 					return
 				}
-				alerts = append(alerts, fmt.Sprintf("stale blockservice %v, fd %s (seen %s ago)", id, fd, formatLastSeen(ts)))
+				bsId := msgs.BlockServiceId(id)
+				badBlockServices[bsId] = struct{}{}
+				alert, found := staleBlockServicesAlerts[bsId]
+				if !found {
+					alert = ll.NewNCAlert(0)
+					alert.SetAppType(lib.XMON_DAYTIME)
+					staleBlockServicesAlerts[bsId] = alert
+				}
+				ll.RaiseNC(alert, "stale blockservice %v, fd %s (seen %s ago)", id, fd, formatLastSeen(ts))
+			}
+			for bsId, alert := range staleBlockServicesAlerts {
+				if _, found := badBlockServices[bsId]; !found {
+					ll.ClearNC(alert)
+					delete(staleBlockServicesAlerts, bsId)
+				}
 			}
 		}()
 
@@ -2281,13 +2299,24 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			}
 			defer rows.Close()
 
+			badShards := make(map[msgs.ShardId]struct{})
 			for rows.Next() {
+				var id uint64
+				var ts msgs.EggsTime
 				err = rows.Scan(&id, &ts)
 				if err != nil {
 					ll.RaiseAlert("error decoding shard row: %s", err)
 					return
 				}
-				alerts = append(alerts, fmt.Sprintf("stale shard %d (last seen %s ago)", id, formatLastSeen(ts)))
+				shId := msgs.ShardId(id)
+				badShards[shId] = struct{}{}
+				alert, found := staleShardsAlerts[shId]
+				if !found {
+					alert = ll.NewNCAlert(0)
+					alert.SetAppType(lib.XMON_DAYTIME)
+					staleShardsAlerts[shId] = alert
+				}
+				ll.RaiseNC(alert, "stale shard %v (seen %s ago)", shId, formatLastSeen(ts))
 			}
 		}()
 
@@ -2299,22 +2328,21 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			}
 			defer rows.Close()
 
+			stale := false
 			for rows.Next() {
+				stale = true
+				var ts msgs.EggsTime
 				err = rows.Scan(&ts)
 				if err != nil {
 					ll.RaiseAlert("error decoding cdc row: %s", err)
 					return
 				}
-				alerts = append(alerts, fmt.Sprintf("stale cdc (last seen %s ago)", formatLastSeen(ts)))
+				ll.RaiseNC(staleCDCAlert, "stale cdc (last seen %s ago)", formatLastSeen(ts))
+			}
+			if !stale {
+				ll.ClearNC(staleCDCAlert)
 			}
 		}()
-
-		if len(alerts) == 0 {
-			ll.ClearNC(staleAlert)
-			continue
-		}
-		msg := strings.Join(alerts, "\n")
-		ll.RaiseNC(staleAlert, msg)
 	}
 }
 

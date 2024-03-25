@@ -431,7 +431,7 @@ public:
             LOG_ERROR(_env, "Last released time not found! Possible DB corruption!");
         }
         if (forcedLastReleased != 0) {
-            ALWAYS_ASSERT(_lastReleased < forcedLastReleased, "Forcing last released to go backwards is not possible. It would cause data inconsistency");
+            ALWAYS_ASSERT(_lastReleased <= forcedLastReleased, "Forcing last released to go backwards is not possible. It would cause data inconsistency");
             LOG_INFO(_env, "Forcing last released to %s", forcedLastReleased);
             setLastReleased(forcedLastReleased);
         }

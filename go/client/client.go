@@ -928,14 +928,11 @@ type Client struct {
 	cdcTimeout           *lib.ReqTimeouts
 	blockTimeout         *lib.ReqTimeouts
 	requestIdCounter     uint64
+	addrsRefreshTicker   *time.Ticker
+	addrsRefreshClose    chan (struct{})
 }
 
-// Create a new client by acquiring the CDC and Shard connection details from Shuckle.
-func NewClient(
-	log *lib.Logger,
-	shuckleTimeout *lib.ReqTimeouts,
-	shuckleAddress string,
-) (*Client, error) {
+func (c *Client) refreshAddrs(log *lib.Logger, shuckleTimeout *lib.ReqTimeouts, shuckleAddress string) error {
 	var shardIps [256][2][4]byte
 	var shardPorts [256][2]uint16
 	var cdcIps [2][4]byte
@@ -944,12 +941,12 @@ func NewClient(
 		log.Info("Getting shard/CDC info from shuckle at '%v'", shuckleAddress)
 		resp, err := ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.ShardsReq{})
 		if err != nil {
-			return nil, fmt.Errorf("could not request shards from shuckle: %w", err)
+			return fmt.Errorf("could not request shards from shuckle: %w", err)
 		}
 		shards := resp.(*msgs.ShardsResp)
 		for i, shard := range shards.Shards {
 			if shard.Port1 == 0 {
-				return nil, fmt.Errorf("shard %v not present in shuckle", i)
+				return fmt.Errorf("shard %v not present in shuckle", i)
 			}
 			shardIps[i][0] = shard.Ip1
 			shardPorts[i][0] = shard.Port1
@@ -958,18 +955,50 @@ func NewClient(
 		}
 		resp, err = ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
-			return nil, fmt.Errorf("could not request CDC from shuckle: %w", err)
+			return fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
 		cdc := resp.(*msgs.CdcResp)
 		if cdc.Port1 == 0 {
-			return nil, fmt.Errorf("CDC not present in shuckle")
+			return fmt.Errorf("CDC not present in shuckle")
 		}
 		cdcIps[0] = cdc.Ip1
 		cdcPorts[0] = cdc.Port1
 		cdcIps[1] = cdc.Ip2
 		cdcPorts[1] = cdc.Port2
 	}
-	return NewClientDirect(log, &cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	c.SetAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	return nil
+}
+
+// Create a new client by acquiring the CDC and Shard connection details from Shuckle. It
+// also refreshes the shard/cdc infos every minute.
+func NewClient(
+	log *lib.Logger,
+	shuckleTimeout *lib.ReqTimeouts,
+	shuckleAddress string,
+) (*Client, error) {
+	c, err := NewClientDirectNoAddrs(log)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.refreshAddrs(log, shuckleTimeout, shuckleAddress); err != nil {
+		return nil, err
+	}
+	c.addrsRefreshTicker = time.NewTicker(time.Minute)
+	c.addrsRefreshClose = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-c.addrsRefreshClose:
+				return
+			case <-c.addrsRefreshTicker.C:
+				if err := c.refreshAddrs(log, shuckleTimeout, shuckleAddress); err != nil {
+					log.RaiseAlert("could not refresh shard & cdc addresses: %v", err)
+				}
+			}
+		}
+	}()
+	return c, nil
 }
 
 // Attach an optional counters object to track requests.
@@ -1057,21 +1086,6 @@ func NewClientDirectNoAddrs(
 	return c, nil
 }
 
-func NewClientDirect(
-	log *lib.Logger,
-	cdcIps *[2][4]byte,
-	cdcPorts *[2]uint16,
-	shardIps *[256][2][4]byte,
-	shardPorts *[256][2]uint16,
-) (c *Client, err error) {
-	c, err = NewClientDirectNoAddrs(log)
-	if err != nil {
-		return nil, err
-	}
-	c.SetAddrs(cdcIps, cdcPorts, shardIps, shardPorts)
-	return c, nil
-}
-
 func uint64ToUDPAddr(addr uint64) *net.UDPAddr {
 	udpAddr := &net.UDPAddr{}
 	udpAddr.IP = []byte{byte(addr >> 24), byte(addr >> 16), byte(addr >> 8), byte(addr)}
@@ -1116,6 +1130,8 @@ func (c *Client) SetAddrs(
 }
 
 func (c *Client) Close() {
+	c.addrsRefreshClose <- struct{}{}
+	c.addrsRefreshTicker.Stop()
 	c.clientMetadata.close()
 	c.writeBlockProcessors.close()
 	c.fetchBlockProcessors.close()

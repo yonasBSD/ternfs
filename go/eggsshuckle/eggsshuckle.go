@@ -247,6 +247,9 @@ func newState(
 		cdcTimeout.Overall = 5 * time.Minute
 		st.client.SetCDCTimeouts(&cdcTimeout)
 	}
+	if err := refreshClient(log, st); err != nil {
+		return nil, err
+	}
 	return st, err
 }
 
@@ -407,14 +410,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 			continue
 		}
 		ll.ClearNC(blockServicesAlert)
-
-		client, err := refreshClient(ll, s)
-		if err != nil {
-			ll.RaiseAlert("error refreshing client: %v", err)
-			time.Sleep(sleepInterval)
-			continue
-		}
-
+		client := s.client
 		for _, bs := range blockServices {
 			// For each blockservice we check shards in random order, otherwise we may overload shard 0
 			for i := 0; i < 256; i++ {
@@ -575,12 +571,18 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 	if err != nil {
 		return nil, err
 	}
+	if err := refreshClient(ll, s); err != nil {
+		return nil, err
+	}
 	return &msgs.RegisterShardResp{}, err
 }
 
 func handleRegisterShardReplica(ll *lib.Logger, s *state, req *msgs.RegisterShardReplicaReq) (*msgs.RegisterShardReplicaResp, error) {
 	err := handleRegisterShardCommon(ll, s, req)
 	if err != nil {
+		return nil, err
+	}
+	if err := refreshClient(ll, s); err != nil {
 		return nil, err
 	}
 	return &msgs.RegisterShardReplicaResp{}, err
@@ -717,27 +719,31 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 	return &msgs.CdcReplicasResp{Replicas: ret[:]}, nil
 }
 
-func handleRegisterCdc(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
-	err := registerCDCReplicaCommon(s, &msgs.RegisterCdcReplicaReq{0, true, msgs.AddrsInfo{req.Ip1, req.Port1, req.Ip2, req.Port2}})
+func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
+	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReplicaReq{0, true, msgs.AddrsInfo{req.Ip1, req.Port1, req.Ip2, req.Port2}})
 	if err != nil {
 		log.RaiseAlert("error registering cdc: %s", err)
 		return nil, err
 	}
-
+	if err := refreshClient(log, s); err != nil {
+		return nil, err
+	}
 	return &msgs.RegisterCdcResp{}, nil
 }
 
-func handleRegisterCdcReplica(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) (*msgs.RegisterCdcReplicaResp, error) {
-	err := registerCDCReplicaCommon(s, req)
+func handleRegisterCDCReplica(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) (*msgs.RegisterCdcReplicaResp, error) {
+	err := registerCDCReplicaCommon(log, s, req)
 	if err != nil {
 		log.RaiseAlert("error registering cdc replica: %s", err)
 		return nil, err
 	}
-
+	if err := refreshClient(log, s); err != nil {
+		return nil, err
+	}
 	return &msgs.RegisterCdcReplicaResp{}, nil
 }
 
-func registerCDCReplicaCommon(s *state, req *msgs.RegisterCdcReplicaReq) error {
+func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) error {
 	if req.Replica > 4 {
 		return msgs.INVALID_REPLICA
 	}
@@ -966,9 +972,9 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	case *msgs.CdcReplicasReq:
 		resp, err = handleCdcReplicas(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
-		resp, err = handleRegisterCdc(log, s, whichReq)
+		resp, err = handleRegisterCDC(log, s, whichReq)
 	case *msgs.RegisterCdcReplicaReq:
-		resp, err = handleRegisterCdcReplica(log, s, whichReq)
+		resp, err = handleRegisterCDCReplica(log, s, whichReq)
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.BlockServiceReq:
@@ -1480,14 +1486,14 @@ type directoryData struct {
 	Info         []directoryInfoEntry
 }
 
-func refreshClient(log *lib.Logger, state *state) (*client.Client, error) {
+func refreshClient(log *lib.Logger, state *state) error {
 	shards, err := state.selectShards()
 	if err != nil {
-		return nil, fmt.Errorf("error reading shards: %s", err)
+		return fmt.Errorf("error reading shards: %s", err)
 	}
 	cdc, err := state.selectCDC()
 	if err != nil {
-		return nil, fmt.Errorf("error reading cdc: %s", err)
+		return fmt.Errorf("error reading cdc: %s", err)
 	}
 
 	var shardIps [256][2][4]byte
@@ -1505,7 +1511,7 @@ func refreshClient(log *lib.Logger, state *state) (*client.Client, error) {
 	cdcIps[1] = cdc.ip2
 	cdcPorts[1] = cdc.port2
 	state.client.SetAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
-	return state.client, nil
+	return nil
 }
 
 func normalizePath(path string) string {
@@ -1599,10 +1605,7 @@ func handleInode(
 			if id == msgs.ROOT_DIR_INODE_ID && path != "/" && path != "" {
 				return errorPage(http.StatusBadRequest, "bad root inode id")
 			}
-			c, err := refreshClient(log, state)
-			if err != nil {
-				panic(err)
-			}
+			c := state.client
 			if id == msgs.NULL_INODE_ID {
 				mbId := lookup(log, c, path)
 				if mbId == nil {
@@ -1836,12 +1839,7 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 			if mimeType == "" {
 				mimeType = "application/x-binary"
 			}
-
-			client, err := refreshClient(log, st)
-			if err != nil {
-				panic(err)
-			}
-
+			client := st.client
 			statResp := msgs.StatFileResp{}
 			err = client.ShardRequest(log, fileId.Shard(), &msgs.StatFileReq{Id: fileId}, &statResp)
 			if err == msgs.FILE_NOT_FOUND {
@@ -1983,10 +1981,7 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
-				client, err := refreshClient(log, st)
-				if err != nil {
-					return sendJsonErr(w, err, http.StatusInternalServerError)
-				}
+				client := st.client
 				if err := client.CDCRequest(log, req, resp); err != nil {
 					return sendJsonErr(w, err, http.StatusInternalServerError)
 				}
@@ -2007,10 +2002,7 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
-				client, err := refreshClient(log, st)
-				if err != nil {
-					return sendJsonErr(w, err, http.StatusInternalServerError)
-				}
+				client := st.client
 				if err := client.ShardRequest(log, shid, req, resp); err != nil {
 					return sendJsonErr(w, err, http.StatusInternalServerError)
 				}

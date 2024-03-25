@@ -43,6 +43,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
     fprintf(stderr, " -clear-logsdb-data\n");
     fprintf(stderr, "    	Removes all data in LogsDB. It can not be used in combination with -use-logsdb to avoid accidental use.\n");
+    fprintf(stderr, " -shuckle-stats\n");
+    fprintf(stderr, "    	Insert shuckle histogram stats.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -196,6 +198,8 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
+        } else if (arg == "-shuckle-stats") {
+            options.shuckleStats = true;
         } else if (arg == "-transient-deadline-interval") {
             options.transientDeadlineInterval = parseDuration(getNextArg());
         } else if (arg == "-use-logsdb") {

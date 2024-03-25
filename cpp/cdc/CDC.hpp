@@ -18,6 +18,7 @@ struct CDCOptions {
     bool xmon = false;
     bool xmonProd = false;
     bool metrics = false;
+    bool shuckleStats = false;
     ReplicaId replicaId = 0;
     ReplicaId leaderReplicaId = 0;
 };

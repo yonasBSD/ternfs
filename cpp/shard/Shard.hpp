@@ -27,6 +27,7 @@ struct ShardOptions {
     bool xmon = false;
     bool xmonProd = false;
     bool metrics = false;
+    bool shuckleStats = false;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 
     // LogsDB settings

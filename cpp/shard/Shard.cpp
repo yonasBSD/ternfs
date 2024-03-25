@@ -1483,7 +1483,9 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shrid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shrid, options, shared)));
+    if (options.shuckleStats) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shrid, options, shared)));
+    }
     if (options.metrics) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shrid, shared)));
     }

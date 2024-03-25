@@ -2310,6 +2310,12 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				}
 				ll.RaiseNC(alert, "stale shard %v (seen %s ago)", shId, formatLastSeen(ts))
 			}
+			for shardId, alert := range staleShardsAlerts {
+				if _, found := badShards[shardId]; !found {
+					ll.ClearNC(alert)
+					delete(staleShardsAlerts, shardId)
+				}
+			}
 		}()
 
 		func() {

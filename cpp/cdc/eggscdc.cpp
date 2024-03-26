@@ -160,6 +160,8 @@ int main(int argc, char** argv) {
             options.metrics = true;
         } else if (arg == "-leader-replica-id") {
             options.leaderReplicaId = parseReplicaId(getNextArg());
+        } else if (arg == "-shuckle-stats") {
+            options.shuckleStats = true;
         } else{
             args.emplace_back(std::move(arg));
         }

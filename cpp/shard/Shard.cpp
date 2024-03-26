@@ -673,7 +673,6 @@ public:
 
         // write out write requests to queue
         {
-            _logEntries.clear();
             size_t numLogEntries = _logEntries.size();
             if (numLogEntries > 0) {
                 LOG_DEBUG(_env, "pushing %s log entries to writer", numLogEntries);

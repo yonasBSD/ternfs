@@ -303,10 +303,14 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
         InodeId thisFile = NULL_INODE_ID;
         uint64_t expectedNextOffset = 0;
+        uint64_t analyzedSpans = 0;
+        uint64_t analyzedFiles = 0;
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            analyzedSpans++;
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
             if (spanK().fileId() == NULL_INODE_ID) { continue; }
             if (spanK().fileId() != thisFile) {
+                analyzedFiles++;
                 expectedNextOffset = 0;
                 thisFile = spanK().fileId();
             }
@@ -343,11 +347,15 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 }
             }
         }
+        ROCKS_DB_CHECKED(it->status());
+        LOG_INFO(env, "Analyzed %s spans in %s files", analyzedSpans, analyzedFiles);
     }
 
-    const auto filesPass = [&env, db, &options, &filesWithSpans]<typename T>(rocksdb::ColumnFamilyHandle* cf) {
+    const auto filesPass = [&env, db, &options, &filesWithSpans]<typename T>(rocksdb::ColumnFamilyHandle* cf, const std::string& what) {
+        uint64_t analyzedFiles = 0;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, cf));
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            analyzedFiles++;
             auto fileK = ExternalValue<InodeIdKey>::FromSlice(it->key());
             InodeId fileId = fileK().id();
             auto fileV = ExternalValue<T>::FromSlice(it->value());
@@ -359,22 +367,24 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 LOG_ERROR(env, "Spans tell us file %s should be of size %s, but it actually has size %s", fileId, spansSize->second, fileV().fileSize());
             }
         }
+        ROCKS_DB_CHECKED(it->status());
+        LOG_INFO(env, "Analyzed %s %s", analyzedFiles, what);
     };
 
     LOG_INFO(env, "Files pass");
-    filesPass.template operator()<FileBody>(filesCf);
+    filesPass.template operator()<FileBody>(filesCf, "files");
 
     LOG_INFO(env, "Transient files pass");
-    filesPass.template operator()<TransientFileBody>(transientFilesCf);
+    filesPass.template operator()<TransientFileBody>(transientFilesCf, "transient files");
 
     LOG_INFO(env, "Block services to files pass");
     {
         uint64_t foundItems = 0;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, blockServicesToFilesCf));
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
-            foundItems++;
             auto k = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
             auto v = ExternalValue<I64Value>::FromSlice(it->value());
+            if (v().i64() != 0) { foundItems++; }
             auto expected = blockServicesToFiles.find(std::pair<BlockServiceId, InodeId>(k().blockServiceId(), k().fileId()));
             if (expected == blockServicesToFiles.end() && v().i64() != 0) {
                 LOG_ERROR(env, "Found spurious block services to file entry for block service %s, file %s, with count %s", k().blockServiceId(), k().fileId(), v().i64());
@@ -383,8 +393,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 LOG_ERROR(env, "Found wrong block services to file entry for block service %s, file %s, expected count %s, got %s", k().blockServiceId(), k().fileId(), expected->second, v().i64());
             }
         }
+        ROCKS_DB_CHECKED(it->status());
         if (foundItems != blockServicesToFiles.size()) {
             LOG_ERROR(env, "Expected %s block services to files, got %s", blockServicesToFiles.size(), foundItems);
         }
+        LOG_INFO(env, "Analyzed %s block service to files entries", foundItems);
     }
 }

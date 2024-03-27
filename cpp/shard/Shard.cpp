@@ -765,14 +765,11 @@ public:
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
 
-        if (options.writeToLogsDB && false) {
+        if (options.writeToLogsDB) {
             _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.forcedLastReleased));
             _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
             _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
         }
-
-        ALWAYS_ASSERT(shrid.replicaId() == 0);
-        _shared.isLeader.store(true, std::memory_order_relaxed);
     }
 
     virtual ~ShardWriter() = default;

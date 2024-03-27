@@ -18,12 +18,6 @@ static void usage(const char* binary) {
 
 }
 
-enum class Command : uint8_t {
-    NONE,
-    VERIFY_EQUAL,
-    UNRELEASED_STATE,
-};
-
 int main(int argc, char** argv) {
     const auto dieWithUsage = [&argv]() {
         usage(argv[0]);
@@ -32,10 +26,7 @@ int main(int argc, char** argv) {
     if (argc == 1) {
         dieWithUsage();
     }
-    auto command = Command::NONE;
 
-    std::string db1Path;
-    std::string db2Path;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
             if (i+1 >= argc) {
@@ -48,26 +39,15 @@ int main(int argc, char** argv) {
         };
         std::string arg = argv[i];
         if (arg == "verify-equal") {
-            command = Command::VERIFY_EQUAL;
-            db1Path = getNextArg();
-            db2Path = getNextArg();
+            std::string db1Path = getNextArg();
+            std::string db2Path = getNextArg();
+            ShardDBTools::verifyEqual(db1Path, db2Path);
         } else if (arg == "unreleased-state") {
-            command = Command::UNRELEASED_STATE;
-            db1Path = getNextArg();
-        } else{
+            std::string db1Path = getNextArg();
+            ShardDBTools::outputUnreleasedState(db1Path);
+        } else {
             dieWithUsage();
         }
-    }
-
-    switch (command) {
-    case Command::NONE:
-        dieWithUsage();
-    case Command::VERIFY_EQUAL:
-        ShardDBTools::verifyEqual(db1Path, db2Path);
-      break;
-    case Command::UNRELEASED_STATE:
-        ShardDBTools::outputUnreleasedState(db1Path);
-      break;
     }
 
     return 0;

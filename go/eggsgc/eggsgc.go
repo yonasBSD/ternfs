@@ -256,7 +256,8 @@ func main() {
 			NumWorkersPerShard: *collectDirectoriesWorkersPerShard,
 			WorkersQueueSize:   *collectDirectoriesWorkersQueueSize,
 		}
-		for i := 0; i < 256; i++ {
+		// skip shard 0 after 2024-03-24 incident, we want to check it throroughly first
+		for i := 1; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -273,7 +274,8 @@ func main() {
 			NumWorkersPerShard: *destructFilesWorkersPerShard,
 			WorkersQueueSize:   *destructFilesWorkersQueueSize,
 		}
-		for i := 0; i < 256; i++ {
+		// skip shard 0 after 2024-03-24 incident, we want to check it throroughly first
+		for i := 1; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -314,7 +316,8 @@ func main() {
 			NumWorkersPerShard: *scrubWorkersPerShard,
 			WorkersQueueSize:   *scrubWorkersQueueSize,
 		}
-		for i := 0; i < 256; i++ {
+		// skip shard 0 after 2024-03-24 incident, we want to check it throroughly first
+		for i := 1; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

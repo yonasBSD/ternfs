@@ -595,26 +595,17 @@ func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShard
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	removeOtherLeadersQuery := ""
-	if req.IsLeader {
-		removeOtherLeadersQuery = `
-			UPDATE shards
-			SET is_leader = false
-			WHERE id = :leader_id AND replica_id <> :leader_replica_id;
-		`
-	}
-
 	n := sql.Named
-	res, err := s.db.Exec(removeOtherLeadersQuery+`
+	res, err := s.db.Exec(`
 		UPDATE shards
-		SET is_leader = :is_leader, ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
+		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
 		WHERE
 		id = :id AND replica_id = :replica_id AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)
-		`, n("id", req.Shrid.Shard()), n("leader_id", req.Shrid.Shard()), n("is_leader", req.IsLeader), n("replica_id", req.Shrid.Replica()), n("leader_replica_id", req.Shrid.Replica()), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
+		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
 		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
@@ -750,27 +741,16 @@ func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcRe
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	removeOtherLeadersQuery := ""
-	if req.IsLeader {
-		removeOtherLeadersQuery = `
-			UPDATE cdc
-			SET is_leader = false
-			WHERE replica_id <> :leader_replica_id;
-		`
-	}
-
 	n := sql.Named
-	res, err := s.db.Exec(removeOtherLeadersQuery+`
+	res, err := s.db.Exec(`
 		UPDATE cdc
-		SET is_leader = :is_leader, ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
+		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
 		WHERE replica_id = :replica_id AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)`,
 		n("replica_id", req.Replica),
-		n("leader_replica_id", req.Replica),
-		n("is_leader", req.IsLeader),
 		n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1),
 		n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2),
 		n("last_seen", msgs.Now()),
@@ -2599,7 +2579,7 @@ func initCDCTable(db *sql.DB) error {
 			continue
 		}
 		n := sql.Named
-		_, err = db.Exec("INSERT INTO cdc VALUES(:replica_id, false, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId))
+		_, err = db.Exec("INSERT INTO cdc VALUES(:replica_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId), n("is_leader", replicaId == 0))
 		if err != nil {
 			return err
 		}
@@ -2692,7 +2672,7 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 			continue
 		}
 		n := sql.Named
-		_, err = db.Exec("INSERT INTO shards VALUES(:id, :replica_id, false, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()))
+		_, err = db.Exec("INSERT INTO shards VALUES(:id, :replica_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()), n("is_leader", id.Replica() == 0))
 		if err != nil {
 			return err
 		}

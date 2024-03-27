@@ -58,9 +58,15 @@ public:
         memcpy(_data.data(), other._data.data(), T::MAX_SIZE);
     }
 
+    StaticValue(const T other) {
+        memset(_data.data(), 0, T::MAX_SIZE);
+        memcpy(_data.data(), other._data, other.size());
+    }
+
     StaticValue& operator=(const StaticValue& other) {
         if (this == &other) { return *this; }
         memcpy(_data.data(), other._data.data(), T::MAX_SIZE);
+        return *this;
     }
 
     StaticValue() = default;

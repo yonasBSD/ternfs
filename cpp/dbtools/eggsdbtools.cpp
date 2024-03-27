@@ -15,7 +15,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Verifies two databases are the same.\n");
     fprintf(stderr, "  unreleased-state DB_PATH\n");
     fprintf(stderr, "    	Outputs state of unreleased entries in DB.\n");
-
+    fprintf(stderr, "  fsck DB_PATH\n");
+    fprintf(stderr, "    	Performs various integrity checks on the RocksDB state. The RocksDB database will be opened as read only.\n");
 }
 
 int main(int argc, char** argv) {
@@ -45,6 +46,9 @@ int main(int argc, char** argv) {
         } else if (arg == "unreleased-state") {
             std::string db1Path = getNextArg();
             ShardDBTools::outputUnreleasedState(db1Path);
+        } else if (arg == "fsck") {
+            std::string dbPath = getNextArg();
+            ShardDBTools::fsck(dbPath);
         } else {
             dieWithUsage();
         }

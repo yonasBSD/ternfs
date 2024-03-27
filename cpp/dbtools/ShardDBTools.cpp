@@ -1,14 +1,18 @@
 #include "ShardDBTools.hpp"
 
 #include <memory>
+#include <rocksdb/db.h>
 #include <rocksdb/slice.h>
 #include <vector>
 
 #include "Env.hpp"
 #include "LogsDB.hpp"
 #include "LogsDBTools.hpp"
+#include "Msgs.hpp"
+#include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
 #include "SharedRocksDB.hpp"
+#include "ShardDBData.hpp"
 
 namespace rocksdb {
 std::ostream& operator<<(std::ostream& out, const rocksdb::Slice& slice) {
@@ -117,4 +121,269 @@ void ShardDBTools::outputUnreleasedState(const std::string& dbPath) {
 
     LOG_INFO(env, "Last released: %s", lastReleased);
     LOG_INFO(env, "Unreleased entries: %s", unreleasedLogEntries);
+}
+
+void ShardDBTools::fsck(const std::string& dbPath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon);
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions, dbPath);
+    auto db = sharedDb.db();
+
+    const rocksdb::Snapshot* snapshotPtr = db->GetSnapshot();
+    ALWAYS_ASSERT(snapshotPtr != nullptr);
+    const auto snapshotDeleter = [db](const rocksdb::Snapshot* ptr) { db->ReleaseSnapshot(ptr); };
+    std::unique_ptr<const rocksdb::Snapshot, decltype(snapshotDeleter)> snapshot(snapshotPtr, snapshotDeleter);
+
+    auto directoriesCf = sharedDb.getCF("directories");
+    auto edgesCf = sharedDb.getCF("edges");
+    auto filesCf = sharedDb.getCF("files");
+    auto spansCf = sharedDb.getCF("spans");
+    auto transientFilesCf = sharedDb.getCF("transientFiles");
+    auto blockServicesToFilesCf = sharedDb.getCF("blockServicesToFiles");
+
+    rocksdb::ReadOptions options;
+    options.snapshot = snapshot.get();
+
+    LOG_INFO(env, "This will take a while and will take 10s of gigabytes of RAM.");
+
+    // no duplicate ownership of any kind in edges
+    bool checkEdgeOrdering = true;
+
+    {
+        LOG_INFO(env, "Edges pass");
+        const rocksdb::ReadOptions options;
+        std::unordered_set<InodeId> ownedInodes;
+        auto dummyCurrentDirectory = InodeId::FromU64Unchecked(1ull << 63);
+        auto thisDir = dummyCurrentDirectory;
+        bool thisDirHasCurrentEdges = false;
+        EggsTime thisDirMaxTime = 0;
+        std::string thisDirMaxTimeEdge;
+        // the last edge for a given name, in a given directory
+        std::unordered_map<std::string, std::pair<StaticValue<EdgeKey>, StaticValue<SnapshotEdgeBody>>> thisDirLastEdges;
+        uint64_t analyzedEdges = 0;
+        uint64_t analyzedDirectories = 0;
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            analyzedEdges++;
+            auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+            if (edgeK().dirId() != thisDir) {
+                analyzedDirectories++;
+                if (thisDir != dummyCurrentDirectory) {
+                    auto dirIdK = InodeIdKey::Static(thisDir);
+                    std::string dirValue;
+                    auto status = db->Get(options, directoriesCf, dirIdK.toSlice(), &dirValue);
+                    if (status.IsNotFound()) {
+                        // the directory must exist
+                        LOG_ERROR(env, "Directory %s is referenced in edges, but it does not exist.", thisDir);
+                    } else {
+                        ROCKS_DB_CHECKED(status);
+                        auto dir = ExternalValue<DirectoryBody>(dirValue);
+                        // the mtime must be greater or equal than all edges
+                        if (dir().mtime() < thisDirMaxTime) {
+                            LOG_ERROR(env, "Directory %s has time %s, but max edge with name %s has greater time %s", thisDir, dir().mtime(), thisDirMaxTimeEdge, thisDirMaxTime);
+                        }
+                        // if we have current edges, the directory can't be snapshot
+                        if (thisDirHasCurrentEdges && thisDir != ROOT_DIR_INODE_ID && dir().ownerId() == NULL_INODE_ID) {
+                            LOG_ERROR(env, "Directory %s has current edges, but is snaphsot (no owner)", thisDir);
+                        }
+                    }
+                }
+                thisDir = edgeK().dirId();
+                thisDirLastEdges.clear();
+                thisDirHasCurrentEdges = false;
+                thisDirMaxTime = 0;
+            }
+            std::string name(edgeK().name().data(), edgeK().name().size());
+            InodeId ownedTargetId = NULL_INODE_ID;
+            EggsTime creationTime;
+            std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
+            std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;
+            if (edgeK().current()) {
+                currentEdge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
+                ownedTargetId = (*currentEdge)().targetId();
+                creationTime = (*currentEdge)().creationTime();
+                thisDirHasCurrentEdges = true;
+            } else {
+                snapshotEdge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
+                creationTime = edgeK().creationTime();
+                if ((*snapshotEdge)().targetIdWithOwned().extra()) {
+                    ownedTargetId = (*snapshotEdge)().targetIdWithOwned().id();
+                }
+            }
+            if (ownedTargetId != NULL_INODE_ID) {
+                if (ownedInodes.contains(ownedTargetId)) {
+                    LOG_ERROR(env, "Inode %s is owned twice!", ownedTargetId);
+                }
+                ownedInodes.emplace(ownedTargetId);
+            }
+            if (creationTime > thisDirMaxTime) {
+                thisDirMaxTime = creationTime;
+                thisDirMaxTimeEdge = name;
+            }
+            // No intra directory dangling pointers
+            if (ownedTargetId != NULL_INODE_ID && ownedTargetId.shard() == thisDir.shard()) {
+                auto idK = InodeIdKey::Static(ownedTargetId);
+                if (ownedTargetId.type() == InodeType::DIRECTORY) {
+                    std::string tmp;
+                    auto status = db->Get(options, directoriesCf, idK.toSlice(), &tmp);
+                    if (status.IsNotFound()) {
+                        LOG_ERROR(env, "Directory %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
+                    } else {
+                        ROCKS_DB_CHECKED(status);
+                    }
+                } else {
+                    std::string tmp;
+                    auto status = db->Get(options, filesCf, idK.toSlice(), &tmp);
+                    if (status.IsNotFound()) {
+                        LOG_ERROR(env, "File %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
+                    } else {
+                        ROCKS_DB_CHECKED(status);
+                    }
+                }
+            }
+            {
+                auto prevEdge = thisDirLastEdges.find(name);
+                if (prevEdge != thisDirLastEdges.end()) {
+                    EggsTime prevCreationTime = prevEdge->second.first().creationTime();
+                    // The edge must be newer than every non-current edge before it, with the exception of deletion edges
+                    // (when we override the deletion edge)
+                    if (
+                        (prevCreationTime > creationTime) ||
+                        (prevCreationTime == creationTime && !(snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID))
+                    ) {
+                        if (checkEdgeOrdering) {
+                            LOG_ERROR(env, "Name %s in directory %s has overlapping edges (%s >= %s).", name, edgeK().dirId(), prevCreationTime, creationTime);
+                        }
+                    }
+                    // Deletion edges are not preceded by another deletion edge
+                    if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID && prevEdge->second.second().targetIdWithOwned().id() == NULL_INODE_ID) {
+                        if (checkEdgeOrdering) {
+                            LOG_ERROR(env, "Deletion edge with name %s creation time %s is preceded by another deletion edge in directory %s", name, edgeK().creationTime(), thisDir);
+                        }
+                    }
+                } else {
+                    // Deletion edges are preceded by something not -- this is actually not enforced
+                    // by the schema, but by GC. So it's not a huge deal if it's wrong.
+                    if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID) {
+                        if (checkEdgeOrdering) {
+                            LOG_ERROR(env, "Deletion edge with name %s creation time %s is not preceded by anything in directory %s", name, edgeK().creationTime(), thisDir);
+                        }
+                    }
+                }
+            }
+            // Add last edge (only snapshot edges can have predecessors)
+            if (snapshotEdge) {
+                StaticValue<EdgeKey> staticEdgeK(edgeK());
+                StaticValue<SnapshotEdgeBody> staticEdgeV((*snapshotEdge)());
+                thisDirLastEdges[name] = {staticEdgeK, staticEdgeV};
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+        LOG_INFO(env, "Analyzed %s edges in %s directories", analyzedEdges, analyzedDirectories);
+    }
+
+    struct HashBlockServiceInodeId {
+        std::size_t operator () (const std::pair<BlockServiceId, InodeId>& k) const {
+            return std::hash<uint64_t>{}(k.first.u64) ^ std::hash<uint64_t>{}(k.second.u64);
+        }
+    };
+
+    std::unordered_map<std::pair<BlockServiceId, InodeId>, int64_t, HashBlockServiceInodeId> blockServicesToFiles;
+    std::unordered_map<InodeId, uint64_t> filesWithSpans; // file to expected size
+    {
+        LOG_INFO(env, "Spans pass");
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
+        InodeId thisFile = NULL_INODE_ID;
+        uint64_t expectedNextOffset = 0;
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
+            if (spanK().fileId() == NULL_INODE_ID) { continue; }
+            if (spanK().fileId() != thisFile) {
+                expectedNextOffset = 0;
+                thisFile = spanK().fileId();
+            }
+            // check that file exists (either transient or non)
+            {
+                auto idK = InodeIdKey::Static(thisFile);
+                std::string tmp;
+                auto status = db->Get(options, filesCf, idK.toSlice(), &tmp);
+                if (status.IsNotFound()) {
+                    auto status = db->Get(options, transientFilesCf, idK.toSlice(), &tmp);
+                    if (status.IsNotFound()) {
+                        LOG_ERROR(env, "We have a span for non-esistant file %s", thisFile);
+                    } else {
+                        ROCKS_DB_CHECKED(status);
+                    }
+                } else {
+                    ROCKS_DB_CHECKED(status);
+                }
+            }
+            // Record blocks
+            auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
+            filesWithSpans[spanK().fileId()] = spanK().offset() + spanV().spanSize();
+            if (spanK().offset() != expectedNextOffset) {
+                LOG_ERROR(env, "Expected offset %s, got %s in span for file %s", expectedNextOffset, spanK().offset(), thisFile);
+            }
+            expectedNextOffset = spanK().offset() + spanV().spanSize();
+            if (spanV().storageClass() == EMPTY_STORAGE) {
+                LOG_ERROR(env, "File %s has empty storage span at offset %s", thisFile, spanK().offset());
+            } else if (spanV().storageClass() != INLINE_STORAGE) {
+                const auto& spanBlock = spanV().blocksBody();
+                for (int i = 0; i < spanBlock.parity().blocks(); i++) {
+                    auto block = spanBlock.block(i);
+                    blockServicesToFiles[std::pair<BlockServiceId, InodeId>(block.blockService(), thisFile)] += 1;
+                }
+            }
+        }
+    }
+
+    const auto filesPass = [&env, db, &options, &filesWithSpans]<typename T>(rocksdb::ColumnFamilyHandle* cf) {
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, cf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto fileK = ExternalValue<InodeIdKey>::FromSlice(it->key());
+            InodeId fileId = fileK().id();
+            auto fileV = ExternalValue<T>::FromSlice(it->value());
+            if (fileV().fileSize() == 0) { continue; } // nothing in this
+            auto spansSize = filesWithSpans.find(fileId);
+            if (spansSize == filesWithSpans.end()) {
+                LOG_ERROR(env, "Could not find spans for non-zero-sized file %s", fileId);
+            } else if (spansSize->second != fileV().fileSize()) {
+                LOG_ERROR(env, "Spans tell us file %s should be of size %s, but it actually has size %s", fileId, spansSize->second, fileV().fileSize());
+            }
+        }
+    };
+
+    LOG_INFO(env, "Files pass");
+    filesPass.template operator()<FileBody>(filesCf);
+
+    LOG_INFO(env, "Transient files pass");
+    filesPass.template operator()<TransientFileBody>(transientFilesCf);
+
+    LOG_INFO(env, "Block services to files pass");
+    {
+        uint64_t foundItems = 0;
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, blockServicesToFilesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            foundItems++;
+            auto k = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
+            auto v = ExternalValue<I64Value>::FromSlice(it->value());
+            auto expected = blockServicesToFiles.find(std::pair<BlockServiceId, InodeId>(k().blockServiceId(), k().fileId()));
+            if (expected == blockServicesToFiles.end() && v().i64() != 0) {
+                LOG_ERROR(env, "Found spurious block services to file entry for block service %s, file %s, with count %s", k().blockServiceId(), k().fileId(), v().i64());
+            }
+            if (expected != blockServicesToFiles.end() && v().i64() != expected->second) {
+                LOG_ERROR(env, "Found wrong block services to file entry for block service %s, file %s, expected count %s, got %s", k().blockServiceId(), k().fileId(), expected->second, v().i64());
+            }
+        }
+        if (foundItems != blockServicesToFiles.size()) {
+            LOG_ERROR(env, "Expected %s block services to files, got %s", blockServicesToFiles.size(), foundItems);
+        }
+    }
 }

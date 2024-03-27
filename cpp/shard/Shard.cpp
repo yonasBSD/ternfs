@@ -769,6 +769,8 @@ public:
             _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.forcedLastReleased));
             _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
             _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
+        } else {
+            LogsDB::clearAllData(shared.sharedDB);
         }
     }
 
@@ -1471,10 +1473,6 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     }
 
     ShardShared shared(sharedDB, blockServicesCache, shardDB);
-
-    if (options.clearLogsDBData) {
-        LogsDB::clearAllData(sharedDB);
-    }
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));

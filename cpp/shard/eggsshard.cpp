@@ -41,8 +41,6 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER or don't use. Default is don't use.\n");
     fprintf(stderr, " -force-last-released LogIdx\n");
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
-    fprintf(stderr, " -clear-logsdb-data\n");
-    fprintf(stderr, "    	Removes all data in LogsDB. It can not be used in combination with -use-logsdb to avoid accidental use.\n");
     fprintf(stderr, " -shuckle-stats\n");
     fprintf(stderr, "    	Insert shuckle histogram stats.\n");
 }
@@ -222,16 +220,9 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-force-last-released") {
             options.forcedLastReleased = parseLogIdx(getNextArg());
-        } else if (arg == "-clear-logsdb-data") {
-            options.clearLogsDBData = true;
         } else{
             args.emplace_back(std::move(arg));
         }
-    }
-
-    if (options.clearLogsDBData && options.writeToLogsDB) {
-        fprintf(stderr, "LogsDB can not be cleared and used for writing in same run.");
-        dieWithUsage();
     }
 
     if (options.forceLeader && options.forcedLastReleased != 0) {

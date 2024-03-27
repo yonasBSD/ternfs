@@ -36,7 +36,6 @@ struct ShardOptions {
     bool forceLeader = false;
     bool avoidBeingLeader = true;
     LogIdx forcedLastReleased = 0;
-    bool clearLogsDBData = false;
 };
 
 void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& options);

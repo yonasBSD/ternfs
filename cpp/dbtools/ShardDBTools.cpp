@@ -1,5 +1,6 @@
 #include "ShardDBTools.hpp"
 
+#include <optional>
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/slice.h>

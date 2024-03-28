@@ -201,6 +201,7 @@ func main() {
 			clientMu.RUnlock()
 			return mbClient
 		}
+		clientMu.RUnlock()
 		clientMu.Lock()
 		if mbClient != nil {
 			clientMu.Unlock()

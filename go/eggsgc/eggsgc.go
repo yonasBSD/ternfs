@@ -119,6 +119,10 @@ func main() {
 		os.Exit(2)
 	}
 
+	if *collectDirectories {
+		fmt.Fprintf(os.Stderr, "Collect directories unavailable until fixed.")
+		os.Exit(2)
+	}
 	logOut := os.Stdout
 	if *logFile != "" {
 		var err error

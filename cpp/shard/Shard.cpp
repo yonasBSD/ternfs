@@ -1144,13 +1144,13 @@ public:
 
             _infoLoaded = true;
         }
-        std::string err;
         if (likely(_registerCompleted)) {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for shardId %s from shuckle", _shrid.shardId());
-            err = fetchShardReplicas(_shuckleHost, _shucklePort, 10_sec, _shrid, replicas);
-            if (!err.empty()) {
-                _env.updateAlert(_alert, "Failed getting shard replicas from shuckle: %s", err);
+            const auto [err, errStr] = fetchShardReplicas(_shuckleHost, _shucklePort, 10_sec, _shrid, replicas);
+            if (err == EINTR) { return false; }
+            if (err) {
+                _env.updateAlert(_alert, "Failed getting shard replicas from shuckle: %s", errStr);
                 return false;
             }
             if (_info != replicas[_shrid.replicaId().u8]) {
@@ -1178,9 +1178,10 @@ public:
         }
 
         LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _info);
-        err = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _info);
-        if (!err.empty()) {
-            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
+        const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _info);
+        if (err == EINTR) { return false; }
+        if (err) {
+            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
             return false;
         }
         _env.clearAlert(_alert);
@@ -1217,9 +1218,10 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
-        std::string err = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
-        if (!err.empty()) {
-            _env.updateAlert(_alert, "could not reach shuckle: %s", err);
+        const auto [err, errStr] = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
+        if (err == EINTR) { return false; }
+        if (err) {
+            _env.updateAlert(_alert, "could not reach shuckle: %s", errStr);
             return false;
         }
         if (_blockServices.empty()) {
@@ -1265,9 +1267,10 @@ public:
             _shared.errors[(int)kind].toStats(prefix.str(), _stats);
         }
         LOG_INFO(_env, "inserting stats");
-        std::string err = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
+        auto [err, errStr] = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
+        if (err == EINTR) { return false; }
         _stats.clear();
-        if (err.empty()) {
+        if (err == 0) {
             _env.clearAlert(_alert);
             for (ShardMessageKind kind : allShardMessageKind) {
                 _shared.timings[(int)kind].reset();
@@ -1275,7 +1278,7 @@ public:
             }
             return true;
         } else {
-            _env.updateAlert(_alert, "Could not insert stats: %s", err);
+            _env.updateAlert(_alert, "Could not insert stats: %s", errStr);
             return false;
         }
     }

@@ -287,7 +287,11 @@ EggsTime Xmon::_stepNextWakeup() {
 
     // Not connected, connect
     if (_fds[SOCK_FD].fd < 0) {
-        _fds[SOCK_FD].fd = connectToHost(_xmonHost, _xmonPort, errString);
+        {
+            auto [sock, err] = connectToHost(_xmonHost, _xmonPort);
+            _fds[SOCK_FD].fd = sock.release();
+            errString = err;
+        }
         CHECK_ERR_STRING(errString);
         LOG_INFO(_env, "connected to xmon %s:%s", _xmonHost, _xmonPort);
 

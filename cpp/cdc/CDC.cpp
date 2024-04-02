@@ -799,9 +799,10 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
-        std::string err = fetchShards(_shuckleHost, _shucklePort, 10_sec, _shards);
-        if (!err.empty()) {
-            _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, err);
+        const auto [err, errStr] = fetchShards(_shuckleHost, _shucklePort, 10_sec, _shards);
+        if (err == EINTR) { return false; }
+        if (err) {
+            _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, errStr);
             return false;
         }
         bool badShard = false;
@@ -874,13 +875,13 @@ public:
             _infoLoaded = true;
         }
 
-        std::string err;
         if(likely(_registerCompleted)) {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for CDC from shuckle");
-            err = fetchCDCReplicas(_shuckleHost, _shucklePort, 10_sec, replicas);
-            if (!err.empty()) {
-                _env.updateAlert(_alert, "Failed getting CDC replicas from shuckle: %s", err);
+            const auto [err, errStr] = fetchCDCReplicas(_shuckleHost, _shucklePort, 10_sec, replicas);
+            if (err == EINTR) { return false; }
+            if (err) {
+                _env.updateAlert(_alert, "Failed getting CDC replicas from shuckle: %s", errStr);
                 return false;
             }
             if (_info != replicas[_replicaId.u8]) {
@@ -894,9 +895,10 @@ public:
         }
 
         LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _info);
-        err = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _replicaId == _leaderReplicaId, _info);
-        if (!err.empty()) {
-            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", err);
+        const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _replicaId == _leaderReplicaId, _info);
+        if (err == EINTR) { return false; }
+        if (err) {
+            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
             return false;
         }
         _env.clearAlert(_alert);
@@ -925,7 +927,6 @@ public:
     virtual ~CDCStatsInserter() = default;
 
     virtual bool periodicStep() override {
-        std::string err;
         for (CDCMessageKind kind : allCDCMessageKind) {
             {
                 std::ostringstream prefix;
@@ -934,9 +935,10 @@ public:
                 _shared.errors[(int)kind].toStats(prefix.str(), _stats);
             }
         }
-        err = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
+        const auto [err, errStr] = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
+        if (err == EINTR) { return false; }
         _stats.clear();
-        if (err.empty()) {
+        if (err == 0) {
             _env.clearAlert(_alert);
             for (CDCMessageKind kind : allCDCMessageKind) {
                 _shared.timingsTotal[(int)kind].reset();
@@ -944,7 +946,7 @@ public:
             }
             return true;
         } else {
-            _env.updateAlert(_alert, "Could not insert stats: %s", err);
+            _env.updateAlert(_alert, "Could not insert stats: %s", errStr);
             return false;
         }
     }

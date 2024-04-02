@@ -5,8 +5,8 @@
 
 // The host here is the scheme + host + port, e.g. `http://localhost:5000`.
 //
-// If it returns a string, the request has failed and the string contains the
-// error. We only returns error strings for errors that might be transient
+// If the first number is non-zero, we errored out, and the element contains
+// an error. We only returns error strings for errors that might be transient
 // (e.g. we cannot connect to the server, or the connection dies), and crash
 // on things that are almost certainly not transient (e.g. bad data on
 // the wire).
@@ -14,7 +14,7 @@
 // This function does double duty -- it both gets all the block services
 // (the shard needs to know which ones exist to fill in addrs), but it also
 // fills in the block services for the shard specifically.
-std::string fetchBlockServices(
+std::pair<int, std::string> fetchBlockServices(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
@@ -23,7 +23,7 @@ std::string fetchBlockServices(
     std::vector<BlockServiceId>& currentBlockServices
 );
 
-std::string registerShardReplica(
+std::pair<int, std::string> registerShardReplica(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
@@ -32,7 +32,7 @@ std::string registerShardReplica(
     const AddrsInfo& info
 );
 
-std::string fetchShardReplicas(
+std::pair<int, std::string> fetchShardReplicas(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
@@ -40,7 +40,7 @@ std::string fetchShardReplicas(
     std::array<AddrsInfo, 5>& replicas
 );
 
-std::string registerCDCReplica(
+std::pair<int, std::string> registerCDCReplica(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
@@ -49,21 +49,21 @@ std::string registerCDCReplica(
     const AddrsInfo& info
 );
 
-std::string fetchCDCReplicas(
+std::pair<int, std::string> fetchCDCReplicas(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     std::array<AddrsInfo, 5>& replicas
 );
 
-std::string fetchShards(
+std::pair<int, std::string> fetchShards(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     std::array<ShardInfo, 256>& shards
 );
 
-std::string insertStats(
+std::pair<int, std::string> insertStats(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,

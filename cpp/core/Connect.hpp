@@ -19,7 +19,7 @@ public:
     }
 
     Sock(): _fd(-1) {}
-    Sock(int fd) : _fd(fd) { ALWAYS_ASSERT(_fd > 0); }
+    explicit Sock(int fd) : _fd(fd) { ALWAYS_ASSERT(_fd > 0); }
     Sock(const Sock&) = delete;
     Sock(Sock&& s) : _fd(s._fd) { s._fd = -1; }
     ~Sock() { if (_fd > 0) { close(_fd); _fd = -1; } }

@@ -39,7 +39,7 @@ std::pair<Sock, std::string> connectToHost(
             }
             std::string prefix = "resolve host " + host + ":" + std::to_string(port);
             if (res == EAI_ADDRFAMILY || res == EAI_AGAIN || res == EAI_NONAME) { // things that might be worth retrying
-                return {EIO, explicitGenerateErrString(prefix, res, gai_strerror(res))};
+                return {Sock::SockError(EIO), explicitGenerateErrString(prefix, res, gai_strerror(res))};
             }
             throw EGGS_EXCEPTION("%s: %s/%s", prefix, res, gai_strerror(res)); // we're probably hosed
         }

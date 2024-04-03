@@ -7,8 +7,8 @@ import (
 
 // Returns how many edges to remove according to the policy (as a prefix of the input).
 //
-// `edges` should be all the snapshot edges for a certain directory, oldest edge first,
-// possibly trailed by the current edge. No other current edges can be present.
+// `edges` should be all the snapshot edges for a certain name, oldest edge first. This
+// must include the current edge.
 //
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
@@ -17,9 +17,23 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 	if len(edges) == 0 {
 		return 0
 	}
+	// check that there is at most one current edge
+	for i := len(edges) - 1; i >= 0; i-- {
+		if edges[i].Current && i < len(edges)-1 {
+			panic(fmt.Errorf("found non-trailing current edge"))
+		}
+	}
+	// check that it's all the same name
+	name := edges[0].Name
+	for i := 0; i < len(edges); i++ {
+		if edges[i].Name != name {
+			panic(fmt.Errorf("got multiple names in edges (%v and %v)", name, edges[i].Name))
+		}
+	}
 	// Do not consider the trailing current edge, if present.
-	if edges[len(edges)-1].Current {
-		edges = edges[:len(edges)-1]
+	lastNonCurrentEdge := len(edges) - 1
+	if edges[lastNonCurrentEdge].Current {
+		lastNonCurrentEdge--
 	}
 	// Index dividing edges, so that all all edges[i] i < firstGoodEdgeVersions should be
 	// removed, while all edges[i] i >= firstGoodEdgeVersions should be kept.
@@ -32,8 +46,8 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 	// edge for it exists.
 	if policy.DeleteAfterVersions.Active() {
 		versionNumber := 0
-		for firstGoodEdgeVersions = len(edges) - 1; firstGoodEdgeVersions >= 0; firstGoodEdgeVersions-- {
-			edge := edges[firstGoodEdgeVersions]
+		for firstGoodEdgeVersions = lastNonCurrentEdge; firstGoodEdgeVersions >= 0; firstGoodEdgeVersions-- {
+			edge := &edges[firstGoodEdgeVersions]
 			if edge.Current {
 				panic(fmt.Errorf("unexpected current edge: %v", edge))
 			}
@@ -50,14 +64,39 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 	}
 	var firstGoodEdgeTime int
 	if policy.DeleteAfterTime.Active() {
-		for firstGoodEdgeTime = len(edges) - 1; firstGoodEdgeTime >= 0; firstGoodEdgeTime-- {
-			edge := edges[firstGoodEdgeTime]
+		for firstGoodEdgeTime = lastNonCurrentEdge; firstGoodEdgeTime >= 0; firstGoodEdgeTime-- {
+			edge := &edges[firstGoodEdgeTime]
 			if edge.Current {
 				panic(fmt.Errorf("unexpected current edge: %v", edge))
 			}
 			creationTime := edge.CreationTime.Time()
 			if now.Time().Sub(creationTime) > policy.DeleteAfterTime.Time() {
-				firstGoodEdgeTime++
+				// We found an edge that was created before the time we want.
+				// However, this is not enough: consider the case where we
+				// create a file, then delete it after 3 months. The owning
+				// snapshot edge will be older than `DeleteAfterTime`, but
+				// we still want to preserve it. What we really care is when
+				// the edge was overridden (by a delete or something else).
+				// We know that the overriding edge is not past deadline.
+				// So we just set the first good edge to the current one.
+				//
+				// Note that this problem is also present for non-owned edges,
+				// but in that case we can't rely on having a followup edge. But
+				// we try regardless. See <https://eulergamma.slack.com/archives/C03PCJMGAAC/p1712144860299789>.
+				if edge.TargetId.Extra() || (edge.TargetId.Id() != msgs.NULL_INODE_ID && firstGoodEdgeTime < len(edges)-1) {
+					// note that if the edge is owned, we are asserting that a next edge exists, which
+					// is exactly what we want.
+					nextEdge := &edges[firstGoodEdgeTime+1]
+					// This might be a current edge, i.e. not caught by this loop,
+					// so we need another check here.
+					if now.Time().Sub(nextEdge.CreationTime.Time()) > policy.DeleteAfterTime.Time() {
+						// The next edge is expired, mark current edge as bad.
+						firstGoodEdgeTime++
+					}
+				} else {
+					// Mark the current edge as bad.
+					firstGoodEdgeTime++
+				}
 				break
 			}
 		}
@@ -70,7 +109,7 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 	if firstGoodEdge < 0 {
 		firstGoodEdge = 0
 	}
-	// if the last edge is a delete, remove that too (we can't keep a delete hanging)
+	// if the last edge is a delete, remove that too (we don't want to keep a delete hanging)
 	if firstGoodEdge < len(edges) && edges[firstGoodEdge].TargetId.Id() == msgs.NULL_INODE_ID {
 		firstGoodEdge++
 	}

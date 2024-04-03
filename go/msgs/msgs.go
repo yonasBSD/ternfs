@@ -1013,6 +1013,10 @@ type Edge struct {
 	CreationTime EggsTime
 }
 
+func (e *Edge) Owned() bool {
+	return e.Current || e.TargetId.Extra()
+}
+
 type FullReadDirCursor struct {
 	// Current and non-current edges are separated, so we must
 	// remember in which section we are.

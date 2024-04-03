@@ -92,44 +92,24 @@ func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.Di
 	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
 		return err
 	}
-
-	edges := make([]msgs.Edge, 0)
+	dirEdges := make(map[string][]msgs.Edge)
 	req := msgs.FullReadDirReq{
 		DirId: dirId,
 	}
 	resp := msgs.FullReadDirResp{}
-	hasEdges := false
 	for {
 		err := c.ShardRequest(log, dirId.Shard(), &req, &resp)
 		if err != nil {
 			return err
 		}
 		log.Debug("%v: got %d edges in response", dirId, len(resp.Results))
-		stop := resp.Next.StartName == ""
 		for _, result := range resp.Results {
-			// we've encountered a current edge, it's time to stop
-			if result.Current {
-				stop = true
-				hasEdges = true
+			if _, found := dirEdges[result.Name]; !found {
+				dirEdges[result.Name] = []msgs.Edge{}
 			}
-			if len(edges) > 0 && (edges[0].NameHash != result.NameHash || edges[0].Name != result.Name) {
-				allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
-				if err != nil {
-					return err
-				}
-				hasEdges = hasEdges || !allRemoved
-				edges = edges[:0]
-			}
-			edges = append(edges, result)
+			dirEdges[result.Name] = append(dirEdges[result.Name], result)
 		}
-		if stop {
-			if len(edges) > 0 {
-				allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
-				if err != nil {
-					return err
-				}
-				hasEdges = hasEdges || !allRemoved
-			}
+		if resp.Next.StartName == "" {
 			break
 		}
 		req.Flags = 0
@@ -138,6 +118,14 @@ func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.Di
 		}
 		req.StartName = resp.Next.StartName
 		req.StartTime = resp.Next.StartTime
+	}
+	hasEdges := false
+	for _, edges := range dirEdges {
+		allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
+		if err != nil {
+			return err
+		}
+		hasEdges = hasEdges || !allRemoved
 	}
 	if !hasEdges && dirId != msgs.ROOT_DIR_INODE_ID {
 		statReq := msgs.StatDirectoryReq{

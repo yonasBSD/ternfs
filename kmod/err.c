@@ -78,7 +78,7 @@ int eggsfs_error_to_linux(int err) {
         eggsfs_warn("unexpected eggsfs error %s (%d)", eggsfs_err_str(err), err);
     }
     WARN_ON(unexpected);
-    if (err == 0) { return 0; }
+    if (err <= 0) { return 0; }
     switch (err) {
     case EGGSFS_ERR_INTERNAL_ERROR: return -EIO;
     case EGGSFS_ERR_FATAL_ERROR: return -EIO;

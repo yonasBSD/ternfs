@@ -218,7 +218,7 @@ out:
     // block.
     if (enode) {
         int err = eggsfs_start_async_getattr(enode);
-        if (err < 0) {
+        if (err < 0 && err != -ERESTARTSYS) {
             eggsfs_warn("could not send async getattr: %d", err);
         }
     }

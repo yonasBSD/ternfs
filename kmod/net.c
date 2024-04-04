@@ -312,7 +312,10 @@ int eggsfs_metadata_send_request(
     eggsfs_debug("sending: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums addr=%pI4:%d", req->request_id, req->shard,  is_cdc ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind), kind, state->attempts, jiffies64_to_msecs(get_jiffies_64() - state->start_t), &addr.sin_addr, ntohs(addr.sin_port));
     err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
     if (unlikely(err < 0)) {
-        INC_STAT_COUNTER(req, kind, NET_FAILURES);
+        if (err != -ERESTARTSYS) {
+            eggsfs_info("could not send: %d", err);
+            INC_STAT_COUNTER(req, kind, NET_FAILURES);
+        }
         // For ENETUNREACH, we pretend to have sent it, and then the timeout
         // mechanism will retry, since this might be fixed with time.
         if (err == -ENETUNREACH) {

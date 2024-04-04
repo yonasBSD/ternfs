@@ -30,6 +30,12 @@
                 <th>Mtime</th>
                 <td><code>{{.Mtime}}</code></td>
             </tr>
+            {{if .Atime}}
+                <tr>
+                    <th>Atime</th>
+                    <td><code>{{.Atime}}</code></td>
+                </tr>
+            {{end}}
             <tr>
                 <th>Transient</th>
                 <td>

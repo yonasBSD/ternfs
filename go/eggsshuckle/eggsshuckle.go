@@ -1441,6 +1441,7 @@ type fileData struct {
 	Path          string // might be empty
 	Size          string
 	Mtime         string
+	Atime         string
 	TransientNote string // only if transient
 	DownloadLink  string
 	AllInline     bool
@@ -1660,6 +1661,7 @@ func handleInode(
 						}
 					} else if err == nil {
 						data.Mtime = resp.Mtime.String()
+						data.Atime = resp.Atime.String()
 						data.Size = fmt.Sprintf("%v (%v bytes)", formatSize(resp.Size), resp.Size)
 					} else {
 						panic(err)

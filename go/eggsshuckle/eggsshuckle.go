@@ -600,12 +600,12 @@ func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShard
 		UPDATE shards
 		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
 		WHERE
-		id = :id AND replica_id = :replica_id AND
+		id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)
-		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
+		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
 		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
@@ -745,12 +745,13 @@ func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcRe
 	res, err := s.db.Exec(`
 		UPDATE cdc
 		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-		WHERE replica_id = :replica_id AND
+		WHERE replica_id = :replica_id AND is_leader = :is_leader AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)`,
 		n("replica_id", req.Replica),
+		n("is_leader", req.IsLeader),
 		n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1),
 		n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2),
 		n("last_seen", msgs.Now()),

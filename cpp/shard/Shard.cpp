@@ -771,6 +771,7 @@ public:
             _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
         } else {
             LogsDB::clearAllData(shared.sharedDB);
+            _shared.isLeader.store(shrid.replicaId() == 0);
         }
     }
 

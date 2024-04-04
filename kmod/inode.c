@@ -39,11 +39,8 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
         return NULL;
     }
 
-    enode->mtime = 0;
-    enode->edge_creation_time = 0;
     eggsfs_latch_init(&enode->getattr_update_latch);
     INIT_DELAYED_WORK(&enode->getattr_async_work, &getattr_async_complete);
-    smp_store_release(&enode->getattr_expiry, 0);
 
     eggsfs_debug("done enode=%p", enode);
     return &enode->inode;
@@ -612,6 +609,9 @@ struct inode* eggsfs_get_inode(
 
         inode->i_op = NULL;
         inode->i_fop = NULL;
+        enode->getattr_expiry = 0;
+        enode->mtime = 0;
+        enode->edge_creation_time = 0;
         if (S_ISDIR(inode->i_mode)) {
             inode->i_op = &eggsfs_dir_inode_ops;
             inode->i_fop = &eggsfs_dir_operations;

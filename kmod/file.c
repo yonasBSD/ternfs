@@ -73,7 +73,6 @@ static int file_open(struct inode* inode, struct file* filp) {
         // to files) are attempted. the reason is that some workflows (such as open write +
         // setattr) _will_ work.
         enode->file.status = EGGSFS_FILE_STATUS_READING;
-        smp_store_release(&enode->getattr_expiry, 0);
         // also, set atime, if requested
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();

@@ -30,6 +30,12 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 			panic(fmt.Errorf("got multiple names in edges (%v and %v)", name, edges[i].Name))
 		}
 	}
+	// check that times are ascending
+	for i := 1; i < len(edges); i++ {
+		if edges[i].CreationTime < edges[i-1].CreationTime {
+			panic(fmt.Errorf("non-monotonic creation times"))
+		}
+	}
 	// Do not consider the trailing current edge, if present.
 	lastNonCurrentEdge := len(edges) - 1
 	if edges[lastNonCurrentEdge].Current {

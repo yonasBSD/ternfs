@@ -6,6 +6,7 @@
 #include <rocksdb/slice.h>
 #include <vector>
 
+#include "Common.hpp"
 #include "Env.hpp"
 #include "LogsDB.hpp"
 #include "LogsDBTools.hpp"
@@ -154,8 +155,30 @@ void ShardDBTools::fsck(const std::string& dbPath) {
 
     LOG_INFO(env, "This will take a while and will take 10s of gigabytes of RAM.");
 
-    // no duplicate ownership of any kind in edges
-    bool checkEdgeOrdering = true;
+    {
+        LOG_INFO(env, "Directories pass");
+        uint64_t analyzedDirs = 0;
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, directoriesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            analyzedDirs++;
+            auto dirK = ExternalValue<InodeIdKey>::FromSlice(it->key());
+            if (dirK().id().type() != InodeType::DIRECTORY) {
+                LOG_ERROR(env, "Found key with bad directory inode %s", dirK().id());
+                continue;
+            }
+            auto _ = ExternalValue<DirectoryBody>::FromSlice(it->value()); // just to check that this works
+        }
+        ROCKS_DB_CHECKED(it->status());
+        LOG_INFO(env, "Analyzed %s directories", analyzedDirs);
+    }
+
+    // no duplicate ownership of any kind in edges -- currently broken in shard 0
+    // because of the outage which lead to the fork
+    bool checkEdgeOrdering = dbPath.find("000") == std::string::npos;
+
+    if (!checkEdgeOrdering) {
+        LOG_INFO(env, "Will not check edge ordering since we think this is shard 0");
+    }
 
     {
         LOG_INFO(env, "Edges pass");
@@ -174,6 +197,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             analyzedEdges++;
             auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+            if (edgeK().dirId().type() != InodeType::DIRECTORY) {
+                LOG_ERROR(env, "Found edge with bad inode id %s", edgeK().dirId());
+                continue;
+            }
             if (edgeK().dirId() != thisDir) {
                 analyzedDirectories++;
                 if (thisDir != dummyCurrentDirectory) {
@@ -308,7 +335,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             analyzedSpans++;
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
-            if (spanK().fileId() == NULL_INODE_ID) { continue; }
+            if (spanK().fileId().type() != InodeType::FILE && spanK().fileId().type() != InodeType::SYMLINK) {
+                LOG_ERROR(env, "Found span with bad file id %s", spanK().fileId());
+                continue;
+            }
             if (spanK().fileId() != thisFile) {
                 analyzedFiles++;
                 expectedNextOffset = 0;
@@ -358,6 +388,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             analyzedFiles++;
             auto fileK = ExternalValue<InodeIdKey>::FromSlice(it->key());
             InodeId fileId = fileK().id();
+            if (fileId.type() != InodeType::FILE && fileId.type() != InodeType::SYMLINK) {
+                LOG_ERROR(env, "Found %s with bad file id %s", what, fileId);
+                continue;
+            }
             auto fileV = ExternalValue<T>::FromSlice(it->value());
             if (fileV().fileSize() == 0) { continue; } // nothing in this
             auto spansSize = filesWithSpans.find(fileId);
@@ -383,6 +417,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, blockServicesToFilesCf));
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto k = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
+            if (k().fileId().type() != InodeType::FILE && k().fileId().type() != InodeType::SYMLINK) {
+                LOG_ERROR(env, "Found block service to files with bad file id %s", k().fileId());
+                continue;
+            }
             auto v = ExternalValue<I64Value>::FromSlice(it->value());
             if (v().i64() != 0) { foundItems++; }
             auto expected = blockServicesToFiles.find(std::pair<BlockServiceId, InodeId>(k().blockServiceId(), k().fileId()));
@@ -398,5 +436,43 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             LOG_ERROR(env, "Expected %s block services to files, got %s", blockServicesToFiles.size(), foundItems);
         }
         LOG_INFO(env, "Analyzed %s block service to files entries", foundItems);
+    }
+}
+
+
+void ShardDBTools::fixupBadInodes(const std::string& dbPath) {
+    ALWAYS_ASSERT(dbPath.find("000") != std::string::npos, "You should only run this on shard 000!");
+
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon);
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.open(rocksDBOptions, dbPath);
+    auto db = sharedDb.db();
+
+    auto directoriesCf = sharedDb.getCF("directories");
+    auto filesCf = sharedDb.getCF("files");
+    auto spansCf = sharedDb.getCF("spans");
+
+    auto zeroKey = InodeIdKey::Static(NULL_INODE_ID);
+    ROCKS_DB_CHECKED(db->Delete({}, directoriesCf, zeroKey.toSlice()));
+    ROCKS_DB_CHECKED(db->Delete({}, filesCf, zeroKey.toSlice()));
+    {
+        const rocksdb::ReadOptions options;
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
+        it->SeekToFirst();
+        ALWAYS_ASSERT(it->Valid());
+        auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
+        if (spanK().fileId() == NULL_INODE_ID) {
+            ROCKS_DB_CHECKED(db->Delete({}, spansCf, spanK.toSlice()));
+        } else {
+            LOG_INFO(env, "could not find bad edge id");
+        }
     }
 }

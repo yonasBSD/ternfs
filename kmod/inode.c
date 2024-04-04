@@ -212,102 +212,101 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
     int err;
     s64 seqno;
 
-again: // progress: whoever wins the lock won't try again
-    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+    // progress: whoever wins the lock won't try again
+    for (;;) {
+        eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
-    // we're still managing this file, nothing to do
-    if (!S_ISDIR(enode->inode.i_mode) && enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
-        return 0;
-    }
-
-    if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
-        u64 ts = get_jiffies_64();
-        if (for_dir_revalidation) {
-            BUG_ON(!S_ISDIR(enode->inode.i_mode));
-            if (smp_load_acquire(&enode->dir.mtime_expiry) > ts) { err = 0; goto out; }
-        } else {
-            if (smp_load_acquire(&enode->getattr_expiry) > ts) { err = 0; goto out; }
+        // we're still managing this file, nothing to do
+        if (!S_ISDIR(enode->inode.i_mode) && enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+            return 0;
         }
 
-        u64 mtime;
-        u64 expiry;
-        bool has_atime = false;
-        u64 atime;
-        if (S_ISDIR(enode->inode.i_mode)) {
-            u64 owner;
-            struct eggsfs_policy_body block_policy;
-            struct eggsfs_policy_body span_policy;
-            struct eggsfs_policy_body stripe_policy;
-            err = eggsfs_shard_getattr_dir(
-                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
-                enode->inode.i_ino,
-                &mtime,
-                &owner,
-                &block_policy,
-                &span_policy,
-                &stripe_policy
-            );
-            if (err == 0) {
-                if (block_policy.len) {
-                    enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
-                }
-                if (span_policy.len) {
-                    enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
-                }
-                if (stripe_policy.len) {
-                    enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
-                }
-                expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
+        if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
+            u64 ts = get_jiffies_64();
+            if (for_dir_revalidation) {
+                BUG_ON(!S_ISDIR(enode->inode.i_mode));
+                if (smp_load_acquire(&enode->dir.mtime_expiry) > ts) { err = 0; goto out; }
+            } else {
+                if (smp_load_acquire(&enode->getattr_expiry) > ts) { err = 0; goto out; }
             }
-        } else {
-            if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
-                eggsfs_debug("updating getattr for reading file");
-                u64 size;
-                err = eggsfs_shard_getattr_file(
-                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
+
+            u64 mtime;
+            u64 expiry;
+            bool has_atime = false;
+            u64 atime;
+            if (S_ISDIR(enode->inode.i_mode)) {
+                u64 owner;
+                struct eggsfs_policy_body block_policy;
+                struct eggsfs_policy_body span_policy;
+                struct eggsfs_policy_body stripe_policy;
+                err = eggsfs_shard_getattr_dir(
+                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
                     enode->inode.i_ino,
                     &mtime,
-                    &atime,
-                    &size
+                    &owner,
+                    &block_policy,
+                    &span_policy,
+                    &stripe_policy
                 );
-                has_atime = true;
-                if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
-                    enode->inode.i_size = 0;
-                    expiry = 0;
-                    mtime = 0;
-                } else if (err == 0) {
-                    enode->inode.i_size = size;
-                    expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
+                if (err == 0) {
+                    if (block_policy.len) {
+                        enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
+                    }
+                    if (span_policy.len) {
+                        enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
+                    }
+                    if (stripe_policy.len) {
+                        enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                    }
+                    expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
                 }
             } else {
-                BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
+                if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
+                    eggsfs_debug("updating getattr for reading file");
+                    u64 size;
+                    err = eggsfs_shard_getattr_file(
+                        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
+                        enode->inode.i_ino,
+                        &mtime,
+                        &atime,
+                        &size
+                    );
+                    has_atime = true;
+                    if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
+                        enode->inode.i_size = 0;
+                        expiry = 0;
+                        mtime = 0;
+                    } else if (err == 0) {
+                        enode->inode.i_size = size;
+                        expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
+                    }
+                } else {
+                    BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
+                }
             }
-        }
-        if (err) { err = eggsfs_error_to_linux(err); goto out; }
-        else {
-            WRITE_ONCE(enode->mtime, mtime);
-            enode->inode.i_mtime.tv_sec = mtime / 1000000000;
-            enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
-            if (has_atime) {
-                enode->inode.i_atime.tv_sec = atime / 1000000000;
-                enode->inode.i_atime.tv_nsec = atime % 1000000000;
+            if (err) { err = eggsfs_error_to_linux(err); goto out; }
+            else {
+                WRITE_ONCE(enode->mtime, mtime);
+                enode->inode.i_mtime.tv_sec = mtime / 1000000000;
+                enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
+                if (has_atime) {
+                    enode->inode.i_atime.tv_sec = atime / 1000000000;
+                    enode->inode.i_atime.tv_nsec = atime % 1000000000;
+                }
             }
-        }
 
-        if (S_ISDIR(enode->inode.i_mode)) {
-            smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + eggsfs_dir_dentry_refresh_time_jiffies);
-        }
-        smp_store_release(&enode->getattr_expiry, expiry);
+            if (S_ISDIR(enode->inode.i_mode)) {
+                smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + eggsfs_dir_dentry_refresh_time_jiffies);
+            }
+            smp_store_release(&enode->getattr_expiry, expiry);
 
 out:
-        WRITE_ONCE(enode->getattr_err, err);
-        eggsfs_latch_release(&enode->getattr_update_latch, seqno);
-        eggsfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
-        return err;
-    } else {
-        eggsfs_latch_wait(&enode->getattr_update_latch, seqno);
-        if (READ_ONCE(enode->getattr_err)) { goto again; }
-        return 0;
+            eggsfs_latch_release(&enode->getattr_update_latch, seqno);
+            eggsfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
+            return err;
+        } else {
+            eggsfs_latch_wait(&enode->getattr_update_latch, seqno);
+        }
     }
 }
 

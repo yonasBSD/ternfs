@@ -171,7 +171,6 @@ struct eggsfs_inode {
     // Method 2 is used when doing speculative getattrs when opening directories.
     u64 getattr_expiry;
     struct eggsfs_latch getattr_update_latch;
-    int getattr_err;
     struct eggsfs_metadata_request getattr_async_req;
     struct delayed_work getattr_async_work;
     s64 getattr_async_seqno;

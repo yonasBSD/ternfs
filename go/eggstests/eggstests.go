@@ -853,7 +853,7 @@ func main() {
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
 	shuckleBeaconPort := flag.Uint("shuckle-beacon-port", 0, "")
-	useLogsDB := flag.Bool("use-logsdb", false, "Spin up replicas for shard. 0 is leader, rest followers")
+	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
@@ -1127,19 +1127,14 @@ func main() {
 	}
 	procs.StartCDC(log, *repoDir, cdcOpts)
 
-	replicaCount := uint8(1)
-	if *useLogsDB {
-		replicaCount = 5
-	}
-
 	// Start shards
 	numShards := 256
 	for i := 0; i < numShards; i++ {
-		for r := uint8(0); r < replicaCount; r++ {
+		for r := uint8(0); r < 5; r++ {
 			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
 			shopts := managedprocess.ShardOpts{
 				Exe:                       cppExes.ShardExe,
-				Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+				Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r)),
 				LogLevel:                  level,
 				Shrid:                     shrid,
 				Valgrind:                  *buildType == "valgrind",
@@ -1152,12 +1147,14 @@ func main() {
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
 				UseLogsDB:                 "",
 			}
-			if *useLogsDB {
-				shopts.Dir = path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r))
-				if r == 0 {
-					shopts.UseLogsDB = "LEADER"
+			if *leaderOnly && r > 0 {
+				continue
+			}
+			if r == 0 {
+				if *leaderOnly {
+					shopts.UseLogsDB = "LEADER_NO_FOLLOWERS"
 				} else {
-					shopts.UseLogsDB = "FOLLOWER"
+					shopts.UseLogsDB = "LEADER"
 				}
 			}
 			procs.StartShard(log, *repoDir, &shopts)

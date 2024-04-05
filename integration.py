@@ -9,7 +9,7 @@ from common import *
 parser = argparse.ArgumentParser()
 parser.add_argument('--short', action='store_true')
 parser.add_argument('--docker', action='store_true')
-parser.add_argument('--logsdb', action='store_true')
+parser.add_argument('--leader-only', action='store_true', help='Run only LogsDB leader with LEADER_NO_FOLLOWERS')
 args = parser.parse_args()
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -40,17 +40,17 @@ else:
 
 bold_print('integration tests')
 short = ['-short'] if args.short else []
-logsdb = ['-use-logsdb'] if args.logsdb else []
+leader_only = ['-leader-only'] if args.leader_only else []
 # -block-service-killer does not work with FUSE driver (the duplicated FDs
 # of the child processes confuse the FUSE driver).
 tests = [
-    ['./go/eggstests/eggstests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short + logsdb,
-    ['./go/eggstests/eggstests', '-binaries-dir', build_release, '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short + logsdb,
+    ['./go/eggstests/eggstests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short + leader_only,
+    ['./go/eggstests/eggstests', '-binaries-dir', build_release, '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short + leader_only,
 ]
 if not args.short:
     # valgrind is super slow, it still surfaced bugs in the past but run the short
     # versions only in the long tests.
-    tests.append(['./go/eggstests/eggstests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests] + logsdb)
+    tests.append(['./go/eggstests/eggstests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests] + leader_only)
 # we need three free ports, we get them here upfront rather than in shuckle to reduce
 # the chance of races -- if we got it from the integration tests it'll be while
 # tons of things are started in another integration test

@@ -746,7 +746,7 @@ public:
     ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         Loop(logger, xmon, "writer"),
         _shared(shared),
-        _maxWritesAtOnce(options.writeToLogsDB ? LogsDB::IN_FLIGHT_APPEND_WINDOW * 10 : MAX_WRITES_AT_ONCE),
+        _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _dontDoReplication(options.dontDoReplication),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
@@ -765,14 +765,10 @@ public:
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
 
-        if (options.writeToLogsDB) {
-            _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, options.avoidBeingLeader, options.forcedLastReleased));
-            _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
-            _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
-        } else {
-            LogsDB::clearAllData(shared.sharedDB);
-            _shared.isLeader.store(shrid.replicaId() == 0);
-        }
+        _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased));
+        // In case of force leader it immediately detects and promotes us to leader
+        _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
+        _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
     }
 
     virtual ~ShardWriter() = default;
@@ -896,31 +892,6 @@ public:
         // _logsDB->flush(true);
 
         sendMessages();
-    }
-
-    void noLogsDbStep() {
-        for (auto&  logEntry : _logEntries) {
-            if (likely(logEntry.requestId)) {
-                LOG_DEBUG(_env, "applying log entry for request %s kind %s from %s", logEntry.requestId, logEntry.requestKind, logEntry.clientAddr);
-            } else {
-                LOG_DEBUG(_env, "applying request-less log entry");
-            }
-
-            auto err = _shared.shardDB.applyLogEntry(++_currentLogIndex, logEntry.logEntry, _respContainer);
-            if (likely(logEntry.requestId)) {
-                Duration elapsed = eggsNow() - logEntry.receivedAt;
-                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-                packShardResponse(_env, _shared, _sendBuf, _sendHdrs[logEntry.sockIx], _sendVecs[logEntry.sockIx], logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, &logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
-            } else if (unlikely(err != NO_ERROR)) {
-                RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
-            }
-        }
-        if (_requests.size() > 0) {
-            LOG_DEBUG(_env, "flushing and sending %s writes", _requests.size());
-            _shared.shardDB.flush(true);
-            // important to send all of them after the flush! otherwise it's not durable yet
-            sendMessages();
-        }
     }
 
     ReplicaAddrsInfo* addressFromReplicaId(ReplicaId id) {
@@ -1083,12 +1054,7 @@ public:
                 break;
             }
         }
-
-        if (_logsDB) {
-            logsDBStep();
-        } else {
-            noLogsDbStep();
-        }
+        logsDBStep();
     }
 };
 
@@ -1422,13 +1388,10 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
-        if (options.writeToLogsDB) {
-            LOG_INFO(env, "Using LogsDB with options:");
-            LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
-            LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
-            LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
-            LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
-        }
+        LOG_INFO(env, "Using LogsDB with options:");
+        LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
+        LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
+        LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
     }
 
     // Immediately start xmon: we want the database initializing update to
@@ -1473,7 +1436,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
     env.clearAlert(dbInitAlert);
 
-    if (options.writeToLogsDB && options.dontDoReplication) {
+    if (options.dontDoReplication) {
         options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
     }
 

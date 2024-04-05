@@ -2,6 +2,7 @@
 set -eu -o pipefail
 
 short=""
+leader_only=""
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -9,14 +10,19 @@ while [[ "$#" -gt 0 ]]; do
             short="-short"
             shift
             ;;
+        -leader-only)
+            leader_only="-leader-only"
+            shift
+            ;;
         *)
-            echo "Bad usage -- only accepted flag is -short"
+            echo "Bad usage -- only accepted flags are -short and -leader-only"
             exit 2
             ;;
     esac
 done
 
 echo "Running with short $short"
+echo "Running with leader_only $leader_only"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
@@ -29,7 +35,7 @@ function cleanup {
     echo 'Syncing logs'
     rsync -e "ssh -p 2223 -i image-key" -avm --include='/eggs-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
     echo 'Terminating QEMU'
-    pkill qemu    
+    pkill qemu
 }
 trap cleanup EXIT
 ./startvm.sh &>vm-out &
@@ -37,7 +43,7 @@ trap cleanup EXIT
 # Wait for VM to go up by trying to copy the kernel module to it
 chmod 0600 image-key
 scp_attempts=0
-while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key eggsfs.ko fmazzol@localhost: ; do 
+while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key eggsfs.ko fmazzol@localhost: ; do
     sleep 1
     scp_attempts=$((scp_attempts + 1))
     if [ $scp_attempts -ge 20 ]; then
@@ -65,10 +71,10 @@ trace_pid=$!
 
 # Do not test migrations/scrubbing since we test this outside qemu anyway
 # (it's completely independent from the kmod code)
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only -binaries-dir eggs" | tee -a test-out
 
 echo 'Unmounting'
 timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"

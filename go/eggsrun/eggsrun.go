@@ -39,7 +39,7 @@ func main() {
 	xmon := flag.String("xmon", "", "")
 	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
-	useLogsDB := flag.Bool("use-logsdb", false, "Spin up replicas for shard. 0 is leader, rest followers")
+	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -190,18 +190,14 @@ func main() {
 		procs.StartCDC(log, *repoDir, &opts)
 	}
 
-	replicaCount := uint8(1)
-	if *useLogsDB {
-		replicaCount = 5
-	}
 	// Start shards
 	for i := 0; i < 256; i++ {
-		for r := uint8(0); r < replicaCount; r++ {
+		for r := uint8(0); r < 5; r++ {
 			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
 			opts := managedprocess.ShardOpts{
 				Exe:            cppExes.ShardExe,
 				Shrid:          shrid,
-				Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d", i)),
+				Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r)),
 				LogLevel:       level,
 				Valgrind:       *buildType == "valgrind",
 				ShuckleAddress: shuckleAddress,
@@ -209,12 +205,14 @@ func main() {
 				Xmon:           *xmon,
 				UseLogsDB:      "",
 			}
-			if *useLogsDB {
-				opts.Dir = path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r))
-				if r == 0 {
-					opts.UseLogsDB = "LEADER"
+			if *leaderOnly && r > 0 {
+				continue
+			}
+			if r == 0 {
+				if *leaderOnly {
+					opts.UseLogsDB = "LEADER_NO_FOLLOWERS"
 				} else {
-					opts.UseLogsDB = "FOLLOWER"
+					opts.UseLogsDB = "LEADER"
 				}
 			}
 			if *startingPort != 0 {

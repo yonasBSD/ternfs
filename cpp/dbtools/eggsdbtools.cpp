@@ -49,9 +49,6 @@ int main(int argc, char** argv) {
         } else if (arg == "fsck") {
             std::string dbPath = getNextArg();
             ShardDBTools::fsck(dbPath);
-        } else if (arg == "fixup-bad-inodes") {
-            std::string dbPath = getNextArg();
-            ShardDBTools::fixupBadInodes(dbPath);
         } else {
             dieWithUsage();
         }

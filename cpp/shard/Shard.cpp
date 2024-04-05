@@ -892,7 +892,8 @@ public:
             ALWAYS_ASSERT(_inFlightEntries.size() == LogsDB::IN_FLIGHT_APPEND_WINDOW);
         }
         _shared.shardDB.flush(true);
-        _logsDB->flush(true);
+        // not needed as we just flushed and apparently it does actually flush again
+        // _logsDB->flush(true);
 
         sendMessages();
     }

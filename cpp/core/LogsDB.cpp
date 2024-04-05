@@ -1591,10 +1591,10 @@ public:
 
     void flush(bool sync) {
         ROCKS_DB_CHECKED(_db->FlushWAL(sync));
-        _maybeLogStatus();
     }
 
     void processIncomingMessages(std::vector<LogsDBRequest>& requests, std::vector<LogsDBResponse>& responses) {
+        _maybeLogStatus();
         for(auto& resp : responses) {
             auto request = _reqResp.getRequest(resp.header.requestId);
             if (request == nullptr) {

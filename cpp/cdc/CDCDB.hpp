@@ -2,9 +2,11 @@
 
 #include <unordered_map>
 
+#include <rocksdb/db.h>
 #include "Bincode.hpp"
 #include "Msgs.hpp"
 #include "Env.hpp"
+#include "SharedRocksDB.hpp"
 #include "Shuckle.hpp"
 
 // This exists purely for type safety
@@ -83,9 +85,8 @@ public:
     CDCDB() = delete;
     CDCDB& operator=(const CDCDB&) = delete;
 
-    CDCDB(Logger& env, std::shared_ptr<XmonAgent>& xmon, const std::string& path);
+    CDCDB(Logger& env, std::shared_ptr<XmonAgent>& xmon, SharedRocksDB& sharedDb);
     ~CDCDB();
-    void close();
 
     // Unlike with ShardDB, we don't have an explicit log preparation step here,
     // because at least for now logs are simply either CDC requests, or shard
@@ -123,6 +124,5 @@ public:
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();
 
-    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values);
-    void dumpRocksDBStatistics();
+    static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 };

@@ -16,14 +16,17 @@
 #include <map>
 #include <poll.h>
 
+#include "Assert.hpp"
 #include "Bincode.hpp"
 #include "CDC.hpp"
 #include "CDCDB.hpp"
 #include "Env.hpp"
 #include "Exception.hpp"
+#include "LogsDB.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Shard.hpp"
+#include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "CDCDB.hpp"
 #include "Crypto.hpp"
@@ -38,8 +41,10 @@
 #include "ErrorCount.hpp"
 
 struct CDCShared {
+    SharedRocksDB& sharedDb;
     CDCDB& db;
     std::array<std::atomic<uint16_t>, 2> ownPorts;
+    std::atomic<bool> isLeader;
     std::mutex replicasLock;
     std::array<AddrsInfo, 5> replicas;
     std::mutex shardsMutex;
@@ -51,7 +56,7 @@ struct CDCShared {
     std::atomic<double> updateSize;
     ErrorCount shardErrors;
 
-    CDCShared(CDCDB& db_) : db(db_), inFlightTxns(0), updateSize(0) {
+    CDCShared(SharedRocksDB& sharedDb_, CDCDB& db_) : sharedDb(sharedDb_), db(db_), isLeader(false), inFlightTxns(0), updateSize(0) {
         ownPorts[0].store(0);
         ownPorts[1].store(0);
         for (CDCMessageKind kind : allCDCMessageKind) {
@@ -235,6 +240,12 @@ public:
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
         expandKey(CDCKey, _expandedCDCKey);
+
+        if (options.writeToLogsDB) {
+            ALWAYS_ASSERT(false);
+        } else {
+            _shared.isLeader.store(options.replicaId == 0, std::memory_order_relaxed);
+        }
         LOG_INFO(_env, "Waiting for shard info to be filled in");
     }
 
@@ -836,7 +847,6 @@ struct CDCRegisterer : PeriodicLoop {
     bool _hasSecondIp;
     XmonNCAlert _alert;
     ReplicaId _replicaId;
-    ReplicaId _leaderReplicaId;
     AddrsInfo _info;
     bool _infoLoaded;
     bool _registerCompleted;
@@ -849,7 +859,6 @@ public:
         _hasSecondIp(options.ipPorts[1].ip != 0),
         _alert(10_sec),
         _replicaId(options.replicaId),
-        _leaderReplicaId(options.leaderReplicaId),
         _infoLoaded(false),
         _registerCompleted(false)
     {
@@ -895,7 +904,7 @@ public:
         }
 
         LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _info);
-        const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _replicaId == _leaderReplicaId, _info);
+        const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _shared.isLeader.load(std::memory_order_relaxed), _info);
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -1022,7 +1031,7 @@ public:
         }
         {
             _rocksDBStats.clear();
-            _shared.db.rocksDBMetrics(_rocksDBStats);
+            _shared.sharedDb.rocksDBMetrics(_rocksDBStats);
             for (const auto& [name, value]: _rocksDBStats) {
                 _metricsBuilder.measurement("eggsfs_cdc_rocksdb");
                 _metricsBuilder.fieldU64(name, value);
@@ -1063,7 +1072,6 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
     LOG_INFO(env, "  level = %s", options.logLevel);
     LOG_INFO(env, "  logFile = '%s'", options.logFile);
     LOG_INFO(env, "  replicaId = %s", options.replicaId);
-    LOG_INFO(env, "  leaderReplicaId = %s", options.leaderReplicaId);
     LOG_INFO(env, "  port = %s", options.port);
     LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
     LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
@@ -1076,6 +1084,13 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         }
     }
     LOG_INFO(env, "  syslog = %s", (int)options.syslog);
+    if (options.writeToLogsDB) {
+            LOG_INFO(env, "Using LogsDB with options:");
+            LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
+            LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
+            LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
+            LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
+        }
 
     std::vector<std::unique_ptr<LoopThread>> threads;
 
@@ -1089,8 +1104,21 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
-    CDCDB db(logger, xmon, dbDir);
-    CDCShared shared(db);
+    SharedRocksDB sharedDb(logger, xmon);
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(CDCDB::getColumnFamilyDescriptors());
+
+    rocksdb::Options dbOptions;
+    dbOptions.create_if_missing = true;
+    dbOptions.create_missing_column_families = true;
+    dbOptions.compression = rocksdb::kLZ4Compression;
+    // In the shards we set this given that 1000*256 = 256k, doing it here also
+    // for symmetry although it's probably not needed.
+    dbOptions.max_open_files = 1000;
+    sharedDb.openTransactionDB(dbOptions, dbDir);
+
+    CDCDB db(logger, xmon, sharedDb);
+    CDCShared shared(sharedDb, db);
 
     LOG_INFO(env, "Spawning server threads");
 
@@ -1106,7 +1134,7 @@ void runCDC(const std::string& dbDir, const CDCOptions& options) {
 
     LoopThread::waitUntilStopped(threads);
 
-    db.close();
+    sharedDb.close();
 
     LOG_INFO(env, "CDC terminating gracefully, bye.");
 }

@@ -20,7 +20,13 @@ struct CDCOptions {
     bool metrics = false;
     bool shuckleStats = false;
     ReplicaId replicaId = 0;
-    ReplicaId leaderReplicaId = 0;
+
+    // LogsDB settings
+    bool writeToLogsDB = false;
+    bool dontDoReplication = false;
+    bool forceLeader = false;
+    bool avoidBeingLeader = true;
+    LogIdx forcedLastReleased = 0;
 };
 
 void runCDC(const std::string& dbDir, const CDCOptions& options);

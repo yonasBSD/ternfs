@@ -19,6 +19,7 @@
 #include "Msgs.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
+#include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "XmonAgent.hpp"
 
@@ -60,6 +61,18 @@
 // proved way too slow, capping directory creation at around 200req/s. So we did the
 // above to pipeline CDC requests. Since this required a change to the CDC RocksDB
 // schema, we call the first version of the schema V0, the current one V1.
+
+
+std::vector<rocksdb::ColumnFamilyDescriptor> CDCDB::getColumnFamilyDescriptors() {
+    return {
+        {rocksdb::kDefaultColumnFamilyName, {}},
+        {"reqQueue", {}},
+        {"parent", {}},
+        {"enqueued", {}},
+        {"executing", {}},
+        {"dirsToTxns", {}},
+    };
+}
 
 std::ostream& operator<<(std::ostream& out, const CDCShardReq& x) {
     out << "CDCShardReq(shid=" << x.shid << ", req=" << x.req << ")";
@@ -266,7 +279,7 @@ enum MakeDirectoryStep : uint8_t {
 //
 // 1. Lookup if an existing directory exists. If it does, immediately succeed.
 // 2. Allocate inode id here in the CDC
-// 3. Create directory in shard we get from the inode   
+// 3. Create directory in shard we get from the inode
 // 4. Lookup old creation time for the edge we're about to create
 // 5. Create locked edge from owner to newly created directory. If this fail because of bad creation time, go back to 4
 // 6. Unlock the edge created in 3
@@ -541,7 +554,7 @@ enum RenameFileStep : uint8_t {
 // 4. unlock edge in step 3
 // 5. unlock source target current edge, and soft unlink it
 //
-// If we fail at step 2 or 3, we need to roll back step 1. Steps 3 and 4 should never fail.    
+// If we fail at step 2 or 3, we need to roll back step 1. Steps 3 and 4 should never fail.
 struct RenameFileStateMachine {
     StateMachineEnv& env;
     const RenameFileReq& req;
@@ -617,7 +630,7 @@ struct RenameFileStateMachine {
     }
 
     void lookupOldCreationTime(bool repeated = false) {
-        auto& shardReq = env.needsShard(RENAME_FILE_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard(), repeated).setFullReadDir(); 
+        auto& shardReq = env.needsShard(RENAME_FILE_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard(), repeated).setFullReadDir();
         shardReq.dirId = req.newOwnerId;
         shardReq.flags = FULL_READ_DIR_BACKWARDS | FULL_READ_DIR_SAME_NAME | FULL_READ_DIR_CURRENT;
         shardReq.limit = 1;
@@ -699,7 +712,7 @@ struct RenameFileStateMachine {
         shardReq.wasMoved = true;
         shardReq.creationTime = req.oldCreationTime;
     }
-    
+
     void afterUnlockOldEdge(EggsError err, const ShardRespContainer* resp) {
         if (err == EggsError::TIMEOUT) {
             unlockOldEdge(true); // retry
@@ -884,7 +897,7 @@ struct SoftUnlinkDirectoryStateMachine {
         } else {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
-            // TODO it would be cleaner to verify this with a lookup 
+            // TODO it would be cleaner to verify this with a lookup
             ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
             auto& cdcResp = env.finish().setSoftUnlinkDirectory();
             // Update parent map
@@ -910,7 +923,7 @@ struct SoftUnlinkDirectoryStateMachine {
         } else {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
-            // TODO it would be cleaner to verify this with a lookup 
+            // TODO it would be cleaner to verify this with a lookup
             ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
             env.finishWithError(state.exitError());
         }
@@ -977,7 +990,7 @@ struct RenameDirectoryStateMachine {
             }
         }
     }
-    
+
     // Check that changing this parent-child relationship wouldn't create
     // loops in directory structure.
     bool loopCheck() {
@@ -1331,55 +1344,16 @@ struct CDCDBImpl {
     CDCDBImpl() = delete;
     CDCDBImpl& operator=(const CDCDBImpl&) = delete;
 
-    CDCDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) : _env(logger, xmon, "cdc_db") {
-        _dbStatistics = rocksdb::CreateDBStatistics();
-        _dbStatisticsFile = path + "/db-statistics.txt";
+    CDCDBImpl(Logger& logger, std::shared_ptr<XmonAgent>& xmon, SharedRocksDB& sharedDb) : _env(logger, xmon, "cdc_db") {
+        _defaultCf = sharedDb.getCF(rocksdb::kDefaultColumnFamilyName);
+        _reqQueueCfLegacy = sharedDb.getCF("reqQueue");
+        _parentCf = sharedDb.getCF("parent");
+        _enqueuedCf = sharedDb.getCF("enqueued");
+        _executingCf = sharedDb.getCF("executing");
+        _dirsToTxnsCf = sharedDb.getCF("dirsToTxns");
+        _dbDontUseDirectly = sharedDb.transactionDB();
 
-        rocksdb::Options options;
-        options.create_if_missing = true;
-        options.create_missing_column_families = true;
-        options.compression = rocksdb::kLZ4Compression;
-        // In the shards we set this given that 1000*256 = 256k, doing it here also
-        // for symmetry although it's probably not needed.
-        options.max_open_files = 1000;
-        options.statistics = _dbStatistics;
-        std::vector<rocksdb::ColumnFamilyDescriptor> familiesDescriptors{
-            {rocksdb::kDefaultColumnFamilyName, {}},
-            {"reqQueue", {}},
-            {"parent", {}},
-            {"enqueued", {}},
-            {"executing", {}},
-            {"dirsToTxns", {}},
-        };
-        std::vector<rocksdb::ColumnFamilyHandle*> familiesHandles;
-        auto dbPath = path + "/db";
-        LOG_INFO(_env, "initializing CDC RocksDB in %s", dbPath);
-        ROCKS_DB_CHECKED_MSG(
-            rocksdb::OptimisticTransactionDB::Open(options, dbPath, familiesDescriptors, &familiesHandles, &_dbDontUseDirectly),
-            "could not open RocksDB %s", dbPath
-        );
-        ALWAYS_ASSERT(familiesDescriptors.size() == familiesHandles.size());
-        _defaultCf = familiesHandles[0];
-        _reqQueueCfLegacy = familiesHandles[1];
-        _parentCf = familiesHandles[2];
-        _enqueuedCf = familiesHandles[3];
-        _executingCf = familiesHandles[4];
-        _dirsToTxnsCf = familiesHandles[5];
-        
         _initDb();
-    }
-
-    void close() {
-        LOG_INFO(_env, "destroying column families and closing database");
-
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_defaultCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_reqQueueCfLegacy));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_parentCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_enqueuedCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_executingCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->DestroyColumnFamilyHandle(_dirsToTxnsCf));
-        ROCKS_DB_CHECKED(_dbDontUseDirectly->Close());
-        delete _dbDontUseDirectly;
     }
 
     // Getting/setting txn ids from our txn ids keys
@@ -1444,7 +1418,7 @@ struct CDCDBImpl {
                 StaticValue<U64Value> v;
                 v().setU64(0);
                 ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&key), v.toSlice()));
-            } 
+            }
         };
 
         initZeroValue("last txn", LAST_TXN_KEY);
@@ -1478,7 +1452,7 @@ struct CDCDBImpl {
                 _addToDirsToTxns(dbTxn, txnK().id(), req);
             }
         }
-        
+
         // Throw away everything legacy. The clients will just retry.
         ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&FIRST_TXN_IN_QUEUE_KEY)));
         ROCKS_DB_CHECKED(dbTxn.Delete(cdcMetadataKey(&LAST_TXN_IN_QUEUE_KEY)));
@@ -1575,7 +1549,7 @@ struct CDCDBImpl {
                 StaticValue<DirsToTxnsKey> k;
                 k().setDirId(dirId);
                 k().setTxnId(txnId);
-                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), ""));                
+                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), ""));
             }
             {
                 // sentinel, if necessary
@@ -1892,27 +1866,13 @@ struct CDCDBImpl {
         ROCKS_DB_CHECKED(it->status());
 
         _startExecuting(*dbTxn, txnIdsToStart, step);
-         
+
         commitTransaction(*dbTxn);
-    }
-
-    void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {
-        ::rocksDBMetrics(_env, _dbDontUseDirectly, *_dbStatistics, stats);
-    }
-
-    void dumpRocksDBStatistics() {
-        LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
-        std::ofstream file(_dbStatisticsFile);
-        file << _dbStatistics->ToString();
     }
 };
 
-CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path) {
-    _impl = new CDCDBImpl(logger, xmon, path);
-}
-
-void CDCDB::close() {
-    ((CDCDBImpl*)_impl)->close();
+CDCDB::CDCDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, SharedRocksDB& sharedDb) {
+    _impl = new CDCDBImpl(logger, xmon, sharedDb);
 }
 
 CDCDB::~CDCDB() {
@@ -1929,12 +1889,4 @@ void CDCDB::update(bool sync, uint64_t logIndex, const std::vector<CDCReqContain
 
 uint64_t CDCDB::lastAppliedLogEntry() {
     return ((CDCDBImpl*)_impl)->_lastAppliedLogEntryDB();
-}
-
-void CDCDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& values) {
-    return ((CDCDBImpl*)_impl)->rocksDBMetrics(values);
-}
-
-void CDCDB::dumpRocksDBStatistics() {
-    return ((CDCDBImpl*)_impl)->dumpRocksDBStatistics();
 }

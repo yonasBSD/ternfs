@@ -29,8 +29,10 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
-    fprintf(stderr, " -leader-replica-id\n");
-    fprintf(stderr, "    	Specify which replica we consider as leader. 0 by default.\n");
+    fprintf(stderr, " -use-logsdb LEADER|LEADER_NO_FOLLOWERS|FOLLOWER|NONE\n");
+    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER or don't use. Default is don't use.\n");
+    fprintf(stderr, " -force-last-released LogIdx\n");
+    fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
 }
 
 static uint32_t parseIpv4(const char* binary, const std::string& arg) {
@@ -82,6 +84,15 @@ static uint8_t parseReplicaId(const std::string& arg) {
         die("Bad replicaId %s", arg.c_str());
     }
     return replicaId;
+}
+
+static LogIdx parseLogIdx(const std::string& arg) {
+    size_t idx;
+    uint64_t x = std::stoull(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff character in LogIdx %s", arg.c_str());
+    }
+    return x;
 }
 
 int main(int argc, char** argv) {
@@ -158,11 +169,29 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
-        } else if (arg == "-leader-replica-id") {
-            options.leaderReplicaId = parseReplicaId(getNextArg());
         } else if (arg == "-shuckle-stats") {
             options.shuckleStats = true;
-        } else{
+        } else if (arg == "-use-logsdb") {
+            std::string logsDBMode = getNextArg();
+            if (logsDBMode == "LEADER") {
+                options.forceLeader = true;
+                options.avoidBeingLeader = false;
+                options.writeToLogsDB = true;
+            } else if (logsDBMode == "FOLLOWER") {
+                options.writeToLogsDB = true;
+            } else if (logsDBMode == "LEADER_NO_FOLLOWERS") {
+                options.forceLeader = true;
+                options.avoidBeingLeader = false;
+                options.writeToLogsDB = true;
+                options.dontDoReplication = true;
+            } else if (logsDBMode == "NONE") {
+            } else {
+                fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
+                dieWithUsage();
+            }
+        } else if (arg == "-force-last-released") {
+            options.forcedLastReleased = parseLogIdx(getNextArg());
+        } else {
             args.emplace_back(std::move(arg));
         }
     }
@@ -199,12 +228,7 @@ int main(int argc, char** argv) {
             throw EXPLICIT_SYSCALL_EXCEPTION(err.value(), "mkdir");
         }
     }
-    size_t processed;
-    int replicaId = std::stoi(args.at(1), &processed);
-    if (processed != args.at(1).size() || replicaId < 0 || replicaId > 4) {
-        die("Invalid replicaId '%s', expecting a number between 0 and 4.\n", args.at(2).c_str());
-    }
-    options.replicaId = replicaId;
+    options.replicaId = parseReplicaId(args.at(1));
 
     runCDC(dbDir, options);
 

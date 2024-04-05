@@ -7,6 +7,7 @@
 #include <shared_mutex>
 #include <utility>
 
+#include "Assert.hpp"
 #include "RocksDBUtils.hpp"
 
 static void closeDB(rocksdb::DB* db) {
@@ -15,7 +16,7 @@ static void closeDB(rocksdb::DB* db) {
 }
 
 SharedRocksDB::SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon)
-    : _env(logger, xmon, "shared_rocksdb"), _db(nullptr, closeDB) {}
+    : _env(logger, xmon, "shared_rocksdb"), _transactionDB(false), _db(nullptr, closeDB) {}
 
 SharedRocksDB::~SharedRocksDB() {
     close();
@@ -41,6 +42,36 @@ void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
     );
 
     _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
+    ALWAYS_ASSERT(_cfDescriptors.size() == cfHandles.size());
+
+    for (auto i = 0; i < _cfDescriptors.size(); ++i) {
+        _cfs.insert(std::make_pair(_cfDescriptors[i].name, cfHandles[i]));
+    }
+
+    _cfDescriptors.clear();
+}
+
+void SharedRocksDB::openTransactionDB(rocksdb::Options options, const std::string& path) {
+    std::unique_lock<std::shared_mutex> _(_stateMutex);
+    ALWAYS_ASSERT(_db.get() == nullptr);
+    ALWAYS_ASSERT(options.statistics.get() == nullptr);
+    _dbStatistics = rocksdb::CreateDBStatistics();
+    _dbStatisticsFile = path + "/db-statistics.txt";
+    options.statistics = _dbStatistics;
+
+
+    std::vector<rocksdb::ColumnFamilyHandle*> cfHandles;
+    cfHandles.reserve(_cfDescriptors.size());
+    rocksdb::OptimisticTransactionDB* db;
+    auto dbPath = path + "/db";
+    LOG_INFO(_env, "Opening RocksDB in %s", dbPath);
+    ROCKS_DB_CHECKED_MSG(
+            rocksdb::OptimisticTransactionDB::Open(options, dbPath, _cfDescriptors, &cfHandles, &db),
+            "could not open RocksDB %s", path
+    );
+
+    _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
+    _transactionDB = true;
     ALWAYS_ASSERT(_cfDescriptors.size() == cfHandles.size());
 
     for (auto i = 0; i < _cfDescriptors.size(); ++i) {
@@ -134,6 +165,13 @@ rocksdb::DB* SharedRocksDB::db() const {
     std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     return _db.get();
+}
+
+rocksdb::OptimisticTransactionDB* SharedRocksDB::transactionDB() const {
+    std::shared_lock<std::shared_mutex> _(_stateMutex);
+    ALWAYS_ASSERT(_db.get() != nullptr);
+    ALWAYS_ASSERT(_transactionDB);
+    return (rocksdb::OptimisticTransactionDB*)_db.get();
 }
 
 void SharedRocksDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats) {

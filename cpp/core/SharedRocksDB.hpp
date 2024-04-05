@@ -8,6 +8,7 @@
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/utilities/optimistic_transaction_db.h>
 
 #include "Env.hpp"
 
@@ -16,6 +17,7 @@ public:
     SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon);
     ~SharedRocksDB();
     void open(rocksdb::Options options, const std::string& path);
+    void openTransactionDB(rocksdb::Options options, const std::string& path);
     void openForReadOnly(rocksdb::Options options, const std::string& path);
     void close();
 
@@ -27,11 +29,13 @@ public:
 
 
     rocksdb::DB* db() const;
+    rocksdb::OptimisticTransactionDB* transactionDB() const;
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
     void dumpRocksDBStatistics();
 
 private:
     Env _env;
+    bool _transactionDB;
     std::unique_ptr<rocksdb::DB, void(*)(rocksdb::DB*)> _db;
     std::shared_ptr<rocksdb::Statistics> _dbStatistics;
     std::string _dbStatisticsFile;

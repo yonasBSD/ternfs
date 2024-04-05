@@ -126,6 +126,18 @@ static LogIdx parseLogIdx(const std::string& arg) {
     return x;
 }
 
+static uint8_t parseReplicaId(const std::string& arg) {
+    size_t idx;
+    unsigned long replicaId = std::stoul(arg, &idx);
+    if (idx != arg.size()) {
+        die("Runoff character in number %s", arg.c_str());
+    }
+    if (replicaId > 4) {
+        die("Bad replicaId %s", arg.c_str());
+    }
+    return replicaId;
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
@@ -264,14 +276,8 @@ int main(int argc, char** argv) {
     if (processed != args.at(1).size() || shardId < 0 || shardId > 255) {
         die("Invalid shard '%s', expecting a number between 0 and 255.\n", args.at(1).c_str());
     }
-    ShardId shid(shardId);
 
-    int replicaId = std::stoi(args.at(2), &processed);
-    if (processed != args.at(2).size() || replicaId < 0 || replicaId > 4) {
-        die("Invalid replicaId '%s', expecting a number between 0 and 4.\n", args.at(2).c_str());
-    }
-
-    ShardReplicaId shrid(shid, replicaId);
+    ShardReplicaId shrid(shardId, parseReplicaId(args.at(2)));
 
     runShard(shrid, dbDir, options);
 

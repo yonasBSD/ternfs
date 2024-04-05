@@ -1,12 +1,11 @@
-// When you want to do some work per-shard, but you also want the
-// full file path.
-//
-// This code is an MVP, it doesn't properly handle queueing between
-// threads (100,000 queue len mitigates this), and also leaks goroutines
-// blocked forever.
+// When you want to traverse the filesystem, but you also want the
+// filepath. We have some workers per shard, to try to parallelize
+// the work nicely. However there is a work-stealing of sorts otherwise
+// it's very easy to end in deadlocks.
 package main
 
 import (
+	"fmt"
 	"sync"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
@@ -27,6 +26,7 @@ type parwalkEnv struct {
 
 func (env *parwalkEnv) visit(
 	log *lib.Logger,
+	homeShid msgs.ShardId,
 	parent msgs.InodeId,
 	id msgs.InodeId,
 	path string,
@@ -35,23 +35,29 @@ func (env *parwalkEnv) visit(
 	if err := env.callback(parent, id, path); err != nil {
 		return err
 	}
-	if parent != msgs.NULL_INODE_ID && parent.Shard() == id.Shard() {
+	if parent != msgs.NULL_INODE_ID && homeShid == id.Shard() {
 		// same shard, handle right now
-		env.process(log, id, path)
+		env.process(log, homeShid, id, path)
 	} else {
-		// pass to other shard
-		env.wg.Add(1)
 		req := parwarlkReq{
 			id:   id,
 			path: path,
 		}
-		env.chans[id.Shard()] <- req
+		select {
+		// pass to other shard
+		case env.chans[id.Shard()] <- req:
+			env.wg.Add(1)
+			// queue is full, do it yourself
+		default:
+			env.process(log, homeShid, id, path)
+		}
 	}
 	return nil
 }
 
 func (env *parwalkEnv) process(
 	log *lib.Logger,
+	homeShid msgs.ShardId,
 	id msgs.InodeId,
 	path string,
 ) error {
@@ -71,7 +77,7 @@ func (env *parwalkEnv) process(
 		}
 		for _, e := range readResp.Results {
 			newPath := path + "/" + e.Name
-			if err := env.visit(log, id, e.TargetId, newPath); err != nil {
+			if err := env.visit(log, homeShid, id, e.TargetId, newPath); err != nil {
 				return err
 			}
 		}
@@ -86,9 +92,13 @@ func (env *parwalkEnv) process(
 func Parwalk(
 	log *lib.Logger,
 	client *client.Client,
+	workersPerShard int,
 	root string,
 	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error,
 ) error {
+	if workersPerShard < 1 {
+		panic(fmt.Errorf("workersPerShard=%d < 1", workersPerShard))
+	}
 	// compute
 	env := parwalkEnv{
 		chans:    make([]chan parwarlkReq, 256),
@@ -96,34 +106,30 @@ func Parwalk(
 		callback: callback,
 	}
 	for i := 0; i < 256; i++ {
-		env.chans[i] = make(chan parwarlkReq, 10_000_000)
+		env.chans[i] = make(chan parwarlkReq, 10_000)
 	}
-	var overallError error
 	for i := 0; i < 256; i++ {
-		ch := env.chans[i]
-		go func() {
-			for {
-				if overallError != nil { // drain forever, not ideal but feeling lazy and will work
-					for {
-						<-ch
-						env.wg.Done()
+		shid := msgs.ShardId(i)
+		ch := env.chans[shid]
+		for j := 0; j < workersPerShard; j++ {
+			go func() {
+				for {
+					req := <-ch
+					if err := env.process(log, shid, req.id, req.path); err != nil {
+						panic(err)
 					}
+					env.wg.Done()
 				}
-				req := <-ch
-				if err := env.process(log, req.id, req.path); err != nil {
-					overallError = err
-				}
-				env.wg.Done()
-			}
-		}()
+			}()
+		}
 	}
 	rootId, parentId, err := client.ResolvePathWithParent(log, root)
 	if err != nil {
 		return err
 	}
-	if err := env.visit(log, parentId, rootId, root); err != nil {
+	if err := env.visit(log, 0, parentId, rootId, root); err != nil {
 		return err
 	}
 	env.wg.Wait()
-	return overallError
+	return nil
 }

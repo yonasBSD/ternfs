@@ -56,6 +56,7 @@ func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	err := Parwalk(
 		log,
 		c,
+		1,
 		"/",
 		func(parent msgs.InodeId, id msgs.InodeId, path string) error {
 			if id.Type() == msgs.DIRECTORY {
@@ -824,6 +825,7 @@ func main() {
 			err := Parwalk(
 				log,
 				getClient(),
+				1,
 				"/",
 				func(parent, id msgs.InodeId, path string) error {
 					if id.Type() == msgs.DIRECTORY {
@@ -934,6 +936,7 @@ func main() {
 		err := Parwalk(
 			log,
 			getClient(),
+			1,
 			*duDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if id.Type() == msgs.DIRECTORY {
@@ -984,6 +987,7 @@ func main() {
 		err := Parwalk(
 			log,
 			getClient(),
+			1,
 			*findDir,
 			func(parent, id msgs.InodeId, path string) error {
 				if strings.HasSuffix(path, "/"+*findName) {

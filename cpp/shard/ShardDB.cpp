@@ -1527,6 +1527,21 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    EggsError _prepareSwapSpans(EggsTime time, const SwapSpansReq& req, SwapSpansEntry& entry) {
+        if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        entry.fileId1 = req.fileId1;
+        entry.byteOffset1 = req.byteOffset1;
+        entry.fileId2 = req.fileId2;
+        entry.byteOffset2 = req.byteOffset2;
+        return NO_ERROR;
+    }
+
     EggsError _prepareMoveSpan(EggsTime time, const MoveSpanReq& req, MoveSpanEntry& entry) {
         if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_DIRECTORY;
@@ -1664,6 +1679,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
             err = _prepareRemoveZeroBlockServiceFiles(time, req.getRemoveZeroBlockServiceFiles(), logEntryBody.setRemoveZeroBlockServiceFiles());
+            break;
+        case ShardMessageKind::SWAP_SPANS:
+            err = _prepareSwapSpans(time, req.getSwapSpans(), logEntryBody.setSwapSpans());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -3050,31 +3068,52 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
+    bool _fetchSpan(InodeId fileId, uint64_t byteOffset, StaticValue<SpanKey>& spanKey, std::string& spanValue, ExternalValue<SpanBody>& span) {
+        spanKey().setFileId(fileId);
+        spanKey().setOffset(byteOffset);
+        auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
+        if (status.IsNotFound()) {
+            LOG_DEBUG(_env, "could not find span at offset %s in file %s", byteOffset, fileId);
+            return false;
+        }
+        ROCKS_DB_CHECKED(status);
+        span = ExternalValue<SpanBody>(spanValue);
+        return true;
+    }
+
+    SpanState _fetchSpanState(EggsTime time, InodeId fileId, uint64_t spanEnd) {
+        // See if it's a normal file first
+        std::string fileValue;
+        ExternalValue<FileBody> file;
+        auto err = _getFile({}, fileId, fileValue, file);
+        ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::FILE_NOT_FOUND);
+        if (err == NO_ERROR) {
+            return SpanState::CLEAN;
+        }
+        // couldn't find normal file, must be transient
+        ExternalValue<TransientFileBody> transientFile;
+        err = _getTransientFile({}, time, true, fileId, fileValue, transientFile);
+        ALWAYS_ASSERT(err == NO_ERROR);
+        if (spanEnd == transientFile().fileSize()) {
+            return transientFile().lastSpanState();
+        } else {
+            return SpanState::CLEAN;
+        }
+    }
+
     EggsError _applySwapBlocks(EggsTime time, rocksdb::WriteBatch& batch, const SwapBlocksEntry& entry, SwapBlocksResp& resp) {
         // TODO turn assertions into proper errors
         // Fetch spans
-        const auto fetchSpan = [this](InodeId fileId, uint64_t byteOffset, StaticValue<SpanKey>& spanKey, std::string& spanValue, ExternalValue<SpanBody>& span) -> bool {
-            spanKey().setFileId(fileId);
-            spanKey().setOffset(byteOffset);
-            auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
-            if (status.IsNotFound()) {
-                LOG_DEBUG(_env, "could not find span at offset %s in file %s", byteOffset, fileId);
-                return false;
-            }
-            ROCKS_DB_CHECKED(status);
-            span = ExternalValue<SpanBody>(spanValue);
-            return true;
-        };
         StaticValue<SpanKey> span1Key;
         std::string span1Value;
         ExternalValue<SpanBody> span1;
-        if (!fetchSpan(entry.fileId1, entry.byteOffset1, span1Key, span1Value, span1)) {
+        if (!_fetchSpan(entry.fileId1, entry.byteOffset1, span1Key, span1Value, span1)) {
             return EggsError::SPAN_NOT_FOUND;
         }
         StaticValue<SpanKey> span2Key;
         std::string span2Value;
         ExternalValue<SpanBody> span2;
-        if (!fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
+        if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
         ALWAYS_ASSERT(span1().storageClass() != INLINE_STORAGE); // TODO better errors
@@ -3085,27 +3124,8 @@ struct ShardDBImpl {
         uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
         ALWAYS_ASSERT(blockSize1 == blockSize2);
         // Fetch span state
-        const auto fetchState = [this, time](InodeId fileId, uint64_t spanEnd) -> SpanState {
-            // See if it's a normal file first
-            std::string fileValue;
-            ExternalValue<FileBody> file;
-            auto err = _getFile({}, fileId, fileValue, file);
-            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::FILE_NOT_FOUND);
-            if (err == NO_ERROR) {
-                return SpanState::CLEAN;
-            }
-            // couldn't find normal file, must be transient
-            ExternalValue<TransientFileBody> transientFile;
-            err = _getTransientFile({}, time, true, fileId, fileValue, transientFile);
-            ALWAYS_ASSERT(err == NO_ERROR);
-            if (spanEnd == transientFile().fileSize()) {
-                return transientFile().lastSpanState();
-            } else {
-                return SpanState::CLEAN;
-            }
-        };
-        auto state1 = fetchState(entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = fetchState(entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
         // We don't want to put not-certified blocks in clean spans, or similar
         ALWAYS_ASSERT(state1 == state2);
         // Find blocks
@@ -3239,6 +3259,48 @@ struct ShardDBImpl {
             _addBlockServicesToFiles(batch, block.blockService(), entry.fileId2, +1);
         }
         // we're done
+        return NO_ERROR;
+    }
+
+    EggsError _applySwapSpans(EggsTime time, rocksdb::WriteBatch& batch, const SwapSpansEntry& entry, SwapSpansResp& resp) {
+        // TODO turn assertions into proper errors
+        StaticValue<SpanKey> span1Key;
+        std::string span1Value;
+        ExternalValue<SpanBody> span1;
+        if (!_fetchSpan(entry.fileId1, entry.byteOffset1, span1Key, span1Value, span1)) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        StaticValue<SpanKey> span2Key;
+        std::string span2Value;
+        ExternalValue<SpanBody> span2;
+        if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        ALWAYS_ASSERT(span1().storageClass() != INLINE_STORAGE); // TODO better errors
+        auto blocks1 = span1().blocksBody();
+        ALWAYS_ASSERT(span2().storageClass() != INLINE_STORAGE);
+        auto blocks2 = span2().blocksBody();
+        // check that size and crc is the same
+        ALWAYS_ASSERT(span1().spanSize() == span2().spanSize());
+        ALWAYS_ASSERT(span1().crc() == span2().crc());
+        // Fetch span state
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        ALWAYS_ASSERT(state1 == SpanState::CLEAN);
+        ALWAYS_ASSERT(state2 == SpanState::CLEAN);
+        // we're ready to swap, first do the blocks bookkeeping
+        const auto adjustBlockServices = [this, &batch](const SpanBlocksBody blocks, InodeId addTo, InodeId subtractFrom) {
+            for (int i = 0; i < blocks.parity().blocks(); i++) {
+                const auto block = blocks.block(i);
+                _addBlockServicesToFiles(batch, block.blockService(), addTo, +1);
+                _addBlockServicesToFiles(batch, block.blockService(), subtractFrom, -1);
+            }
+        };
+        adjustBlockServices(blocks1, entry.fileId2, entry.fileId1);
+        adjustBlockServices(blocks2, entry.fileId1, entry.fileId2);
+        // now do the swap
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span2.toSlice()));
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
         return NO_ERROR;
     }
 
@@ -3643,6 +3705,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::MOVE_SPAN:
     case ShardMessageKind::SET_TIME:
     case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_SPANS:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

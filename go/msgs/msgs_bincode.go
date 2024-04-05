@@ -394,6 +394,8 @@ func (k ShardMessageKind) String() string {
 		return "ADD_SPAN_INITIATE_WITH_REFERENCE"
 	case 125:
 		return "REMOVE_ZERO_BLOCK_SERVICE_FILES"
+	case 126:
+		return "SWAP_SPANS"
 	case 128:
 		return "CREATE_DIRECTORY_INODE"
 	case 129:
@@ -446,6 +448,7 @@ const (
 	REMOVE_INODE ShardMessageKind = 0x7A
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
 	REMOVE_ZERO_BLOCK_SERVICE_FILES ShardMessageKind = 0x7D
+	SWAP_SPANS ShardMessageKind = 0x7E
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -486,6 +489,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	REMOVE_INODE,
 	ADD_SPAN_INITIATE_WITH_REFERENCE,
 	REMOVE_ZERO_BLOCK_SERVICE_FILES,
+	SWAP_SPANS,
 	CREATE_DIRECTORY_INODE,
 	SET_DIRECTORY_OWNER,
 	REMOVE_DIRECTORY_OWNER,
@@ -558,6 +562,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &AddSpanInitiateWithReferenceReq{}, &AddSpanInitiateWithReferenceResp{}, nil
 	case k == "REMOVE_ZERO_BLOCK_SERVICE_FILES":
 		return &RemoveZeroBlockServiceFilesReq{}, &RemoveZeroBlockServiceFilesResp{}, nil
+	case k == "SWAP_SPANS":
+		return &SwapSpansReq{}, &SwapSpansResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
 		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
@@ -2596,6 +2602,54 @@ func (v *RemoveZeroBlockServiceFilesResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextFile)); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (v *SwapSpansReq) ShardRequestKind() ShardMessageKind {
+	return SWAP_SPANS
+}
+
+func (v *SwapSpansReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SwapSpansReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SwapSpansResp) ShardResponseKind() ShardMessageKind {
+	return SWAP_SPANS
+}
+
+func (v *SwapSpansResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *SwapSpansResp) Unpack(r io.Reader) error {
 	return nil
 }
 

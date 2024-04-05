@@ -1195,6 +1195,19 @@ type SwapBlocksReq struct {
 
 type SwapBlocksResp struct{}
 
+// TODO this works with transient files, but doesn't require a cookie -- it's a bit
+// inconsistent.
+//
+// Swaps two spans, both clean. CRCs etc must match.
+type SwapSpansReq struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	FileId2     InodeId
+	ByteOffset2 uint64
+}
+
+type SwapSpansResp struct{}
+
 type BlockServiceFilesReq struct {
 	BlockServiceId BlockServiceId
 	// Not strictly needed, since the migration process usually fetches some file ids
@@ -1714,6 +1727,13 @@ type SwapBlocksEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	BlockId2    BlockId
+}
+
+type SwapSpansEntry struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	FileId2     InodeId
+	ByteOffset2 uint64
 }
 
 type MoveSpanEntry struct {

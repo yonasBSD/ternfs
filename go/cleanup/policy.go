@@ -13,7 +13,7 @@ import (
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
 // If it returns N, edges[N:] will be well formed too in the sense above.
-func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.Edge) int {
+func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.Edge) int {
 	if len(edges) == 0 {
 		return 0
 	}
@@ -30,8 +30,12 @@ func edgesToRemove(policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.
 			panic(fmt.Errorf("got multiple names in edges (%v and %v)", name, edges[i].Name))
 		}
 	}
-	// check that times are ascending
+	// check that times are ascending, apart from shard 0 for which this is not
+	// true after the merge
 	for i := 1; i < len(edges); i++ {
+		if dir.Shard() == 0 && edges[i].Current {
+			continue
+		}
 		if edges[i].CreationTime < edges[i-1].CreationTime {
 			panic(fmt.Errorf("non-monotonic creation times"))
 		}

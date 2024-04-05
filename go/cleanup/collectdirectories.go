@@ -35,7 +35,7 @@ func applyPolicy(
 	log.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
 	atomic.AddUint64(&stats.VisitedEdges, uint64(len(edges)))
 	now := msgs.Now()
-	toCollect := edgesToRemove(policy, now, edges)
+	toCollect := edgesToRemove(dirId, policy, now, edges)
 	log.Debug("%v: will remove %d edges out of %d", dirId, toCollect, len(edges))
 	for _, edge := range edges[:toCollect] {
 		if edge.Current {

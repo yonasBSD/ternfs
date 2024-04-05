@@ -30,8 +30,8 @@ func TestDeleteAll(t *testing.T) {
 			CreationTime: date(2),
 		},
 	}
-	assert.Equal(t, 2, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0)}, date(3), edges))
-	assert.Equal(t, 2, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(0)}, date(3), edges))
+	assert.Equal(t, 2, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0)}, date(3), edges))
+	assert.Equal(t, 2, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(0)}, date(3), edges))
 }
 
 func TestDeleteAfterVersions(t *testing.T) {
@@ -61,22 +61,22 @@ func TestDeleteAfterVersions(t *testing.T) {
 			CreationTime: date(7),
 		},
 	}
-	assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(10)}, msgs.Now(), edges))
-	assert.Equal(t, 3, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(1)}, msgs.Now(), edges))
-	assert.Equal(t, 1, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(2)}, msgs.Now(), edges)) // delete does not count
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(10)}, msgs.Now(), edges))
+	assert.Equal(t, 3, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(1)}, msgs.Now(), edges))
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(2)}, msgs.Now(), edges)) // delete does not count
 	/*
 		// this falls on day 6, so between the delete and the last create. everything
 		// apart from the last create should be deleted.
-		assert.Equal(t, 3, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(8), edges))
+		assert.Equal(t, 3, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(8), edges))
 		// this falls on day 4, so between the second create and the deleted. the
 		// delete is deleted too (can't be kept hanging)
-		assert.Equal(t, 3, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 4)}, date(8), edges))
+		assert.Equal(t, 3, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 4)}, date(8), edges))
 		// this falls between the first and second create.
-		assert.Equal(t, 1, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 6)}, date(8), edges))
+		assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 6)}, date(8), edges))
 		// this is well before anything
-		assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(48 * time.Hour * 10)}, date(8), edges))
+		assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(48 * time.Hour * 10)}, date(8), edges))
 		// doesn't crash with empty edges
-		assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(48 * time.Hour * 10)}, date(8), make([]msgs.Edge, 0)))
+		assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(48 * time.Hour * 10)}, date(8), make([]msgs.Edge, 0)))
 	*/
 }
 
@@ -97,9 +97,9 @@ func TestDeleteAfterTime1(t *testing.T) {
 		},
 	}
 	// This falls on day 2, note that the edge owning the file is expired, but we still don't delete anything
-	assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
 	// Once the deletion edge expires, _then_ we delete
-	assert.Equal(t, 2, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges))
+	assert.Equal(t, 2, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges))
 }
 
 func TestDeleteAfterTime2(t *testing.T) {
@@ -120,10 +120,10 @@ func TestDeleteAfterTime2(t *testing.T) {
 		},
 	}
 	// This falls on day 2, note that the edge owning the file is expired, but we still don't delete anything
-	assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
 	// Once the deletion edge expires, _then_ we delete, but only the snapshot
 	// edge.
-	assert.Equal(t, 1, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges))
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges))
 }
 
 func TestDeleteAfterTime3(t *testing.T) {
@@ -137,7 +137,7 @@ func TestDeleteAfterTime3(t *testing.T) {
 		},
 	}
 	// This falls on day 2, note that the edge owning the file is expired, but we still don't delete anything
-	assert.Equal(t, 1, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
 }
 
 func TestDontDeleteCurrent(t *testing.T) {
@@ -150,5 +150,5 @@ func TestDontDeleteCurrent(t *testing.T) {
 			Current:      true,
 		},
 	}
-	assert.Equal(t, 0, edgesToRemove(&msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges))
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges))
 }

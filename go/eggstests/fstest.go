@@ -37,6 +37,7 @@ type fsTestOpts struct {
 	readWithMmap    bool
 
 	migrate bool
+	defrag  bool
 }
 
 type fsTestHarness[Id comparable] interface {
@@ -899,6 +900,86 @@ func fsTestInternal[Id comparable](
 		}
 		log.Info("migrated files in %s", time.Since(t0))
 		t0 = time.Now()
+	}
+	if opts.defrag {
+		// now, defrag to stimulate the defrag codepath -- set everything to be HDD, then defrag
+		blockPolicy := &msgs.BlockPolicy{}
+		if _, err := c.ResolveDirectoryInfoEntry(log, client.NewDirInfoCache(), msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+			panic(err)
+		}
+		if len(blockPolicy.Entries) != 2 || blockPolicy.Entries[0].MinSize != 0 {
+			panic(fmt.Errorf("bad block policy %+v", blockPolicy))
+		}
+		if blockPolicy.Entries[1].StorageClass != msgs.HDD_STORAGE {
+			panic(fmt.Errorf("bad block policy %+v", blockPolicy))
+		}
+		flashOnlyPolicy := &msgs.BlockPolicy{Entries: []msgs.BlockPolicyEntry{{StorageClass: msgs.HDD_STORAGE, MinSize: 0}}}
+		if err := c.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, flashOnlyPolicy); err != nil {
+			panic(err)
+		}
+		// defrag
+		stats := &cleanup.DefragStats{}
+		alert := log.NewNCAlert(0)
+		if err := cleanup.DefragFiles(log, c, lib.NewBufPool(), client.NewDirInfoCache(), stats, alert, "/", 0); err != nil {
+			panic(err)
+		}
+		if stats.DefraggedSpans == 0 {
+			panic(fmt.Errorf("defragged nothing"))
+		}
+		// restore policy
+		if err := c.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, blockPolicy); err != nil {
+			panic(err)
+		}
+		// check that we have no flash block
+		blockServicesResp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			panic(err)
+		}
+		blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo)
+		for i := range blockServices.BlockServices {
+			blockServicesById[blockServices.BlockServices[i].Info.Id] = &blockServices.BlockServices[i]
+		}
+		client.Parwalk(
+			log, c, 1, "/",
+			func(parent, fileId msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+				if fileId.Type() == msgs.DIRECTORY {
+					return nil
+				}
+				fileSpansReq := msgs.FileSpansReq{
+					FileId:     fileId,
+					ByteOffset: 0,
+				}
+				fileSpansResp := msgs.FileSpansResp{}
+				for {
+					if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+						panic(err)
+					}
+					for spanIx := range fileSpansResp.Spans {
+						span := &fileSpansResp.Spans[spanIx]
+						if span.Header.StorageClass == msgs.INLINE_STORAGE {
+							continue
+						}
+						body := span.Body.(*msgs.FetchedBlocksSpan)
+						for _, block := range body.Blocks {
+							blockService := blockServicesById[fileSpansResp.BlockServices[block.BlockServiceIx].Id]
+							if blockService.Info.StorageClass != msgs.HDD_STORAGE {
+								panic(fmt.Errorf("seen unexpected block service %+v", blockService))
+							}
+						}
+					}
+					if fileSpansResp.NextOffset == 0 {
+						break
+					}
+					fileSpansReq.ByteOffset = fileSpansResp.NextOffset
+				}
+				return nil
+			},
+		)
+		log.Info("defragged files in %s: %+v", time.Since(t0), stats)
+		t0 = time.Now()
+	}
+	if opts.migrate || opts.defrag {
 		// And check the state again, don't bother with multiple threads thoush
 		state.rootDir.check(log, harness)
 		log.Info("checked files in %s", time.Since(t0))

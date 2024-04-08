@@ -2,12 +2,12 @@
 // filepath. We have some workers per shard, to try to parallelize
 // the work nicely. However there is a work-stealing of sorts otherwise
 // it's very easy to end in deadlocks.
-package main
+package client
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
-	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
@@ -20,8 +20,8 @@ type parwarlkReq struct {
 type parwalkEnv struct {
 	wg       sync.WaitGroup
 	chans    []chan parwarlkReq
-	client   *client.Client
-	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error
+	client   *Client
+	callback func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error
 }
 
 func (env *parwalkEnv) visit(
@@ -30,9 +30,10 @@ func (env *parwalkEnv) visit(
 	parent msgs.InodeId,
 	id msgs.InodeId,
 	path string,
+	creationTime msgs.EggsTime,
 ) error {
 	log.Debug("visiting %q, %v", path, id)
-	if err := env.callback(parent, id, path); err != nil {
+	if err := env.callback(parent, id, path, creationTime); err != nil {
 		return err
 	}
 	if parent != msgs.NULL_INODE_ID && homeShid == id.Shard() {
@@ -47,7 +48,7 @@ func (env *parwalkEnv) visit(
 		// pass to other shard
 		case env.chans[id.Shard()] <- req:
 			env.wg.Add(1)
-			// queue is full, do it yourself
+		// queue is full, do it yourself
 		default:
 			env.process(log, homeShid, id, path)
 		}
@@ -76,8 +77,8 @@ func (env *parwalkEnv) process(
 			return nil
 		}
 		for _, e := range readResp.Results {
-			newPath := path + "/" + e.Name
-			if err := env.visit(log, homeShid, id, e.TargetId, newPath); err != nil {
+			newPath := filepath.Join(path, e.Name)
+			if err := env.visit(log, homeShid, id, e.TargetId, newPath, e.CreationTime); err != nil {
 				return err
 			}
 		}
@@ -91,10 +92,10 @@ func (env *parwalkEnv) process(
 
 func Parwalk(
 	log *lib.Logger,
-	client *client.Client,
+	client *Client,
 	workersPerShard int,
 	root string,
-	callback func(parent msgs.InodeId, id msgs.InodeId, path string) error,
+	callback func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error,
 ) error {
 	if workersPerShard < 1 {
 		panic(fmt.Errorf("workersPerShard=%d < 1", workersPerShard))
@@ -108,28 +109,42 @@ func Parwalk(
 	for i := 0; i < 256; i++ {
 		env.chans[i] = make(chan parwarlkReq, 10_000)
 	}
+	errChan := make(chan error, 1)
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		ch := env.chans[shid]
 		for j := 0; j < workersPerShard; j++ {
 			go func() {
 				for {
-					req := <-ch
+					req, more := <-ch
+					if !more {
+						return
+					}
 					if err := env.process(log, shid, req.id, req.path); err != nil {
-						panic(err)
+						for _, ch := range env.chans {
+							close(ch)
+						}
+						select {
+						case errChan <- err:
+						default:
+						}
+						return
 					}
 					env.wg.Done()
 				}
 			}()
 		}
 	}
-	rootId, parentId, err := client.ResolvePathWithParent(log, root)
+	rootId, creationTime, parentId, err := client.ResolvePathWithParent(log, root)
 	if err != nil {
 		return err
 	}
-	if err := env.visit(log, 0, parentId, rootId, root); err != nil {
+	if err := env.visit(log, 0, parentId, rootId, root, creationTime); err != nil {
 		return err
 	}
-	env.wg.Wait()
-	return nil
+	go func() {
+		env.wg.Wait()
+		errChan <- nil
+	}()
+	return <-errChan
 }

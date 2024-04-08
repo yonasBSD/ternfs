@@ -162,7 +162,7 @@ func reconstructBlock(
 	blockToMigrateIx uint8,
 	blocksToMigrateIxs []uint8, // the other blocks to migrate
 ) (msgs.BlockId, msgs.BlockServiceId, error) {
-	if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile); err != nil {
+	if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile, fmt.Sprintf("reconstruct %v", fileId)); err != nil {
 		return 0, 0, err
 	}
 	D := parity.DataBlocks()
@@ -351,7 +351,7 @@ func migrateBlocksInFileGeneric(
 						if !goodToCopyFrom {
 							continue
 						}
-						if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile); err != nil {
+						if err := ensureScratchFile(log, c, fileId.Shard(), scratchFile, fmt.Sprintf("reconstruct copy %v", fileId)); err != nil {
 							return err
 						}
 						log.Debug("trying block ix %v", blockIx)

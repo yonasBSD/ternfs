@@ -1540,6 +1540,17 @@ func (p *StripePolicy) Tag() DirectoryInfoTag {
 	return STRIPE_POLICY_TAG
 }
 
+func (p *StripePolicy) Stripes(size uint32) uint8 {
+	S := int(size) / int(p.TargetStripeSize)
+	if S < 1 {
+		S = 1
+	}
+	if S > 15 {
+		S = 15
+	}
+	return uint8(S)
+}
+
 // --------------------------------------------------------------------
 // shard log entries
 //

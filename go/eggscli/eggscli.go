@@ -53,12 +53,12 @@ func usage() {
 func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
-	err := Parwalk(
+	err := client.Parwalk(
 		log,
 		c,
 		1,
 		"/",
-		func(parent msgs.InodeId, id msgs.InodeId, path string) error {
+		func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
 			if id.Type() == msgs.DIRECTORY {
 				if atomic.AddUint64(&examinedDirs, 1)%1000000 == 0 {
 					log.Info("examined %v dirs, %v files", examinedDirs, examinedFiles)
@@ -822,12 +822,12 @@ func main() {
 		analyzedFiles := uint64(0)
 		startedAt := time.Now()
 		go func() {
-			err := Parwalk(
+			err := client.Parwalk(
 				log,
 				getClient(),
 				1,
 				"/",
-				func(parent, id msgs.InodeId, path string) error {
+				func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
 					}
@@ -933,12 +933,12 @@ func main() {
 		histoCountBins := make([]uint64, 256)
 		histogram := lib.NewHistogram(len(histoSizeBins), 255, 1.15) // max: ~900PB
 		startedAt := time.Now()
-		err := Parwalk(
+		err := client.Parwalk(
 			log,
 			getClient(),
-			1,
+			5,
 			*duDir,
-			func(parent, id msgs.InodeId, path string) error {
+			func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
 				if id.Type() == msgs.DIRECTORY {
 					atomic.AddUint64(&numDirectories, 1)
 					return nil
@@ -984,12 +984,12 @@ func main() {
 	findDir := findCmd.String("path", "/", "")
 	findName := findCmd.String("name", "", "")
 	findRun := func() {
-		err := Parwalk(
+		err := client.Parwalk(
 			log,
 			getClient(),
 			1,
 			*findDir,
-			func(parent, id msgs.InodeId, path string) error {
+			func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
 				if strings.HasSuffix(path, "/"+*findName) {
 					log.Info(path)
 				}
@@ -1019,6 +1019,7 @@ func main() {
 		flags: scrubFileCmd,
 		run:   scrubFileRun,
 	}
+
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := cleanup.ScrubState{}
@@ -1116,6 +1117,46 @@ func main() {
 	commands["kernel-latencies"] = commandSpec{
 		flags: kernelLatenciesCmd,
 		run:   kernelLatenciesRun,
+	}
+
+	defragFileCmd := flag.NewFlagSet("defrag", flag.ExitOnError)
+	defragFilePath := defragFileCmd.String("path", "", "The directory or file to defrag")
+	defragFileFrom := defragFileCmd.String("from", "", "If present, will not defrag files pointed at by edges created before this time.")
+	defragFileRun := func() {
+		c := getClient()
+		dirInfoCache := client.NewDirInfoCache()
+		bufPool := lib.NewBufPool()
+		stats := &cleanup.DefragStats{}
+		alert := log.NewNCAlert(0)
+		id, _, parent, err := c.ResolvePathWithParent(log, *defragFilePath)
+		if err != nil {
+			panic(err)
+		}
+		if id.Type() == msgs.DIRECTORY {
+			var startTime msgs.EggsTime
+			if *defragFileFrom != "" {
+				t, err := time.Parse(time.RFC3339Nano, *defragFileFrom)
+				if err != nil {
+					panic(err)
+				}
+				startTime = msgs.MakeEggsTime(t)
+			}
+			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, *defragFilePath, startTime); err != nil {
+				panic(err)
+			}
+		} else {
+			if *defragFileFrom != "" {
+				panic(fmt.Errorf("cannot provide -from with a file -path"))
+			}
+			if err := cleanup.DefragFile(log, c, bufPool, dirInfoCache, stats, alert, parent, id, *defragFilePath); err != nil {
+				panic(err)
+			}
+		}
+		log.Info("defrag stats: %+v", stats)
+	}
+	commands["defrag"] = commandSpec{
+		flags: defragFileCmd,
+		run:   defragFileRun,
 	}
 
 	flag.Parse()

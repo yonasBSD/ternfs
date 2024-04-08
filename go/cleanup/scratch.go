@@ -13,7 +13,7 @@ type scratchFile struct {
 	size   uint64
 }
 
-func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, file *scratchFile) error {
+func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, file *scratchFile, note string) error {
 	if file.id != msgs.NULL_INODE_ID {
 		return nil
 	}
@@ -23,7 +23,7 @@ func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, fi
 		shard,
 		&msgs.ConstructFileReq{
 			Type: msgs.FILE,
-			Note: "migrate",
+			Note: note,
 		},
 		&resp,
 	)

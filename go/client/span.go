@@ -95,6 +95,37 @@ func ensureLen(buf *[]byte, l int) {
 
 const eggsFsPageSize int = 4096
 
+type SpanParameters struct {
+	Parity       rs.Parity
+	StorageClass msgs.StorageClass
+	Stripes      uint8
+	CellSize     uint32
+}
+
+func ComputeSpanParameters(
+	spanPolicies *msgs.SpanPolicy,
+	blockPolicies *msgs.BlockPolicy,
+	stripePolicy *msgs.StripePolicy,
+	spanSize uint32,
+) *SpanParameters {
+	// Compute all the size parameters.
+	S := int(stripePolicy.Stripes(spanSize))
+	spanPolicy := spanPolicies.Pick(spanSize)
+	D := spanPolicy.Parity.DataBlocks()
+	blockSize := (int(spanSize) + D - 1) / D
+	cellSize := (blockSize + S - 1) / S
+	// Round up cell to page size
+	cellSize = eggsFsPageSize * ((cellSize + eggsFsPageSize - 1) / eggsFsPageSize)
+	blockSize = cellSize * S
+	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
+	return &SpanParameters{
+		Parity:       spanPolicy.Parity,
+		Stripes:      uint8(S),
+		StorageClass: storageClass,
+		CellSize:     uint32(cellSize),
+	}
+}
+
 func prepareSpanInitiateReq(
 	blacklist []msgs.BlacklistEntry,
 	spanPolicies *msgs.SpanPolicy,
@@ -113,22 +144,13 @@ func prepareSpanInitiateReq(
 	crc := crc32c.Sum(0, *data)
 	crc = crc32c.ZeroExtend(crc, int(sizeWithZeros)-len(*data))
 
-	// Compute all the size parameters. We use TargetStripeSize as an upper bound,
-	// for now (i.e. the stripe will always be smaller than TargetStripeSize)
-	S := (len(*data) + int(stripePolicy.TargetStripeSize) - 1) / int(stripePolicy.TargetStripeSize)
-	if S > 15 {
-		S = 15
-	}
-	spanPolicy := spanPolicies.Pick(uint32(len(*data)))
-	D := spanPolicy.Parity.DataBlocks()
-	P := spanPolicy.Parity.ParityBlocks()
-	B := spanPolicy.Parity.Blocks()
-	blockSize := (len(*data) + D - 1) / D
-	cellSize := (blockSize + S - 1) / S
-	// Round up cell to page size
-	cellSize = eggsFsPageSize * ((cellSize + eggsFsPageSize - 1) / eggsFsPageSize)
-	blockSize = cellSize * S
-	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
+	spanParameters := ComputeSpanParameters(spanPolicies, blockPolicies, stripePolicy, uint32(len(*data)))
+	S := int(spanParameters.Stripes)
+	D := spanParameters.Parity.DataBlocks()
+	P := spanParameters.Parity.ParityBlocks()
+	B := spanParameters.Parity.Blocks()
+	cellSize := int(spanParameters.CellSize)
+	blockSize := cellSize * S
 
 	// Pad the data with zeros
 	ensureLen(data, S*D*cellSize)
@@ -139,9 +161,9 @@ func prepareSpanInitiateReq(
 		ByteOffset:   offset,
 		Size:         sizeWithZeros,
 		Crc:          msgs.Crc(crc),
-		StorageClass: storageClass,
+		StorageClass: spanParameters.StorageClass,
 		Blacklist:    blacklist,
-		Parity:       spanPolicy.Parity,
+		Parity:       spanParameters.Parity,
 		Stripes:      uint8(S),
 		CellSize:     uint32(cellSize),
 		Crcs:         make([]msgs.Crc, B*S),
@@ -157,7 +179,7 @@ func prepareSpanInitiateReq(
 	} else { // RS
 		// Make space for the parity blocks after the data blocks
 		ensureLen(data, blockSize*B)
-		rs := rs.Get(spanPolicy.Parity)
+		rs := rs.Get(spanParameters.Parity)
 		dataSrcs := make([][]byte, D)
 		parityDests := make([][]byte, P)
 		for s := 0; s < S; s++ {
@@ -236,6 +258,7 @@ func (c *Client) CreateSpan(
 	blockPolicies *msgs.BlockPolicy,
 	stripePolicy *msgs.StripePolicy,
 	id msgs.InodeId,
+	reference msgs.InodeId,
 	cookie [8]byte,
 	offset uint64,
 	// The span size might be greater than `len(*data)`, in which case we have trailing
@@ -245,6 +268,9 @@ func (c *Client) CreateSpan(
 	// buffer), the intention is that if you're using a buf pool to get this you can put it back after.
 	data *[]byte,
 ) error {
+	if reference == msgs.NULL_INODE_ID {
+		reference = id
+	}
 	log.Debug("writing span spanSize=%v len=%v", spanSize, len(*data))
 
 	if len(*data) < 256 {
@@ -255,18 +281,22 @@ func (c *Client) CreateSpan(
 	}
 
 	// initiate span add
-	initiateReq := prepareSpanInitiateReq(append([]msgs.BlacklistEntry{}, blacklist...), spanPolicies, blockPolicies, stripePolicy, id, cookie, offset, spanSize, data)
+	bareInitiateReq := prepareSpanInitiateReq(append([]msgs.BlacklistEntry{}, blacklist...), spanPolicies, blockPolicies, stripePolicy, id, cookie, offset, spanSize, data)
 	{
-		expectedSize := float64(spanSize) * float64(initiateReq.Parity.Blocks()) / float64(initiateReq.Parity.DataBlocks())
-		actualSize := initiateReq.CellSize * uint32(initiateReq.Stripes) * uint32(initiateReq.Parity.Blocks())
+		expectedSize := float64(spanSize) * float64(bareInitiateReq.Parity.Blocks()) / float64(bareInitiateReq.Parity.DataBlocks())
+		actualSize := bareInitiateReq.CellSize * uint32(bareInitiateReq.Stripes) * uint32(bareInitiateReq.Parity.Blocks())
 		log.Debug("span logical size: %v, span physical size: %v, waste: %v%%", spanSize, actualSize, 100.0*(float64(actualSize)-expectedSize)/float64(actualSize))
+	}
+	initiateReq := &msgs.AddSpanInitiateWithReferenceReq{
+		Req:       *bareInitiateReq,
+		Reference: reference,
 	}
 
 	maxAttempts := 5 // 4 = number of block services that can be down at once in the tests right now
 	var err error
 	for attempt := 0; ; attempt++ {
 		log.Debug("span writing attempt %v", attempt+1)
-		initiateResp := msgs.AddSpanInitiateResp{}
+		initiateResp := msgs.AddSpanInitiateWithReferenceResp{}
 		if err = c.ShardRequest(log, id.Shard(), initiateReq, &initiateResp); err != nil {
 			return err
 		}
@@ -275,15 +305,15 @@ func (c *Client) CreateSpan(
 			FileId:     id,
 			Cookie:     cookie,
 			ByteOffset: offset,
-			Proofs:     make([]msgs.BlockProof, len(initiateResp.Blocks)),
+			Proofs:     make([]msgs.BlockProof, len(initiateResp.Resp.Blocks)),
 		}
-		for i, block := range initiateResp.Blocks {
+		for i, block := range initiateResp.Resp.Blocks {
 			var proof [8]byte
-			blockCrc, blockReader := mkBlockReader(initiateReq, *data, i)
+			blockCrc, blockReader := mkBlockReader(&initiateReq.Req, *data, i)
 			// fail immediately to other block services
-			proof, err = c.WriteBlock(log, &lib.NoTimeouts, &block, blockReader, initiateReq.CellSize*uint32(initiateReq.Stripes), blockCrc)
+			proof, err = c.WriteBlock(log, &lib.NoTimeouts, &block, blockReader, initiateReq.Req.CellSize*uint32(initiateReq.Req.Stripes), blockCrc)
 			if err != nil {
-				initiateReq.Blacklist = append(initiateReq.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
+				initiateReq.Req.Blacklist = append(initiateReq.Req.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
 				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
 				goto FailedAttempt
 			}
@@ -359,8 +389,7 @@ func (c *Client) WriteFile(
 		}
 		*spanBuf = (*spanBuf)[:read]
 		err = c.CreateSpan(
-			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy,
-			fileId, cookie, offset, uint32(read), spanBuf,
+			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy, fileId, msgs.NULL_INODE_ID, cookie, offset, uint32(read), spanBuf,
 		)
 		if err != nil {
 			return err
@@ -492,6 +521,7 @@ func (c *Client) fetchMirroredStripe(
 func (c *Client) fetchRsStripe(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
+	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
@@ -509,7 +539,7 @@ func (c *Client) fetchRsStripe(
 	blocksFound := 0
 	stripe := spanOffset / (uint32(D) * body.CellSize)
 	if stripe >= uint32(body.Stripes) {
-		panic(fmt.Errorf("impossible: stripe %v >= stripes %v, spanOffset=%v, spanSize=%v, cellSize=%v, D=%v", stripe, body.Stripes, spanOffset, span.Header.Size, body.CellSize, D))
+		panic(fmt.Errorf("impossible: stripe %v >= stripes %v, file=%v spanOffset=%v, spanSize=%v, cellSize=%v, D=%v", stripe, body.Stripes, fileId, spanOffset, span.Header.Size, body.CellSize, D))
 	}
 	log.Debug("fetching stripe %v, cell size %v", stripe, body.CellSize)
 	for i := 0; i < B; i++ {
@@ -561,29 +591,17 @@ func (c *Client) fetchRsStripe(
 	return span.Header.ByteOffset + uint64(stripe)*uint64(D)*uint64(body.CellSize), stripeBuf, nil
 }
 
-// Returns nil, nil if span or stripe cannot be found.
-// Stripe might not be found because
-func (c *Client) FetchStripe(
+func (c *Client) FetchStripeFromSpan(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
+	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
-	spans []msgs.FetchedSpan,
+	span *msgs.FetchedSpan,
 	offset uint64,
 ) (*FetchedStripe, error) {
-	// find span
-	spanIx := sort.Search(len(spans), func(i int) bool {
-		return offset < spans[i].Header.ByteOffset+uint64(spans[i].Header.Size)
-	})
-	if spanIx >= len(spans) {
-		log.Debug("empty file offset=%v spanIx=%v len(spans)=%v", offset, spanIx, len(spans))
-		return nil, nil // out of spans
+	if offset < span.Header.ByteOffset || offset >= span.Header.ByteOffset+uint64(span.Header.Size) {
+		panic(fmt.Errorf("out of bounds offset %v for span going from %v to %v", offset, span.Header.ByteOffset, span.Header.ByteOffset+uint64(span.Header.Size)))
 	}
-	span := &spans[spanIx]
-	if offset >= (span.Header.ByteOffset + uint64(span.Header.Size)) {
-		log.Debug("could not find span")
-		return nil, nil // out of spans
-	}
-
 	log.DebugStack(1, "will fetch span %v -> %v", span.Header.ByteOffset, span.Header.ByteOffset+uint64(span.Header.Size))
 
 	// if inline, it's very easy
@@ -631,7 +649,7 @@ func (c *Client) FetchStripe(
 			return nil, err
 		}
 	} else {
-		start, buf, err = c.fetchRsStripe(log, bufPool, blockServices, span, body, offset)
+		start, buf, err = c.fetchRsStripe(log, bufPool, fileId, blockServices, span, body, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -651,6 +669,64 @@ func (c *Client) FetchStripe(
 		Start: start,
 	}
 	return stripe, nil
+}
+
+// The buf we get out must be returned to the bufPool.
+func (c *Client) FetchSpan(
+	log *lib.Logger,
+	bufPool *lib.BufPool,
+	fileId msgs.InodeId,
+	blockServices []msgs.BlockService,
+	span *msgs.FetchedSpan,
+) (*[]byte, error) {
+	spanBuf := bufPool.Get(int(span.Header.Size))
+	var err error
+	defer func() {
+		if err != nil {
+			bufPool.Put(spanBuf)
+		}
+	}()
+
+	offset := span.Header.ByteOffset
+	for offset < span.Header.ByteOffset+uint64(span.Header.Size) {
+		var stripe *FetchedStripe
+		stripe, err = c.FetchStripeFromSpan(log, bufPool, fileId, blockServices, span, offset)
+		if err != nil {
+			return nil, err
+		}
+		copy((*spanBuf)[offset-span.Header.ByteOffset:], *stripe.Buf)
+		offset += uint64(len(*stripe.Buf))
+		stripe.Put(bufPool)
+	}
+
+	return spanBuf, nil
+}
+
+// Returns nil, nil if span or stripe cannot be found.
+// Stripe might not be found because
+func (c *Client) FetchStripe(
+	log *lib.Logger,
+	bufPool *lib.BufPool,
+	fileId msgs.InodeId,
+	blockServices []msgs.BlockService,
+	spans []msgs.FetchedSpan,
+	offset uint64,
+) (*FetchedStripe, error) {
+	// find span
+	spanIx := sort.Search(len(spans), func(i int) bool {
+		return offset < spans[i].Header.ByteOffset+uint64(spans[i].Header.Size)
+	})
+	if spanIx >= len(spans) {
+		log.Debug("empty file offset=%v spanIx=%v len(spans)=%v", offset, spanIx, len(spans))
+		return nil, nil // out of spans
+	}
+	span := &spans[spanIx]
+	if offset >= (span.Header.ByteOffset + uint64(span.Header.Size)) {
+		log.Debug("could not find span")
+		return nil, nil // out of spans
+	}
+
+	return c.FetchStripeFromSpan(log, bufPool, fileId, blockServices, span, offset)
 }
 
 func (c *Client) FetchSpans(
@@ -719,7 +795,7 @@ func (f *fileReader) Close() error {
 func (f *fileReader) Read(p []byte) (int, error) {
 	if f.currentStripe == nil || f.cursor >= (f.currentStripe.Start+uint64(len(*f.currentStripe.Buf))) {
 		var err error
-		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.blockServices, f.spans, f.cursor)
+		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.fileId, f.blockServices, f.spans, f.cursor)
 		if err != nil {
 			return 0, err
 		}

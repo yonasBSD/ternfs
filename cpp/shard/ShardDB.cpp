@@ -3300,7 +3300,7 @@ struct ShardDBImpl {
         adjustBlockServices(blocks2, entry.fileId1, entry.fileId2);
         // now do the swap
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span2.toSlice()));
-        ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span1.toSlice()));
         return NO_ERROR;
     }
 
@@ -3462,6 +3462,9 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::SWAP_BLOCKS:
             err = _applySwapBlocks(time, batch, logEntryBody.getSwapBlocks(), resp.setSwapBlocks());
+            break;
+        case ShardLogEntryKind::SWAP_SPANS:
+            err = _applySwapSpans(time, batch, logEntryBody.getSwapSpans(), resp.setSwapSpans());
             break;
         case ShardLogEntryKind::MOVE_SPAN:
             err = _applyMoveSpan(time, batch, logEntryBody.getMoveSpan(), resp.setMoveSpan());

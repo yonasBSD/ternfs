@@ -1235,9 +1235,9 @@ TraverseDirectories:
 }
 
 // High-level helper function to take a string path and return the inode and parent inode
-func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, parent msgs.InodeId, err error) {
+func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, creationTime msgs.EggsTime, parent msgs.InodeId, err error) {
 	if !filepath.IsAbs(path) {
-		return msgs.NULL_INODE_ID, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
+		return msgs.NULL_INODE_ID, 0, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
 	}
 	parent = msgs.NULL_INODE_ID
 	id = msgs.ROOT_DIR_INODE_ID
@@ -1247,17 +1247,18 @@ func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.In
 		}
 		resp := msgs.LookupResp{}
 		if err := c.ShardRequest(log, id.Shard(), &msgs.LookupReq{DirId: id, Name: segment}, &resp); err != nil {
-			return msgs.NULL_INODE_ID, msgs.NULL_INODE_ID, err
+			return msgs.NULL_INODE_ID, 0, msgs.NULL_INODE_ID, err
 		}
 		parent = id
 		id = resp.TargetId
+		creationTime = resp.CreationTime
 	}
-	return id, parent, nil
+	return id, creationTime, parent, nil
 }
 
 // High-level helper function to take a string path and return the inode
 func (c *Client) ResolvePath(log *lib.Logger, path string) (msgs.InodeId, error) {
-	id, _, err := c.ResolvePathWithParent(log, path)
+	id, _, _, err := c.ResolvePathWithParent(log, path)
 	return id, err
 }
 

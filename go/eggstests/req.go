@@ -96,7 +96,7 @@ func createFile(
 			}
 			spanBuf := bufPool.Get(int(thisSpanSize))
 			rand.Read(*spanBuf)
-			err := client.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
+			err := client.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, msgs.NULL_INODE_ID, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
 			bufPool.Put(spanBuf)
 			if err != nil {
 				panic(err)

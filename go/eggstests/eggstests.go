@@ -932,8 +932,9 @@ func main() {
 	var goExes *managedprocess.GoExes
 	if *binariesDir != "" {
 		cppExes = &managedprocess.CppExes{
-			ShardExe: path.Join(*binariesDir, "eggsshard"),
-			CDCExe:   path.Join(*binariesDir, "eggscdc"),
+			ShardExe:   path.Join(*binariesDir, "eggsshard"),
+			CDCExe:     path.Join(*binariesDir, "eggscdc"),
+			DBToolsExe: path.Join(*binariesDir, "eggsdbtools"),
 		}
 		goExes = &managedprocess.GoExes{
 			ShuckleExe:       path.Join(*binariesDir, "eggsshuckle"),
@@ -950,7 +951,13 @@ func main() {
 	terminateChan := make(chan any, 1)
 
 	procs := managedprocess.New(terminateChan)
-	defer procs.Close()
+	procsClosed := false
+	defer func() {
+		if !procsClosed {
+			procsClosed = true
+			procs.Close()
+		}
+	}()
 
 	// If we're running with kmod, set the timeout to be very high
 	// (in qemu things can be delayed massively). TODO it would be
@@ -1268,6 +1275,28 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// fsck everything
+	log.Info("stopping cluster and fscking it")
+	procsClosed = true
+	procs.Close()
+	{
+		subDataDirs, err := os.ReadDir(*dataDir)
+		if err != nil {
+			panic(err)
+		}
+		for _, subDir := range subDataDirs {
+			if !strings.Contains(subDir.Name(), "shard") {
+				continue
+			}
+			log.Info("fscking %q", path.Join(*dataDir, subDir.Name(), "db"))
+			cmd := exec.Command(cppExes.DBToolsExe, "fsck", path.Join(*dataDir, subDir.Name(), "db"))
+			if err := cmd.Run(); err != nil {
+				panic(err)
+			}
+		}
+	}
+
 	// we haven't panicked, allow to cleanup the db dir if appropriate
 	cleanupDbDir = tmpDataDir && !*preserveDbDir && !*profile && !*profileTest
 }

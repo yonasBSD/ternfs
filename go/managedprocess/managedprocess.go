@@ -700,14 +700,16 @@ func buildCpp(ll *lib.Logger, repoDir string, buildType string, targets []string
 }
 
 type CppExes struct {
-	ShardExe string
-	CDCExe   string
+	ShardExe   string
+	CDCExe     string
+	DBToolsExe string
 }
 
 func BuildCppExes(ll *lib.Logger, repoDir string, buildType string) *CppExes {
-	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/eggsshard", "cdc/eggscdc"})
+	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/eggsshard", "cdc/eggscdc", "dbtools/eggsdbtools"})
 	return &CppExes{
-		ShardExe: path.Join(buildDir, "shard/eggsshard"),
-		CDCExe:   path.Join(buildDir, "cdc/eggscdc"),
+		ShardExe:   path.Join(buildDir, "shard/eggsshard"),
+		CDCExe:     path.Join(buildDir, "cdc/eggscdc"),
+		DBToolsExe: path.Join(buildDir, "dbtools/eggsdbtools"),
 	}
 }

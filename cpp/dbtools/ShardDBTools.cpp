@@ -137,6 +137,12 @@ void ShardDBTools::fsck(const std::string& dbPath) {
     rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
     sharedDb.openForReadOnly(rocksDBOptions, dbPath);
     auto db = sharedDb.db();
+    bool anyErrors = false;
+
+#define ERROR(...) do { \
+        LOG_ERROR(env, __VA_ARGS__); \
+        anyErrors = true; \
+    } while (0)
 
     const rocksdb::Snapshot* snapshotPtr = db->GetSnapshot();
     ALWAYS_ASSERT(snapshotPtr != nullptr);
@@ -163,7 +169,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             analyzedDirs++;
             auto dirK = ExternalValue<InodeIdKey>::FromSlice(it->key());
             if (dirK().id().type() != InodeType::DIRECTORY) {
-                LOG_ERROR(env, "Found key with bad directory inode %s", dirK().id());
+                ERROR("Found key with bad directory inode %s", dirK().id());
                 continue;
             }
             auto _ = ExternalValue<DirectoryBody>::FromSlice(it->value()); // just to check that this works
@@ -198,7 +204,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             analyzedEdges++;
             auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
             if (edgeK().dirId().type() != InodeType::DIRECTORY) {
-                LOG_ERROR(env, "Found edge with bad inode id %s", edgeK().dirId());
+                ERROR("Found edge with bad inode id %s", edgeK().dirId());
                 continue;
             }
             if (edgeK().dirId() != thisDir) {
@@ -209,17 +215,17 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                     auto status = db->Get(options, directoriesCf, dirIdK.toSlice(), &dirValue);
                     if (status.IsNotFound()) {
                         // the directory must exist
-                        LOG_ERROR(env, "Directory %s is referenced in edges, but it does not exist.", thisDir);
+                        ERROR("Directory %s is referenced in edges, but it does not exist.", thisDir);
                     } else {
                         ROCKS_DB_CHECKED(status);
                         auto dir = ExternalValue<DirectoryBody>(dirValue);
                         // the mtime must be greater or equal than all edges
                         if (dir().mtime() < thisDirMaxTime) {
-                            LOG_ERROR(env, "Directory %s has time %s, but max edge with name %s has greater time %s", thisDir, dir().mtime(), thisDirMaxTimeEdge, thisDirMaxTime);
+                            ERROR("Directory %s has time %s, but max edge with name %s has greater time %s", thisDir, dir().mtime(), thisDirMaxTimeEdge, thisDirMaxTime);
                         }
                         // if we have current edges, the directory can't be snapshot
                         if (thisDirHasCurrentEdges && thisDir != ROOT_DIR_INODE_ID && dir().ownerId() == NULL_INODE_ID) {
-                            LOG_ERROR(env, "Directory %s has current edges, but is snaphsot (no owner)", thisDir);
+                            ERROR("Directory %s has current edges, but is snaphsot (no owner)", thisDir);
                         }
                     }
                 }
@@ -247,7 +253,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             }
             if (ownedTargetId != NULL_INODE_ID) {
                 if (ownedInodes.contains(ownedTargetId)) {
-                    LOG_ERROR(env, "Inode %s is owned twice!", ownedTargetId);
+                    ERROR("Inode %s is owned twice!", ownedTargetId);
                 }
                 ownedInodes.emplace(ownedTargetId);
             }
@@ -262,7 +268,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                     std::string tmp;
                     auto status = db->Get(options, directoriesCf, idK.toSlice(), &tmp);
                     if (status.IsNotFound()) {
-                        LOG_ERROR(env, "Directory %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
+                        ERROR("Directory %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
                     } else {
                         ROCKS_DB_CHECKED(status);
                     }
@@ -270,7 +276,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                     std::string tmp;
                     auto status = db->Get(options, filesCf, idK.toSlice(), &tmp);
                     if (status.IsNotFound()) {
-                        LOG_ERROR(env, "File %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
+                        ERROR("File %s is referenced in directory %s but I could not find it.", ownedTargetId, edgeK().dirId());
                     } else {
                         ROCKS_DB_CHECKED(status);
                     }
@@ -287,13 +293,13 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                         (prevCreationTime == creationTime && !(snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID))
                     ) {
                         if (checkEdgeOrdering) {
-                            LOG_ERROR(env, "Name %s in directory %s has overlapping edges (%s >= %s).", name, edgeK().dirId(), prevCreationTime, creationTime);
+                            ERROR("Name %s in directory %s has overlapping edges (%s >= %s).", name, edgeK().dirId(), prevCreationTime, creationTime);
                         }
                     }
                     // Deletion edges are not preceded by another deletion edge
                     if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID && prevEdge->second.second().targetIdWithOwned().id() == NULL_INODE_ID) {
                         if (checkEdgeOrdering) {
-                            LOG_ERROR(env, "Deletion edge with name %s creation time %s is preceded by another deletion edge in directory %s", name, edgeK().creationTime(), thisDir);
+                            ERROR("Deletion edge with name %s creation time %s is preceded by another deletion edge in directory %s", name, edgeK().creationTime(), thisDir);
                         }
                     }
                 } else {
@@ -301,7 +307,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                     // by the schema, but by GC. So it's not a huge deal if it's wrong.
                     if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID) {
                         if (checkEdgeOrdering) {
-                            LOG_ERROR(env, "Deletion edge with name %s creation time %s is not preceded by anything in directory %s", name, edgeK().creationTime(), thisDir);
+                            ERROR("Deletion edge with name %s creation time %s is not preceded by anything in directory %s", name, edgeK().creationTime(), thisDir);
                         }
                     }
                 }
@@ -336,7 +342,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             analyzedSpans++;
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
             if (spanK().fileId().type() != InodeType::FILE && spanK().fileId().type() != InodeType::SYMLINK) {
-                LOG_ERROR(env, "Found span with bad file id %s", spanK().fileId());
+                ERROR("Found span with bad file id %s", spanK().fileId());
                 continue;
             }
             if (spanK().fileId() != thisFile) {
@@ -352,7 +358,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 if (status.IsNotFound()) {
                     auto status = db->Get(options, transientFilesCf, idK.toSlice(), &tmp);
                     if (status.IsNotFound()) {
-                        LOG_ERROR(env, "We have a span for non-esistant file %s", thisFile);
+                        ERROR("We have a span for non-esistant file %s", thisFile);
                     } else {
                         ROCKS_DB_CHECKED(status);
                     }
@@ -364,11 +370,11 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
             filesWithSpans[spanK().fileId()] = spanK().offset() + spanV().spanSize();
             if (spanK().offset() != expectedNextOffset) {
-                LOG_ERROR(env, "Expected offset %s, got %s in span for file %s", expectedNextOffset, spanK().offset(), thisFile);
+                ERROR("Expected offset %s, got %s in span for file %s", expectedNextOffset, spanK().offset(), thisFile);
             }
             expectedNextOffset = spanK().offset() + spanV().spanSize();
             if (spanV().storageClass() == EMPTY_STORAGE) {
-                LOG_ERROR(env, "File %s has empty storage span at offset %s", thisFile, spanK().offset());
+                ERROR("File %s has empty storage span at offset %s", thisFile, spanK().offset());
             } else if (spanV().storageClass() != INLINE_STORAGE) {
                 const auto& spanBlock = spanV().blocksBody();
                 for (int i = 0; i < spanBlock.parity().blocks(); i++) {
@@ -381,7 +387,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         LOG_INFO(env, "Analyzed %s spans in %s files", analyzedSpans, analyzedFiles);
     }
 
-    const auto filesPass = [&env, db, &options, &filesWithSpans]<typename T>(rocksdb::ColumnFamilyHandle* cf, const std::string& what) {
+    const auto filesPass = [&env, &anyErrors, db, &options, &filesWithSpans]<typename T>(rocksdb::ColumnFamilyHandle* cf, const std::string& what) {
         uint64_t analyzedFiles = 0;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, cf));
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
@@ -389,16 +395,16 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             auto fileK = ExternalValue<InodeIdKey>::FromSlice(it->key());
             InodeId fileId = fileK().id();
             if (fileId.type() != InodeType::FILE && fileId.type() != InodeType::SYMLINK) {
-                LOG_ERROR(env, "Found %s with bad file id %s", what, fileId);
+                ERROR("Found %s with bad file id %s", what, fileId);
                 continue;
             }
             auto fileV = ExternalValue<T>::FromSlice(it->value());
             if (fileV().fileSize() == 0) { continue; } // nothing in this
             auto spansSize = filesWithSpans.find(fileId);
             if (spansSize == filesWithSpans.end()) {
-                LOG_ERROR(env, "Could not find spans for non-zero-sized file %s", fileId);
+                ERROR("Could not find spans for non-zero-sized file %s", fileId);
             } else if (spansSize->second != fileV().fileSize()) {
-                LOG_ERROR(env, "Spans tell us file %s should be of size %s, but it actually has size %s", fileId, spansSize->second, fileV().fileSize());
+                ERROR("Spans tell us file %s should be of size %s, but it actually has size %s", fileId, spansSize->second, fileV().fileSize());
             }
         }
         ROCKS_DB_CHECKED(it->status());
@@ -418,23 +424,27 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto k = ExternalValue<BlockServiceToFileKey>::FromSlice(it->key());
             if (k().fileId().type() != InodeType::FILE && k().fileId().type() != InodeType::SYMLINK) {
-                LOG_ERROR(env, "Found block service to files with bad file id %s", k().fileId());
+                ERROR("Found block service to files with bad file id %s", k().fileId());
                 continue;
             }
             auto v = ExternalValue<I64Value>::FromSlice(it->value());
             if (v().i64() != 0) { foundItems++; }
             auto expected = blockServicesToFiles.find(std::pair<BlockServiceId, InodeId>(k().blockServiceId(), k().fileId()));
             if (expected == blockServicesToFiles.end() && v().i64() != 0) {
-                LOG_ERROR(env, "Found spurious block services to file entry for block service %s, file %s, with count %s", k().blockServiceId(), k().fileId(), v().i64());
+                ERROR("Found spurious block services to file entry for block service %s, file %s, with count %s", k().blockServiceId(), k().fileId(), v().i64());
             }
             if (expected != blockServicesToFiles.end() && v().i64() != expected->second) {
-                LOG_ERROR(env, "Found wrong block services to file entry for block service %s, file %s, expected count %s, got %s", k().blockServiceId(), k().fileId(), expected->second, v().i64());
+                ERROR("Found wrong block services to file entry for block service %s, file %s, expected count %s, got %s", k().blockServiceId(), k().fileId(), expected->second, v().i64());
             }
         }
         ROCKS_DB_CHECKED(it->status());
         if (foundItems != blockServicesToFiles.size()) {
-            LOG_ERROR(env, "Expected %s block services to files, got %s", blockServicesToFiles.size(), foundItems);
+            ERROR("Expected %s block services to files, got %s", blockServicesToFiles.size(), foundItems);
         }
         LOG_INFO(env, "Analyzed %s block service to files entries", foundItems);
     }
+
+    ALWAYS_ASSERT(!anyErrors, "Some errors detected, check log");
+
+#undef ERROR
 }

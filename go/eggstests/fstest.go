@@ -964,7 +964,7 @@ func fsTestInternal[Id comparable](
 						for _, block := range body.Blocks {
 							blockService := blockServicesById[fileSpansResp.BlockServices[block.BlockServiceIx].Id]
 							if blockService.Info.StorageClass != msgs.HDD_STORAGE {
-								panic(fmt.Errorf("seen unexpected block service %+v", blockService))
+								panic(fmt.Errorf("seen unexpected block service in file %q: %+v", path, blockService))
 							}
 						}
 					}

@@ -1537,8 +1537,10 @@ struct ShardDBImpl {
         ALWAYS_ASSERT(req.fileId1 != req.fileId2);
         entry.fileId1 = req.fileId1;
         entry.byteOffset1 = req.byteOffset1;
+        entry.blocks1 = req.blocks1;
         entry.fileId2 = req.fileId2;
         entry.byteOffset2 = req.byteOffset2;
+        entry.blocks2 = req.blocks2;
         return NO_ERROR;
     }
 
@@ -3288,6 +3290,18 @@ struct ShardDBImpl {
         auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
         ALWAYS_ASSERT(state1 == SpanState::CLEAN);
         ALWAYS_ASSERT(state2 == SpanState::CLEAN);
+        // check if we've already swapped
+        const auto blocksMatch = [](const SpanBlocksBody span, const BincodeList<uint64_t>& blocks) {
+            if (span.parity().blocks() != blocks.els.size()) { return false; }
+            for (int i = 0; i < blocks.els.size(); i++) {
+                if (span.block(i).blockId() != blocks.els[i]) { return false; }
+            }
+            return true;
+        };
+        if (blocksMatch(blocks1, entry.blocks2) && blocksMatch(blocks2, entry.blocks1)) {
+            return NO_ERROR; // we're already done
+        }
+        ALWAYS_ASSERT(blocksMatch(blocks1, entry.blocks1) && blocksMatch(blocks2, entry.blocks2));
         // we're ready to swap, first do the blocks bookkeeping
         const auto adjustBlockServices = [this, &batch](const SpanBlocksBody blocks, InodeId addTo, InodeId subtractFrom) {
             for (int i = 0; i < blocks.parity().blocks(); i++) {

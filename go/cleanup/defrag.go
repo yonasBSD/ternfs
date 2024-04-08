@@ -126,12 +126,23 @@ func defragFileInternal(
 			}
 			// create new span in scratch file
 			scratchOffset := sf.size
-			if err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, sf.id, fileId, sf.cookie, sf.size, span.Header.Size, spanBuf); err != nil {
+			createdBlocks, err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, sf.id, fileId, sf.cookie, sf.size, span.Header.Size, spanBuf)
+			if err != nil {
 				return err
 			}
 			sf.size += uint64(span.Header.Size)
 			// swap them
-			swapReq := msgs.SwapSpansReq{FileId1: fileId, ByteOffset1: span.Header.ByteOffset, FileId2: sf.id, ByteOffset2: scratchOffset}
+			swapReq := msgs.SwapSpansReq{
+				FileId1:     fileId,
+				ByteOffset1: span.Header.ByteOffset,
+				Blocks1:     []msgs.BlockId{},
+				FileId2:     sf.id,
+				ByteOffset2: scratchOffset,
+				Blocks2:     createdBlocks,
+			}
+			for _, block := range body.Blocks {
+				swapReq.Blocks1 = append(swapReq.Blocks1, block.BlockId)
+			}
 			if err := c.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapSpansResp{}); err != nil {
 				return err
 			}

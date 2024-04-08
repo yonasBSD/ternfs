@@ -2423,18 +2423,22 @@ std::ostream& operator<<(std::ostream& out, const RemoveZeroBlockServiceFilesRes
 struct SwapSpansReq {
     InodeId fileId1;
     uint64_t byteOffset1;
+    BincodeList<uint64_t> blocks1;
     InodeId fileId2;
     uint64_t byteOffset2;
+    BincodeList<uint64_t> blocks2;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + 8; // fileId1 + byteOffset1 + fileId2 + byteOffset2
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2 + blocks2
 
     SwapSpansReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
         _size += 8; // byteOffset1
+        _size += blocks1.packedSize(); // blocks1
         _size += 8; // fileId2
         _size += 8; // byteOffset2
+        _size += blocks2.packedSize(); // blocks2
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -5439,18 +5443,22 @@ std::ostream& operator<<(std::ostream& out, const RemoveZeroBlockServiceFilesEnt
 struct SwapSpansEntry {
     InodeId fileId1;
     uint64_t byteOffset1;
+    BincodeList<uint64_t> blocks1;
     InodeId fileId2;
     uint64_t byteOffset2;
+    BincodeList<uint64_t> blocks2;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + 8; // fileId1 + byteOffset1 + fileId2 + byteOffset2
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2 + blocks2
 
     SwapSpansEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
         _size += 8; // byteOffset1
+        _size += blocks1.packedSize(); // blocks1
         _size += 8; // fileId2
         _size += 8; // byteOffset2
+        _size += blocks2.packedSize(); // blocks2
         return _size;
     }
     void pack(BincodeBuf& buf) const;

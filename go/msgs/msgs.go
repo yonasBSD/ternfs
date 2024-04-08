@@ -1199,11 +1199,17 @@ type SwapBlocksResp struct{}
 // inconsistent.
 //
 // Swaps two spans, both clean. CRCs etc must match.
+//
+// We need the list of block ids to make sure we're swapping the right thing,
+// and to make the request idempotent. The block ids are enough since each block
+// id is referenced from exactly one span.
 type SwapSpansReq struct {
 	FileId1     InodeId
 	ByteOffset1 uint64
+	Blocks1     []BlockId
 	FileId2     InodeId
 	ByteOffset2 uint64
+	Blocks2     []BlockId
 }
 
 type SwapSpansResp struct{}
@@ -1743,8 +1749,10 @@ type SwapBlocksEntry struct {
 type SwapSpansEntry struct {
 	FileId1     InodeId
 	ByteOffset1 uint64
+	Blocks1     []BlockId
 	FileId2     InodeId
 	ByteOffset2 uint64
+	Blocks2     []BlockId
 }
 
 type MoveSpanEntry struct {

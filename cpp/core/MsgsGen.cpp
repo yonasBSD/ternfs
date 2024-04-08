@@ -2683,30 +2683,38 @@ std::ostream& operator<<(std::ostream& out, const RemoveZeroBlockServiceFilesRes
 void SwapSpansReq::pack(BincodeBuf& buf) const {
     fileId1.pack(buf);
     buf.packScalar<uint64_t>(byteOffset1);
+    buf.packList<uint64_t>(blocks1);
     fileId2.pack(buf);
     buf.packScalar<uint64_t>(byteOffset2);
+    buf.packList<uint64_t>(blocks2);
 }
 void SwapSpansReq::unpack(BincodeBuf& buf) {
     fileId1.unpack(buf);
     byteOffset1 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks1);
     fileId2.unpack(buf);
     byteOffset2 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks2);
 }
 void SwapSpansReq::clear() {
     fileId1 = InodeId();
     byteOffset1 = uint64_t(0);
+    blocks1.clear();
     fileId2 = InodeId();
     byteOffset2 = uint64_t(0);
+    blocks2.clear();
 }
 bool SwapSpansReq::operator==(const SwapSpansReq& rhs) const {
     if ((InodeId)this->fileId1 != (InodeId)rhs.fileId1) { return false; };
     if ((uint64_t)this->byteOffset1 != (uint64_t)rhs.byteOffset1) { return false; };
+    if (blocks1 != rhs.blocks1) { return false; };
     if ((InodeId)this->fileId2 != (InodeId)rhs.fileId2) { return false; };
     if ((uint64_t)this->byteOffset2 != (uint64_t)rhs.byteOffset2) { return false; };
+    if (blocks2 != rhs.blocks2) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SwapSpansReq& x) {
-    out << "SwapSpansReq(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ")";
+    out << "SwapSpansReq(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "Blocks1=" << x.blocks1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ", " << "Blocks2=" << x.blocks2 << ")";
     return out;
 }
 
@@ -9494,30 +9502,38 @@ std::ostream& operator<<(std::ostream& out, const RemoveZeroBlockServiceFilesEnt
 void SwapSpansEntry::pack(BincodeBuf& buf) const {
     fileId1.pack(buf);
     buf.packScalar<uint64_t>(byteOffset1);
+    buf.packList<uint64_t>(blocks1);
     fileId2.pack(buf);
     buf.packScalar<uint64_t>(byteOffset2);
+    buf.packList<uint64_t>(blocks2);
 }
 void SwapSpansEntry::unpack(BincodeBuf& buf) {
     fileId1.unpack(buf);
     byteOffset1 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks1);
     fileId2.unpack(buf);
     byteOffset2 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks2);
 }
 void SwapSpansEntry::clear() {
     fileId1 = InodeId();
     byteOffset1 = uint64_t(0);
+    blocks1.clear();
     fileId2 = InodeId();
     byteOffset2 = uint64_t(0);
+    blocks2.clear();
 }
 bool SwapSpansEntry::operator==(const SwapSpansEntry& rhs) const {
     if ((InodeId)this->fileId1 != (InodeId)rhs.fileId1) { return false; };
     if ((uint64_t)this->byteOffset1 != (uint64_t)rhs.byteOffset1) { return false; };
+    if (blocks1 != rhs.blocks1) { return false; };
     if ((InodeId)this->fileId2 != (InodeId)rhs.fileId2) { return false; };
     if ((uint64_t)this->byteOffset2 != (uint64_t)rhs.byteOffset2) { return false; };
+    if (blocks2 != rhs.blocks2) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SwapSpansEntry& x) {
-    out << "SwapSpansEntry(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ")";
+    out << "SwapSpansEntry(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "Blocks1=" << x.blocks1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ", " << "Blocks2=" << x.blocks2 << ")";
     return out;
 }
 

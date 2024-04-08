@@ -2616,11 +2616,29 @@ func (v *SwapSpansReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.ByteOffset1)); err != nil {
 		return err
 	}
+	len1 := len(v.Blocks1)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := bincode.PackScalar(w, uint64(v.Blocks1[i])); err != nil {
+			return err
+		}
+	}
 	if err := bincode.PackScalar(w, uint64(v.FileId2)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint64(v.ByteOffset2)); err != nil {
 		return err
+	}
+	len2 := len(v.Blocks2)
+	if err := bincode.PackLength(w, len2); err != nil {
+		return err
+	}
+	for i := 0; i < len2; i++ {
+		if err := bincode.PackScalar(w, uint64(v.Blocks2[i])); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2632,11 +2650,31 @@ func (v *SwapSpansReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset1)); err != nil {
 		return err
 	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blocks1, len1)
+	for i := 0; i < len1; i++ {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks1[i])); err != nil {
+			return err
+		}
+	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId2)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset2)); err != nil {
 		return err
+	}
+	var len2 int
+	if err := bincode.UnpackLength(r, &len2); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blocks2, len2)
+	for i := 0; i < len2; i++ {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks2[i])); err != nil {
+			return err
+		}
 	}
 	return nil
 }

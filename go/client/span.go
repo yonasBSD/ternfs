@@ -251,6 +251,9 @@ func mkBlockReader(
 // Note: the buffer underlying data might be modified by adding padding zeros
 // for the purpose of splitting things into blocks/stripes. The (possibly modified)
 // buffer is returned, regardless of whether the error is nil or not.
+//
+// Return which block ids were created for the span, this is needed in defragmentation
+// so we return it immediately here
 func (c *Client) CreateSpan(
 	log *lib.Logger,
 	blacklist []msgs.BlacklistEntry,
@@ -267,7 +270,7 @@ func (c *Client) CreateSpan(
 	// The contents of this pointer might be modified by this function (we might have to extend the
 	// buffer), the intention is that if you're using a buf pool to get this you can put it back after.
 	data *[]byte,
-) error {
+) ([]msgs.BlockId, error) {
 	if reference == msgs.NULL_INODE_ID {
 		reference = id
 	}
@@ -275,9 +278,9 @@ func (c *Client) CreateSpan(
 
 	if len(*data) < 256 {
 		if err := c.createInlineSpan(log, id, cookie, offset, spanSize, *data); err != nil {
-			return err
+			return nil, err
 		}
-		return nil
+		return []msgs.BlockId{}, nil
 	}
 
 	// initiate span add
@@ -294,11 +297,16 @@ func (c *Client) CreateSpan(
 
 	maxAttempts := 5 // 4 = number of block services that can be down at once in the tests right now
 	var err error
+	var blocks []msgs.BlockId
 	for attempt := 0; ; attempt++ {
 		log.Debug("span writing attempt %v", attempt+1)
 		initiateResp := msgs.AddSpanInitiateWithReferenceResp{}
 		if err = c.ShardRequest(log, id.Shard(), initiateReq, &initiateResp); err != nil {
-			return err
+			return nil, err
+		}
+		blocks = []msgs.BlockId{}
+		for _, block := range initiateResp.Resp.Blocks {
+			blocks = append(blocks, block.BlockId)
 		}
 		// write blocks
 		certifyReq := msgs.AddSpanCertifyReq{
@@ -321,7 +329,7 @@ func (c *Client) CreateSpan(
 			certifyReq.Proofs[i].Proof = proof
 		}
 		if err = c.ShardRequest(log, id.Shard(), &certifyReq, &msgs.AddSpanCertifyResp{}); err != nil {
-			return err
+			return nil, err
 		}
 		// we've managed
 		break
@@ -334,7 +342,7 @@ func (c *Client) CreateSpan(
 		// create temp file, move the bad span there, then we can restart
 		constructResp := &msgs.ConstructFileResp{}
 		if err := c.ShardRequest(log, id.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE, Note: "bad_add_span_attempt"}, constructResp); err != nil {
-			return err
+			return nil, err
 		}
 		moveSpanReq := &msgs.MoveSpanReq{
 			FileId1:     id,
@@ -346,11 +354,11 @@ func (c *Client) CreateSpan(
 			SpanSize:    spanSize,
 		}
 		if err := c.ShardRequest(log, id.Shard(), moveSpanReq, &msgs.MoveSpanResp{}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return err
+	return blocks, err
 }
 
 func (c *Client) WriteFile(
@@ -388,7 +396,7 @@ func (c *Client) WriteFile(
 			break
 		}
 		*spanBuf = (*spanBuf)[:read]
-		err = c.CreateSpan(
+		_, err = c.CreateSpan(
 			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy, fileId, msgs.NULL_INODE_ID, cookie, offset, uint32(read), spanBuf,
 		)
 		if err != nil {

@@ -1240,6 +1240,8 @@ struct CrossShardHardUnlinkFileStateMachine {
     void start() {
         if (req.ownerId.shard() == req.targetId.shard()) {
             env.finishWithError(EggsError::SAME_SHARD);
+        } else if (req.targetId.type() == InodeType::DIRECTORY) {
+            env.finishWithError(EggsError::TYPE_IS_DIRECTORY);
         } else {
             removeEdge();
         }

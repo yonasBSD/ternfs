@@ -998,7 +998,17 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
                 }
                 size_t to_copy = min((u64)PAGE_SIZE - (*ppos % PAGE_SIZE), span_data_end - *ppos);
                 eggsfs_debug("(block) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
-                size_t copied = copy_page_to_iter(page, *ppos % PAGE_SIZE, to_copy, to);
+                size_t copied;
+                // copy_page_to_iter below ends up calling copy_page_to_iter_pipe for spliced reads,
+                // which assumes the pages are managed by VM subsystem, but our pages aren't.
+                // As a result spliced reads return zero pages.
+                if (unlikely(iov_iter_is_pipe(to))) {
+                    char* from_ptr = kmap_atomic(page);
+                    copied = copy_to_iter(from_ptr + *ppos % PAGE_SIZE, to_copy, to);
+                    kunmap_atomic(from_ptr);
+                } else {
+                    copied = copy_page_to_iter(page, *ppos % PAGE_SIZE, to_copy, to);
+                }
                 eggsfs_debug("copied=%lu, remaining %lu", copied, iov_iter_count(to));
                 if (copied < to_copy && iov_iter_count(to)) { written = -EFAULT; goto out; }
                 written += copied;

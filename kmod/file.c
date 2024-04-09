@@ -999,9 +999,13 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
                 size_t to_copy = min((u64)PAGE_SIZE - (*ppos % PAGE_SIZE), span_data_end - *ppos);
                 eggsfs_debug("(block) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
                 size_t copied;
-                // copy_page_to_iter below ends up calling copy_page_to_iter_pipe for spliced reads,
-                // which assumes the pages are managed by VM subsystem, but our pages aren't.
-                // As a result spliced reads return zero pages.
+                // copy_page_to_iter below ends up calling copy_page_to_iter_pipe for spliced reads
+                // which takes a reference to the our page using `get_page()` and also associates
+                // `page_cache_pipe_buf_ops()` to manage the page (https://elixir.bootlin.com/linux/v5.4.249/source/lib/iov_iter.c#L400).
+                // Later `splice_direct_to_actor()` trips over on https://elixir.bootlin.com/linux/v5.4.249/source/fs/splice.c#L977,
+                // goes through all the pipe buffers (which contain references to our pages) and drops
+                // references to the pages by calling https://elixir.bootlin.com/linux/v5.4.249/source/fs/splice.c#L92.
+                // As a result nfs spliced reads return zero pages.
                 if (unlikely(iov_iter_is_pipe(to))) {
                     char* from_ptr = kmap_atomic(page);
                     copied = copy_to_iter(from_ptr + *ppos % PAGE_SIZE, to_copy, to);

@@ -249,6 +249,10 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 creationTime = edgeK().creationTime();
                 if ((*snapshotEdge)().targetIdWithOwned().extra()) {
                     ownedTargetId = (*snapshotEdge)().targetIdWithOwned().id();
+                    // we can't have an owned directory snapshot edge
+                    if (ownedTargetId.type() == InodeType::DIRECTORY) {
+                        ERROR("Directory %s has a snapshot, owned edge to directory %s", thisDir, ownedTargetId);
+                    }
                 }
             }
             if (ownedTargetId != NULL_INODE_ID) {

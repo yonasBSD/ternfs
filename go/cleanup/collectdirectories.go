@@ -43,6 +43,9 @@ func applyPolicy(
 		}
 		var err error
 		if edge.TargetId.Extra() { // the extra bit on a snapshot edge means owned
+			if edge.TargetId.Id().Type() == msgs.DIRECTORY {
+				panic(fmt.Errorf("unexpected owned directory owner=%v edge=%+v", dirId, edge))
+			}
 			if edge.TargetId.Id().Shard() == dirId.Shard() {
 				// same shard, we can delete directly. We also know that this is not a directory (it's an
 				// owned, but snapshot edge)

@@ -1173,18 +1173,25 @@ private:
     XmonNCAlert _alert;
     std::vector<BlockServiceInfo> _blockServices;
     std::vector<BlockServiceId> _currentBlockServices;
+    bool _updatedOnce;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared):
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, 1_mins}),
         _shared(shared),
         _shrid(shrid),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shucklePort(options.shucklePort),
+        _updatedOnce(false)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
     }
 
     virtual bool periodicStep() override {
+        if (!_blockServices.empty()) {
+            // We delayed applying cache update most likely we were leader. We should apply it now
+            _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
+        }
+
         LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
         const auto [err, errStr] = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
         if (err == EINTR) { return false; }
@@ -1196,10 +1203,14 @@ public:
             _env.updateAlert(_alert, "got no block services");
             return false;
         }
-
-        _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
-
-        LOG_DEBUG(_env, "updated block services");
+        // We immediately update cache if we are leader and delay until next iteration on leader unless this is first update which we apply immediately
+        if (!_shared.isLeader.load(std::memory_order_relaxed) || !_updatedOnce) {
+            _updatedOnce = true;
+            _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
+            _blockServices.clear();
+            _currentBlockServices.clear();
+            LOG_DEBUG(_env, "updated block services");
+        }
 
         _env.clearAlert(_alert);
 

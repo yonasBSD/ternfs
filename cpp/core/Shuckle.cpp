@@ -126,6 +126,8 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     blockServices.clear();
     currentBlockServices.clear();
 
+#define FAIL(err, errStr) do { blockServices.clear(); currentBlockServices.clear(); return {err, errStr}; } while (0)
+
     auto [sock, err] = shuckleSock(addr, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), err};
@@ -137,13 +139,13 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
         auto& req = reqContainer.setAllBlockServices();
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
-            if (err) { return {err, errStr}; }
+            if (err) { FAIL(err, errStr); }
         }
 
         ShuckleRespContainer respContainer;
         {
             const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
-            if (err) { return {err, errStr}; }
+            if (err) { FAIL(err, errStr); }
         }
 
         blockServices = respContainer.getAllBlockServices().blockServices.els;
@@ -156,13 +158,13 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
         req.shardId = shid;
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
-            if (err) { return {err, errStr}; }
+            if (err) { FAIL(err, errStr); }
         }
 
         ShuckleRespContainer respContainer;
         {
             const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
-            if (err) { return {err, errStr}; }
+            if (err) { FAIL(err, errStr); }
         }
 
         currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
@@ -179,12 +181,14 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
             if (!knownBlockServices.contains(bsId.u64)) {
                 std::stringstream ss;
                 ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";
-                return {EIO, ss.str()};
+                FAIL(EIO, ss.str());
             }
         }
     }
 
     return {};
+
+#undef FAIL
 }
 
 std::pair<int, std::string> registerShardReplica(

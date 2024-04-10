@@ -507,6 +507,9 @@ func (c *Client) fetchMirroredStripe(
 	for i := 0; i < B && !found; i++ {
 		block := &body.Blocks[i]
 		blockService := &blockServices[block.BlockServiceIx]
+		if !blockService.Flags.CanRead() {
+			continue
+		}
 		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(cell))
 		if err != nil {
 			continue
@@ -551,6 +554,11 @@ func (c *Client) fetchRsStripe(
 	}
 	log.Debug("fetching stripe %v, cell size %v", stripe, body.CellSize)
 	for i := 0; i < B; i++ {
+		block := &body.Blocks[i]
+		blockService := &blockServices[block.BlockServiceIx]
+		if !blockService.Flags.CanRead() {
+			continue
+		}
 		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(stripe))
 		if err != nil {
 			continue

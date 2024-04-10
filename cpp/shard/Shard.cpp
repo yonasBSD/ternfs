@@ -1190,6 +1190,8 @@ public:
         if (!_blockServices.empty()) {
             // We delayed applying cache update most likely we were leader. We should apply it now
             _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
+            _blockServices.clear();
+            _currentBlockServices.clear();
         }
 
         LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);

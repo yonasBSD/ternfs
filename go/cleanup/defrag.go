@@ -15,7 +15,7 @@ import (
 
 type DefragStats struct {
 	AnalyzedFiles                uint64
-	AnalyzedSize                 uint64
+	AnalyzedLogicalSize          uint64
 	AnalyzedBlocks               uint64
 	DefraggedSpans               uint64
 	DefraggedLogicalBytes        uint64
@@ -31,12 +31,12 @@ func defragPrintStatsLastReport(log *lib.Logger, c *client.Client, stats *Defrag
 	physicalDeltaMBs := 1000.0 * physicalDeltaMB / float64(timeSinceStart.Milliseconds())
 	log.RaiseNC(
 		progressReportAlert,
-		"looked at %v files %v blocks, logical size %0.2fMB, defragged %v spans, logical size %0.2fMB; %v blocks %0.2fMB -> %v blocks (%+d) %0.2fMB (%+0.2fMB), %+0.2fMB/s",
-		stats.AnalyzedFiles, stats.AnalyzedBlocks, float64(stats.AnalyzedSize)/1e6,
-		stats.DefraggedSpans, float64(stats.DefraggedLogicalBytes)/1e6,
-		stats.DefraggedBlocksBefore, float64(stats.DefraggedPhysicalBytesBefore)/1e6,
+		"looked at %v files %v blocks, logical size %0.2fTB, defragged %v spans, logical size %0.2fTB; %v blocks %0.2fTB -> %v blocks (%+d) %0.2fTB (%+0.2fTB), %+0.2fMB/s",
+		stats.AnalyzedFiles, stats.AnalyzedBlocks, float64(stats.AnalyzedLogicalSize)/1e12,
+		stats.DefraggedSpans, float64(stats.DefraggedLogicalBytes)/1e12,
+		stats.DefraggedBlocksBefore, float64(stats.DefraggedPhysicalBytesBefore)/1e12,
 		stats.DefraggedBlocksAfter, int64(stats.DefraggedBlocksAfter)-int64(stats.DefraggedBlocksBefore),
-		float64(stats.DefraggedPhysicalBytesAfter)/1e6, physicalDeltaMB, physicalDeltaMBs,
+		float64(stats.DefraggedPhysicalBytesAfter)/1e12, physicalDeltaMB, physicalDeltaMBs,
 	)
 	timeStats.lastReportAt = now
 }
@@ -87,7 +87,7 @@ func defragFileInternal(
 		}
 		for spanIx := range fileSpansResp.Spans {
 			span := &fileSpansResp.Spans[spanIx]
-			atomic.AddUint64(&stats.AnalyzedSize, uint64(span.Header.Size))
+			atomic.AddUint64(&stats.AnalyzedLogicalSize, uint64(span.Header.Size))
 			if span.Header.StorageClass == msgs.INLINE_STORAGE {
 				continue
 			}
@@ -179,11 +179,12 @@ func DefragFiles(
 	stats *DefragStats,
 	progressReportAlert *lib.XmonNCAlert,
 	path string,
+	workersPerShard int,
 	startFrom msgs.EggsTime,
 ) error {
 	timeStats := newTimeStats()
 	return client.Parwalk(
-		log, c, 10, path,
+		log, c, 5, path,
 		func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil

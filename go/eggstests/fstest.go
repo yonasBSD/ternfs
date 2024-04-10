@@ -920,7 +920,7 @@ func fsTestInternal[Id comparable](
 		// defrag
 		stats := &cleanup.DefragStats{}
 		alert := log.NewNCAlert(0)
-		if err := cleanup.DefragFiles(log, c, lib.NewBufPool(), client.NewDirInfoCache(), stats, alert, "/", 0); err != nil {
+		if err := cleanup.DefragFiles(log, c, lib.NewBufPool(), client.NewDirInfoCache(), stats, alert, "/", 5, 0); err != nil {
 			panic(err)
 		}
 		if stats.DefraggedSpans == 0 {

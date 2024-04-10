@@ -1142,7 +1142,7 @@ func main() {
 				}
 				startTime = msgs.MakeEggsTime(t)
 			}
-			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, *defragFilePath, startTime); err != nil {
+			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, *defragFilePath, 5, startTime); err != nil {
 				panic(err)
 			}
 		} else {

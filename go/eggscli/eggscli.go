@@ -1128,6 +1128,7 @@ func main() {
 		bufPool := lib.NewBufPool()
 		stats := &cleanup.DefragStats{}
 		alert := log.NewNCAlert(0)
+		alert.SetAppType(lib.XMON_NEVER)
 		id, _, parent, err := c.ResolvePathWithParent(log, *defragFilePath)
 		if err != nil {
 			panic(err)

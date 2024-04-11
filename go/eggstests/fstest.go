@@ -941,11 +941,12 @@ func fsTestInternal[Id comparable](
 			blockServicesById[blockServices.BlockServices[i].Info.Id] = &blockServices.BlockServices[i]
 		}
 		client.Parwalk(
-			log, c, 1, "/",
-			func(parent, fileId msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+			log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
+			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, fileId msgs.InodeId, current bool, owned bool) error {
 				if fileId.Type() == msgs.DIRECTORY {
 					return nil
 				}
+				path := path.Join(parentPath, name)
 				fileSpansReq := msgs.FileSpansReq{
 					FileId:     fileId,
 					ByteOffset: 0,

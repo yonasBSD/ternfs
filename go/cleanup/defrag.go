@@ -5,6 +5,7 @@ package cleanup
 
 import (
 	"fmt"
+	"path"
 	"sync/atomic"
 	"time"
 	"xtx/eggsfs/client"
@@ -36,7 +37,7 @@ func defragPrintStatsLastReport(log *lib.Logger, c *client.Client, stats *Defrag
 		stats.DefraggedSpans, float64(stats.DefraggedLogicalBytes)/1e12,
 		stats.DefraggedBlocksBefore, float64(stats.DefraggedPhysicalBytesBefore)/1e12,
 		stats.DefraggedBlocksAfter, int64(stats.DefraggedBlocksAfter)-int64(stats.DefraggedBlocksBefore),
-		float64(stats.DefraggedPhysicalBytesAfter)/1e12, physicalDeltaMB, physicalDeltaMBs,
+		float64(stats.DefraggedPhysicalBytesAfter)/1e12, physicalDeltaMB/1e6, physicalDeltaMBs,
 	)
 	timeStats.lastReportAt = now
 }
@@ -178,14 +179,14 @@ func DefragFiles(
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragStats,
 	progressReportAlert *lib.XmonNCAlert,
-	path string,
+	root string,
 	workersPerShard int,
 	startFrom msgs.EggsTime,
 ) error {
 	timeStats := newTimeStats()
 	return client.Parwalk(
-		log, c, 5, path,
-		func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+		log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
+		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}
@@ -193,7 +194,7 @@ func DefragFiles(
 				return nil
 			}
 			return defragFileInternal(
-				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path,
+				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name),
 			)
 		},
 	)

@@ -6,7 +6,7 @@ package client
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"sync"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -21,28 +21,40 @@ type parwalkEnv struct {
 	wg       sync.WaitGroup
 	chans    []chan parwarlkReq
 	client   *Client
-	callback func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error
+	snapshot bool
+	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error
 }
 
 func (env *parwalkEnv) visit(
 	log *lib.Logger,
 	homeShid msgs.ShardId,
 	parent msgs.InodeId,
-	id msgs.InodeId,
-	path string,
+	parentPath string,
+	name string,
 	creationTime msgs.EggsTime,
+	id msgs.InodeId,
+	current bool,
+	owned bool,
 ) error {
-	log.Debug("visiting %q, %v", path, id)
-	if err := env.callback(parent, id, path, creationTime); err != nil {
+	if err := env.callback(parent, parentPath, name, creationTime, id, current, owned); err != nil {
 		return err
 	}
+	// if it's not a directory, skip
+	if id.Type() != msgs.DIRECTORY {
+		return nil
+	}
+	// if it's not owned, skip
+	if !owned {
+		return nil
+	}
+	fullPath := path.Join(parentPath, name)
 	if parent != msgs.NULL_INODE_ID && homeShid == id.Shard() {
 		// same shard, handle right now
-		env.process(log, homeShid, id, path)
+		env.process(log, homeShid, id, fullPath)
 	} else {
 		req := parwarlkReq{
 			id:   id,
-			path: path,
+			path: fullPath,
 		}
 		select {
 		// pass to other shard
@@ -50,7 +62,7 @@ func (env *parwalkEnv) visit(
 			env.wg.Add(1)
 		// queue is full, do it yourself
 		default:
-			env.process(log, homeShid, id, path)
+			env.process(log, homeShid, id, fullPath)
 		}
 	}
 	return nil
@@ -62,49 +74,79 @@ func (env *parwalkEnv) process(
 	id msgs.InodeId,
 	path string,
 ) error {
-	// nothing to do
-	if id.Type() != msgs.DIRECTORY {
-		return nil
-	}
-	// recurse down
-	readReq := &msgs.ReadDirReq{
-		DirId: id,
-	}
-	readResp := &msgs.ReadDirResp{}
-	for {
-		if err := env.client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
-			log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
-			return nil
+	if env.snapshot {
+		req := &msgs.FullReadDirReq{
+			DirId: id,
 		}
-		for _, e := range readResp.Results {
-			newPath := filepath.Join(path, e.Name)
-			if err := env.visit(log, homeShid, id, e.TargetId, newPath, e.CreationTime); err != nil {
-				return err
+		resp := &msgs.FullReadDirResp{}
+		for {
+			if err := env.client.ShardRequest(log, id.Shard(), req, resp); err != nil {
+				log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
+				return nil
 			}
+			for _, e := range resp.Results {
+				if e.TargetId.Id() == msgs.NULL_INODE_ID { // no point looking at deletion edges
+					continue
+				}
+				if err := env.visit(log, homeShid, id, path, e.Name, e.CreationTime, e.TargetId.Id(), e.Current, e.Current || e.TargetId.Extra()); err != nil {
+					return err
+				}
+			}
+			if resp.Next.StartName == "" {
+				break
+			}
+			req.Flags = 0
+			if resp.Next.Current {
+				req.Flags = msgs.FULL_READ_DIR_CURRENT
+			}
+			req.StartName = resp.Next.StartName
+			req.StartTime = resp.Next.StartTime
 		}
-		if readResp.NextHash == 0 {
-			break
+	} else {
+		readReq := &msgs.ReadDirReq{
+			DirId: id,
 		}
-		readReq.StartHash = readResp.NextHash
+		readResp := &msgs.ReadDirResp{}
+		for {
+			if err := env.client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
+				log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
+				return nil
+			}
+			for _, e := range readResp.Results {
+				if err := env.visit(log, homeShid, id, path, e.Name, e.CreationTime, e.TargetId, true, true); err != nil {
+					return err
+				}
+			}
+			if readResp.NextHash == 0 {
+				break
+			}
+			readReq.StartHash = readResp.NextHash
+		}
 	}
 	return nil
+}
+
+type ParwalkOptions struct {
+	WorkersPerShard int
+	Snapshot        bool
 }
 
 func Parwalk(
 	log *lib.Logger,
 	client *Client,
-	workersPerShard int,
+	options *ParwalkOptions,
 	root string,
-	callback func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error,
+	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
-	if workersPerShard < 1 {
-		panic(fmt.Errorf("workersPerShard=%d < 1", workersPerShard))
+	if options.WorkersPerShard < 1 {
+		panic(fmt.Errorf("workersPerShard=%d < 1", options.WorkersPerShard))
 	}
 	// compute
 	env := parwalkEnv{
 		chans:    make([]chan parwarlkReq, 256),
 		client:   client,
 		callback: callback,
+		snapshot: options.Snapshot,
 	}
 	for i := 0; i < 256; i++ {
 		env.chans[i] = make(chan parwarlkReq, 10_000)
@@ -113,7 +155,7 @@ func Parwalk(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		ch := env.chans[shid]
-		for j := 0; j < workersPerShard; j++ {
+		for j := 0; j < options.WorkersPerShard; j++ {
 			go func() {
 				for {
 					req, more := <-ch
@@ -139,7 +181,7 @@ func Parwalk(
 	if err != nil {
 		return err
 	}
-	if err := env.visit(log, 0, parentId, rootId, root, creationTime); err != nil {
+	if err := env.visit(log, 0, parentId, path.Dir(root), path.Base(root), creationTime, rootId, true, true); err != nil {
 		return err
 	}
 	go func() {

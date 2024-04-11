@@ -11,7 +11,9 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,9 +58,11 @@ func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	err := client.Parwalk(
 		log,
 		c,
-		1,
+		&client.ParwalkOptions{
+			WorkersPerShard: 1,
+		},
 		"/",
-		func(parent msgs.InodeId, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				if atomic.AddUint64(&examinedDirs, 1)%1000000 == 0 {
 					log.Info("examined %v dirs, %v files", examinedDirs, examinedFiles)
@@ -96,7 +100,7 @@ func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 				}
 				spansReq.ByteOffset = spansResp.NextOffset
 			}
-			fmt.Printf("%v,%q,%v,%v\n", id, path, logicalSize, physicalSize)
+			fmt.Printf("%v,%q,%v,%v\n", id, path.Join(parentPath, name), logicalSize, physicalSize)
 			return nil
 		},
 	)
@@ -825,12 +829,13 @@ func main() {
 			err := client.Parwalk(
 				log,
 				getClient(),
-				1,
+				&client.ParwalkOptions{WorkersPerShard: 1},
 				"/",
-				func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+				func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
 					}
+					path := path.Join(parentPath, name)
 					req := msgs.FileSpansReq{
 						FileId: id,
 					}
@@ -936,9 +941,11 @@ func main() {
 		err := client.Parwalk(
 			log,
 			getClient(),
-			5,
+			&client.ParwalkOptions{
+				WorkersPerShard: 5,
+			},
 			*duDir,
-			func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
+			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
 				if id.Type() == msgs.DIRECTORY {
 					atomic.AddUint64(&numDirectories, 1)
 					return nil
@@ -982,17 +989,52 @@ func main() {
 
 	findCmd := flag.NewFlagSet("find", flag.ExitOnError)
 	findDir := findCmd.String("path", "/", "")
-	findName := findCmd.String("name", "", "")
+	findName := findCmd.String("name", "", "Regex to match the name against.")
+	findSnapshot := findCmd.Bool("snapshot", false, "If set, will search through snapshot directory entries too.")
+	findOnlySnapshot := findCmd.Bool("only-snapshot", false, "If set, will return _only_ snapshot edges.")
+	findOnlyOwned := findCmd.Bool("only-owned", false, "If true and -snapshot is set, only owned files will be searched.")
+	findBeforeSpec := findCmd.String("before", "", "If set, only directory entries created before this duration/date will be searched.")
+	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
 	findRun := func() {
+		re := regexp.MustCompile(`.*`)
+		if *findName != "" {
+			re = regexp.MustCompile(*findName)
+		}
+		findBefore := msgs.EggsTime(^uint64(0))
+		if *findBeforeSpec != "" {
+			d, durErr := time.ParseDuration(*findBeforeSpec)
+			if durErr != nil {
+				t, tErr := time.Parse(time.RFC3339Nano, *findBeforeSpec)
+				if tErr != nil {
+					panic(fmt.Errorf("could not parse %q as duration or time: %v, %v", *findBeforeSpec, durErr, tErr))
+				}
+				findBefore = msgs.MakeEggsTime(t)
+			} else {
+				findBefore = msgs.MakeEggsTime(time.Now().Add(-d))
+			}
+		}
 		err := client.Parwalk(
 			log,
 			getClient(),
-			1,
+			&client.ParwalkOptions{
+				WorkersPerShard: *findWorkersPerShard,
+				Snapshot:        *findSnapshot,
+			},
 			*findDir,
-			func(parent, id msgs.InodeId, path string, creationTime msgs.EggsTime) error {
-				if strings.HasSuffix(path, "/"+*findName) {
-					log.Info(path)
+			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
+				if !owned && *findOnlyOwned {
+					return nil
 				}
+				if current && *findOnlySnapshot {
+					return nil
+				}
+				if creationTime > findBefore {
+					return nil
+				}
+				if !re.MatchString(name) {
+					return nil
+				}
+				log.Info("%q", path.Join(parentPath, name))
 				return nil
 			},
 		)

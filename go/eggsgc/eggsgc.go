@@ -90,6 +90,7 @@ func main() {
 	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 50, "")
 	defrag := flag.Bool("defrag", false, "")
 	defragWorkersPerShard := flag.Int("defrag-workers-per-shard", 5, "")
+	defragMinSpanSize := flag.Uint("defrag-min-span-size", 0, "")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
@@ -381,7 +382,11 @@ func main() {
 				bufPool := lib.NewBufPool()
 				progressReportAlert := log.NewNCAlert(0)
 				progressReportAlert.SetAppType(lib.XMON_NEVER)
-				cleanup.DefragFiles(log, c, bufPool, dirInfoCache, defragStats, progressReportAlert, "/", *defragWorkersPerShard, 0)
+				options := cleanup.DefragOptions{
+					WorkersPerShard: *defragWorkersPerShard,
+					MinSpanSize:     uint32(*defragMinSpanSize),
+				}
+				cleanup.DefragFiles(log, c, bufPool, dirInfoCache, defragStats, progressReportAlert, &options, "/")
 				log.RaiseAlertAppType(lib.XMON_DAYTIME, "finished one cycle of defragging, will start again")
 			}
 		}()

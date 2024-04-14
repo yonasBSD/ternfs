@@ -53,6 +53,7 @@ func defragFileInternal(
 	parent msgs.InodeId,
 	fileId msgs.InodeId,
 	filePath string,
+	minSpanSize uint32,
 ) error {
 	defer func() {
 		lastReportAt := atomic.LoadInt64(&timeStats.lastReportAt)
@@ -90,6 +91,9 @@ func defragFileInternal(
 			span := &fileSpansResp.Spans[spanIx]
 			atomic.AddUint64(&stats.AnalyzedLogicalSize, uint64(span.Header.Size))
 			if span.Header.StorageClass == msgs.INLINE_STORAGE {
+				continue
+			}
+			if span.Header.Size < minSpanSize {
 				continue
 			}
 			body := span.Body.(*msgs.FetchedBlocksSpan)
@@ -169,7 +173,13 @@ func DefragFile(
 	filePath string,
 ) error {
 	timeStats := newTimeStats()
-	return defragFileInternal(log, client, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, fileId, filePath)
+	return defragFileInternal(log, client, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, fileId, filePath, 0)
+}
+
+type DefragOptions struct {
+	WorkersPerShard int
+	StartFrom       msgs.EggsTime
+	MinSpanSize     uint32
 }
 
 func DefragFiles(
@@ -179,22 +189,21 @@ func DefragFiles(
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragStats,
 	progressReportAlert *lib.XmonNCAlert,
+	options *DefragOptions,
 	root string,
-	workersPerShard int,
-	startFrom msgs.EggsTime,
 ) error {
 	timeStats := newTimeStats()
 	return client.Parwalk(
-		log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
+		log, c, &client.ParwalkOptions{WorkersPerShard: options.WorkersPerShard}, root,
 		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}
-			if creationTime < startFrom {
+			if creationTime < options.StartFrom {
 				return nil
 			}
 			return defragFileInternal(
-				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name),
+				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name), options.MinSpanSize,
 			)
 		},
 	)

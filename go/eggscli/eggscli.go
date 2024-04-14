@@ -817,71 +817,6 @@ func main() {
 		run:   fileSizesRun,
 	}
 
-	findBlockCmd := flag.NewFlagSet("find-block", flag.ExitOnError)
-	findBlockId := findBlockCmd.Uint64("id", 0, "Block id to find")
-	findBlockRun := func() {
-		blockId := msgs.BlockId(*findBlockId)
-		log.Info("looking for %v", blockId)
-		ch := make(chan any)
-		analyzedFiles := uint64(0)
-		startedAt := time.Now()
-		go func() {
-			err := client.Parwalk(
-				log,
-				getClient(),
-				&client.ParwalkOptions{WorkersPerShard: 1},
-				"/",
-				func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
-					if id.Type() == msgs.DIRECTORY {
-						return nil
-					}
-					path := path.Join(parentPath, name)
-					req := msgs.FileSpansReq{
-						FileId: id,
-					}
-					resp := msgs.FileSpansResp{}
-					for {
-						if err := getClient().ShardRequest(log, id.Shard(), &req, &resp); err != nil {
-							log.ErrorNoAlert("could not get spans for file %q, id %v", id, path)
-							return err
-						}
-						for _, span := range resp.Spans {
-							if span.Header.StorageClass == msgs.INLINE_STORAGE {
-								continue
-							}
-							body := span.Body.(*msgs.FetchedBlocksSpan)
-							for _, block := range body.Blocks {
-								if block.BlockId == blockId {
-									log.Info("block id %v is in file %q, id %v", blockId, path, id)
-									ch <- nil // terminate
-									return nil
-								}
-							}
-						}
-						req.ByteOffset = resp.NextOffset
-						if req.ByteOffset == 0 {
-							break
-						}
-					}
-					if atomic.AddUint64(&analyzedFiles, 1)%uint64(1_000_000) == 0 {
-						log.Info("went through %v files (%0.2f files/s)", analyzedFiles, float64(analyzedFiles)/float64(time.Since(startedAt).Seconds()))
-					}
-					return nil
-				},
-			)
-			ch <- err
-		}()
-		err := <-ch
-		if err != nil {
-			log.ErrorNoAlert("could not find block %v: %v", blockId, err)
-			panic(err)
-		}
-	}
-	commands["find-block"] = commandSpec{
-		flags: findBlockCmd,
-		run:   findBlockRun,
-	}
-
 	countFilesCmd := flag.NewFlagSet("count-files", flag.ExitOnError)
 	countFilesRun := func() {
 		var wg sync.WaitGroup
@@ -994,6 +929,7 @@ func main() {
 	findOnlySnapshot := findCmd.Bool("only-snapshot", false, "If set, will return _only_ snapshot edges.")
 	findOnlyOwned := findCmd.Bool("only-owned", false, "If true and -snapshot is set, only owned files will be searched.")
 	findBeforeSpec := findCmd.String("before", "", "If set, only directory entries created before this duration/date will be searched.")
+	findBlockId := findCmd.Uint64("id", 0, "If specified, only files which contain the given block will be returned.")
 	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
 	findRun := func() {
 		re := regexp.MustCompile(`.*`)
@@ -1033,6 +969,43 @@ func main() {
 				}
 				if !re.MatchString(name) {
 					return nil
+				}
+				if *findBlockId != 0 {
+					if id.Type() == msgs.DIRECTORY {
+						return nil
+					}
+					req := msgs.FileSpansReq{
+						FileId: id,
+					}
+					resp := msgs.FileSpansResp{}
+					found := false
+					for {
+						if err := getClient().ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+							return err
+						}
+						for _, span := range resp.Spans {
+							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+								continue
+							}
+							body := span.Body.(*msgs.FetchedBlocksSpan)
+							for _, block := range body.Blocks {
+								if block.BlockId == msgs.BlockId(*findBlockId) {
+									found = true
+									break
+								}
+							}
+							if found {
+								break
+							}
+						}
+						req.ByteOffset = resp.NextOffset
+						if req.ByteOffset == 0 || found {
+							break
+						}
+					}
+					if !found {
+						return nil
+					}
 				}
 				log.Info("%q", path.Join(parentPath, name))
 				return nil
@@ -1184,7 +1157,11 @@ func main() {
 				}
 				startTime = msgs.MakeEggsTime(t)
 			}
-			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, *defragFilePath, 5, startTime); err != nil {
+			options := cleanup.DefragOptions{
+				WorkersPerShard: 5,
+				StartFrom:       startTime,
+			}
+			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, &options, *defragFilePath); err != nil {
 				panic(err)
 			}
 		} else {

@@ -527,6 +527,10 @@ private:
 
     void _handleShardRequest(int sockIx, struct sockaddr_in* clientAddr, BincodeBuf& reqBbuf) {
         LOG_DEBUG(_env, "received message from %s", *clientAddr);
+        if (unlikely(!_shared.isLeader.load(std::memory_order_relaxed))) {
+            LOG_DEBUG(_env, "not leader, dropping request %s", *clientAddr);
+            return;
+        }
 
         // First, try to parse the header
         ShardRequestHeader reqHeader;

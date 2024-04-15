@@ -1800,6 +1800,11 @@ func main() {
 			reflect.TypeOf(msgs.SetBlockServiceDecommissionedReq{}),
 			reflect.TypeOf(msgs.SetBlockServiceDecommissionedResp{}),
 		},
+		{
+			0x16,
+			reflect.TypeOf(msgs.MoveShardLeaderReq{}),
+			reflect.TypeOf(msgs.MoveShardLeaderResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

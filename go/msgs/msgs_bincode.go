@@ -686,6 +686,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SHARDS_WITH_REPLICAS"
 	case 21:
 		return "SET_BLOCK_SERVICE_DECOMMISSIONED"
+	case 22:
+		return "MOVE_SHARD_LEADER"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -713,6 +715,7 @@ const (
 	CDC_REPLICAS ShuckleMessageKind = 0x13
 	SHARDS_WITH_REPLICAS ShuckleMessageKind = 0x14
 	SET_BLOCK_SERVICE_DECOMMISSIONED ShuckleMessageKind = 0x15
+	MOVE_SHARD_LEADER ShuckleMessageKind = 0x16
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -736,9 +739,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	CDC_REPLICAS,
 	SHARDS_WITH_REPLICAS,
 	SET_BLOCK_SERVICE_DECOMMISSIONED,
+	MOVE_SHARD_LEADER,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 21
+const MaxShuckleMessageKind ShuckleMessageKind = 22
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -782,6 +786,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ShardsWithReplicasReq{}, &ShardsWithReplicasResp{}, nil
 	case k == "SET_BLOCK_SERVICE_DECOMMISSIONED":
 		return &SetBlockServiceDecommissionedReq{}, &SetBlockServiceDecommissionedResp{}, nil
+	case k == "MOVE_SHARD_LEADER":
+		return &MoveShardLeaderReq{}, &MoveShardLeaderResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5178,6 +5184,36 @@ func (v *SetBlockServiceDecommissionedResp) Pack(w io.Writer) error {
 }
 
 func (v *SetBlockServiceDecommissionedResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *MoveShardLeaderReq) ShuckleRequestKind() ShuckleMessageKind {
+	return MOVE_SHARD_LEADER
+}
+
+func (v *MoveShardLeaderReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveShardLeaderReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveShardLeaderResp) ShuckleResponseKind() ShuckleMessageKind {
+	return MOVE_SHARD_LEADER
+}
+
+func (v *MoveShardLeaderResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *MoveShardLeaderResp) Unpack(r io.Reader) error {
 	return nil
 }
 

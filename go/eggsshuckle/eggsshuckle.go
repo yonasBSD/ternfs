@@ -875,6 +875,26 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 	return resp, nil
 }
 
+func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
+	n := sql.Named
+	res, err := s.db.Exec(
+		"UPDATE shards SET is_leader = (replica_id = :replica_id) WHERE id = :id",
+		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()),
+	)
+	if err != nil {
+		panic(err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	if rowsAffected != 5 {
+		panic(fmt.Errorf("unusual number of rows affected (%s) when changing leader to %s", msgs.REMOVE_DIRECTORY_OWNER, req.Shrid))
+	}
+
+	return &msgs.MoveShardLeaderResp{}, nil
+}
+
 func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
 	n := sql.Named
 	end := req.EndTime
@@ -970,6 +990,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleShuckle(log, s)
 	case *msgs.ShardBlockServicesReq:
 		resp, err = handleShardBlockServices(log, s, whichReq)
+	case *msgs.MoveShardLeaderReq:
+		resp, err = handleMoveShardLeader(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}

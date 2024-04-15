@@ -285,6 +285,7 @@ enum class ShuckleMessageKind : uint8_t {
     CDC_REPLICAS = 19,
     SHARDS_WITH_REPLICAS = 20,
     SET_BLOCK_SERVICE_DECOMMISSIONED = 21,
+    MOVE_SHARD_LEADER = 22,
 };
 
 const std::vector<ShuckleMessageKind> allShuckleMessageKind {
@@ -308,9 +309,10 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::CDC_REPLICAS,
     ShuckleMessageKind::SHARDS_WITH_REPLICAS,
     ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED,
+    ShuckleMessageKind::MOVE_SHARD_LEADER,
 };
 
-constexpr int maxShuckleMessageKind = 21;
+constexpr int maxShuckleMessageKind = 22;
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
@@ -3832,6 +3834,42 @@ struct SetBlockServiceDecommissionedResp {
 
 std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedResp& x);
 
+struct MoveShardLeaderReq {
+    ShardReplicaId shrid;
+
+    static constexpr uint16_t STATIC_SIZE = 2; // shrid
+
+    MoveShardLeaderReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 2; // shrid
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const MoveShardLeaderReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const MoveShardLeaderReq& x);
+
+struct MoveShardLeaderResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    MoveShardLeaderResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const MoveShardLeaderResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const MoveShardLeaderResp& x);
+
 struct FetchBlockReq {
     uint64_t blockId;
     uint32_t offset;
@@ -4595,7 +4633,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 struct ShuckleReqContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq, RegisterShardReplicaReq, ShardReplicasReq, ShardBlockServicesReq, RegisterCdcReplicaReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq> _data;
+    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq, RegisterShardReplicaReq, ShardReplicasReq, ShardBlockServicesReq, RegisterCdcReplicaReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq, MoveShardLeaderReq> _data;
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
@@ -4645,6 +4683,8 @@ public:
     ShardsWithReplicasReq& setShardsWithReplicas();
     const SetBlockServiceDecommissionedReq& getSetBlockServiceDecommissioned() const;
     SetBlockServiceDecommissionedReq& setSetBlockServiceDecommissioned();
+    const MoveShardLeaderReq& getMoveShardLeader() const;
+    MoveShardLeaderReq& setMoveShardLeader();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
@@ -4659,7 +4699,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 struct ShuckleRespContainer {
 private:
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
-    std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp, RegisterShardReplicaResp, ShardReplicasResp, ShardBlockServicesResp, RegisterCdcReplicaResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp> _data;
+    std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp, RegisterShardReplicaResp, ShardReplicasResp, ShardBlockServicesResp, RegisterCdcReplicaResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp, MoveShardLeaderResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -4709,6 +4749,8 @@ public:
     ShardsWithReplicasResp& setShardsWithReplicas();
     const SetBlockServiceDecommissionedResp& getSetBlockServiceDecommissioned() const;
     SetBlockServiceDecommissionedResp& setSetBlockServiceDecommissioned();
+    const MoveShardLeaderResp& getMoveShardLeader() const;
+    MoveShardLeaderResp& setMoveShardLeader();
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 

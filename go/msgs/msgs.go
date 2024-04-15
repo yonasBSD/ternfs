@@ -1960,6 +1960,12 @@ type ShardsWithReplicasResp struct {
 	Shards []ShardWithReplicasInfo
 }
 
+type MoveShardLeaderReq struct {
+	Shrid ShardReplicaId
+}
+
+type MoveShardLeaderResp struct{}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

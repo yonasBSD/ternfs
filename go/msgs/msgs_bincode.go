@@ -688,6 +688,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SET_BLOCK_SERVICE_DECOMMISSIONED"
 	case 22:
 		return "MOVE_SHARD_LEADER"
+	case 23:
+		return "CLEAR_SHARD_INFO"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -716,6 +718,7 @@ const (
 	SHARDS_WITH_REPLICAS ShuckleMessageKind = 0x14
 	SET_BLOCK_SERVICE_DECOMMISSIONED ShuckleMessageKind = 0x15
 	MOVE_SHARD_LEADER ShuckleMessageKind = 0x16
+	CLEAR_SHARD_INFO ShuckleMessageKind = 0x17
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -740,9 +743,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	SHARDS_WITH_REPLICAS,
 	SET_BLOCK_SERVICE_DECOMMISSIONED,
 	MOVE_SHARD_LEADER,
+	CLEAR_SHARD_INFO,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 22
+const MaxShuckleMessageKind ShuckleMessageKind = 23
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -788,6 +792,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &SetBlockServiceDecommissionedReq{}, &SetBlockServiceDecommissionedResp{}, nil
 	case k == "MOVE_SHARD_LEADER":
 		return &MoveShardLeaderReq{}, &MoveShardLeaderResp{}, nil
+	case k == "CLEAR_SHARD_INFO":
+		return &ClearShardInfoReq{}, &ClearShardInfoResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5214,6 +5220,36 @@ func (v *MoveShardLeaderResp) Pack(w io.Writer) error {
 }
 
 func (v *MoveShardLeaderResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ClearShardInfoReq) ShuckleRequestKind() ShuckleMessageKind {
+	return CLEAR_SHARD_INFO
+}
+
+func (v *ClearShardInfoReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ClearShardInfoReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ClearShardInfoResp) ShuckleResponseKind() ShuckleMessageKind {
+	return CLEAR_SHARD_INFO
+}
+
+func (v *ClearShardInfoResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ClearShardInfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 

@@ -889,10 +889,33 @@ func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderR
 		panic(err)
 	}
 	if rowsAffected != 5 {
-		panic(fmt.Errorf("unusual number of rows affected (%s) when changing leader to %s", msgs.REMOVE_DIRECTORY_OWNER, req.Shrid))
+		panic(fmt.Errorf("unusual number of rows affected (%d) when changing leader to %s", rowsAffected, req.Shrid))
 	}
 
 	return &msgs.MoveShardLeaderResp{}, nil
+}
+
+func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
+	n := sql.Named
+	res, err := s.db.Exec(`
+		UPDATE shards
+		SET ip1 = `+zeroIPString+`, port1 = 0, ip2 = `+zeroIPString+`, port2 = 0, last_seen = 0
+		WHERE id = :id AND replica_id = :replica_id AND is_leader = false
+		`,
+		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()),
+	)
+	if err != nil {
+		panic(err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	if rowsAffected != 1 {
+		panic(fmt.Errorf("unusual number of rows affected (%d) when executing ClearShardInfoReq for %s", rowsAffected, req.Shrid))
+	}
+
+	return &msgs.ClearShardInfoResp{}, nil
 }
 
 func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
@@ -992,6 +1015,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleShardBlockServices(log, s, whichReq)
 	case *msgs.MoveShardLeaderReq:
 		resp, err = handleMoveShardLeader(log, s, whichReq)
+	case *msgs.ClearShardInfoReq:
+		resp, err = handleClearShardInfo(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}

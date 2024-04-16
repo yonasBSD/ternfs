@@ -436,6 +436,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         out << "MOVE_SHARD_LEADER";
         break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        out << "CLEAR_SHARD_INFO";
+        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -4139,6 +4142,38 @@ std::ostream& operator<<(std::ostream& out, const MoveShardLeaderResp& x) {
     return out;
 }
 
+void ClearShardInfoReq::pack(BincodeBuf& buf) const {
+    shrid.pack(buf);
+}
+void ClearShardInfoReq::unpack(BincodeBuf& buf) {
+    shrid.unpack(buf);
+}
+void ClearShardInfoReq::clear() {
+    shrid = ShardReplicaId();
+}
+bool ClearShardInfoReq::operator==(const ClearShardInfoReq& rhs) const {
+    if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ClearShardInfoReq& x) {
+    out << "ClearShardInfoReq(" << "Shrid=" << x.shrid << ")";
+    return out;
+}
+
+void ClearShardInfoResp::pack(BincodeBuf& buf) const {
+}
+void ClearShardInfoResp::unpack(BincodeBuf& buf) {
+}
+void ClearShardInfoResp::clear() {
+}
+bool ClearShardInfoResp::operator==(const ClearShardInfoResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ClearShardInfoResp& x) {
+    out << "ClearShardInfoResp(" << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -7292,6 +7327,15 @@ MoveShardLeaderReq& ShuckleReqContainer::setMoveShardLeader() {
     auto& x = _data.emplace<20>();
     return x;
 }
+const ClearShardInfoReq& ShuckleReqContainer::getClearShardInfo() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
+    return std::get<21>(_data);
+}
+ClearShardInfoReq& ShuckleReqContainer::setClearShardInfo() {
+    _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
+    auto& x = _data.emplace<21>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7372,6 +7416,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         setMoveShardLeader() = other.getMoveShardLeader();
         break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        setClearShardInfo() = other.getClearShardInfo();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7427,6 +7474,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<19>(_data).packedSize();
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return std::get<20>(_data).packedSize();
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        return std::get<21>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7496,6 +7545,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         std::get<20>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        std::get<21>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7568,6 +7620,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<20>().unpack(buf);
         break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        _data.emplace<21>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7619,6 +7674,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getSetBlockServiceDecommissioned() == other.getSetBlockServiceDecommissioned();
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return getMoveShardLeader() == other.getMoveShardLeader();
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        return getClearShardInfo() == other.getClearShardInfo();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7688,6 +7745,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         out << x.getMoveShardLeader();
+        break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        out << x.getClearShardInfo();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -7884,6 +7944,15 @@ MoveShardLeaderResp& ShuckleRespContainer::setMoveShardLeader() {
     auto& x = _data.emplace<20>();
     return x;
 }
+const ClearShardInfoResp& ShuckleRespContainer::getClearShardInfo() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
+    return std::get<21>(_data);
+}
+ClearShardInfoResp& ShuckleRespContainer::setClearShardInfo() {
+    _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
+    auto& x = _data.emplace<21>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -7964,6 +8033,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         setMoveShardLeader() = other.getMoveShardLeader();
         break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        setClearShardInfo() = other.getClearShardInfo();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -8019,6 +8091,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<19>(_data).packedSize();
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return std::get<20>(_data).packedSize();
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        return std::get<21>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8088,6 +8162,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         std::get<20>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        std::get<21>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8160,6 +8237,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<20>().unpack(buf);
         break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        _data.emplace<21>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -8211,6 +8291,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getSetBlockServiceDecommissioned() == other.getSetBlockServiceDecommissioned();
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return getMoveShardLeader() == other.getMoveShardLeader();
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        return getClearShardInfo() == other.getClearShardInfo();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8280,6 +8362,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::MOVE_SHARD_LEADER:
         out << x.getMoveShardLeader();
+        break;
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+        out << x.getClearShardInfo();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

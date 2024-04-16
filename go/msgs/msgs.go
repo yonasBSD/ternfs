@@ -1966,6 +1966,12 @@ type MoveShardLeaderReq struct {
 
 type MoveShardLeaderResp struct{}
 
+type ClearShardInfoReq struct {
+	Shrid ShardReplicaId
+}
+
+type ClearShardInfoResp struct{}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

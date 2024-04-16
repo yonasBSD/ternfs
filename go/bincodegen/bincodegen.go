@@ -1805,6 +1805,11 @@ func main() {
 			reflect.TypeOf(msgs.MoveShardLeaderReq{}),
 			reflect.TypeOf(msgs.MoveShardLeaderResp{}),
 		},
+		{
+			0x17,
+			reflect.TypeOf(msgs.ClearShardInfoReq{}),
+			reflect.TypeOf(msgs.ClearShardInfoResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

@@ -319,7 +319,7 @@ int eggsfs_metadata_send_request(
         // For ENETUNREACH, we pretend to have sent it, and then the timeout
         // mechanism will retry, since this might be fixed with time.
         if (err == -ENETUNREACH) {
-            err = 0;
+            err = len;
         } else {
             goto out_err_no_latency; // we didn't really get a response here, so no sense increasing the latency bucket
         }

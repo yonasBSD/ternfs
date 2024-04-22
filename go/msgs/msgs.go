@@ -174,6 +174,10 @@ func (flags BlockServiceFlags) CanRead() bool {
 	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_READ | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
 }
 
+func (flags BlockServiceFlags) CanWrite() bool {
+	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_WRITE | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
+}
+
 const (
 	DIRECTORY InodeType = 1
 	FILE      InodeType = 2

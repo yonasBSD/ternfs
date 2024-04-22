@@ -74,17 +74,17 @@ func DestructFile(
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
 			for i := range initResp.Blocks {
 				block := &initResp.Blocks[i]
-				// There's no point trying to erase blocks for stale block services which are
-				// not decommissioned -- they're almost certainly temporarly offline, and we'll
-				// be stuck forever since in GC we run with infinite timeout. Just skip.
-				if block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) && !block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+				// There's no point trying to erase blocks for stale block services -- they're
+				// almost certainly temporarly offline, and we'll be stuck forever since in GC we run
+				// with infinite timeout. Just skip.
+				if block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) {
 					log.Debug("skipping block %v in file %v since its block service %v is stale", block.BlockId, id, block.BlockServiceId)
 					couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
 					continue
 				}
 				// Check if the block was stale/decommissioned/no_write, in which case
 				// there might be nothing we can do here, for now.
-				acceptFailure := block.BlockServiceFlags&(msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE) != 0
+				acceptFailure := !block.BlockServiceFlags.CanWrite()
 				proof, err := c.EraseBlock(log, block)
 				if err != nil {
 					if acceptFailure {

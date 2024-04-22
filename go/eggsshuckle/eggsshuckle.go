@@ -2399,7 +2399,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 				continue
 			}
 			fd := bs.FailureDomain.String()
-			if _, found := activeBlockServices[fd]; !found {
+			if _, found := activeBlockServices[fd]; !found && fd != "REDACTED" { // fsf94 is currently down
 				// this alert can go once we start decommissioning entire servers, leaving it in
 				// now for safety
 				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Id, fd)

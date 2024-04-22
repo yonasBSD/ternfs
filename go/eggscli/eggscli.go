@@ -930,6 +930,7 @@ func main() {
 	findOnlyOwned := findCmd.Bool("only-owned", false, "If true and -snapshot is set, only owned files will be searched.")
 	findBeforeSpec := findCmd.String("before", "", "If set, only directory entries created before this duration/date will be searched.")
 	findBlockId := findCmd.Uint64("id", 0, "If specified, only files which contain the given block will be returned.")
+	findMinSize := findCmd.Uint64("min-size", 0, "If specified, only files of at least this size will be returned.")
 	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
 	findRun := func() {
 		re := regexp.MustCompile(`.*`)
@@ -949,9 +950,10 @@ func main() {
 				findBefore = msgs.MakeEggsTime(time.Now().Add(-d))
 			}
 		}
+		c := getClient()
 		err := client.Parwalk(
 			log,
-			getClient(),
+			c,
 			&client.ParwalkOptions{
 				WorkersPerShard: *findWorkersPerShard,
 				Snapshot:        *findSnapshot,
@@ -970,6 +972,24 @@ func main() {
 				if !re.MatchString(name) {
 					return nil
 				}
+				if *findMinSize > 0 {
+					if id.Type() == msgs.DIRECTORY {
+						return nil
+					}
+					statReq := msgs.StatFileReq{Id: id}
+					statResp := msgs.StatFileResp{}
+					if err := c.ShardRequest(log, id.Shard(), &statReq, &statResp); err != nil {
+						if err == msgs.FILE_NOT_FOUND {
+							// could get collected
+							log.Info("file %q disappeared", path.Join(parentPath, name))
+						} else {
+							return err
+						}
+					}
+					if statResp.Size < *findMinSize {
+						return nil
+					}
+				}
 				if *findBlockId != 0 {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
@@ -980,7 +1000,7 @@ func main() {
 					resp := msgs.FileSpansResp{}
 					found := false
 					for {
-						if err := getClient().ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							return err
 						}
 						for _, span := range resp.Spans {

@@ -4,8 +4,10 @@
 #include <vector>
 #include <rocksdb/db.h>
 
+#include "Bincode.hpp"
 #include "Env.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
 
@@ -76,6 +78,8 @@ public:
     static constexpr Duration LEADER_INACTIVE_TIMEOUT = 1_sec;
     static constexpr size_t IN_FLIGHT_APPEND_WINDOW = 1 << 8;
     static constexpr size_t CATCHUP_WINDOW = 1 << 8 ;
+
+    static constexpr size_t MAX_UDP_ENTRY_SIZE = MAX_UDP_MTU - std::max(LogRequestHeader::STATIC_SIZE + LogReqContainer::STATIC_SIZE, LogResponseHeader::STATIC_SIZE + LogRespContainer::STATIC_SIZE);
 
     LogsDB() = delete;
 

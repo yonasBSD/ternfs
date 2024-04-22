@@ -4398,6 +4398,7 @@ std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x);
 
 struct ShardReqContainer {
 private:
+    static constexpr std::array<size_t,38> _staticSizes = {LookupReq::STATIC_SIZE, StatFileReq::STATIC_SIZE, StatDirectoryReq::STATIC_SIZE, ReadDirReq::STATIC_SIZE, ConstructFileReq::STATIC_SIZE, AddSpanInitiateReq::STATIC_SIZE, AddSpanCertifyReq::STATIC_SIZE, LinkFileReq::STATIC_SIZE, SoftUnlinkFileReq::STATIC_SIZE, FileSpansReq::STATIC_SIZE, SameDirectoryRenameReq::STATIC_SIZE, AddInlineSpanReq::STATIC_SIZE, SetTimeReq::STATIC_SIZE, FullReadDirReq::STATIC_SIZE, MoveSpanReq::STATIC_SIZE, RemoveNonOwnedEdgeReq::STATIC_SIZE, SameShardHardFileUnlinkReq::STATIC_SIZE, StatTransientFileReq::STATIC_SIZE, SetDirectoryInfoReq::STATIC_SIZE, VisitDirectoriesReq::STATIC_SIZE, VisitFilesReq::STATIC_SIZE, VisitTransientFilesReq::STATIC_SIZE, RemoveSpanInitiateReq::STATIC_SIZE, RemoveSpanCertifyReq::STATIC_SIZE, SwapBlocksReq::STATIC_SIZE, BlockServiceFilesReq::STATIC_SIZE, RemoveInodeReq::STATIC_SIZE, AddSpanInitiateWithReferenceReq::STATIC_SIZE, RemoveZeroBlockServiceFilesReq::STATIC_SIZE, SwapSpansReq::STATIC_SIZE, CreateDirectoryInodeReq::STATIC_SIZE, SetDirectoryOwnerReq::STATIC_SIZE, RemoveDirectoryOwnerReq::STATIC_SIZE, CreateLockedCurrentEdgeReq::STATIC_SIZE, LockCurrentEdgeReq::STATIC_SIZE, UnlockCurrentEdgeReq::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeReq::STATIC_SIZE, MakeFileTransientReq::STATIC_SIZE};
     ShardMessageKind _kind = (ShardMessageKind)0;
     std::variant<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, FileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, AddSpanInitiateWithReferenceReq, RemoveZeroBlockServiceFilesReq, SwapSpansReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
@@ -4488,6 +4489,7 @@ public:
 
     void clear() { _kind = (ShardMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
@@ -4498,6 +4500,7 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 
 struct ShardRespContainer {
 private:
+    static constexpr std::array<size_t,38> _staticSizes = {LookupResp::STATIC_SIZE, StatFileResp::STATIC_SIZE, StatDirectoryResp::STATIC_SIZE, ReadDirResp::STATIC_SIZE, ConstructFileResp::STATIC_SIZE, AddSpanInitiateResp::STATIC_SIZE, AddSpanCertifyResp::STATIC_SIZE, LinkFileResp::STATIC_SIZE, SoftUnlinkFileResp::STATIC_SIZE, FileSpansResp::STATIC_SIZE, SameDirectoryRenameResp::STATIC_SIZE, AddInlineSpanResp::STATIC_SIZE, SetTimeResp::STATIC_SIZE, FullReadDirResp::STATIC_SIZE, MoveSpanResp::STATIC_SIZE, RemoveNonOwnedEdgeResp::STATIC_SIZE, SameShardHardFileUnlinkResp::STATIC_SIZE, StatTransientFileResp::STATIC_SIZE, SetDirectoryInfoResp::STATIC_SIZE, VisitDirectoriesResp::STATIC_SIZE, VisitFilesResp::STATIC_SIZE, VisitTransientFilesResp::STATIC_SIZE, RemoveSpanInitiateResp::STATIC_SIZE, RemoveSpanCertifyResp::STATIC_SIZE, SwapBlocksResp::STATIC_SIZE, BlockServiceFilesResp::STATIC_SIZE, RemoveInodeResp::STATIC_SIZE, AddSpanInitiateWithReferenceResp::STATIC_SIZE, RemoveZeroBlockServiceFilesResp::STATIC_SIZE, SwapSpansResp::STATIC_SIZE, CreateDirectoryInodeResp::STATIC_SIZE, SetDirectoryOwnerResp::STATIC_SIZE, RemoveDirectoryOwnerResp::STATIC_SIZE, CreateLockedCurrentEdgeResp::STATIC_SIZE, LockCurrentEdgeResp::STATIC_SIZE, UnlockCurrentEdgeResp::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeResp::STATIC_SIZE, MakeFileTransientResp::STATIC_SIZE};
     ShardMessageKind _kind = (ShardMessageKind)0;
     std::variant<LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, FileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, RemoveZeroBlockServiceFilesResp, SwapSpansResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
@@ -4588,6 +4591,7 @@ public:
 
     void clear() { _kind = (ShardMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardMessageKind kind);
@@ -4598,6 +4602,7 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x);
 
 struct CDCReqContainer {
 private:
+    static constexpr std::array<size_t,6> _staticSizes = {MakeDirectoryReq::STATIC_SIZE, RenameFileReq::STATIC_SIZE, SoftUnlinkDirectoryReq::STATIC_SIZE, RenameDirectoryReq::STATIC_SIZE, HardUnlinkDirectoryReq::STATIC_SIZE, CrossShardHardUnlinkFileReq::STATIC_SIZE};
     CDCMessageKind _kind = (CDCMessageKind)0;
     std::variant<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, CrossShardHardUnlinkFileReq> _data;
 public:
@@ -4624,6 +4629,7 @@ public:
 
     void clear() { _kind = (CDCMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
@@ -4634,6 +4640,7 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
 
 struct CDCRespContainer {
 private:
+    static constexpr std::array<size_t,6> _staticSizes = {MakeDirectoryResp::STATIC_SIZE, RenameFileResp::STATIC_SIZE, SoftUnlinkDirectoryResp::STATIC_SIZE, RenameDirectoryResp::STATIC_SIZE, HardUnlinkDirectoryResp::STATIC_SIZE, CrossShardHardUnlinkFileResp::STATIC_SIZE};
     CDCMessageKind _kind = (CDCMessageKind)0;
     std::variant<MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp> _data;
 public:
@@ -4660,6 +4667,7 @@ public:
 
     void clear() { _kind = (CDCMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, CDCMessageKind kind);
@@ -4670,6 +4678,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 
 struct ShuckleReqContainer {
 private:
+    static constexpr std::array<size_t,22> _staticSizes = {ShardsReq::STATIC_SIZE, CdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, ShuckleReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, AllBlockServicesReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, BlockServiceReq::STATIC_SIZE, InsertStatsReq::STATIC_SIZE, ShardReq::STATIC_SIZE, GetStatsReq::STATIC_SIZE, RegisterShardReplicaReq::STATIC_SIZE, ShardReplicasReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, RegisterCdcReplicaReq::STATIC_SIZE, CdcReplicasReq::STATIC_SIZE, ShardsWithReplicasReq::STATIC_SIZE, SetBlockServiceDecommissionedReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE};
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
     std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterBlockServicesReq, RegisterShardReq, AllBlockServicesReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, InsertStatsReq, ShardReq, GetStatsReq, RegisterShardReplicaReq, ShardReplicasReq, ShardBlockServicesReq, RegisterCdcReplicaReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq, MoveShardLeaderReq, ClearShardInfoReq> _data;
 public:
@@ -4728,6 +4737,7 @@ public:
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShuckleMessageKind kind);
@@ -4738,6 +4748,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 
 struct ShuckleRespContainer {
 private:
+    static constexpr std::array<size_t,22> _staticSizes = {ShardsResp::STATIC_SIZE, CdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, AllBlockServicesResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, BlockServiceResp::STATIC_SIZE, InsertStatsResp::STATIC_SIZE, ShardResp::STATIC_SIZE, GetStatsResp::STATIC_SIZE, RegisterShardReplicaResp::STATIC_SIZE, ShardReplicasResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, RegisterCdcReplicaResp::STATIC_SIZE, CdcReplicasResp::STATIC_SIZE, ShardsWithReplicasResp::STATIC_SIZE, SetBlockServiceDecommissionedResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE};
     ShuckleMessageKind _kind = (ShuckleMessageKind)0;
     std::variant<ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterBlockServicesResp, RegisterShardResp, AllBlockServicesResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, InsertStatsResp, ShardResp, GetStatsResp, RegisterShardReplicaResp, ShardReplicasResp, ShardBlockServicesResp, RegisterCdcReplicaResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp, MoveShardLeaderResp, ClearShardInfoResp> _data;
 public:
@@ -4796,6 +4807,7 @@ public:
 
     void clear() { _kind = (ShuckleMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShuckleMessageKind kind);
@@ -4806,6 +4818,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x);
 
 struct LogReqContainer {
 private:
+    static constexpr std::array<size_t,7> _staticSizes = {LogWriteReq::STATIC_SIZE, ReleaseReq::STATIC_SIZE, LogReadReq::STATIC_SIZE, NewLeaderReq::STATIC_SIZE, NewLeaderConfirmReq::STATIC_SIZE, LogRecoveryReadReq::STATIC_SIZE, LogRecoveryWriteReq::STATIC_SIZE};
     LogMessageKind _kind = (LogMessageKind)0;
     std::variant<LogWriteReq, ReleaseReq, LogReadReq, NewLeaderReq, NewLeaderConfirmReq, LogRecoveryReadReq, LogRecoveryWriteReq> _data;
 public:
@@ -4834,6 +4847,7 @@ public:
 
     void clear() { _kind = (LogMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, LogMessageKind kind);
@@ -4844,6 +4858,7 @@ std::ostream& operator<<(std::ostream& out, const LogReqContainer& x);
 
 struct LogRespContainer {
 private:
+    static constexpr std::array<size_t,7> _staticSizes = {LogWriteResp::STATIC_SIZE, ReleaseResp::STATIC_SIZE, LogReadResp::STATIC_SIZE, NewLeaderResp::STATIC_SIZE, NewLeaderConfirmResp::STATIC_SIZE, LogRecoveryReadResp::STATIC_SIZE, LogRecoveryWriteResp::STATIC_SIZE};
     LogMessageKind _kind = (LogMessageKind)0;
     std::variant<LogWriteResp, ReleaseResp, LogReadResp, NewLeaderResp, NewLeaderConfirmResp, LogRecoveryReadResp, LogRecoveryWriteResp> _data;
 public:
@@ -4872,6 +4887,7 @@ public:
 
     void clear() { _kind = (LogMessageKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, LogMessageKind kind);
@@ -5555,6 +5571,7 @@ std::ostream& operator<<(std::ostream& out, const SwapSpansEntry& x);
 
 struct ShardLogEntryContainer {
 private:
+    static constexpr std::array<size_t,26> _staticSizes = {ConstructFileEntry::STATIC_SIZE, LinkFileEntry::STATIC_SIZE, SameDirectoryRenameEntry::STATIC_SIZE, SoftUnlinkFileEntry::STATIC_SIZE, CreateDirectoryInodeEntry::STATIC_SIZE, CreateLockedCurrentEdgeEntry::STATIC_SIZE, UnlockCurrentEdgeEntry::STATIC_SIZE, LockCurrentEdgeEntry::STATIC_SIZE, RemoveDirectoryOwnerEntry::STATIC_SIZE, RemoveInodeEntry::STATIC_SIZE, SetDirectoryOwnerEntry::STATIC_SIZE, SetDirectoryInfoEntry::STATIC_SIZE, RemoveNonOwnedEdgeEntry::STATIC_SIZE, SameShardHardFileUnlinkEntry::STATIC_SIZE, RemoveSpanInitiateEntry::STATIC_SIZE, AddSpanInitiateEntry::STATIC_SIZE, AddSpanCertifyEntry::STATIC_SIZE, AddInlineSpanEntry::STATIC_SIZE, MakeFileTransientEntry::STATIC_SIZE, RemoveSpanCertifyEntry::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeEntry::STATIC_SIZE, SwapBlocksEntry::STATIC_SIZE, MoveSpanEntry::STATIC_SIZE, SetTimeEntry::STATIC_SIZE, RemoveZeroBlockServiceFilesEntry::STATIC_SIZE, SwapSpansEntry::STATIC_SIZE};
     ShardLogEntryKind _kind = (ShardLogEntryKind)0;
     std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry, SwapSpansEntry> _data;
 public:
@@ -5621,6 +5638,7 @@ public:
 
     void clear() { _kind = (ShardLogEntryKind)0; };
 
+    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());
     size_t packedSize() const;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf, ShardLogEntryKind kind);

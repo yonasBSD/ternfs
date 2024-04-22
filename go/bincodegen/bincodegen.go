@@ -1066,6 +1066,14 @@ type containerType struct {
 func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeName string, types []containerType) {
 	fmt.Fprintf(hpp, "struct %s {\n", name)
 	fmt.Fprintf(hpp, "private:\n")
+	fmt.Fprintf(hpp, "    static constexpr std::array<size_t,%d> _staticSizes = {", len(types))
+	for i, typ := range types {
+		if i > 0 {
+			fmt.Fprintf(hpp, ", ")
+		}
+		fmt.Fprintf(hpp, "%s::STATIC_SIZE", cppType(typ.typ))
+	}
+	fmt.Fprintf(hpp, "};\n")
 	fmt.Fprintf(hpp, "    %s _kind = (%s)0;\n", kindTypeName, kindTypeName)
 	fmt.Fprintf(hpp, "    std::variant<")
 	for i, typ := range types {
@@ -1097,6 +1105,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    void clear() { _kind = (%s)0; };\n\n", kindTypeName)
+	fmt.Fprintf(hpp, "    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());\n")
 	fmt.Fprintf(hpp, "    size_t packedSize() const;\n")
 	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
 	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf, %s kind);\n", kindTypeName)

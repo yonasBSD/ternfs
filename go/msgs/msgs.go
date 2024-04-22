@@ -665,17 +665,26 @@ func (fd *FailureDomain) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fd.String())
 }
 
+func MkFailureDomain(str string) (*FailureDomain, error) {
+	if len(str) > 16 {
+		return nil, fmt.Errorf("failure domain string too long (%v)", len(str))
+	}
+	fd := &FailureDomain{Name: [16]byte{}}
+	copy(fd.Name[:], []byte(str))
+	return fd, nil
+}
+
 func (fd *FailureDomain) UnmarshalJSON(b []byte) error {
 	var str string
 	err := json.Unmarshal([]byte(b), &str)
 	if err != nil {
 		return err
 	}
-	if len(str) > 16 {
-		return fmt.Errorf("failure domain string too long (%v)", len(str))
+	parsed, err := MkFailureDomain(str)
+	if err != nil {
+		return err
 	}
-	fd.Name = [16]byte{}
-	copy(fd.Name[:], []byte(str))
+	fd.Name = parsed.Name
 	return nil
 }
 
@@ -1690,8 +1699,21 @@ type RegisterBlockServiceInfo struct {
 }
 
 type BlockServiceInfo struct {
-	Info     RegisterBlockServiceInfo
-	HasFiles bool
+	Id             BlockServiceId
+	Ip1            [4]byte
+	Port1          uint16
+	Ip2            [4]byte
+	Port2          uint16
+	StorageClass   StorageClass
+	FailureDomain  FailureDomain
+	SecretKey      [16]byte
+	Flags          BlockServiceFlags
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64 // how many blocks we have
+	Path           string
+	LastSeen       EggsTime
+	HasFiles       bool
 }
 
 type EntryNewBlockInfo struct {
@@ -1817,6 +1839,29 @@ type RegisterBlockServicesReq struct {
 
 type RegisterBlockServicesResp struct{}
 
+type NewRegisterBlockServiceInfo struct {
+	Id             BlockServiceId
+	Ip1            [4]byte
+	Port1          uint16
+	Ip2            [4]byte
+	Port2          uint16
+	StorageClass   StorageClass
+	FailureDomain  FailureDomain
+	SecretKey      [16]byte
+	Flags          BlockServiceFlags
+	FlagsMask      uint8
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64 // how many blocks we have
+	Path           string
+}
+
+type NewRegisterBlockServicesReq struct {
+	BlockServices []NewRegisterBlockServiceInfo
+}
+
+type NewRegisterBlockServicesResp struct{}
+
 type ShardsReq struct{}
 
 type ShardInfo struct {
@@ -1915,7 +1960,7 @@ type BlockServiceReq struct {
 }
 
 type BlockServiceResp struct {
-	Info RegisterBlockServiceInfo
+	Info BlockServiceInfo
 }
 
 type ShardReq struct {

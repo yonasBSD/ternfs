@@ -365,22 +365,22 @@ export function renderIndex() {
         let available = 0;
         let blocks = 0n;
         for (const bs of blockServices.BlockServices) {
-            failureDomains.add(bs.Info.FailureDomain);
-            capacity += bs.Info.CapacityBytes;
-            available += bs.Info.AvailableBytes;
-            blocks += BigInt(bs.Info.Blocks);
+            failureDomains.add(bs.FailureDomain);
+            capacity += bs.CapacityBytes;
+            available += bs.AvailableBytes;
+            blocks += BigInt(bs.Blocks);
             rows.push([
-                bs.Info.FailureDomain,
-                stringifyAddress(bs.Info.Ip1, bs.Info.Port1),
-                stringifyAddress(bs.Info.Ip2, bs.Info.Port2),
-                bs.Info.Path,
-                bs.Info.Id,
-                bs.Info.Flags,
-                bs.Info.StorageClass,
-                bs.Info.Blocks,
-                bs.Info.CapacityBytes,
-                bs.Info.AvailableBytes,
-                bs.Info.LastSeen,
+                bs.FailureDomain,
+                stringifyAddress(bs.Ip1, bs.Port1),
+                stringifyAddress(bs.Ip2, bs.Port2),
+                bs.Path,
+                bs.Id,
+                bs.Flags,
+                bs.StorageClass,
+                bs.Blocks,
+                bs.CapacityBytes,
+                bs.AvailableBytes,
+                bs.LastSeen,
                 bs.HasFiles,
             ]);
         }

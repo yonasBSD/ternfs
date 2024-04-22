@@ -110,6 +110,8 @@ func readShuckleRequest(
 	switch kind {
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.NEW_REGISTER_BLOCK_SERVICES:
+		req = &msgs.NewRegisterBlockServicesReq{}
 	case msgs.SHARDS:
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:

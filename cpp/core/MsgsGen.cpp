@@ -178,8 +178,8 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::CANNOT_UNSET_DECOMMISSIONED:
         out << "CANNOT_UNSET_DECOMMISSIONED";
         break;
-    case EggsError::CANNOT_REGISTER_DECOMMISSIONED:
-        out << "CANNOT_REGISTER_DECOMMISSIONED";
+    case EggsError::CANNOT_REGISTER_DECOMMISSIONED_OR_STALE:
+        out << "CANNOT_REGISTER_DECOMMISSIONED_OR_STALE";
         break;
     case EggsError::BLOCK_TOO_OLD_FOR_WRITE:
         out << "BLOCK_TOO_OLD_FOR_WRITE";
@@ -213,6 +213,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
         break;
     case EggsError::AUTO_DECOMMISSION_FORBIDDEN:
         out << "AUTO_DECOMMISSION_FORBIDDEN";
+        break;
+    case EggsError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION:
+        out << "INCONSISTENT_BLOCK_SERVICE_REGISTRATION";
         break;
     default:
         out << "EggsError(" << ((int)err) << ")";
@@ -438,6 +441,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
         break;
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << "CLEAR_SHARD_INFO";
+        break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        out << "NEW_REGISTER_BLOCK_SERVICES";
         break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
@@ -1149,24 +1155,76 @@ std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x) {
 }
 
 void BlockServiceInfo::pack(BincodeBuf& buf) const {
-    info.pack(buf);
+    id.pack(buf);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
+    buf.packScalar<uint8_t>(storageClass);
+    failureDomain.pack(buf);
+    buf.packFixedBytes<16>(secretKey);
+    buf.packScalar<uint8_t>(flags);
+    buf.packScalar<uint64_t>(capacityBytes);
+    buf.packScalar<uint64_t>(availableBytes);
+    buf.packScalar<uint64_t>(blocks);
+    buf.packBytes(path);
+    lastSeen.pack(buf);
     buf.packScalar<bool>(hasFiles);
 }
 void BlockServiceInfo::unpack(BincodeBuf& buf) {
-    info.unpack(buf);
+    id.unpack(buf);
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
+    storageClass = buf.unpackScalar<uint8_t>();
+    failureDomain.unpack(buf);
+    buf.unpackFixedBytes<16>(secretKey);
+    flags = buf.unpackScalar<uint8_t>();
+    capacityBytes = buf.unpackScalar<uint64_t>();
+    availableBytes = buf.unpackScalar<uint64_t>();
+    blocks = buf.unpackScalar<uint64_t>();
+    buf.unpackBytes(path);
+    lastSeen.unpack(buf);
     hasFiles = buf.unpackScalar<bool>();
 }
 void BlockServiceInfo::clear() {
-    info.clear();
+    id = BlockServiceId(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
+    storageClass = uint8_t(0);
+    failureDomain.clear();
+    secretKey.clear();
+    flags = uint8_t(0);
+    capacityBytes = uint64_t(0);
+    availableBytes = uint64_t(0);
+    blocks = uint64_t(0);
+    path.clear();
+    lastSeen = EggsTime();
     hasFiles = bool(0);
 }
 bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
-    if (info != rhs.info) { return false; };
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if (failureDomain != rhs.failureDomain) { return false; };
+    if (secretKey != rhs.secretKey) { return false; };
+    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
+    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
+    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
+    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
+    if (path != rhs.path) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Info=" << x.info << ", " << "HasFiles=" << x.hasFiles << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ")";
     return out;
 }
 
@@ -1323,6 +1381,76 @@ bool ShardWithReplicasInfo::operator==(const ShardWithReplicasInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const ShardWithReplicasInfo& x) {
     out << "ShardWithReplicasInfo(" << "Id=" << x.id << ", " << "IsLeader=" << x.isLeader << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
+    return out;
+}
+
+void NewRegisterBlockServiceInfo::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    buf.packFixedBytes<4>(ip1);
+    buf.packScalar<uint16_t>(port1);
+    buf.packFixedBytes<4>(ip2);
+    buf.packScalar<uint16_t>(port2);
+    buf.packScalar<uint8_t>(storageClass);
+    failureDomain.pack(buf);
+    buf.packFixedBytes<16>(secretKey);
+    buf.packScalar<uint8_t>(flags);
+    buf.packScalar<uint8_t>(flagsMask);
+    buf.packScalar<uint64_t>(capacityBytes);
+    buf.packScalar<uint64_t>(availableBytes);
+    buf.packScalar<uint64_t>(blocks);
+    buf.packBytes(path);
+}
+void NewRegisterBlockServiceInfo::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    buf.unpackFixedBytes<4>(ip1);
+    port1 = buf.unpackScalar<uint16_t>();
+    buf.unpackFixedBytes<4>(ip2);
+    port2 = buf.unpackScalar<uint16_t>();
+    storageClass = buf.unpackScalar<uint8_t>();
+    failureDomain.unpack(buf);
+    buf.unpackFixedBytes<16>(secretKey);
+    flags = buf.unpackScalar<uint8_t>();
+    flagsMask = buf.unpackScalar<uint8_t>();
+    capacityBytes = buf.unpackScalar<uint64_t>();
+    availableBytes = buf.unpackScalar<uint64_t>();
+    blocks = buf.unpackScalar<uint64_t>();
+    buf.unpackBytes(path);
+}
+void NewRegisterBlockServiceInfo::clear() {
+    id = BlockServiceId(0);
+    ip1.clear();
+    port1 = uint16_t(0);
+    ip2.clear();
+    port2 = uint16_t(0);
+    storageClass = uint8_t(0);
+    failureDomain.clear();
+    secretKey.clear();
+    flags = uint8_t(0);
+    flagsMask = uint8_t(0);
+    capacityBytes = uint64_t(0);
+    availableBytes = uint64_t(0);
+    blocks = uint64_t(0);
+    path.clear();
+}
+bool NewRegisterBlockServiceInfo::operator==(const NewRegisterBlockServiceInfo& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if (ip1 != rhs.ip1) { return false; };
+    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
+    if (ip2 != rhs.ip2) { return false; };
+    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if (failureDomain != rhs.failureDomain) { return false; };
+    if (secretKey != rhs.secretKey) { return false; };
+    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
+    if ((uint8_t)this->flagsMask != (uint8_t)rhs.flagsMask) { return false; };
+    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
+    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
+    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
+    if (path != rhs.path) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewRegisterBlockServiceInfo& x) {
+    out << "NewRegisterBlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "FlagsMask=" << (int)x.flagsMask << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
     return out;
 }
 
@@ -4171,6 +4299,38 @@ bool ClearShardInfoResp::operator==(const ClearShardInfoResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const ClearShardInfoResp& x) {
     out << "ClearShardInfoResp(" << ")";
+    return out;
+}
+
+void NewRegisterBlockServicesReq::pack(BincodeBuf& buf) const {
+    buf.packList<NewRegisterBlockServiceInfo>(blockServices);
+}
+void NewRegisterBlockServicesReq::unpack(BincodeBuf& buf) {
+    buf.unpackList<NewRegisterBlockServiceInfo>(blockServices);
+}
+void NewRegisterBlockServicesReq::clear() {
+    blockServices.clear();
+}
+bool NewRegisterBlockServicesReq::operator==(const NewRegisterBlockServicesReq& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewRegisterBlockServicesReq& x) {
+    out << "NewRegisterBlockServicesReq(" << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
+void NewRegisterBlockServicesResp::pack(BincodeBuf& buf) const {
+}
+void NewRegisterBlockServicesResp::unpack(BincodeBuf& buf) {
+}
+void NewRegisterBlockServicesResp::clear() {
+}
+bool NewRegisterBlockServicesResp::operator==(const NewRegisterBlockServicesResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const NewRegisterBlockServicesResp& x) {
+    out << "NewRegisterBlockServicesResp(" << ")";
     return out;
 }
 
@@ -7336,6 +7496,15 @@ ClearShardInfoReq& ShuckleReqContainer::setClearShardInfo() {
     auto& x = _data.emplace<21>();
     return x;
 }
+const NewRegisterBlockServicesReq& ShuckleReqContainer::getNewRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES);
+    return std::get<22>(_data);
+}
+NewRegisterBlockServicesReq& ShuckleReqContainer::setNewRegisterBlockServices() {
+    _kind = ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES;
+    auto& x = _data.emplace<22>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7419,6 +7588,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        setNewRegisterBlockServices() = other.getNewRegisterBlockServices();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7476,6 +7648,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<20>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        return std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7548,6 +7722,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<21>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        std::get<22>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7623,6 +7800,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<21>().unpack(buf);
         break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        _data.emplace<22>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7676,6 +7856,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getMoveShardLeader() == other.getMoveShardLeader();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        return getNewRegisterBlockServices() == other.getNewRegisterBlockServices();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7748,6 +7930,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
+        break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        out << x.getNewRegisterBlockServices();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -7953,6 +8138,15 @@ ClearShardInfoResp& ShuckleRespContainer::setClearShardInfo() {
     auto& x = _data.emplace<21>();
     return x;
 }
+const NewRegisterBlockServicesResp& ShuckleRespContainer::getNewRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES);
+    return std::get<22>(_data);
+}
+NewRegisterBlockServicesResp& ShuckleRespContainer::setNewRegisterBlockServices() {
+    _kind = ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES;
+    auto& x = _data.emplace<22>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -8036,6 +8230,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        setNewRegisterBlockServices() = other.getNewRegisterBlockServices();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -8093,6 +8290,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<20>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        return std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8165,6 +8364,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<21>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        std::get<22>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8240,6 +8442,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<21>().unpack(buf);
         break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        _data.emplace<22>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -8293,6 +8498,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getMoveShardLeader() == other.getMoveShardLeader();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        return getNewRegisterBlockServices() == other.getNewRegisterBlockServices();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8365,6 +8572,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
+        break;
+    case ShuckleMessageKind::NEW_REGISTER_BLOCK_SERVICES:
+        out << x.getNewRegisterBlockServices();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

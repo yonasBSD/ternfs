@@ -54,7 +54,6 @@ struct QueuedShardLogEntry {
 
 // TODO make options
 const int LOG_ENTRIES_QUEUE_SIZE = 8192; // a few megabytes, should be quite a bit bigger than the below
-const int MAX_WRITES_AT_ONCE = 200; // say that each write is ~100bytes, this gives us 20KB of write
 const int MAX_RECV_MSGS = 100;
 
 enum class WriterQueueEntryKind :uint8_t {

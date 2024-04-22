@@ -175,7 +175,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     {
         std::unordered_set<uint64_t> knownBlockServices;
         for (const auto& bs : blockServices) {
-            knownBlockServices.insert(bs.info.id.u64);
+            knownBlockServices.insert(bs.id.u64);
         }
         for (BlockServiceId bsId : currentBlockServices) {
             if (!knownBlockServices.contains(bsId.u64)) {

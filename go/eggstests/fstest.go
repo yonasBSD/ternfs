@@ -663,7 +663,7 @@ func corruptFiles(
 		}
 		body := resp.(*msgs.AllBlockServicesResp)
 		for _, block := range body.BlockServices {
-			blockServicesToDataDirs[block.Info.Id] = block.Info.Path
+			blockServicesToDataDirs[block.Id] = block.Path
 		}
 	}
 	filesReq := msgs.VisitFilesReq{}
@@ -941,7 +941,7 @@ func fsTestInternal[Id comparable](
 		blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo)
 		for i := range blockServices.BlockServices {
-			blockServicesById[blockServices.BlockServices[i].Info.Id] = &blockServices.BlockServices[i]
+			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}
 		client.Parwalk(
 			log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
@@ -967,7 +967,7 @@ func fsTestInternal[Id comparable](
 						body := span.Body.(*msgs.FetchedBlocksSpan)
 						for _, block := range body.Blocks {
 							blockService := blockServicesById[fileSpansResp.BlockServices[block.BlockServiceIx].Id]
-							if blockService.Info.StorageClass != msgs.HDD_STORAGE {
+							if blockService.StorageClass != msgs.HDD_STORAGE {
 								panic(fmt.Errorf("seen unexpected block service in file %q: %+v", path, blockService))
 							}
 						}

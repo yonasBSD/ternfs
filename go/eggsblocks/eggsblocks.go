@@ -238,9 +238,10 @@ var maximumRegisterInterval time.Duration = time.Minute * 2
 func registerPeriodically(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
+	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	shuckleAddress string,
 ) {
-	req := msgs.RegisterBlockServicesReq{}
+	req := msgs.NewRegisterBlockServicesReq{}
 	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		req.BlockServices = req.BlockServices[:0]
@@ -249,6 +250,9 @@ func registerPeriodically(
 				continue
 			}
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
+		}
+		for _, bs := range deadBlockServices {
+			req.BlockServices = append(req.BlockServices, bs.info)
 		}
 		log.Trace("registering with %+v", req)
 		_, err := client.ShuckleRequest(log, nil, shuckleAddress, &req)
@@ -259,7 +263,7 @@ func registerPeriodically(
 		}
 		log.ClearNC(alert)
 		waitFor := time.Duration(mrand.Uint64() % uint64(maximumRegisterInterval.Nanoseconds()))
-		log.Info("registered with %v, waiting %v", shuckleAddress, waitFor)
+		log.Info("registered with %v (%v alive, %v dead), waiting %v", shuckleAddress, len(blockServices), len(deadBlockServices), waitFor)
 		time.Sleep(waitFor)
 	}
 }
@@ -679,6 +683,8 @@ func handleRequestError(
 
 type deadBlockService struct {
 	cipher cipher.Block
+	// we store the last seen data from shuckle so that we keep registering that
+	info msgs.NewRegisterBlockServiceInfo
 }
 
 func readBlocksRequest(
@@ -1044,7 +1050,7 @@ type blockService struct {
 	key                     [16]byte
 	cipher                  cipher.Block
 	storageClass            msgs.StorageClass
-	cachedInfo              msgs.RegisterBlockServiceInfo
+	cachedInfo              msgs.NewRegisterBlockServiceInfo
 	couldNotUpdateInfo      bool
 	couldNotUpdateInfoAlert lib.XmonNCAlert
 	ioErrors                uint64
@@ -1071,6 +1077,35 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 		ret[path] = mountFields[2]
 	}
 	return ret, nil
+}
+
+func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.NewRegisterBlockServiceInfo {
+	// Everything else is filled in by `initBlockServicesInfo`
+	return &msgs.NewRegisterBlockServiceInfo{
+		CapacityBytes:  info.CapacityBytes,
+		AvailableBytes: info.AvailableBytes,
+		Blocks:         info.Blocks,
+	}
+}
+
+func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.NewRegisterBlockServiceInfo {
+	// We just replicate everything from the cached one, forever -- but no flags.
+	return &msgs.NewRegisterBlockServiceInfo{
+		Id:             info.Id,
+		Ip1:            info.Ip1,
+		Port1:          info.Port1,
+		Ip2:            info.Ip2,
+		StorageClass:   info.StorageClass,
+		FailureDomain:  info.FailureDomain,
+		SecretKey:      info.SecretKey,
+		CapacityBytes:  info.CapacityBytes,
+		AvailableBytes: info.AvailableBytes,
+		Blocks:         info.Blocks,
+		Path:           info.Path,
+		// just to be explicit about it
+		Flags:     0,
+		FlagsMask: 0,
+	}
 }
 
 func main() {
@@ -1256,41 +1291,48 @@ func main() {
 		}
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]
-			ourBs, weHaveBs := blockServices[bs.Info.Id]
-			sameFailureDomain := bs.Info.FailureDomain.Name == failureDomain
-			isDecommissioned := (bs.Info.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
+			ourBs, weHaveBs := blockServices[bs.Id]
+			sameFailureDomain := bs.FailureDomain.Name == failureDomain
+			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
 			// No disagreement on failure domain with shuckle (otherwise we could end up with
 			// a split brain scenario where two eggsblocks processes assume control of two dead
 			// block services)
 			if weHaveBs && !sameFailureDomain {
-				panic(fmt.Errorf("We have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle.", bs.Info.Id, failureDomain, bs.Info.FailureDomain))
+				panic(fmt.Errorf("We have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle.", bs.Id, failureDomain, bs.FailureDomain))
 			}
 			// block services in the same failure domain, which we do not have, must be
 			// decommissioned
 			if !weHaveBs && sameFailureDomain {
 				if !isDecommissioned {
-					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Info.Id, failureDomain))
+					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Id, failureDomain))
 				}
-				cipher, err := aes.NewCipher(bs.Info.SecretKey[:])
+				cipher, err := aes.NewCipher(bs.SecretKey[:])
 				if err != nil {
 					panic(fmt.Errorf("could not create AES-128 key: %w", err))
 				}
-				log.Info("will service erase block requests for decommissioned block service %v", bs.Info.Id)
-				deadBlockServices[bs.Info.Id] = deadBlockService{
+				log.Info("will service erase block requests for decommissioned block service %v", bs.Id)
+				deadBlockServices[bs.Id] = deadBlockService{
 					cipher: cipher,
+					info:   *deadBlockServiceInfo(bs),
 				}
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Info.Id)
-				delete(blockServices, bs.Info.Id)
-				deadBlockServices[bs.Info.Id] = deadBlockService{
+				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
+				delete(blockServices, bs.Id)
+				deadBlockServices[bs.Id] = deadBlockService{
 					cipher: ourBs.cipher,
+					info:   *deadBlockServiceInfo(bs),
 				}
 			}
 			// fill in information from shuckle, if it's recent enough
-			if weHaveBs && time.Since(bs.Info.LastSeen.Time()) < maximumRegisterInterval*2 {
-				ourBs.cachedInfo = bs.Info
+			if weHaveBs && time.Since(bs.LastSeen.Time()) < maximumRegisterInterval*2 {
+				// everything else is filled in by initBlockServicesInfo
+				ourBs.cachedInfo = msgs.NewRegisterBlockServiceInfo{
+					CapacityBytes:  bs.CapacityBytes,
+					AvailableBytes: bs.AvailableBytes,
+					Blocks:         bs.Blocks,
+				}
 			}
 		}
 	}
@@ -1341,7 +1383,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		registerPeriodically(log, blockServices, *shuckleAddress)
+		registerPeriodically(log, blockServices, deadBlockServices, *shuckleAddress)
 	}()
 
 	go func() {

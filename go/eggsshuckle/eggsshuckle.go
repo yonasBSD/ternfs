@@ -188,10 +188,9 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 	defer rows.Close()
 
 	for rows.Next() {
-		bs := msgs.RegisterBlockServiceInfo{}
-		var hasFiles bool
+		bs := msgs.BlockServiceInfo{}
 		var ip1, ip2, fd, sk []byte
-		err = rows.Scan(&bs.Id, &ip1, &bs.Port1, &ip2, &bs.Port2, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &hasFiles)
+		err = rows.Scan(&bs.Id, &ip1, &bs.Port1, &ip2, &bs.Port2, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
@@ -200,7 +199,7 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 		copy(bs.Ip2[:], ip2)
 		copy(bs.FailureDomain.Name[:], fd)
 		copy(bs.SecretKey[:], sk)
-		ret[bs.Id] = msgs.BlockServiceInfo{Info: bs, HasFiles: hasFiles}
+		ret[bs.Id] = bs
 	}
 	return ret, nil
 }
@@ -286,7 +285,7 @@ func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*
 		panic(fmt.Errorf("impossible: %v results for id blocks selection", len(blockServices)))
 	}
 	for _, bs := range blockServices {
-		return &msgs.BlockServiceResp{Info: bs.Info}, nil
+		return &msgs.BlockServiceResp{Info: bs}, nil
 	}
 	return nil, msgs.BLOCK_SERVICE_NOT_FOUND
 }
@@ -309,16 +308,15 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	values = values[:0]
 	for i := range req.BlockServices {
 		bs := req.BlockServices[i]
-		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
-			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED
+		// DECOMMISSIONED is always managed by the user, not by eggsblocks.
+		if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_STALE) {
+			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED_OR_STALE
 		}
-		flags := bs.Flags
-		// ll.Info("block service %s %v key: %s", string(bs.FailureDomain[:]), bs.Id, hex.EncodeToString(bs.SecretKey[:]))
 		values = append(
 			values,
 			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
 			bs.StorageClass, bs.FailureDomain.Name[:],
-			bs.SecretKey[:], flags,
+			bs.SecretKey[:], bs.Flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
 			bs.Path, now, has_files,
 		)
@@ -348,6 +346,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 			path = excluded.path AND
 			secret_key = excluded.secret_key
 	`))
+	// Remove STALE, we just got an update.
 	values = append(values, msgs.EGGSFS_BLOCK_SERVICE_STALE)
 
 	s.mutex.Lock()
@@ -367,11 +366,82 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 		panic(err)
 	}
 	if int(rowsAffected) != len(req.BlockServices) {
-		ll.Info("failed request: %+v", req)
 		ll.RaiseAlert("could not update all block services (expected %v, updated %v), some of them probably have inconsistent info, check logs", len(req.BlockServices), rowsAffected)
 	}
 
 	return &msgs.RegisterBlockServicesResp{}, nil
+}
+
+func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.NewRegisterBlockServicesReq) (*msgs.NewRegisterBlockServicesResp, error) {
+	if len(req.BlockServices) == 0 {
+		return &msgs.NewRegisterBlockServicesResp{}, nil
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	now := msgs.Now()
+	has_files := false
+
+	for i := range req.BlockServices {
+		bs := req.BlockServices[i]
+		// DECOMMISSIONED|STALE are always managed externally, not by eggsblocks.
+		if msgs.BlockServiceFlags(bs.FlagsMask).HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_STALE) {
+			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED_OR_STALE
+		}
+		res, err := tx.Exec(`
+				INSERT INTO block_services
+					(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files)
+				VALUES
+					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT DO UPDATE SET
+					flags = (flags & ~?) | (excluded.flags & ?),
+					capacity_bytes = excluded.capacity_bytes,
+					available_bytes = excluded.available_bytes,
+					blocks = excluded.blocks,
+					last_seen = excluded.last_seen
+				WHERE
+					ip1 = excluded.ip1 AND
+					port1 = excluded.port1 AND
+					ip2 = excluded.ip2 AND
+					port2 = excluded.port2 AND
+					storage_class = excluded.storage_class AND
+					failure_domain = excluded.failure_domain AND
+					path = excluded.path AND
+					secret_key = excluded.secret_key	
+			`,
+			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
+			bs.StorageClass, bs.FailureDomain.Name[:],
+			bs.SecretKey[:], bs.Flags,
+			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
+			bs.Path, now, has_files,
+			bs.FlagsMask|uint8(msgs.EGGSFS_BLOCK_SERVICE_STALE), // remove staleness -- we've just updated the BS
+			bs.FlagsMask,
+		)
+		if err != nil {
+			return nil, err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			panic(err)
+		}
+		if int(rowsAffected) != 1 {
+			ll.RaiseAlert("could not update block service %v (expected 1 row, updated %v), it probably has inconsistent info, check logs", bs.Id, rowsAffected)
+			return nil, msgs.INCONSISTENT_BLOCK_SERVICE_REGISTRATION
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &msgs.NewRegisterBlockServicesResp{}, nil
 }
 
 func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServiceId, hasFiles bool) {
@@ -419,7 +489,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 			rand.Shuffle(len(shids), func(i, j int) { shids[i], shids[j] = shids[j], shids[i] })
 
 			hasFiles := false
-			bsId := bs.Info.Id
+			bsId := bs.Id
 			for _, i := range shids {
 				shid := msgs.ShardId(i)
 				filesReq := msgs.BlockServiceFilesReq{BlockServiceId: bsId}
@@ -462,7 +532,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 
 	decommedWithFiles := 0
 	for _, bs := range blockServices {
-		if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
+		if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 			decommedWithFiles = decommedWithFiles + 1
 		}
 		if decommedWithFiles >= s.config.maxDecommedWithFiles {
@@ -846,16 +916,16 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 	// It should eventually be replaced with something a bit cleverer, see #44.
 	blockServicesByFailureDomain := make(map[msgs.StorageClass]map[msgs.FailureDomain][]msgs.BlockServiceId)
 	for _, bs := range blockServices {
-		if _, found := blockServicesByFailureDomain[bs.Info.StorageClass]; !found {
-			blockServicesByFailureDomain[bs.Info.StorageClass] = make(map[msgs.FailureDomain][]msgs.BlockServiceId)
+		if _, found := blockServicesByFailureDomain[bs.StorageClass]; !found {
+			blockServicesByFailureDomain[bs.StorageClass] = make(map[msgs.FailureDomain][]msgs.BlockServiceId)
 		}
-		if _, found := blockServicesByFailureDomain[bs.Info.StorageClass][bs.Info.FailureDomain]; !found {
-			blockServicesByFailureDomain[bs.Info.StorageClass][bs.Info.FailureDomain] = []msgs.BlockServiceId{}
+		if _, found := blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain]; !found {
+			blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain] = []msgs.BlockServiceId{}
 		}
-		if bs.Info.AvailableBytes < s.config.blockServiceMinFreeBytes { // not enough free bytes
+		if bs.AvailableBytes < s.config.blockServiceMinFreeBytes { // not enough free bytes
 			continue
 		}
-		blockServicesByFailureDomain[bs.Info.StorageClass][bs.Info.FailureDomain] = append(blockServicesByFailureDomain[bs.Info.StorageClass][bs.Info.FailureDomain], bs.Info.Id)
+		blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain] = append(blockServicesByFailureDomain[bs.StorageClass][bs.FailureDomain], bs.Id)
 	}
 	r := wyhash.New(rand.Uint64())
 	resp := &msgs.ShardBlockServicesResp{
@@ -975,6 +1045,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	switch whichReq := req.(type) {
 	case *msgs.RegisterBlockServicesReq:
 		resp, err = handleRegisterBlockServices(log, s, whichReq)
+	case *msgs.NewRegisterBlockServicesReq:
+		resp, err = handleNewRegisterBlockServices(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
 	case *msgs.SetBlockServiceDecommissionedReq:
@@ -1135,6 +1207,8 @@ func readShuckleRequest(
 	switch kind {
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.NEW_REGISTER_BLOCK_SERVICES:
+		req = &msgs.NewRegisterBlockServicesReq{}
 	case msgs.SHARDS:
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:
@@ -2390,38 +2464,38 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 		// failure domain -> path
 		activeBlockServices := make(map[string]map[string]struct{})
 		for _, bs := range blockServices {
-			if bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
-			fd := bs.Info.FailureDomain.String()
+			fd := bs.FailureDomain.String()
 			if _, found := activeBlockServices[fd]; !found {
 				activeBlockServices[fd] = make(map[string]struct{})
 			}
-			if _, alreadyPresent := activeBlockServices[fd][bs.Info.Path]; alreadyPresent {
-				log.RaiseAlert("found duplicate block service at path %q for failure domain %q", bs.Info.Path, fd)
+			if _, alreadyPresent := activeBlockServices[fd][bs.Path]; alreadyPresent {
+				log.RaiseAlert("found duplicate block service at path %q for failure domain %q", bs.Path, fd)
 				continue
 			}
-			activeBlockServices[fd][bs.Info.Path] = struct{}{}
+			activeBlockServices[fd][bs.Path] = struct{}{}
 		}
 		// collect non-replaced decommissioned block services
 		missingBlockServices := make(map[string]struct{})
 		decommedWithFiles := make(map[string]struct{})
 		for _, bs := range blockServices {
-			if !bs.Info.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+			if !bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
-			fd := bs.Info.FailureDomain.String()
+			fd := bs.FailureDomain.String()
 			if _, found := activeBlockServices[fd]; !found {
 				// this alert can go once we start decommissioning entire servers, leaving it in
 				// now for safety
-				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Info.Id, fd)
+				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Id, fd)
 				continue
 			}
 			if bs.HasFiles {
-				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Info.Id, fd, bs.Info.Path)] = struct{}{}
+				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Id, fd, bs.Path)] = struct{}{}
 			}
-			if _, found := activeBlockServices[fd][bs.Info.Path]; !found {
-				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Info.Path)] = struct{}{}
+			if _, found := activeBlockServices[fd][bs.Path]; !found {
+				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
 			}
 		}
 		if len(missingBlockServices) == 0 {

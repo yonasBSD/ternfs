@@ -1446,7 +1446,7 @@ func main() {
 		"BLOCK_TOO_BIG",
 		"BLOCK_NOT_FOUND",
 		"CANNOT_UNSET_DECOMMISSIONED",
-		"CANNOT_REGISTER_DECOMMISSIONED",
+		"CANNOT_REGISTER_DECOMMISSIONED_OR_STALE",
 		"BLOCK_TOO_OLD_FOR_WRITE",
 		// these two error below are heavily heuristic based. the first one means
 		// "we got a IO error, but the whole disk is probably kaput", the second
@@ -1462,6 +1462,7 @@ func main() {
 		"LOG_ENTRY_UNRELEASED",
 		"LOG_ENTRY_RELEASED",
 		"AUTO_DECOMMISSION_FORBIDDEN",
+		"INCONSISTENT_BLOCK_SERVICE_REGISTRATION",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1819,6 +1820,11 @@ func main() {
 			reflect.TypeOf(msgs.ClearShardInfoReq{}),
 			reflect.TypeOf(msgs.ClearShardInfoResp{}),
 		},
+		{
+			0x18,
+			reflect.TypeOf(msgs.NewRegisterBlockServicesReq{}),
+			reflect.TypeOf(msgs.NewRegisterBlockServicesResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -1922,6 +1928,7 @@ func main() {
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
 		reflect.TypeOf(msgs.Stat{}),
 		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
+		reflect.TypeOf(msgs.NewRegisterBlockServiceInfo{}),
 	}...)...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)

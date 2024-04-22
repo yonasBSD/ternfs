@@ -353,14 +353,14 @@ func main() {
 		blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 		numBlockServicesToMigrate := 0
 		for _, bs := range blockServices.BlockServices {
-			if bs.Info.Id == msgs.BlockServiceId(*migrateId) || bs.Info.FailureDomain.String() == *migrateFailureDomain || (bs.Info.Flags&yesFlags != 0 && bs.Info.Flags&noFlags == 0) {
+			if bs.Id == msgs.BlockServiceId(*migrateId) || bs.FailureDomain.String() == *migrateFailureDomain || (bs.Flags&yesFlags != 0 && bs.Flags&noFlags == 0) {
 				numBlockServicesToMigrate++
-				bss := blockServicesToMigrate[bs.Info.FailureDomain.String()]
+				bss := blockServicesToMigrate[bs.FailureDomain.String()]
 				if bss == nil {
 					bss = &[]msgs.BlockServiceId{}
-					blockServicesToMigrate[bs.Info.FailureDomain.String()] = bss
+					blockServicesToMigrate[bs.FailureDomain.String()] = bss
 				}
-				*bss = append(*bss, bs.Info.Id)
+				*bss = append(*bss, bs.Id)
 			}
 		}
 		if len(blockServicesToMigrate) == 0 {
@@ -622,12 +622,12 @@ func main() {
 		blockServices := resp.(*msgs.AllBlockServicesResp)
 		var blockServiceInfo msgs.BlockServiceInfo
 		for _, bsInfo := range blockServices.BlockServices {
-			if bsInfo.Info.Id == msgs.BlockServiceId(*blockReqBlockService) {
+			if bsInfo.Id == msgs.BlockServiceId(*blockReqBlockService) {
 				blockServiceInfo = bsInfo
 				break
 			}
 		}
-		cipher, err := aes.NewCipher(blockServiceInfo.Info.SecretKey[:])
+		cipher, err := aes.NewCipher(blockServiceInfo.SecretKey[:])
 		if err != nil {
 			panic(err)
 		}
@@ -640,7 +640,7 @@ func main() {
 			Crc:     msgs.Crc(crc32c.Sum(0, fileContents)),
 			Size:    uint32(len(fileContents)),
 		}
-		req.Certificate = client.BlockWriteCertificate(cipher, blockServiceInfo.Info.Id, &req)
+		req.Certificate = client.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
 		log.Info("request: %+v", req)
 	}
 	commands["write-block-req"] = commandSpec{
@@ -665,7 +665,7 @@ func main() {
 			}
 			found := false
 			for _, bsInfo := range blockServices.BlockServices {
-				if bsInfo.Info.Id == msgs.BlockServiceId(bsId) {
+				if bsInfo.Id == msgs.BlockServiceId(bsId) {
 					bsInfos = append(bsInfos, bsInfo)
 					found = true
 					break
@@ -677,7 +677,7 @@ func main() {
 		}
 		conns := make([]*net.TCPConn, len(bsInfos))
 		for i := 0; i < len(conns); i++ {
-			conn, err := client.BlockServiceConnection(log, bsInfos[i].Info.Ip1, bsInfos[i].Info.Port1, bsInfos[i].Info.Ip2, bsInfos[i].Info.Port2)
+			conn, err := client.BlockServiceConnection(log, bsInfos[i].Ip1, bsInfos[i].Port1, bsInfos[i].Ip2, bsInfos[i].Port2)
 			if err != nil {
 				panic(err)
 			}
@@ -689,7 +689,7 @@ func main() {
 		t := time.Now()
 		for i := 0; i < len(conns); i++ {
 			conn := conns[i]
-			bsId := bsInfos[i].Info.Id
+			bsId := bsInfos[i].Id
 			go func() {
 				thisErr := client.TestWrite(log, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
 				if thisErr != nil {
@@ -740,8 +740,8 @@ func main() {
 			}
 			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 			for _, bs := range blockServices.BlockServices {
-				if bs.Info.FailureDomain.String() == *blockserviceFlagsFailureDomain {
-					blockServiceIds = append(blockServiceIds, bs.Info.Id)
+				if bs.FailureDomain.String() == *blockserviceFlagsFailureDomain {
+					blockServiceIds = append(blockServiceIds, bs.Id)
 				}
 			}
 			if len(blockServiceIds) == 0 {

@@ -65,6 +65,8 @@ func readShuckleResponse(
 	switch kind {
 	case msgs.REGISTER_BLOCK_SERVICES:
 		resp = &msgs.RegisterBlockServicesResp{}
+	case msgs.NEW_REGISTER_BLOCK_SERVICES:
+		resp = &msgs.NewRegisterBlockServicesResp{}
 	case msgs.SHARDS:
 		resp = &msgs.ShardsResp{}
 	case msgs.REGISTER_SHARD:

@@ -58,7 +58,7 @@ const char* eggsfs_err_str(int err) {
     case 65: return "BLOCK_TOO_BIG";
     case 66: return "BLOCK_NOT_FOUND";
     case 67: return "CANNOT_UNSET_DECOMMISSIONED";
-    case 68: return "CANNOT_REGISTER_DECOMMISSIONED";
+    case 68: return "CANNOT_REGISTER_DECOMMISSIONED_OR_STALE";
     case 69: return "BLOCK_TOO_OLD_FOR_WRITE";
     case 70: return "BLOCK_IO_ERROR_DEVICE";
     case 71: return "BLOCK_IO_ERROR_FILE";
@@ -70,6 +70,7 @@ const char* eggsfs_err_str(int err) {
     case 77: return "LOG_ENTRY_UNRELEASED";
     case 78: return "LOG_ENTRY_RELEASED";
     case 79: return "AUTO_DECOMMISSION_FORBIDDEN";
+    case 80: return "INCONSISTENT_BLOCK_SERVICE_REGISTRATION";
     default: return "UNKNOWN";
     }
 }

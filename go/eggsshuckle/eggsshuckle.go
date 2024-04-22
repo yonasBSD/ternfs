@@ -290,91 +290,9 @@ func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*
 	return nil, msgs.BLOCK_SERVICE_NOT_FOUND
 }
 
-func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
+func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
 	if len(req.BlockServices) == 0 {
 		return &msgs.RegisterBlockServicesResp{}, nil
-	}
-
-	now := msgs.Now()
-	has_files := false
-	var fmtBuilder strings.Builder
-	fmtBuilder.Write([]byte(`
-		INSERT INTO block_services
-			(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files)
-		VALUES
-	`))
-	fmtValues := []byte("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	values := make([]any, len(req.BlockServices)*15) // 15: number of columns
-	values = values[:0]
-	for i := range req.BlockServices {
-		bs := req.BlockServices[i]
-		// DECOMMISSIONED is always managed by the user, not by eggsblocks.
-		if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_STALE) {
-			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED_OR_STALE
-		}
-		values = append(
-			values,
-			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
-			bs.StorageClass, bs.FailureDomain.Name[:],
-			bs.SecretKey[:], bs.Flags,
-			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
-			bs.Path, now, has_files,
-		)
-		if i > 0 {
-			fmtBuilder.Write([]byte(", "))
-		}
-		fmtBuilder.Write(fmtValues)
-	}
-	// Never change the storage_class/failure_domain/secret_key/ip/path,
-	// see <internal-repo/issues/89>, we might
-	// relax the IP restriction in the future but let's be cautious now.
-	// Do not update has_files as it is set outside of the registration.
-	fmtBuilder.Write([]byte(`
-		ON CONFLICT DO UPDATE SET
-			flags = (flags & ~?) | excluded.flags,
-			capacity_bytes = excluded.capacity_bytes,
-			available_bytes = excluded.available_bytes,
-			blocks = excluded.blocks,
-			last_seen = excluded.last_seen
-		WHERE
-			ip1 = excluded.ip1 AND
-			port1 = excluded.port1 AND
-			ip2 = excluded.ip2 AND
-			port2 = excluded.port2 AND
-			storage_class = excluded.storage_class AND
-			failure_domain = excluded.failure_domain AND
-			path = excluded.path AND
-			secret_key = excluded.secret_key
-	`))
-	// Remove STALE, we just got an update.
-	values = append(values, msgs.EGGSFS_BLOCK_SERVICE_STALE)
-
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	// ll.Info("values: %+q", values)
-	result, err := s.db.Exec(fmtBuilder.String(), values...)
-
-	if err != nil {
-		ll.RaiseAlert("error registering block services: %s", err)
-		return nil, err
-	}
-
-	// check that all of them fired
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		panic(err)
-	}
-	if int(rowsAffected) != len(req.BlockServices) {
-		ll.RaiseAlert("could not update all block services (expected %v, updated %v), some of them probably have inconsistent info, check logs", len(req.BlockServices), rowsAffected)
-	}
-
-	return &msgs.RegisterBlockServicesResp{}, nil
-}
-
-func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.NewRegisterBlockServicesReq) (*msgs.NewRegisterBlockServicesResp, error) {
-	if len(req.BlockServices) == 0 {
-		return &msgs.NewRegisterBlockServicesResp{}, nil
 	}
 
 	s.mutex.Lock()
@@ -441,7 +359,7 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.NewRegis
 		return nil, err
 	}
 
-	return &msgs.NewRegisterBlockServicesResp{}, nil
+	return &msgs.RegisterBlockServicesResp{}, nil
 }
 
 func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServiceId, hasFiles bool) {
@@ -1044,8 +962,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
 	case *msgs.RegisterBlockServicesReq:
-		resp, err = handleRegisterBlockServices(log, s, whichReq)
-	case *msgs.NewRegisterBlockServicesReq:
 		resp, err = handleNewRegisterBlockServices(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
@@ -1207,8 +1123,6 @@ func readShuckleRequest(
 	switch kind {
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
-	case msgs.NEW_REGISTER_BLOCK_SERVICES:
-		req = &msgs.NewRegisterBlockServicesReq{}
 	case msgs.SHARDS:
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:

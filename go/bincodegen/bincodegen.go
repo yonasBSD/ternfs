@@ -1731,11 +1731,6 @@ func main() {
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{
 		{
-			0x02,
-			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
-			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
-		},
-		{
 			0x04,
 			reflect.TypeOf(msgs.RegisterShardReq{}),
 			reflect.TypeOf(msgs.RegisterShardResp{}),
@@ -1822,8 +1817,8 @@ func main() {
 		},
 		{
 			0x18,
-			reflect.TypeOf(msgs.NewRegisterBlockServicesReq{}),
-			reflect.TypeOf(msgs.NewRegisterBlockServicesResp{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
 		},
 	}...)
 
@@ -1920,7 +1915,6 @@ func main() {
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
-		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
 		reflect.TypeOf(msgs.AddrsInfo{}),
 		reflect.TypeOf(msgs.SpanPolicy{}),
@@ -1928,7 +1922,7 @@ func main() {
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
 		reflect.TypeOf(msgs.Stat{}),
 		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
-		reflect.TypeOf(msgs.NewRegisterBlockServiceInfo{}),
+		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 	}...)...)
 
 	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)

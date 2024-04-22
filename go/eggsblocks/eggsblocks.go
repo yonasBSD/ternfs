@@ -1095,6 +1095,7 @@ func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.NewRegisterBlockSer
 		Ip1:            info.Ip1,
 		Port1:          info.Port1,
 		Ip2:            info.Ip2,
+		Port2:          info.Port2,
 		StorageClass:   info.StorageClass,
 		FailureDomain:  info.FailureDomain,
 		SecretKey:      info.SecretKey,

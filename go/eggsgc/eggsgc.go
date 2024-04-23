@@ -430,7 +430,7 @@ func main() {
 				}
 				if *defrag {
 					metrics.FieldU64("defrag_analyzed_files", atomic.LoadUint64(&defragStats.AnalyzedFiles))
-					metrics.FieldU64("defrag_analyzed_logical_size", atomic.LoadUint64(&defragStats.AnalyzedFiles))
+					metrics.FieldU64("defrag_analyzed_logical_size", atomic.LoadUint64(&defragStats.AnalyzedLogicalSize))
 					metrics.FieldU64("defrag_analyzed_blocks", atomic.LoadUint64(&defragStats.AnalyzedBlocks))
 					metrics.FieldU64("defragged_spans", atomic.LoadUint64(&defragStats.DefraggedSpans))
 					metrics.FieldU64("defragged_logical_bytes", atomic.LoadUint64(&defragStats.DefraggedLogicalBytes))

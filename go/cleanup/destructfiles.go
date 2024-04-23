@@ -13,6 +13,7 @@ type DestructFilesStats struct {
 	VisitedFiles     uint64
 	DestructedFiles  uint64
 	DestructedSpans  uint64
+	SkippedFiles     uint64
 	SkippedSpans     uint64
 	DestructedBlocks uint64
 	FailedFiles      uint64
@@ -45,6 +46,7 @@ func DestructFile(
 	now := msgs.Now()
 	if now < deadline {
 		log.Debug("%v: deadline not expired (deadline=%v, now=%v), not destructing", id, deadline, now)
+		atomic.AddUint64(&stats.SkippedFiles, 1)
 		return nil
 	}
 	// TODO need to think about transient files that already had dirty spans at the end.

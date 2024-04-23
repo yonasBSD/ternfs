@@ -94,7 +94,7 @@ func scrubWorker(
 			rateLimit.Acquire()
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workerChan)))
-		canIgnoreError := req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE | msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
+		canIgnoreError := !req.blockService.Flags.CanRead()
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}

@@ -171,11 +171,11 @@ func (flags BlockServiceFlags) ShortString() string {
 }
 
 func (flags BlockServiceFlags) CanRead() bool {
-	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_READ | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
+	return (flags & (EGGSFS_BLOCK_SERVICE_STALE | EGGSFS_BLOCK_SERVICE_NO_READ | EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
 }
 
 func (flags BlockServiceFlags) CanWrite() bool {
-	return (flags&EGGSFS_BLOCK_SERVICE_STALE | flags&EGGSFS_BLOCK_SERVICE_NO_WRITE | flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) == 0
+	return (flags & (EGGSFS_BLOCK_SERVICE_STALE | EGGSFS_BLOCK_SERVICE_NO_WRITE | EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
 }
 
 const (

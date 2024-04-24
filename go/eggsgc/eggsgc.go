@@ -91,6 +91,7 @@ func main() {
 	defrag := flag.Bool("defrag", false, "")
 	defragWorkersPerShard := flag.Int("defrag-workers-per-shard", 5, "")
 	defragMinSpanSize := flag.Uint("defrag-min-span-size", 0, "")
+	defragStorageClass := flag.String("defrag-storage-class", "", "If present, will only defrag spans in this storage class.")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
@@ -374,6 +375,10 @@ func main() {
 
 	defragStats := &cleanup.DefragStats{}
 	if *defrag {
+		var storageClass msgs.StorageClass
+		if *defragStorageClass != "" {
+			storageClass = msgs.StorageClassFromString(*defragStorageClass)
+		}
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
@@ -385,6 +390,7 @@ func main() {
 				options := cleanup.DefragOptions{
 					WorkersPerShard: *defragWorkersPerShard,
 					MinSpanSize:     uint32(*defragMinSpanSize),
+					StorageClass:    storageClass,
 				}
 				cleanup.DefragFiles(log, c, bufPool, dirInfoCache, defragStats, progressReportAlert, &options, "/")
 				log.RaiseAlertAppType(lib.XMON_DAYTIME, "finished one cycle of defragging, will start again")

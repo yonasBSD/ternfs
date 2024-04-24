@@ -54,6 +54,7 @@ func defragFileInternal(
 	fileId msgs.InodeId,
 	filePath string,
 	minSpanSize uint32,
+	storageClass msgs.StorageClass,
 ) error {
 	defer func() {
 		lastReportAt := atomic.LoadInt64(&timeStats.lastReportAt)
@@ -94,6 +95,9 @@ func defragFileInternal(
 				continue
 			}
 			if span.Header.Size < minSpanSize {
+				continue
+			}
+			if storageClass != msgs.EMPTY_STORAGE && storageClass != span.Header.StorageClass {
 				continue
 			}
 			body := span.Body.(*msgs.FetchedBlocksSpan)
@@ -173,13 +177,14 @@ func DefragFile(
 	filePath string,
 ) error {
 	timeStats := newTimeStats()
-	return defragFileInternal(log, client, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, fileId, filePath, 0)
+	return defragFileInternal(log, client, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, fileId, filePath, 0, 0)
 }
 
 type DefragOptions struct {
 	WorkersPerShard int
 	StartFrom       msgs.EggsTime
 	MinSpanSize     uint32
+	StorageClass    msgs.StorageClass // EMPTY = no filter
 }
 
 func DefragFiles(
@@ -203,7 +208,7 @@ func DefragFiles(
 				return nil
 			}
 			return defragFileInternal(
-				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name), options.MinSpanSize,
+				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name), options.MinSpanSize, options.StorageClass,
 			)
 		},
 	)

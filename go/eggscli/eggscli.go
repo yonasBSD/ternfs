@@ -926,7 +926,7 @@ func main() {
 				}
 				if atomic.AddUint64(&numFiles, 1)%uint64(1_000_000) == 0 {
 					if *duPhysical {
-						log.Info("went through %v files (%v logical, %v physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+						log.Info("went through %v files (%v logical, %v physical, %v physical target, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), formatSize(uint64(float64(totalLogicalSize)*1.4)), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 					} else {
 						log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 					}
@@ -938,7 +938,7 @@ func main() {
 			panic(err)
 		}
 		if *duPhysical {
-			log.Info("total size: %v logical (%v bytes), %v physical (%v bytes), in %v files and %v directories", formatSize(totalLogicalSize), totalLogicalSize, formatSize(totalPhysicalSize), totalPhysicalSize, numFiles, numDirectories)
+			log.Info("total size: %v logical (%v bytes), %v physical (%v bytes), %v physical target, in %v files and %v directories", formatSize(totalLogicalSize), totalLogicalSize, formatSize(totalPhysicalSize), totalPhysicalSize, formatSize(uint64(float64(totalLogicalSize)*1.4)), numFiles, numDirectories)
 		} else {
 			log.Info("total size: %v (%v bytes), in %v files and %v directories", formatSize(totalLogicalSize), totalLogicalSize, numFiles, numDirectories)
 		}

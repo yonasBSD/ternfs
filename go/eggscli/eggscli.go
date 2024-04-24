@@ -865,17 +865,21 @@ func main() {
 	duCmd := flag.NewFlagSet("du", flag.ExitOnError)
 	duDir := duCmd.String("path", "/", "")
 	duHisto := duCmd.String("histogram", "", "Filepath in which to write size histogram (in CSV) to")
+	duPhysical := duCmd.Bool("physical", false, "Also measure physical space (slower)")
 	duRun := func() {
 		var numFiles uint64
 		var numDirectories uint64
-		var totalSize uint64
-		histoSizeBins := make([]uint64, 256)
+		var totalLogicalSize uint64
+		var totalPhysicalSize uint64
+		histogram := lib.NewHistogram(256, 255, 1.15) // max: ~900PB
+		histoLogicalSizeBins := make([]uint64, 256)
+		histoPhysicalSizeBins := make([]uint64, 256)
 		histoCountBins := make([]uint64, 256)
-		histogram := lib.NewHistogram(len(histoSizeBins), 255, 1.15) // max: ~900PB
 		startedAt := time.Now()
+		c := getClient()
 		err := client.Parwalk(
 			log,
-			getClient(),
+			c,
 			&client.ParwalkOptions{
 				WorkersPerShard: 5,
 			},
@@ -886,29 +890,72 @@ func main() {
 					return nil
 				}
 				resp := msgs.StatFileResp{}
-				if err := getClient().ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+				if err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
 					return err
 				}
-				atomic.AddUint64(&totalSize, resp.Size)
-				if atomic.AddUint64(&numFiles, 1)%uint64(1_000_000) == 0 {
-					log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
-				}
+				atomic.AddUint64(&totalLogicalSize, resp.Size)
 				bin := histogram.WhichBin(resp.Size)
 				atomic.AddUint64(&histoCountBins[bin], 1)
-				atomic.AddUint64(&histoSizeBins[bin], resp.Size)
+				atomic.AddUint64(&histoLogicalSizeBins[bin], resp.Size)
+				if *duPhysical {
+					fileSpansReq := msgs.FileSpansReq{
+						FileId:     id,
+						ByteOffset: 0,
+					}
+					fileSpansResp := msgs.FileSpansResp{}
+					physicalSize := uint64(0)
+					for {
+						if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+							return err
+						}
+						for spanIx := range fileSpansResp.Spans {
+							span := &fileSpansResp.Spans[spanIx]
+							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+								continue
+							}
+							body := span.Body.(*msgs.FetchedBlocksSpan)
+							physicalSize += uint64(body.CellSize) * uint64(body.Parity.Blocks()) * uint64(body.Stripes)
+						}
+						if fileSpansResp.NextOffset == 0 {
+							break
+						}
+						fileSpansReq.ByteOffset = fileSpansResp.NextOffset
+					}
+					atomic.AddUint64(&totalPhysicalSize, physicalSize)
+					atomic.AddUint64(&histoPhysicalSizeBins[bin], physicalSize)
+				}
+				if atomic.AddUint64(&numFiles, 1)%uint64(1_000_000) == 0 {
+					if *duPhysical {
+						log.Info("went through %v files (%v logical, %v physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					} else {
+						log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					}
+				}
 				return nil
 			},
 		)
 		if err != nil {
 			panic(err)
 		}
-		log.Info("total size: %v (%v bytes), in %v files and %v directories", formatSize(totalSize), totalSize, numFiles, numDirectories)
+		if *duPhysical {
+			log.Info("total size: %v logical (%v bytes), %v physical (%v bytes), in %v files and %v directories", formatSize(totalLogicalSize), totalLogicalSize, formatSize(totalPhysicalSize), totalPhysicalSize, numFiles, numDirectories)
+		} else {
+			log.Info("total size: %v (%v bytes), in %v files and %v directories", formatSize(totalLogicalSize), totalLogicalSize, numFiles, numDirectories)
+		}
 		if *duHisto != "" {
 			log.Info("writing size histogram to %q", *duHisto)
 			histoCsvBuf := bytes.NewBuffer([]byte{})
-			fmt.Fprintf(histoCsvBuf, "upper_bound,file_count,total_size\n")
+			if *duPhysical {
+				fmt.Fprintf(histoCsvBuf, "logical_upper_bound,file_count,total_logical_size,total_physical_size\n")
+			} else {
+				fmt.Fprintf(histoCsvBuf, "upper_bound,file_count,total_size\n")
+			}
 			for i, upperBound := range histogram.Bins() {
-				fmt.Fprintf(histoCsvBuf, "%v,%v,%v\n", upperBound, histoCountBins[i], histoSizeBins[i])
+				if *duPhysical {
+					fmt.Fprintf(histoCsvBuf, "%v,%v,%v,%v\n", upperBound, histoCountBins[i], histoLogicalSizeBins[i], histoPhysicalSizeBins[i])
+				} else {
+					fmt.Fprintf(histoCsvBuf, "%v,%v,%v\n", upperBound, histoCountBins[i], histoLogicalSizeBins[i])
+				}
 			}
 			if err := os.WriteFile(*duHisto, histoCsvBuf.Bytes(), 0644); err != nil {
 				log.ErrorNoAlert("could not write histo file %q, will print histogram here: %v", *duHisto, err)

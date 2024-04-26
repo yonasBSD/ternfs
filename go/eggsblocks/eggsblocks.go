@@ -157,42 +157,36 @@ func countBlocks(basePath string) (uint64, error) {
 	return uint64(blocks), nil
 }
 
-// either updates `blockService`, or returns an error.
-func updateBlockServiceInfoOrError(
+func updateBlockServiceInfoCapacity(
 	log *lib.Logger,
 	blockService *blockService,
 ) error {
-	t := time.Now()
-	log.Info("starting to update block services info for %v", blockService.cachedInfo.Id)
 	var statfs unix.Statfs_t
 	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
 		return err
 	}
 	capacityBytes := statfs.Blocks * uint64(statfs.Bsize)
 	availableBytes := statfs.Bavail * uint64(statfs.Bsize)
+	blockService.cachedInfo.CapacityBytes = capacityBytes
+	blockService.cachedInfo.AvailableBytes = availableBytes
+	return nil
+}
+
+// either updates `blockService`, or returns an error.
+func updateBlockServiceInfoBlocks(
+	log *lib.Logger,
+	blockService *blockService,
+) error {
+	t := time.Now()
+	log.Info("starting to count blocks for %v", blockService.cachedInfo.Id)
 	var err error
 	blocks, err := countBlocks(blockService.path)
 	if err != nil {
 		return err
 	}
-	blockService.cachedInfo.CapacityBytes = capacityBytes
-	blockService.cachedInfo.AvailableBytes = availableBytes
 	blockService.cachedInfo.Blocks = blocks
-	log.Info("done updating block service info for %v in %v", blockService.cachedInfo.Id, time.Since(t))
+	log.Info("done counting blocks for %v in %v", blockService.cachedInfo.Id, time.Since(t))
 	return nil
-}
-
-func updateBlockServiceInfo(
-	log *lib.Logger,
-	blockService *blockService,
-) {
-	if err := updateBlockServiceInfoOrError(log, blockService); err != nil {
-		blockService.couldNotUpdateInfo = true
-		log.RaiseNC(&blockService.couldNotUpdateInfoAlert, "could not update block service info for block service %v: %v", blockService.cachedInfo.Id, err)
-	} else {
-		blockService.couldNotUpdateInfo = false
-		log.ClearNC(&blockService.couldNotUpdateInfoAlert)
-	}
 }
 
 func initBlockServicesInfo(
@@ -223,7 +217,12 @@ func initBlockServicesInfo(
 		go func() {
 			// only update if it isn't filled it in already from shuckle
 			if closureBs.cachedInfo.Blocks == 0 {
-				updateBlockServiceInfo(log, closureBs)
+				if err := updateBlockServiceInfoCapacity(log, closureBs); err != nil {
+					panic(err)
+				}
+				if err := updateBlockServiceInfoBlocks(log, closureBs); err != nil {
+					panic(err)
+				}
 			}
 			wg.Done()
 		}()
@@ -246,7 +245,7 @@ func registerPeriodically(
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
-			if bs.couldNotUpdateInfo {
+			if bs.couldNotUpdateInfoBlocks || bs.couldNotUpdateInfoCapacity {
 				continue
 			}
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
@@ -268,13 +267,38 @@ func registerPeriodically(
 	}
 }
 
-func updateBlockServicesInfoForever(
+func updateBlockServiceInfoBlocksForever(
+	log *lib.Logger,
+	blockServices map[msgs.BlockServiceId]*blockService,
+) {
+	for {
+
+		for _, bs := range blockServices {
+			if err := updateBlockServiceInfoBlocks(log, bs); err != nil {
+				bs.couldNotUpdateInfoBlocks = true
+				log.RaiseNC(&bs.couldNotUpdateInfoBlocksAlert, "could not count blocks for block service %v: %v", bs.cachedInfo.Id, err)
+			} else {
+				bs.couldNotUpdateInfoBlocks = false
+				log.ClearNC(&bs.couldNotUpdateInfoBlocksAlert)
+			}
+		}
+		time.Sleep(time.Minute) // so that we won't busy loop in tests etc
+	}
+}
+
+func updateBlockServiceInfoCapacityForever(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 ) {
 	for {
 		for _, bs := range blockServices {
-			updateBlockServiceInfo(log, bs)
+			if err := updateBlockServiceInfoCapacity(log, bs); err != nil {
+				bs.couldNotUpdateInfoCapacity = true
+				log.RaiseNC(&bs.couldNotUpdateInfoCapacityAlert, "could not get capacity for block service %v: %v", bs.cachedInfo.Id, err)
+			} else {
+				bs.couldNotUpdateInfoCapacity = false
+				log.ClearNC(&bs.couldNotUpdateInfoCapacityAlert)
+			}
 		}
 		time.Sleep(time.Minute) // so that we won't busy loop in tests etc
 	}
@@ -636,7 +660,7 @@ func handleRequestError(
 
 	if errors.Is(err, syscall.EIO) && blockServiceId != 0 {
 		blockService := blockServices[blockServiceId]
-		if blockService.couldNotUpdateInfo {
+		if blockService.couldNotUpdateInfoBlocks || blockService.couldNotUpdateInfoCapacity {
 			err = msgs.BLOCK_IO_ERROR_DEVICE
 		} else {
 			err = msgs.BLOCK_IO_ERROR_FILE
@@ -1045,15 +1069,17 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 }
 
 type blockService struct {
-	path                    string
-	devId                   string
-	key                     [16]byte
-	cipher                  cipher.Block
-	storageClass            msgs.StorageClass
-	cachedInfo              msgs.RegisterBlockServiceInfo
-	couldNotUpdateInfo      bool
-	couldNotUpdateInfoAlert lib.XmonNCAlert
-	ioErrors                uint64
+	path                            string
+	devId                           string
+	key                             [16]byte
+	cipher                          cipher.Block
+	storageClass                    msgs.StorageClass
+	cachedInfo                      msgs.RegisterBlockServiceInfo
+	couldNotUpdateInfoBlocks        bool
+	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
+	couldNotUpdateInfoCapacity      bool
+	couldNotUpdateInfoCapacityAlert lib.XmonNCAlert
+	ioErrors                        uint64
 }
 
 func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error) {
@@ -1258,12 +1284,13 @@ func main() {
 			devId = ""
 		}
 		blockServices[id] = &blockService{
-			path:                    dir,
-			devId:                   devId,
-			key:                     key,
-			cipher:                  cipher,
-			storageClass:            storageClass,
-			couldNotUpdateInfoAlert: *log.NewNCAlert(time.Second),
+			path:                            dir,
+			devId:                           devId,
+			key:                             key,
+			cipher:                          cipher,
+			storageClass:                    storageClass,
+			couldNotUpdateInfoBlocksAlert:   *log.NewNCAlert(time.Second),
+			couldNotUpdateInfoCapacityAlert: *log.NewNCAlert(time.Second),
 		}
 	}
 	for id, blockService := range blockServices {
@@ -1389,7 +1416,12 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		updateBlockServicesInfoForever(log, blockServices)
+		updateBlockServiceInfoBlocksForever(log, blockServices)
+	}()
+
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		updateBlockServiceInfoCapacityForever(log, blockServices)
 	}()
 
 	if *metrics {

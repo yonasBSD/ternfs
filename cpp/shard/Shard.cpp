@@ -1288,7 +1288,7 @@ public:
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
         _shrid(shrid),
-        _sendMetricsAlert(XmonAppType::DAYTIME, 1_mins),
+        _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins),
         _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
         _writeQueueAlert(XmonAppType::NEVER)
     {}

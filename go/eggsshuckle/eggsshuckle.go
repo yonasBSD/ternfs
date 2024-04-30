@@ -2291,7 +2291,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 					alert.SetAppType(lib.XMON_DAYTIME)
 					staleBlockServicesAlerts[bsId] = alert
 				}
-				ll.RaiseNC(alert, "stale blockservice %v, fd %s (seen %s ago)", id, fd, formatLastSeen(ts))
+				ll.RaiseNC(alert, "stale blockservice %v, fd %s (seen %s ago)", bsId, fd, formatLastSeen(ts))
 			}
 			for bsId, alert := range staleBlockServicesAlerts {
 				if _, found := badBlockServices[bsId]; !found {

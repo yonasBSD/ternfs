@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -47,13 +50,14 @@ type xmonRequest struct {
 }
 
 type Xmon struct {
-	hostname         string
-	parent           XmonTroll
-	children         []XmonTroll
-	xmonAddr         string
-	requests         chan xmonRequest
-	onlyLogging      bool
-	printQuietAlerts bool
+	hostname              string
+	parent                XmonTroll
+	children              []XmonTroll
+	xmonAddr              string
+	requests              chan xmonRequest
+	nonBinnableAlertsSema *semaphore.Weighted
+	onlyLogging           bool
+	printQuietAlerts      bool
 }
 
 type XmonConfig struct {
@@ -207,6 +211,7 @@ func (x *Xmon) packRequest(buf *bytes.Buffer, req *xmonRequest) {
 }
 
 const maxBinnableAlerts int = 20
+const maxNonBinnableAlerts int = 50
 
 // alert in quiet period
 type quietAlert struct {
@@ -492,10 +497,11 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 				AppType:     config.AppType,
 				AppInstance: config.AppInstance + "@" + hostname,
 			},
-			hostname:         hostname,
-			requests:         make(chan xmonRequest, 4096),
-			printQuietAlerts: config.PrintQuietAlerts,
-			children:         []XmonTroll{},
+			hostname:              hostname,
+			requests:              make(chan xmonRequest, 4096),
+			printQuietAlerts:      config.PrintQuietAlerts,
+			children:              []XmonTroll{},
+			nonBinnableAlertsSema: semaphore.NewWeighted(int64(maxNonBinnableAlerts)),
 		}
 		for _, appType := range appTypes {
 			if appType == config.AppType {
@@ -567,6 +573,12 @@ func xmonRaiseStack(
 	}
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)
+		if !binnable && !xmon.onlyLogging {
+			err := xmon.nonBinnableAlertsSema.Acquire(context.Background(), 1)
+			if err != nil {
+				panic(err)
+			}
+		}
 		xmon.requests <- xmonRequest{
 			troll:       troll,
 			msgType:     XMON_CREATE,
@@ -622,6 +634,9 @@ func (a *XmonNCAlert) Clear(log *Logger, xmon *Xmon) {
 	}
 	if troll.AppType == "" {
 		troll.AppType = xmon.parent.AppType
+	}
+	if !xmon.onlyLogging {
+		xmon.nonBinnableAlertsSema.Release(1)
 	}
 	xmon.requests <- xmonRequest{
 		troll:   troll,

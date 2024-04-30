@@ -194,6 +194,8 @@ static void getattr_async_complete(struct work_struct* work) {
             WRITE_ONCE(enode->mtime, mtime);
             enode->inode.i_mtime.tv_sec = mtime / 1000000000;
             enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
+            enode->inode.i_ctime.tv_sec = mtime / 1000000000;
+            enode->inode.i_ctime.tv_nsec = mtime % 1000000000;
             if (has_atime) {
                 enode->inode.i_atime.tv_sec = atime / 1000000000;
                 enode->inode.i_atime.tv_nsec = atime % 1000000000;
@@ -289,6 +291,8 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
                 WRITE_ONCE(enode->mtime, mtime);
                 enode->inode.i_mtime.tv_sec = mtime / 1000000000;
                 enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
+                enode->inode.i_ctime.tv_sec = mtime / 1000000000;
+                enode->inode.i_ctime.tv_nsec = mtime % 1000000000;
                 if (has_atime) {
                     enode->inode.i_atime.tv_sec = atime / 1000000000;
                     enode->inode.i_atime.tv_nsec = atime % 1000000000;

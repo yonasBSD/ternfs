@@ -3104,7 +3104,6 @@ struct ShardDBImpl {
     }
 
     EggsError _applySwapBlocks(EggsTime time, rocksdb::WriteBatch& batch, const SwapBlocksEntry& entry, SwapBlocksResp& resp) {
-        // TODO turn assertions into proper errors
         // Fetch spans
         StaticValue<SpanKey> span1Key;
         std::string span1Value;
@@ -3118,18 +3117,23 @@ struct ShardDBImpl {
         if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        ALWAYS_ASSERT(span1().storageClass() != INLINE_STORAGE); // TODO better errors
+        if (span1().storageClass() == INLINE_STORAGE || span2().storageClass() == INLINE_STORAGE) {
+            return EggsError::SWAP_BLOCKS_INLINE_STORAGE;
+        }
         auto blocks1 = span1().blocksBody();
-        ALWAYS_ASSERT(span2().storageClass() != INLINE_STORAGE);
         auto blocks2 = span2().blocksBody();
         uint32_t blockSize1 = blocks1.cellSize()*blocks1.stripes();
         uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
-        ALWAYS_ASSERT(blockSize1 == blockSize2);
+        if (blockSize1 != blockSize2) {
+            return EggsError::SWAP_BLOCKS_MISMATCHING_SIZE;
+        }
         // Fetch span state
         auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
         auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
         // We don't want to put not-certified blocks in clean spans, or similar
-        ALWAYS_ASSERT(state1 == state2);
+        if (state1 != state2) {
+            return EggsError::SWAP_BLOCKS_MISMATCHING_STATE;
+        }
         // Find blocks
         const auto findBlock = [](const SpanBlocksBody blocks, uint64_t blockId, BlockBody& block) -> int {
             for (int i = 0; i < blocks.parity().blocks(); i++) {
@@ -3154,7 +3158,9 @@ struct ShardDBImpl {
             RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "blocks not found when swapping blocks, are you running two migrations at once? fileId1=%s offset1=%s block1=%s fileId2=%s offset2=%s block2=%s", entry.fileId1, entry.byteOffset1, entry.blockId1, entry.fileId2, entry.byteOffset2, entry.blockId2);
             return EggsError::BLOCK_NOT_FOUND;
         }
-        ALWAYS_ASSERT(block1.crc() == block2.crc());
+        if (block1.crc() != block2.crc()) {
+            return EggsError::SWAP_BLOCKS_MISMATCHING_CRC;
+        }
         // Check that we're not creating a situation where we have two blocks in the same block service
         const auto checkNoDuplicateBlockServices = [](const auto blocks, int blockToBeReplacedIx, const auto newBlock) {
             for (int i = 0; i < blocks.parity().blocks(); i++) {
@@ -3162,7 +3168,9 @@ struct ShardDBImpl {
                     continue;
                 }
                 const auto block = blocks.block(i);
-                ALWAYS_ASSERT(block.blockService() != newBlock.blockService(), "new block has block service %s which is already in block %s", newBlock.blockService(), i);
+                if (block.blockService() == newBlock.blockService()) {
+                    return EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE;
+                }
             }
         };
         checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
@@ -3265,7 +3273,6 @@ struct ShardDBImpl {
     }
 
     EggsError _applySwapSpans(EggsTime time, rocksdb::WriteBatch& batch, const SwapSpansEntry& entry, SwapSpansResp& resp) {
-        // TODO turn assertions into proper errors
         StaticValue<SpanKey> span1Key;
         std::string span1Value;
         ExternalValue<SpanBody> span1;
@@ -3278,18 +3285,24 @@ struct ShardDBImpl {
         if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        ALWAYS_ASSERT(span1().storageClass() != INLINE_STORAGE); // TODO better errors
+        if (span1().storageClass() == INLINE_STORAGE || span2().storageClass() == INLINE_STORAGE) {
+            return EggsError::SWAP_SPANS_INLINE_STORAGE;
+        }
         auto blocks1 = span1().blocksBody();
-        ALWAYS_ASSERT(span2().storageClass() != INLINE_STORAGE);
         auto blocks2 = span2().blocksBody();
         // check that size and crc is the same
-        ALWAYS_ASSERT(span1().spanSize() == span2().spanSize());
-        ALWAYS_ASSERT(span1().crc() == span2().crc());
+        if (span1().spanSize() != span2().spanSize()) {
+            return EggsError::SWAP_SPANS_MISMATCHING_SIZE;
+        }
+        if (span1().crc() != span2().crc()) {
+            return EggsError::SWAP_SPANS_MISMATCHING_CRC;
+        }
         // Fetch span state
         auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
         auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
-        ALWAYS_ASSERT(state1 == SpanState::CLEAN);
-        ALWAYS_ASSERT(state2 == SpanState::CLEAN);
+        if (state1 != SpanState::CLEAN || state2 != SpanState::CLEAN) {
+            return EggsError::SWAP_SPANS_NOT_CLEAN;
+        }
         // check if we've already swapped
         const auto blocksMatch = [](const SpanBlocksBody span, const BincodeList<uint64_t>& blocks) {
             if (span.parity().blocks() != blocks.els.size()) { return false; }
@@ -3301,7 +3314,9 @@ struct ShardDBImpl {
         if (blocksMatch(blocks1, entry.blocks2) && blocksMatch(blocks2, entry.blocks1)) {
             return NO_ERROR; // we're already done
         }
-        ALWAYS_ASSERT(blocksMatch(blocks1, entry.blocks1) && blocksMatch(blocks2, entry.blocks2));
+        if (!(blocksMatch(blocks1, entry.blocks1) && blocksMatch(blocks2, entry.blocks2))) {
+            return EggsError::SWAP_SPANS_MISMATCHING_BLOCKS;
+        }
         // we're ready to swap, first do the blocks bookkeeping
         const auto adjustBlockServices = [this, &batch](const SpanBlocksBody blocks, InodeId addTo, InodeId subtractFrom) {
             for (int i = 0; i < blocks.parity().blocks(); i++) {

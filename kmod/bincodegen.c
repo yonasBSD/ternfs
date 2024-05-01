@@ -71,6 +71,16 @@ const char* eggsfs_err_str(int err) {
     case 78: return "LOG_ENTRY_RELEASED";
     case 79: return "AUTO_DECOMMISSION_FORBIDDEN";
     case 80: return "INCONSISTENT_BLOCK_SERVICE_REGISTRATION";
+    case 81: return "SWAP_BLOCKS_INLINE_STORAGE";
+    case 82: return "SWAP_BLOCKS_MISMATCHING_SIZE";
+    case 83: return "SWAP_BLOCKS_MISMATCHING_STATE";
+    case 84: return "SWAP_BLOCKS_MISMATCHING_CRC";
+    case 85: return "SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE";
+    case 86: return "SWAP_SPANS_INLINE_STORAGE";
+    case 87: return "SWAP_SPANS_MISMATCHING_SIZE";
+    case 88: return "SWAP_SPANS_NOT_CLEAN";
+    case 89: return "SWAP_SPANS_MISMATCHING_CRC";
+    case 90: return "SWAP_SPANS_MISMATCHING_BLOCKS";
     default: return "UNKNOWN";
     }
 }

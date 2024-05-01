@@ -217,6 +217,36 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION:
         out << "INCONSISTENT_BLOCK_SERVICE_REGISTRATION";
         break;
+    case EggsError::SWAP_BLOCKS_INLINE_STORAGE:
+        out << "SWAP_BLOCKS_INLINE_STORAGE";
+        break;
+    case EggsError::SWAP_BLOCKS_MISMATCHING_SIZE:
+        out << "SWAP_BLOCKS_MISMATCHING_SIZE";
+        break;
+    case EggsError::SWAP_BLOCKS_MISMATCHING_STATE:
+        out << "SWAP_BLOCKS_MISMATCHING_STATE";
+        break;
+    case EggsError::SWAP_BLOCKS_MISMATCHING_CRC:
+        out << "SWAP_BLOCKS_MISMATCHING_CRC";
+        break;
+    case EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE:
+        out << "SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE";
+        break;
+    case EggsError::SWAP_SPANS_INLINE_STORAGE:
+        out << "SWAP_SPANS_INLINE_STORAGE";
+        break;
+    case EggsError::SWAP_SPANS_MISMATCHING_SIZE:
+        out << "SWAP_SPANS_MISMATCHING_SIZE";
+        break;
+    case EggsError::SWAP_SPANS_NOT_CLEAN:
+        out << "SWAP_SPANS_NOT_CLEAN";
+        break;
+    case EggsError::SWAP_SPANS_MISMATCHING_CRC:
+        out << "SWAP_SPANS_MISMATCHING_CRC";
+        break;
+    case EggsError::SWAP_SPANS_MISMATCHING_BLOCKS:
+        out << "SWAP_SPANS_MISMATCHING_BLOCKS";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

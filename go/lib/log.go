@@ -113,7 +113,7 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 	log.mu.Lock()
 	bytes := buf.Bytes()
 	for written := 0; written < len(bytes); {
-		w, err := log.out.Write(buf.Bytes())
+		w, err := log.out.Write(bytes[written:])
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
 				// we've already torn down the logging system

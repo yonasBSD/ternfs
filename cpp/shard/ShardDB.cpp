@@ -3172,9 +3172,18 @@ struct ShardDBImpl {
                     return EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE;
                 }
             }
+            return NO_ERROR;
         };
-        checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
-        checkNoDuplicateBlockServices(blocks2, block2Ix, block1);
+        {
+            EggsError err = checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
+            if (err != NO_ERROR) {
+                return err;
+            }
+            err = checkNoDuplicateBlockServices(blocks2, block2Ix, block1);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
         // Record the block counts
         _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId1, -1);
         _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId1, +1);

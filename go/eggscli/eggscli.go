@@ -976,7 +976,7 @@ func main() {
 	findOnlySnapshot := findCmd.Bool("only-snapshot", false, "If set, will return _only_ snapshot edges.")
 	findOnlyOwned := findCmd.Bool("only-owned", false, "If true and -snapshot is set, only owned files will be searched.")
 	findBeforeSpec := findCmd.String("before", "", "If set, only directory entries created before this duration/date will be searched.")
-	findBlockId := findCmd.Uint64("id", 0, "If specified, only files which contain the given block will be returned.")
+	findBlockId := findCmd.Uint64("block-id", 0, "If specified, only files which contain the given block will be returned.")
 	findMinSize := findCmd.Uint64("min-size", 0, "If specified, only files of at least this size will be returned.")
 	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
 	findRun := func() {

@@ -122,6 +122,7 @@ func defragFileInternal(
 			// read span
 			spanBuf, err := c.FetchSpan(log, bufPool, fileId, fileSpansResp.BlockServices, span)
 			if err != nil {
+				log.RaiseAlert("could not read file %v: %v", fileId, err)
 				return err
 			}
 			defer bufPool.Put(spanBuf)

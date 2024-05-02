@@ -122,7 +122,6 @@ func defragFileInternal(
 			// read span
 			spanBuf, err := c.FetchSpan(log, bufPool, fileId, fileSpansResp.BlockServices, span)
 			if err != nil {
-				log.RaiseAlert("could not read file %v: %v", fileId, err)
 				return err
 			}
 			defer bufPool.Put(spanBuf)
@@ -208,9 +207,14 @@ func DefragFiles(
 			if creationTime < options.StartFrom {
 				return nil
 			}
-			return defragFileInternal(
+			err := defragFileInternal(
 				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name), options.MinSpanSize, options.StorageClass,
 			)
+			// keep defragging
+			if err != nil {
+				log.RaiseAlert("could not read file %q (%v): %v", path.Join(parentPath, name), id, err)
+			}
+			return nil
 		},
 	)
 }

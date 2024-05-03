@@ -757,7 +757,8 @@ func cppType(t reflect.Type) string {
 	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" ||
 		t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
 		t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" ||
-		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" {
+		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" ||
+		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -837,7 +838,8 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
 		expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" ||
 		expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" ||
-		expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" {
+		expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" ||
+		expr.typ.Name() == "Ip" || expr.typ.Name() == "IpPort" || expr.typ.Name() == "AddrsInfo" {
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
@@ -869,7 +871,8 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
 			expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardReplicaId" ||
-			expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" {
+			expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" ||
+			expr.typ.Name() == "Ip" || expr.typ.Name() == "IpPort" || expr.typ.Name() == "AddrsInfo" {
 			cg.cline(fmt.Sprintf("%s = %s()", expr.fld, cppType(expr.typ)))
 		} else {
 			cg.cline(fmt.Sprintf("%s = %s(0)", expr.fld, cppType(expr.typ)))
@@ -1926,7 +1929,7 @@ func main() {
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
-		reflect.TypeOf(msgs.AddrsInfo{}),
+
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
@@ -1935,7 +1938,17 @@ func main() {
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 	}...)...)
 
-	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)
+	goExtras := append(extras, []reflect.Type{
+		reflect.TypeOf(msgs.IpPort{}),
+		reflect.TypeOf(msgs.AddrsInfo{}),
+	}...)
+
+	kernelExtras = append([]reflect.Type{
+		reflect.TypeOf(msgs.IpPort{}),
+		reflect.TypeOf(msgs.AddrsInfo{})},
+		kernelExtras...)
+
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, goExtras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	writeIfChanged(goOutFileName, goCode)
 

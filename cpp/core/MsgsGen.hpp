@@ -471,24 +471,18 @@ struct CurrentEdge {
 std::ostream& operator<<(std::ostream& out, const CurrentEdge& x);
 
 struct AddSpanInitiateBlockInfo {
-    BincodeFixedBytes<4> blockServiceIp1;
-    uint16_t blockServicePort1;
-    BincodeFixedBytes<4> blockServiceIp2;
-    uint16_t blockServicePort2;
+    AddrsInfo blockServiceAddrs;
     BlockServiceId blockServiceId;
     FailureDomain blockServiceFailureDomain;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + FailureDomain::STATIC_SIZE + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockServiceFailureDomain + blockId + certificate
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + FailureDomain::STATIC_SIZE + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceAddrs + blockServiceId + blockServiceFailureDomain + blockId + certificate
 
     AddSpanInitiateBlockInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp1
-        _size += 2; // blockServicePort1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp2
-        _size += 2; // blockServicePort2
+        _size += blockServiceAddrs.packedSize(); // blockServiceAddrs
         _size += 8; // blockServiceId
         _size += blockServiceFailureDomain.packedSize(); // blockServiceFailureDomain
         _size += 8; // blockId
@@ -504,25 +498,19 @@ struct AddSpanInitiateBlockInfo {
 std::ostream& operator<<(std::ostream& out, const AddSpanInitiateBlockInfo& x);
 
 struct RemoveSpanInitiateBlockInfo {
-    BincodeFixedBytes<4> blockServiceIp1;
-    uint16_t blockServicePort1;
-    BincodeFixedBytes<4> blockServiceIp2;
-    uint16_t blockServicePort2;
+    AddrsInfo blockServiceAddrs;
     BlockServiceId blockServiceId;
     FailureDomain blockServiceFailureDomain;
     uint8_t blockServiceFlags;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + FailureDomain::STATIC_SIZE + 1 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceIp1 + blockServicePort1 + blockServiceIp2 + blockServicePort2 + blockServiceId + blockServiceFailureDomain + blockServiceFlags + blockId + certificate
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + FailureDomain::STATIC_SIZE + 1 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceAddrs + blockServiceId + blockServiceFailureDomain + blockServiceFlags + blockId + certificate
 
     RemoveSpanInitiateBlockInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp1
-        _size += 2; // blockServicePort1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // blockServiceIp2
-        _size += 2; // blockServicePort2
+        _size += blockServiceAddrs.packedSize(); // blockServiceAddrs
         _size += 8; // blockServiceId
         _size += blockServiceFailureDomain.packedSize(); // blockServiceFailureDomain
         _size += 1; // blockServiceFlags
@@ -560,22 +548,16 @@ struct BlockProof {
 std::ostream& operator<<(std::ostream& out, const BlockProof& x);
 
 struct BlockService {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     BlockServiceId id;
     uint8_t flags;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8 + 1; // ip1 + port1 + ip2 + port2 + id + flags
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + 1; // addrs + id + flags
 
     BlockService() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 8; // id
         _size += 1; // flags
         return _size;
@@ -589,21 +571,15 @@ struct BlockService {
 std::ostream& operator<<(std::ostream& out, const BlockService& x);
 
 struct ShardInfo {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip1 + port1 + ip2 + port2 + lastSeen
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
     ShardInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 8; // lastSeen
         return _size;
     }
@@ -984,10 +960,7 @@ std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
 struct BlockServiceInfo {
     BlockServiceId id;
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     uint8_t storageClass;
     FailureDomain failureDomain;
     BincodeFixedBytes<16> secretKey;
@@ -999,16 +972,13 @@ struct BlockServiceInfo {
     EggsTime lastSeen;
     bool hasFiles;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen + hasFiles
+    static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 1; // id + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen + hasFiles
 
     BlockServiceInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 1; // storageClass
         _size += failureDomain.packedSize(); // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
@@ -1028,31 +998,6 @@ struct BlockServiceInfo {
 };
 
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x);
-
-struct AddrsInfo {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
-
-    AddrsInfo() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const AddrsInfo&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const AddrsInfo& x);
 
 struct SpanPolicy {
     BincodeList<SpanPolicyEntry> entries;
@@ -1139,23 +1084,17 @@ std::ostream& operator<<(std::ostream& out, const Stat& x);
 struct ShardWithReplicasInfo {
     ShardReplicaId id;
     bool isLeader;
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = 2 + 1 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // id + isLeader + ip1 + port1 + ip2 + port2 + lastSeen
+    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 8; // id + isLeader + addrs + lastSeen
 
     ShardWithReplicasInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // id
         _size += 1; // isLeader
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 8; // lastSeen
         return _size;
     }
@@ -1169,10 +1108,7 @@ std::ostream& operator<<(std::ostream& out, const ShardWithReplicasInfo& x);
 
 struct RegisterBlockServiceInfo {
     BlockServiceId id;
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     uint8_t storageClass;
     FailureDomain failureDomain;
     BincodeFixedBytes<16> secretKey;
@@ -1183,16 +1119,13 @@ struct RegisterBlockServiceInfo {
     uint64_t blocks;
     BincodeBytes path;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + ip1 + port1 + ip2 + port2 + storageClass + failureDomain + secretKey + flags + flagsMask + capacityBytes + availableBytes + blocks + path
+    static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + addrs + storageClass + failureDomain + secretKey + flags + flagsMask + capacityBytes + availableBytes + blocks + path
 
     RegisterBlockServiceInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 1; // storageClass
         _size += failureDomain.packedSize(); // failureDomain
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
@@ -3158,21 +3091,15 @@ struct CdcReq {
 std::ostream& operator<<(std::ostream& out, const CdcReq& x);
 
 struct CdcResp {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2 + 8; // ip1 + port1 + ip2 + port2 + lastSeen
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
     CdcResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         _size += 8; // lastSeen
         return _size;
     }
@@ -3246,20 +3173,14 @@ struct ShuckleReq {
 std::ostream& operator<<(std::ostream& out, const ShuckleReq& x);
 
 struct ShuckleResp {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE; // addrs
 
     ShuckleResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3272,15 +3193,15 @@ std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
 
 struct RegisterShardReq {
     ShardId id;
-    AddrsInfo info;
+    AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + AddrsInfo::STATIC_SIZE; // id + info
+    static constexpr uint16_t STATIC_SIZE = 1 + AddrsInfo::STATIC_SIZE; // id + addrs
 
     RegisterShardReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
-        _size += info.packedSize(); // info
+        _size += addrs.packedSize(); // addrs
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3345,20 +3266,14 @@ struct AllBlockServicesResp {
 std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x);
 
 struct RegisterCdcReq {
-    BincodeFixedBytes<4> ip1;
-    uint16_t port1;
-    BincodeFixedBytes<4> ip2;
-    uint16_t port2;
+    AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<4>::STATIC_SIZE + 2 + BincodeFixedBytes<4>::STATIC_SIZE + 2; // ip1 + port1 + ip2 + port2
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE; // addrs
 
     RegisterCdcReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip1
-        _size += 2; // port1
-        _size += BincodeFixedBytes<4>::STATIC_SIZE; // ip2
-        _size += 2; // port2
+        _size += addrs.packedSize(); // addrs
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3587,16 +3502,16 @@ std::ostream& operator<<(std::ostream& out, const GetStatsResp& x);
 struct RegisterShardReplicaReq {
     ShardReplicaId shrid;
     bool isLeader;
-    AddrsInfo info;
+    AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE; // shrid + isLeader + info
+    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE; // shrid + isLeader + addrs
 
     RegisterShardReplicaReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
         _size += 1; // isLeader
-        _size += info.packedSize(); // info
+        _size += addrs.packedSize(); // addrs
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3703,16 +3618,16 @@ std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x);
 struct RegisterCdcReplicaReq {
     ReplicaId replica;
     bool isLeader;
-    AddrsInfo info;
+    AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + 1 + AddrsInfo::STATIC_SIZE; // replica + isLeader + info
+    static constexpr uint16_t STATIC_SIZE = 1 + 1 + AddrsInfo::STATIC_SIZE; // replica + isLeader + addrs
 
     RegisterCdcReplicaReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replica
         _size += 1; // isLeader
-        _size += info.packedSize(); // info
+        _size += addrs.packedSize(); // addrs
         return _size;
     }
     void pack(BincodeBuf& buf) const;

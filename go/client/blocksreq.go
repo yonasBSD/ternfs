@@ -13,16 +13,16 @@ import (
 // A low-level utility for directly communication with block services.
 //
 // Currently this is not used by the main [Client] library at all.
-func BlockServiceConnection(log *lib.Logger, ip1 [4]byte, port1 uint16, ip2 [4]byte, port2 uint16) (*net.TCPConn, error) {
-	if port1 == 0 {
+func BlockServiceConnection(log *lib.Logger, addrs msgs.AddrsInfo) (*net.TCPConn, error) {
+	if addrs.Addr1.Port == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
 	var ips [2][4]byte
-	ips[0] = ip1
-	ips[1] = ip2
+	ips[0] = addrs.Addr1.Addrs
+	ips[1] = addrs.Addr2.Addrs
 	var ports [2]uint16
-	ports[0] = port1
-	ports[1] = port2
+	ports[0] = addrs.Addr1.Port
+	ports[1] = addrs.Addr2.Port
 	var errs [2]error
 	var sock *net.TCPConn
 	start := int(rand.Uint32())

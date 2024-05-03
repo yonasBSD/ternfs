@@ -138,11 +138,17 @@ int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct so
                 .err = 0,
             };
             eggsfs_shuckle_resp_get_start(&ctx, start);
-            eggsfs_shuckle_resp_get_ip1(&ctx, start, ip1);
-            eggsfs_shuckle_resp_get_port1(&ctx, ip1, port1);
-            eggsfs_shuckle_resp_get_ip2(&ctx, port1, ip2);
-            eggsfs_shuckle_resp_get_port2(&ctx, ip2, port2);
-            eggsfs_shuckle_resp_get_end(&ctx, port2, end);
+            eggsfs_shuckle_resp_get_addrs(&ctx, start, addr_start);
+            eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport1_start, ip1);
+            eggsfs_ip_port_get_port(&ctx, ip1, port1);
+            eggsfs_ip_port_get_end(&ctx, port1, ipport1_end);
+            eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport2_start, ip2);
+            eggsfs_ip_port_get_port(&ctx, ip2, port2);
+            eggsfs_ip_port_get_end(&ctx, port2, ipport2_end);
+            eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+            eggsfs_shuckle_resp_get_end(&ctx, addr_end, end);
             eggsfs_shuckle_resp_get_finish(&ctx, end);
             if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 

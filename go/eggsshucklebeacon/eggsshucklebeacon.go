@@ -216,12 +216,12 @@ func main() {
 		panic(fmt.Errorf("-shuckle-1 needs to be provided"))
 	}
 	shuckleResp := &msgs.ShuckleResp{}
-	shuckleResp.Ip1, shuckleResp.Port1, err = lib.ParseIPV4Addr(*shuckleAddr1)
+	shuckleResp.Addrs.Addr1.Addrs, shuckleResp.Addrs.Addr1.Port, err = lib.ParseIPV4Addr(*shuckleAddr1)
 	if err != nil {
 		panic(err)
 	}
 	if *shuckleAddr2 != "" {
-		shuckleResp.Ip2, shuckleResp.Port2, err = lib.ParseIPV4Addr(*shuckleAddr2)
+		shuckleResp.Addrs.Addr2.Addrs, shuckleResp.Addrs.Addr2.Port, err = lib.ParseIPV4Addr(*shuckleAddr2)
 		if err != nil {
 			panic(err)
 		}

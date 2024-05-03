@@ -739,10 +739,7 @@ struct ShardDBImpl {
             auto& blockService = resp.blockServices.els.emplace_back();
             const auto& cache = inMemoryBlockServicesData.blockServices.at(blockServiceId.u64);
             blockService.id = blockServiceId;
-            blockService.ip1 = cache.ip1;
-            blockService.port1 = cache.port1;
-            blockService.ip2 = cache.ip2;
-            blockService.port2 = cache.port2;
+            blockService.addrs = cache.addrs;
             blockService.flags = cache.flags;
             return resp.blockServices.els.size()-1;
         };
@@ -2571,10 +2568,7 @@ struct ShardDBImpl {
                 const auto block = blocks.block(i);
                 const auto& cache = inMemoryBlockServicesData.blockServices.at(block.blockService().u64);
                 auto& respBlock = resp.blocks.els.emplace_back();
-                respBlock.blockServiceIp1 = cache.ip1;
-                respBlock.blockServicePort1 = cache.port1;
-                respBlock.blockServiceIp2 = cache.ip2;
-                respBlock.blockServicePort2 = cache.port2;
+                respBlock.blockServiceAddrs = cache.addrs;
                 respBlock.blockServiceId = block.blockService();
                 respBlock.blockId = block.blockId();
                 respBlock.blockServiceFlags = cache.flags;
@@ -2613,10 +2607,7 @@ struct ShardDBImpl {
             respBlock.blockServiceId = block.blockService();
             respBlock.blockId = block.blockId();
             const auto& cache = inMemoryBlockServiceData.blockServices.at(block.blockService().u64);
-            respBlock.blockServiceIp1 = cache.ip1;
-            respBlock.blockServicePort1 = cache.port1;
-            respBlock.blockServiceIp2 = cache.ip2;
-            respBlock.blockServicePort2 = cache.port2;
+            respBlock.blockServiceAddrs = cache.addrs;
             respBlock.blockServiceFailureDomain.name.data = cache.failureDomain;
             respBlock.certificate.data = _blockWriteCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
         }

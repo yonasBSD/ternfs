@@ -29,7 +29,7 @@ std::pair<int, std::string> registerShardReplica(
     Duration timeout,
     ShardReplicaId shrid,
     bool isLeader,
-    const AddrsInfo& info
+    const AddrsInfo& addrs
 );
 
 std::pair<int, std::string> fetchShardReplicas(
@@ -46,7 +46,7 @@ std::pair<int, std::string> registerCDCReplica(
     Duration timeout,
     ReplicaId replicaId,
     bool isLeader,
-    const AddrsInfo& info
+    const AddrsInfo& addrs
 );
 
 std::pair<int, std::string> fetchCDCReplicas(

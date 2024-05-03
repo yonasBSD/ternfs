@@ -40,6 +40,7 @@ type NameHash uint64
 type Cookie [8]byte
 type LogIdx uint64
 type LeaderToken uint64
+type Ip [4]byte
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -304,6 +305,35 @@ func (id *Cookie) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (ip Ip) String() string {
+	return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
+}
+
+func (ip Ip) MarshalJSON() ([]byte, error) {
+	return []byte(ip.String()), nil
+}
+
+func (ip *Ip) UnmarshalJSON(b []byte) error {
+	var ipStr string
+	err := json.Unmarshal(b, &ipStr)
+	if err != nil {
+		return err
+	}
+
+	tokens := strings.Split(ipStr, ".")
+	if len(tokens) != 4 {
+		return fmt.Errorf("can not parse ipv4 %s", ipStr)
+	}
+	for i, token := range tokens {
+		val, err := strconv.ParseUint(token, 10, 8)
+		if err != nil {
+			return err
+		}
+		ip[i] = byte(val)
+	}
+	return nil
+}
+
 func marshalNameHash(id uint64) ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%016x\"", uint64(id))), nil
 }
@@ -474,6 +504,39 @@ func (t *EggsTime) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*t = EggsTime(tt.UnixNano())
+	return nil
+}
+
+type IpPort struct {
+	Addrs Ip
+	Port  uint16
+}
+
+func (i IpPort) String() string {
+	return fmt.Sprintf("%s:%d", i.Addrs.String(), i.Port)
+}
+
+func (i IpPort) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("%q", i.String())), nil
+}
+
+func (i *IpPort) UnmarshalJSON(b []byte) error {
+	var ts string
+	if err := json.Unmarshal(b, &ts); err != nil {
+		return err
+	}
+	tokens := strings.Split(ts, ":")
+	if len(tokens) != 2 {
+		return fmt.Errorf("can not parse ip:port (%s)", ts)
+	}
+	if err := i.Addrs.UnmarshalJSON([]byte(tokens[0])); err != nil {
+		return err
+	}
+	val, err := strconv.ParseUint(tokens[1], 10, 16)
+	if err != nil {
+		return err
+	}
+	i.Port = uint16(val)
 	return nil
 }
 
@@ -703,10 +766,10 @@ type BlacklistEntry struct {
 // Generally speaking, the num_data_blocks*BlockSize == Size. However, there are two
 // exceptions.
 //
-// * If the erasure code we use dictates the data to be a multiple of a certain number
+//   - If the erasure code we use dictates the data to be a multiple of a certain number
 //     of bytes, then the sum of the data block sizes might be larger than the span size
 //     to ensure that, in which case the excess data must be zero and can be discarded.
-// * The span size can be greater than the sum of data blocks, in which case trailing
+//   - The span size can be greater than the sum of data blocks, in which case trailing
 //     zeros are added. This is to support cheap creation of gaps in the file.
 //
 // The storage class must not be EMPTY_STORAGE or INLINE_STORAGE.
@@ -730,10 +793,7 @@ type AddSpanInitiateReq struct {
 }
 
 type AddSpanInitiateBlockInfo struct {
-	BlockServiceIp1           [4]byte
-	BlockServicePort1         uint16
-	BlockServiceIp2           [4]byte
-	BlockServicePort2         uint16
+	BlockServiceAddrs         AddrsInfo
 	BlockServiceId            BlockServiceId
 	BlockServiceFailureDomain FailureDomain
 	BlockId                   BlockId
@@ -781,10 +841,7 @@ type RemoveSpanInitiateReq struct {
 }
 
 type RemoveSpanInitiateBlockInfo struct {
-	BlockServiceIp1           [4]byte
-	BlockServicePort1         uint16
-	BlockServiceIp2           [4]byte
-	BlockServicePort2         uint16
+	BlockServiceAddrs         AddrsInfo
 	BlockServiceId            BlockServiceId
 	BlockServiceFailureDomain FailureDomain
 	BlockServiceFlags         BlockServiceFlags
@@ -899,10 +956,7 @@ type FetchedSpan struct {
 }
 
 type BlockService struct {
-	Ip1   [4]byte
-	Port1 uint16
-	Ip2   [4]byte
-	Port2 uint16
+	Addrs AddrsInfo
 	// The BlockServiceId is stable (derived from the secret key, which is stored on the
 	// block service id).
 	//
@@ -1088,16 +1142,16 @@ type RemoveEdgesReq struct {
 //
 // Consider the following scenarios:
 //
-// * We might create an edge and not realize because of timeouts, and
+//   - We might create an edge and not realize because of timeouts, and
 //     then create a second, unwanted edge. Both the lock and the
 //     OldCreationTime match protect against this.
-// * We might create an edge, lose track of the request because of
+//   - We might create an edge, lose track of the request because of
 //     packet drop in the response, and then somebody else might overwrite
 //     the edge. OldCreationTime will make the retry request fail,
 //     however at that point we don't know if we have ever succeeded
 //     or not. Locking fixes this, because no non-CDC operation will
 //     be able to mess with the locked edge.
-// * We might send many create requests because of retries, have one succeed,
+//   - We might send many create requests because of retries, have one succeed,
 //     then unlock the edge, and then have one of the requests we sent
 //     lock again because of packet reordering. So at that point we'd
 //     leak a lock. This does not happen with OldCreationTime: only
@@ -1687,10 +1741,7 @@ type AddInlineSpanEntry struct {
 
 type BlockServiceInfo struct {
 	Id             BlockServiceId
-	Ip1            [4]byte
-	Port1          uint16
-	Ip2            [4]byte
-	Port2          uint16
+	Addrs          AddrsInfo
 	StorageClass   StorageClass
 	FailureDomain  FailureDomain
 	SecretKey      [16]byte
@@ -1822,10 +1873,7 @@ type AllBlockServicesResp struct {
 
 type RegisterBlockServiceInfo struct {
 	Id             BlockServiceId
-	Ip1            [4]byte
-	Port1          uint16
-	Ip2            [4]byte
-	Port2          uint16
+	Addrs          AddrsInfo
 	StorageClass   StorageClass
 	FailureDomain  FailureDomain
 	SecretKey      [16]byte
@@ -1846,10 +1894,7 @@ type RegisterBlockServicesResp struct{}
 type ShardsReq struct{}
 
 type ShardInfo struct {
-	Ip1      [4]byte
-	Port1    uint16
-	Ip2      [4]byte
-	Port2    uint16
+	Addrs    AddrsInfo
 	LastSeen EggsTime
 }
 
@@ -1860,15 +1905,13 @@ type ShardsResp struct {
 }
 
 type AddrsInfo struct {
-	Ip1   [4]byte
-	Port1 uint16
-	Ip2   [4]byte
-	Port2 uint16
+	Addr1 IpPort
+	Addr2 IpPort
 }
 
 type RegisterShardReq struct {
-	Id   ShardId
-	Info AddrsInfo
+	Id    ShardId
+	Addrs AddrsInfo
 }
 
 type RegisterShardResp struct{}
@@ -1876,7 +1919,7 @@ type RegisterShardResp struct{}
 type RegisterShardReplicaReq struct {
 	Shrid    ShardReplicaId
 	IsLeader bool
-	Info     AddrsInfo
+	Addrs    AddrsInfo
 }
 
 type RegisterShardReplicaResp struct{}
@@ -1892,10 +1935,7 @@ type ShardReplicasResp struct {
 }
 
 type RegisterCdcReq struct {
-	Ip1   [4]byte
-	Port1 uint16
-	Ip2   [4]byte
-	Port2 uint16
+	Addrs AddrsInfo
 }
 
 type RegisterCdcResp struct{}
@@ -1903,7 +1943,7 @@ type RegisterCdcResp struct{}
 type RegisterCdcReplicaReq struct {
 	Replica  ReplicaId
 	IsLeader bool
-	Info     AddrsInfo
+	Addrs    AddrsInfo
 }
 
 type RegisterCdcReplicaResp struct{}
@@ -1911,10 +1951,7 @@ type RegisterCdcReplicaResp struct{}
 type CdcReq struct{}
 
 type CdcResp struct {
-	Ip1      [4]byte
-	Port1    uint16
-	Ip2      [4]byte
-	Port2    uint16
+	Addrs    AddrsInfo
 	LastSeen EggsTime
 }
 
@@ -1955,10 +1992,7 @@ type ShardResp struct {
 type ShuckleReq struct{}
 
 type ShuckleResp struct {
-	Ip1   [4]byte
-	Port1 uint16
-	Ip2   [4]byte
-	Port2 uint16
+	Addrs AddrsInfo
 }
 
 // Gets the block services a shard should use to write
@@ -1975,10 +2009,7 @@ type ShardsWithReplicasReq struct{}
 type ShardWithReplicasInfo struct {
 	Id       ShardReplicaId
 	IsLeader bool
-	Ip1      [4]byte
-	Port1    uint16
-	Ip2      [4]byte
-	Port2    uint16
+	Addrs    AddrsInfo
 	LastSeen EggsTime
 }
 

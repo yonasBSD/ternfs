@@ -15,10 +15,7 @@
 struct BlockServiceCache {
     AES128Key secretKey;
     std::array<uint8_t, 16> failureDomain;
-    std::array<uint8_t, 4> ip1;
-    std::array<uint8_t, 4> ip2;
-    uint16_t port1;
-    uint16_t port2;
+    AddrsInfo addrs;
     uint8_t storageClass;
     uint8_t flags;
 };
@@ -85,7 +82,7 @@ public:
     // Specifically, there are two instances where you can use `getCache()` in
     // ShardDB.cpp:
     //
-    // 1. You're filling in a response (e.g. converting block service ids to 
+    // 1. You're filling in a response (e.g. converting block service ids to
     //     addresses);
     // 2. You're preparing a log entry.
     //

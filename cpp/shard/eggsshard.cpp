@@ -4,9 +4,12 @@
 #include <stdio.h>
 #include <filesystem>
 #include <string>
+#include <sys/socket.h>
 #include <unordered_map>
 
+#include "Bincode.hpp"
 #include "Exception.hpp"
+#include "Msgs.hpp"
 #include "Shard.hpp"
 #include "Shuckle.hpp"
 
@@ -62,42 +65,48 @@ static double parseProbability(const std::string& arg) {
     return x;
 }
 
-static uint32_t parseIpv4(const char* binary, const std::string& arg) {
-    struct sockaddr_in addr;
-    int res = inet_pton(AF_INET, arg.c_str(), &addr.sin_addr);
+static bool parseIpv4(const std::string& arg, sockaddr_in& addrOut) {
+    addrOut.sin_family = AF_INET;
+    int res = inet_pton(AF_INET, arg.c_str(), &addrOut.sin_addr);
     if (res == 0) {
         fprintf(stderr, "Invalid ipv4 address '%s'\n\n", arg.c_str());
-        usage(binary);
-        exit(2);
+        return false;
     }
-    uint32_t out;
-    static_assert(sizeof(addr.sin_addr) == sizeof(out));
-    memcpy(&out, &addr.sin_addr, sizeof(addr.sin_addr));
-    return ntohl(out);
+    return true;
 }
 
-static uint16_t parsePort(const std::string& arg) {
+static bool parsePort(const std::string& arg, uint16_t& portOut) {
     size_t idx;
     unsigned long port = std::stoul(arg, &idx);
     if (idx != arg.size()) {
-        die("Runoff character in number %s", arg.c_str());
+        fprintf(stderr, "Runoff character in number %s", arg.c_str());
+        return false;
     }
     if (port > 0xFFFFul) {
-        die("Bad port %s", arg.c_str());
+        fprintf(stderr, "Bad port %s", arg.c_str());
+        return false;
     }
-    return port;
+    portOut = port;
+    return true;
 }
 
-static std::pair<uint32_t, uint16_t> parseIpv4Addr(const char* binary, const std::string& arg) {
+static bool parseIpv4Addr(const std::string& arg, IpPort& addrOut) {
     size_t colon = arg.find(':');
     if (colon == std::string::npos) {
         fprintf(stderr, "Invalid ipv4 ip:port address '%s'\n\n", arg.c_str());
-        usage(binary);
-        exit(2);
+        return false;
     }
-    uint32_t ip = parseIpv4(binary, arg.substr(0, colon));
-    uint16_t port = parsePort(arg.substr(colon+1));
-    return {ip, port};
+    sockaddr_in addr;
+    if (!parseIpv4(arg.substr(0, colon), addr)) {
+        return false;
+    }
+    uint16_t port;
+    if (!parsePort(arg.substr(colon+1),port)) {
+        return false;
+    }
+    addr.sin_port = htons(port);
+    addrOut = IpPort::fromSockAddrIn(addr);
+    return true;
 }
 
 const std::unordered_map<std::string, uint64_t> durationUnitMap = {
@@ -186,13 +195,13 @@ int main(int argc, char** argv) {
         } else if (arg == "-shuckle") {
             shuckleAddress = getNextArg();
         } else if (arg == "-addr-1") {
-            const auto [ip, port] = parseIpv4Addr(argv[0], getNextArg());
-            options.ipPorts[0].ip = ip;
-            options.ipPorts[0].port = port;
+            if(!parseIpv4Addr(getNextArg(), options.shardAddrs[0])) {
+                dieWithUsage();
+            }
         } else if (arg == "-addr-2") {
-            const auto [ip, port] = parseIpv4Addr(argv[0], getNextArg());
-            options.ipPorts[1].ip = ip;
-            options.ipPorts[1].port = port;
+            if(!parseIpv4Addr(getNextArg(), options.shardAddrs[1])) {
+                dieWithUsage();
+            }
         } else if (arg == "-syslog") {
             options.syslog = true;
         } else if (arg == "-xmon") {
@@ -257,7 +266,7 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
-    if (options.ipPorts[0].ip == 0) {
+    if (options.shardAddrs[0].ip == Ip({0,0,0,0})) {
         fprintf(stderr, "Please provide -addr-1.\n\n");
         usage(argv[0]);
         exit(2);

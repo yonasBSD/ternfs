@@ -193,7 +193,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 
 std::pair<int, std::string> registerShardReplica(
     const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, bool isLeader,
-    const AddrsInfo& info
+    const AddrsInfo& addrs
 ) {
     const auto [sock, errStr] = shuckleSock(addr, port, timeout);
     if (sock.error()) {
@@ -204,7 +204,7 @@ std::pair<int, std::string> registerShardReplica(
     auto& req = reqContainer.setRegisterShardReplica();
     req.shrid = shrid;
     req.isLeader = isLeader;
-    req.info = info;
+    req.addrs = addrs;
     {
         const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
@@ -253,7 +253,7 @@ std::pair<int, std::string> fetchShardReplicas(
     return {};
 }
 
-std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, bool isLeader, const AddrsInfo& info) {
+std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, bool isLeader, const AddrsInfo& addrs) {
     const auto [sock, errStr] = shuckleSock(host, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
@@ -263,7 +263,7 @@ std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t
     auto& req = reqContainer.setRegisterCdcReplica();
     req.replica = replicaId;
     req.isLeader = isLeader;
-    req.info = info;
+    req.addrs = addrs;
     {
         const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }

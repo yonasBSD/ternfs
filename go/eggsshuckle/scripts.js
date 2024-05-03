@@ -219,7 +219,7 @@ function TableInner(props) {
     if (currentPage > 0) {
         for (let i = pageRows.length; i < elementsPerPage; i++) {
             dummyRows.push(p.h('tr', {}, cols.map(_ => p.h('td', {}, '\u00A0'))));
-        }    
+        }
     }
 
     return p.h(
@@ -246,7 +246,7 @@ function TableInner(props) {
                         p.h('a', { href: '#', style: 'text-decoration: none;', onClick: setIx(ix)}, `${ascending ? "▲" : "▼"}`),
                         p.h('sup', {}, `${sortIx+1}`), ' ',
                         p.h('a', {href: '#', style: 'text-decoration: none;', onClick: removeIx(ix)}, '×')];
-                }             
+                }
                 return p.h('th', {}, c, ' ', p.h('small', {}, sortButton))
             })),
             disableSearch ? null :
@@ -255,7 +255,7 @@ function TableInner(props) {
                 })),
         ),
         p.h('tbody', {},
-            pageRows.map(row => 
+            pageRows.map(row =>
                 p.h('tr', {className: 'text-nowrap', ...rowProps(row)}, rowCells(row).map((r, i) => {
                     let col = cols[i];
                     let content = r;
@@ -338,12 +338,8 @@ function stringifyAgo(then, now) {
     } else {
         timeAgo = `${Math.floor(diffInSeconds / 86400)}d ago`;
     }
-    
-    return timeAgo;
-}
 
-function stringifyAddress(ip, port) {
-    return `${ip[0]}.${ip[1]}.${ip[2]}.${ip[3]}:${port}`;
+    return timeAgo;
 }
 
 export function renderIndex() {
@@ -353,11 +349,11 @@ export function renderIndex() {
             const resp = await shuckleReq('ALL_BLOCK_SERVICES', {});
             setBlockServices(resp);
         }, []);
-    
+
         if (blockServices === null) {
             return p.h('em', null, 'Loading...');
         }
- 
+
         const now = new Date();
         const rows = [];
         let failureDomains = new Set();
@@ -371,8 +367,8 @@ export function renderIndex() {
             blocks += BigInt(bs.Blocks);
             rows.push([
                 bs.FailureDomain,
-                stringifyAddress(bs.Ip1, bs.Port1),
-                stringifyAddress(bs.Ip2, bs.Port2),
+                bs.Addrs.Addr1,
+                bs.Addrs.Addr2,
                 bs.Path,
                 bs.Id,
                 bs.Flags,
@@ -387,7 +383,7 @@ export function renderIndex() {
         const cols = [
             {name: 'FailureDomain'},
             {name: 'Address 1'},
-            {name: 'Address 2'}, 
+            {name: 'Address 2'},
             {name: 'Path', render: t => p.h('code', {}, t)},
             {name: 'Id', render: t => p.h('code', {}, t)},
             {name: 'Flags', string: stringifyShortFlags, render: t => p.h('code', {}, t)},
@@ -416,7 +412,7 @@ export function renderIndex() {
             const resp = await shuckleReq('SHARDS_WITH_REPLICAS', {});
             setShards(resp);
         }, []);
-    
+
         if (shards === null) {
             return p.h('em', null, 'Loading...');
         }
@@ -428,8 +424,8 @@ export function renderIndex() {
                 parseInt(shard.Id.split(':')[0], 10),
                 parseInt(shard.Id.split(':')[1], 10),
                 shard.IsLeader ? 'yes' : 'no',
-                stringifyAddress(shard.Ip1, shard.Port1),
-                stringifyAddress(shard.Ip2, shard.Port2),
+                shard.Addrs.Addr1,
+                shard.Addrs.Addr2,
                 shard.LastSeen,
             ])
         });
@@ -480,11 +476,11 @@ export function renderDirectoryEdges(id, path) {
                 localStorage.setItem('edges-full', showSnapshotEdges);
             } else {
                 localStorage.removeItem('edges-full');
-            }                
+            }
         }, [showSnapshotEdges])
 
         const renderBool = s => s === 'yes' ? p.h('strong', {}, s) : s;
-    
+
         let edgesTable = p.h('em', {}, `Loading (${loadedEdges}/?)...`);
         if (edges !== null) {
             const rows = [];
@@ -593,7 +589,7 @@ export function renderTransientFiles() {
         if (transientFiles !== null) {
             for (const {Id, Cookie, DeadlineTime} of transientFiles) {
                 rows.push([Id, Cookie, DeadlineTime]);
-            }    
+            }
         }
         const cols = [
             {name: 'Id', render: t => p.h('a', {href: `/browse?id=${t}`}, p.h('code', {}, t))},
@@ -657,15 +653,15 @@ export function renderStats() {
         const minutes = ('0' + date.getMinutes()).slice(-2);
         return `${year}-${month}-${day}T${hours}:${minutes}`;
     }
-    
+
     function nsToLocalDate(ns) {
         return formatLocalDate(new Date(Number(ns/1000000n)));
     }
-    
+
     const chartsEl = document.getElementById('charts');
 
     const twoDec = (x) => (Math.round(x*100) / 100).toFixed(2);
-    
+
     function formatNs(ns) {
         let scale = 1n;
         const next = (unit, scaleFactor) => {
@@ -689,7 +685,7 @@ export function renderStats() {
         }
         throw 'Impossible';
     }
-    
+
     function drawLatencyChart(req, timings) {
         const chartEl = document.createElement('canvas');
         new window.Chart(chartEl, {
@@ -706,7 +702,7 @@ export function renderStats() {
     function nsToRFC3339Nano(ns) {
         const msBigInt = ns / BigInt(1000000);
         const msNumber = Number(msBigInt);
-        const date = new Date(msNumber);    
+        const date = new Date(msNumber);
         const nsStr = Number(ns % BigInt(1000000)).toString().padStart(6, '0');
         const dateStr = date.toISOString().replace('Z', '');
         return `${dateStr}${nsStr}Z`;
@@ -722,11 +718,11 @@ export function renderStats() {
                 EndTime: nsToRFC3339Nano(endTime),
             })
         });
-        
+
         if (!response.ok) {
             throw new Error("HTTP error " + response.status);
         }
-        
+
         const buffer = await response.arrayBuffer();
         return new Uint8Array(buffer);
     }
@@ -771,7 +767,7 @@ export function renderStats() {
     } else {
         timeToEl.value = formatLocalDate(new Date());
     }
-    
+
     const sortSelectEl = document.getElementById('sort-select');
     const selectedSort = urlParams.get('sortBy') || 'name';
     for (const f of ['name', ...allFigures]) {
@@ -783,7 +779,7 @@ export function renderStats() {
 
     const statsFilterEl = document.getElementById('stats-filter');
     statsFilterEl.value = urlParams.get('filter') || '';
-    
+
     let cachedData = { timeFrom: 0n, timeTo: 0n, stats: {} };
 
     async function loadData(timeFrom, timeTo) {
@@ -853,7 +849,7 @@ export function renderStats() {
                             throw `Differing upper bounds for ${stat.name} at ${bin}, ${histogram[bin].upperBoundNs} != ${upperBoundNs}`;
                         }
                         histogram[bin].count += count;
-                    }    
+                    }
                 } else if (whichStat === 'errors') { // errors stats
                     // not parsed yet
                 } else {
@@ -862,7 +858,7 @@ export function renderStats() {
             }
             if (startName === "") { break; }
         }
-    
+
         // trim histos, replace undefineds with zero
         for (const reqData of Object.values(data.stats)) {
             let skipStart = 0;
@@ -921,7 +917,7 @@ export function renderStats() {
                         }
                     }
                     return { sort: u, text: formatNs(u) };
-                })    
+                })
             }
             percentile('p50', 50n);
             percentile('p90', 90n);
@@ -966,7 +962,7 @@ export function renderStats() {
         const sortedData = Object.entries(data).filter(([k, _]) => k.match(k.match(statsFilter))).sort(sortBy);
         if (showCharts) {
             chartsEl.appendChild(h(
-                'div', 
+                'div',
                 { style: { display: 'grid', gridTemplateColumns: '50% 50%' } },
                 sortedData.map(([stat, statData]) => h(
                     'div',
@@ -980,10 +976,10 @@ export function renderStats() {
                     ),
                     drawLatencyChart(stat, statData)
                 )),
-            ));    
+            ));
         } else {
             chartsEl.appendChild(h(
-                'table', 
+                'table',
                 { className: 'table' },
                 h('thead', {}, h('tr', {}, h('th', {}, '#'), allFigures.map(figure => h('th', {}, figure)))),
                 h('tbody', {},

@@ -49,7 +49,7 @@ std::pair<Sock, std::string> connectToHost(
     int err;
     std::string errStr;
     for (struct addrinfo* info = infos.get(); info != nullptr; info = info->ai_next) {
-        Sock sock(socket(AF_INET, SOCK_STREAM, 0));
+        auto sock = Sock::TCPSock();
         if (sock.error()) {
             throw SYSCALL_EXCEPTION("socket");
         }

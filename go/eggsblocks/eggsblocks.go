@@ -191,10 +191,7 @@ func updateBlockServiceInfoBlocks(
 
 func initBlockServicesInfo(
 	log *lib.Logger,
-	ip1 [4]byte,
-	port1 uint16,
-	ip2 [4]byte,
-	port2 uint16,
+	addrs msgs.AddrsInfo,
 	failureDomain [16]byte,
 	blockServices map[msgs.BlockServiceId]*blockService,
 ) error {
@@ -205,10 +202,7 @@ func initBlockServicesInfo(
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
 		bs.cachedInfo.Id = id
-		bs.cachedInfo.Ip1 = ip1
-		bs.cachedInfo.Port1 = port1
-		bs.cachedInfo.Ip2 = ip2
-		bs.cachedInfo.Port2 = port2
+		bs.cachedInfo.Addrs = addrs
 		bs.cachedInfo.SecretKey = bs.key
 		bs.cachedInfo.StorageClass = bs.storageClass
 		bs.cachedInfo.FailureDomain.Name = failureDomain
@@ -1118,10 +1112,7 @@ func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServic
 	// We just replicate everything from the cached one, forever -- but no flags.
 	return &msgs.RegisterBlockServiceInfo{
 		Id:             info.Id,
-		Ip1:            info.Ip1,
-		Port1:          info.Port1,
-		Ip2:            info.Ip2,
-		Port2:          info.Port2,
+		Addrs:          info.Addrs,
 		StorageClass:   info.StorageClass,
 		FailureDomain:  info.FailureDomain,
 		SecretKey:      info.SecretKey,
@@ -1387,7 +1378,7 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(log, ownIp1, actualPort1, ownIp2, actualPort2, failureDomain, blockServices)
+	initBlockServicesInfo(log, msgs.AddrsInfo{msgs.IpPort{ownIp1, actualPort1}, msgs.IpPort{ownIp2, actualPort2}}, failureDomain, blockServices)
 	log.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)

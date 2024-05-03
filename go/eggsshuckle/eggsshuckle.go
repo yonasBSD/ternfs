@@ -65,10 +65,7 @@ func parseTemplates(ts ...namedTemplate) (tmpl *template.Template) {
 }
 
 type cdcState struct {
-	ip1      [4]byte
-	port1    uint16
-	ip2      [4]byte
-	port2    uint16
+	addrs    msgs.AddrsInfo
 	lastSeen msgs.EggsTime
 }
 
@@ -98,12 +95,12 @@ func (s *state) selectCDC() (*cdcState, error) {
 			return nil, fmt.Errorf("more than 1 cdc row returned from db")
 		}
 		var ip1, ip2 []byte
-		err = rows.Scan(&ip1, &cdc.port1, &ip2, &cdc.port2, &cdc.lastSeen)
+		err = rows.Scan(&ip1, &cdc.addrs.Addr1.Port, &ip2, &cdc.addrs.Addr2.Port, &cdc.lastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
-		copy(cdc.ip1[:], ip1)
-		copy(cdc.ip2[:], ip2)
+		copy(cdc.addrs.Addr1.Addrs[:], ip1)
+		copy(cdc.addrs.Addr2.Addrs[:], ip2)
 		i += 1
 	}
 	return &cdc, nil
@@ -129,12 +126,12 @@ func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 		var id int
 		var replicaId int
 		var isLeader bool
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
+		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
-		copy(si.Ip1[:], ip1)
-		copy(si.Ip2[:], ip2)
+		copy(si.Addrs.Addr1.Addrs[:], ip1)
+		copy(si.Addrs.Addr2.Addrs[:], ip2)
 		ret[id] = si
 		i += 1
 	}
@@ -157,12 +154,12 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 		var id int
 		var replicaId int
 		var isLeader bool
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
+		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
-		copy(si.Ip1[:], ip1)
-		copy(si.Ip2[:], ip2)
+		copy(si.Addrs.Addr1.Addrs[:], ip1)
+		copy(si.Addrs.Addr2.Addrs[:], ip2)
 		return &si, nil
 	}
 
@@ -190,13 +187,13 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 	for rows.Next() {
 		bs := msgs.BlockServiceInfo{}
 		var ip1, ip2, fd, sk []byte
-		err = rows.Scan(&bs.Id, &ip1, &bs.Port1, &ip2, &bs.Port2, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles)
+		err = rows.Scan(&bs.Id, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
 
-		copy(bs.Ip1[:], ip1)
-		copy(bs.Ip2[:], ip2)
+		copy(bs.Addrs.Addr1.Addrs[:], ip1)
+		copy(bs.Addrs.Addr2.Addrs[:], ip2)
 		copy(bs.FailureDomain.Name[:], fd)
 		copy(bs.SecretKey[:], sk)
 		ret[bs.Id] = bs
@@ -206,10 +203,7 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 
 type shuckleConfig struct {
 	blockServiceMinFreeBytes uint64
-	ip1                      [4]byte
-	port1                    uint16
-	ip2                      [4]byte
-	port2                    uint16
+	addrs                    msgs.AddrsInfo
 	minAutoDecomInterval     time.Duration
 	maxDecommedWithFiles     int
 }
@@ -332,9 +326,9 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 					storage_class = excluded.storage_class AND
 					failure_domain = excluded.failure_domain AND
 					path = excluded.path AND
-					secret_key = excluded.secret_key	
+					secret_key = excluded.secret_key
 			`,
-			bs.Id, bs.Ip1[:], bs.Port1, bs.Ip2[:], bs.Port2,
+			bs.Id, bs.Addrs.Addr1.Addrs[:], bs.Addrs.Addr1.Port, bs.Addrs.Addr2.Addrs[:], bs.Addrs.Addr2.Port,
 			bs.StorageClass, bs.FailureDomain.Name[:],
 			bs.SecretKey[:], bs.Flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
@@ -530,16 +524,16 @@ func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithRepl
 		var ip1, ip2 []byte
 		var id int
 		var replicaId int
-		err = rows.Scan(&id, &replicaId, &si.IsLeader, &ip1, &si.Port1, &ip2, &si.Port2, &si.LastSeen)
+		err = rows.Scan(&id, &replicaId, &si.IsLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
-		if si.Port1 == 0 {
+		if si.Addrs.Addr1.Port == 0 {
 			continue
 		}
 		si.Id = msgs.MakeShardReplicaId(msgs.ShardId(id), msgs.ReplicaId(replicaId))
-		copy(si.Ip1[:], ip1)
-		copy(si.Ip2[:], ip2)
+		copy(si.Addrs.Addr1.Addrs[:], ip1)
+		copy(si.Addrs.Addr2.Addrs[:], ip2)
 		ret = append(ret, si)
 	}
 
@@ -555,7 +549,7 @@ func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp,
 }
 
 func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
-	err := handleRegisterShardCommon(ll, s, &msgs.RegisterShardReplicaReq{msgs.MakeShardReplicaId(req.Id, 0), true, req.Info})
+	err := handleRegisterShardCommon(ll, s, &msgs.RegisterShardReplicaReq{msgs.MakeShardReplicaId(req.Id, 0), true, req.Addrs})
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +587,7 @@ func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShard
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)
-		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1), n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2), n("last_seen", msgs.Now()),
+		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
 		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
@@ -636,12 +630,12 @@ func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (
 		var replicaId int
 		var isLeader bool
 		var lastSeen uint64
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Port1, &ip2, &si.Port2, &lastSeen)
+		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addr1.Port, &ip2, &si.Addr2.Port, &lastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
-		copy(si.Ip1[:], ip1)
-		copy(si.Ip2[:], ip2)
+		copy(si.Addr1.Addrs[:], ip1)
+		copy(si.Addr2.Addrs[:], ip2)
 		ret[replicaId] = si
 		i += 1
 	}
@@ -659,10 +653,7 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 		log.RaiseAlert("error reading cdc: %s", err)
 		return nil, err
 	}
-	resp.Ip1 = cdc.ip1
-	resp.Port1 = cdc.port1
-	resp.Ip2 = cdc.ip2
-	resp.Port2 = cdc.port2
+	resp.Addrs = cdc.addrs
 	resp.LastSeen = cdc.lastSeen
 
 	return &resp, nil
@@ -685,12 +676,12 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 		si := msgs.AddrsInfo{}
 		var ip1, ip2 []byte
 		var replicaId int
-		err = rows.Scan(&replicaId, &ip1, &si.Port1, &ip2, &si.Port2)
+		err = rows.Scan(&replicaId, &ip1, &si.Addr1.Port, &ip2, &si.Addr2.Port)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding cdc row: %s", err)
 		}
-		copy(si.Ip1[:], ip1)
-		copy(si.Ip2[:], ip2)
+		copy(si.Addr1.Addrs[:], ip1)
+		copy(si.Addr2.Addrs[:], ip2)
 		ret[replicaId] = si
 		i += 1
 	}
@@ -699,7 +690,7 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 }
 
 func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
-	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReplicaReq{0, true, msgs.AddrsInfo{req.Ip1, req.Port1, req.Ip2, req.Port2}})
+	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReplicaReq{0, true, req.Addrs})
 	if err != nil {
 		log.RaiseAlert("error registering cdc: %s", err)
 		return nil, err
@@ -740,8 +731,8 @@ func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcRe
 		)`,
 		n("replica_id", req.Replica),
 		n("is_leader", req.IsLeader),
-		n("ip1", req.Info.Ip1[:]), n("port1", req.Info.Port1),
-		n("ip2", req.Info.Ip2[:]), n("port2", req.Info.Port2),
+		n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port),
+		n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port),
 		n("last_seen", msgs.Now()),
 	)
 	if err != nil {
@@ -943,10 +934,7 @@ func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.Get
 
 func handleShuckle(log *lib.Logger, s *state) (*msgs.ShuckleResp, error) {
 	resp := &msgs.ShuckleResp{
-		Ip1:   s.config.ip1,
-		Port1: s.config.port1,
-		Ip2:   s.config.ip2,
-		Port2: s.config.port2,
+		Addrs: s.config.addrs,
 	}
 	return resp, nil
 }
@@ -1425,8 +1413,8 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				ll.RaiseAlert("error reading cdc: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
 			}
-			data.CDCAddr1 = fmt.Sprintf("%v:%v", net.IP(cdc.ip1[:]), cdc.port1)
-			data.CDCAddr2 = fmt.Sprintf("%v:%v", net.IP(cdc.ip2[:]), cdc.port2)
+			data.CDCAddr1 = cdc.addrs.Addr1.String()
+			data.CDCAddr2 = cdc.addrs.Addr2.String()
 			data.CDCLastSeen = formatLastSeen(cdc.lastSeen)
 
 			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
@@ -1513,21 +1501,12 @@ func refreshClient(log *lib.Logger, state *state) error {
 		return fmt.Errorf("error reading cdc: %s", err)
 	}
 
-	var shardIps [256][2][4]byte
-	var shardPorts [256][2]uint16
+	var shardAddrs [256]msgs.AddrsInfo
+
 	for i, si := range shards {
-		shardIps[i][0] = si.Ip1
-		shardPorts[i][0] = si.Port1
-		shardIps[i][1] = si.Ip2
-		shardPorts[i][1] = si.Port2
+		shardAddrs[i] = si.Addrs
 	}
-	var cdcIps [2][4]byte
-	var cdcPorts [2]uint16
-	cdcIps[0] = cdc.ip1
-	cdcPorts[0] = cdc.port1
-	cdcIps[1] = cdc.ip2
-	cdcPorts[1] = cdc.port2
-	state.client.SetAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	state.client.SetAddrs(cdc.addrs, &shardAddrs)
 	return nil
 }
 
@@ -1737,10 +1716,10 @@ func handleInode(
 									blockService := resp.BlockServices[block.BlockServiceIx]
 									hosts, found := blockServiceToHosts[blockService.Id]
 									if !found {
-										names1, _ := net.LookupAddr(net.IP(blockService.Ip1[:]).String())
+										names1, _ := net.LookupAddr(net.IP(blockService.Addrs.Addr1.Addrs[:]).String())
 										names2 := []string{}
-										if blockService.Ip2 != [4]byte{0, 0, 0, 0} {
-											names2, _ = net.LookupAddr(net.IP(blockService.Ip2[:]).String())
+										if blockService.Addrs.Addr2.Addrs != [4]byte{0, 0, 0, 0} {
+											names2, _ = net.LookupAddr(net.IP(blockService.Addrs.Addr2.Addrs[:]).String())
 										}
 										hosts = strings.Join(append(names1, names2...), ",")
 										blockServiceToHosts[blockService.Id] = hosts
@@ -1808,14 +1787,14 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 					return sendPage(errorPage(http.StatusNotFound, fmt.Sprintf("Unknown block service id %v", blockServiceId)))
 				}
 				var ip1, ip2 []byte
-				if err := rows.Scan(&ip1, &blockService.Port1, &ip2, &blockService.Port2, &blockService.Flags); err != nil {
+				if err := rows.Scan(&ip1, &blockService.Addrs.Addr1.Port, &ip2, &blockService.Addrs.Addr2.Port, &blockService.Flags); err != nil {
 					return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Error reading block service: %s", err)))
 				}
 				blockService.Id = blockServiceId
-				copy(blockService.Ip1[:], ip1[:])
-				copy(blockService.Ip2[:], ip2[:])
+				copy(blockService.Addrs.Addr1.Addrs[:], ip1[:])
+				copy(blockService.Addrs.Addr2.Addrs[:], ip2[:])
 
-				conn, err = client.BlockServiceConnection(log, blockService.Ip1, blockService.Port1, blockService.Ip2, blockService.Port2)
+				conn, err = client.BlockServiceConnection(log, blockService.Addrs)
 				if err != nil {
 					panic(err)
 				}
@@ -2840,10 +2819,7 @@ func main() {
 	}
 
 	config := &shuckleConfig{
-		ip1:                      ownIp1,
-		port1:                    ownPort1,
-		ip2:                      ownIp2,
-		port2:                    ownPort2,
+		addrs:                    msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
 		blockServiceMinFreeBytes: *bsMinBytes,
 		minAutoDecomInterval:     *minDecomInterval,
 		maxDecommedWithFiles:     *maxDecommedWithFiles,

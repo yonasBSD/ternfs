@@ -17,6 +17,87 @@ enum class InodeType : uint8_t {
     SYMLINK = 3,
 };
 
+using Ip = BincodeFixedBytes<4>;
+
+struct IpPort {
+    Ip ip;
+    uint16_t port;
+
+    static constexpr size_t STATIC_SIZE = Ip::STATIC_SIZE + sizeof(port);
+
+    IpPort() : ip(), port(0) {}
+
+    bool operator==(const IpPort& rhs) const {
+        return port == rhs.port && ip == rhs.ip;
+    }
+
+    void clear() {
+        ip.clear();
+        port = 0;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packFixedBytes<4>(ip);
+        buf.packScalar(port);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        buf.unpackFixedBytes<4>(ip);
+        port = buf.unpackScalar<uint16_t>();
+    }
+
+    constexpr size_t packedSize() const {
+        return STATIC_SIZE;
+    }
+
+    void toSockAddrIn(struct sockaddr_in& out) const;
+
+    static IpPort fromSockAddrIn(const struct sockaddr_in& in);
+};
+
+std::ostream& operator<<(std::ostream& out, const IpPort& addr);
+
+struct AddrsInfo {
+    std::array<IpPort, 2> addrs;
+
+    static constexpr size_t STATIC_SIZE = IpPort::STATIC_SIZE + IpPort::STATIC_SIZE;
+
+    AddrsInfo() {}
+
+    bool operator==(const AddrsInfo& rhs) const {
+        return addrs[0] == rhs.addrs[0] && addrs[1] == rhs.addrs[1];
+    }
+
+    bool contains(const IpPort& addr) const {
+        return addrs[0] == addr || addrs[1] == addr;
+    }
+
+    void clear() {
+        addrs[0].clear();
+        addrs[1].clear();
+    }
+
+    void pack(BincodeBuf& buf) const {
+        addrs[0].pack(buf);
+        addrs[1].pack(buf);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        addrs[0].unpack(buf);
+        addrs[1].unpack(buf);
+    }
+
+    constexpr size_t packedSize() const {
+        return STATIC_SIZE;
+    }
+
+    constexpr IpPort& operator[](size_t i) { return addrs[i]; }
+    constexpr const IpPort& operator[](size_t i) const { return addrs[i]; }
+    constexpr size_t size() const { return addrs.size(); }
+};
+
+std::ostream& operator<<(std::ostream& out, const AddrsInfo& addrs);
+
 struct ShardId {
     uint8_t u8;
 

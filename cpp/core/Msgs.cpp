@@ -1,20 +1,41 @@
-#include <unordered_map>
-
 #include "Msgs.hpp"
 
-std::ostream& operator<<(std::ostream& out, ShardId shard) {
-    out << int(shard.u8);
+#include <unordered_map>
+
+#include <netinet/in.h>
+
+void IpPort::toSockAddrIn(struct sockaddr_in& out) const {
+    out.sin_family = AF_INET;
+    memcpy(&out.sin_addr.s_addr, ip.data.data(), ip.data.size());
+    out.sin_port = htons(port);
+}
+
+IpPort IpPort::fromSockAddrIn(const struct sockaddr_in& in){
+    IpPort addr;
+    memcpy(addr.ip.data.data(), &in.sin_addr.s_addr, addr.ip.data.size());
+    addr.port = ntohs(in.sin_port);
+    return addr;
+}
+
+std::ostream& operator<<(std::ostream& out, const IpPort& addr) {
+    return out << (int) addr.ip.data[0] << '.' << (int) addr.ip.data[1] << '.' << (int) addr.ip.data[2] << '.' << (int) addr.ip.data[3] << ':' << addr.port;
+}
+
+std::ostream& operator<<(std::ostream& out, const AddrsInfo& addrs) {
+    out << "AddrsInfo(addr1=" << addrs[0] << ", addr2=" << addrs[1] << ")";
     return out;
+}
+
+std::ostream& operator<<(std::ostream& out, ShardId shard) {
+    return out << int(shard.u8);
 }
 
 std::ostream& operator<<(std::ostream& out, ReplicaId replica) {
-    out << int(replica.u8);
-    return out;
+    return out << int(replica.u8);
 }
 
 std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid) {
-    out << std::setw(3) << std::setfill('0') << shrid.shardId() << ":" << shrid.replicaId();
-    return out;
+    return out << std::setw(3) << std::setfill('0') << shrid.shardId() << ":" << shrid.replicaId();
 }
 
 std::ostream& operator<<(std::ostream& out, InodeId id) {
@@ -25,8 +46,7 @@ std::ostream& operator<<(std::ostream& out, InodeId id) {
 }
 
 std::ostream& operator<<(std::ostream& out, InodeIdExtra id) {
-    out << "[" << (id.extra() ? 'X' : ' ') << "]" << id.id();
-    return out;
+    return out << "[" << (id.extra() ? 'X' : ' ') << "]" << id.id();
 }
 
 std::ostream& operator<<(std::ostream& out, Parity parity) {
@@ -50,15 +70,13 @@ uint8_t storageClassByName(const char* name) {
 std::ostream& operator<<(std::ostream& out, Crc crc) {
     char buf[9];
     sprintf(buf, "%08x", crc.u32);
-    out << buf;
-    return out;
+    return out << buf;
 }
 
 std::ostream& operator<<(std::ostream& out, BlockServiceId id) {
     char buf[19];
     sprintf(buf, "0x%016lx", id.u64);
-    out << buf;
-    return out;
+    return out << buf;
 }
 
 std::ostream& operator<<(std::ostream& out, LogIdx idx) {
@@ -67,6 +85,5 @@ std::ostream& operator<<(std::ostream& out, LogIdx idx) {
 }
 
 std::ostream& operator<<(std::ostream& out, LeaderToken token) {
-    out << token.idx() << ":" << token.replica();
-    return out;
+    return out << token.idx() << ":" << token.replica();
 }

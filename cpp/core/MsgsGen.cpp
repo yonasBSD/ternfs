@@ -622,40 +622,28 @@ std::ostream& operator<<(std::ostream& out, const CurrentEdge& x) {
 }
 
 void AddSpanInitiateBlockInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(blockServiceIp1);
-    buf.packScalar<uint16_t>(blockServicePort1);
-    buf.packFixedBytes<4>(blockServiceIp2);
-    buf.packScalar<uint16_t>(blockServicePort2);
+    blockServiceAddrs.pack(buf);
     blockServiceId.pack(buf);
     blockServiceFailureDomain.pack(buf);
     buf.packScalar<uint64_t>(blockId);
     buf.packFixedBytes<8>(certificate);
 }
 void AddSpanInitiateBlockInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(blockServiceIp1);
-    blockServicePort1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(blockServiceIp2);
-    blockServicePort2 = buf.unpackScalar<uint16_t>();
+    blockServiceAddrs.unpack(buf);
     blockServiceId.unpack(buf);
     blockServiceFailureDomain.unpack(buf);
     blockId = buf.unpackScalar<uint64_t>();
     buf.unpackFixedBytes<8>(certificate);
 }
 void AddSpanInitiateBlockInfo::clear() {
-    blockServiceIp1.clear();
-    blockServicePort1 = uint16_t(0);
-    blockServiceIp2.clear();
-    blockServicePort2 = uint16_t(0);
+    blockServiceAddrs.clear();
     blockServiceId = BlockServiceId(0);
     blockServiceFailureDomain.clear();
     blockId = uint64_t(0);
     certificate.clear();
 }
 bool AddSpanInitiateBlockInfo::operator==(const AddSpanInitiateBlockInfo& rhs) const {
-    if (blockServiceIp1 != rhs.blockServiceIp1) { return false; };
-    if ((uint16_t)this->blockServicePort1 != (uint16_t)rhs.blockServicePort1) { return false; };
-    if (blockServiceIp2 != rhs.blockServiceIp2) { return false; };
-    if ((uint16_t)this->blockServicePort2 != (uint16_t)rhs.blockServicePort2) { return false; };
+    if (blockServiceAddrs != rhs.blockServiceAddrs) { return false; };
     if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
     if (blockServiceFailureDomain != rhs.blockServiceFailureDomain) { return false; };
     if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
@@ -663,15 +651,12 @@ bool AddSpanInitiateBlockInfo::operator==(const AddSpanInitiateBlockInfo& rhs) c
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const AddSpanInitiateBlockInfo& x) {
-    out << "AddSpanInitiateBlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+    out << "AddSpanInitiateBlockInfo(" << "BlockServiceAddrs=" << x.blockServiceAddrs << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
     return out;
 }
 
 void RemoveSpanInitiateBlockInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(blockServiceIp1);
-    buf.packScalar<uint16_t>(blockServicePort1);
-    buf.packFixedBytes<4>(blockServiceIp2);
-    buf.packScalar<uint16_t>(blockServicePort2);
+    blockServiceAddrs.pack(buf);
     blockServiceId.pack(buf);
     blockServiceFailureDomain.pack(buf);
     buf.packScalar<uint8_t>(blockServiceFlags);
@@ -679,10 +664,7 @@ void RemoveSpanInitiateBlockInfo::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<8>(certificate);
 }
 void RemoveSpanInitiateBlockInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(blockServiceIp1);
-    blockServicePort1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(blockServiceIp2);
-    blockServicePort2 = buf.unpackScalar<uint16_t>();
+    blockServiceAddrs.unpack(buf);
     blockServiceId.unpack(buf);
     blockServiceFailureDomain.unpack(buf);
     blockServiceFlags = buf.unpackScalar<uint8_t>();
@@ -690,10 +672,7 @@ void RemoveSpanInitiateBlockInfo::unpack(BincodeBuf& buf) {
     buf.unpackFixedBytes<8>(certificate);
 }
 void RemoveSpanInitiateBlockInfo::clear() {
-    blockServiceIp1.clear();
-    blockServicePort1 = uint16_t(0);
-    blockServiceIp2.clear();
-    blockServicePort2 = uint16_t(0);
+    blockServiceAddrs.clear();
     blockServiceId = BlockServiceId(0);
     blockServiceFailureDomain.clear();
     blockServiceFlags = uint8_t(0);
@@ -701,10 +680,7 @@ void RemoveSpanInitiateBlockInfo::clear() {
     certificate.clear();
 }
 bool RemoveSpanInitiateBlockInfo::operator==(const RemoveSpanInitiateBlockInfo& rhs) const {
-    if (blockServiceIp1 != rhs.blockServiceIp1) { return false; };
-    if ((uint16_t)this->blockServicePort1 != (uint16_t)rhs.blockServicePort1) { return false; };
-    if (blockServiceIp2 != rhs.blockServiceIp2) { return false; };
-    if ((uint16_t)this->blockServicePort2 != (uint16_t)rhs.blockServicePort2) { return false; };
+    if (blockServiceAddrs != rhs.blockServiceAddrs) { return false; };
     if ((BlockServiceId)this->blockServiceId != (BlockServiceId)rhs.blockServiceId) { return false; };
     if (blockServiceFailureDomain != rhs.blockServiceFailureDomain) { return false; };
     if ((uint8_t)this->blockServiceFlags != (uint8_t)rhs.blockServiceFlags) { return false; };
@@ -713,7 +689,7 @@ bool RemoveSpanInitiateBlockInfo::operator==(const RemoveSpanInitiateBlockInfo& 
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveSpanInitiateBlockInfo& x) {
-    out << "RemoveSpanInitiateBlockInfo(" << "BlockServiceIp1=" << x.blockServiceIp1 << ", " << "BlockServicePort1=" << x.blockServicePort1 << ", " << "BlockServiceIp2=" << x.blockServiceIp2 << ", " << "BlockServicePort2=" << x.blockServicePort2 << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockServiceFlags=" << (int)x.blockServiceFlags << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
+    out << "RemoveSpanInitiateBlockInfo(" << "BlockServiceAddrs=" << x.blockServiceAddrs << ", " << "BlockServiceId=" << x.blockServiceId << ", " << "BlockServiceFailureDomain=" << x.blockServiceFailureDomain << ", " << "BlockServiceFlags=" << (int)x.blockServiceFlags << ", " << "BlockId=" << x.blockId << ", " << "Certificate=" << x.certificate << ")";
     return out;
 }
 
@@ -740,74 +716,50 @@ std::ostream& operator<<(std::ostream& out, const BlockProof& x) {
 }
 
 void BlockService::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     id.pack(buf);
     buf.packScalar<uint8_t>(flags);
 }
 void BlockService::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     id.unpack(buf);
     flags = buf.unpackScalar<uint8_t>();
 }
 void BlockService::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     id = BlockServiceId(0);
     flags = uint8_t(0);
 }
 bool BlockService::operator==(const BlockService& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockService& x) {
-    out << "BlockService(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "Id=" << x.id << ", " << "Flags=" << (int)x.flags << ")";
+    out << "BlockService(" << "Addrs=" << x.addrs << ", " << "Id=" << x.id << ", " << "Flags=" << (int)x.flags << ")";
     return out;
 }
 
 void ShardInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     lastSeen.pack(buf);
 }
 void ShardInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     lastSeen.unpack(buf);
 }
 void ShardInfo::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     lastSeen = EggsTime();
 }
 bool ShardInfo::operator==(const ShardInfo& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
-    out << "ShardInfo(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "ShardInfo(" << "Addrs=" << x.addrs << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -1113,10 +1065,7 @@ std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
 
 void BlockServiceInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     buf.packScalar<uint8_t>(storageClass);
     failureDomain.pack(buf);
     buf.packFixedBytes<16>(secretKey);
@@ -1130,10 +1079,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
 }
 void BlockServiceInfo::unpack(BincodeBuf& buf) {
     id.unpack(buf);
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     storageClass = buf.unpackScalar<uint8_t>();
     failureDomain.unpack(buf);
     buf.unpackFixedBytes<16>(secretKey);
@@ -1147,10 +1093,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
 }
 void BlockServiceInfo::clear() {
     id = BlockServiceId(0);
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     storageClass = uint8_t(0);
     failureDomain.clear();
     secretKey.clear();
@@ -1164,10 +1107,7 @@ void BlockServiceInfo::clear() {
 }
 bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
     if (failureDomain != rhs.failureDomain) { return false; };
     if (secretKey != rhs.secretKey) { return false; };
@@ -1181,37 +1121,7 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ")";
-    return out;
-}
-
-void AddrsInfo::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
-}
-void AddrsInfo::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
-}
-void AddrsInfo::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
-}
-bool AddrsInfo::operator==(const AddrsInfo& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AddrsInfo& x) {
-    out << "AddrsInfo(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ")";
     return out;
 }
 
@@ -1302,51 +1212,36 @@ std::ostream& operator<<(std::ostream& out, const Stat& x) {
 void ShardWithReplicasInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
     buf.packScalar<bool>(isLeader);
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     lastSeen.pack(buf);
 }
 void ShardWithReplicasInfo::unpack(BincodeBuf& buf) {
     id.unpack(buf);
     isLeader = buf.unpackScalar<bool>();
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     lastSeen.unpack(buf);
 }
 void ShardWithReplicasInfo::clear() {
     id = ShardReplicaId();
     isLeader = bool(0);
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     lastSeen = EggsTime();
 }
 bool ShardWithReplicasInfo::operator==(const ShardWithReplicasInfo& rhs) const {
     if ((ShardReplicaId)this->id != (ShardReplicaId)rhs.id) { return false; };
     if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShardWithReplicasInfo& x) {
-    out << "ShardWithReplicasInfo(" << "Id=" << x.id << ", " << "IsLeader=" << x.isLeader << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "ShardWithReplicasInfo(" << "Id=" << x.id << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
 void RegisterBlockServiceInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     buf.packScalar<uint8_t>(storageClass);
     failureDomain.pack(buf);
     buf.packFixedBytes<16>(secretKey);
@@ -1359,10 +1254,7 @@ void RegisterBlockServiceInfo::pack(BincodeBuf& buf) const {
 }
 void RegisterBlockServiceInfo::unpack(BincodeBuf& buf) {
     id.unpack(buf);
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     storageClass = buf.unpackScalar<uint8_t>();
     failureDomain.unpack(buf);
     buf.unpackFixedBytes<16>(secretKey);
@@ -1375,10 +1267,7 @@ void RegisterBlockServiceInfo::unpack(BincodeBuf& buf) {
 }
 void RegisterBlockServiceInfo::clear() {
     id = BlockServiceId(0);
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     storageClass = uint8_t(0);
     failureDomain.clear();
     secretKey.clear();
@@ -1391,10 +1280,7 @@ void RegisterBlockServiceInfo::clear() {
 }
 bool RegisterBlockServiceInfo::operator==(const RegisterBlockServiceInfo& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
     if (failureDomain != rhs.failureDomain) { return false; };
     if (secretKey != rhs.secretKey) { return false; };
@@ -1407,7 +1293,7 @@ bool RegisterBlockServiceInfo::operator==(const RegisterBlockServiceInfo& rhs) c
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x) {
-    out << "RegisterBlockServiceInfo(" << "Id=" << x.id << ", " << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "FlagsMask=" << (int)x.flagsMask << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
+    out << "RegisterBlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "FlagsMask=" << (int)x.flagsMask << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
     return out;
 }
 
@@ -3482,36 +3368,24 @@ std::ostream& operator<<(std::ostream& out, const CdcReq& x) {
 }
 
 void CdcResp::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
     lastSeen.pack(buf);
 }
 void CdcResp::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
     lastSeen.unpack(buf);
 }
 void CdcResp::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
     lastSeen = EggsTime();
 }
 bool CdcResp::operator==(const CdcResp& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CdcResp& x) {
-    out << "CdcResp(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ", " << "LastSeen=" << x.lastSeen << ")";
+    out << "CdcResp(" << "Addrs=" << x.addrs << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -3578,54 +3452,42 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReq& x) {
 }
 
 void ShuckleResp::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
 }
 void ShuckleResp::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
 }
 void ShuckleResp::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
 }
 bool ShuckleResp::operator==(const ShuckleResp& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x) {
-    out << "ShuckleResp(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ")";
+    out << "ShuckleResp(" << "Addrs=" << x.addrs << ")";
     return out;
 }
 
 void RegisterShardReq::pack(BincodeBuf& buf) const {
     id.pack(buf);
-    info.pack(buf);
+    addrs.pack(buf);
 }
 void RegisterShardReq::unpack(BincodeBuf& buf) {
     id.unpack(buf);
-    info.unpack(buf);
+    addrs.unpack(buf);
 }
 void RegisterShardReq::clear() {
     id = ShardId();
-    info.clear();
+    addrs.clear();
 }
 bool RegisterShardReq::operator==(const RegisterShardReq& rhs) const {
     if ((ShardId)this->id != (ShardId)rhs.id) { return false; };
-    if (info != rhs.info) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterShardReq& x) {
-    out << "RegisterShardReq(" << "Id=" << x.id << ", " << "Info=" << x.info << ")";
+    out << "RegisterShardReq(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ")";
     return out;
 }
 
@@ -3676,32 +3538,20 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
 }
 
 void RegisterCdcReq::pack(BincodeBuf& buf) const {
-    buf.packFixedBytes<4>(ip1);
-    buf.packScalar<uint16_t>(port1);
-    buf.packFixedBytes<4>(ip2);
-    buf.packScalar<uint16_t>(port2);
+    addrs.pack(buf);
 }
 void RegisterCdcReq::unpack(BincodeBuf& buf) {
-    buf.unpackFixedBytes<4>(ip1);
-    port1 = buf.unpackScalar<uint16_t>();
-    buf.unpackFixedBytes<4>(ip2);
-    port2 = buf.unpackScalar<uint16_t>();
+    addrs.unpack(buf);
 }
 void RegisterCdcReq::clear() {
-    ip1.clear();
-    port1 = uint16_t(0);
-    ip2.clear();
-    port2 = uint16_t(0);
+    addrs.clear();
 }
 bool RegisterCdcReq::operator==(const RegisterCdcReq& rhs) const {
-    if (ip1 != rhs.ip1) { return false; };
-    if ((uint16_t)this->port1 != (uint16_t)rhs.port1) { return false; };
-    if (ip2 != rhs.ip2) { return false; };
-    if ((uint16_t)this->port2 != (uint16_t)rhs.port2) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x) {
-    out << "RegisterCdcReq(" << "Ip1=" << x.ip1 << ", " << "Port1=" << x.port1 << ", " << "Ip2=" << x.ip2 << ", " << "Port2=" << x.port2 << ")";
+    out << "RegisterCdcReq(" << "Addrs=" << x.addrs << ")";
     return out;
 }
 
@@ -3918,26 +3768,26 @@ std::ostream& operator<<(std::ostream& out, const GetStatsResp& x) {
 void RegisterShardReplicaReq::pack(BincodeBuf& buf) const {
     shrid.pack(buf);
     buf.packScalar<bool>(isLeader);
-    info.pack(buf);
+    addrs.pack(buf);
 }
 void RegisterShardReplicaReq::unpack(BincodeBuf& buf) {
     shrid.unpack(buf);
     isLeader = buf.unpackScalar<bool>();
-    info.unpack(buf);
+    addrs.unpack(buf);
 }
 void RegisterShardReplicaReq::clear() {
     shrid = ShardReplicaId();
     isLeader = bool(0);
-    info.clear();
+    addrs.clear();
 }
 bool RegisterShardReplicaReq::operator==(const RegisterShardReplicaReq& rhs) const {
     if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
     if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
-    if (info != rhs.info) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterShardReplicaReq& x) {
-    out << "RegisterShardReplicaReq(" << "Shrid=" << x.shrid << ", " << "IsLeader=" << x.isLeader << ", " << "Info=" << x.info << ")";
+    out << "RegisterShardReplicaReq(" << "Shrid=" << x.shrid << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ")";
     return out;
 }
 
@@ -4030,26 +3880,26 @@ std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x) {
 void RegisterCdcReplicaReq::pack(BincodeBuf& buf) const {
     replica.pack(buf);
     buf.packScalar<bool>(isLeader);
-    info.pack(buf);
+    addrs.pack(buf);
 }
 void RegisterCdcReplicaReq::unpack(BincodeBuf& buf) {
     replica.unpack(buf);
     isLeader = buf.unpackScalar<bool>();
-    info.unpack(buf);
+    addrs.unpack(buf);
 }
 void RegisterCdcReplicaReq::clear() {
     replica = ReplicaId();
     isLeader = bool(0);
-    info.clear();
+    addrs.clear();
 }
 bool RegisterCdcReplicaReq::operator==(const RegisterCdcReplicaReq& rhs) const {
     if ((ReplicaId)this->replica != (ReplicaId)rhs.replica) { return false; };
     if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
-    if (info != rhs.info) { return false; };
+    if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReplicaReq& x) {
-    out << "RegisterCdcReplicaReq(" << "Replica=" << x.replica << ", " << "IsLeader=" << x.isLeader << ", " << "Info=" << x.info << ")";
+    out << "RegisterCdcReplicaReq(" << "Replica=" << x.replica << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ")";
     return out;
 }
 

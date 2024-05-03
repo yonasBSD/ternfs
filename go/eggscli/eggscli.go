@@ -677,7 +677,7 @@ func main() {
 		}
 		conns := make([]*net.TCPConn, len(bsInfos))
 		for i := 0; i < len(conns); i++ {
-			conn, err := client.BlockServiceConnection(log, bsInfos[i].Ip1, bsInfos[i].Port1, bsInfos[i].Ip2, bsInfos[i].Port2)
+			conn, err := client.BlockServiceConnection(log, bsInfos[i].Addrs)
 			if err != nil {
 				panic(err)
 			}

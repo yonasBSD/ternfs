@@ -8,8 +8,6 @@
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <poll.h>
-#include <unordered_map>
 #include <vector>
 
 #include "Assert.hpp"
@@ -31,6 +29,7 @@
 #include "Shuckle.hpp"
 #include "Time.hpp"
 #include "Time.hpp"
+#include "UDPSocketPair.hpp"
 #include "wyhash.h"
 #include "Xmon.hpp"
 #include "Timings.hpp"
@@ -47,7 +46,7 @@ struct QueuedShardLogEntry {
     // block service updates).
     uint64_t requestId;
     EggsTime receivedAt;
-    struct sockaddr_in clientAddr;
+    IpPort clientAddr;
     int sockIx; // which sock to use to reply
     ShardMessageKind requestKind;
 };
@@ -158,38 +157,40 @@ private:
     std::variant<LogsDBRequest, LogsDBResponse, QueuedShardLogEntry> _data;
 };
 
-struct ReplicaAddrsInfo {
-    std::array<sockaddr_in, 2> addrs;
-};
-
-bool operator==(sockaddr_in& l, sockaddr_in& r) {
-    return l.sin_addr.s_addr == r.sin_addr.s_addr && l.sin_port == r.sin_port;
-}
-
 struct ShardShared {
     SharedRocksDB& sharedDB;
     BlockServicesCacheDB& blockServicesCache;
     ShardDB& shardDB;
-    std::array<std::atomic<uint32_t>, 2> ips;
-    std::array<std::atomic<uint32_t>, 2> ports;
-    std::array<struct pollfd, 2> socks;
+    std::array<UDPSocketPair, 1> socks; // in an array to play with UDPReceiver<>
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
     SPSC<ShardWriterRequest> writerRequestsQueue;
     std::atomic<double> logEntriesQueueSize;
     std::array<std::atomic<double>, 2> receivedRequests; // how many requests we got at once from each socket
     std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
-    std::shared_ptr<std::array<ReplicaAddrsInfo, LogsDB::REPLICA_COUNT>> replicas;
+    std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> replicas;
     std::atomic<bool> isLeader;
 
     ShardShared() = delete;
-    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_): sharedDB(sharedDB_), blockServicesCache(blockServicesCache_), shardDB(shardDB_), ips{0, 0}, ports{0, 0}, writerRequestsQueue(LOG_ENTRIES_QUEUE_SIZE), logEntriesQueueSize(0), pulledWriteRequests(0) {
+    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, UDPSocketPair&& sock) :
+        sharedDB(sharedDB_),
+        blockServicesCache(blockServicesCache_),
+        shardDB(shardDB_),
+        socks({std::move(sock)}),
+        writerRequestsQueue(LOG_ENTRIES_QUEUE_SIZE),
+        logEntriesQueueSize(0),
+        pulledWriteRequests(0)
+    {
         for (ShardMessageKind kind : allShardMessageKind) {
             timings[(int)kind] = Timings::Standard();
         }
         for (auto& x: receivedRequests) {
             x = 0;
         }
+    }
+
+    const UDPSocketPair& sock() const {
+        return socks[0];
     }
 };
 
@@ -215,23 +216,23 @@ static bool bigResponse(ShardMessageKind kind) {
 
 static void packShardResponse(
     Env& env,
-    ShardShared& shared,
-    std::vector<char>& sendBuf,
-    std::vector<struct mmsghdr>& sendHdrs,
-    std::vector<struct iovec>& sendVecs,
+    const AddrsInfo& srcAddr,
+    UDPSender& sender,
     uint64_t requestId,
     ShardMessageKind kind,
     Duration elapsed,
     bool dropArtificially,
-    const struct sockaddr_in* clientAddr,
-    int sockIx,
+    const IpPort& clientAddr,
+    uint8_t sockIx,
     EggsError err,
     const ShardRespContainer& resp
 ) {
-    // pack into sendBuf
-    size_t sendBufBegin = sendBuf.size();
-    sendBuf.resize(sendBufBegin + MAX_UDP_MTU);
-    BincodeBuf respBbuf(&sendBuf[sendBufBegin], MAX_UDP_MTU);
+    if (unlikely(dropArtificially)) {
+        LOG_DEBUG(env, "artificially dropping response %s", requestId);
+        return;
+    }
+    ALWAYS_ASSERT(clientAddr.port != 0);
+
     if (err == NO_ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", requestId, kind, elapsed);
         if (bigResponse(kind)) {
@@ -243,39 +244,21 @@ static void packShardResponse(
         } else {
             LOG_DEBUG(env, "resp body: %s", resp);
         }
-        ShardResponseHeader(requestId, kind).pack(respBbuf);
-        resp.pack(respBbuf);
+        sender.prepareOutgoingMessage(env, srcAddr, sockIx, clientAddr,
+            [requestId, kind, &resp](BincodeBuf& buf) {
+                ShardResponseHeader(requestId, kind).pack(buf);
+                resp.pack(buf);
+            });
     } else {
         LOG_DEBUG(env, "request %s failed with error %s in %s", kind, err, elapsed);
-        ShardResponseHeader(requestId, ShardMessageKind::ERROR).pack(respBbuf);
-        respBbuf.packScalar<uint16_t>((uint16_t)err);
-    }
-    sendBuf.resize(sendBufBegin + respBbuf.len());
-
-    shared.timings[(int)kind].add(elapsed);
-    shared.errors[(int)kind].add(err);
-
-    if (unlikely(dropArtificially)) {
-        LOG_DEBUG(env, "artificially dropping response %s", requestId);
-        sendBuf.resize(sendBufBegin);
-        return;
+        sender.prepareOutgoingMessage(env, srcAddr, sockIx, clientAddr,
+            [requestId, err](BincodeBuf& buf) {
+                ShardResponseHeader(requestId, ShardMessageKind::ERROR).pack(buf);
+                buf.packScalar<uint16_t>((uint16_t)err);
+            });
     }
 
-    LOG_DEBUG(env, "will send response for req id %s kind %s to %s", requestId, kind, *clientAddr);
-
-    // Prepare sendmmsg stuff. The vectors might be resized by the
-    // time we get to sending this, so store references when we must
-    // -- we'll fix up the actual values later.
-    auto& hdr = sendHdrs.emplace_back();
-    hdr.msg_hdr = {
-        .msg_name = (sockaddr_in*)clientAddr,
-        .msg_namelen = sizeof(*clientAddr),
-        .msg_iovlen = 1,
-    };
-    hdr.msg_len = respBbuf.len();
-    auto& vec = sendVecs.emplace_back();
-    vec.iov_base = (void*)sendBufBegin;
-    vec.iov_len = respBbuf.len();
+    LOG_DEBUG(env, "will send response for req id %s kind %s to %s", requestId, kind, clientAddr);
 }
 
 struct ShardServer : Loop {
@@ -283,7 +266,6 @@ private:
     // init data
     ShardShared& _shared;
     ShardReplicaId _shrid;
-    std::array<IpPort, 2> _ipPorts;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
@@ -291,33 +273,21 @@ private:
     // run data
     AES128Key _expandedCDCKey;
     AES128Key _expandedShardKey;
-    // recvmmsg data (one per socket, since we receive from both and send from both
-    // using some of the header data)
-    std::array<std::vector<char>, 2> _recvBuf;
-    std::array<std::vector<struct mmsghdr>, 2> _recvHdrs;
-    std::array<std::vector<struct sockaddr_in>, 2> _recvAddrs;
-    std::array<std::vector<struct iovec>, 2> _recvVecs;
-    // what we parse into
-    ShardReqContainer _reqContainer;
-    ShardRespContainer _respContainer;
+
     // log entries buffers
     std::vector<ShardWriterRequest> _logEntries;
-    // sendmmsg data
-    std::vector<char> _sendBuf;
-    std::array<std::vector<struct mmsghdr>, 2> _sendHdrs; // one per socket
-    std::array<std::vector<struct iovec>, 2> _sendVecs;
-    MultiplexedChannel<3, std::array<uint32_t, 3>{SHARD_REQ_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
 
+    std::unique_ptr<UDPReceiver<1>> _receiver;
+    std::unique_ptr<UDPSender> _sender;
+    std::unique_ptr<MultiplexedChannel<3, std::array<uint32_t, 3>{SHARD_REQ_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}>> _channel;
 public:
     ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         Loop(logger, xmon, "server"),
         _shared(shared),
         _shrid(shrid),
-        _ipPorts(options.ipPorts),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
-        _outgoingPacketDropProbability(0),
-        _channel(_env, MAX_RECV_MSGS * _ipPorts.size())
+        _outgoingPacketDropProbability(0)
     {
         auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
             if (prob != 0.0) {
@@ -329,76 +299,19 @@ public:
         convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         expandKey(ShardKey, _expandedShardKey);
-
-        _init();
+        expandKey(CDCKey, _expandedCDCKey);
+        _receiver = std::make_unique<UDPReceiver<1>>(UDPReceiverConfig{.perSockMaxRecvMsg = MAX_RECV_MSGS, .maxMsgSize = MAX_UDP_MTU});
+        _sender = std::make_unique<UDPSender>(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU});
+        _channel = std::make_unique<MultiplexedChannel<3, std::array<uint32_t, 3>{SHARD_REQ_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}>>();
     }
 
     virtual ~ShardServer() = default;
 
 private:
-    void _init() {
-        LOG_INFO(_env, "initializing server sockets");
-        expandKey(CDCKey, _expandedCDCKey);
+    void _handleLogsDBResponse(UDPMessage& msg) {
+        LOG_DEBUG(_env, "received LogsDBResponse from %s", msg.clientAddr);
 
-        memset(_shared.socks.data(), 0, _shared.socks.size()*sizeof(_shared.socks[0]));
-        for (int i = 0; i < _ipPorts.size(); i++) {
-            const auto& ipPort = _ipPorts[i];
-            if (ipPort.ip == 0) { break; }
-            int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (sock < 0) {
-                throw SYSCALL_EXCEPTION("cannot create socket");
-            }
-            struct sockaddr_in serverAddr;
-            serverAddr.sin_family = AF_INET;
-            uint32_t ipn = htonl(ipPort.ip);
-            memcpy(&serverAddr.sin_addr.s_addr, &ipn, sizeof(ipn));
-            serverAddr.sin_port = htons(ipPort.port);
-            if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != 0) {
-                char ip[INET_ADDRSTRLEN];
-                throw SYSCALL_EXCEPTION("cannot bind socket to addr %s:%s", inet_ntop(AF_INET, &serverAddr.sin_addr, ip, INET_ADDRSTRLEN), ipPort.port);
-            }
-            {
-                socklen_t addrLen = sizeof(serverAddr);
-                if (getsockname(sock, (struct sockaddr*)&serverAddr, &addrLen) < 0) {
-                    throw SYSCALL_EXCEPTION("getsockname");
-                }
-            }
-            // stats are ~50byte, and are the most common request, say 100byte
-            // per request on average, 1MiB buffer should be enough for 10k requests
-            // or so in each of the two queues.
-            {
-                int bufSize = 1<<20;
-                if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (void*)&bufSize, sizeof(bufSize)) < 0) {
-                    throw SYSCALL_EXCEPTION("setsockopt");
-                }
-            }
-            // store addresses/fds
-            _shared.ips[i].store(ntohl(serverAddr.sin_addr.s_addr), std::memory_order_release);
-            _shared.ports[i].store(ntohs(serverAddr.sin_port), std::memory_order_release);
-            _shared.socks[i].fd = sock;
-            _shared.socks[i].events = POLL_IN;
-            LOG_INFO(_env, "Bound shard %s to %s", _shrid, serverAddr);
-
-            _recvBuf[i].resize(DEFAULT_UDP_MTU*MAX_RECV_MSGS);
-            _recvHdrs[i].resize(MAX_RECV_MSGS);
-            memset(_recvHdrs[i].data(), 0, sizeof(_recvHdrs[i][0])*MAX_RECV_MSGS);
-            _recvAddrs[i].resize(MAX_RECV_MSGS);
-            _recvVecs[i].resize(MAX_RECV_MSGS);
-            for (int j = 0; j < _recvVecs[i].size(); j++) {
-                _recvVecs[i][j].iov_base = &_recvBuf[i][j*DEFAULT_UDP_MTU];
-                _recvVecs[i][j].iov_len = DEFAULT_UDP_MTU;
-                _recvHdrs[i][j].msg_hdr.msg_iov = &_recvVecs[i][j];
-                _recvHdrs[i][j].msg_hdr.msg_iovlen = 1;
-                _recvHdrs[i][j].msg_hdr.msg_namelen = sizeof(_recvAddrs[i][j]);
-                _recvHdrs[i][j].msg_hdr.msg_name = &_recvAddrs[i][j];
-            }
-        }
-    }
-
-    void _handleLogsDBResponse(int sockIx, struct sockaddr_in* clientAddr, BincodeBuf& buf) {
-        LOG_DEBUG(_env, "received LogsDBResponse from %s", *clientAddr);
-
-        auto replicaId = _getReplicaId(clientAddr);
+        auto replicaId = _getReplicaId(msg.clientAddr);
 
         if (replicaId == LogsDB::REPLICA_COUNT) {
             LOG_DEBUG(_env, "We can't match this address to replica. Dropping");
@@ -409,7 +322,7 @@ private:
         resp.replicaId = replicaId;
 
         try {
-            resp.header.unpack(buf);
+            resp.header.unpack(msg.buf);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBResponse.header: %s", err.what());
             _logEntries.pop_back();
@@ -423,39 +336,39 @@ private:
         }
 
         try {
-            resp.responseContainer.unpack(buf, resp.header.kind);
+            resp.responseContainer.unpack(msg.buf, resp.header.kind);
         } catch (const BincodeException& exc) {
             LOG_ERROR(_env, "Could not parse LogsDBResponse.responseContainer of kind %s: %s", resp.header.kind, exc.what());
             _logEntries.pop_back();
             return;
         }
 
-        if (unlikely(buf.remaining() < 8)) {
-            LOG_ERROR(_env, "Could not parse LogsDBResponse of kind %s from %s. Message signature is 8 bytes, only %s remaining", resp.header.kind, *clientAddr, buf.remaining());
+        if (unlikely(msg.buf.remaining() < 8)) {
+            LOG_ERROR(_env, "Could not parse LogsDBResponse of kind %s from %s. Message signature is 8 bytes, only %s remaining", resp.header.kind, msg.clientAddr, msg.buf.remaining());
             _logEntries.pop_back();
             return;
         }
 
-        auto expectedMac = cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data);
+        auto expectedMac = cbcmac(_expandedShardKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
         BincodeFixedBytes<8> receivedMac;
-        buf.unpackFixedBytes<8>(receivedMac);
+        msg.buf.unpackFixedBytes<8>(receivedMac);
         if (unlikely(expectedMac != receivedMac.data)) {
-            LOG_ERROR(_env, "Incorrect signature for LogsDBResponse %s from %s", resp.header.kind, *clientAddr);
+            LOG_ERROR(_env, "Incorrect signature for LogsDBResponse %s from %s", resp.header.kind, msg.clientAddr);
             _logEntries.pop_back();
             return;
         }
 
-        if (unlikely(buf.remaining())) {
-            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBResponse %s from %s", buf.remaining(), resp.header.kind, *clientAddr);
+        if (unlikely(msg.buf.remaining())) {
+            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBResponse %s from %s", msg.buf.remaining(), resp.header.kind, msg.clientAddr);
             _logEntries.pop_back();
         }
         LOG_DEBUG(_env, "Received response %s for requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
     }
 
-    void _handleLogsDBRequest(int sockIx, struct sockaddr_in* clientAddr, BincodeBuf& buf) {
-        LOG_DEBUG(_env, "received LogsDBRequest from %s", *clientAddr);
+    void _handleLogsDBRequest(UDPMessage& msg) {
+        LOG_DEBUG(_env, "received LogsDBRequest from %s", msg.clientAddr);
 
-        auto replicaId = _getReplicaId(clientAddr);
+        auto replicaId = _getReplicaId(msg.clientAddr);
 
         if (replicaId == LogsDB::REPLICA_COUNT) {
             LOG_DEBUG(_env, "We can't match this address to replica. Dropping");
@@ -466,7 +379,7 @@ private:
         req.replicaId = replicaId;
 
         try {
-            req.header.unpack(buf);
+            req.header.unpack(msg.buf);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBRequest.header: %s", err.what());
             _logEntries.pop_back();
@@ -480,64 +393,64 @@ private:
         }
 
         try {
-            req.requestContainer.unpack(buf, req.header.kind);
+            req.requestContainer.unpack(msg.buf, req.header.kind);
         } catch (const BincodeException& exc) {
             LOG_ERROR(_env, "Could not parse LogsDBRequest.requestContainer of kind %s: %s", req.header.kind, exc.what());
             _logEntries.pop_back();
             return;
         }
 
-        if (unlikely(buf.remaining() < 8)) {
-            LOG_ERROR(_env, "Could not parse LogsDBRequest of kind %s from %s, message signature is 8 bytes, only %s remaining", req.header.kind, *clientAddr, buf.remaining());
+        if (unlikely(msg.buf.remaining() < 8)) {
+            LOG_ERROR(_env, "Could not parse LogsDBRequest of kind %s from %s, message signature is 8 bytes, only %s remaining", req.header.kind, msg.clientAddr, msg.buf.remaining());
             _logEntries.pop_back();
             return;
         }
 
-        auto expectedMac = cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data);
+        auto expectedMac = cbcmac(_expandedShardKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
         BincodeFixedBytes<8> receivedMac;
-        buf.unpackFixedBytes<8>(receivedMac);
+        msg.buf.unpackFixedBytes<8>(receivedMac);
         if (unlikely(expectedMac != receivedMac.data)) {
-            LOG_ERROR(_env, "Incorrect signature for LogsDBRequest %s from %s", req.header.kind, *clientAddr);
+            LOG_ERROR(_env, "Incorrect signature for LogsDBRequest %s from %s", req.header.kind, msg.clientAddr);
             _logEntries.pop_back();
             return;
         }
 
-        if (unlikely(buf.remaining())) {
-            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBRequest %s from %s", buf.remaining(), req.header.kind, *clientAddr);
+        if (unlikely(msg.buf.remaining())) {
+            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBRequest %s from %s", msg.buf.remaining(), req.header.kind, msg.clientAddr);
             _logEntries.pop_back();
         }
         LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", req.header.kind, req.header.requestId, req.replicaId);
     }
 
-    uint8_t _getReplicaId(sockaddr_in* clientAddress) {
+    uint8_t _getReplicaId(const IpPort& clientAddress) {
         auto replicasPtr = _shared.replicas;
         if (!replicasPtr) {
             return LogsDB::REPLICA_COUNT;
         }
 
         for (ReplicaId replicaId = 0; replicaId.u8 < replicasPtr->size(); ++replicaId.u8) {
-            auto& replica = replicasPtr->at(replicaId.u8);
-            if (replica.addrs[0] == *clientAddress || replica.addrs[1] == *clientAddress) {
-                    return replicaId.u8;
+            if (replicasPtr->at(replicaId.u8).contains(clientAddress)) {
+                return replicaId.u8;
             }
         }
+
         return LogsDB::REPLICA_COUNT;
     }
 
-    void _handleShardRequest(int sockIx, struct sockaddr_in* clientAddr, BincodeBuf& reqBbuf) {
-        LOG_DEBUG(_env, "received message from %s", *clientAddr);
+    void _handleShardRequest(UDPMessage& msg) {
+        LOG_DEBUG(_env, "received message from %s", msg.clientAddr);
         if (unlikely(!_shared.isLeader.load(std::memory_order_relaxed))) {
-            LOG_DEBUG(_env, "not leader, dropping request %s", *clientAddr);
+            LOG_DEBUG(_env, "not leader, dropping request %s", msg.clientAddr);
             return;
         }
 
         // First, try to parse the header
         ShardRequestHeader reqHeader;
         try {
-            reqHeader.unpack(reqBbuf);
+            reqHeader.unpack(msg.buf);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse: %s", err.what());
-            RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", *clientAddr);
+            RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", msg.clientAddr);
             return;
         }
 
@@ -548,41 +461,42 @@ private:
 
         auto t0 = eggsNow();
 
-        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, *clientAddr);
+        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, msg.clientAddr);
 
         // If this will be filled in with an actual code, it means that we couldn't process
         // the request.
         EggsError err = NO_ERROR;
 
         // Now, try to parse the body
+        ShardReqContainer reqContainer;
         try {
-            _reqContainer.unpack(reqBbuf, reqHeader.kind);
+            reqContainer.unpack(msg.buf, reqHeader.kind);
             if (bigRequest(reqHeader.kind)) {
                 if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
-                    LOG_TRACE(_env, "parsed request: %s", _reqContainer);
+                    LOG_TRACE(_env, "parsed request: %s", reqContainer);
                 } else {
                     LOG_DEBUG(_env, "parsed request: <omitted>");
                 }
             } else {
-                LOG_DEBUG(_env, "parsed request: %s", _reqContainer);
+                LOG_DEBUG(_env, "parsed request: %s", reqContainer);
             }
         } catch (const BincodeException& exc) {
             LOG_ERROR(_env, "Could not parse: %s", exc.what());
-            RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, *clientAddr);
+            RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, msg.clientAddr);
             err = EggsError::MALFORMED_REQUEST;
         }
 
         if (likely(err == NO_ERROR)) {
             // authenticate, if necessary
             if (isPrivilegedRequestKind(reqHeader.kind)) {
-                if (unlikely(reqBbuf.remaining() < 8)) {
-                    LOG_ERROR(_env, "Could not parse request of kind %s from %s, message signature is 8 bytes, only %s remaining", reqHeader.kind, *clientAddr, reqBbuf.remaining());
-                    RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, *clientAddr);
+                if (unlikely(msg.buf.remaining() < 8)) {
+                    LOG_ERROR(_env, "Could not parse request of kind %s from %s, message signature is 8 bytes, only %s remaining", reqHeader.kind, msg.clientAddr, msg.buf.remaining());
+                    RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, msg.clientAddr);
                     err = EggsError::MALFORMED_REQUEST;
                 } else {
-                    auto expectedMac = cbcmac(_expandedCDCKey, reqBbuf.data, reqBbuf.cursor - reqBbuf.data);
+                    auto expectedMac = cbcmac(_expandedCDCKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
                     BincodeFixedBytes<8> receivedMac;
-                    reqBbuf.unpackFixedBytes<8>(receivedMac);
+                    msg.buf.unpackFixedBytes<8>(receivedMac);
                     if (expectedMac != receivedMac.data) {
                         err = EggsError::NOT_AUTHORISED;
                     }
@@ -591,25 +505,26 @@ private:
         }
 
         // Make sure nothing is left
-        if (unlikely(err == NO_ERROR && reqBbuf.remaining() != 0)) {
-            RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", reqBbuf.remaining(), reqHeader.kind, *clientAddr);
+        if (unlikely(err == NO_ERROR && msg.buf.remaining() != 0)) {
+            RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", msg.buf.remaining(), reqHeader.kind, msg.clientAddr);
             err = EggsError::MALFORMED_REQUEST;
         }
 
         // At this point, if it's a read request, we can process it,
         // if it's a write request we prepare the log entry and
         // send it off.
+        ShardRespContainer respContainer;
         if (likely(err == NO_ERROR)) {
-            if (readOnlyShardReq(_reqContainer.kind())) {
-                err = _shared.shardDB.read(_reqContainer, _respContainer);
+            if (readOnlyShardReq(reqContainer.kind())) {
+                err = _shared.shardDB.read(reqContainer, respContainer);
             } else {
                 auto& entry = _logEntries.emplace_back().setQueuedShardLogEntry();
-                entry.sockIx = sockIx;
-                entry.clientAddr = *clientAddr;
+                entry.sockIx = msg.socketIx;
+                entry.clientAddr = msg.clientAddr;
                 entry.receivedAt = t0;
                 entry.requestKind = reqHeader.kind;
                 entry.requestId = reqHeader.requestId;
-                err = _shared.shardDB.prepareLogEntry(_reqContainer, entry.logEntry);
+                err = _shared.shardDB.prepareLogEntry(reqContainer, entry.logEntry);
                 if (likely(err == NO_ERROR)) {
                     return; // we're done here, move along
                 } else {
@@ -620,7 +535,7 @@ private:
 
         Duration elapsed = eggsNow() - t0;
         bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-        packShardResponse(_env, _shared, _sendBuf, _sendHdrs[sockIx], _sendVecs[sockIx], reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, clientAddr, sockIx, err, _respContainer);
+        packShardResponse(_env, _shared.sock().addr(), *_sender, reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, msg.clientAddr, msg.socketIx, err, respContainer);
     }
 
 public:
@@ -631,46 +546,21 @@ public:
         }
 
         _logEntries.clear();
-        _sendBuf.clear();
-        _channel.clear();
-        for (int i = 0; i < 2; i++) {
-            _sendHdrs[i].clear();
-            _sendVecs[i].clear();
+
+        if (unlikely(!_channel->receiveMessages(_env, _shared.socks, *_receiver))) {
+            return;
         }
 
-        if (unlikely(Loop::poll(_shared.socks.data(), 1 + (_shared.socks[1].fd != 0), -1) < 0)) {
-            if (errno == EINTR) { return; }
-            throw SYSCALL_EXCEPTION("poll");
+        for (auto& msg : _channel->protocolMessages(LOG_RESP_PROTOCOL_VERSION)) {
+            _handleLogsDBResponse(msg);
         }
 
-        for (int sockIx = 0; sockIx < _shared.socks.size(); sockIx++) {
-            const auto& sock = _shared.socks[sockIx];
-            if (!(sock.revents & POLLIN)) { continue; }
-
-            int msgs = recvmmsg(_shared.socks[sockIx].fd, &_recvHdrs[sockIx][0], _recvHdrs[sockIx].size(), MSG_DONTWAIT, nullptr);
-            if (unlikely(msgs < 0)) { // we know we have data from poll, we won't get EAGAIN
-                throw SYSCALL_EXCEPTION("recvmmsgs");
-            }
-            LOG_DEBUG(_env, "received %s messages from socket %s", msgs, sockIx);
-
-            if (msgs > 0) {
-                _shared.receivedRequests[sockIx] = _shared.receivedRequests[sockIx]*0.95 + ((double)msgs)*0.05;
-            }
-            for (int msgIx = 0; msgIx < msgs; msgIx++) {
-                _channel.demultiplexMessage(sockIx, _recvHdrs[sockIx][msgIx]);
-            }
+        for (auto& msg : _channel->protocolMessages(LOG_REQ_PROTOCOL_VERSION)) {
+            _handleLogsDBRequest(msg);
         }
 
-        for (auto& msg : _channel.getProtocolMessages(LOG_RESP_PROTOCOL_VERSION)) {
-            _handleLogsDBResponse(msg.socketId, msg.clientAddr, msg.buf);
-        }
-
-        for (auto& msg : _channel.getProtocolMessages(LOG_REQ_PROTOCOL_VERSION)) {
-            _handleLogsDBRequest(msg.socketId, msg.clientAddr, msg.buf);
-        }
-
-        for (auto& msg : _channel.getProtocolMessages(SHARD_REQ_PROTOCOL_VERSION)) {
-            _handleShardRequest(msg.socketId, msg.clientAddr, msg.buf);
+        for (auto& msg : _channel->protocolMessages(SHARD_REQ_PROTOCOL_VERSION)) {
+            _handleShardRequest(msg);
         }
 
 
@@ -687,27 +577,7 @@ public:
             }
         }
         // write out read responses to UDP
-        for (int i = 0; i < 2; i++) {
-            if (_sendHdrs[i].size() == 0) { continue; }
-            LOG_DEBUG(_env, "sending %s read responses to sock %s", _sendHdrs[i].size(), i);
-            for (int j = 0; j < _sendHdrs[i].size(); j++) {
-                auto& vec = _sendVecs[i][j];
-                vec.iov_base = &_sendBuf[(size_t)vec.iov_base];
-                auto& hdr = _sendHdrs[i][j];
-                hdr.msg_hdr.msg_iov = &vec;
-            }
-            int ret = sendmmsg(_shared.socks[i].fd, &_sendHdrs[i][0], _sendHdrs[i].size(), 0);
-            if (unlikely(ret < 0)) {
-                // we get EPERM when nf drops packets
-                if (errno == EPERM) {
-                    LOG_INFO(_env, "we got EPERM when trying to send %s messages, will drop them", _sendHdrs[i].size());
-                } else {
-                    throw SYSCALL_EXCEPTION("sendto");
-                }
-            } else if (unlikely(ret < _sendHdrs[i].size())) {
-                LOG_INFO(_env, "dropping %s out of %s requests since `sendmmsg` could not send them all", _sendHdrs[i].size()-ret, _sendHdrs[i].size());
-            }
-        }
+        _sender->sendMessages(_env, _shared.sock());
     }
 };
 
@@ -730,13 +600,9 @@ private:
     std::vector<LogsDBResponse> _logsDBOutResponses;
     std::unordered_map<uint64_t, QueuedShardLogEntry> _inFlightEntries;
     std::vector<QueuedShardLogEntry> _outgoingLogEntries;
-    std::shared_ptr<std::array<ReplicaAddrsInfo, LogsDB::REPLICA_COUNT>> _replicaInfo;
+    std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicaInfo;
 
-    // sendmmsg data (one per socket)
-    std::vector<char> _sendBuf;
-    std::array<std::vector<struct mmsghdr>, 2> _sendHdrs; // one per socket
-    std::array<std::vector<struct iovec>, 2> _sendVecs;
-
+    UDPSender _sender;
     uint64_t _packetDropRand;
     uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
@@ -751,6 +617,7 @@ public:
         _shared(shared),
         _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _dontDoReplication(options.dontDoReplication),
+        _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
         _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
@@ -880,7 +747,7 @@ public:
                 if (likely(logEntry.requestId)) {
                     Duration elapsed = eggsNow() - logEntry.receivedAt;
                     bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-                    packShardResponse(_env, _shared, _sendBuf, _sendHdrs[logEntry.sockIx], _sendVecs[logEntry.sockIx], logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, &logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
+                    packShardResponse(_env, _shared.sock().addr(), _sender, logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
                 } else if (unlikely(err != NO_ERROR)) {
                     RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
                 }
@@ -894,19 +761,19 @@ public:
         // not needed as we just flushed and apparently it does actually flush again
         // _logsDB->flush(true);
 
-        sendMessages();
+        _sender.sendMessages(_env, _shared.sock());
     }
 
-    ReplicaAddrsInfo* addressFromReplicaId(ReplicaId id) {
+    AddrsInfo* addressFromReplicaId(ReplicaId id) {
         if (!_replicaInfo) {
             return nullptr;
         }
 
-        auto& replicaInfo = (*_replicaInfo)[id.u8];
-        if (replicaInfo.addrs[0].sin_addr.s_addr == 0) {
+        auto& addr = (*_replicaInfo)[id.u8];
+        if (addr[0].port == 0) {
             return nullptr;
         }
-        return &replicaInfo;
+        return &addr;
     }
 
     void packLogsDBResponse(LogsDBResponse& response) {
@@ -922,34 +789,18 @@ public:
             LOG_DEBUG(_env, "artificially dropping response %s", response.header.requestId);
             return;
         }
-        // pack into sendBuf
-        size_t sendBufBegin = _sendBuf.size();
-        _sendBuf.resize(sendBufBegin + MAX_UDP_MTU);
-        BincodeBuf respBbuf(&_sendBuf[sendBufBegin], MAX_UDP_MTU);
-        response.header.pack(respBbuf);
-        response.responseContainer.pack(respBbuf);
-        respBbuf.packFixedBytes<8>({cbcmac(_expandedShardKey, respBbuf.data, respBbuf.cursor - respBbuf.data)});
-        _sendBuf.resize(sendBufBegin + respBbuf.len());
 
-        auto now = eggsNow(); // randomly pick one of the shard addrs and one of our sockets
-        int whichReplicaAddr = now.ns & !!addrInfo.addrs[1].sin_port;
-        int whichSock = (now.ns>>1) & !!_shared.ips[1];
+        _sender.prepareOutgoingMessage(
+            _env,
+            _shared.sock().addr(),
+            addrInfo,
+            [&response,this](BincodeBuf& buf) {
+                response.header.pack(buf);
+                response.responseContainer.pack(buf);
+                buf.packFixedBytes<8>({cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data)});
+            });
 
-        LOG_DEBUG(_env, "will send response for req id %s kind %s to %s", response.header.requestId, response.header.kind, addrInfo.addrs[whichReplicaAddr]);
-
-        // Prepare sendmmsg stuff. The vectors might be resized by the
-        // time we get to sending this, so store references when we must
-        // -- we'll fix up the actual values later.
-        auto& hdr = _sendHdrs[whichSock].emplace_back();
-        hdr.msg_hdr = {
-            .msg_name = (sockaddr_in*)&addrInfo.addrs[whichReplicaAddr],
-            .msg_namelen = sizeof(addrInfo.addrs[whichReplicaAddr]),
-            .msg_iovlen = 1,
-        };
-        hdr.msg_len = respBbuf.len();
-        auto& vec = _sendVecs[whichSock].emplace_back();
-        vec.iov_base = (void*)sendBufBegin;
-        vec.iov_len = respBbuf.len();
+        LOG_DEBUG(_env, "will send response for req id %s kind %s to %s", response.header.requestId, response.header.kind, addrInfo);
     }
 
     void packLogsDBRequest(LogsDBRequest& request) {
@@ -965,58 +816,18 @@ public:
             LOG_DEBUG(_env, "artificially dropping request %s", request.header.requestId);
             return;
         }
-        // pack into sendBuf
-        size_t sendBufBegin = _sendBuf.size();
-        _sendBuf.resize(sendBufBegin + MAX_UDP_MTU);
-        BincodeBuf respBbuf(&_sendBuf[sendBufBegin], MAX_UDP_MTU);
-        request.header.pack(respBbuf);
-        request.requestContainer.pack(respBbuf);
-        respBbuf.packFixedBytes<8>({cbcmac(_expandedShardKey, respBbuf.data, respBbuf.cursor - respBbuf.data)});
-        _sendBuf.resize(sendBufBegin + respBbuf.len());
 
-        request.sentTime = eggsNow(); // randomly pick one of the shard addrs and one of our sockets
-        int whichReplicaAddr = request.sentTime.ns & !!addrInfo.addrs[1].sin_port;
-        int whichSock = (request.sentTime.ns>>1) & !!_shared.ips[1];
+        _sender.prepareOutgoingMessage(
+            _env,
+            _shared.sock().addr(),
+            addrInfo,
+            [&request,this](BincodeBuf& buf) {
+                request.header.pack(buf);
+                request.requestContainer.pack(buf);
+                buf.packFixedBytes<8>({cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data)});
+            });
 
-        LOG_DEBUG(_env, "will send request for req id %s kind %s to %s", request.header.requestId, request.header.kind, addrInfo.addrs[whichReplicaAddr]);
-
-        // Prepare sendmmsg stuff. The vectors might be resized by the
-        // time we get to sending this, so store references when we must
-        // -- we'll fix up the actual values later.
-        auto& hdr = _sendHdrs[whichSock].emplace_back();
-        hdr.msg_hdr = {
-            .msg_name = (sockaddr_in*)&addrInfo.addrs[whichReplicaAddr],
-            .msg_namelen = sizeof(addrInfo.addrs[whichReplicaAddr]),
-            .msg_iovlen = 1,
-        };
-        hdr.msg_len = respBbuf.len();
-        auto& vec = _sendVecs[whichSock].emplace_back();
-        vec.iov_base = (void*)sendBufBegin;
-        vec.iov_len = respBbuf.len();
-    }
-
-    void sendMessages() {
-        for (int i = 0; i < _sendHdrs.size(); i++) {
-            if (_sendHdrs[i].size() == 0) { continue; }
-            LOG_DEBUG(_env, "sending %s messages to socket %s", _sendHdrs[i].size(), i);
-            for (int j = 0; j < _sendHdrs[i].size(); j++) {
-                auto& vec = _sendVecs[i][j];
-                vec.iov_base = &_sendBuf[(size_t)vec.iov_base];
-                auto& hdr = _sendHdrs[i][j];
-                hdr.msg_hdr.msg_iov = &vec;
-            }
-            int ret = sendmmsg(_shared.socks[i].fd, &_sendHdrs[i][0], _sendHdrs[i].size(), 0);
-            if (unlikely(ret < 0)) {
-                // we get this when nf drops packets
-                if (errno != EPERM) {
-                    throw SYSCALL_EXCEPTION("sendto");
-                } else {
-                    LOG_INFO(_env, "dropping %s messages because of EPERM", _sendHdrs[i].size());
-                }
-            } else if (unlikely(ret < _sendHdrs[i].size())) {
-                LOG_INFO(_env, "dropping %s out of %s messages since `sendmmsg` could not send them all", _sendHdrs[i].size()-ret, _sendHdrs[i].size());
-            }
-        }
+        LOG_DEBUG(_env, "will send request for req id %s kind %s to %s", request.header.requestId, request.header.kind, addrInfo);
     }
 
     virtual void step() override {
@@ -1027,11 +838,6 @@ public:
         _logsDBOutResponses.clear();
         _logEntries.clear();
         _outgoingLogEntries.clear();
-        _sendBuf.clear();
-        for (int i = 0; i < _sendHdrs.size(); i++) {
-            _sendHdrs[i].clear();
-            _sendVecs[i].clear();
-        }
         _replicaInfo = _shared.replicas;
         uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, _maxWritesAtOnce, _logsDB ? _logsDB->getNextTimeout() : -1);
         if (likely(pulled > 0)) {
@@ -1068,12 +874,8 @@ private:
     ShardReplicaId _shrid;
     std::string _shuckleHost;
     uint16_t _shucklePort;
-    bool _hasSecondIp;
     XmonNCAlert _alert;
-    AddrsInfo _info;
-    bool _infoLoaded;
     bool _registerCompleted;
-    std::array<AddrsInfo, 5> _replicas;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
@@ -1081,8 +883,6 @@ public:
         _shrid(shrid),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
-        _hasSecondIp(options.ipPorts[1].port != 0),
-        _infoLoaded(false),
         _registerCompleted(false)
     {}
 
@@ -1093,28 +893,6 @@ public:
     }
 
     virtual bool periodicStep() {
-        if (unlikely(!_infoLoaded)) {
-            uint16_t port1 = _shared.ports[0].load();
-            uint16_t port2 = _shared.ports[1].load();
-            // Avoid registering with only one port, so that clients can just wait on
-            // the first port being ready and they always have both.
-            if (port1 == 0 || (_hasSecondIp && port2 == 0)) {
-                // shard server isn't up yet
-                return false;
-            }
-            uint32_t ip1 = _shared.ips[0].load();
-            uint32_t ip2 = _shared.ips[1].load();
-
-            uint32_t ip = htonl(ip1);
-            memcpy(_info.ip1.data.data(), &ip, 4);
-            _info.port1 = port1;
-
-            ip = htonl(ip2);
-            memcpy(_info.ip2.data.data(), &ip, 4);
-            _info.port2 = port2;
-
-            _infoLoaded = true;
-        }
         if (likely(_registerCompleted)) {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for shardId %s from shuckle", _shrid.shardId());
@@ -1124,32 +902,18 @@ public:
                 _env.updateAlert(_alert, "Failed getting shard replicas from shuckle: %s", errStr);
                 return false;
             }
-            if (_info != replicas[_shrid.replicaId().u8]) {
-                _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_shrid.replicaId().u8], _info);
+            if (_shared.sock().addr() != replicas[_shrid.replicaId().u8]) {
+                _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_shrid.replicaId().u8], _shared.sock().addr());
                 return false;
             }
-            if (_replicas != replicas) {
-                _replicas = replicas;
-                auto replicaUpdatePtr = std::make_shared<std::array<ReplicaAddrsInfo, LogsDB::REPLICA_COUNT>>();
-                auto& replicaUpdate = *replicaUpdatePtr;
-                for (size_t i = 0; i < _replicas.size(); ++i) {
-                    uint32_t ip;
-                    memcpy(&ip, _replicas[i].ip1.data.data(), _replicas[i].ip1.data.size());
-                    replicaUpdate[i].addrs[0].sin_family = AF_INET;
-                    replicaUpdate[i].addrs[0].sin_addr.s_addr = ip;
-                    memcpy(&ip, _replicas[i].ip2.data.data(), _replicas[i].ip2.data.size());
-                    replicaUpdate[i].addrs[1].sin_family = AF_INET;
-                    replicaUpdate[i].addrs[1].sin_addr.s_addr = ip;
-
-                    replicaUpdate[i].addrs[0].sin_port = htons(_replicas[i].port1);
-                    replicaUpdate[i].addrs[1].sin_port= htons(_replicas[i].port2);
-                }
-                std::atomic_exchange(&_shared.replicas, replicaUpdatePtr);
+            if (unlikely(!_shared.replicas || *_shared.replicas != replicas)) {
+                LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", replicas[0], replicas[1], replicas[2], replicas[3], replicas[4]);
+                std::atomic_exchange(&_shared.replicas, std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
             }
         }
 
-        LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _info);
-        const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _info);
+        LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _shared.sock().addr());
+        const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -1393,14 +1157,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
         LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
         LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
-        for (int i = 0; i < 2; i++) {
-            LOG_INFO(env, "  port%s = %s", i+1, options.ipPorts[0].port);
-            {
-                char ip[INET_ADDRSTRLEN];
-                uint32_t ipN = options.ipPorts[i].ip;
-                LOG_INFO(env, "  ownIp%s = %s", i+1, inet_ntop(AF_INET, &ipN, ip, INET_ADDRSTRLEN));
-            }
-        }
+        LOG_INFO(env, "  ownAddres = %s", options.shardAddrs);
         LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
@@ -1456,7 +1213,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
     }
 
-    ShardShared shared(sharedDB, blockServicesCache, shardDB);
+    ShardShared shared(sharedDB, blockServicesCache, shardDB, UDPSocketPair(env, options.shardAddrs));
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));

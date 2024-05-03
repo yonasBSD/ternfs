@@ -816,10 +816,7 @@ func (proc *blocksProcessor) processResponses(log *lib.Logger) {
 
 type blocksProcessorKey struct {
 	blockServiceKey uint64
-	ip1             [4]byte
-	port1           uint16
-	ip2             [4]byte
-	port2           uint16
+	addrs           msgs.AddrsInfo
 }
 
 type blocksProcessors struct {
@@ -838,10 +835,7 @@ func (procs *blocksProcessors) init(what string, timeouts **lib.ReqTimeouts) {
 
 type sendArgs struct {
 	blockService       msgs.BlockServiceId
-	ip1                [4]byte
-	port1              uint16
-	ip2                [4]byte
-	port2              uint16
+	addrs              msgs.AddrsInfo
 	req                msgs.BlocksRequest
 	reqAdditionalBody  io.ReadSeeker // this will _only_ be used to seek to start on retries
 	resp               msgs.BlocksResponse
@@ -856,8 +850,8 @@ func (procs *blocksProcessors) send(
 	args *sendArgs,
 	completionChan chan *blockCompletion,
 ) error {
-	if args.port1 == 0 && args.port2 == 0 {
-		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.ip1, args.port1, args.ip2, args.port2))
+	if args.addrs.Addr1.Port == 0 && args.addrs.Addr1.Port == 0 {
+		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.addrs.Addr1.Addrs, args.addrs.Addr1.Port, args.addrs.Addr2.Addrs, args.addrs.Addr2.Port))
 	}
 	resp := &clientBlockResponse{
 		req:                  args.req,
@@ -873,12 +867,10 @@ func (procs *blocksProcessors) send(
 		resp:                 resp,
 	}
 	key := blocksProcessorKey{
-		ip1:   args.ip1,
-		port1: args.port1,
-		ip2:   args.ip2,
-		port2: args.port2,
+		blockServiceKey: uint64(args.blockService) & ((1 << uint64(procs.blockServiceBits)) - 1),
+		addrs:           args.addrs,
 	}
-	key.blockServiceKey = uint64(args.blockService) & ((1 << uint64(procs.blockServiceBits)) - 1)
+
 	// likely case, we already have something. we could
 	// LoadOrStore directly but this saves us allocating new
 	// chans
@@ -891,8 +883,8 @@ func (procs *blocksProcessors) send(
 	procAny, loaded := procs.processors.LoadOrStore(key, &blocksProcessor{
 		reqChan:         make(chan *clientBlockRequest, 128),
 		inFlightReqChan: make(chan clientBlockResponseWithGeneration, 128),
-		addr1:           net.TCPAddr{IP: net.IP(args.ip1[:]), Port: int(args.port1)},
-		addr2:           net.TCPAddr{IP: net.IP(args.ip2[:]), Port: int(args.port2)},
+		addr1:           net.TCPAddr{IP: net.IP(args.addrs.Addr1.Addrs[:]), Port: int(args.addrs.Addr1.Port)},
+		addr2:           net.TCPAddr{IP: net.IP(args.addrs.Addr2.Addrs[:]), Port: int(args.addrs.Addr2.Port)},
 		what:            procs.what,
 		timeout:         procs.timeouts,
 		_conn:           &blocksProcessorConn{},
@@ -933,10 +925,8 @@ type Client struct {
 }
 
 func (c *Client) refreshAddrs(log *lib.Logger, shuckleTimeout *lib.ReqTimeouts, shuckleAddress string) error {
-	var shardIps [256][2][4]byte
-	var shardPorts [256][2]uint16
-	var cdcIps [2][4]byte
-	var cdcPorts [2]uint16
+	var shardAddrs [256]msgs.AddrsInfo
+	var cdcAddrs msgs.AddrsInfo
 	{
 		log.Info("Getting shard/CDC info from shuckle at '%v'", shuckleAddress)
 		resp, err := ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.ShardsReq{})
@@ -945,28 +935,22 @@ func (c *Client) refreshAddrs(log *lib.Logger, shuckleTimeout *lib.ReqTimeouts, 
 		}
 		shards := resp.(*msgs.ShardsResp)
 		for i, shard := range shards.Shards {
-			if shard.Port1 == 0 {
+			if shard.Addrs.Addr1.Port == 0 {
 				return fmt.Errorf("shard %v not present in shuckle", i)
 			}
-			shardIps[i][0] = shard.Ip1
-			shardPorts[i][0] = shard.Port1
-			shardIps[i][1] = shard.Ip2
-			shardPorts[i][1] = shard.Port2
+			shardAddrs[i] = shard.Addrs
 		}
 		resp, err = ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.CdcReq{})
 		if err != nil {
 			return fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
 		cdc := resp.(*msgs.CdcResp)
-		if cdc.Port1 == 0 {
+		if cdc.Addrs.Addr1.Port == 0 {
 			return fmt.Errorf("CDC not present in shuckle")
 		}
-		cdcIps[0] = cdc.Ip1
-		cdcPorts[0] = cdc.Port1
-		cdcIps[1] = cdc.Ip2
-		cdcPorts[1] = cdc.Port2
+		cdcAddrs = cdc.Addrs
 	}
-	c.SetAddrs(&cdcIps, &cdcPorts, &shardIps, &shardPorts)
+	c.SetAddrs(cdcAddrs, &shardAddrs)
 	return nil
 }
 
@@ -1110,23 +1094,28 @@ func (c *Client) shardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
 // Modify the CDC and Shard IP addresses and ports dynamically.
 // The update is atomic, this can be done at any time from any context.
 func (c *Client) SetAddrs(
-	cdcIps *[2][4]byte,
-	cdcPorts *[2]uint16,
-	shardIps *[256][2][4]byte,
-	shardPorts *[256][2]uint16,
+	cdcAddrs msgs.AddrsInfo,
+	shardAddrs *[256]msgs.AddrsInfo,
 ) {
-	for i := 0; i < 2; i++ {
-		for j := 0; j < 256; j++ {
-			atomic.StoreUint64(
-				&c.shardRawAddrs[j][i],
-				uint64(shardPorts[j][i])<<32|uint64(shardIps[j][i][0])<<24|uint64(shardIps[j][i][1])<<16|uint64(shardIps[j][i][2])<<8|uint64(shardIps[j][i][3]),
-			)
-		}
+	for i := 0; i < len(shardAddrs); i++ {
 		atomic.StoreUint64(
-			&c.cdcRawAddr[i],
-			uint64(cdcPorts[i])<<32|uint64(cdcIps[i][0])<<24|uint64(cdcIps[i][1])<<16|uint64(cdcIps[i][2])<<8|uint64(cdcIps[i][3]),
+			&c.shardRawAddrs[i][0],
+			uint64(shardAddrs[i].Addr1.Port)<<32|uint64(shardAddrs[i].Addr1.Addrs[0])<<24|uint64(shardAddrs[i].Addr1.Addrs[1])<<16|uint64(shardAddrs[i].Addr1.Addrs[2])<<8|uint64(shardAddrs[i].Addr1.Addrs[3]),
+		)
+		atomic.StoreUint64(
+			&c.shardRawAddrs[i][1],
+			uint64(shardAddrs[i].Addr2.Port)<<32|uint64(shardAddrs[i].Addr2.Addrs[0])<<24|uint64(shardAddrs[i].Addr2.Addrs[1])<<16|uint64(shardAddrs[i].Addr2.Addrs[2])<<8|uint64(shardAddrs[i].Addr2.Addrs[3]),
 		)
 	}
+
+	atomic.StoreUint64(
+		&c.cdcRawAddr[0],
+		uint64(cdcAddrs.Addr1.Port)<<32|uint64(cdcAddrs.Addr1.Addrs[0])<<24|uint64(cdcAddrs.Addr1.Addrs[1])<<16|uint64(cdcAddrs.Addr1.Addrs[2])<<8|uint64(cdcAddrs.Addr1.Addrs[3]),
+	)
+	atomic.StoreUint64(
+		&c.cdcRawAddr[1],
+		uint64(cdcAddrs.Addr2.Port)<<32|uint64(cdcAddrs.Addr2.Addrs[0])<<24|uint64(cdcAddrs.Addr2.Addrs[1])<<16|uint64(cdcAddrs.Addr2.Addrs[2])<<8|uint64(cdcAddrs.Addr2.Addrs[3]),
+	)
 }
 
 func (c *Client) Close() {
@@ -1265,9 +1254,7 @@ func (c *Client) ResolvePath(log *lib.Logger, path string) (msgs.InodeId, error)
 func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any) *sendArgs {
 	return &sendArgs{
 		block.BlockServiceId,
-		block.BlockServiceIp1,
-		block.BlockServicePort1,
-		block.BlockServiceIp2, block.BlockServicePort2,
+		block.BlockServiceAddrs,
 		&msgs.WriteBlockReq{
 			BlockId:     block.BlockId,
 			Crc:         crc,
@@ -1301,7 +1288,7 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 		ch := make(chan *blockCompletion, 1)
 		err := processor.send(log, args, ch)
 		if err != nil {
-			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, err)
+			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.addrs.Addr1.Addrs[:]), args.addrs.Addr1.Port, net.IP(args.addrs.Addr2.Addrs[:]), args.addrs.Addr2.Port, err)
 			return nil, err
 		}
 		resp := <-ch
@@ -1312,10 +1299,10 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 		if retriableBlockError(err) {
 			next := timeouts.Next(startedAt)
 			if next == 0 {
-				log.RaiseAlertStack(lib.XMON_NEVER, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will not retry since time is up: %v", args.blockService, net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, err)
+				log.RaiseAlertStack(lib.XMON_NEVER, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will not retry since time is up: %v", args.blockService, net.IP(args.addrs.Addr1.Addrs[:]), args.addrs.Addr1.Port, net.IP(args.addrs.Addr2.Addrs[:]), args.addrs.Addr2.Port, attempt, err)
 				return nil, err
 			}
-			log.RaiseNCStack(timeoutAlert, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will retry in %v: %v", args.blockService, net.IP(args.ip1[:]), args.port1, net.IP(args.ip2[:]), args.port2, attempt, next, err)
+			log.RaiseNCStack(timeoutAlert, 2, "block request to %v %v:%v %v:%v failed with retriable error (attempt %v), will retry in %v: %v", args.blockService, net.IP(args.addrs.Addr1.Addrs[:]), args.addrs.Addr1.Port, net.IP(args.addrs.Addr2.Addrs[:]), args.addrs.Addr2.Port, attempt, next, err)
 			if args.reqAdditionalBody != nil {
 				_, err := args.reqAdditionalBody.Seek(0, io.SeekStart)
 				if err != nil {
@@ -1343,10 +1330,7 @@ func (c *Client) WriteBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, block *m
 func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any) *sendArgs {
 	return &sendArgs{
 		blockService.Id,
-		blockService.Ip1,
-		blockService.Port1,
-		blockService.Ip2,
-		blockService.Port2,
+		blockService.Addrs,
 		&msgs.FetchBlockReq{
 			BlockId: blockId,
 			Offset:  offset,
@@ -1390,10 +1374,7 @@ func (c *Client) FetchBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, blockSer
 func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sendArgs {
 	return &sendArgs{
 		block.BlockServiceId,
-		block.BlockServiceIp1,
-		block.BlockServicePort1,
-		block.BlockServiceIp2,
-		block.BlockServicePort2,
+		block.BlockServiceAddrs,
 		&msgs.EraseBlockReq{
 			BlockId:     block.BlockId,
 			Certificate: block.Certificate,
@@ -1421,10 +1402,7 @@ func (c *Client) EraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlock
 func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any) *sendArgs {
 	return &sendArgs{
 		blockService.Id,
-		blockService.Ip1,
-		blockService.Port1,
-		blockService.Ip2,
-		blockService.Port2,
+		blockService.Addrs,
 		&msgs.CheckBlockReq{
 			BlockId: blockId,
 			Size:    size,

@@ -92,11 +92,17 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
             .err = 0,
         };
         eggsfs_shard_info_get_start(&ctx, start);
-        eggsfs_shard_info_get_ip1(&ctx, start, shard_ip1);
-        eggsfs_shard_info_get_port1(&ctx, shard_ip1, shard_port1);
-        eggsfs_shard_info_get_ip2(&ctx, shard_port1, shard_ip2);
-        eggsfs_shard_info_get_port2(&ctx, shard_ip2, shard_port2);
-        eggsfs_shard_info_get_last_seen(&ctx, shard_port2, last_seen);
+        eggsfs_shard_info_get_addrs(&ctx, start, addr_start);
+        eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+        eggsfs_ip_port_get_addrs(&ctx, ipport1_start, shard_ip1);
+        eggsfs_ip_port_get_port(&ctx, shard_ip1, shard_port1);
+        eggsfs_ip_port_get_end(&ctx, shard_port1, ipport1_end);
+        eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+        eggsfs_ip_port_get_addrs(&ctx, ipport2_start, shard_ip2);
+        eggsfs_ip_port_get_port(&ctx, shard_ip2, shard_port2);
+        eggsfs_ip_port_get_end(&ctx, shard_port2, ipport2_end);
+        eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+        eggsfs_shard_info_get_last_seen(&ctx, addr_end, last_seen);
         eggsfs_shard_info_get_end(&ctx, last_seen, end);
         eggsfs_shard_info_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
@@ -146,11 +152,17 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
             .err = 0,
         };
         eggsfs_cdc_resp_get_start(&ctx, start);
-        eggsfs_cdc_resp_get_ip1(&ctx, start, cdc_ip1);
-        eggsfs_cdc_resp_get_port1(&ctx, cdc_ip1, cdc_port1);
-        eggsfs_cdc_resp_get_ip2(&ctx, cdc_port1, cdc_ip2);
-        eggsfs_cdc_resp_get_port2(&ctx, cdc_ip2, cdc_port2);
-        eggsfs_cdc_resp_get_last_seen(&ctx, cdc_port2, last_seen);
+        eggsfs_cdc_resp_get_addrs(&ctx, start, addr_start);
+        eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+        eggsfs_ip_port_get_addrs(&ctx, ipport1_start, cdc_ip1);
+        eggsfs_ip_port_get_port(&ctx, cdc_ip1, cdc_port1);
+        eggsfs_ip_port_get_end(&ctx, cdc_port1, ipport1_end);
+        eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+        eggsfs_ip_port_get_addrs(&ctx, ipport2_start, cdc_ip2);
+        eggsfs_ip_port_get_port(&ctx, cdc_ip2, cdc_port2);
+        eggsfs_ip_port_get_end(&ctx, cdc_port2, ipport2_end);
+        eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+        eggsfs_cdc_resp_get_last_seen(&ctx, addr_end, last_seen);
         eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
         eggsfs_cdc_resp_get_finish(&ctx, end);
         if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }

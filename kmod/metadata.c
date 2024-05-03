@@ -80,7 +80,7 @@ static void prepare_resp_ctx(struct sk_buff* skb, struct eggsfs_bincode_get_ctx*
             return;
         } else {
             ctx->owned = ctx->buf;
-            BUG_ON(skb_copy_bits(skb, 0, ctx->buf, skb->len) != 0);            
+            BUG_ON(skb_copy_bits(skb, 0, ctx->buf, skb->len) != 0);
         }
     } else {
         ctx->buf = skb->data;
@@ -353,7 +353,7 @@ static bool check_new_edge_after_rename(
         consume_skb(skb);
         if (ctx.err != 0) { return false; }
         if (resp_target.x != target) { return false; }
-        *creation_time = resp_creation_time.x;        
+        *creation_time = resp_creation_time.x;
     }
 
     return true;
@@ -473,7 +473,7 @@ int eggsfs_shard_link_file(struct eggsfs_fs_info* info, u64 file, u64 cookie, u6
         *creation_time = resp_creation_time.x;
     }
 
-    return 0;    
+    return 0;
 }
 
 int eggsfs_shard_async_getattr_dir(
@@ -502,7 +502,7 @@ int eggsfs_shard_async_getattr_dir(
     }
 
     return 0;
-} 
+}
 
 int eggsfs_shard_parse_getattr_dir(
     struct sk_buff* skb,
@@ -668,7 +668,7 @@ int eggsfs_shard_create_file(struct eggsfs_fs_info* info, u8 shid, int itype, co
         *cookie = resp_cookie.x;
     }
 
-    return 0;    
+    return 0;
 }
 
 int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cookie, u64 offset, u32 size, const char* data, u8 len) {
@@ -703,7 +703,7 @@ int eggsfs_shard_add_inline_span(struct eggsfs_fs_info* info, u64 file, u64 cook
         FINISH_RESP();
     }
 
-    return 0;    
+    return 0;
 }
 
 int eggsfs_shard_set_time(struct eggsfs_fs_info* info, u64 file, u64 mtime, u64 atime) {
@@ -730,7 +730,7 @@ int eggsfs_shard_set_time(struct eggsfs_fs_info* info, u64 file, u64 mtime, u64 
         FINISH_RESP();
     }
 
-    return 0;    
+    return 0;
 }
 
 int eggsfs_shard_set_atime_nowait(struct eggsfs_fs_info* info, u64 file, u64 atime) {
@@ -831,11 +831,17 @@ int eggsfs_shard_add_span_initiate(
         int i;
         for (i = 0; i < B; i++) {
             eggsfs_add_span_initiate_block_info_get_start(&ctx, start);
-            eggsfs_add_span_initiate_block_info_get_block_service_ip1(&ctx, start, bs_ip1);
-            eggsfs_add_span_initiate_block_info_get_block_service_port1(&ctx, bs_ip1, bs_port1);
-            eggsfs_add_span_initiate_block_info_get_block_service_ip2(&ctx, bs_port1, bs_ip2);
-            eggsfs_add_span_initiate_block_info_get_block_service_port2(&ctx, bs_ip2, bs_port2);
-            eggsfs_add_span_initiate_block_info_get_block_service_id(&ctx, bs_port2, bs_id);
+            eggsfs_add_span_initiate_block_info_get_block_service_addrs(&ctx, start, addr_start);
+            eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport1_start, bs_ip1);
+            eggsfs_ip_port_get_port(&ctx, bs_ip1, bs_port1);
+            eggsfs_ip_port_get_end(&ctx, bs_port1, ipport1_end);
+            eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport2_start, bs_ip2);
+            eggsfs_ip_port_get_port(&ctx, bs_ip2, bs_port2);
+            eggsfs_ip_port_get_end(&ctx, bs_port2, ipport2_end);
+            eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+            eggsfs_add_span_initiate_block_info_get_block_service_id(&ctx, addr_end, bs_id);
             eggsfs_add_span_initiate_block_info_get_block_service_failure_domain(&ctx, bs_id, failure_domain_start);
             eggsfs_failure_domain_get(&ctx, failure_domain_start, failure_domain_end, failure_domain);
             eggsfs_add_span_initiate_block_info_get_block_id(&ctx, failure_domain_end, block_id);
@@ -858,7 +864,7 @@ int eggsfs_shard_add_span_initiate(
             eggsfs_debug("resp of kind %02x failed with err %d", kind, ctx.err);
             return ctx.err;
         }
-    } 
+    }
 
     return 0;
 }
@@ -915,7 +921,7 @@ int eggsfs_shard_add_span_certify(
         eggsfs_add_span_certify_resp_get_end(&ctx, start, end);
         eggsfs_add_span_certify_resp_get_finish(&ctx, end);
         FINISH_RESP();
-    } 
+    }
 
     return 0;
 }
@@ -1011,11 +1017,17 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
                                     .err = 0,
                                 };
                                 eggsfs_block_service_get_start(&bs_ctx, start);
-                                eggsfs_block_service_get_ip1(&bs_ctx, start, ip1);
-                                eggsfs_block_service_get_port1(&bs_ctx, ip1, port1);
-                                eggsfs_block_service_get_ip2(&bs_ctx, port1, ip2);
-                                eggsfs_block_service_get_port2(&bs_ctx, ip2, port2);
-                                eggsfs_block_service_get_id(&bs_ctx, port2, bs_id);
+                                eggsfs_block_service_get_addrs(&bs_ctx, start, addr_start);
+                                eggsfs_addrs_info_get_addr1(&bs_ctx, addr_start, ipport1_start);
+                                eggsfs_ip_port_get_addrs(&bs_ctx, ipport1_start, ip1);
+                                eggsfs_ip_port_get_port(&bs_ctx, ip1, port1);
+                                eggsfs_ip_port_get_end(&bs_ctx, port1, ipport1_end);
+                                eggsfs_addrs_info_get_addr2(&bs_ctx, ipport1_end, ipport2_start);
+                                eggsfs_ip_port_get_addrs(&bs_ctx, ipport2_start, ip2);
+                                eggsfs_ip_port_get_port(&bs_ctx, ip2, port2);
+                                eggsfs_ip_port_get_end(&bs_ctx, port2, ipport2_end);
+                                eggsfs_addrs_info_get_end(&bs_ctx, ipport2_end, addr_end);
+                                eggsfs_block_service_get_id(&bs_ctx, addr_end, bs_id);
                                 eggsfs_block_service_get_flags(&bs_ctx, bs_id, bs_flags);
                                 eggsfs_block_service_get_end(&bs_ctx, bs_flags, end);
                                 eggsfs_bincode_get_finish_list_el(end);
@@ -1069,8 +1081,7 @@ int eggsfs_shard_move_span(
         FINISH_RESP();
     }
 
-    return 0;    
-    
+    return 0;
 }
 
 

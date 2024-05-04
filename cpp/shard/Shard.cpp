@@ -216,6 +216,7 @@ static bool bigResponse(ShardMessageKind kind) {
 
 static void packShardResponse(
     Env& env,
+    ShardShared& shared,
     const AddrsInfo& srcAddr,
     UDPSender& sender,
     uint64_t requestId,
@@ -227,6 +228,8 @@ static void packShardResponse(
     EggsError err,
     const ShardRespContainer& resp
 ) {
+    shared.timings[(int)kind].add(elapsed);
+    shared.errors[(int)kind].add(err);
     if (unlikely(dropArtificially)) {
         LOG_DEBUG(env, "artificially dropping response %s", requestId);
         return;
@@ -535,7 +538,7 @@ private:
 
         Duration elapsed = eggsNow() - t0;
         bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-        packShardResponse(_env, _shared.sock().addr(), *_sender, reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, msg.clientAddr, msg.socketIx, err, respContainer);
+        packShardResponse(_env, _shared, _shared.sock().addr(), *_sender, reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, msg.clientAddr, msg.socketIx, err, respContainer);
     }
 
 public:
@@ -558,9 +561,13 @@ public:
         for (auto& msg : _channel->protocolMessages(LOG_REQ_PROTOCOL_VERSION)) {
             _handleLogsDBRequest(msg);
         }
-
+        std::array<size_t, 2> shardMsgCount{0, 0};
         for (auto& msg : _channel->protocolMessages(SHARD_REQ_PROTOCOL_VERSION)) {
             _handleShardRequest(msg);
+            ++shardMsgCount[msg.socketIx];
+        }
+        for (size_t i = 0; i < _shared.receivedRequests.size(); ++i) {
+            _shared.receivedRequests[i] = _shared.receivedRequests[i]*0.95 + ((double)shardMsgCount[i])*0.05;
         }
 
 
@@ -747,7 +754,7 @@ public:
                 if (likely(logEntry.requestId)) {
                     Duration elapsed = eggsNow() - logEntry.receivedAt;
                     bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-                    packShardResponse(_env, _shared.sock().addr(), _sender, logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
+                    packShardResponse(_env, _shared, _shared.sock().addr(), _sender, logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
                 } else if (unlikely(err != NO_ERROR)) {
                     RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
                 }

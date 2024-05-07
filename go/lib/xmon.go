@@ -380,7 +380,7 @@ Reconnect:
 						// note that we haven't removed the request from the ring buffer yet
 						goto Reconnect
 					}
-					if req.msgType == XMON_CREATE && req.binnable {
+					if (req.msgType == XMON_CREATE || req.msgType == (XMON_CREATE|0x100)) && req.binnable {
 						binnableAlerts[req.alertId] = struct{}{}
 					}
 				}

@@ -346,7 +346,7 @@ Reconnect:
 							goto SkipRequest
 						}
 					} else {
-						log.LogLocation(req.logLevel, req.file, req.line, "creating alert, alertId=%v binnable=%v troll=%+v message=%q", req.alertId, req.binnable, req.troll, req.message)
+						log.LogLocation(req.logLevel, req.file, req.line, "creating alert, alertId=%v binnable=%v troll=%+v message=%q binnableAlerts=%v", req.alertId, req.binnable, req.troll, req.message, len(binnableAlerts))
 					}
 				case XMON_UPDATE:
 					if req.binnable {

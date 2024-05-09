@@ -235,7 +235,10 @@ int eggsfs_metadata_request_nowait(struct eggsfs_metadata_socket* sock, u64 req_
     int err = kernel_sendmsg(sock->sock, &msg, &vec, 1, vec.iov_len);
     if (err < 0) {
         eggsfs_info("could not send, err=%d", err);
-        return err;
+	// At the moment it is not entirely clear why we occasionally get EPERM.
+        if (err != -EPERM) {
+            return err;
+        }
     }
     return 0;
 }
@@ -318,7 +321,9 @@ int eggsfs_metadata_send_request(
         }
         // For ENETUNREACH, we pretend to have sent it, and then the timeout
         // mechanism will retry, since this might be fixed with time.
-        if (err == -ENETUNREACH) {
+	// For EPERM, at the moment it is not entirely clear why it is returned
+	// occasionally.
+        if (err == -ENETUNREACH || err == -EPERM) {
             err = len;
         } else {
             goto out_err_no_latency; // we didn't really get a response here, so no sense increasing the latency bucket

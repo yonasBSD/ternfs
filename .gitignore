@@ -7,4 +7,9 @@ compile_commands.json
 .idea
 .rsync-rules
 kmod/bincode_tests
+kmod/dmesg
+kmod/test-out
+kmod/trace
+kmod/vm-out
+linux-*.tar.gz
 eggs-integrationtest.*

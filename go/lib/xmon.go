@@ -211,7 +211,7 @@ func (x *Xmon) packRequest(buf *bytes.Buffer, req *xmonRequest) {
 }
 
 const maxBinnableAlerts int = 20
-const maxNonBinnableAlerts int = 50
+const maxNonBinnableAlerts int = 300
 
 // alert in quiet period
 type quietAlert struct {

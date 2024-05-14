@@ -216,7 +216,7 @@ func main() {
 				}
 			}
 			if *startingPort != 0 {
-				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+1+uint16(i)+uint16(r)*256)
+				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(i)+uint16(r)*256)
 			} else {
 				opts.Addr1 = "127.0.0.1:0"
 			}

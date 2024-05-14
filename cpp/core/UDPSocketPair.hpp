@@ -94,7 +94,7 @@ struct UDPReceiver {
         LOG_DEBUG(env, "Poll returned, reading messages");
         // read
         size_t messagesSoFar = 0;
-        for (int i = 0; i < fds.size(); i++) {
+        for (int i = 0; i < numFds; i++) {
             const pollfd& pfd = fds[i];
             if (!(pfd.revents & POLLIN)) { continue; }
             const auto [sockIx1, sockIx2] = fdToSockIx[i];

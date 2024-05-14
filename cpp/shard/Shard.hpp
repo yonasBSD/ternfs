@@ -14,7 +14,6 @@ struct ShardOptions {
     AddrsInfo shardAddrs;
     // If non-zero, packets will be dropped with this probability. Useful to test
     // resilience of the system.
-    double simulateIncomingPacketDrop = 0.0;
     double simulateOutgoingPacketDrop = 0.0;
     bool syslog = false;
     bool xmon = false;

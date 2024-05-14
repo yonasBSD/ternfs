@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/iterator.h>
@@ -14,9 +16,11 @@
 #include "CDCDB.hpp"
 #include "AssertiveLock.hpp"
 #include "CDCDBData.hpp"
+#include "Common.hpp"
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
 #include "SharedRocksDB.hpp"
@@ -123,6 +127,20 @@ std::ostream& operator<<(std::ostream& out, const CDCShardResp& x) {
         out << "err=" << x.err;
     }
     out << ")";
+    return out;
+}
+
+std::ostream& operator<<(std::ostream& out, const CDCLogEntry& x) {
+    out << "CDCLogEntry(logIdx= " << x.logIdx() << ", ";
+    out << "cdcReqs=[";
+    for (auto& req : x.cdcReqs()) {
+        out << req << ", ";
+    }
+    out << "], shardResps=[";
+    for (auto& resp: x.shardResps()) {
+        out << resp << ", ";
+    }
+    out << "])";
     return out;
 }
 
@@ -1308,6 +1326,102 @@ struct UnpackCDCReq {
     }
 };
 
+void CDCShardResp::pack(BincodeBuf& buf) const {
+    buf.packScalar(txnId.x);
+    buf.packScalar(err);
+    if (err != NO_ERROR) {
+        return;
+    }
+    bincodeMessagePack(resp, buf);
+}
+
+void CDCShardResp::unpack(BincodeBuf& buf) {
+    txnId.x = buf.unpackScalar<uint64_t>();
+    err = (EggsError)buf.unpackScalar<uint16_t>();
+    if (err != NO_ERROR) {
+        return;
+    }
+    bincodeMessageUnpack(resp, buf);
+}
+
+size_t CDCShardResp::packedSize() const {
+    size_t size{10};
+    if (err == NO_ERROR) {
+        size += bincodeMessagePackedSize(resp);
+    }
+    return size;
+}
+
+void CDCLogEntry::prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::vector<CDCShardResp>& shardResps, size_t maxPackedSize, std::vector<CDCLogEntry>& entriesOut) {
+    size_t usedSize = std::numeric_limits<size_t>::max();
+    CDCLogEntry* curEntry{nullptr};
+    for (auto& shardResp : shardResps) {
+        auto respSize = shardResp.packedSize();
+        ALWAYS_ASSERT(respSize < maxPackedSize);
+        if (unlikely(maxPackedSize - respSize < usedSize)) {
+            curEntry = &entriesOut.emplace_back();
+            usedSize = curEntry->packedSize();
+        }
+        curEntry->_shardResps.emplace_back(std::move(shardResp));
+        usedSize += respSize;
+        ALWAYS_ASSERT(usedSize <= maxPackedSize);
+    }
+    for (auto& cdcReq : cdcReqs) {
+        auto reqSize = bincodeMessagePackedSize(cdcReq);
+        ALWAYS_ASSERT(reqSize < maxPackedSize);
+        if (unlikely(maxPackedSize - reqSize < usedSize)) {
+            curEntry = &entriesOut.emplace_back();
+            usedSize = curEntry->packedSize();
+        }
+        curEntry->_cdcReqs.emplace_back(std::move(cdcReq));
+        usedSize += reqSize;
+        ALWAYS_ASSERT(usedSize <= maxPackedSize);
+    }
+    cdcReqs.clear();
+    shardResps.clear();
+}
+
+CDCLogEntry CDCLogEntry::prepareBootstrapEntry() {
+    CDCLogEntry entry;
+    entry._bootstrapEntry = true;
+    return entry;
+}
+
+void CDCLogEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<bool>(_bootstrapEntry);
+    buf.packScalar<uint32_t>(_cdcReqs.size());
+    for (auto& cdcReq : _cdcReqs) {
+        bincodeMessagePack(cdcReq, buf);
+    }
+    buf.packScalar<uint32_t>(_shardResps.size());
+    for (auto& shardResp : _shardResps) {
+        shardResp.pack(buf);
+    }
+}
+
+void CDCLogEntry::unpack(BincodeBuf& buf) {
+    _bootstrapEntry = buf.unpackScalar<bool>();
+    _cdcReqs.resize(buf.unpackScalar<uint32_t>());
+    for (auto& cdcReq : _cdcReqs) {
+        bincodeMessageUnpack(cdcReq, buf);
+    }
+    _shardResps.resize(buf.unpackScalar<uint32_t>());
+    for (auto& shardResp : _shardResps) {
+        shardResp.unpack(buf);
+    }
+}
+
+size_t CDCLogEntry::packedSize() const {
+    size_t size{1 + 2 * sizeof(uint32_t)};
+    for (auto& cdcReq : _cdcReqs) {
+        size += bincodeMessagePackedSize(cdcReq);
+    }
+    for (auto& shardResp : _shardResps) {
+        size += shardResp.packedSize();
+    }
+    return size;
+}
+
 struct CDCDBImpl {
     Env _env;
 
@@ -1881,12 +1995,12 @@ CDCDB::~CDCDB() {
     delete ((CDCDBImpl*)_impl);
 }
 
-void CDCDB::bootstrap(bool sync, uint64_t logIndex, CDCStep& step) {
-    return ((CDCDBImpl*)_impl)->bootstrap(sync, logIndex, step);
-}
-
-void CDCDB::update(bool sync, uint64_t logIndex, const std::vector<CDCReqContainer>& cdcReqs, const std::vector<CDCShardResp>& shardResps, CDCStep& step, std::vector<CDCTxnId>& cdcReqsTxnIds) {
-    return ((CDCDBImpl*)_impl)->update(sync, logIndex, cdcReqs, shardResps, step, cdcReqsTxnIds);
+void CDCDB::applyLogEntry(bool sync, const CDCLogEntry& entry, CDCStep& step, std::vector<CDCTxnId>& cdcReqsTxnIds) {
+    if (unlikely(entry.bootstrapEntry())) {
+        ((CDCDBImpl*)_impl)->bootstrap(sync, entry.logIdx(), step);
+    } else {
+        ((CDCDBImpl*)_impl)->update(sync, entry.logIdx(), entry.cdcReqs(), entry.shardResps(), step, cdcReqsTxnIds);
+    }
 }
 
 uint64_t CDCDB::lastAppliedLogEntry() {

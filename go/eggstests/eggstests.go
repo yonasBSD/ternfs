@@ -838,7 +838,6 @@ func main() {
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
 	profileTest := flag.Bool("profile-test", false, "Run the test driver with profiling. Implies -preserve-data-dir")
 	profile := flag.Bool("profile", false, "Run with profiling (this includes the C++ and Go binaries and the test driver). Implies -preserve-data-dir")
-	incomingPacketDrop := flag.Float64("incoming-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will drop the requests on arrival.")
 	outgoingPacketDrop := flag.Float64("outgoing-packet-drop", 0.0, "Simulate packet drop in shard (the argument is the probability that any packet will be dropped). This one will process the requests, but drop the responses.")
 	short := flag.Bool("short", false, "Run a shorter version of the tests")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
@@ -1111,28 +1110,38 @@ func main() {
 	if *outgoingPacketDrop > 0 {
 		fmt.Printf("will drop %0.2f%% of packets after executing requests\n", *outgoingPacketDrop*100.0)
 	}
-	if *incomingPacketDrop > 0 {
-		fmt.Printf("will drop %0.2f%% of packets before executing requests\n", *outgoingPacketDrop*100.0)
-	}
 
 	// Start CDC
-
-	cdcOpts := &managedprocess.CDCOpts{
-		Exe:            cppExes.CDCExe,
-		Dir:            path.Join(*dataDir, "cdc"),
-		ReplicaId:      msgs.ReplicaId(0),
-		LogLevel:       level,
-		Valgrind:       *buildType == "valgrind",
-		Perf:           *profile,
-		ShuckleAddress: shuckleAddress,
-		Addr1:          "127.0.0.1:0",
-		Addr2:          "127.0.0.1:0",
+	for r := uint8(0); r < 5; r++ {
+		cdcOpts := &managedprocess.CDCOpts{
+			ReplicaId:      msgs.ReplicaId(r),
+			Exe:            cppExes.CDCExe,
+			Dir:            path.Join(*dataDir, fmt.Sprintf("cdc_%d", r)),
+			LogLevel:       level,
+			Valgrind:       *buildType == "valgrind",
+			Perf:           *profile,
+			ShuckleAddress: shuckleAddress,
+			Addr1:          "127.0.0.1:0",
+			Addr2:          "127.0.0.1:0",
+		}
+		if *leaderOnly && r > 0 {
+			continue
+		}
+		if r == 0 {
+			if *leaderOnly {
+				cdcOpts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+			} else {
+				cdcOpts.UseLogsDB = "LEADER"
+			}
+		} else {
+			cdcOpts.UseLogsDB = "FOLLOWER"
+		}
+		if *buildType == "valgrind" {
+			// apparently 100ms is too little when running with valgrind
+			cdcOpts.ShardTimeout = time.Millisecond * 500
+		}
+		procs.StartCDC(log, *repoDir, cdcOpts)
 	}
-	if *buildType == "valgrind" {
-		// apparently 100ms is too little when running with valgrind
-		cdcOpts.ShardTimeout = time.Millisecond * 500
-	}
-	procs.StartCDC(log, *repoDir, cdcOpts)
 
 	// Start shards
 	numShards := 256
@@ -1146,7 +1155,6 @@ func main() {
 				Shrid:                     shrid,
 				Valgrind:                  *buildType == "valgrind",
 				Perf:                      *profile,
-				IncomingPacketDrop:        *incomingPacketDrop,
 				OutgoingPacketDrop:        *outgoingPacketDrop,
 				ShuckleAddress:            shuckleAddress,
 				Addr1:                     "127.0.0.1:0",

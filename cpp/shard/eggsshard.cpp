@@ -30,8 +30,6 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	The second address to bind ourselves too, we'll also advertise it to shuckle. Optional.\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
-    fprintf(stderr, " -incoming-packet-drop [0, 1)\n");
-    fprintf(stderr, "    	Drop given ratio of packets on arrival.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
     fprintf(stderr, " -xmon qa|prod\n");
@@ -188,8 +186,6 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-log-file") {
             options.logFile = getNextArg();
-        } else if (arg == "-incoming-packet-drop") {
-            options.simulateIncomingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "-outgoing-packet-drop") {
             options.simulateOutgoingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "-shuckle") {

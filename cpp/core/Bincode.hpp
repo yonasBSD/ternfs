@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <cstdlib>
 #include <string.h>
 #include <sys/types.h>
@@ -383,6 +384,26 @@ struct BincodeBuf {
         return rocksdb::Slice((const char*)data, len());
     }
 };
+
+template<typename T>
+void bincodeMessagePack(const T& message, BincodeBuf& buf) {
+    static_assert(sizeof(message.kind()) == 1);
+    buf.packScalar(message.kind());
+    message.pack(buf);
+}
+
+template<typename T>
+void bincodeMessageUnpack(T& message, BincodeBuf& buf) {
+    static_assert(sizeof(message.kind()) == 1);
+    auto kind = buf.unpackScalar<typeof(message.kind())>();
+    message.unpack(buf, kind);
+}
+
+template<typename T>
+size_t bincodeMessagePackedSize(const T& message) {
+    static_assert(sizeof(message.kind()) == 1);
+    return 1 + message.packedSize();
+}
 
 constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header
 constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IP header - ICMP header

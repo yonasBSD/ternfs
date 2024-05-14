@@ -270,7 +270,6 @@ private:
     ShardShared& _shared;
     ShardReplicaId _shrid;
     uint64_t _packetDropRand;
-    uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
     // run data
@@ -289,7 +288,6 @@ public:
         _shared(shared),
         _shrid(shrid),
         _packetDropRand(eggsNow().ns),
-        _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
     {
         auto convertProb = [this](const std::string& what, double prob, uint64_t& iprob) {
@@ -299,7 +297,6 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         expandKey(ShardKey, _expandedShardKey);
         expandKey(CDCKey, _expandedCDCKey);
@@ -328,12 +325,6 @@ private:
             resp.header.unpack(msg.buf);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBResponse.header: %s", err.what());
-            _logEntries.pop_back();
-            return;
-        }
-
-        if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
-            LOG_DEBUG(_env, "artificially dropping LogsDBResponse %s", resp.header.requestId);
             _logEntries.pop_back();
             return;
         }
@@ -383,25 +374,13 @@ private:
 
         try {
             req.header.unpack(msg.buf);
-        } catch (const BincodeException& err) {
-            LOG_ERROR(_env, "Could not parse LogsDBRequest.header: %s", err.what());
-            _logEntries.pop_back();
-            return;
-        }
-
-        if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
-            LOG_DEBUG(_env, "artificially dropping LogsDBRequest %s", req.header.requestId);
-            _logEntries.pop_back();
-            return;
-        }
-
-        try {
             req.requestContainer.unpack(msg.buf, req.header.kind);
-        } catch (const BincodeException& exc) {
-            LOG_ERROR(_env, "Could not parse LogsDBRequest.requestContainer of kind %s: %s", req.header.kind, exc.what());
+        } catch (const BincodeException& err) {
+            LOG_ERROR(_env, "Could not parse LogsDBRequest: %s", err.what());
             _logEntries.pop_back();
             return;
         }
+
 
         if (unlikely(msg.buf.remaining() < 8)) {
             LOG_ERROR(_env, "Could not parse LogsDBRequest of kind %s from %s, message signature is 8 bytes, only %s remaining", req.header.kind, msg.clientAddr, msg.buf.remaining());
@@ -454,11 +433,6 @@ private:
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse: %s", err.what());
             RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", msg.clientAddr);
-            return;
-        }
-
-        if (wyhash64(&_packetDropRand) % 10'000 < _incomingPacketDropProbability) {
-            LOG_DEBUG(_env, "artificially dropping request %s", reqHeader.requestId);
             return;
         }
 
@@ -611,7 +585,6 @@ private:
 
     UDPSender _sender;
     uint64_t _packetDropRand;
-    uint64_t _incomingPacketDropProbability; // probability * 10,000
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
     virtual void sendStop() override {
@@ -626,7 +599,6 @@ public:
         _dontDoReplication(options.dontDoReplication),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
-        _incomingPacketDropProbability(0),
         _outgoingPacketDropProbability(0)
     {
         expandKey(ShardKey, _expandedShardKey);
@@ -638,7 +610,6 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        convertProb("incoming", options.simulateIncomingPacketDrop, _incomingPacketDropProbability);
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
 
@@ -882,15 +853,13 @@ private:
     std::string _shuckleHost;
     uint16_t _shucklePort;
     XmonNCAlert _alert;
-    bool _registerCompleted;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
         _shared(shared),
         _shrid(shrid),
         _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
-        _registerCompleted(false)
+        _shucklePort(options.shucklePort)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -900,7 +869,17 @@ public:
     }
 
     virtual bool periodicStep() {
-        if (likely(_registerCompleted)) {
+        {
+            LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _shared.sock().addr());
+            const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
+            if (err == EINTR) { return false; }
+            if (err) {
+                _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
+                return false;
+            }
+        }
+
+        {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for shardId %s from shuckle", _shrid.shardId());
             const auto [err, errStr] = fetchShardReplicas(_shuckleHost, _shucklePort, 10_sec, _shrid, replicas);
@@ -913,27 +892,24 @@ public:
                 _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_shrid.replicaId().u8], _shared.sock().addr());
                 return false;
             }
+            if (unlikely(!_shared.replicas)) {
+                size_t emptyReplicas{0};
+                for (auto& replica : replicas) {
+                    if (replica.addrs[0].port == 0) {
+                        ++emptyReplicas;
+                    }
+                }
+                if (emptyReplicas > LogsDB::REPLICA_COUNT / 2 ) {
+                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
+                    return false;
+                }
+            }
             if (unlikely(!_shared.replicas || *_shared.replicas != replicas)) {
                 LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", replicas[0], replicas[1], replicas[2], replicas[3], replicas[4]);
                 std::atomic_exchange(&_shared.replicas, std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
             }
         }
-
-        LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _shared.sock().addr());
-        const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
-        if (err == EINTR) { return false; }
-        if (err) {
-            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
-            return false;
-        }
         _env.clearAlert(_alert);
-
-        if (unlikely(!_registerCompleted)){
-            _registerCompleted = true;
-            // Even though we registered successfully we want to do another loop quickly to fetch replica information
-            return false;
-        }
-
         return true;
     }
 };
@@ -1165,7 +1141,6 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
         LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
         LOG_INFO(env, "  ownAddres = %s", options.shardAddrs);
-        LOG_INFO(env, "  simulateIncomingPacketDrop = %s", options.simulateIncomingPacketDrop);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
         LOG_INFO(env, "Using LogsDB with options:");

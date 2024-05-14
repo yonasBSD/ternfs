@@ -1,7 +1,6 @@
-#include <chrono>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
@@ -9,8 +8,6 @@
 #include <sys/socket.h>
 #include <atomic>
 #include <fcntl.h>
-#include <optional>
-#include <thread>
 #include <unordered_map>
 #include <arpa/inet.h>
 #include <unordered_set>
@@ -26,6 +23,7 @@
 #include "LogsDB.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
+#include "MultiplexedChannel.hpp"
 #include "Shard.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
@@ -50,8 +48,7 @@ struct CDCShared {
     CDCDB& db;
     std::array<UDPSocketPair, 2> socks;
     std::atomic<bool> isLeader;
-    std::mutex replicasLock;
-    std::array<AddrsInfo, 5> replicas;
+    std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> replicas;
     std::mutex shardsMutex;
     std::array<ShardInfo, 256> shards;
     // How long it took us to process the entire request, from parse to response.
@@ -193,6 +190,7 @@ private:
     CDCShared& _shared;
     bool _seenShards;
     uint64_t _currentLogIndex;
+    LogIdx _logsDBLogIndex;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
     AES128Key _expandedCDCKey;
@@ -201,6 +199,7 @@ private:
     // We receive everything at once, but we send stuff from
     // separate threads.
     UDPReceiver<2> _receiver;
+    MultiplexedChannel<4, std::array<uint32_t, 4>{CDC_REQ_PROTOCOL_VERSION, SHARD_RESP_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
     UDPSender _cdcSender;
     UDPSender _shardSender;
 
@@ -209,6 +208,7 @@ private:
     std::vector<CDCReqInfo> _cdcReqsInfo;
     std::vector<CDCTxnId> _cdcReqsTxnIds;
     std::vector<CDCShardResp> _shardResps;
+    std::unordered_map<uint64_t, CDCLogEntry> _inFlightEntries;
 
     // The requests we've enqueued, but haven't completed yet, with
     // where to send the response. Indexed by txn id.
@@ -223,6 +223,15 @@ private:
     // The _shard_ request we're currently waiting for, if any.
     InFlightShardRequests _inFlightShardReqs;
 
+    const bool _dontDoReplication;
+    std::unique_ptr<LogsDB> _logsDB;
+    std::vector<LogsDBRequest> _logsDBRequests;
+    std::vector<LogsDBResponse> _logsDBResponses;
+    std::vector<LogsDBRequest *> _logsDBOutRequests;
+    std::vector<LogsDBResponse> _logsDBOutResponses;
+    std::unordered_map<uint64_t, CDCLogEntry> _inFlightLogEntries;
+    std::unordered_map<uint64_t, std::vector<CDCReqInfo>> _logEntryIdxToReqInfos;
+    std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicas;
 public:
     CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCOptions& options, CDCShared& shared) :
         Loop(logger, xmon, "req_server"),
@@ -230,13 +239,18 @@ public:
         _seenShards(false),
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
-        _shardTimeout(options.shardTimeout)
+        _shardTimeout(options.shardTimeout),
+        _dontDoReplication(options.dontDoReplication)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
         expandKey(CDCKey, _expandedCDCKey);
 
         if (options.writeToLogsDB) {
-            ALWAYS_ASSERT(false);
+            _logsDB.reset(new LogsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased));
+            // In case of force leader it immediately detects and promotes us to leader
+            _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
+            _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
+            _logsDBLogIndex = _logsDB->getLastReleased();
         } else {
             _shared.isLeader.store(options.replicaId == 0, std::memory_order_relaxed);
         }
@@ -244,14 +258,23 @@ public:
     }
 
     virtual void step() override {
+        std::vector<LogsDBLogEntry> entries;
         if (unlikely(!_seenShards)) {
             if (!_waitForShards()) {
                 return;
             }
             _seenShards = true;
-            // If we've got dangling transactions, immediately start processing it
-            _shared.db.bootstrap(true, _advanceLogIndex(), _step);
-            _processStep();
+            if (_shared.isLeader.load(std::memory_order_relaxed)) {
+                // If we've got dangling transactions, immediately start processing it
+                auto bootstrap = CDCLogEntry::prepareBootstrapEntry();
+                auto& entry = entries.emplace_back();
+                entry.value.resize(bootstrap.packedSize());
+                BincodeBuf bbuf((char*) entry.value.data(), entry.value.size());
+                bootstrap.pack(bbuf);
+                ALWAYS_ASSERT(bbuf.len() == entry.value.size());
+                bootstrap.logIdx(++_logsDBLogIndex.u64);
+                _inFlightLogEntries[bootstrap.logIdx()] = std::move(bootstrap);
+            }
         }
 
         // clear internal buffers
@@ -259,9 +282,10 @@ public:
         _cdcReqsInfo.clear();
         _cdcReqsTxnIds.clear();
         _shardResps.clear();
+        _replicas = _shared.replicas;
 
 
-        // Process CDC requests and shard responses
+        // Timeout ShardRequests
         {
             auto now = eggsNow();
             while (_updateSize() < MAX_UPDATE_SIZE) {
@@ -276,34 +300,123 @@ public:
                 _recordCDCShardRespError(requestId, *resp, EggsError::TIMEOUT);
             }
         }
+        auto timeout = _logsDB ? _logsDB->getNextTimeout() : ((_inFlightShardReqs.size() > 0) ? _shardTimeout : -1);
+        // we need to process bootstrap entry
+        if (unlikely(entries.size())) {
+            timeout = 0;
+        }
+        _channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE - _updateSize(), timeout);
 
-        _receiver.receiveMessages(_env, _shared.socks, MAX_UPDATE_SIZE - _updateSize(), (_inFlightShardReqs.size() > 0) ? _shardTimeout : -1);
-
+        _processLogMessages();
         _processShardMessages();
         _processCDCMessages();
 
         _shared.updateSize = 0.95*_shared.updateSize + 0.05*_updateSize();
-        // If anything happened, update the db and write down the in flight CDCs
+
         if (_cdcReqs.size() > 0 || _shardResps.size() > 0) {
-            // process everything in a single batch
-            _shared.db.update(true, _advanceLogIndex(), _cdcReqs, _shardResps, _step, _cdcReqsTxnIds);
-            // record txn ids etc. for newly received requests
-            for (int i = 0; i < _cdcReqs.size(); i++) {
-                const auto& req = _cdcReqs[i];
-                const auto& reqInfo = _cdcReqsInfo[i];
-                CDCTxnId txnId = _cdcReqsTxnIds[i];
-                ALWAYS_ASSERT(_inFlightTxns.find(txnId) == _inFlightTxns.end());
-                auto& inFlight = _inFlightTxns[txnId];
-                inFlight.hasClient = true;
-                inFlight.cdcRequestId = reqInfo.reqId;
-                inFlight.clientAddr = reqInfo.clientAddr;
-                inFlight.kind = req.kind();
-                inFlight.receivedAt = reqInfo.receivedAt;
-                inFlight.sockIx = reqInfo.sockIx;
-                _updateInFlightTxns();
-                _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqInfo.reqId, reqInfo.clientAddr));
+            ALWAYS_ASSERT(_shared.isLeader.load(std::memory_order_relaxed));
+            std::vector<CDCLogEntry> entriesOut;
+            CDCLogEntry::prepareLogEntries(_cdcReqs, _shardResps, LogsDB::MAX_UDP_ENTRY_SIZE, entriesOut);
+
+            auto reqInfoIt = _cdcReqsInfo.begin();
+            for (auto& entry : entriesOut) {
+                auto& logEntry = entries.emplace_back();
+                logEntry.value.resize(entry.packedSize());
+                BincodeBuf bbuf((char*) logEntry.value.data(), logEntry.value.size());
+                entry.pack(bbuf);
+                ALWAYS_ASSERT(bbuf.len() == logEntry.value.size());
+                entry.logIdx(++_logsDBLogIndex.u64);
+                std::vector<CDCReqInfo> infos(reqInfoIt, reqInfoIt + entry.cdcReqs().size());
+                _logEntryIdxToReqInfos[entry.logIdx()] = std::move(infos);
+                reqInfoIt += entry.cdcReqs().size();
+                _inFlightLogEntries[entry.logIdx()] = std::move(entry);
             }
-            _processStep();
+        }
+        if (_logsDB) {
+            if (_logsDB->isLeader()) {
+                auto err = _logsDB->appendEntries(entries);
+                ALWAYS_ASSERT(err == NO_ERROR);
+                // we need to drop information about entries which might have been dropped due to append window being full
+                if (unlikely(entries.size() && entries.back().idx == 0)) {
+                    LogIdx lastGood{};
+                    for (auto& entry : entries) {
+                        if (lastGood < entry.idx) {
+                            lastGood = entry.idx;
+                            continue;
+                        }
+                        ALWAYS_ASSERT(entry.idx == 0);
+                        ++lastGood;
+                        _logEntryIdxToReqInfos.erase(lastGood.u64);
+                        _inFlightLogEntries.erase(lastGood.u64);
+                    }
+                }
+                entries.clear();
+            }
+            // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
+            // We want to have priority when sending out
+            _logsDB->getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
+
+            for (auto& response : _logsDBOutResponses) {
+                _packLogsDBResponse(response);
+            }
+
+            for (auto request : _logsDBOutRequests) {
+                _packLogsDBRequest(*request);
+            }
+            if (_dontDoReplication) {
+                _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
+            }
+            _logsDB->readEntries(entries);
+        } else {
+            auto currentLogIndex = _currentLogIndex;
+            for (auto& entry: entries) {
+                entry.idx.u64 = ++currentLogIndex;
+            }
+        }
+
+        // Apply replicated log entries
+        for(auto& logEntry : entries) {
+            ALWAYS_ASSERT(logEntry.idx == _advanceLogIndex());
+            BincodeBuf bbuf((char*)logEntry.value.data(), logEntry.value.size());
+            CDCLogEntry cdcEntry;
+            cdcEntry.unpack(bbuf);
+            cdcEntry.logIdx(logEntry.idx.u64);
+            if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) && cdcEntry != _inFlightLogEntries[cdcEntry.logIdx()])) {
+                LOG_ERROR(_env, "Entry difference after deserialization cdcEntry(%s), original(%s)", std::move(cdcEntry), std::move(_inFlightLogEntries[cdcEntry.logIdx()]));
+            }
+            ALWAYS_ASSERT(!_shared.isLeader.load(std::memory_order_relaxed) || cdcEntry == _inFlightLogEntries[cdcEntry.logIdx()]);
+            _inFlightLogEntries.erase(cdcEntry.logIdx());
+            // process everything in a single batch
+            _cdcReqsTxnIds.clear();
+            _shared.db.applyLogEntry(true, cdcEntry, _step, _cdcReqsTxnIds);
+
+            if (_shared.isLeader.load(std::memory_order_relaxed)) {
+                // record txn ids etc. for newly received requests
+                auto& cdcReqs = cdcEntry.cdcReqs();
+                auto& reqInfos = _logEntryIdxToReqInfos[cdcEntry.logIdx()];
+                ALWAYS_ASSERT(cdcReqs.size() == reqInfos.size());
+                for (size_t i = 0; i < cdcReqs.size(); ++i) {
+                    const auto& req = cdcReqs[i];
+                    const auto& reqInfo = reqInfos[i];
+                    CDCTxnId txnId = _cdcReqsTxnIds[i];
+                    ALWAYS_ASSERT(_inFlightTxns.find(txnId) == _inFlightTxns.end());
+                    auto& inFlight = _inFlightTxns[txnId];
+                    inFlight.hasClient = true;
+                    inFlight.cdcRequestId = reqInfo.reqId;
+                    inFlight.clientAddr = reqInfo.clientAddr;
+                    inFlight.kind = req.kind();
+                    inFlight.receivedAt = reqInfo.receivedAt;
+                    inFlight.sockIx = reqInfo.sockIx;
+                    _updateInFlightTxns();
+                    _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqInfo.reqId, reqInfo.clientAddr));
+                }
+                _processStep();
+                _logEntryIdxToReqInfos.erase(cdcEntry.logIdx());
+            }
+        }
+
+        if (_logsDB) {
+            _logsDB->flush(true);
         }
 
         _shardSender.sendMessages(_env, _shared.socks[SHARD_SOCK]);
@@ -311,6 +424,47 @@ public:
     }
 
 private:
+    void _packLogsDBResponse(LogsDBResponse& response) {
+        auto addrInfoPtr = addressFromReplicaId(response.replicaId);
+        if (unlikely(addrInfoPtr == nullptr)) {
+            LOG_DEBUG(_env, "No information for replica id %s. dropping response", response.replicaId);
+            return;
+        }
+        auto& addrInfo = *addrInfoPtr;
+
+        _cdcSender.prepareOutgoingMessage(
+            _env,
+            _shared.socks[CDC_SOCK].addr(),
+            addrInfo,
+            [&response,this](BincodeBuf& buf) {
+                response.header.pack(buf);
+                response.responseContainer.pack(buf);
+                buf.packFixedBytes<8>({cbcmac(_expandedCDCKey, buf.data, buf.cursor - buf.data)});
+            });
+
+        LOG_DEBUG(_env, "will send response for req id %s kind %s to %s", response.header.requestId, response.header.kind, addrInfo);
+    }
+
+    void _packLogsDBRequest(LogsDBRequest& request) {
+        auto addrInfoPtr = addressFromReplicaId(request.replicaId);
+        if (unlikely(addrInfoPtr == nullptr)) {
+            LOG_DEBUG(_env, "No information for replica id %s. dropping request", request.replicaId);
+            return;
+        }
+        auto& addrInfo = *addrInfoPtr;
+
+        _cdcSender.prepareOutgoingMessage(
+            _env,
+            _shared.socks[CDC_SOCK].addr(),
+            addrInfo,
+            [&request,this](BincodeBuf& buf) {
+                request.header.pack(buf);
+                request.requestContainer.pack(buf);
+                buf.packFixedBytes<8>({cbcmac(_expandedCDCKey, buf.data, buf.cursor - buf.data)});
+            });
+
+        LOG_DEBUG(_env, "will send request for req id %s kind %s to %s", request.header.requestId, request.header.kind, addrInfo);
+    }
     void _updateInFlightTxns() {
         _shared.inFlightTxns = _shared.inFlightTxns*0.95 + ((double)_inFlightTxns.size())*0.05;
     }
@@ -375,9 +529,126 @@ private:
         return _cdcReqs.size() + _shardResps.size();
     }
 
+    AddrsInfo* addressFromReplicaId(ReplicaId id) {
+        if (!_replicas) {
+            return nullptr;
+        }
+
+        auto& addr = (*_replicas)[id.u8];
+        if (addr[0].port == 0) {
+            return nullptr;
+        }
+        return &addr;
+    }
+
+    uint8_t _getReplicaId(const IpPort& clientAddress) {
+        if (!_replicas) {
+            return LogsDB::REPLICA_COUNT;
+        }
+
+        for (ReplicaId replicaId = 0; replicaId.u8 < _replicas->size(); ++replicaId.u8) {
+            if (_replicas->at(replicaId.u8).contains(clientAddress)) {
+                return replicaId.u8;
+            }
+        }
+
+        return LogsDB::REPLICA_COUNT;
+    }
+
+    void _processLogMessages() {
+        if (!_logsDB) {
+            return;
+        }
+        std::vector<LogsDBRequest> requests;
+        std::vector<LogsDBResponse> responses;
+        auto& requestMessages = _channel.protocolMessages(LOG_REQ_PROTOCOL_VERSION);
+        auto& responseMessages = _channel.protocolMessages(LOG_RESP_PROTOCOL_VERSION);
+        requests.reserve(requestMessages.size());
+        responses.reserve(responseMessages.size());
+        for (auto& msg : requestMessages) {
+            auto replicaId = _getReplicaId(msg.clientAddr);
+            if (replicaId == LogsDB::REPLICA_COUNT) {
+                LOG_DEBUG(_env, "We can't match this address (%s) to replica. Dropping", msg.clientAddr);
+                continue;
+            }
+            auto& req = requests.emplace_back();
+            req.replicaId = replicaId;
+            try {
+                req.header.unpack(msg.buf);
+                req.requestContainer.unpack(msg.buf, req.header.kind);
+            } catch (const BincodeException& err) {
+                LOG_ERROR(_env, "could not parse: %s", err.what());
+                RAISE_ALERT(_env, "could not parse LogsDBRequest from %s, dropping it.", msg.clientAddr);
+                requests.pop_back();
+                continue;
+            }
+
+            if (unlikely(msg.buf.remaining() < 8)) {
+                LOG_ERROR(_env, "Could not parse LogsDBRequest of kind %s from %s, message signature is 8 bytes, only %s remaining", req.header.kind, msg.clientAddr, msg.buf.remaining());
+                requests.pop_back();
+                return;
+            }
+
+            auto expectedMac = cbcmac(_expandedCDCKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
+            BincodeFixedBytes<8> receivedMac;
+            msg.buf.unpackFixedBytes<8>(receivedMac);
+            if (unlikely(expectedMac != receivedMac.data)) {
+                LOG_ERROR(_env, "Incorrect signature for LogsDBRequest %s from %s", req.header.kind, msg.clientAddr);
+                requests.pop_back();
+                return;
+            }
+
+            if (unlikely(msg.buf.remaining())) {
+                LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBRequest %s from %s", msg.buf.remaining(), req.header.kind, msg.clientAddr);
+                requests.pop_back();
+            }
+            LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", req.header.kind, req.header.requestId, req.replicaId);
+        }
+        for (auto& msg : responseMessages) {
+            auto replicaId = _getReplicaId(msg.clientAddr);
+            if (replicaId == LogsDB::REPLICA_COUNT) {
+                LOG_DEBUG(_env, "We can't match this address (%s) to replica. Dropping", msg.clientAddr);
+                continue;
+            }
+            auto& resp = responses.emplace_back();
+            resp.replicaId = replicaId;
+            try {
+                resp.header.unpack(msg.buf);
+                resp.responseContainer.unpack(msg.buf, resp.header.kind);
+            } catch (const BincodeException& err) {
+                LOG_ERROR(_env, "could not parse: %s", err.what());
+                RAISE_ALERT(_env, "could not parse LogsDBResponse from %s, dropping it.", msg.clientAddr);
+                requests.pop_back();
+                continue;
+            }
+
+            if (unlikely(msg.buf.remaining() < 8)) {
+                LOG_ERROR(_env, "Could not parse LogsDBResponse of kind %s from %s, message signature is 8 bytes, only %s remaining", resp.header.kind, msg.clientAddr, msg.buf.remaining());
+                requests.pop_back();
+                return;
+            }
+
+            auto expectedMac = cbcmac(_expandedCDCKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
+            BincodeFixedBytes<8> receivedMac;
+            msg.buf.unpackFixedBytes<8>(receivedMac);
+            if (unlikely(expectedMac != receivedMac.data)) {
+                LOG_ERROR(_env, "Incorrect signature for LogsDBResponse %s from %s", resp.header.kind, msg.clientAddr);
+                requests.pop_back();
+                return;
+            }
+
+            if (unlikely(msg.buf.remaining())) {
+                LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBResponse %s from %s", msg.buf.remaining(), resp.header.kind, msg.clientAddr);
+                requests.pop_back();
+            }
+            LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
+        }
+        _logsDB->processIncomingMessages(requests, responses);
+    }
+
     void _processCDCMessages() {
         int startUpdateSize = _updateSize();
-        for (auto& msg: _receiver.messages()[CDC_SOCK]) {
+        for (auto& msg: _channel.protocolMessages(CDC_REQ_PROTOCOL_VERSION)) {
             // First, try to parse the header
             CDCRequestHeader reqHeader;
             try {
@@ -436,7 +707,7 @@ private:
     }
 
     void _processShardMessages() {
-        for (auto& msg : _receiver.messages()[SHARD_SOCK]) {
+        for (auto& msg : _channel.protocolMessages(SHARD_RESP_PROTOCOL_VERSION)) {
             LOG_DEBUG(_env, "received response from shard");
 
             ShardResponseHeader respHeader;
@@ -673,14 +944,24 @@ public:
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
         _alert(10_sec),
-        _replicaId(options.replicaId),
-        _registerCompleted(false)
+        _replicaId(options.replicaId)
     {}
 
     virtual ~CDCRegisterer() = default;
 
     virtual bool periodicStep() override {
-        if(likely(_registerCompleted)) {
+        LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _shared.socks[CDC_SOCK].addr());
+        {
+            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
+            if (err == EINTR) { return false; }
+            if (err) {
+                _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
+                return false;
+            }
+            _env.clearAlert(_alert);
+        }
+
+        {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for CDC from shuckle");
             const auto [err, errStr] = fetchCDCReplicas(_shuckleHost, _shucklePort, 10_sec, replicas);
@@ -693,21 +974,23 @@ public:
                 _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_replicaId.u8], _shared.socks[CDC_SOCK].addr());
                 return false;
             }
-            {
-                std::lock_guard guard(_shared.replicasLock);
-                _shared.replicas = replicas;
+            if (unlikely(!_shared.replicas)) {
+                size_t emptyReplicas{0};
+                for (auto& replica : replicas) {
+                    if (replica.addrs[0].port == 0) {
+                        ++emptyReplicas;
+                    }
+                }
+                if (emptyReplicas > LogsDB::REPLICA_COUNT / 2 ) {
+                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
+                    return false;
+                }
+            }
+            if (unlikely(!_shared.replicas || *_shared.replicas != replicas)) {
+                LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", replicas[0], replicas[1], replicas[2], replicas[3], replicas[4]);
+                std::atomic_exchange(&_shared.replicas, std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
             }
         }
-
-        LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _shared.socks[CDC_SOCK].addr());
-        const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
-        if (err == EINTR) { return false; }
-        if (err) {
-            _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
-            return false;
-        }
-        _env.clearAlert(_alert);
-        _registerCompleted = true;
         return true;
     }
 };

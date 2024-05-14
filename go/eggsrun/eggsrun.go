@@ -173,21 +173,40 @@ func main() {
 
 	// Start CDC
 	{
-		opts := managedprocess.CDCOpts{
-			Exe:            cppExes.CDCExe,
-			Dir:            path.Join(*dataDir, "cdc"),
-			LogLevel:       level,
-			Valgrind:       *buildType == "valgrind",
-			ShuckleAddress: shuckleAddress,
-			Perf:           *profile,
-			Xmon:           *xmon,
+		for r := uint8(0); r < 5; r++ {
+			dir := path.Join(*dataDir, fmt.Sprintf("cdc_%d", r))
+			if r == 0 {
+				dir = path.Join(*dataDir, "cdc")
+			}
+			opts := managedprocess.CDCOpts{
+				ReplicaId:      msgs.ReplicaId(r),
+				Exe:            cppExes.CDCExe,
+				Dir:            dir,
+				LogLevel:       level,
+				Valgrind:       *buildType == "valgrind",
+				ShuckleAddress: shuckleAddress,
+				Perf:           *profile,
+				Xmon:           *xmon,
+			}
+			if *leaderOnly && r > 0 {
+				continue
+			}
+			if r == 0 {
+				if *leaderOnly {
+					opts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+				} else {
+					opts.UseLogsDB = "LEADER"
+				}
+			} else {
+				opts.UseLogsDB = "FOLLOWER"
+			}
+			if *startingPort != 0 {
+				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+uint16(r))
+			} else {
+				opts.Addr1 = "127.0.0.1:0"
+			}
+			procs.StartCDC(log, *repoDir, &opts)
 		}
-		if *startingPort != 0 {
-			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", *startingPort)
-		} else {
-			opts.Addr1 = "127.0.0.1:0"
-		}
-		procs.StartCDC(log, *repoDir, &opts)
 	}
 
 	// Start shards

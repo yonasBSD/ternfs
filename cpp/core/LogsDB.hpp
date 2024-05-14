@@ -111,6 +111,8 @@ public:
 
     Duration getNextTimeout() const;
 
+    LogIdx getLastReleased() const;
+
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
     static void clearAllData(SharedRocksDB& shardDB);
 private:

@@ -1673,6 +1673,8 @@ public:
         _appender.maybeMoveRelease();
         _catchupReader.maybeCatchUp();
         _reqResp.resendTimedOutRequests();
+        responses.clear();
+        requests.clear();
     }
 
     void getOutgoingMessages(std::vector<LogsDBRequest*>& requests, std::vector<LogsDBResponse>& responses) {
@@ -1694,6 +1696,10 @@ public:
 
     Duration getNextTimeout() const {
         return _reqResp.getNextTimeout();
+    }
+
+    LogIdx getLastReleased() const {
+        return _metadata.getLastReleased();
     }
 
 private:
@@ -1767,6 +1773,10 @@ void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries) {
 
 Duration LogsDB::getNextTimeout() const {
     return _impl->getNextTimeout();
+}
+
+LogIdx LogsDB::getLastReleased() const {
+    return _impl->getLastReleased();
 }
 
 void LogsDB::_getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut)  {

@@ -465,7 +465,6 @@ type ShardOpts struct {
 	LogLevel                  lib.LogLevel
 	Valgrind                  bool
 	Perf                      bool
-	IncomingPacketDrop        float64
 	OutgoingPacketDrop        float64
 	ShuckleAddress            string
 	Addr1                     string
@@ -482,7 +481,6 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-incoming-packet-drop", fmt.Sprintf("%g", opts.IncomingPacketDrop),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-shuckle", opts.ShuckleAddress,
 		"-addr-1", opts.Addr1,
@@ -567,6 +565,7 @@ type CDCOpts struct {
 	Addr2          string
 	ShardTimeout   time.Duration
 	Xmon           string
+	UseLogsDB      string
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
@@ -587,6 +586,9 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.UseLogsDB != "" {
+		args = append(args, "-use-logsdb", opts.UseLogsDB)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:

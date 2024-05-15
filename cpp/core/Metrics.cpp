@@ -3,6 +3,7 @@
 #include "Metrics.hpp"
 
 #include "Assert.hpp"
+#define CPPHTTPLIB_USE_POLL
 #include "httplib.h"
 
 #if 0

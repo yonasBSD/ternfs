@@ -14,11 +14,12 @@
 
 class SharedRocksDB {
 public:
-    SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon);
+    SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path, const std::string& statisticsPath);
     ~SharedRocksDB();
     void open(rocksdb::Options options, const std::string& path);
-    void openTransactionDB(rocksdb::Options options, const std::string& path);
-    void openForReadOnly(rocksdb::Options options, const std::string& path);
+    void openTransactionDB(rocksdb::Options options);
+    void open(rocksdb::Options options);
+    void openForReadOnly(rocksdb::Options options);
     void close();
 
     void registerCFDescriptors(const std::vector<rocksdb::ColumnFamilyDescriptor>& _cfDescriptors);
@@ -36,9 +37,10 @@ public:
 private:
     Env _env;
     bool _transactionDB;
+    const std::string _path;
+    const std::string _statisticsFilePath;
     std::unique_ptr<rocksdb::DB, void(*)(rocksdb::DB*)> _db;
     std::shared_ptr<rocksdb::Statistics> _dbStatistics;
-    std::string _dbStatisticsFile;
     std::vector<rocksdb::ColumnFamilyDescriptor> _cfDescriptors;
     mutable std::shared_mutex _stateMutex;
     std::unordered_map<std::string, rocksdb::ColumnFamilyHandle*> _cfs;

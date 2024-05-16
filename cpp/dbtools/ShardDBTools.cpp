@@ -27,17 +27,17 @@ void ShardDBTools::verifyEqual(const std::string &db1Path, const std::string &db
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
     std::shared_ptr<XmonAgent> xmon;
     Env env(logger, xmon, "ShardDBTools");
-    SharedRocksDB sharedDb1(logger, xmon);
+    SharedRocksDB sharedDb1(logger, xmon, db1Path, "");
     sharedDb1.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDb1.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     rocksdb::Options rocksDBOptions;
     rocksDBOptions.compression = rocksdb::kLZ4Compression;
     rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
-    sharedDb1.openForReadOnly(rocksDBOptions, db1Path);
-    SharedRocksDB sharedDb2(logger, xmon);
+    sharedDb1.openForReadOnly(rocksDBOptions);
+    SharedRocksDB sharedDb2(logger, xmon, db2Path, "");
     sharedDb2.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDb2.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
-    sharedDb2.openForReadOnly(rocksDBOptions, db2Path);
+    sharedDb2.openForReadOnly(rocksDBOptions);
     auto db1 = sharedDb1.db();
     auto db2 = sharedDb2.db();
 
@@ -109,13 +109,13 @@ void ShardDBTools::outputUnreleasedState(const std::string& dbPath) {
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
     std::shared_ptr<XmonAgent> xmon;
     Env env(logger, xmon, "ShardDBTools");
-    SharedRocksDB sharedDb(logger, xmon);
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
     sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     rocksdb::Options rocksDBOptions;
     rocksDBOptions.compression = rocksdb::kLZ4Compression;
     rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
-    sharedDb.openForReadOnly(rocksDBOptions, dbPath);
+    sharedDb.openForReadOnly(rocksDBOptions);
     LogIdx lastReleased;
     std::vector<LogIdx> unreleasedLogEntries;
 
@@ -129,13 +129,13 @@ void ShardDBTools::fsck(const std::string& dbPath) {
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
     std::shared_ptr<XmonAgent> xmon;
     Env env(logger, xmon, "ShardDBTools");
-    SharedRocksDB sharedDb(logger, xmon);
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
     sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     rocksdb::Options rocksDBOptions;
     rocksDBOptions.compression = rocksdb::kLZ4Compression;
     rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
-    sharedDb.openForReadOnly(rocksDBOptions, dbPath);
+    sharedDb.openForReadOnly(rocksDBOptions);
     auto db = sharedDb.db();
     bool anyErrors = false;
 

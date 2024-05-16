@@ -392,7 +392,7 @@ struct TempShardDB {
             throw SYSCALL_EXCEPTION("mkdtemp");
         }
         std::shared_ptr<XmonAgent> xmon;
-        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
+        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
         blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
         db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
@@ -402,7 +402,7 @@ struct TempShardDB {
     void restart() {
         std::shared_ptr<XmonAgent> xmon;
         db->close();
-        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
+        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
         blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
         db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
@@ -432,7 +432,7 @@ struct TempShardDB {
         rocksDBOptions.max_open_files = 1000;
         // We batch writes and flush manually.
         rocksDBOptions.manual_wal_flush = true;
-        sharedDB->open(rocksDBOptions, dbDir);
+        sharedDB->open(rocksDBOptions);
     }
 };
 

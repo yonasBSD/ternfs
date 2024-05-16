@@ -30,7 +30,7 @@ struct TempLogsDB {
             throw SYSCALL_EXCEPTION("mkdtemp");
         }
 
-        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
+        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
 
         initSharedDB();
         db = std::make_unique<LogsDB>(*env, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
@@ -46,7 +46,7 @@ struct TempLogsDB {
         LogIdx forcedLastReleased = 0)
     {
         db->close();
-        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon);
+        sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
         db = std::make_unique<LogsDB>(*env, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
     }
@@ -75,7 +75,7 @@ struct TempLogsDB {
         rocksDBOptions.max_open_files = 1000;
         // We batch writes and flush manually.
         rocksDBOptions.manual_wal_flush = true;
-        sharedDB->open(rocksDBOptions, dbDir);
+        sharedDB->open(rocksDBOptions);
     }
 };
 

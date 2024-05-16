@@ -1,6 +1,7 @@
 #include "SharedRocksDB.hpp"
 
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <rocksdb/db.h>
 #include <rocksdb/statistics.h>
@@ -15,30 +16,33 @@ static void closeDB(rocksdb::DB* db) {
     delete db;
 }
 
-SharedRocksDB::SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon)
-    : _env(logger, xmon, "shared_rocksdb"), _transactionDB(false), _db(nullptr, closeDB) {}
+SharedRocksDB::SharedRocksDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& path, const std::string& statisticsFilePath) :
+    _env(logger, xmon, "shared_rocksdb"),
+    _transactionDB(false),
+    _path(path),
+    _statisticsFilePath(statisticsFilePath),
+    _db(nullptr, closeDB)
+    {}
 
 SharedRocksDB::~SharedRocksDB() {
     close();
 }
 
-void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
+void SharedRocksDB::open(rocksdb::Options options) {
     std::unique_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() == nullptr);
     ALWAYS_ASSERT(options.statistics.get() == nullptr);
     _dbStatistics = rocksdb::CreateDBStatistics();
-    _dbStatisticsFile = path + "/db-statistics.txt";
     options.statistics = _dbStatistics;
 
 
     std::vector<rocksdb::ColumnFamilyHandle*> cfHandles;
     cfHandles.reserve(_cfDescriptors.size());
     rocksdb::DB* db;
-    auto dbPath = path + "/db";
-    LOG_INFO(_env, "Opening RocksDB in %s", dbPath);
+    LOG_INFO(_env, "Opening RocksDB in %s", _path);
     ROCKS_DB_CHECKED_MSG(
-            rocksdb::DB::Open(options, dbPath, _cfDescriptors, &cfHandles, &db),
-            "could not open RocksDB %s", path
+            rocksdb::DB::Open(options, _path, _cfDescriptors, &cfHandles, &db),
+            "could not open RocksDB %s", _path
     );
 
     _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
@@ -51,23 +55,20 @@ void SharedRocksDB::open(rocksdb::Options options, const std::string& path) {
     _cfDescriptors.clear();
 }
 
-void SharedRocksDB::openTransactionDB(rocksdb::Options options, const std::string& path) {
+void SharedRocksDB::openTransactionDB(rocksdb::Options options) {
     std::unique_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() == nullptr);
     ALWAYS_ASSERT(options.statistics.get() == nullptr);
     _dbStatistics = rocksdb::CreateDBStatistics();
-    _dbStatisticsFile = path + "/db-statistics.txt";
     options.statistics = _dbStatistics;
-
 
     std::vector<rocksdb::ColumnFamilyHandle*> cfHandles;
     cfHandles.reserve(_cfDescriptors.size());
     rocksdb::OptimisticTransactionDB* db;
-    auto dbPath = path + "/db";
-    LOG_INFO(_env, "Opening RocksDB in %s", dbPath);
+    LOG_INFO(_env, "Opening RocksDB in %s", _path);
     ROCKS_DB_CHECKED_MSG(
-            rocksdb::OptimisticTransactionDB::Open(options, dbPath, _cfDescriptors, &cfHandles, &db),
-            "could not open RocksDB %s", path
+            rocksdb::OptimisticTransactionDB::Open(options, _path, _cfDescriptors, &cfHandles, &db),
+            "could not open RocksDB %s", _path
     );
 
     _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
@@ -81,7 +82,7 @@ void SharedRocksDB::openTransactionDB(rocksdb::Options options, const std::strin
     _cfDescriptors.clear();
 }
 
-void SharedRocksDB::openForReadOnly(rocksdb::Options options, const std::string& path) {
+void SharedRocksDB::openForReadOnly(rocksdb::Options options) {
     std::unique_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() == nullptr);
     options.create_if_missing = false;
@@ -90,10 +91,10 @@ void SharedRocksDB::openForReadOnly(rocksdb::Options options, const std::string&
     std::vector<rocksdb::ColumnFamilyHandle*> cfHandles;
     cfHandles.reserve(_cfDescriptors.size());
     rocksdb::DB* db;
-    LOG_INFO(_env, "Opening RocksDB as readonly in %s", path);
+    LOG_INFO(_env, "Opening RocksDB as readonly in %s", _path);
     ROCKS_DB_CHECKED_MSG(
-            rocksdb::DB::OpenForReadOnly(options, path, _cfDescriptors, &cfHandles, &db),
-            "could not open RocksDB %s", path
+            rocksdb::DB::OpenForReadOnly(options, _path, _cfDescriptors, &cfHandles, &db),
+            "could not open RocksDB %s", _path
     );
 
     _db = std::unique_ptr<rocksdb::DB, void (*)(rocksdb::DB*)>(db,closeDB);
@@ -183,7 +184,7 @@ void SharedRocksDB::rocksDBMetrics(std::unordered_map<std::string, uint64_t>& st
 void SharedRocksDB::dumpRocksDBStatistics() {
     std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
-    LOG_INFO(_env, "Dumping statistics to %s", _dbStatisticsFile);
-    std::ofstream file(_dbStatisticsFile);
+    LOG_INFO(_env, "Dumping statistics to %s", _statisticsFilePath);
+    std::ofstream file(_statisticsFilePath);
     file << _dbStatistics->ToString();
 }

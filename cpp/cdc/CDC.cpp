@@ -1176,7 +1176,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
-    SharedRocksDB sharedDb(logger, xmon);
+    SharedRocksDB sharedDb(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
     sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     sharedDb.registerCFDescriptors(CDCDB::getColumnFamilyDescriptors());
 
@@ -1187,7 +1187,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     // In the shards we set this given that 1000*256 = 256k, doing it here also
     // for symmetry although it's probably not needed.
     dbOptions.max_open_files = 1000;
-    sharedDb.openTransactionDB(dbOptions, dbDir);
+    sharedDb.openTransactionDB(dbOptions);
 
     CDCDB db(logger, xmon, sharedDb);
     CDCShared shared(

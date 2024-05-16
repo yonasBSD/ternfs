@@ -1170,7 +1170,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
 
-    SharedRocksDB sharedDB(logger, xmon);
+    SharedRocksDB sharedDB(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
     sharedDB.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
@@ -1184,7 +1184,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     rocksDBOptions.max_open_files = 1000;
     // We batch writes and flush manually.
     rocksDBOptions.manual_wal_flush = true;
-    sharedDB.open(rocksDBOptions, dbDir);
+    sharedDB.open(rocksDBOptions);
 
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 

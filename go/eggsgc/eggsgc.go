@@ -359,9 +359,10 @@ func main() {
 					for _, blockServiceId := range *bss {
 						log.RaiseNC(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
 						if err := cleanup.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
-							log.RaiseAlert("could not migrate blocks out of block service %v: %v", blockServiceId, err)
+							log.RaiseAlert("could not migrate blocks out of block service %v, stats so far %+v: %v", blockServiceId, migrateState.Stats, err)
+						} else {
+							log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)
 						}
-						log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)
 						log.ClearNC(progressReportAlert)
 					}
 				}

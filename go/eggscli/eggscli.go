@@ -1250,6 +1250,7 @@ func main() {
 	resurrectFileCmd := flag.NewFlagSet("resurrect", flag.ExitOnError)
 	resurrectFilePath := resurrectFileCmd.String("path", "", "The file to resurrect")
 	resurrectFileList := resurrectFileCmd.String("list", "", "File with files to resurrect (one per line)")
+	resurrectFileWorkers := resurrectFileCmd.Int("workers", 256, "")
 	resurrectFileRun := func() {
 		if (*resurrectFilePath == "" && *resurrectFileList == "") || (*resurrectFilePath != "" && *resurrectFileList != "") {
 			panic(fmt.Errorf("must provide -path or -list"))
@@ -1257,10 +1258,72 @@ func main() {
 		if *resurrectFilePath == "" && *resurrectFileList == "" {
 			panic(fmt.Errorf("must provide -path or -list"))
 		}
-		paths := []string{}
-		if *resurrectFilePath != "" {
-			paths = append(paths, *resurrectFilePath)
+		if *resurrectFileWorkers < 1 {
+			panic(fmt.Errorf("workers must be > 0"))
 		}
+		c := getClient()
+		t0 := time.Now()
+		ch := make(chan string, *resurrectFileWorkers*4)
+		var wg sync.WaitGroup
+		wg.Add(*resurrectFileWorkers)
+		for i := 0; i < *resurrectFileWorkers; i++ {
+			go func() {
+				defer wg.Done()
+				for {
+					p, more := <-ch
+					if !more {
+						return
+					}
+					dirId, err := c.ResolvePath(log, path.Dir(p))
+					if err != nil {
+						panic(err)
+					}
+					req := msgs.FullReadDirReq{
+						DirId:     dirId,
+						Flags:     msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_BACKWARDS | msgs.FULL_READ_DIR_SAME_NAME,
+						StartName: path.Base(p),
+					}
+					resp := msgs.FullReadDirResp{}
+					if err := c.ShardRequest(log, dirId.Shard(), &req, &resp); err != nil {
+						panic(err)
+					}
+					if len(resp.Results) < 2 {
+						log.Info("%q: found < 2 edges, skipping: %+v", p, resp.Results)
+						continue
+					}
+					// if we already have a current edge, no need to do anything
+					if resp.Results[0].Current {
+						log.Info("%q: a current edge already exists, skipping", p)
+						continue
+					}
+					// otherwise, we expect a deleted edge, and then an owned edge
+					if resp.Results[0].TargetId.Id() != msgs.NULL_INODE_ID {
+						log.Info("%q: last edge is not a deletion edge, skipping: %+v", p, resp.Results[0])
+						continue
+					}
+					if !resp.Results[1].TargetId.Extra() {
+						log.Info("%q: second to last edge is not an owned edge, skipping: %+v", p, resp.Results[1])
+						continue
+					}
+					// We've got everything we need, do the resurrection
+					resurrectReq := msgs.SameDirectoryRenameSnapshotReq{
+						TargetId:        resp.Results[1].TargetId.Id(),
+						DirId:           dirId,
+						OldName:         path.Base(p),
+						OldCreationTime: resp.Results[1].CreationTime,
+						NewName:         path.Base(p),
+					}
+					if err := c.ShardRequest(log, dirId.Shard(), &resurrectReq, &msgs.SameDirectoryRenameSnapshotResp{}); err != nil {
+						panic(fmt.Errorf("could not resurrect %q: %w", p, err))
+					}
+					log.Info("%q: resurrected", p)
+				}
+			}()
+		}
+		if *resurrectFilePath != "" {
+			ch <- *resurrectFilePath
+		}
+		seenFiles := 0
 		if *resurrectFileList != "" {
 			file, err := os.Open(*resurrectFileList)
 			if err != nil {
@@ -1269,57 +1332,18 @@ func main() {
 			defer file.Close()
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
+				if seenFiles%30_000 == 0 {
+					log.Info("Went through %v files (%0.2f files/sec)", seenFiles, 1000.0*float64(seenFiles)/float64(time.Since(t0).Milliseconds()))
+				}
+				seenFiles++
 				if strings.TrimSpace(scanner.Text()) == "" {
 					continue
 				}
-				paths = append(paths, scanner.Text())
+				ch <- scanner.Text()
 			}
 		}
-		c := getClient()
-		for i, p := range paths {
-			if i%30_000 == 0 {
-				log.Info("Went through %v files", i)
-			}
-			dirId, err := c.ResolvePath(log, path.Dir(p))
-			if err != nil {
-				panic(err)
-			}
-			req := msgs.FullReadDirReq{
-				DirId:     dirId,
-				Flags:     msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_BACKWARDS | msgs.FULL_READ_DIR_SAME_NAME,
-				StartName: path.Base(p),
-			}
-			resp := msgs.FullReadDirResp{}
-			if err := c.ShardRequest(log, dirId.Shard(), &req, &resp); err != nil {
-				panic(err)
-			}
-			// if we already have a current edge, no need to do anything
-			if resp.Results[0].Current {
-				log.Info("%q: a current edge already exists, skipping", p)
-				continue
-			}
-			// otherwise, we expect a deleted edge, and then an owned edge
-			if resp.Results[0].TargetId.Id() != msgs.NULL_INODE_ID {
-				log.Info("%q: last edge is not a deletion edge, skipping: %+v", p, resp.Results[0])
-				continue
-			}
-			if !resp.Results[1].TargetId.Extra() {
-				log.Info("%q: second to last edge is not an owned edge, skipping: %+v", p, resp.Results[1])
-				continue
-			}
-			// We've got everything we need, do the resurrection
-			resurrectReq := msgs.SameDirectoryRenameSnapshotReq{
-				TargetId:        resp.Results[1].TargetId.Id(),
-				DirId:           dirId,
-				OldName:         path.Base(p),
-				OldCreationTime: resp.Results[1].CreationTime,
-				NewName:         path.Base(p),
-			}
-			if err := c.ShardRequest(log, dirId.Shard(), &resurrectReq, &msgs.SameDirectoryRenameSnapshotResp{}); err != nil {
-				panic(err)
-			}
-			log.Info("%q: resurrected", p)
-		}
+		close(ch)
+		wg.Wait()
 	}
 	commands["resurrect"] = commandSpec{
 		flags: resurrectFileCmd,

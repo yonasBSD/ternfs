@@ -936,7 +936,7 @@ struct CDCRegisterer : PeriodicLoop {
     uint16_t _shucklePort;
     XmonNCAlert _alert;
     ReplicaId _replicaId;
-    bool _registerCompleted;
+    bool _dontDoReplication;
 public:
     CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
         PeriodicLoop(logger, xmon, "registerer", { 1_sec, 1_mins }),
@@ -944,7 +944,8 @@ public:
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
         _alert(10_sec),
-        _replicaId(options.replicaId)
+        _replicaId(options.replicaId),
+        _dontDoReplication(options.dontDoReplication)
     {}
 
     virtual ~CDCRegisterer() = default;
@@ -981,7 +982,7 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (emptyReplicas > LogsDB::REPLICA_COUNT / 2 ) {
+                if (!_dontDoReplication && emptyReplicas > LogsDB::REPLICA_COUNT / 2 ) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
                     return false;
                 }

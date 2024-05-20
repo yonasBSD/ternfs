@@ -81,6 +81,7 @@ const char* eggsfs_err_str(int err) {
     case 88: return "SWAP_SPANS_NOT_CLEAN";
     case 89: return "SWAP_SPANS_MISMATCHING_CRC";
     case 90: return "SWAP_SPANS_MISMATCHING_BLOCKS";
+    case 91: return "EDGE_NOT_OWNED";
     default: return "UNKNOWN";
     }
 }

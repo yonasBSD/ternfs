@@ -1358,6 +1358,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SetTimeEntry{}),
 			reflect.TypeOf(msgs.RemoveZeroBlockServiceFilesEntry{}),
 			reflect.TypeOf(msgs.SwapSpansEntry{}),
+			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotEntry{}),
 		},
 	)
 
@@ -1476,6 +1477,7 @@ func main() {
 		"SWAP_SPANS_NOT_CLEAN",
 		"SWAP_SPANS_MISMATCHING_CRC",
 		"SWAP_SPANS_MISMATCHING_BLOCKS",
+		"EDGE_NOT_OWNED",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1551,7 +1553,7 @@ func main() {
 			reflect.TypeOf(msgs.FullReadDirReq{}),
 			reflect.TypeOf(msgs.FullReadDirResp{}),
 		},
-		// this is also "private" but we use it to statsh away broken dirty
+		// this is also "private" but we use it to stash away broken dirty
 		// spans
 		{
 			0x7B,
@@ -1639,6 +1641,11 @@ func main() {
 			0x7E,
 			reflect.TypeOf(msgs.SwapSpansReq{}),
 			reflect.TypeOf(msgs.SwapSpansResp{}),
+		},
+		{
+			0x7F,
+			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotReq{}),
+			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotResp{}),
 		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{

@@ -996,6 +996,21 @@ type SameDirectoryRenameResp struct {
 	NewCreationTime EggsTime
 }
 
+// This is exactly like `SameDirectoryRenameReq`, but it expects
+// an owned snapshot edge. Useful to resurrect mistakenly deleted
+// files.
+type SameDirectoryRenameSnapshotReq struct {
+	TargetId        InodeId
+	DirId           InodeId
+	OldName         string
+	OldCreationTime EggsTime
+	NewName         string
+}
+
+type SameDirectoryRenameSnapshotResp struct {
+	NewCreationTime EggsTime
+}
+
 type VisitDirectoriesReq struct {
 	BeginId InodeId
 	Mtu     uint16
@@ -1647,6 +1662,14 @@ type LinkFileEntry struct {
 }
 
 type SameDirectoryRenameEntry struct {
+	DirId           InodeId
+	TargetId        InodeId
+	OldName         string
+	OldCreationTime EggsTime
+	NewName         string
+}
+
+type SameDirectoryRenameSnapshotEntry struct {
 	DirId           InodeId
 	TargetId        InodeId
 	OldName         string

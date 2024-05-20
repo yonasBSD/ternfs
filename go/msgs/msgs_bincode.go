@@ -196,6 +196,7 @@ const (
 	SWAP_SPANS_NOT_CLEAN ErrCode = 88
 	SWAP_SPANS_MISMATCHING_CRC ErrCode = 89
 	SWAP_SPANS_MISMATCHING_BLOCKS ErrCode = 90
+	EDGE_NOT_OWNED ErrCode = 91
 )
 
 func (err ErrCode) String() string {
@@ -362,6 +363,8 @@ func (err ErrCode) String() string {
 		return "SWAP_SPANS_MISMATCHING_CRC"
 	case 90:
 		return "SWAP_SPANS_MISMATCHING_BLOCKS"
+	case 91:
+		return "EDGE_NOT_OWNED"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -429,6 +432,8 @@ func (k ShardMessageKind) String() string {
 		return "REMOVE_ZERO_BLOCK_SERVICE_FILES"
 	case 126:
 		return "SWAP_SPANS"
+	case 127:
+		return "SAME_DIRECTORY_RENAME_SNAPSHOT"
 	case 128:
 		return "CREATE_DIRECTORY_INODE"
 	case 129:
@@ -482,6 +487,7 @@ const (
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
 	REMOVE_ZERO_BLOCK_SERVICE_FILES ShardMessageKind = 0x7D
 	SWAP_SPANS ShardMessageKind = 0x7E
+	SAME_DIRECTORY_RENAME_SNAPSHOT ShardMessageKind = 0x7F
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -523,6 +529,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	ADD_SPAN_INITIATE_WITH_REFERENCE,
 	REMOVE_ZERO_BLOCK_SERVICE_FILES,
 	SWAP_SPANS,
+	SAME_DIRECTORY_RENAME_SNAPSHOT,
 	CREATE_DIRECTORY_INODE,
 	SET_DIRECTORY_OWNER,
 	REMOVE_DIRECTORY_OWNER,
@@ -597,6 +604,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &RemoveZeroBlockServiceFilesReq{}, &RemoveZeroBlockServiceFilesResp{}, nil
 	case k == "SWAP_SPANS":
 		return &SwapSpansReq{}, &SwapSpansResp{}, nil
+	case k == "SAME_DIRECTORY_RENAME_SNAPSHOT":
+		return &SameDirectoryRenameSnapshotReq{}, &SameDirectoryRenameSnapshotResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
 		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
@@ -2733,6 +2742,66 @@ func (v *SwapSpansResp) Pack(w io.Writer) error {
 }
 
 func (v *SwapSpansResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *SameDirectoryRenameSnapshotReq) ShardRequestKind() ShardMessageKind {
+	return SAME_DIRECTORY_RENAME_SNAPSHOT
+}
+
+func (v *SameDirectoryRenameSnapshotReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.OldName)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.OldCreationTime)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.NewName)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SameDirectoryRenameSnapshotReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.TargetId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.OldName); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldCreationTime)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.NewName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SameDirectoryRenameSnapshotResp) ShardResponseKind() ShardMessageKind {
+	return SAME_DIRECTORY_RENAME_SNAPSHOT
+}
+
+func (v *SameDirectoryRenameSnapshotResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NewCreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SameDirectoryRenameSnapshotResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NewCreationTime)); err != nil {
+		return err
+	}
 	return nil
 }
 

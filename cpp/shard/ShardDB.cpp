@@ -965,11 +965,12 @@ struct ShardDBImpl {
         return NO_ERROR;
     }
 
-    EggsError _prepareSameDirectoryRename(EggsTime time, const SameDirectoryRenameReq& req, SameDirectoryRenameEntry& entry) {
+    template<bool DontAllowDifferentNames, typename Req, typename Entry>
+    EggsError _prepareSameDirectoryRename(EggsTime time, const Req& req, Entry& entry) {
         if (req.dirId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
-        if (req.oldName == req.newName) {
+        if (DontAllowDifferentNames && (req.oldName == req.newName)) {
             return EggsError::SAME_SOURCE_AND_DESTINATION;
         }
         if (!validName(req.newName.ref())) {
@@ -1606,7 +1607,10 @@ struct ShardDBImpl {
             err = _prepareLinkFile(time, req.getLinkFile(), logEntryBody.setLinkFile());
             break;
         case ShardMessageKind::SAME_DIRECTORY_RENAME:
-            err = _prepareSameDirectoryRename(time, req.getSameDirectoryRename(), logEntryBody.setSameDirectoryRename());
+            err = _prepareSameDirectoryRename<true>(time, req.getSameDirectoryRename(), logEntryBody.setSameDirectoryRename());
+            break;
+        case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+            err = _prepareSameDirectoryRename<false>(time, req.getSameDirectoryRenameSnapshot(), logEntryBody.setSameDirectoryRenameSnapshot());
             break;
         case ShardMessageKind::SOFT_UNLINK_FILE:
             err = _prepareSoftUnlinkFile(time, req.getSoftUnlinkFile(), logEntryBody.setSoftUnlinkFile());
@@ -1968,6 +1972,64 @@ struct ShardDBImpl {
                 return err;
             }
         }
+        // Now, create the new one
+        {
+            EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, 0, resp.newCreationTime);
+            if (err != NO_ERROR) {
+                return err;
+            }
+        }
+        return NO_ERROR;
+    }
+
+    EggsError _applySameDirectoryRenameSnapshot(EggsTime time, rocksdb::WriteBatch& batch, const SameDirectoryRenameSnapshotEntry& entry, SameDirectoryRenameSnapshotResp& resp) {
+        // First, disown the snapshot edge.
+        {
+            // compute hash
+            uint64_t nameHash;
+            {
+                // allowSnaphsot=false since we can't have owned edges in snapshot dirs
+                EggsError err = _initiateDirectoryModificationAndHash(time, false, batch, entry.dirId, entry.oldName.ref(), nameHash);
+                if (err != NO_ERROR) {
+                    return err;
+                }
+            }
+
+            // get the edge
+            StaticValue<EdgeKey> edgeKey;
+            edgeKey().setDirIdWithCurrent(entry.dirId, false); // current=false
+            edgeKey().setNameHash(nameHash);
+            edgeKey().setName(entry.oldName.ref());
+            edgeKey().setCreationTime(entry.oldCreationTime);
+            std::string edgeValue;
+            auto status = _db->Get({}, _edgesCf, edgeKey.toSlice(), &edgeValue);
+            if (status.IsNotFound()) {
+                return EggsError::EDGE_NOT_FOUND;
+            }
+            ROCKS_DB_CHECKED(status);
+            ExternalValue<SnapshotEdgeBody> edgeBody(edgeValue);
+            if (edgeBody().targetIdWithOwned().id() != entry.targetId) {
+                LOG_DEBUG(_env, "expecting target %s, but got %s", entry.targetId, edgeBody().targetIdWithOwned().id());
+                return EggsError::MISMATCHING_TARGET;
+            }
+            if (!edgeBody().targetIdWithOwned().extra()) { // owned
+                return EggsError::EDGE_NOT_OWNED;
+            }
+
+            // make the snapshot edge non-owned
+            {
+                StaticValue<EdgeKey> k;
+                k().setDirIdWithCurrent(entry.dirId, false); // snapshot (current=false)
+                k().setNameHash(nameHash);
+                k().setName(entry.oldName.ref());
+                k().setCreationTime(entry.oldCreationTime);
+                StaticValue<SnapshotEdgeBody> v;
+                v().setVersion(0);
+                v().setTargetIdWithOwned(InodeIdExtra(entry.targetId, false));
+                ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
+            }
+        }
+
         // Now, create the new one
         {
             EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, 0, resp.newCreationTime);
@@ -3430,6 +3492,9 @@ struct ShardDBImpl {
         case ShardLogEntryKind::SAME_DIRECTORY_RENAME:
             err = _applySameDirectoryRename(time, batch, logEntryBody.getSameDirectoryRename(), resp.setSameDirectoryRename());
             break;
+        case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+            err = _applySameDirectoryRenameSnapshot(time, batch, logEntryBody.getSameDirectoryRenameSnapshot(), resp.setSameDirectoryRenameSnapshot());
+            break;
         case ShardLogEntryKind::SOFT_UNLINK_FILE:
             err = _applySoftUnlinkFile(time, batch, logEntryBody.getSoftUnlinkFile(), resp.setSoftUnlinkFile());
             break;
@@ -3738,6 +3803,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::SET_TIME:
     case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
     case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

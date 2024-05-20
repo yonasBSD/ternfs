@@ -219,30 +219,6 @@ static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* add
     return true;
 }
 
-int eggsfs_metadata_request_nowait(struct eggsfs_metadata_socket* sock, u64 req_id, void *p, u32 len, const atomic64_t* addr_data1, const atomic64_t* addr_data2) {
-    struct msghdr msg;
-    struct sockaddr_in addr;
-    if (WHICH_SHARD_IP++ % 2) {
-        eggsfs_shard_fill_msghdr(&msg, &addr, addr_data1);
-    } else {
-        if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data2))) {
-            BUG_ON(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data1));
-        }
-    }
-    struct kvec vec;
-    vec.iov_base = p;
-    vec.iov_len = len;
-    int err = kernel_sendmsg(sock->sock, &msg, &vec, 1, vec.iov_len);
-    if (err < 0) {
-        eggsfs_info("could not send, err=%d", err);
-	// At the moment it is not entirely clear why we occasionally get EPERM.
-        if (err != -EPERM) {
-            return err;
-        }
-    }
-    return 0;
-}
-
 // #define LOG_STR_NO_ADDR "req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums"
 // #define LOG_STR LOG_STR_NO_ADDR " addr=%pI4:%d"
 // #define LOG_ARGS_NO_ADDR(req, state, kind) (req)->request_id, (state)->shard_id, (((state)->shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind)), kind, (state)->attempts, jiffies64_to_msecs(get_jiffies_64() - (state)->start_t)

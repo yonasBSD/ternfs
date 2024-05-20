@@ -733,23 +733,6 @@ int eggsfs_shard_set_time(struct eggsfs_fs_info* info, u64 file, u64 mtime, u64 
     return 0;
 }
 
-int eggsfs_shard_set_atime_nowait(struct eggsfs_fs_info* info, u64 file, u64 atime) {
-    u64 req_id = alloc_request_id();
-    u8 kind = EGGSFS_SHARD_SET_TIME;
-
-    PREPARE_SHARD_REQ_CTX(EGGSFS_SET_TIME_REQ_SIZE);
-    eggsfs_set_time_req_put_start(&ctx, start);
-    eggsfs_set_time_req_put_id(&ctx, start, file_id, file);
-    eggsfs_set_time_req_put_mtime(&ctx, file_id, mtime_req, 0);
-    eggsfs_set_time_req_put_atime(&ctx, mtime_req, atime_req, atime | (1ull<<63));
-    eggsfs_set_time_req_put_end(&ctx, atime_req, end);
-
-    u8 shid = eggsfs_inode_shard(file);
-    return eggsfs_metadata_request_nowait(&info->sock, req_id, ctx.start, ctx.cursor-ctx.start, &info->shard_addrs1[shid], &info->shard_addrs2[shid]);
-
-    return 0;
-}
-
 int eggsfs_shard_add_span_initiate(
     struct eggsfs_fs_info* info, void* data, u64 file, u64 cookie, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, u32* cell_crcs,
     u16 blacklist_length, char (*blacklist)[16],

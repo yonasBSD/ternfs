@@ -1204,7 +1204,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     CDCDB db(logger, xmon, sharedDb);
     CDCShared shared(
         sharedDb, db,
-        std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.cdcAddrs, MAX_UPDATE_SIZE), UDPSocketPair(env, options.cdcToShardAddress, MAX_UPDATE_SIZE)})
+        std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.cdcAddrs), UDPSocketPair(env, options.cdcToShardAddress)})
     );
 
     LOG_INFO(env, "Spawning server threads");

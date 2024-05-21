@@ -309,8 +309,8 @@ func main() {
 	if *scrub {
 		rateLimit := lib.NewRateLimit(&lib.RateLimitOpts{
 			RefillInterval: time.Second,
-			Refill:         50000, // 50k blocks per second scrubs in ~1 month right now (100 billion blocks)
-			BucketSize:     50000 * 100,
+			Refill:         100000, // 100k blocks per second scrubs in ~1 month right now (100 billion blocks)
+			BucketSize:     100000 * 100,
 		})
 		defer rateLimit.Close()
 		// retry forever

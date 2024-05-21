@@ -305,7 +305,9 @@ public:
         if (unlikely(entries.size())) {
             timeout = 0;
         }
-        _channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE - _updateSize(), timeout);
+        if (unlikely(!_channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE - _updateSize(), timeout))) {
+            return;
+        };
 
         _processLogMessages();
         _processShardMessages();
@@ -641,7 +643,7 @@ private:
                 LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBResponse %s from %s", msg.buf.remaining(), resp.header.kind, msg.clientAddr);
                 requests.pop_back();
             }
-            LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
+            LOG_DEBUG(_env, "Received response %s with requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
         }
         _logsDB->processIncomingMessages(requests, responses);
     }

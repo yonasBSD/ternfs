@@ -240,6 +240,8 @@ public:
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout),
+        _receiver({.maxMsgSize = MAX_UDP_MTU}),
+        _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
         _dontDoReplication(options.dontDoReplication)
     {
         _currentLogIndex = _shared.db.lastAppliedLogEntry();
@@ -318,7 +320,7 @@ public:
         if (_cdcReqs.size() > 0 || _shardResps.size() > 0) {
             ALWAYS_ASSERT(_shared.isLeader.load(std::memory_order_relaxed));
             std::vector<CDCLogEntry> entriesOut;
-            CDCLogEntry::prepareLogEntries(_cdcReqs, _shardResps, LogsDB::MAX_UDP_ENTRY_SIZE, entriesOut);
+            CDCLogEntry::prepareLogEntries(_cdcReqs, _shardResps, LogsDB::DEFAULT_UDP_ENTRY_SIZE, entriesOut);
 
             auto reqInfoIt = _cdcReqsInfo.begin();
             for (auto& entry : entriesOut) {

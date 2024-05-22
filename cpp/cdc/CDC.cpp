@@ -342,16 +342,20 @@ public:
                 ALWAYS_ASSERT(err == NO_ERROR);
                 // we need to drop information about entries which might have been dropped due to append window being full
                 if (unlikely(entries.size() && entries.back().idx == 0)) {
-                    LogIdx lastGood{};
-                    for (auto& entry : entries) {
-                        if (lastGood < entry.idx) {
-                            lastGood = entry.idx;
-                            continue;
+                    uint64_t lastGood = 0;
+                    size_t i = 0;
+                    for (; i < entries.size(); ++i) {
+                        if (lastGood >= entries[i].idx.u64) {
+                            break;
                         }
-                        ALWAYS_ASSERT(entry.idx == 0);
+                        lastGood = entries[i].idx.u64;
+                    }
+                    _logsDBLogIndex.u64 = lastGood;
+                    for (;i < entries.size(); ++i) {
+                        ALWAYS_ASSERT(entries[i].idx == 0);
                         ++lastGood;
-                        _logEntryIdxToReqInfos.erase(lastGood.u64);
-                        _inFlightLogEntries.erase(lastGood.u64);
+                        _logEntryIdxToReqInfos.erase(lastGood);
+                        _inFlightLogEntries.erase(lastGood);
                     }
                 }
                 entries.clear();

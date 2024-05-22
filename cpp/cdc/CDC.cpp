@@ -224,7 +224,7 @@ private:
     InFlightShardRequests _inFlightShardReqs;
 
     const bool _dontDoReplication;
-    std::unique_ptr<LogsDB> _logsDB;
+    LogsDB _logsDB;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
     std::vector<LogsDBRequest *> _logsDBOutRequests;
@@ -237,25 +237,23 @@ public:
         Loop(logger, xmon, "req_server"),
         _shared(shared),
         _seenShards(false),
+        _currentLogIndex(_shared.db.lastAppliedLogEntry()),
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout),
         _receiver({.maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
-        _dontDoReplication(options.dontDoReplication)
+        _dontDoReplication(options.dontDoReplication),
+        _logsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased)
     {
-        _currentLogIndex = _shared.db.lastAppliedLogEntry();
         expandKey(CDCKey, _expandedCDCKey);
 
-        if (options.writeToLogsDB) {
-            _logsDB.reset(new LogsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased));
+        if (options.forceLeader) {
             // In case of force leader it immediately detects and promotes us to leader
-            _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
-            _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
-            _logsDBLogIndex = _logsDB->getLastReleased();
-        } else {
-            _shared.isLeader.store(options.replicaId == 0, std::memory_order_relaxed);
+            _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
         }
+        _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
+        _logsDBLogIndex = _logsDB.getLastReleased();
         LOG_INFO(_env, "Waiting for shard info to be filled in");
     }
 
@@ -302,7 +300,7 @@ public:
                 _recordCDCShardRespError(requestId, *resp, EggsError::TIMEOUT);
             }
         }
-        auto timeout = _logsDB ? _logsDB->getNextTimeout() : ((_inFlightShardReqs.size() > 0) ? _shardTimeout : -1);
+        auto timeout = _logsDB.getNextTimeout();
         // we need to process bootstrap entry
         if (unlikely(entries.size())) {
             timeout = 0;
@@ -336,51 +334,45 @@ public:
                 _inFlightLogEntries[entry.logIdx()] = std::move(entry);
             }
         }
-        if (_logsDB) {
-            if (_logsDB->isLeader()) {
-                auto err = _logsDB->appendEntries(entries);
-                ALWAYS_ASSERT(err == NO_ERROR);
-                // we need to drop information about entries which might have been dropped due to append window being full
-                if (unlikely(entries.size() && entries.back().idx == 0)) {
-                    uint64_t lastGood = 0;
-                    size_t i = 0;
-                    for (; i < entries.size(); ++i) {
-                        if (lastGood >= entries[i].idx.u64) {
-                            break;
-                        }
-                        lastGood = entries[i].idx.u64;
+
+        if (_logsDB.isLeader()) {
+            auto err = _logsDB.appendEntries(entries);
+            ALWAYS_ASSERT(err == NO_ERROR);
+            // we need to drop information about entries which might have been dropped due to append window being full
+            if (unlikely(entries.size() && entries.back().idx == 0)) {
+                uint64_t lastGood = 0;
+                size_t i = 0;
+                for (; i < entries.size(); ++i) {
+                    if (lastGood >= entries[i].idx.u64) {
+                        break;
                     }
-                    _logsDBLogIndex.u64 = lastGood;
-                    for (;i < entries.size(); ++i) {
-                        ALWAYS_ASSERT(entries[i].idx == 0);
-                        ++lastGood;
-                        _logEntryIdxToReqInfos.erase(lastGood);
-                        _inFlightLogEntries.erase(lastGood);
-                    }
+                    lastGood = entries[i].idx.u64;
                 }
-                entries.clear();
+                _logsDBLogIndex.u64 = lastGood;
+                for (;i < entries.size(); ++i) {
+                    ALWAYS_ASSERT(entries[i].idx == 0);
+                    ++lastGood;
+                    _logEntryIdxToReqInfos.erase(lastGood);
+                    _inFlightLogEntries.erase(lastGood);
+                }
             }
-            // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
-            // We want to have priority when sending out
-            _logsDB->getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
-
-            for (auto& response : _logsDBOutResponses) {
-                _packLogsDBResponse(response);
-            }
-
-            for (auto request : _logsDBOutRequests) {
-                _packLogsDBRequest(*request);
-            }
-            if (_dontDoReplication) {
-                _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
-            }
-            _logsDB->readEntries(entries);
-        } else {
-            auto currentLogIndex = _currentLogIndex;
-            for (auto& entry: entries) {
-                entry.idx.u64 = ++currentLogIndex;
-            }
+            entries.clear();
         }
+        // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
+        // We want to have priority when sending out
+        _logsDB.getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
+
+        for (auto& response : _logsDBOutResponses) {
+            _packLogsDBResponse(response);
+        }
+
+        for (auto request : _logsDBOutRequests) {
+            _packLogsDBRequest(*request);
+        }
+        if (_dontDoReplication) {
+            _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
+        }
+        _logsDB.readEntries(entries);
 
         // Apply replicated log entries
         for(auto& logEntry : entries) {
@@ -423,9 +415,7 @@ public:
             }
         }
 
-        if (_logsDB) {
-            _logsDB->flush(true);
-        }
+        _logsDB.flush(true);
 
         _shardSender.sendMessages(_env, _shared.socks[SHARD_SOCK]);
         _cdcSender.sendMessages(_env, _shared.socks[CDC_SOCK]);
@@ -564,9 +554,6 @@ private:
     }
 
     void _processLogMessages() {
-        if (!_logsDB) {
-            return;
-        }
         std::vector<LogsDBRequest> requests;
         std::vector<LogsDBResponse> responses;
         auto& requestMessages = _channel.protocolMessages(LOG_REQ_PROTOCOL_VERSION);
@@ -651,7 +638,7 @@ private:
             }
             LOG_DEBUG(_env, "Received response %s with requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
         }
-        _logsDB->processIncomingMessages(requests, responses);
+        _logsDB.processIncomingMessages(requests, responses);
     }
 
     void _processCDCMessages() {
@@ -854,30 +841,6 @@ private:
             respHeader.pack(respBbuf);
             resp.pack(respBbuf);
         });
-    }
-
-    void _packResp(int sock, struct sockaddr_in* dest, const char* data, size_t len) {
-        // We need to handle EAGAIN/EPERM when trying to send. Here we take a ...
-        // lazy approach and just loop with a delay. This seems to happen when
-        // we restart everything while under load, it's not great to block here
-        // but it's probably OK to do so in those cases. We should also automatically
-        // clear the alert when done with this.
-        XmonNCAlert alert(1_sec);
-        for (;;) {
-            if (likely(sendto(sock, data, len, 0, (struct sockaddr*)&dest, sizeof(dest)) == len)) {
-                break;
-            }
-            int err = errno;
-            // Note that we get EPERM on `sendto` when nf drops packets.
-            if (likely(err == EAGAIN || err == EPERM)) {
-                _env.updateAlert(alert, "we got %s/%s=%s when trying to send shard message, will wait and retry", err, translateErrno(err), safe_strerror(err));
-                (100_ms).sleepRetry();
-            } else {
-                _env.clearAlert(alert);
-                throw EXPLICIT_SYSCALL_EXCEPTION(err, "sendto");
-            }
-        }
-        _env.clearAlert(alert);
     }
 
     uint64_t _advanceLogIndex() {
@@ -1172,13 +1135,10 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
     LOG_INFO(env, "  cdcAddrs = %s", options.cdcAddrs);
     LOG_INFO(env, "  syslog = %s", (int)options.syslog);
-    if (options.writeToLogsDB) {
-            LOG_INFO(env, "Using LogsDB with options:");
-            LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
-            LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
-            LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
-            LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
-        }
+    LOG_INFO(env, "Using LogsDB with options:");
+    LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
+    LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
+    LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
 
     std::vector<std::unique_ptr<LoopThread>> threads;
 
@@ -1187,7 +1147,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
         XmonConfig config;
         {
             std::ostringstream ss;
-            ss << "eggscdc" << options.replicaId;
+            ss << "eggscdc_" << options.replicaId;
             config.appInstance = ss.str();
         }
         config.appType = XmonAppType::CRITICAL;

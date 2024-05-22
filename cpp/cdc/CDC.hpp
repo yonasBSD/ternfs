@@ -24,10 +24,8 @@ struct CDCOptions {
     ReplicaId replicaId = 0;
 
     // LogsDB settings
-    bool writeToLogsDB = false;
     bool dontDoReplication = false;
     bool forceLeader = false;
-    bool avoidBeingLeader = true;
     LogIdx forcedLastReleased = 0;
 };
 

@@ -1157,8 +1157,8 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         XmonConfig config;
         {
             std::ostringstream ss;
-            ss << shrid;
-            config.appInstance = "eggsshard" + ss.str();
+            ss << "eggsshard" << shrid.shardId() << "_" << shrid.replicaId();
+            config.appInstance =  ss.str();
         }
         config.prod = options.xmonProd;
         config.appType = XmonAppType::CRITICAL;

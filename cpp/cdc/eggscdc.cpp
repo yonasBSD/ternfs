@@ -29,8 +29,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
-    fprintf(stderr, " -use-logsdb LEADER|LEADER_NO_FOLLOWERS|FOLLOWER|NONE\n");
-    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER or don't use. Default is don't use.\n");
+    fprintf(stderr, " -use-logsdb LEADER|LEADER_NO_FOLLOWERS|FOLLOWER\n");
+    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER. Default is FOLLOWER.\n");
     fprintf(stderr, " -force-last-released LogIdx\n");
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
 }
@@ -185,16 +185,10 @@ int main(int argc, char** argv) {
             std::string logsDBMode = getNextArg();
             if (logsDBMode == "LEADER") {
                 options.forceLeader = true;
-                options.avoidBeingLeader = false;
-                options.writeToLogsDB = true;
-            } else if (logsDBMode == "FOLLOWER") {
-                options.writeToLogsDB = true;
             } else if (logsDBMode == "LEADER_NO_FOLLOWERS") {
                 options.forceLeader = true;
-                options.avoidBeingLeader = false;
-                options.writeToLogsDB = true;
                 options.dontDoReplication = true;
-            } else if (logsDBMode == "NONE") {
+            } else if (logsDBMode == "FOLLOWER") {
             } else {
                 fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
                 dieWithUsage();
@@ -212,6 +206,11 @@ int main(int argc, char** argv) {
     }
     if (args.size() < 2) {
         args.emplace_back("0");
+    }
+
+    if (options.forceLeader && options.forcedLastReleased != 0) {
+        fprintf(stderr, "You can not forward release point on a LEADER replica.");
+        dieWithUsage();
     }
 
 #ifndef EGGS_DEBUG

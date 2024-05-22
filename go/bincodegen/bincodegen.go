@@ -1840,6 +1840,11 @@ func main() {
 			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
 			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
 		},
+		{
+			0x19,
+			reflect.TypeOf(msgs.CdcWithReplicasReq{}),
+			reflect.TypeOf(msgs.CdcWithReplicasResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -1943,6 +1948,7 @@ func main() {
 		reflect.TypeOf(msgs.Stat{}),
 		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
+		reflect.TypeOf(msgs.CdcWithReplicasInfo{}),
 	}...)...)
 
 	goExtras := append(extras, []reflect.Type{

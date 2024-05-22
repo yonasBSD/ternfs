@@ -441,6 +441,40 @@ export function renderIndex() {
         return p.h(Table, { identifier: 'shards', cols, rows })
     }
     p.render(p.h(Shards), document.getElementById('shards-table'));
+
+    function Cdc() {
+        const [cdcReplicas, setCdcReplicas] = useState(null);
+        useEffect(async () => {
+            const resp = await shuckleReq('CDC_WITH_REPLICAS', {});
+            setCdcReplicas(resp);
+        }, []);
+
+        if (cdcReplicas === null) {
+            return p.h('em', null, 'Loading...');
+        }
+
+        const now = new Date();
+        const rows = [];
+        cdcReplicas.Replicas.forEach(cdc => {
+            rows.push([
+                cdc.ReplicaId,
+                cdc.IsLeader ? 'yes' : 'no',
+                cdc.Addrs.Addr1,
+                cdc.Addrs.Addr2,
+                cdc.LastSeen,
+            ])
+        });
+        const cols = [
+            {name: 'Replica', render: t => p.h('code', {}, t)},
+            {name: 'Leader', render: s => s === 'yes' ? p.h('strong', {}, s) : s},
+            {name: 'Address 1', render: t => p.h('code', {}, t)},
+            {name: 'Address 2', render: t => p.h('code', {}, t)},
+            {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
+        ];
+
+        return p.h(Table, { identifier: 'shards', cols, rows })
+    }
+    p.render(p.h(Cdc), document.getElementById('cdc-table'));
 }
 
 // browse

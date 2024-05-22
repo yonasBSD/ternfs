@@ -478,6 +478,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << "REGISTER_BLOCK_SERVICES";
         break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        out << "CDC_WITH_REPLICAS";
+        break;
     default:
         out << "ShuckleMessageKind(" << ((int)kind) << ")";
         break;
@@ -1300,6 +1303,36 @@ bool RegisterBlockServiceInfo::operator==(const RegisterBlockServiceInfo& rhs) c
 }
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x) {
     out << "RegisterBlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "FlagsMask=" << (int)x.flagsMask << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
+    return out;
+}
+
+void CdcWithReplicasInfo::pack(BincodeBuf& buf) const {
+    replicaId.pack(buf);
+    buf.packScalar<bool>(isLeader);
+    addrs.pack(buf);
+    lastSeen.pack(buf);
+}
+void CdcWithReplicasInfo::unpack(BincodeBuf& buf) {
+    replicaId.unpack(buf);
+    isLeader = buf.unpackScalar<bool>();
+    addrs.unpack(buf);
+    lastSeen.unpack(buf);
+}
+void CdcWithReplicasInfo::clear() {
+    replicaId = ReplicaId();
+    isLeader = bool(0);
+    addrs.clear();
+    lastSeen = EggsTime();
+}
+bool CdcWithReplicasInfo::operator==(const CdcWithReplicasInfo& rhs) const {
+    if ((ReplicaId)this->replicaId != (ReplicaId)rhs.replicaId) { return false; };
+    if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
+    if (addrs != rhs.addrs) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcWithReplicasInfo& x) {
+    out << "CdcWithReplicasInfo(" << "ReplicaId=" << x.replicaId << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ", " << "LastSeen=" << x.lastSeen << ")";
     return out;
 }
 
@@ -4164,6 +4197,38 @@ bool RegisterBlockServicesResp::operator==(const RegisterBlockServicesResp& rhs)
 }
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x) {
     out << "RegisterBlockServicesResp(" << ")";
+    return out;
+}
+
+void CdcWithReplicasReq::pack(BincodeBuf& buf) const {
+}
+void CdcWithReplicasReq::unpack(BincodeBuf& buf) {
+}
+void CdcWithReplicasReq::clear() {
+}
+bool CdcWithReplicasReq::operator==(const CdcWithReplicasReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcWithReplicasReq& x) {
+    out << "CdcWithReplicasReq(" << ")";
+    return out;
+}
+
+void CdcWithReplicasResp::pack(BincodeBuf& buf) const {
+    buf.packList<CdcWithReplicasInfo>(replicas);
+}
+void CdcWithReplicasResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<CdcWithReplicasInfo>(replicas);
+}
+void CdcWithReplicasResp::clear() {
+    replicas.clear();
+}
+bool CdcWithReplicasResp::operator==(const CdcWithReplicasResp& rhs) const {
+    if (replicas != rhs.replicas) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcWithReplicasResp& x) {
+    out << "CdcWithReplicasResp(" << "Replicas=" << x.replicas << ")";
     return out;
 }
 
@@ -7379,6 +7444,15 @@ RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
     auto& x = _data.emplace<21>();
     return x;
 }
+const CdcWithReplicasReq& ShuckleReqContainer::getCdcWithReplicas() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_WITH_REPLICAS);
+    return std::get<22>(_data);
+}
+CdcWithReplicasReq& ShuckleReqContainer::setCdcWithReplicas() {
+    _kind = ShuckleMessageKind::CDC_WITH_REPLICAS;
+    auto& x = _data.emplace<22>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7462,6 +7536,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         setRegisterBlockServices() = other.getRegisterBlockServices();
         break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        setCdcWithReplicas() = other.getCdcWithReplicas();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7519,6 +7596,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return std::get<20>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        return std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7591,6 +7670,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<21>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        std::get<22>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7666,6 +7748,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<21>().unpack(buf);
         break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        _data.emplace<22>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -7719,6 +7804,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getClearShardInfo() == other.getClearShardInfo();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return getRegisterBlockServices() == other.getRegisterBlockServices();
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        return getCdcWithReplicas() == other.getCdcWithReplicas();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7791,6 +7878,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
+        break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        out << x.getCdcWithReplicas();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
@@ -7996,6 +8086,15 @@ RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
     auto& x = _data.emplace<21>();
     return x;
 }
+const CdcWithReplicasResp& ShuckleRespContainer::getCdcWithReplicas() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_WITH_REPLICAS);
+    return std::get<22>(_data);
+}
+CdcWithReplicasResp& ShuckleRespContainer::setCdcWithReplicas() {
+    _kind = ShuckleMessageKind::CDC_WITH_REPLICAS;
+    auto& x = _data.emplace<22>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -8079,6 +8178,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         setRegisterBlockServices() = other.getRegisterBlockServices();
         break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        setCdcWithReplicas() = other.getCdcWithReplicas();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -8136,6 +8238,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return std::get<20>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        return std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8208,6 +8312,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<21>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        std::get<22>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8283,6 +8390,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf, ShuckleMessageKind kind) {
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<21>().unpack(buf);
         break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        _data.emplace<22>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", kind);
     }
@@ -8336,6 +8446,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getClearShardInfo() == other.getClearShardInfo();
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return getRegisterBlockServices() == other.getRegisterBlockServices();
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        return getCdcWithReplicas() == other.getCdcWithReplicas();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8408,6 +8520,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
+        break;
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+        out << x.getCdcWithReplicas();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());

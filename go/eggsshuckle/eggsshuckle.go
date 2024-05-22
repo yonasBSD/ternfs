@@ -659,6 +659,29 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 	return &resp, nil
 }
 
+func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasReq) (*msgs.CdcWithReplicasResp, error) {
+	var ret []msgs.CdcWithReplicasInfo
+	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc")
+	if err != nil {
+		return nil, fmt.Errorf("error selecting cdc replicas: %s", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		si := msgs.CdcWithReplicasInfo{}
+		var ip1, ip2 []byte
+		err = rows.Scan(&si.ReplicaId, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen, &si.IsLeader)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding cdc row: %s", err)
+		}
+		copy(si.Addrs.Addr1.Addrs[:], ip1)
+		copy(si.Addrs.Addr2.Addrs[:], ip2)
+		ret = append(ret, si)
+	}
+
+	return &msgs.CdcWithReplicasResp{Replicas: ret}, nil
+}
+
 func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*msgs.CdcReplicasResp, error) {
 	var ret [5]msgs.AddrsInfo
 	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2 FROM cdc")
@@ -969,6 +992,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleAllBlockServices(log, s, whichReq)
 	case *msgs.CdcReq:
 		resp, err = handleCdc(log, s, whichReq)
+	case *msgs.CdcWithReplicasReq:
+		resp, err = handleCdcWithReplicas(log, s, whichReq)
 	case *msgs.CdcReplicasReq:
 		resp, err = handleCdcReplicas(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
@@ -1311,9 +1336,6 @@ type indexData struct {
 	TotalCapacity       string
 	TotalUsed           string
 	TotalUsedPercentage string
-	CDCAddr1            string
-	CDCAddr2            string
-	CDCLastSeen         string
 	Blocks              uint64
 }
 
@@ -1400,22 +1422,9 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 			data := indexData{
 				NumBlockServices: len(blockServices),
 			}
-			now := msgs.Now()
-			formatLastSeen := func(t msgs.EggsTime) string {
-				return formatNanos(uint64(now) - uint64(t))
-			}
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
 			failureDomainsBytes := make(map[string]struct{})
-
-			cdc, err := state.selectCDC()
-			if err != nil {
-				ll.RaiseAlert("error reading cdc: %s", err)
-				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading cdc: %s", err))
-			}
-			data.CDCAddr1 = cdc.addrs.Addr1.String()
-			data.CDCAddr2 = cdc.addrs.Addr2.String()
-			data.CDCLastSeen = formatLastSeen(cdc.lastSeen)
 
 			data.TotalUsed = formatSize(totalCapacityBytes - totalAvailableBytes)
 			data.TotalCapacity = formatSize(totalAvailableBytes)

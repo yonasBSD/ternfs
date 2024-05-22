@@ -732,6 +732,8 @@ func (k ShuckleMessageKind) String() string {
 		return "CLEAR_SHARD_INFO"
 	case 24:
 		return "REGISTER_BLOCK_SERVICES"
+	case 25:
+		return "CDC_WITH_REPLICAS"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -761,6 +763,7 @@ const (
 	MOVE_SHARD_LEADER ShuckleMessageKind = 0x16
 	CLEAR_SHARD_INFO ShuckleMessageKind = 0x17
 	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x18
+	CDC_WITH_REPLICAS ShuckleMessageKind = 0x19
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -786,9 +789,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	MOVE_SHARD_LEADER,
 	CLEAR_SHARD_INFO,
 	REGISTER_BLOCK_SERVICES,
+	CDC_WITH_REPLICAS,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 24
+const MaxShuckleMessageKind ShuckleMessageKind = 25
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -836,6 +840,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ClearShardInfoReq{}, &ClearShardInfoResp{}, nil
 	case k == "REGISTER_BLOCK_SERVICES":
 		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}, nil
+	case k == "CDC_WITH_REPLICAS":
+		return &CdcWithReplicasReq{}, &CdcWithReplicasResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4318,6 +4324,38 @@ func (v *RegisterBlockServiceInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *CdcWithReplicasInfo) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.ReplicaId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *CdcWithReplicasInfo) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.ReplicaId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *IpPort) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 4, v.Addrs[:]); err != nil {
 		return err
@@ -5258,6 +5296,49 @@ func (v *RegisterBlockServicesResp) Pack(w io.Writer) error {
 }
 
 func (v *RegisterBlockServicesResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *CdcWithReplicasReq) ShuckleRequestKind() ShuckleMessageKind {
+	return CDC_WITH_REPLICAS
+}
+
+func (v *CdcWithReplicasReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *CdcWithReplicasReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *CdcWithReplicasResp) ShuckleResponseKind() ShuckleMessageKind {
+	return CDC_WITH_REPLICAS
+}
+
+func (v *CdcWithReplicasResp) Pack(w io.Writer) error {
+	len1 := len(v.Replicas)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *CdcWithReplicasResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Replicas, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Unpack(r); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

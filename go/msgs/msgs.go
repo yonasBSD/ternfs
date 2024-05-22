@@ -1978,6 +1978,19 @@ type CdcResp struct {
 	LastSeen EggsTime
 }
 
+type CdcWithReplicasReq struct{}
+
+type CdcWithReplicasInfo struct {
+	ReplicaId ReplicaId
+	IsLeader  bool
+	Addrs     AddrsInfo
+	LastSeen  EggsTime
+}
+
+type CdcWithReplicasResp struct {
+	Replicas []CdcWithReplicasInfo
+}
+
 type CdcReplicasReq struct{}
 
 type CdcReplicasResp struct {

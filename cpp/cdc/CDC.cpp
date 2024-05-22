@@ -244,7 +244,7 @@ public:
         _receiver({.maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
         _dontDoReplication(options.dontDoReplication),
-        _logsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased)
+        _logsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, _currentLogIndex)
     {
         expandKey(CDCKey, _expandedCDCKey);
 

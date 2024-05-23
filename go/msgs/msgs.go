@@ -552,6 +552,8 @@ type BlocksMessageKind uint8
 
 type LogMessageKind uint8
 
+type CtrlMessageKind uint8
+
 const ERROR uint8 = 0
 
 const (
@@ -601,6 +603,13 @@ func (crc *Crc) Unpack(r io.Reader) error {
 
 // --------------------------------------------------------------------
 // Shard requests/responses
+
+type ShardSnapshotReq struct {
+	SnapshotId uint64
+}
+
+type ShardSnapshotResp struct {
+}
 
 // Given directory inode and name, returns inode from outgoing
 // current edge. Does not consider non-current directories and
@@ -1335,6 +1344,13 @@ type SetTimeResp struct{}
 
 // --------------------------------------------------------------------
 // CDC requests/responses
+
+type CdcSnapshotReq struct {
+	SnapshotId uint64
+}
+
+type CdcSnapshotResp struct {
+}
 
 type MakeDirectoryReq struct {
 	OwnerId InodeId

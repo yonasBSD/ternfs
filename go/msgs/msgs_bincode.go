@@ -197,6 +197,7 @@ const (
 	SWAP_SPANS_MISMATCHING_CRC ErrCode = 89
 	SWAP_SPANS_MISMATCHING_BLOCKS ErrCode = 90
 	EDGE_NOT_OWNED ErrCode = 91
+	CANNOT_CREATE_DB_SNAPSHOT ErrCode = 92
 )
 
 func (err ErrCode) String() string {
@@ -365,6 +366,8 @@ func (err ErrCode) String() string {
 		return "SWAP_SPANS_MISMATCHING_BLOCKS"
 	case 91:
 		return "EDGE_NOT_OWNED"
+	case 92:
+		return "CANNOT_CREATE_DB_SNAPSHOT"
 	default:
 		return fmt.Sprintf("ErrCode(%d)", err)
 	}
@@ -408,6 +411,8 @@ func (k ShardMessageKind) String() string {
 		return "SAME_SHARD_HARD_FILE_UNLINK"
 	case 3:
 		return "STAT_TRANSIENT_FILE"
+	case 18:
+		return "SHARD_SNAPSHOT"
 	case 13:
 		return "SET_DIRECTORY_INFO"
 	case 112:
@@ -475,6 +480,7 @@ const (
 	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
 	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
+	SHARD_SNAPSHOT ShardMessageKind = 0x12
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	VISIT_DIRECTORIES ShardMessageKind = 0x70
 	VISIT_FILES ShardMessageKind = 0x71
@@ -517,6 +523,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	REMOVE_NON_OWNED_EDGE,
 	SAME_SHARD_HARD_FILE_UNLINK,
 	STAT_TRANSIENT_FILE,
+	SHARD_SNAPSHOT,
 	SET_DIRECTORY_INFO,
 	VISIT_DIRECTORIES,
 	VISIT_FILES,
@@ -580,6 +587,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &SameShardHardFileUnlinkReq{}, &SameShardHardFileUnlinkResp{}, nil
 	case k == "STAT_TRANSIENT_FILE":
 		return &StatTransientFileReq{}, &StatTransientFileResp{}, nil
+	case k == "SHARD_SNAPSHOT":
+		return &ShardSnapshotReq{}, &ShardSnapshotResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
 		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}, nil
 	case k == "VISIT_DIRECTORIES":
@@ -641,6 +650,8 @@ func (k CDCMessageKind) String() string {
 		return "HARD_UNLINK_DIRECTORY"
 	case 6:
 		return "CROSS_SHARD_HARD_UNLINK_FILE"
+	case 7:
+		return "CDC_SNAPSHOT"
 	default:
 		return fmt.Sprintf("CDCMessageKind(%d)", k)
 	}
@@ -654,6 +665,7 @@ const (
 	RENAME_DIRECTORY CDCMessageKind = 0x4
 	HARD_UNLINK_DIRECTORY CDCMessageKind = 0x5
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
+	CDC_SNAPSHOT CDCMessageKind = 0x7
 )
 
 var AllCDCMessageKind = [...]CDCMessageKind{
@@ -663,9 +675,10 @@ var AllCDCMessageKind = [...]CDCMessageKind{
 	RENAME_DIRECTORY,
 	HARD_UNLINK_DIRECTORY,
 	CROSS_SHARD_HARD_UNLINK_FILE,
+	CDC_SNAPSHOT,
 }
 
-const MaxCDCMessageKind CDCMessageKind = 6
+const MaxCDCMessageKind CDCMessageKind = 7
 
 func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 	switch {
@@ -681,6 +694,8 @@ func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 		return &HardUnlinkDirectoryReq{}, &HardUnlinkDirectoryResp{}, nil
 	case k == "CROSS_SHARD_HARD_UNLINK_FILE":
 		return &CrossShardHardUnlinkFileReq{}, &CrossShardHardUnlinkFileResp{}, nil
+	case k == "CDC_SNAPSHOT":
+		return &CdcSnapshotReq{}, &CdcSnapshotResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -2083,6 +2098,36 @@ func (v *StatTransientFileResp) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *ShardSnapshotReq) ShardRequestKind() ShardMessageKind {
+	return SHARD_SNAPSHOT
+}
+
+func (v *ShardSnapshotReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.SnapshotId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardSnapshotReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.SnapshotId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardSnapshotResp) ShardResponseKind() ShardMessageKind {
+	return SHARD_SNAPSHOT
+}
+
+func (v *ShardSnapshotResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ShardSnapshotResp) Unpack(r io.Reader) error {
+	return nil
+}
+
 func (v *SetDirectoryInfoReq) ShardRequestKind() ShardMessageKind {
 	return SET_DIRECTORY_INFO
 }
@@ -3474,6 +3519,36 @@ func (v *CrossShardHardUnlinkFileResp) Pack(w io.Writer) error {
 }
 
 func (v *CrossShardHardUnlinkFileResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *CdcSnapshotReq) CDCRequestKind() CDCMessageKind {
+	return CDC_SNAPSHOT
+}
+
+func (v *CdcSnapshotReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.SnapshotId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *CdcSnapshotReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.SnapshotId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *CdcSnapshotResp) CDCResponseKind() CDCMessageKind {
+	return CDC_SNAPSHOT
+}
+
+func (v *CdcSnapshotResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *CdcSnapshotResp) Unpack(r io.Reader) error {
 	return nil
 }
 

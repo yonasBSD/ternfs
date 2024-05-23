@@ -21,6 +21,7 @@
 #include "Env.hpp"
 #include "Msgs.hpp"
 #include "ShardDB.hpp"
+#include "MsgsGen.hpp"
 #include "ShardDBData.hpp"
 #include "Assert.hpp"
 #include "Exception.hpp"
@@ -3804,6 +3805,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
     case ShardMessageKind::SWAP_SPANS:
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

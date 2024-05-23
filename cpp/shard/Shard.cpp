@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <ostream>
+#include <string>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
@@ -18,9 +19,10 @@
 #include "Exception.hpp"
 #include "LogsDB.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Shard.hpp"
 #include "Env.hpp"
-#include "MsgsGen.hpp"
+#include "Msgs.hpp"
 #include "MultiplexedChannel.hpp"
 #include "ShardDB.hpp"
 #include "ShardKey.hpp"
@@ -51,6 +53,14 @@ struct QueuedShardLogEntry {
     ShardMessageKind requestKind;
 };
 
+struct SnapshotRequest {
+    uint64_t requestId;
+    EggsTime receivedAt;
+    uint64_t snapshotId;
+    IpPort clientAddr;
+    int sockIx; // which sock to use to reply
+};
+
 // TODO make options
 const int LOG_ENTRIES_QUEUE_SIZE = 8192; // a few megabytes, should be quite a bit bigger than the below
 const int MAX_RECV_MSGS = 100;
@@ -59,6 +69,7 @@ enum class WriterQueueEntryKind :uint8_t {
     LOGSDB_REQUEST = 1,
     LOGSDB_RESPONSE = 2,
     SHARD_LOG_ENTRY = 3,
+    SNAPSHOT_REQUEST = 4,
 };
 
 std::ostream& operator<<(std::ostream& out, WriterQueueEntryKind kind) {
@@ -71,6 +82,9 @@ std::ostream& operator<<(std::ostream& out, WriterQueueEntryKind kind) {
         break;
     case WriterQueueEntryKind::SHARD_LOG_ENTRY:
         out << "SHARD_LOG_ENTRY";
+        break;
+    case WriterQueueEntryKind::SNAPSHOT_REQUEST:
+        out << "SNAPSHOT_REQUEST";
         break;
     default:
         out << "Unknown WriterQueueEntryKind(" << (uint8_t)kind << ")";
@@ -152,9 +166,26 @@ public:
         return std::move(std::get<2>(_data));
     }
 
+    SnapshotRequest& setSnapshotRequest() {
+        _kind = WriterQueueEntryKind::SNAPSHOT_REQUEST;
+        auto& x = _data.emplace<3>();
+        return x;
+    }
+
+    const SnapshotRequest& getSnapshotRequest() const {
+        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SNAPSHOT_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::SNAPSHOT_REQUEST);
+        return std::get<3>(_data);
+    }
+
+    SnapshotRequest&& moveSnapshotRequest() {
+        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SNAPSHOT_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::SNAPSHOT_REQUEST);
+        clear();
+        return std::move(std::get<3>(_data));
+    }
+
 private:
     WriterQueueEntryKind _kind;
-    std::variant<LogsDBRequest, LogsDBResponse, QueuedShardLogEntry> _data;
+    std::variant<LogsDBRequest, LogsDBResponse, QueuedShardLogEntry, SnapshotRequest> _data;
 };
 
 struct ShardShared {
@@ -494,6 +525,13 @@ private:
         if (likely(err == NO_ERROR)) {
             if (readOnlyShardReq(reqContainer.kind())) {
                 err = _shared.shardDB.read(reqContainer, respContainer);
+            } else if (unlikely(reqContainer.kind() == ShardMessageKind::SHARD_SNAPSHOT)) {
+                auto& entry = _logEntries.emplace_back().setSnapshotRequest();
+                entry.sockIx = msg.socketIx;
+                entry.clientAddr = msg.clientAddr;
+                entry.receivedAt = t0;
+                entry.snapshotId = reqContainer.getShardSnapshot().snapshotId;
+                entry.requestId = reqHeader.requestId;
             } else {
                 auto& entry = _logEntries.emplace_back().setQueuedShardLogEntry();
                 entry.sockIx = msg.socketIx;
@@ -540,6 +578,7 @@ public:
             _handleShardRequest(msg);
             ++shardMsgCount[msg.socketIx];
         }
+
         for (size_t i = 0; i < _shared.receivedRequests.size(); ++i) {
             _shared.receivedRequests[i] = _shared.receivedRequests[i]*0.95 + ((double)shardMsgCount[i])*0.05;
         }
@@ -564,6 +603,7 @@ public:
 
 struct ShardWriter : Loop {
 private:
+    const std::string _basePath;
     ShardShared& _shared;
     AES128Key _expandedShardKey;
     uint64_t _currentLogIndex;
@@ -572,6 +612,7 @@ private:
     const size_t _maxWritesAtOnce;
 
     std::vector<QueuedShardLogEntry> _logEntries;
+    SnapshotRequest _snapshotRequest;
 
     std::unique_ptr<LogsDB> _logsDB;
     const bool _dontDoReplication;
@@ -592,10 +633,12 @@ private:
     }
 
 public:
-    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
+    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared, std::string basePath) :
         Loop(logger, xmon, "writer"),
+        _basePath(std::move(basePath)),
         _shared(shared),
         _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
+        _snapshotRequest({0,0,0,{},0}),
         _dontDoReplication(options.dontDoReplication),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
@@ -739,7 +782,16 @@ public:
         // not needed as we just flushed and apparently it does actually flush again
         // _logsDB->flush(true);
 
+        if (unlikely(_snapshotRequest.requestId != 0)) {
+            _respContainer.setShardSnapshot();
+            auto err = _shared.sharedDB.snapshot(_basePath +"/snapshot-" + std::to_string(_snapshotRequest.snapshotId));
+            Duration elapsed = eggsNow() - _snapshotRequest.receivedAt;
+            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, _snapshotRequest.requestId, ShardMessageKind::SHARD_SNAPSHOT, elapsed, false, _snapshotRequest.clientAddr, _snapshotRequest.sockIx, err, _respContainer);
+            _snapshotRequest.requestId = 0;
+        }
+
         _sender.sendMessages(_env, _shared.sock());
+
     }
 
     AddrsInfo* addressFromReplicaId(ReplicaId id) {
@@ -838,6 +890,9 @@ public:
                 break;
             case WriterQueueEntryKind::SHARD_LOG_ENTRY:
                 _logEntries.emplace_back(request.moveQueuedShardLogEntry());
+                break;
+            case WriterQueueEntryKind::SNAPSHOT_REQUEST:
+                _snapshotRequest = request.moveSnapshotRequest();
                 break;
             }
         }
@@ -1198,7 +1253,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     ShardShared shared(sharedDB, blockServicesCache, shardDB, UDPSocketPair(env, options.shardAddrs));
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared, dbDir)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shrid, options, shared)));
     if (options.shuckleStats) {

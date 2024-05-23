@@ -82,6 +82,7 @@ const char* eggsfs_err_str(int err) {
     case 89: return "SWAP_SPANS_MISMATCHING_CRC";
     case 90: return "SWAP_SPANS_MISMATCHING_BLOCKS";
     case 91: return "EDGE_NOT_OWNED";
+    case 92: return "CANNOT_CREATE_DB_SNAPSHOT";
     default: return "UNKNOWN";
     }
 }

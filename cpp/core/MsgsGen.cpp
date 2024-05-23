@@ -250,6 +250,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::EDGE_NOT_OWNED:
         out << "EDGE_NOT_OWNED";
         break;
+    case EggsError::CANNOT_CREATE_DB_SNAPSHOT:
+        out << "CANNOT_CREATE_DB_SNAPSHOT";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;
@@ -312,6 +315,9 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
         break;
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         out << "STAT_TRANSIENT_FILE";
+        break;
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        out << "SHARD_SNAPSHOT";
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << "SET_DIRECTORY_INFO";
@@ -402,6 +408,9 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << "CROSS_SHARD_HARD_UNLINK_FILE";
+        break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        out << "CDC_SNAPSHOT";
         break;
     default:
         out << "CDCMessageKind(" << ((int)kind) << ")";
@@ -2228,6 +2237,38 @@ std::ostream& operator<<(std::ostream& out, const StatTransientFileResp& x) {
     return out;
 }
 
+void ShardSnapshotReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(snapshotId);
+}
+void ShardSnapshotReq::unpack(BincodeBuf& buf) {
+    snapshotId = buf.unpackScalar<uint64_t>();
+}
+void ShardSnapshotReq::clear() {
+    snapshotId = uint64_t(0);
+}
+bool ShardSnapshotReq::operator==(const ShardSnapshotReq& rhs) const {
+    if ((uint64_t)this->snapshotId != (uint64_t)rhs.snapshotId) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardSnapshotReq& x) {
+    out << "ShardSnapshotReq(" << "SnapshotId=" << x.snapshotId << ")";
+    return out;
+}
+
+void ShardSnapshotResp::pack(BincodeBuf& buf) const {
+}
+void ShardSnapshotResp::unpack(BincodeBuf& buf) {
+}
+void ShardSnapshotResp::clear() {
+}
+bool ShardSnapshotResp::operator==(const ShardSnapshotResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardSnapshotResp& x) {
+    out << "ShardSnapshotResp(" << ")";
+    return out;
+}
+
 void SetDirectoryInfoReq::pack(BincodeBuf& buf) const {
     id.pack(buf);
     info.pack(buf);
@@ -3409,6 +3450,38 @@ bool CrossShardHardUnlinkFileResp::operator==(const CrossShardHardUnlinkFileResp
 }
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x) {
     out << "CrossShardHardUnlinkFileResp(" << ")";
+    return out;
+}
+
+void CdcSnapshotReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(snapshotId);
+}
+void CdcSnapshotReq::unpack(BincodeBuf& buf) {
+    snapshotId = buf.unpackScalar<uint64_t>();
+}
+void CdcSnapshotReq::clear() {
+    snapshotId = uint64_t(0);
+}
+bool CdcSnapshotReq::operator==(const CdcSnapshotReq& rhs) const {
+    if ((uint64_t)this->snapshotId != (uint64_t)rhs.snapshotId) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcSnapshotReq& x) {
+    out << "CdcSnapshotReq(" << "SnapshotId=" << x.snapshotId << ")";
+    return out;
+}
+
+void CdcSnapshotResp::pack(BincodeBuf& buf) const {
+}
+void CdcSnapshotResp::unpack(BincodeBuf& buf) {
+}
+void CdcSnapshotResp::clear() {
+}
+bool CdcSnapshotResp::operator==(const CdcSnapshotResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const CdcSnapshotResp& x) {
+    out << "CdcSnapshotResp(" << ")";
     return out;
 }
 
@@ -4890,193 +4963,202 @@ StatTransientFileReq& ShardReqContainer::setStatTransientFile() {
     auto& x = _data.emplace<17>();
     return x;
 }
+const ShardSnapshotReq& ShardReqContainer::getShardSnapshot() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SHARD_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SHARD_SNAPSHOT);
+    return std::get<18>(_data);
+}
+ShardSnapshotReq& ShardReqContainer::setShardSnapshot() {
+    _kind = ShardMessageKind::SHARD_SNAPSHOT;
+    auto& x = _data.emplace<18>();
+    return x;
+}
 const SetDirectoryInfoReq& ShardReqContainer::getSetDirectoryInfo() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<18>(_data);
+    return std::get<19>(_data);
 }
 SetDirectoryInfoReq& ShardReqContainer::setSetDirectoryInfo() {
     _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = _data.emplace<18>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const VisitDirectoriesReq& ShardReqContainer::getVisitDirectories() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_DIRECTORIES, "%s != %s", _kind, ShardMessageKind::VISIT_DIRECTORIES);
-    return std::get<19>(_data);
+    return std::get<20>(_data);
 }
 VisitDirectoriesReq& ShardReqContainer::setVisitDirectories() {
     _kind = ShardMessageKind::VISIT_DIRECTORIES;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const VisitFilesReq& ShardReqContainer::getVisitFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_FILES);
-    return std::get<20>(_data);
+    return std::get<21>(_data);
 }
 VisitFilesReq& ShardReqContainer::setVisitFiles() {
     _kind = ShardMessageKind::VISIT_FILES;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const VisitTransientFilesReq& ShardReqContainer::getVisitTransientFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_TRANSIENT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_TRANSIENT_FILES);
-    return std::get<21>(_data);
+    return std::get<22>(_data);
 }
 VisitTransientFilesReq& ShardReqContainer::setVisitTransientFiles() {
     _kind = ShardMessageKind::VISIT_TRANSIENT_FILES;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const RemoveSpanInitiateReq& ShardReqContainer::getRemoveSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_INITIATE);
-    return std::get<22>(_data);
+    return std::get<23>(_data);
 }
 RemoveSpanInitiateReq& ShardReqContainer::setRemoveSpanInitiate() {
     _kind = ShardMessageKind::REMOVE_SPAN_INITIATE;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const RemoveSpanCertifyReq& ShardReqContainer::getRemoveSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_CERTIFY);
-    return std::get<23>(_data);
+    return std::get<24>(_data);
 }
 RemoveSpanCertifyReq& ShardReqContainer::setRemoveSpanCertify() {
     _kind = ShardMessageKind::REMOVE_SPAN_CERTIFY;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const SwapBlocksReq& ShardReqContainer::getSwapBlocks() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_BLOCKS, "%s != %s", _kind, ShardMessageKind::SWAP_BLOCKS);
-    return std::get<24>(_data);
+    return std::get<25>(_data);
 }
 SwapBlocksReq& ShardReqContainer::setSwapBlocks() {
     _kind = ShardMessageKind::SWAP_BLOCKS;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const BlockServiceFilesReq& ShardReqContainer::getBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::BLOCK_SERVICE_FILES);
-    return std::get<25>(_data);
+    return std::get<26>(_data);
 }
 BlockServiceFilesReq& ShardReqContainer::setBlockServiceFiles() {
     _kind = ShardMessageKind::BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const RemoveInodeReq& ShardReqContainer::getRemoveInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_INODE, "%s != %s", _kind, ShardMessageKind::REMOVE_INODE);
-    return std::get<26>(_data);
+    return std::get<27>(_data);
 }
 RemoveInodeReq& ShardReqContainer::setRemoveInode() {
     _kind = ShardMessageKind::REMOVE_INODE;
-    auto& x = _data.emplace<26>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const AddSpanInitiateWithReferenceReq& ShardReqContainer::getAddSpanInitiateWithReference() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE);
-    return std::get<27>(_data);
+    return std::get<28>(_data);
 }
 AddSpanInitiateWithReferenceReq& ShardReqContainer::setAddSpanInitiateWithReference() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const RemoveZeroBlockServiceFilesReq& ShardReqContainer::getRemoveZeroBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES);
-    return std::get<28>(_data);
+    return std::get<29>(_data);
 }
 RemoveZeroBlockServiceFilesReq& ShardReqContainer::setRemoveZeroBlockServiceFiles() {
     _kind = ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const SwapSpansReq& ShardReqContainer::getSwapSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_SPANS, "%s != %s", _kind, ShardMessageKind::SWAP_SPANS);
-    return std::get<29>(_data);
+    return std::get<30>(_data);
 }
 SwapSpansReq& ShardReqContainer::setSwapSpans() {
     _kind = ShardMessageKind::SWAP_SPANS;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const SameDirectoryRenameSnapshotReq& ShardReqContainer::getSameDirectoryRenameSnapshot() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT);
-    return std::get<30>(_data);
+    return std::get<31>(_data);
 }
 SameDirectoryRenameSnapshotReq& ShardReqContainer::setSameDirectoryRenameSnapshot() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 const CreateDirectoryInodeReq& ShardReqContainer::getCreateDirectoryInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_DIRECTORY_INODE, "%s != %s", _kind, ShardMessageKind::CREATE_DIRECTORY_INODE);
-    return std::get<31>(_data);
+    return std::get<32>(_data);
 }
 CreateDirectoryInodeReq& ShardReqContainer::setCreateDirectoryInode() {
     _kind = ShardMessageKind::CREATE_DIRECTORY_INODE;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<32>();
     return x;
 }
 const SetDirectoryOwnerReq& ShardReqContainer::getSetDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_OWNER);
-    return std::get<32>(_data);
+    return std::get<33>(_data);
 }
 SetDirectoryOwnerReq& ShardReqContainer::setSetDirectoryOwner() {
     _kind = ShardMessageKind::SET_DIRECTORY_OWNER;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<33>();
     return x;
 }
 const RemoveDirectoryOwnerReq& ShardReqContainer::getRemoveDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::REMOVE_DIRECTORY_OWNER);
-    return std::get<33>(_data);
+    return std::get<34>(_data);
 }
 RemoveDirectoryOwnerReq& ShardReqContainer::setRemoveDirectoryOwner() {
     _kind = ShardMessageKind::REMOVE_DIRECTORY_OWNER;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<34>();
     return x;
 }
 const CreateLockedCurrentEdgeReq& ShardReqContainer::getCreateLockedCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE);
-    return std::get<34>(_data);
+    return std::get<35>(_data);
 }
 CreateLockedCurrentEdgeReq& ShardReqContainer::setCreateLockedCurrentEdge() {
     _kind = ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<35>();
     return x;
 }
 const LockCurrentEdgeReq& ShardReqContainer::getLockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::LOCK_CURRENT_EDGE);
-    return std::get<35>(_data);
+    return std::get<36>(_data);
 }
 LockCurrentEdgeReq& ShardReqContainer::setLockCurrentEdge() {
     _kind = ShardMessageKind::LOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<36>();
     return x;
 }
 const UnlockCurrentEdgeReq& ShardReqContainer::getUnlockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::UNLOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::UNLOCK_CURRENT_EDGE);
-    return std::get<36>(_data);
+    return std::get<37>(_data);
 }
 UnlockCurrentEdgeReq& ShardReqContainer::setUnlockCurrentEdge() {
     _kind = ShardMessageKind::UNLOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<37>();
     return x;
 }
 const RemoveOwnedSnapshotFileEdgeReq& ShardReqContainer::getRemoveOwnedSnapshotFileEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
-    return std::get<37>(_data);
+    return std::get<38>(_data);
 }
 RemoveOwnedSnapshotFileEdgeReq& ShardReqContainer::setRemoveOwnedSnapshotFileEdge() {
     _kind = ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<38>();
     return x;
 }
 const MakeFileTransientReq& ShardReqContainer::getMakeFileTransient() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardMessageKind::MAKE_FILE_TRANSIENT);
-    return std::get<38>(_data);
+    return std::get<39>(_data);
 }
 MakeFileTransientReq& ShardReqContainer::setMakeFileTransient() {
     _kind = ShardMessageKind::MAKE_FILE_TRANSIENT;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<39>();
     return x;
 }
 ShardReqContainer::ShardReqContainer() {
@@ -5149,6 +5231,9 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
         break;
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         setStatTransientFile() = other.getStatTransientFile();
+        break;
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        setShardSnapshot() = other.getShardSnapshot();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         setSetDirectoryInfo() = other.getSetDirectoryInfo();
@@ -5262,48 +5347,50 @@ size_t ShardReqContainer::packedSize() const {
         return std::get<16>(_data).packedSize();
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         return std::get<17>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         return std::get<18>(_data).packedSize();
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         return std::get<19>(_data).packedSize();
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         return std::get<20>(_data).packedSize();
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         return std::get<21>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         return std::get<22>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         return std::get<23>(_data).packedSize();
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         return std::get<24>(_data).packedSize();
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         return std::get<25>(_data).packedSize();
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         return std::get<26>(_data).packedSize();
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         return std::get<27>(_data).packedSize();
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         return std::get<28>(_data).packedSize();
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         return std::get<29>(_data).packedSize();
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         return std::get<30>(_data).packedSize();
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return std::get<31>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return std::get<32>(_data).packedSize();
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         return std::get<33>(_data).packedSize();
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         return std::get<34>(_data).packedSize();
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         return std::get<35>(_data).packedSize();
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         return std::get<36>(_data).packedSize();
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         return std::get<37>(_data).packedSize();
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         return std::get<38>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return std::get<39>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
@@ -5365,68 +5452,71 @@ void ShardReqContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<17>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         std::get<18>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<19>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         std::get<20>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         std::get<21>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         std::get<22>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         std::get<23>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         std::get<24>(_data).pack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         std::get<25>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         std::get<26>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         std::get<27>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         std::get<28>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         std::get<29>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         std::get<30>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         std::get<31>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         std::get<32>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         std::get<33>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         std::get<34>(_data).pack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         std::get<35>(_data).pack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         std::get<36>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         std::get<37>(_data).pack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         std::get<38>(_data).pack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        std::get<39>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -5490,68 +5580,71 @@ void ShardReqContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         _data.emplace<27>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         _data.emplace<28>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         _data.emplace<29>().unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         _data.emplace<30>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         _data.emplace<31>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         _data.emplace<32>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         _data.emplace<33>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         _data.emplace<34>().unpack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         _data.emplace<35>().unpack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         _data.emplace<36>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         _data.emplace<37>().unpack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         _data.emplace<38>().unpack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        _data.emplace<39>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", kind);
@@ -5598,6 +5691,8 @@ bool ShardReqContainer::operator==(const ShardReqContainer& other) const {
         return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         return getStatTransientFile() == other.getStatTransientFile();
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        return getShardSnapshot() == other.getShardSnapshot();
     case ShardMessageKind::SET_DIRECTORY_INFO:
         return getSetDirectoryInfo() == other.getSetDirectoryInfo();
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -5700,6 +5795,9 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
         break;
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         out << x.getStatTransientFile();
+        break;
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        out << x.getShardSnapshot();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << x.getSetDirectoryInfo();
@@ -5932,193 +6030,202 @@ StatTransientFileResp& ShardRespContainer::setStatTransientFile() {
     auto& x = _data.emplace<17>();
     return x;
 }
+const ShardSnapshotResp& ShardRespContainer::getShardSnapshot() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::SHARD_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SHARD_SNAPSHOT);
+    return std::get<18>(_data);
+}
+ShardSnapshotResp& ShardRespContainer::setShardSnapshot() {
+    _kind = ShardMessageKind::SHARD_SNAPSHOT;
+    auto& x = _data.emplace<18>();
+    return x;
+}
 const SetDirectoryInfoResp& ShardRespContainer::getSetDirectoryInfo() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<18>(_data);
+    return std::get<19>(_data);
 }
 SetDirectoryInfoResp& ShardRespContainer::setSetDirectoryInfo() {
     _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = _data.emplace<18>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const VisitDirectoriesResp& ShardRespContainer::getVisitDirectories() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_DIRECTORIES, "%s != %s", _kind, ShardMessageKind::VISIT_DIRECTORIES);
-    return std::get<19>(_data);
+    return std::get<20>(_data);
 }
 VisitDirectoriesResp& ShardRespContainer::setVisitDirectories() {
     _kind = ShardMessageKind::VISIT_DIRECTORIES;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const VisitFilesResp& ShardRespContainer::getVisitFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_FILES);
-    return std::get<20>(_data);
+    return std::get<21>(_data);
 }
 VisitFilesResp& ShardRespContainer::setVisitFiles() {
     _kind = ShardMessageKind::VISIT_FILES;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const VisitTransientFilesResp& ShardRespContainer::getVisitTransientFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_TRANSIENT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_TRANSIENT_FILES);
-    return std::get<21>(_data);
+    return std::get<22>(_data);
 }
 VisitTransientFilesResp& ShardRespContainer::setVisitTransientFiles() {
     _kind = ShardMessageKind::VISIT_TRANSIENT_FILES;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const RemoveSpanInitiateResp& ShardRespContainer::getRemoveSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_INITIATE);
-    return std::get<22>(_data);
+    return std::get<23>(_data);
 }
 RemoveSpanInitiateResp& ShardRespContainer::setRemoveSpanInitiate() {
     _kind = ShardMessageKind::REMOVE_SPAN_INITIATE;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const RemoveSpanCertifyResp& ShardRespContainer::getRemoveSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_CERTIFY);
-    return std::get<23>(_data);
+    return std::get<24>(_data);
 }
 RemoveSpanCertifyResp& ShardRespContainer::setRemoveSpanCertify() {
     _kind = ShardMessageKind::REMOVE_SPAN_CERTIFY;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const SwapBlocksResp& ShardRespContainer::getSwapBlocks() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_BLOCKS, "%s != %s", _kind, ShardMessageKind::SWAP_BLOCKS);
-    return std::get<24>(_data);
+    return std::get<25>(_data);
 }
 SwapBlocksResp& ShardRespContainer::setSwapBlocks() {
     _kind = ShardMessageKind::SWAP_BLOCKS;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const BlockServiceFilesResp& ShardRespContainer::getBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::BLOCK_SERVICE_FILES);
-    return std::get<25>(_data);
+    return std::get<26>(_data);
 }
 BlockServiceFilesResp& ShardRespContainer::setBlockServiceFiles() {
     _kind = ShardMessageKind::BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const RemoveInodeResp& ShardRespContainer::getRemoveInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_INODE, "%s != %s", _kind, ShardMessageKind::REMOVE_INODE);
-    return std::get<26>(_data);
+    return std::get<27>(_data);
 }
 RemoveInodeResp& ShardRespContainer::setRemoveInode() {
     _kind = ShardMessageKind::REMOVE_INODE;
-    auto& x = _data.emplace<26>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const AddSpanInitiateWithReferenceResp& ShardRespContainer::getAddSpanInitiateWithReference() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE);
-    return std::get<27>(_data);
+    return std::get<28>(_data);
 }
 AddSpanInitiateWithReferenceResp& ShardRespContainer::setAddSpanInitiateWithReference() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const RemoveZeroBlockServiceFilesResp& ShardRespContainer::getRemoveZeroBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES);
-    return std::get<28>(_data);
+    return std::get<29>(_data);
 }
 RemoveZeroBlockServiceFilesResp& ShardRespContainer::setRemoveZeroBlockServiceFiles() {
     _kind = ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const SwapSpansResp& ShardRespContainer::getSwapSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_SPANS, "%s != %s", _kind, ShardMessageKind::SWAP_SPANS);
-    return std::get<29>(_data);
+    return std::get<30>(_data);
 }
 SwapSpansResp& ShardRespContainer::setSwapSpans() {
     _kind = ShardMessageKind::SWAP_SPANS;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const SameDirectoryRenameSnapshotResp& ShardRespContainer::getSameDirectoryRenameSnapshot() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT);
-    return std::get<30>(_data);
+    return std::get<31>(_data);
 }
 SameDirectoryRenameSnapshotResp& ShardRespContainer::setSameDirectoryRenameSnapshot() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 const CreateDirectoryInodeResp& ShardRespContainer::getCreateDirectoryInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_DIRECTORY_INODE, "%s != %s", _kind, ShardMessageKind::CREATE_DIRECTORY_INODE);
-    return std::get<31>(_data);
+    return std::get<32>(_data);
 }
 CreateDirectoryInodeResp& ShardRespContainer::setCreateDirectoryInode() {
     _kind = ShardMessageKind::CREATE_DIRECTORY_INODE;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<32>();
     return x;
 }
 const SetDirectoryOwnerResp& ShardRespContainer::getSetDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_OWNER);
-    return std::get<32>(_data);
+    return std::get<33>(_data);
 }
 SetDirectoryOwnerResp& ShardRespContainer::setSetDirectoryOwner() {
     _kind = ShardMessageKind::SET_DIRECTORY_OWNER;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<33>();
     return x;
 }
 const RemoveDirectoryOwnerResp& ShardRespContainer::getRemoveDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::REMOVE_DIRECTORY_OWNER);
-    return std::get<33>(_data);
+    return std::get<34>(_data);
 }
 RemoveDirectoryOwnerResp& ShardRespContainer::setRemoveDirectoryOwner() {
     _kind = ShardMessageKind::REMOVE_DIRECTORY_OWNER;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<34>();
     return x;
 }
 const CreateLockedCurrentEdgeResp& ShardRespContainer::getCreateLockedCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE);
-    return std::get<34>(_data);
+    return std::get<35>(_data);
 }
 CreateLockedCurrentEdgeResp& ShardRespContainer::setCreateLockedCurrentEdge() {
     _kind = ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<35>();
     return x;
 }
 const LockCurrentEdgeResp& ShardRespContainer::getLockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::LOCK_CURRENT_EDGE);
-    return std::get<35>(_data);
+    return std::get<36>(_data);
 }
 LockCurrentEdgeResp& ShardRespContainer::setLockCurrentEdge() {
     _kind = ShardMessageKind::LOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<36>();
     return x;
 }
 const UnlockCurrentEdgeResp& ShardRespContainer::getUnlockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::UNLOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::UNLOCK_CURRENT_EDGE);
-    return std::get<36>(_data);
+    return std::get<37>(_data);
 }
 UnlockCurrentEdgeResp& ShardRespContainer::setUnlockCurrentEdge() {
     _kind = ShardMessageKind::UNLOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<37>();
     return x;
 }
 const RemoveOwnedSnapshotFileEdgeResp& ShardRespContainer::getRemoveOwnedSnapshotFileEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
-    return std::get<37>(_data);
+    return std::get<38>(_data);
 }
 RemoveOwnedSnapshotFileEdgeResp& ShardRespContainer::setRemoveOwnedSnapshotFileEdge() {
     _kind = ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<38>();
     return x;
 }
 const MakeFileTransientResp& ShardRespContainer::getMakeFileTransient() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardMessageKind::MAKE_FILE_TRANSIENT);
-    return std::get<38>(_data);
+    return std::get<39>(_data);
 }
 MakeFileTransientResp& ShardRespContainer::setMakeFileTransient() {
     _kind = ShardMessageKind::MAKE_FILE_TRANSIENT;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<39>();
     return x;
 }
 ShardRespContainer::ShardRespContainer() {
@@ -6191,6 +6298,9 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
         break;
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         setStatTransientFile() = other.getStatTransientFile();
+        break;
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        setShardSnapshot() = other.getShardSnapshot();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         setSetDirectoryInfo() = other.getSetDirectoryInfo();
@@ -6304,48 +6414,50 @@ size_t ShardRespContainer::packedSize() const {
         return std::get<16>(_data).packedSize();
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         return std::get<17>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         return std::get<18>(_data).packedSize();
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         return std::get<19>(_data).packedSize();
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         return std::get<20>(_data).packedSize();
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         return std::get<21>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         return std::get<22>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         return std::get<23>(_data).packedSize();
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         return std::get<24>(_data).packedSize();
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         return std::get<25>(_data).packedSize();
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         return std::get<26>(_data).packedSize();
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         return std::get<27>(_data).packedSize();
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         return std::get<28>(_data).packedSize();
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         return std::get<29>(_data).packedSize();
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         return std::get<30>(_data).packedSize();
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return std::get<31>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return std::get<32>(_data).packedSize();
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         return std::get<33>(_data).packedSize();
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         return std::get<34>(_data).packedSize();
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         return std::get<35>(_data).packedSize();
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         return std::get<36>(_data).packedSize();
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         return std::get<37>(_data).packedSize();
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         return std::get<38>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return std::get<39>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
@@ -6407,68 +6519,71 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         std::get<17>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         std::get<18>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<19>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         std::get<20>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         std::get<21>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         std::get<22>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         std::get<23>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         std::get<24>(_data).pack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         std::get<25>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         std::get<26>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         std::get<27>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         std::get<28>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         std::get<29>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         std::get<30>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         std::get<31>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         std::get<32>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         std::get<33>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         std::get<34>(_data).pack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         std::get<35>(_data).pack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         std::get<36>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         std::get<37>(_data).pack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         std::get<38>(_data).pack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        std::get<39>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -6532,68 +6647,71 @@ void ShardRespContainer::unpack(BincodeBuf& buf, ShardMessageKind kind) {
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::SHARD_SNAPSHOT:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_FILES:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::SWAP_BLOCKS:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::REMOVE_INODE:
         _data.emplace<27>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         _data.emplace<28>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         _data.emplace<29>().unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::SWAP_SPANS:
         _data.emplace<30>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         _data.emplace<31>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         _data.emplace<32>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         _data.emplace<33>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         _data.emplace<34>().unpack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         _data.emplace<35>().unpack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         _data.emplace<36>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
         _data.emplace<37>().unpack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
         _data.emplace<38>().unpack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        _data.emplace<39>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", kind);
@@ -6640,6 +6758,8 @@ bool ShardRespContainer::operator==(const ShardRespContainer& other) const {
         return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         return getStatTransientFile() == other.getStatTransientFile();
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        return getShardSnapshot() == other.getShardSnapshot();
     case ShardMessageKind::SET_DIRECTORY_INFO:
         return getSetDirectoryInfo() == other.getSetDirectoryInfo();
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -6742,6 +6862,9 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
         break;
     case ShardMessageKind::STAT_TRANSIENT_FILE:
         out << x.getStatTransientFile();
+        break;
+    case ShardMessageKind::SHARD_SNAPSHOT:
+        out << x.getShardSnapshot();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << x.getSetDirectoryInfo();
@@ -6866,6 +6989,15 @@ CrossShardHardUnlinkFileReq& CDCReqContainer::setCrossShardHardUnlinkFile() {
     auto& x = _data.emplace<5>();
     return x;
 }
+const CdcSnapshotReq& CDCReqContainer::getCdcSnapshot() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::CDC_SNAPSHOT, "%s != %s", _kind, CDCMessageKind::CDC_SNAPSHOT);
+    return std::get<6>(_data);
+}
+CdcSnapshotReq& CDCReqContainer::setCdcSnapshot() {
+    _kind = CDCMessageKind::CDC_SNAPSHOT;
+    auto& x = _data.emplace<6>();
+    return x;
+}
 CDCReqContainer::CDCReqContainer() {
     clear();
 }
@@ -6901,6 +7033,9 @@ void CDCReqContainer::operator=(const CDCReqContainer& other) {
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
         break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        setCdcSnapshot() = other.getCdcSnapshot();
+        break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
@@ -6926,6 +7061,8 @@ size_t CDCReqContainer::packedSize() const {
         return std::get<4>(_data).packedSize();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return std::get<5>(_data).packedSize();
+    case CDCMessageKind::CDC_SNAPSHOT:
+        return std::get<6>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
@@ -6950,6 +7087,9 @@ void CDCReqContainer::pack(BincodeBuf& buf) const {
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         std::get<5>(_data).pack(buf);
+        break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        std::get<6>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
@@ -6977,6 +7117,9 @@ void CDCReqContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         _data.emplace<5>().unpack(buf);
         break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        _data.emplace<6>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
     }
@@ -6998,6 +7141,8 @@ bool CDCReqContainer::operator==(const CDCReqContainer& other) const {
         return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    case CDCMessageKind::CDC_SNAPSHOT:
+        return getCdcSnapshot() == other.getCdcSnapshot();
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
@@ -7022,6 +7167,9 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x) {
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << x.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        out << x.getCdcSnapshot();
         break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
@@ -7083,6 +7231,15 @@ CrossShardHardUnlinkFileResp& CDCRespContainer::setCrossShardHardUnlinkFile() {
     auto& x = _data.emplace<5>();
     return x;
 }
+const CdcSnapshotResp& CDCRespContainer::getCdcSnapshot() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::CDC_SNAPSHOT, "%s != %s", _kind, CDCMessageKind::CDC_SNAPSHOT);
+    return std::get<6>(_data);
+}
+CdcSnapshotResp& CDCRespContainer::setCdcSnapshot() {
+    _kind = CDCMessageKind::CDC_SNAPSHOT;
+    auto& x = _data.emplace<6>();
+    return x;
+}
 CDCRespContainer::CDCRespContainer() {
     clear();
 }
@@ -7118,6 +7275,9 @@ void CDCRespContainer::operator=(const CDCRespContainer& other) {
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
         break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        setCdcSnapshot() = other.getCdcSnapshot();
+        break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
@@ -7143,6 +7303,8 @@ size_t CDCRespContainer::packedSize() const {
         return std::get<4>(_data).packedSize();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return std::get<5>(_data).packedSize();
+    case CDCMessageKind::CDC_SNAPSHOT:
+        return std::get<6>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
@@ -7167,6 +7329,9 @@ void CDCRespContainer::pack(BincodeBuf& buf) const {
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         std::get<5>(_data).pack(buf);
+        break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        std::get<6>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
@@ -7194,6 +7359,9 @@ void CDCRespContainer::unpack(BincodeBuf& buf, CDCMessageKind kind) {
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         _data.emplace<5>().unpack(buf);
         break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        _data.emplace<6>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", kind);
     }
@@ -7215,6 +7383,8 @@ bool CDCRespContainer::operator==(const CDCRespContainer& other) const {
         return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    case CDCMessageKind::CDC_SNAPSHOT:
+        return getCdcSnapshot() == other.getCdcSnapshot();
     default:
         throw BINCODE_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
@@ -7239,6 +7409,9 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
         break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << x.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::CDC_SNAPSHOT:
+        out << x.getCdcSnapshot();
         break;
     default:
         throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());

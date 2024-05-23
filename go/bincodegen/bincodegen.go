@@ -1478,6 +1478,7 @@ func main() {
 		"SWAP_SPANS_MISMATCHING_CRC",
 		"SWAP_SPANS_MISMATCHING_BLOCKS",
 		"EDGE_NOT_OWNED",
+		"CANNOT_CREATE_DB_SNAPSHOT",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1579,6 +1580,11 @@ func main() {
 			0x03,
 			reflect.TypeOf(msgs.StatTransientFileReq{}),
 			reflect.TypeOf(msgs.StatTransientFileResp{}),
+		},
+		{
+			0x12,
+			reflect.TypeOf(msgs.ShardSnapshotReq{}),
+			reflect.TypeOf(msgs.ShardSnapshotResp{}),
 		},
 		{
 			0x0D,
@@ -1723,6 +1729,11 @@ func main() {
 			0x06,
 			reflect.TypeOf(msgs.CrossShardHardUnlinkFileReq{}),
 			reflect.TypeOf(msgs.CrossShardHardUnlinkFileResp{}),
+		},
+		{
+			0x07,
+			reflect.TypeOf(msgs.CdcSnapshotReq{}),
+			reflect.TypeOf(msgs.CdcSnapshotResp{}),
 		},
 	}...)
 

@@ -11,6 +11,7 @@
 #include <rocksdb/utilities/optimistic_transaction_db.h>
 
 #include "Env.hpp"
+#include "Msgs.hpp"
 
 class SharedRocksDB {
 public:
@@ -33,6 +34,8 @@ public:
     rocksdb::OptimisticTransactionDB* transactionDB() const;
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
     void dumpRocksDBStatistics();
+
+    EggsError snapshot(const std::string& path);
 
 private:
     Env _env;

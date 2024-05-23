@@ -248,7 +248,7 @@ func defragFileReplace(
 				analyzedMBs := 1000.0 * analyzedMB / float64(timeSinceStart.Milliseconds())
 				log.RaiseNC(
 					progressReportAlert,
-					"looked at %v files, logical size %0.2fTB (%+0.2fMB/s), replaced %0.2fTB",
+					"looked at %v files, logical size %0.2fTB (%0.2fMB/s), replaced %0.2fTB",
 					stats.AnalyzedFiles, float64(stats.AnalyzedLogicalSize)/1e12, analyzedMBs, float64(stats.ReplacedLogicalSize)/1e12,
 				)
 			}

@@ -218,3 +218,115 @@ func DefragFiles(
 		},
 	)
 }
+
+type DefragSpansStats struct {
+	AnalyzedFiles       uint64
+	AnalyzedLogicalSize uint64
+	ReplacedLogicalSize uint64
+}
+
+// Replaces a file with another, identical one.
+func defragFileReplace(
+	log *lib.Logger,
+	c *client.Client,
+	bufPool *lib.BufPool,
+	dirInfoCache *client.DirInfoCache,
+	stats *DefragSpansStats,
+	progressReportAlert *lib.XmonNCAlert,
+	timeStats *timeStats,
+	parent msgs.InodeId,
+	fileId msgs.InodeId,
+	filePath string,
+) error {
+	defer func() {
+		lastReportAt := atomic.LoadInt64(&timeStats.lastReportAt)
+		now := time.Now().UnixNano()
+		if (now - lastReportAt) > time.Minute.Nanoseconds() {
+			if atomic.CompareAndSwapInt64(&timeStats.lastReportAt, lastReportAt, now) {
+				timeSinceStart := time.Duration(now - atomic.LoadInt64(&timeStats.startedAt))
+				analyzedMB := float64(stats.AnalyzedLogicalSize) / 1e6
+				analyzedMBs := 1000.0 * analyzedMB / float64(timeSinceStart.Milliseconds())
+				log.RaiseNC(
+					progressReportAlert,
+					"looked at %v files, logical size %0.2fTB (%+0.2fMB/s), replaced %0.2fTB",
+					stats.AnalyzedFiles, float64(stats.AnalyzedLogicalSize)/1e12, analyzedMBs, float64(stats.ReplacedLogicalSize)/1e12,
+				)
+			}
+		}
+	}()
+	var spanPolicy msgs.SpanPolicy
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, parent, &spanPolicy); err != nil {
+		return err
+	}
+	atomic.AddUint64(&stats.AnalyzedFiles, 1)
+	shouldReplace := false
+	fileSize := uint64(0)
+	{
+		largestSpanSize := spanPolicy.Entries[len(spanPolicy.Entries)-1].MaxSize
+		fileSpansReq := msgs.FileSpansReq{
+			FileId:     fileId,
+			ByteOffset: 0,
+		}
+		fileSpansResp := msgs.FileSpansResp{}
+		for {
+			if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+				return err
+			}
+			for spanIx := range fileSpansResp.Spans {
+				span := &fileSpansResp.Spans[spanIx]
+				fileSize += uint64(span.Header.Size)
+				shouldReplace = shouldReplace || (span.Header.Size > largestSpanSize) // span is too big
+				lastSpan := (spanIx == len(fileSpansResp.Spans)-1) && (fileSpansResp.NextOffset == 0)
+				shouldReplace = shouldReplace || (!lastSpan && span.Header.Size < largestSpanSize) // span is too small
+			}
+			if fileSpansResp.NextOffset == 0 {
+				break
+			}
+			fileSpansReq.ByteOffset = fileSpansResp.NextOffset
+		}
+	}
+	atomic.AddUint64(&stats.AnalyzedLogicalSize, fileSize)
+	if !shouldReplace {
+		return nil
+	}
+	// TODO it would be a lot nicer for this to be atomic, with some custom shard
+	// operation.
+	fileContents, err := c.ReadFile(log, bufPool, fileId)
+	if err != nil {
+		return err
+	}
+	defer fileContents.Close()
+	if _, err := c.CreateFile(log, bufPool, dirInfoCache, filePath, fileContents); err != nil {
+		return err
+	}
+	atomic.AddUint64(&stats.ReplacedLogicalSize, fileSize)
+	return nil
+}
+
+func DefragSpans(
+	log *lib.Logger,
+	c *client.Client,
+	bufPool *lib.BufPool,
+	dirInfoCache *client.DirInfoCache,
+	stats *DefragSpansStats,
+	progressReportAlert *lib.XmonNCAlert,
+	root string,
+) error {
+	timeStats := newTimeStats()
+	return client.Parwalk(
+		log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
+		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
+			if id.Type() == msgs.DIRECTORY {
+				return nil
+			}
+			err := defragFileReplace(
+				log, c, bufPool, dirInfoCache, stats, progressReportAlert, timeStats, parent, id, path.Join(parentPath, name),
+			)
+			// keep defragging
+			if err != nil {
+				log.RaiseAlert("could not defrag file %q (%v): %v", path.Join(parentPath, name), id, err)
+			}
+			return nil
+		},
+	)
+}

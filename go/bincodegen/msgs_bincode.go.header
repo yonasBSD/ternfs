@@ -47,6 +47,8 @@ func TagToDirInfoEntry(tag DirectoryInfoTag) IsDirectoryInfoEntry {
 		return &SpanPolicy{}
 	case BLOCK_POLICY_TAG:
 		return &BlockPolicy{}
+	case STRIPE_POLICY_TAG:
+		return &StripePolicy{}
 	default:
 		panic(fmt.Errorf("unknown policy tag %v", tag))
 	}

@@ -509,7 +509,7 @@ func main() {
 
 	setDirInfoCmd := flag.NewFlagSet("set-dir-info", flag.ExitOnError)
 	setDirInfoIdU64 := setDirInfoCmd.Uint64("id", 0, "InodeId for the directory to set the policy of.")
-	setDirInfoIdTag := setDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
+	setDirInfoIdTag := setDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK|STRIPE")
 	setDirInfoPolicy := setDirInfoCmd.String("body", "", "Policy, in JSON")
 	setDirInfoRun := func() {
 		entry := msgs.TagToDirInfoEntry(msgs.DirInfoTagFromName(*setDirInfoIdTag))
@@ -1245,6 +1245,25 @@ func main() {
 	commands["defrag"] = commandSpec{
 		flags: defragFileCmd,
 		run:   defragFileRun,
+	}
+
+	defragSpansCmd := flag.NewFlagSet("defrag-spans", flag.ExitOnError)
+	defragSpansPath := defragSpansCmd.String("path", "", "The directory or file to defrag")
+	defragSpansRun := func() {
+		c := getClient()
+		dirInfoCache := client.NewDirInfoCache()
+		bufPool := lib.NewBufPool()
+		stats := &cleanup.DefragSpansStats{}
+		alert := log.NewNCAlert(0)
+		alert.SetAppType(lib.XMON_NEVER)
+		if err := cleanup.DefragSpans(log, c, bufPool, dirInfoCache, stats, alert, *defragSpansPath); err != nil {
+			panic(err)
+		}
+		log.Info("defrag stats: %+v", stats)
+	}
+	commands["defrag-spans"] = commandSpec{
+		flags: defragSpansCmd,
+		run:   defragSpansRun,
 	}
 
 	resurrectFileCmd := flag.NewFlagSet("resurrect", flag.ExitOnError)

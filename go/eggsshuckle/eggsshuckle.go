@@ -303,6 +303,10 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 
 	for i := range req.BlockServices {
 		bs := req.BlockServices[i]
+		if bs.Id == 0 {
+			ll.RaiseAlert("cannot register block service zero, dropping request")
+			return nil, msgs.INTERNAL_ERROR
+		}
 		// DECOMMISSIONED|STALE are always managed externally, not by eggsblocks.
 		if msgs.BlockServiceFlags(bs.FlagsMask).HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_STALE) {
 			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED_OR_STALE

@@ -940,8 +940,28 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 		if _, err := keyFile.Write(key[:]); err != nil {
 			panic(err)
 		}
+		keyCrc := crc32c.Sum(0, key[:])
+		if err := binary.Write(keyFile, binary.LittleEndian, keyCrc); err != nil {
+			panic(err)
+		}
 	} else if read != 16 {
 		panic(fmt.Errorf("short secret key (%v rather than 16 bytes)", read))
+	} else {
+		expectedKeyCrc := crc32c.Sum(0, key[:])
+		var actualKeyCrcBytes [4]byte
+		_, err := keyFile.Read(actualKeyCrcBytes[:])
+		if err == io.EOF { // CRC not there yet
+			if err := binary.Write(keyFile, binary.LittleEndian, expectedKeyCrc); err != nil {
+				panic(err)
+			}
+		} else if err != nil {
+			panic(err)
+		} else {
+			actualKeyCrc := binary.LittleEndian.Uint32(actualKeyCrcBytes[:])
+			if expectedKeyCrc != actualKeyCrc {
+				panic(fmt.Errorf("expected crc %v, got %v", msgs.Crc(expectedKeyCrc), msgs.Crc(actualKeyCrc)))
+			}
+		}
 	}
 	return key
 }

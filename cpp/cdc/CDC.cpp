@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <atomic>
 #include <fcntl.h>
+#include <sys/types.h>
 #include <unordered_map>
 #include <arpa/inet.h>
 #include <unordered_set>
@@ -131,14 +132,38 @@ private:
     std::map<EggsTime, uint64_t> _pq;
 
 public:
+
+    struct TimeIterator {
+        RequestsMap::const_iterator operator->() const {
+            return _reqs.find(_it->second);
+        }
+        TimeIterator& operator++() {
+            ++_it;
+            return *this;
+        }
+
+        TimeIterator(const RequestsMap& reqs, const std::map<EggsTime, uint64_t>& pq) : _reqs(reqs), _pq(pq), _it(_pq.begin()) {}
+        bool operator==(const TimeIterator& other) const {
+            return _it == other._it;
+        }
+        bool operator!=(const TimeIterator& other) const {
+            return!(*this == other);
+        }
+        TimeIterator end() const {
+            return TimeIterator{_reqs, _pq, _pq.end()};
+        }
+    private:
+        TimeIterator(const RequestsMap& reqs, const std::map<EggsTime, uint64_t>& pq, std::map<EggsTime, uint64_t>::const_iterator it) : _reqs(reqs), _pq(pq), _it(it) {}
+        const RequestsMap& _reqs;
+        const std::map<EggsTime, uint64_t>& _pq;
+        std::map<EggsTime, uint64_t>::const_iterator _it;
+    };
     size_t size() const {
         return _reqs.size();
     }
 
-    RequestsMap::const_iterator oldest() const {
-        ALWAYS_ASSERT(size() > 0);
-        auto reqByTime = _pq.begin();
-        return _reqs.find(reqByTime->second);
+    TimeIterator oldest() const {
+        return TimeIterator(_reqs, _pq);
     }
 
     RequestsMap::const_iterator find(uint64_t reqId) const {
@@ -209,6 +234,9 @@ private:
     std::vector<CDCReqInfo> _cdcReqsInfo;
     std::vector<CDCTxnId> _cdcReqsTxnIds;
     std::vector<CDCShardResp> _shardResps;
+    std::vector<uint64_t> _shardRespReqIds;
+    std::unordered_map<uint64_t, std::vector<uint64_t>> _entryIdxToRespIds;
+    std::unordered_set<uint64_t> _receivedResponses;
     std::unordered_map<uint64_t, CDCLogEntry> _inFlightEntries;
 
     // The requests we've enqueued, but haven't completed yet, with
@@ -284,22 +312,26 @@ public:
         _cdcReqsInfo.clear();
         _cdcReqsTxnIds.clear();
         _shardResps.clear();
+        _shardRespReqIds.clear();
+        _receivedResponses.clear();
+        _entryIdxToRespIds.clear();
         _replicas = _shared.replicas;
 
 
         // Timeout ShardRequests
         {
             auto now = eggsNow();
-            while (_updateSize() < MAX_UPDATE_SIZE) {
-                if (_inFlightShardReqs.size() == 0) { break; }
-                auto oldest = _inFlightShardReqs.oldest();
+            auto oldest = _inFlightShardReqs.oldest();
+            while (_updateSize() < MAX_UPDATE_SIZE && oldest != oldest.end()) {
+
                 if ((now - oldest->second.sentAt) < _shardTimeout) { break; }
 
                 LOG_DEBUG(_env, "in-flight shard request %s was sent at %s, it's now %s, will time out (%s > %s)", oldest->first, oldest->second.sentAt, now, (now - oldest->second.sentAt), _shardTimeout);
                 uint64_t requestId = oldest->first;
-                auto resp = _prepareCDCShardResp(requestId); // erases `oldest`
+                auto resp = _prepareCDCShardResp(requestId);
                 ALWAYS_ASSERT(resp != nullptr); // must be there, we've just timed it out
                 _recordCDCShardRespError(requestId, *resp, EggsError::TIMEOUT);
+                ++oldest;
             }
         }
         auto timeout = _logsDB.getNextTimeout();
@@ -323,6 +355,7 @@ public:
             CDCLogEntry::prepareLogEntries(_cdcReqs, _shardResps, LogsDB::DEFAULT_UDP_ENTRY_SIZE, entriesOut);
 
             auto reqInfoIt = _cdcReqsInfo.begin();
+            auto respIdIt = _shardRespReqIds.begin();
             for (auto& entry : entriesOut) {
                 auto& logEntry = entries.emplace_back();
                 logEntry.value.resize(entry.packedSize());
@@ -331,7 +364,10 @@ public:
                 ALWAYS_ASSERT(bbuf.len() == logEntry.value.size());
                 entry.logIdx(++_logsDBLogIndex.u64);
                 std::vector<CDCReqInfo> infos(reqInfoIt, reqInfoIt + entry.cdcReqs().size());
-                _logEntryIdxToReqInfos[entry.logIdx()] = std::move(infos);
+                std::vector<uint64_t> respIds(respIdIt, respIdIt + entry.shardResps().size());
+                _logEntryIdxToReqInfos.emplace(entry.logIdx(), std::move(infos));
+                _entryIdxToRespIds.emplace(entry.logIdx(), std::move(respIds));
+                respIdIt += entry.shardResps().size();
                 reqInfoIt += entry.cdcReqs().size();
                 _inFlightLogEntries[entry.logIdx()] = std::move(entry);
             }
@@ -341,17 +377,25 @@ public:
             auto err = _logsDB.appendEntries(entries);
             ALWAYS_ASSERT(err == NO_ERROR);
             // we need to drop information about entries which might have been dropped due to append window being full
+            bool foundLastInserted = false;
             for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
                 auto& entry = *it;
                 if (entry.idx != 0) {
-                    ALWAYS_ASSERT(entry.idx == _logsDBLogIndex);
-                    break;
+                    ALWAYS_ASSERT(foundLastInserted || entry.idx == _logsDBLogIndex);
+                    foundLastInserted = true;
+                    for (auto respId : _entryIdxToRespIds[entry.idx.u64]) {
+                        auto it = _inFlightShardReqs.find(respId);
+                        ALWAYS_ASSERT(it != _inFlightShardReqs.end());
+                        _inFlightShardReqs.erase(it);
+                    }
+                } else {
+                    ALWAYS_ASSERT(!foundLastInserted);
+                    ALWAYS_ASSERT(_logEntryIdxToReqInfos.contains(_logsDBLogIndex.u64));
+                    ALWAYS_ASSERT(_inFlightLogEntries.contains(_logsDBLogIndex.u64));
+                    _logEntryIdxToReqInfos.erase(_logsDBLogIndex.u64);
+                    _inFlightLogEntries.erase(_logsDBLogIndex.u64);
+                    --_logsDBLogIndex.u64;
                 }
-                ALWAYS_ASSERT(_logEntryIdxToReqInfos.contains(_logsDBLogIndex.u64));
-                ALWAYS_ASSERT(_inFlightLogEntries.contains(_logsDBLogIndex.u64));
-                _logEntryIdxToReqInfos.erase(_logsDBLogIndex.u64);
-                _inFlightLogEntries.erase(_logsDBLogIndex.u64);
-                --_logsDBLogIndex.u64;
             }
             entries.clear();
         }
@@ -499,10 +543,15 @@ private:
             LOG_DEBUG(_env, "got unexpected shard request id %s, dropping", reqId);
             return nullptr;
         }
+        if (_receivedResponses.contains(reqId)) {
+            LOG_DEBUG(_env, "got multipl responses for same request %s, dropping", reqId);
+            return nullptr;
+        }
         CDCTxnId txnId = reqIt->second.txnId;
         auto& resp = _shardResps.emplace_back();
         resp.txnId = reqIt->second.txnId;
-        _inFlightShardReqs.erase(reqIt); // not in flight anymore
+        _shardRespReqIds.emplace_back(reqId);
+        _receivedResponses.emplace(reqId);
         return &resp;
     }
 

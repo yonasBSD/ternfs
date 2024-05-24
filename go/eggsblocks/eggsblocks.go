@@ -1139,7 +1139,7 @@ func main() {
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
-	connectionTimeout := flag.Duration("connection-timeout", time.Minute, "")
+	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
 	metrics := flag.Bool("metrics", false, "")
 	flag.Parse()
 	if flag.NArg()%2 != 0 {

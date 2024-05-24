@@ -318,56 +318,55 @@ retry:
     // The `alloc_pages*` functions can invoke the shrinker to get as they try to get
     // a page, which in turn might invoke the span shrinker, resulting in a deadlock.
 
-    // We always get the full set of spans, this simplifies prefetching (we just
-    // blindly assume the span is there, and if it's been reclaimed in the meantime
-    // we just don't care).
-    u64 spans_offset;
-    for (spans_offset = 0;;) {
-        // fetch next batch of spans
-        u64 next_offset;
-        struct get_span_ctx ctx = { .err = 0, .enode = enode };
-        INIT_LIST_HEAD(&ctx.spans);
-        err = eggsfs_error_to_linux(eggsfs_shard_file_spans(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, spans_offset, &next_offset,&ctx
-        ));
-        err = err ?: ctx.err;
-        if (unlikely(err)) {
-            eggsfs_debug("failed to get file spans at %llu err=%d", spans_offset, err);
-            for (;;) {
-                struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
-                if (span == NULL) { break; }
-                list_del(&span->lru);
-                free_span(span, NULL);
-            }
-            GET_SPAN_EXIT(ERR_PTR(err));
-        }
-        // add them to enode spans and LRU
-        down_write(&file->spans_lock);
+    // Fetch one batch of spans. We could fetch more, which would aid prefetching
+    // (right now prefetching just does nothing if it does not have the span ready)
+    // but:
+    //
+    // 1. Currently prefetching is off
+    // 2. We have some directories  with max span size 3MB, which
+    //      means that files have tons of spans, which stresses out the metadata servers
+    //      massively. These are files where the quants are doing 1MB random accesses,
+    //      so one batch of spans will suffice.
+    u64 next_offset;
+    struct get_span_ctx ctx = { .err = 0, .enode = enode };
+    INIT_LIST_HEAD(&ctx.spans);
+    err = eggsfs_error_to_linux(eggsfs_shard_file_spans(
+        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, offset, &next_offset,&ctx
+    ));
+    err = err ?: ctx.err;
+    if (unlikely(err)) {
+        eggsfs_debug("failed to get file spans at %llu err=%d", offset, err);
         for (;;) {
             struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
             if (span == NULL) { break; }
             list_del(&span->lru);
-            if (!insert_span(&file->spans, span)) {
-                // Span is already cached
-                free_span(span, NULL);
-            } else {
-                if (span->storage_class != EGGSFS_INLINE_STORAGE) {
-                    // Not already cached, must add it to the LRU
-                    eggsfs_counter_inc(eggsfs_stat_cached_spans);
-                    struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-                    struct eggsfs_span_lru* lru = get_span_lru(span);
-                    spin_lock_bh(&lru->lock);
-                    block_span->refcount = 0;
-                    list_add(&span->lru, &lru->lru);
-                    spin_unlock_bh(&lru->lock);
-                }
+            free_span(span, NULL);
+        }
+        GET_SPAN_EXIT(ERR_PTR(err));
+    }
+    // add them to enode spans and LRU
+    down_write(&file->spans_lock);
+    for (;;) {
+        struct eggsfs_span* span = list_first_entry_or_null(&ctx.spans, struct eggsfs_span, lru);
+        if (span == NULL) { break; }
+        list_del(&span->lru);
+        if (!insert_span(&file->spans, span)) {
+            // Span is already cached
+            free_span(span, NULL);
+        } else {
+            if (span->storage_class != EGGSFS_INLINE_STORAGE) {
+                // Not already cached, must add it to the LRU
+                eggsfs_counter_inc(eggsfs_stat_cached_spans);
+                struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+                struct eggsfs_span_lru* lru = get_span_lru(span);
+                spin_lock_bh(&lru->lock);
+                block_span->refcount = 0;
+                list_add(&span->lru, &lru->lru);
+                spin_unlock_bh(&lru->lock);
             }
         }
-        up_write(&file->spans_lock);
-        // stop if we're done
-        if (next_offset == 0) { break; }
-        spans_offset = next_offset;
     }
+    up_write(&file->spans_lock);
 
     // We now restart, we know that the span must be there (unless the shard is broken).
     // It might get reclaimed in the meantime though.

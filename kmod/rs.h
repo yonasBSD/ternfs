@@ -4,7 +4,7 @@
 #include <linux/kernel.h>
 
 #define EGGSFS_MAX_DATA 10
-#define EGGSFS_MAX_PARITY 4
+#define EGGSFS_MAX_PARITY 6
 #define EGGSFS_MAX_BLOCKS (EGGSFS_MAX_DATA+EGGSFS_MAX_PARITY)
 
 extern int eggsfs_rs_cpu_level;

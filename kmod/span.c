@@ -1058,9 +1058,9 @@ static struct fetch_stripe_state* start_fetch_stripe(
     struct fetch_stripe_state* st = NULL;
 
     int D = eggsfs_data_blocks(span->parity);
-    int B = eggsfs_blocks(span->parity);
-    if (D > EGGSFS_MAX_DATA || B > EGGSFS_MAX_BLOCKS) {
-        eggsfs_error("got out of bounds parity of RS(%d,%d) for span %llu in file %016lx", D, B-D, span->span.start, enode->inode.i_ino);
+    int P = eggsfs_parity_blocks(span->parity);
+    if (D > EGGSFS_MAX_DATA || P > EGGSFS_MAX_PARITY) {
+        eggsfs_error("got out of bounds parity of RS(%d,%d) for span %llu in file %016lx", D, P, span->span.start, enode->inode.i_ino);
         err = -EIO;
         goto out_err;
     }

@@ -747,7 +747,7 @@ int eggsfs_shard_add_span_initiate(
     // Not worth writing a bincodegen stuff for this variable sized request, of which we have
     // only two instance.
     int B = eggsfs_blocks(parity);
-    if (B > EGGSFS_MAX_BLOCKS) {
+    if (unlikely(eggsfs_data_blocks(parity) > EGGSFS_MAX_DATA || eggsfs_parity_blocks(parity) > EGGSFS_MAX_PARITY)) {
         return -EINVAL;
     }
 
@@ -862,7 +862,7 @@ int eggsfs_shard_add_span_certify(
     u8 kind = EGGSFS_SHARD_ADD_SPAN_CERTIFY;
 
     int B = eggsfs_blocks(parity);
-    if (unlikely(B > EGGSFS_MAX_BLOCKS)) {
+    if (unlikely(eggsfs_data_blocks(parity) > EGGSFS_MAX_DATA || eggsfs_parity_blocks(parity) > EGGSFS_MAX_PARITY)) {
         return -EINVAL;
     }
 

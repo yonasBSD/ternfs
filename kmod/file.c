@@ -406,7 +406,7 @@ static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
     return p;
 }
 
-static void compute_span_parameters(
+static int compute_span_parameters(
     struct eggsfs_policy* block_policy_p,
     struct eggsfs_policy* span_policy_p,
     struct eggsfs_policy* stripe_policy_p,
@@ -421,7 +421,7 @@ static void compute_span_parameters(
         span->block_size = 0;
         span->stripes = 0;
         span->parity = 0;
-        return;
+        return 0;
     }
 
     // fetch the bodies of the policies
@@ -452,6 +452,10 @@ static void compute_span_parameters(
         u32 max_size;
         eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
         BUG_ON(span_size > max_size);
+    }
+    if (unlikely(eggsfs_data_blocks(parity) > EGGSFS_MAX_DATA || eggsfs_parity_blocks(parity) > EGGSFS_MAX_PARITY)) {
+        eggsfs_info("got asked to write with parity (%d,%d), which is beyond max blocks (%d,%d)", eggsfs_data_blocks(parity), eggsfs_parity_blocks(parity), EGGSFS_MAX_DATA, EGGSFS_MAX_PARITY);
+        return -EINVAL;
     }
 
     // For simplicity, we have all cells to be a multiple of PAGE_SIZE, which means that all
@@ -494,6 +498,8 @@ static void compute_span_parameters(
     span->block_size = block_size;
     span->stripes = S;
     span->parity = parity;
+
+    return 0;
 }
 
 // To be called with the inode lock. Acquires the flushing sema.
@@ -643,9 +649,13 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
         return 0;
     }
 
-    compute_span_parameters(
+    err = compute_span_parameters(
         enode->block_policy, enode->span_policy, enode->stripe_policy, span
     );
+    if (err) {
+        up(&enode->file.flushing_span_sema);
+        goto out;
+    }
 
     // Here (and in `write_blocks`) we might block even if we're non
     // blocking, since we don't have async metadata requests yet, which is
@@ -664,11 +674,11 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
         ));
         kunmap(page);
         up(&enode->file.flushing_span_sema);
-        return err;
     } else {
-        // the real deal, we need to write blocks
+        // The real deal, we need to write blocks. Note that
+        // this guy is tasked with releasing the flushing semaphore
+        // if things fail (otherwise we're not done yet).
         err = write_blocks(span);
-        if (err) { goto out; }
     }
 
 out:
@@ -767,6 +777,7 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
     if (span->written >= max_span_size) { // we need to start flushing the span
         // this might block even if it says nonblock, which is unfortunate.
         err = start_flushing(enode, !!(flags&IOCB_NOWAIT));
+        if (err < 0) { goto out_err_permanent; }
     }
 
     int written;
@@ -776,7 +787,7 @@ out:
     return written;
 
 out_err_permanent:
-    atomic_set(&enode->file.transient_err, err);
+    atomic_cmpxchg(&enode->file.transient_err, 0, err);
 out_err:
     eggsfs_debug("err=%d", err);
     if (err == -EAGAIN && *ppos > ppos_before) {

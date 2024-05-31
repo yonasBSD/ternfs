@@ -26,7 +26,8 @@ eggsfs-objs += \
 	span.o \
 	bincode.o \
 	revision.o \
-	policy.o
+	policy.o \
+	block_services.o
 
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
 

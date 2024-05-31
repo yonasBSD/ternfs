@@ -7,15 +7,7 @@
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 
-struct eggsfs_policy {
-    struct hlist_node hnode;
-    spinlock_t lock;
-    u64 inode;
-    u8 tag;
-    // First byte: len, then the body. We store this separatedly
-    // since we it's RCU protected.
-    char* __rcu body;
-};
+struct eggsfs_policy;
 
 // Creates or update a specific policy. Very fast unless the policy is unseen so
 // far, which is a rare occurrence.

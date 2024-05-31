@@ -5,8 +5,19 @@
 #include <linux/hashtable.h>
 #include <linux/stringhash.h>
 #include <linux/slab.h>
+#include <linux/lockdep.h>
 
 #include "log.h"
+
+struct eggsfs_policy {
+    struct hlist_node hnode;
+    spinlock_t lock;
+    u64 inode;
+    u8 tag;
+    // First byte: len, then the body. We store this separatedly
+    // since we it's RCU protected.
+    char* __rcu body;
+};
 
 #define POLICY_BITS 8
 #define POLICY_BUCKETS (1<<POLICY_BITS) // 256
@@ -34,14 +45,17 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     if (likely(policy != NULL)) {
         // We found one, check if we need to update.
         rcu_read_lock();
-        u8 curr_len = *(u8*)policy->body;
-        if (likely(curr_len == len && memcmp(body, policy->body+1, len) == 0)) { // still the same, no update needed
-            rcu_read_unlock();
-            return policy;
+        {
+            char* body = rcu_dereference(policy->body);
+            u8 curr_len = *(u8*)body;
+            if (likely(curr_len == len && memcmp(body, body+1, len) == 0)) { // still the same, no update needed
+                rcu_read_unlock();
+                return policy;
+            }
         }
         rcu_read_unlock();
 
-        // things differ, we do need to update, first allocate and fill the body the body
+        // things differ, we do need to update, first allocate and fill the body
         char* new_body = kmalloc(1 + len, GFP_KERNEL);
         if (new_body == NULL) {
             return ERR_PTR(-ENOMEM);
@@ -49,9 +63,9 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
         *(u8*)new_body = (u8)len;
         memcpy(new_body+1, body, len);
 
-        // swap the pointers TODO can this be done with an atomic?
+        // Swap the pointers
         spin_lock(&policy->lock);
-        char* old_body = rcu_dereference(policy->body);
+        char* old_body = rcu_dereference_protected(policy->body, lockdep_is_held(&policy->lock));
         rcu_assign_pointer(policy->body, new_body);
         spin_unlock(&policy->lock);
 
@@ -84,7 +98,7 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     spin_lock(&policies_locks[bucket]);
     // check if somebody got to it first
     policy = find_policy(inode, tag);
-    if (policy != NULL) {
+    if (unlikely(policy != NULL)) {
         // let's not bother updating to our thing in this racy case
         spin_unlock(&policies_locks[bucket]);
         kfree(new_policy->body);

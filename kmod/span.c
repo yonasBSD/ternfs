@@ -2,6 +2,7 @@
 #include <linux/random.h>
 
 #include "bincode.h"
+#include "block.h"
 #include "inode.h"
 #include "log.h"
 #include "span.h"
@@ -15,6 +16,7 @@
 #include "trace.h"
 #include "intrshims.h"
 #include "sysctl.h"
+#include "block_services.h"
 
 EGGSFS_DEFINE_COUNTER(eggsfs_stat_cached_spans);
 
@@ -175,14 +177,22 @@ void eggsfs_file_spans_cb_block(
     struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
 
     struct eggsfs_block* block = &block_span->blocks[block_ix];
-    block->bs.id = bs_id;
-    block->bs.ip1 = ip1;
-    block->bs.port1 = port1;
-    block->bs.ip2 = ip2;
-    block->bs.port2 = port2;
-    block->bs.flags = flags;
     block->id = block_id;
     block->crc = crc;
+
+    // Populate bs cache
+    struct eggsfs_block_service bs;
+    bs.id = bs_id;
+    bs.ip1 = ip1;
+    bs.port1 = port1;
+    bs.ip2 = ip2;
+    bs.port2 = port2;
+    bs.flags = flags;
+    block->bs = eggsfs_upsert_block_service(&bs);
+    if (IS_ERR(block->bs)) {
+        ctx->err = PTR_ERR(block->bs);
+        return;
+    }
 }
 
 void eggsfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body) {
@@ -937,11 +947,13 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         u32 block_offset = st->stripe * span->cell_size;
         fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_START, i, 0);
         hold_fetch_stripe(st);
-        eggsfs_debug("block start st=%p block_service=%016llx block_id=%016llx", st, block->bs.id, block->id);
+        eggsfs_debug("block start st=%p block_service=%016llx block_id=%016llx", st, block->id, block->id);
+        struct eggsfs_block_service bs;
+        eggsfs_get_block_service(block->bs, &bs);
         int block_err = eggsfs_fetch_block(
             &block_done,
             (void*)st,
-            &block->bs, block->id, block_offset, span->cell_size
+            &bs, block->id, block_offset, span->cell_size
         );
         if (block_err) {
             atomic_set(&st->last_block_err, block_err);

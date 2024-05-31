@@ -19,6 +19,7 @@
 #include "file.h"
 #include "debugfs.h"
 #include "policy.h"
+#include "block_services.h"
 
 MODULE_LICENSE("GPL");
 
@@ -40,6 +41,9 @@ static int __init eggsfs_init(void) {
 
     err = eggsfs_policy_init();
     if (err) { goto out_policy; }
+
+    err = eggsfs_block_service_init();
+    if (err) { goto out_block_service; }
 
     err = eggsfs_sysfs_init();
     if (err) { goto out_sysfs; }
@@ -87,6 +91,8 @@ out_block:
 out_sysctl:
     eggsfs_sysfs_exit();
 out_sysfs:
+    eggsfs_block_service_exit();
+out_block_service:
     eggsfs_policy_exit();
 out_policy:
     eggsfs_rs_exit();
@@ -105,6 +111,7 @@ static void __exit eggsfs_exit(void) {
     eggsfs_block_exit();
     eggsfs_sysctl_exit();
     eggsfs_sysfs_exit();
+    eggsfs_block_service_exit();
     eggsfs_policy_exit();
     eggsfs_rs_exit();
 

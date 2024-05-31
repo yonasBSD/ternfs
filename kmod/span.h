@@ -38,8 +38,8 @@ struct eggsfs_inline_span {
     })
 
 struct eggsfs_block {
+    struct eggsfs_stored_block_service* bs;
     u64 id;
-    struct eggsfs_block_service bs;
     u32 crc;
 };
 

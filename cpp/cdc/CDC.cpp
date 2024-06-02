@@ -339,7 +339,7 @@ public:
         if (unlikely(entries.size())) {
             timeout = 0;
         }
-        if (unlikely(!_channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE - _updateSize(), timeout))) {
+        if (unlikely(!_channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE, timeout))) {
             return;
         };
 

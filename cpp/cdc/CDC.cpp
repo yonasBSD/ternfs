@@ -209,6 +209,7 @@ struct CDCReqInfo {
 };
 
 constexpr int MAX_UPDATE_SIZE = 500;
+constexpr uint64_t MAX_MSG_RECEIVE = (LogsDB::CATCHUP_WINDOW + LogsDB::IN_FLIGHT_APPEND_WINDOW) * LogsDB::REPLICA_COUNT + MAX_UPDATE_SIZE;
 
 struct CDCServer : Loop {
 private:
@@ -271,7 +272,7 @@ public:
         // important to not catch stray requests from previous executions
         _shardRequestIdCounter(wyhash64_rand()),
         _shardTimeout(options.shardTimeout),
-        _receiver({.maxMsgSize = MAX_UDP_MTU}),
+        _receiver({.perSockMaxRecvMsg = MAX_MSG_RECEIVE, .maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
         _dontDoReplication(options.dontDoReplication),
         _logsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, _currentLogIndex)
@@ -339,7 +340,7 @@ public:
         if (unlikely(entries.size())) {
             timeout = 0;
         }
-        if (unlikely(!_channel.receiveMessages(_env,_shared.socks, _receiver, MAX_UPDATE_SIZE, timeout))) {
+        if (unlikely(!_channel.receiveMessages(_env,_shared.socks, _receiver, MAX_MSG_RECEIVE, timeout))) {
             return;
         };
 

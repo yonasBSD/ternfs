@@ -313,7 +313,11 @@ out:
             eggsfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
             return err;
         } else {
-            eggsfs_latch_wait(&enode->getattr_update_latch, seqno);
+            long ret = eggsfs_latch_wait_timeout(&enode->getattr_update_latch, seqno, 2 * eggsfs_overall_shard_timeout_jiffies);
+            if (unlikely(ret < 1)) {
+                eggsfs_warn("latch_wait timed out, this should never happen, getattr stuck? id=0x%016lx getattr_async_seqno=%lld counter=%lld seqno=%lld", enode->inode.i_ino, enode->getattr_async_seqno, atomic64_read(&enode->getattr_update_latch.counter), seqno);
+                return -EDEADLK;
+            }
         }
     }
 }

@@ -219,11 +219,6 @@ static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* add
     return true;
 }
 
-// #define LOG_STR_NO_ADDR "req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums"
-// #define LOG_STR LOG_STR_NO_ADDR " addr=%pI4:%d"
-// #define LOG_ARGS_NO_ADDR(req, state, kind) (req)->request_id, (state)->shard_id, (((state)->shard_id < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind)), kind, (state)->attempts, jiffies64_to_msecs(get_jiffies_64() - (state)->start_t)
-// #define LOG_ARGS(req, state, kind) LOG_ARGS_NO_ADDR(req, state, kind), &(req)addr.sin_addr, ntohs(addr.sin_port)
-
 // jiffies only have millisecond precision, but we still use nanoseconds as the
 // format is nicer and makes the buckets a bit more precise.
 // |1 below drops the 0 value to the smallest bucket

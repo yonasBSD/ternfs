@@ -87,6 +87,10 @@ void __cold eggsfs_inode_exit(void) {
     kmem_cache_destroy(eggsfs_inode_cachep);
 }
 
+// Returns:
+// *  0: the async getattr was not sent, because of contention
+// *  1: the async getattr was sent
+// * -n: error code
 int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
     eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 

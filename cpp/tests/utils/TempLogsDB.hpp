@@ -10,8 +10,6 @@ struct TempLogsDB {
     std::string dbDir;
     Logger logger;
     std::shared_ptr<XmonAgent> xmon;
-    std::unique_ptr<Env> env;
-
 
     std::unique_ptr<SharedRocksDB> sharedDB;
     std::unique_ptr<LogsDB> db;
@@ -23,7 +21,7 @@ struct TempLogsDB {
         bool dontDoReplication = false,
         bool forceLeader = false,
         bool avoidBeingLeader = false,
-        LogIdx forcedLastReleased = 0): logger(level, STDERR_FILENO, false, false), env(new Env(logger, xmon, "LogsDB"))
+        LogIdx forcedLastReleased = 0): logger(level, STDERR_FILENO, false, false)
     {
         dbDir = std::string("temp-logs-db.XXXXXX");
         if (mkdtemp(dbDir.data()) == nullptr) {
@@ -33,7 +31,7 @@ struct TempLogsDB {
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
 
         initSharedDB();
-        db = std::make_unique<LogsDB>(*env, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
     }
 
     // useful to test recovery
@@ -48,7 +46,7 @@ struct TempLogsDB {
         db->close();
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
-        db = std::make_unique<LogsDB>(*env, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
     }
 
     ~TempLogsDB() {

@@ -47,6 +47,7 @@ static constexpr uint8_t SHARD_SOCK = 1;
 struct CDCShared {
     SharedRocksDB& sharedDb;
     CDCDB& db;
+    LogsDB& logsDB;
     std::array<UDPSocketPair, 2> socks;
     std::atomic<bool> isLeader;
     std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> replicas;
@@ -59,7 +60,7 @@ struct CDCShared {
     std::atomic<double> updateSize;
     ErrorCount shardErrors;
 
-    CDCShared(SharedRocksDB& sharedDb_, CDCDB& db_, std::array<UDPSocketPair, 2>&& socks_) : sharedDb(sharedDb_), db(db_), socks(std::move(socks_)), isLeader(false), inFlightTxns(0), updateSize(0) {
+    CDCShared(SharedRocksDB& sharedDb_, CDCDB& db_, LogsDB& logsDB_, std::array<UDPSocketPair, 2>&& socks_) : sharedDb(sharedDb_), db(db_), logsDB(logsDB_), socks(std::move(socks_)), isLeader(false), inFlightTxns(0), updateSize(0) {
         for (CDCMessageKind kind : allCDCMessageKind) {
             timingsTotal[(int)kind] = Timings::Standard();
         }
@@ -254,7 +255,7 @@ private:
     InFlightShardRequests _inFlightShardReqs;
 
     const bool _dontDoReplication;
-    LogsDB _logsDB;
+    LogsDB& _logsDB;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
     std::vector<LogsDBRequest *> _logsDBOutRequests;
@@ -275,7 +276,7 @@ public:
         _receiver({.perSockMaxRecvMsg = MAX_MSG_RECEIVE, .maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
         _dontDoReplication(options.dontDoReplication),
-        _logsDB(_env,_shared.sharedDb, options.replicaId, _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, _currentLogIndex)
+        _logsDB(shared.logsDB)
     {
         expandKey(CDCKey, _expandedCDCKey);
 
@@ -1108,6 +1109,114 @@ public:
     // }
 };
 
+static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ReplicaId replicaId, EggsTime now) {
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "idle_time", stats.idleTime.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "processing_time", stats.processingTime.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "leader_last_active", stats.leaderLastActive.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "append_window", stats.appendWindow.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "entries_released", stats.entriesReleased.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "follower_lag", stats.followerLag.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "reader_lag", stats.readerLag.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "catchup_window", stats.catchupWindow.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "entries_read", stats.entriesRead.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_received", stats.requestsReceived.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "responses_received", stats.requestsReceived.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_sent", stats.requestsSent.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "responses_sent", stats.responsesSent.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_timedout", stats.requestsTimedOut.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.tag("replica", replicaId);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "current_epoch", stats.currentEpoch.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+}
+
 struct CDCMetricsInserter : PeriodicLoop {
 private:
     CDCShared& _shared;
@@ -1186,6 +1295,7 @@ public:
                 _metricsBuilder.timestamp(now);
             }
         }
+        logsDBstatsToMetrics(_metricsBuilder, _shared.logsDB.getStats(), _replicaId, now);
         std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();
         if (err.empty()) {
@@ -1260,8 +1370,9 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     sharedDb.openTransactionDB(dbOptions);
 
     CDCDB db(logger, xmon, sharedDb);
+    LogsDB logsDB(logger, xmon, sharedDb, options.replicaId, db.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, db.lastAppliedLogEntry());
     CDCShared shared(
-        sharedDb, db,
+        sharedDb, db, logsDB,
         std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.cdcAddrs), UDPSocketPair(env, options.cdcToShardAddress)})
     );
 

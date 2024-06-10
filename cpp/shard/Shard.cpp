@@ -192,6 +192,7 @@ struct ShardShared {
     SharedRocksDB& sharedDB;
     BlockServicesCacheDB& blockServicesCache;
     ShardDB& shardDB;
+    LogsDB& logsDB;
     std::array<UDPSocketPair, 1> socks; // in an array to play with UDPReceiver<>
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
@@ -203,10 +204,11 @@ struct ShardShared {
     std::atomic<bool> isLeader;
 
     ShardShared() = delete;
-    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, UDPSocketPair&& sock) :
+    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock) :
         sharedDB(sharedDB_),
         blockServicesCache(blockServicesCache_),
         shardDB(shardDB_),
+        logsDB(logsDB_),
         socks({std::move(sock)}),
         writerRequestsQueue(LOG_ENTRIES_QUEUE_SIZE),
         logEntriesQueueSize(0),
@@ -614,7 +616,7 @@ private:
     std::vector<QueuedShardLogEntry> _logEntries;
     SnapshotRequest _snapshotRequest;
 
-    std::unique_ptr<LogsDB> _logsDB;
+    LogsDB& _logsDB;
     const bool _dontDoReplication;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
@@ -639,6 +641,7 @@ public:
         _shared(shared),
         _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _snapshotRequest({0,0,0,{},0}),
+        _logsDB(shared.logsDB),
         _dontDoReplication(options.dontDoReplication),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
@@ -656,24 +659,23 @@ public:
         convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
 
-        _logsDB.reset(new LogsDB(_env,_shared.sharedDB,shrid.replicaId(), _currentLogIndex, options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased));
         // In case of force leader it immediately detects and promotes us to leader
-        _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
-        _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
+        _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
+        _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
     }
 
     virtual ~ShardWriter() = default;
 
     void logsDBStep() {
         LOG_DEBUG(_env, "Calling LogsDB processIncomingMessages with %s requests and %s responses", _logsDBRequests.size(), _logsDBResponses.size());
-        _logsDB->processIncomingMessages(_logsDBRequests,_logsDBResponses);
-        _shared.isLeader.store(_logsDB->isLeader(), std::memory_order_relaxed);
+        _logsDB.processIncomingMessages(_logsDBRequests,_logsDBResponses);
+        _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
 
         bool droppedDueToInFlightWindow = false;
 
         // If we are leader write any outstanding entries
         std::vector<LogsDBLogEntry> logsDBEntries;
-        if (!_logsDB->isLeader()) {
+        if (!_logsDB.isLeader()) {
             //TODO: we could notify clients we are no longer leader
             if (_logEntries.size() > 0) {
                 LOG_INFO(_env, "Received %s shard write requests but we are not log leader. dropping", _logEntries.size());
@@ -697,7 +699,7 @@ public:
                 logsDBEntry.value.assign(buf.data, buf.cursor);
             }
 
-            auto err = _logsDB->appendEntries(logsDBEntries);
+            auto err = _logsDB.appendEntries(logsDBEntries);
             ALWAYS_ASSERT(err == NO_ERROR);
             ALWAYS_ASSERT(_logEntries.size() == logsDBEntries.size());
             for (size_t i = 0; i < _logEntries.size(); ++i) {
@@ -717,13 +719,13 @@ public:
                 // usually the state machine is moved by responses if we don't expect any we move it manually
                 _logsDBRequests.clear();
                 _logsDBResponses.clear();
-                _logsDB->processIncomingMessages(_logsDBRequests, _logsDBResponses);
+                _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
             }
         }
 
         // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
         // We want to have priority when sending out
-        _logsDB->getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
+        _logsDB.getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
 
         for (auto& response : _logsDBOutResponses) {
             packLogsDBResponse(response);
@@ -733,9 +735,9 @@ public:
             packLogsDBRequest(*request);
         }
 
-        _logsDB->readEntries(logsDBEntries);
+        _logsDB.readEntries(logsDBEntries);
         _outgoingLogEntries.reserve(logsDBEntries.size());
-        if (_dontDoReplication && _logsDB->isLeader()) {
+        if (_dontDoReplication && _logsDB.isLeader()) {
             ALWAYS_ASSERT(_inFlightEntries.size() == logsDBEntries.size());
         }
 
@@ -749,7 +751,7 @@ public:
             ALWAYS_ASSERT(_currentLogIndex == shardEntry.idx);
             auto it = _inFlightEntries.find(shardEntry.idx.u64);
 
-            if (_dontDoReplication  && _logsDB->isLeader()) {
+            if (_dontDoReplication  && _logsDB.isLeader()) {
                 ALWAYS_ASSERT(it != _inFlightEntries.end());
                 ALWAYS_ASSERT(shardEntry == it->second.logEntry);
             }
@@ -780,7 +782,7 @@ public:
         }
         _shared.shardDB.flush(true);
         // not needed as we just flushed and apparently it does actually flush again
-        // _logsDB->flush(true);
+        // _logsDB.flush(true);
 
         if (unlikely(_snapshotRequest.requestId != 0)) {
             _respContainer.setShardSnapshot();
@@ -869,7 +871,7 @@ public:
         _logEntries.clear();
         _outgoingLogEntries.clear();
         _replicaInfo = _shared.replicas;
-        uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, _maxWritesAtOnce, _logsDB ? _logsDB->getNextTimeout() : -1);
+        uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, _maxWritesAtOnce, _logsDB.getNextTimeout());
         if (likely(pulled > 0)) {
             LOG_DEBUG(_env, "pulled %s requests from write queue", pulled);
             _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)pulled)*0.05;
@@ -1076,6 +1078,114 @@ public:
     // }
 };
 
+static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ShardReplicaId shrid, EggsTime now) {
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "idle_time", stats.idleTime.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "processing_time", stats.processingTime.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "leader_last_active", stats.leaderLastActive.load(std::memory_order_relaxed).ns);
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "append_window", stats.appendWindow.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "entries_released", stats.entriesReleased.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "follower_lag", stats.followerLag.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "reader_lag", stats.readerLag.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "catchup_window", stats.catchupWindow.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "entries_read", stats.entriesRead.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_received", stats.requestsReceived.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "responses_received", stats.requestsReceived.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_sent", stats.requestsSent.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "responses_sent", stats.responsesSent.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldFloat( "requests_timedout", stats.requestsTimedOut.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+    {
+        metricsBuilder.measurement("eggsfs_shard_logsdb");
+        metricsBuilder.tag("shard", shrid);
+        metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
+        metricsBuilder.fieldU64( "current_epoch", stats.currentEpoch.load(std::memory_order_relaxed));
+        metricsBuilder.timestamp(now);
+    }
+}
+
 struct ShardMetricsInserter : PeriodicLoop {
 private:
     ShardShared& _shared;
@@ -1159,6 +1269,7 @@ public:
                 _metricsBuilder.timestamp(now);
             }
         }
+        logsDBstatsToMetrics(_metricsBuilder, _shared.logsDB.getStats(), _shrid, now);
         std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();
         if (err.empty()) {
@@ -1244,13 +1355,14 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 
     ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
+    LogsDB logsDB(logger, xmon, sharedDB, shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased);
     env.clearAlert(dbInitAlert);
 
     if (options.dontDoReplication) {
         options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
     }
 
-    ShardShared shared(sharedDB, blockServicesCache, shardDB, UDPSocketPair(env, options.shardAddrs));
+    ShardShared shared(sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.shardAddrs));
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared, dbDir)));

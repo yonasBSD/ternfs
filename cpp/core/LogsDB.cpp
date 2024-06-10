@@ -1,6 +1,7 @@
 #include "LogsDB.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -54,6 +55,15 @@ static bool tryGet(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, const rocks
 static constexpr auto METADATA_CF_NAME = "logMetadata";
 static constexpr auto DATA_PARTITION_0_NAME = "logTimePartition0";
 static constexpr auto DATA_PARTITION_1_NAME = "logTimePartition1";
+
+
+static void update_atomic_stat_ema(std::atomic<double>& stat, double newValue) {
+    stat.store((stat.load(std::memory_order_relaxed)* 0.95 + newValue * 0.05), std::memory_order_relaxed);
+}
+
+static void update_atomic_stat_ema(std::atomic<Duration>& stat, Duration newValue) {
+    stat.store((Duration)((double)stat.load(std::memory_order_relaxed).ns * 0.95 + (double)newValue.ns * 0.05), std::memory_order_relaxed);
+}
 
 std::vector<rocksdb::ColumnFamilyDescriptor> LogsDB::getColumnFamilyDescriptors() {
     return {
@@ -382,8 +392,9 @@ private:
 
 class LogMetadata {
 public:
-    LogMetadata(Env& env, SharedRocksDB& sharedDb, ReplicaId replicaId, DataPartitions& data) :
+    LogMetadata(Env& env, LogsDBStats& stats, SharedRocksDB& sharedDb, ReplicaId replicaId, DataPartitions& data) :
         _env(env),
+        _stats(stats),
         _sharedDb(sharedDb),
         _cf(sharedDb.getCF(METADATA_CF_NAME)),
         _replicaId(replicaId),
@@ -435,6 +446,7 @@ public:
             LOG_INFO(_env, "Forcing last released to %s", forcedLastReleased);
             setLastReleased(forcedLastReleased);
         }
+        _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
         return initSuccess;
     }
 
@@ -465,6 +477,7 @@ public:
             _lastAssigned = _lastReleased;
         }
         _leaderToken = token;
+        _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
         _nomineeToken = LeaderToken(0,0);
         return NO_ERROR;
     }
@@ -500,6 +513,7 @@ public:
         batch.Put(_cf, logsDBMetadataKey(LAST_RELEASED_IDX_KEY), U64Value::Static(lastReleased.u64).toSlice());
         batch.Put(_cf, logsDBMetadataKey(LAST_RELEASED_TIME_KEY),U64Value::Static(now.ns).toSlice());
         ROCKS_DB_CHECKED(_sharedDb.db()->Write({}, &batch));
+        update_atomic_stat_ema(_stats.entriesReleased, lastReleased.u64 - _lastReleased.u64);
         _lastReleased = lastReleased;
         _lastReleasedTime = now;
     }
@@ -510,6 +524,7 @@ public:
 
 private:
     Env& _env;
+    LogsDBStats& _stats;
     SharedRocksDB& _sharedDb;
     rocksdb::ColumnFamilyHandle* _cf;
     const ReplicaId _replicaId;
@@ -529,7 +544,7 @@ class ReqResp {
 
         using QuorumTrackArray = std::array<uint64_t, LogsDB::REPLICA_COUNT>;
 
-        ReqResp() : _lastAssignedRequest(CONFIRMED_REQ_ID) {}
+        ReqResp(LogsDBStats& stats) : _stats(stats), _lastAssignedRequest(CONFIRMED_REQ_ID) {}
 
         LogsDBRequest& newRequest(LogMessageKind kind, ReplicaId targetReplicaId) {
             auto& request = _requests[++_lastAssignedRequest];
@@ -567,6 +582,7 @@ class ReqResp {
             auto releaseCutoffTime = now - LogsDB::SEND_RELEASE_INTERVAL;
             auto readCutoffTime = now - LogsDB::READ_TIMEOUT;
             auto cutoffTime = now;
+            uint64_t timedOutCount{0};
             for (auto& r : _requests) {
                 switch (r.second.header.kind) {
                 case LogMessageKind::RELEASE:
@@ -581,12 +597,17 @@ class ReqResp {
                 if (r.second.sentTime < cutoffTime) {
                     r.second.sentTime = now;
                     _requestsToSend.emplace_back(&r.second);
+                    if (r.second.header.kind != LogMessageKind::RELEASE) {
+                        ++timedOutCount;
+                    }
                 }
             }
+            update_atomic_stat_ema(_stats.requestsTimedOut, timedOutCount);
         }
 
         void getRequestsToSend(std::vector<LogsDBRequest*>& requests) {
             requests.swap(_requestsToSend);
+            update_atomic_stat_ema(_stats.requestsSent, requests.size());
             _requestsToSend.clear();
         }
 
@@ -601,6 +622,7 @@ class ReqResp {
 
         void getResponsesToSend(std::vector<LogsDBResponse>& responses) {
             responses.swap(_responses);
+            update_atomic_stat_ema(_stats.responsesSent, responses.size());
             _responses.clear();
         }
 
@@ -621,12 +643,13 @@ class ReqResp {
             return numResponses > requestIds.size() / 2;
         }
 
-    private:
-     uint64_t _lastAssignedRequest;
-     std::unordered_map<uint64_t, LogsDBRequest> _requests;
-     std::vector<LogsDBRequest*> _requestsToSend;
+private:
+    LogsDBStats& _stats;
+    uint64_t _lastAssignedRequest;
+    std::unordered_map<uint64_t, LogsDBRequest> _requests;
+    std::vector<LogsDBRequest*> _requestsToSend;
 
-     std::vector<LogsDBResponse> _responses;
+    std::vector<LogsDBResponse> _responses;
 };
 
 enum class LeadershipState : uint8_t {
@@ -671,8 +694,9 @@ struct LeaderElectionState {
 
 class LeaderElection {
 public:
-    LeaderElection(Env& env, bool forceLeader, bool avoidBeingLeader, ReplicaId replicaId, LogMetadata& metadata, DataPartitions& data, ReqResp& reqResp) :
+    LeaderElection(Env& env, LogsDBStats& stats, bool forceLeader, bool avoidBeingLeader, ReplicaId replicaId, LogMetadata& metadata, DataPartitions& data, ReqResp& reqResp) :
         _env(env),
+        _stats(stats),
         _forceLeader(forceLeader),
         _avoidBeingLeader(avoidBeingLeader),
         _replicaId(replicaId),
@@ -687,8 +711,10 @@ public:
     }
 
     void maybeStartLeaderElection() {
+        auto now = eggsNow();
         if (_state != LeadershipState::FOLLOWER ||
-            (_leaderLastActive + LogsDB::LEADER_INACTIVE_TIMEOUT > eggsNow())) {
+            (_leaderLastActive + LogsDB::LEADER_INACTIVE_TIMEOUT > now)) {
+            update_atomic_stat_ema(_stats.leaderLastActive, now - _leaderLastActive);
             return;
         }
         auto nomineeToken = _metadata.generateNomineeToken();
@@ -704,7 +730,6 @@ public:
 
         _electionState.reset(new LeaderElectionState());
         _electionState->lastReleased = _metadata.getLastReleased();
-        auto now = eggsNow();
         _leaderLastActive = now;
 
         if (unlikely(_forceLeader)) {
@@ -1106,6 +1131,7 @@ private:
     }
 
     Env& _env;
+    LogsDBStats& _stats;
     const bool _forceLeader;
     const bool _avoidBeingLeader;
     const ReplicaId _replicaId;
@@ -1202,7 +1228,8 @@ private:
 
 class CatchupReader {
 public:
-    CatchupReader(ReqResp& reqResp, LogMetadata& metadata, DataPartitions& data, ReplicaId replicaId, LogIdx lastRead) :
+    CatchupReader(LogsDBStats& stats, ReqResp& reqResp, LogMetadata& metadata, DataPartitions& data, ReplicaId replicaId, LogIdx lastRead) :
+        _stats(stats),
         _reqResp(reqResp),
         _metadata(metadata),
         _data(data),
@@ -1211,8 +1238,9 @@ public:
         _lastContinuousIdx(lastRead),
         _lastMissingIdx(lastRead) {}
 
-    void readEntries(std::vector<LogsDBLogEntry>& entries) {
+    void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
         if (_lastRead == _lastContinuousIdx) {
+            update_atomic_stat_ema(_stats.entriesRead, (uint64_t)0);
             return;
         }
         auto lastReleased = _metadata.getLastReleased();
@@ -1221,13 +1249,15 @@ public:
 
         auto it = _data.getIterator();
         for (it.seek(startIndex); it.valid(); it.next(), ++startIndex) {
-            if (_lastContinuousIdx < it.key()) {
+            if (_lastContinuousIdx < it.key() || entries.size() >= maxEntries) {
                 break;
             }
             ALWAYS_ASSERT(startIndex == it.key());
             entries.emplace_back(it.entry());
+            _lastRead = startIndex;
         }
-        _lastRead = _lastContinuousIdx;
+        update_atomic_stat_ema(_stats.entriesRead, entries.size());
+        update_atomic_stat_ema(_stats.readerLag, lastReleased.u64 - _lastRead.u64);
     }
 
     void init() {
@@ -1239,6 +1269,7 @@ public:
     void maybeCatchUp() {
         for (auto idx : _missingEntries) {
             if (idx != 0) {
+                _populateStats();
                 return;
             }
         }
@@ -1246,7 +1277,9 @@ public:
         _missingEntries.clear();
         _requestIds.clear();
         _findMissingEntries();
+        _populateStats();
     }
+
 
     void proccessLogReadRequest(ReplicaId fromReplicaId, uint64_t requestId, const LogReadReq& request) {
         auto& response = _reqResp.newResponse(LogMessageKind::LOG_READ, fromReplicaId, requestId);
@@ -1294,6 +1327,11 @@ public:
 
 private:
 
+    void _populateStats() {
+        update_atomic_stat_ema(_stats.followerLag, _metadata.getLastReleased().u64 - _lastContinuousIdx.u64);
+        update_atomic_stat_ema(_stats.catchupWindow, _missingEntries.size());
+    }
+
     void _findMissingEntries() {
         if (!_missingEntries.empty()) {
             return;
@@ -1337,7 +1375,7 @@ private:
             }
         }
     }
-
+    LogsDBStats& _stats;
     ReqResp& _reqResp;
     LogMetadata& _metadata;
     DataPartitions& _data;
@@ -1355,7 +1393,7 @@ class Appender {
     static constexpr size_t IN_FLIGHT_MASK = LogsDB::IN_FLIGHT_APPEND_WINDOW - 1;
     static_assert((IN_FLIGHT_MASK & LogsDB::IN_FLIGHT_APPEND_WINDOW) == 0);
 public:
-    Appender(Env& env, ReqResp& reqResp, LogMetadata& metadata, LeaderElection& leaderElection, bool dontDoReplication) :
+    Appender(Env& env, LogsDBStats& stats, ReqResp& reqResp, LogMetadata& metadata, LeaderElection& leaderElection, bool dontDoReplication) :
         _env(env),
         _reqResp(reqResp),
         _metadata(metadata),
@@ -1415,7 +1453,7 @@ public:
         if (!_leaderElection.isLeader()) {
             return EggsError::LEADER_PREEMPTED;
         }
-        auto availableSpace = LogsDB::IN_FLIGHT_APPEND_WINDOW - (_entriesEnd - _entriesStart);
+        auto availableSpace = LogsDB::IN_FLIGHT_APPEND_WINDOW - entriesInFlight();
         auto countToAppend = std::min(entries.size(), availableSpace);
         for(size_t i = 0; i < countToAppend; ++i) {
             entries[i].idx = _metadata.assignLogIdx();
@@ -1477,6 +1515,10 @@ public:
         _reqResp.eraseRequest(request.header.requestId);
     }
 
+    uint64_t entriesInFlight() const {
+        return _entriesEnd - _entriesStart;
+    }
+
 private:
 
     void _init() {
@@ -1523,7 +1565,8 @@ private:
 class LogsDBImpl {
 public:
     LogsDBImpl(
-        Env& env,
+        Logger& logger,
+        std::shared_ptr<XmonAgent>& xmon,
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
@@ -1532,16 +1575,17 @@ public:
         bool avoidBeingLeader,
         LogIdx forcedLastReleased)
     :
-        _env(env),
+        _env(logger, xmon, "LogsDB"),
         _db(sharedDB.db()),
         _replicaId(replicaId),
-        _partitions(env,sharedDB),
-        _metadata(env,sharedDB, replicaId, _partitions),
-        _reqResp(),
-        _leaderElection(env, forceLeader, avoidBeingLeader, replicaId, _metadata, _partitions, _reqResp),
-        _batchWriter(env,_reqResp, _leaderElection),
-        _catchupReader(_reqResp, _metadata, _partitions, replicaId, lastRead),
-        _appender(_env, _reqResp, _metadata, _leaderElection, dontDoReplication)
+        _stats(),
+        _partitions(_env,sharedDB),
+        _metadata(_env,_stats, sharedDB, replicaId, _partitions),
+        _reqResp(_stats),
+        _leaderElection(_env, _stats, forceLeader, avoidBeingLeader, replicaId, _metadata, _partitions, _reqResp),
+        _batchWriter(_env,_reqResp, _leaderElection),
+        _catchupReader(_stats, _reqResp, _metadata, _partitions, replicaId, lastRead),
+        _appender(_env, _stats, _reqResp, _metadata, _leaderElection, dontDoReplication)
     {
         LOG_INFO(_env, "Initializing LogsDB");
         auto initialStart = _metadata.isInitialStart() && _partitions.isInitialStart();
@@ -1564,6 +1608,7 @@ public:
 
         LOG_INFO(_env,"LogsDB opened, leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
         _infoLoggedTime = eggsNow();
+        _lastLoopFinished = eggsNow();
     }
 
     ~LogsDBImpl() {
@@ -1571,7 +1616,7 @@ public:
     }
 
     void close() {
-        LOG_INFO(_env,"closing LogsDB, leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
+        LOG_INFO(_env,"closing LogsDB, leaderToken(%s), lastReleased(%s), lastRead(%s)", _metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
     }
 
     LogIdx appendLogEntries(std::vector<LogsDBLogEntry>& entries) {
@@ -1594,7 +1639,8 @@ public:
     }
 
     void processIncomingMessages(std::vector<LogsDBRequest>& requests, std::vector<LogsDBResponse>& responses) {
-        _maybeLogStatus();
+        auto processingStarted = eggsNow();
+        _maybeLogStatus(processingStarted);
         for(auto& resp : responses) {
             auto request = _reqResp.getRequest(resp.header.requestId);
             if (request == nullptr) {
@@ -1673,8 +1719,15 @@ public:
         _appender.maybeMoveRelease();
         _catchupReader.maybeCatchUp();
         _reqResp.resendTimedOutRequests();
+        update_atomic_stat_ema(_stats.requestsReceived, requests.size());
+        update_atomic_stat_ema(_stats.responsesReceived, responses.size());
+        update_atomic_stat_ema(_stats.appendWindow, _appender.entriesInFlight());
+        _stats.isLeader.store(_leaderElection.isLeader(), std::memory_order_relaxed);
         responses.clear();
         requests.clear();
+        update_atomic_stat_ema(_stats.idleTime, processingStarted - _lastLoopFinished);
+        _lastLoopFinished = eggsNow();
+        update_atomic_stat_ema(_stats.processingTime, _lastLoopFinished - processingStarted);
     }
 
     void getOutgoingMessages(std::vector<LogsDBRequest*>& requests, std::vector<LogsDBResponse>& responses) {
@@ -1690,8 +1743,8 @@ public:
         return _appender.appendEntries(entries);
     }
 
-    void readEntries(std::vector<LogsDBLogEntry>& entries) {
-        _catchupReader.readEntries(entries);
+    void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
+        _catchupReader.readEntries(entries, maxEntries);
     }
 
     Duration getNextTimeout() const {
@@ -1702,10 +1755,13 @@ public:
         return _metadata.getLastReleased();
     }
 
+    const LogsDBStats& getStats() const {
+        return _stats;
+    }
+
 private:
 
-    void _maybeLogStatus() {
-        auto now = eggsNow();
+    void _maybeLogStatus(EggsTime now) {
         if (now - _infoLoggedTime > 1_mins) {
             LOG_INFO(_env,"LogsDB status: leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
             _infoLoggedTime = now;
@@ -1715,6 +1771,7 @@ private:
     Env _env;
     rocksdb::DB* _db;
     const ReplicaId _replicaId;
+    LogsDBStats _stats;
     DataPartitions _partitions;
     LogMetadata _metadata;
     ReqResp _reqResp;
@@ -1723,10 +1780,12 @@ private:
     CatchupReader _catchupReader;
     Appender _appender;
     EggsTime _infoLoggedTime;
+    EggsTime _lastLoopFinished;
 };
 
 LogsDB::LogsDB(
-        Env& env,
+        Logger& logger,
+        std::shared_ptr<XmonAgent>& xmon,
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
@@ -1735,7 +1794,7 @@ LogsDB::LogsDB(
         bool avoidBeingLeader,
         LogIdx forcedLastReleased)
 {
-    _impl = new LogsDBImpl(env, sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
+    _impl = new LogsDBImpl(logger, xmon, sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
 }
 
 LogsDB::~LogsDB() {
@@ -1767,8 +1826,8 @@ EggsError LogsDB::appendEntries(std::vector<LogsDBLogEntry>& entries) {
     return _impl->appendEntries(entries);
 }
 
-void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries) {
-    _impl->readEntries(entries);
+void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
+    _impl->readEntries(entries, maxEntries);
 }
 
 Duration LogsDB::getNextTimeout() const {
@@ -1779,10 +1838,15 @@ LogIdx LogsDB::getLastReleased() const {
     return _impl->getLastReleased();
 }
 
+const LogsDBStats& LogsDB::getStats() const {
+    return _impl->getStats();
+}
+
 void LogsDB::_getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut)  {
     DataPartitions data(env, sharedDB);
     bool initSuccess = data.init(false);
-    LogMetadata metadata(env,sharedDB, 0, data);
+    LogsDBStats stats;
+    LogMetadata metadata(env, stats, sharedDB, 0, data);
     initSuccess = initSuccess && metadata.init(false, 0);
     ALWAYS_ASSERT(initSuccess, "Failed to init LogsDB, check if you need to run with \"initialStart\" flag!");
     lastReleasedOut = metadata.getLastReleased();

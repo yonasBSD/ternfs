@@ -66,6 +66,25 @@ struct LogsDBResponse {
 
 std::ostream& operator<<(std::ostream& out, const LogsDBResponse& entry);
 
+struct LogsDBStats {
+    std::atomic<Duration> idleTime{0};
+    std::atomic<Duration> processingTime{0};
+    std::atomic<Duration> leaderLastActive{0};
+    std::atomic<double> appendWindow{0};
+    std::atomic<double> entriesReleased{0};
+    std::atomic<double> followerLag{0};
+    std::atomic<double> readerLag{0};
+    std::atomic<double> catchupWindow{0};
+    std::atomic<double> entriesRead{0};
+    std::atomic<double> requestsReceived{0};
+    std::atomic<double> responsesReceived{0};
+    std::atomic<double> requestsSent{0};
+    std::atomic<double> responsesSent{0};
+    std::atomic<double> requestsTimedOut{0};
+    std::atomic<uint64_t> currentEpoch{0};
+    std::atomic<bool> isLeader{false};
+};
+
 class LogsDBImpl;
 
 class LogsDB {
@@ -86,7 +105,7 @@ public:
 
     // On start we verify last released data is less than 1.5 * PARTITION_TIME_SPAN old to guarantee we can catchup.
     LogsDB(
-        Env& env,
+        Logger& logger, std::shared_ptr<XmonAgent>& xmon,
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
@@ -108,11 +127,13 @@ public:
 
     EggsError appendEntries(std::vector<LogsDBLogEntry>& entries);
 
-    void readEntries(std::vector<LogsDBLogEntry>& entries);
+    void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries = IN_FLIGHT_APPEND_WINDOW);
 
     Duration getNextTimeout() const;
 
     LogIdx getLastReleased() const;
+
+    const LogsDBStats& getStats() const;
 
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
     static void clearAllData(SharedRocksDB& shardDB);

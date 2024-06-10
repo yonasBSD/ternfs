@@ -1111,105 +1111,105 @@ public:
 
 static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ReplicaId replicaId, EggsTime now) {
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "idle_time", stats.idleTime.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "processing_time", stats.processingTime.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "leader_last_active", stats.leaderLastActive.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "append_window", stats.appendWindow.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "entries_released", stats.entriesReleased.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "follower_lag", stats.followerLag.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "reader_lag", stats.readerLag.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "catchup_window", stats.catchupWindow.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "entries_read", stats.entriesRead.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_received", stats.requestsReceived.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "responses_received", stats.requestsReceived.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_sent", stats.requestsSent.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "responses_sent", stats.responsesSent.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_timedout", stats.requestsTimedOut.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
     }
     {
-        metricsBuilder.measurement("eggsfs_cdc_rocksdb");
+        metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "current_epoch", stats.currentEpoch.load(std::memory_order_relaxed));

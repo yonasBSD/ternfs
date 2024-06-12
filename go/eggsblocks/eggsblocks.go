@@ -684,7 +684,11 @@ func handleRequestError(
 	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
 		writeBlocksResponseError(log, conn, eggsErr)
 		// kill the connection in bad cases
-		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) {
+		// BLOCK_NOT_FOUND + WriteBlock is bad because we get
+		// data right after causing malformed request errors.
+		// We might want want to do this for all WriteBlock
+		// cases.
+		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BLOCK_NOT_FOUND) {
 			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
 			return false
 		} else {

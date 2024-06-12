@@ -905,15 +905,17 @@ public:
 struct ShardRegisterer : PeriodicLoop {
 private:
     ShardShared& _shared;
-    ShardReplicaId _shrid;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
+    const ShardReplicaId _shrid;
+    const bool _dontDoReplication;
+    const std::string _shuckleHost;
+    const uint16_t _shucklePort;
     XmonNCAlert _alert;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
         PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
         _shared(shared),
         _shrid(shrid),
+        _dontDoReplication(options.dontDoReplication),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort)
     {}
@@ -955,7 +957,7 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (emptyReplicas > LogsDB::REPLICA_COUNT / 2 ) {
+                if (emptyReplicas > 0 && !_dontDoReplication) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
                     return false;
                 }

@@ -21,7 +21,7 @@ static spinlock_t block_services_locks[BS_BUCKETS];
 static struct eggsfs_stored_block_service* find_block_service(u64 bs_id) {
     struct eggsfs_stored_block_service* bs;
     hash_for_each_possible_rcu(block_services, bs, hnode, bs_id) {
-        if (likely(bs->id)) {
+        if (likely(bs->id == bs_id)) {
             return bs;
         }
     }

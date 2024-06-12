@@ -13,7 +13,6 @@
 #include "Env.hpp"
 #include "XmonAgent.hpp"
 #include "Loop.hpp"
-#include "Stopper.hpp"
 
 struct XmonConfig {
     bool prod = false;
@@ -101,7 +100,6 @@ struct XmonBuf {
 
 struct Xmon : Loop {
 private:
-    Stopper _stopper;
     std::shared_ptr<XmonAgent> _agent;
     std::string _hostname;
     std::string _appInstance;

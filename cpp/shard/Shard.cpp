@@ -905,7 +905,6 @@ public:
 struct ShardRegisterer : PeriodicLoop {
 private:
     ShardShared& _shared;
-    Stopper _stopper;
     ShardReplicaId _shrid;
     std::string _shuckleHost;
     uint16_t _shucklePort;

@@ -13,7 +13,7 @@
 #include <unordered_set>
 
 #include "Bincode.hpp"
-#include "Msgs.hpp"
+#include "Protocol.hpp"
 #include "Shuckle.hpp"
 #include "Exception.hpp"
 #include "Connect.hpp"
@@ -68,10 +68,8 @@ static std::pair<int, std::string> writeShuckleRequest(int fd, const ShuckleReqC
         } \
     } while (false)
     WRITE_OUT(&SHUCKLE_REQ_PROTOCOL_VERSION, sizeof(SHUCKLE_REQ_PROTOCOL_VERSION));
-    uint32_t len = 1 + bbuf.len();
+    uint32_t len = bbuf.len();
     WRITE_OUT(&len, sizeof(len));
-    auto kind = req.kind();
-    WRITE_OUT(&kind, sizeof(kind));
     WRITE_OUT(bbuf.data, bbuf.len());
 #undef WRITE_OUT
     return {};
@@ -106,19 +104,16 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
     }
     uint32_t len;
     READ_IN(&len, sizeof(len));
-    ShuckleMessageKind kind;
-    READ_IN(&kind, sizeof(kind));
-    std::vector<char> buf(len-1);
+    std::vector<char> buf(len);
     READ_IN(buf.data(), buf.size());
 #undef READ_IN
     BincodeBuf bbuf(buf.data(), buf.size());
-    if (kind == ShuckleMessageKind::ERROR) {
-        EggsError error = (EggsError)bbuf.unpackScalar<uint16_t>();
+    resp.unpack(bbuf);
+    if (resp.kind() == ShuckleMessageKind::ERROR) {
         std::stringstream ss;
-        ss << "got error " << error;
+        ss << "got error " << resp.getError();
         return {EIO, ss.str()};
     }
-    resp.unpack(bbuf, kind);
     return {};
 }
 

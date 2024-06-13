@@ -1068,7 +1068,7 @@ func writeShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleRespons
 	return nil
 }
 
-func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
+func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.EggsError) error {
 	log.Debug("writing shuckle error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
@@ -1107,7 +1107,7 @@ func handleError(
 	log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
 
 	// attempt to say goodbye, ignore errors
-	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 		writeShuckleResponseError(log, conn, eggsErr)
 		return false
 	} else {
@@ -1550,7 +1550,7 @@ func lookup(log *lib.Logger, client *client.Client, path string) *msgs.InodeId {
 		}
 		resp := msgs.LookupResp{}
 		if err := client.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
-			eggsErr, ok := err.(msgs.ErrCode)
+			eggsErr, ok := err.(msgs.EggsError)
 			if ok {
 				if eggsErr == msgs.NAME_NOT_FOUND {
 					return nil
@@ -1924,7 +1924,7 @@ func sendJson(w http.ResponseWriter, out []byte) (io.ReadCloser, int64, int) {
 func sendJsonErr(w http.ResponseWriter, err any, status int) (io.ReadCloser, int64, int) {
 	w.Header().Set("Content-Type", "application/json")
 	j := map[string]any{"err": fmt.Sprintf("%v", err)}
-	eggsErr, ok := err.(msgs.ErrCode)
+	eggsErr, ok := err.(msgs.EggsError)
 	if ok {
 		j["errCode"] = uint8(eggsErr)
 	}

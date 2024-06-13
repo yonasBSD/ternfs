@@ -11,7 +11,7 @@
 #include <rocksdb/utilities/optimistic_transaction_db.h>
 
 #include "Env.hpp"
-#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 
 class SharedRocksDB {
 public:

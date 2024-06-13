@@ -71,10 +71,10 @@ func (c *Client) metadataRequest(
 			counters.Timings.Add(elapsed)
 		}
 		// If we're past the first attempt, there are cases where errors are not what they seem.
-		var eggsError msgs.ErrCode
+		var eggsError msgs.EggsError
 		if resp.err != nil {
 			var isEggsError bool
-			eggsError, isEggsError = resp.err.(msgs.ErrCode)
+			eggsError, isEggsError = resp.err.(msgs.EggsError)
 			if isEggsError && attempts > 0 {
 				if shid >= 0 {
 					eggsError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), eggsError)

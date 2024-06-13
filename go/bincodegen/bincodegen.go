@@ -269,24 +269,24 @@ type reqRespType struct {
 }
 
 // Start from 10 to play nice with kernel drivers and such.
-const errCodeOffset = 10
+const eggsErrorCodeOffset = 10
 
 func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "const (\n")
 	for i, err := range errors {
-		fmt.Fprintf(out, "\t%s ErrCode = %d\n", err, i+errCodeOffset)
+		fmt.Fprintf(out, "\t%s EggsError = %d\n", err, i+eggsErrorCodeOffset)
 	}
 	fmt.Fprintf(out, ")\n")
 	fmt.Fprintf(out, "\n")
 
-	fmt.Fprintf(out, "func (err ErrCode) String() string {\n")
+	fmt.Fprintf(out, "func (err EggsError) String() string {\n")
 	fmt.Fprintf(out, "\tswitch err {\n")
 	for i, err := range errors {
-		fmt.Fprintf(out, "\tcase %d:\n", i+errCodeOffset)
+		fmt.Fprintf(out, "\tcase %d:\n", i+eggsErrorCodeOffset)
 		fmt.Fprintf(out, "\t\treturn \"%s\"\n", err)
 	}
 	fmt.Fprintf(out, "\tdefault:\n")
-	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"ErrCode(%%d)\", err)\n")
+	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"EggsError(%%d)\", err)\n")
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 }
@@ -700,12 +700,12 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	fmt.Fprintln(hOut)
 
 	for i, err := range errors {
-		fmt.Fprintf(hOut, "#define EGGSFS_ERR_%s %d\n", err, errCodeOffset+i)
+		fmt.Fprintf(hOut, "#define EGGSFS_ERR_%s %d\n", err, eggsErrorCodeOffset+i)
 	}
 	fmt.Fprintf(hOut, "\n")
 	fmt.Fprintf(hOut, "#define __print_eggsfs_err(i) __print_symbolic(i")
 	for i, err := range errors {
-		fmt.Fprintf(hOut, ", { %d, %q }", errCodeOffset+i, err)
+		fmt.Fprintf(hOut, ", { %d, %q }", eggsErrorCodeOffset+i, err)
 	}
 	fmt.Fprintf(hOut, ")\n")
 	fmt.Fprintf(hOut, "const char* eggsfs_err_str(int err);\n\n")
@@ -713,7 +713,7 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	fmt.Fprintf(cOut, "const char* eggsfs_err_str(int err) {\n")
 	fmt.Fprintf(cOut, "    switch (err) {\n")
 	for i, err := range errors {
-		fmt.Fprintf(cOut, "    case %d: return %q;\n", errCodeOffset+i, err)
+		fmt.Fprintf(cOut, "    case %d: return %q;\n", eggsErrorCodeOffset+i, err)
 	}
 	fmt.Fprintf(cOut, "    default: return \"UNKNOWN\";\n")
 	fmt.Fprintf(cOut, "    }\n")
@@ -758,7 +758,7 @@ func cppType(t reflect.Type) string {
 		t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
 		t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" ||
 		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" ||
-		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" {
+		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" || t.Name() == "EggsError" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -995,13 +995,17 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 
 func generateCppErr(hpp io.Writer, cpp io.Writer, errors []string) {
 	fmt.Fprintf(hpp, "enum class EggsError : uint16_t {\n")
+	fmt.Fprintf(hpp, "    NO_ERROR = 0,\n")
 	for i, err := range errors {
-		fmt.Fprintf(hpp, "    %s = %d,\n", err, errCodeOffset+i)
+		fmt.Fprintf(hpp, "    %s = %d,\n", err, eggsErrorCodeOffset+i)
 	}
 	fmt.Fprintf(hpp, "};\n\n")
 	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, EggsError err);\n\n")
 	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, EggsError err) {\n")
 	fmt.Fprintf(cpp, "    switch (err) {\n")
+	fmt.Fprintf(cpp, "    case EggsError::NO_ERROR:\n")
+	fmt.Fprintf(cpp, "        out << \"NO_ERROR\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
 	for _, err := range errors {
 		fmt.Fprintf(cpp, "    case EggsError::%s:\n", err)
 		fmt.Fprintf(cpp, "        out << \"%s\";\n", err)
@@ -1020,7 +1024,7 @@ func generateCppErr(hpp io.Writer, cpp io.Writer, errors []string) {
 	}
 	fmt.Fprintf(hpp, "};\n\n")
 
-	fmt.Fprintf(hpp, "constexpr int maxEggsError = %d;\n\n", errCodeOffset+len(errors))
+	fmt.Fprintf(hpp, "constexpr int maxEggsError = %d;\n\n", eggsErrorCodeOffset+len(errors))
 }
 
 func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRespType) {
@@ -1029,6 +1033,7 @@ func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRe
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(hpp, "    %s = %d,\n", reqRespEnum(reqResp), reqResp.kind)
 	}
+	fmt.Fprintf(hpp, "    EMPTY = 255,\n") // add EMPTY entry at the end
 	fmt.Fprintf(hpp, "};\n\n")
 
 	fmt.Fprintf(hpp, "const std::vector<%sMessageKind> all%sMessageKind {\n", name, name)
@@ -1047,11 +1052,17 @@ func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRe
 
 	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, %sMessageKind kind) {\n", name)
 	fmt.Fprintf(cpp, "    switch (kind) {\n")
+	fmt.Fprintf(cpp, "    case %sMessageKind::ERROR:\n", name)
+	fmt.Fprintf(cpp, "        out << \"ERROR\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(cpp, "    case %sMessageKind::%s:\n", name, reqRespEnum(reqResp))
 		fmt.Fprintf(cpp, "        out << \"%s\";\n", reqRespEnum(reqResp))
 		fmt.Fprintf(cpp, "        break;\n")
 	}
+	fmt.Fprintf(cpp, "    case %sMessageKind::EMPTY:\n", name)
+	fmt.Fprintf(cpp, "        out << \"EMPTY\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    default:\n")
 	fmt.Fprintf(cpp, "        out << \"%sMessageKind(\" << ((int)kind) << \")\";\n", name)
 	fmt.Fprintf(cpp, "        break;\n")
@@ -1074,10 +1085,14 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		if i > 0 {
 			fmt.Fprintf(hpp, ", ")
 		}
-		fmt.Fprintf(hpp, "%s::STATIC_SIZE", cppType(typ.typ))
+		if typ.typ.Name() == "EggsError" {
+			fmt.Fprintf(hpp, "sizeof(%s)", cppType(typ.typ))
+		} else {
+			fmt.Fprintf(hpp, "%s::STATIC_SIZE", cppType(typ.typ))
+		}
 	}
 	fmt.Fprintf(hpp, "};\n")
-	fmt.Fprintf(hpp, "    %s _kind = (%s)0;\n", kindTypeName, kindTypeName)
+	fmt.Fprintf(hpp, "    %s _kind = %s::EMPTY;\n", kindTypeName, kindTypeName)
 	fmt.Fprintf(hpp, "    std::variant<")
 	for i, typ := range types {
 		if i > 0 {
@@ -1107,11 +1122,11 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		fmt.Fprintf(cpp, "}\n")
 	}
 	fmt.Fprintf(hpp, "\n")
-	fmt.Fprintf(hpp, "    void clear() { _kind = (%s)0; };\n\n", kindTypeName)
-	fmt.Fprintf(hpp, "    static constexpr size_t STATIC_SIZE = *std::max_element(_staticSizes.begin(), _staticSizes.end());\n")
+	fmt.Fprintf(hpp, "    void clear() { _kind = %s::EMPTY; };\n\n", kindTypeName)
+	fmt.Fprintf(hpp, "    static constexpr size_t STATIC_SIZE = sizeof(%s) + *std::max_element(_staticSizes.begin(), _staticSizes.end());\n", kindTypeName)
 	fmt.Fprintf(hpp, "    size_t packedSize() const;\n")
 	fmt.Fprintf(hpp, "    void pack(BincodeBuf& buf) const;\n")
-	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf, %s kind);\n", kindTypeName)
+	fmt.Fprintf(hpp, "    void unpack(BincodeBuf& buf);\n")
 	fmt.Fprintf(hpp, "    bool operator==(const %s& other) const;\n", name)
 	fmt.Fprintf(hpp, "};\n\n")
 
@@ -1128,11 +1143,11 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "%s::%s(%s&& other) {\n", name, name, name)
 	fmt.Fprintf(cpp, "    _data = std::move(other._data);\n")
 	fmt.Fprintf(cpp, "    _kind = other._kind;\n")
-	fmt.Fprintf(cpp, "    other._kind = (%s)0;\n", kindTypeName)
+	fmt.Fprintf(cpp, "    other._kind = %s::EMPTY;\n", kindTypeName)
 	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "void %s::operator=(const %s& other) {\n", name, name)
-	fmt.Fprintf(cpp, "    if (other.kind() == (%s)0) { clear(); return; }\n", kindTypeName)
+	fmt.Fprintf(cpp, "    if (other.kind() == %s::EMPTY) { clear(); return; }\n", kindTypeName)
 	fmt.Fprintf(cpp, "    switch (other.kind()) {\n")
 	for _, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
@@ -1147,14 +1162,18 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "void %s::operator=(%s&& other) {\n", name, name)
 	fmt.Fprintf(cpp, "    _data = std::move(other._data);\n")
 	fmt.Fprintf(cpp, "    _kind = other._kind;\n")
-	fmt.Fprintf(cpp, "    other._kind = (%s)0;\n", kindTypeName)
+	fmt.Fprintf(cpp, "    other._kind = %s::EMPTY;\n", kindTypeName)
 	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "size_t %s::packedSize() const {\n", name)
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		fmt.Fprintf(cpp, "        return std::get<%d>(_data).packedSize();\n", i)
+		if typ.typ.Name() == "EggsError" {
+			fmt.Fprintf(cpp, "        return sizeof(%s) + sizeof(%s);\n", kindTypeName, cppType(typ.typ))
+		} else {
+			fmt.Fprintf(cpp, "        return sizeof(%s) + std::get<%d>(_data).packedSize();\n", kindTypeName, i)
+		}
 	}
 	fmt.Fprintf(cpp, "    default:\n")
 	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
@@ -1162,10 +1181,15 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "void %s::pack(BincodeBuf& buf) const {\n", name)
+	fmt.Fprintf(cpp, "    buf.packScalar<%s>(_kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		fmt.Fprintf(cpp, "        std::get<%d>(_data).pack(buf);\n", i)
+		if typ.typ.Name() == "EggsError" {
+			fmt.Fprintf(cpp, "        buf.packScalar<%s>(std::get<%d>(_data));\n", cppType(typ.typ), i)
+		} else {
+			fmt.Fprintf(cpp, "        std::get<%d>(_data).pack(buf);\n", i)
+		}
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
@@ -1173,22 +1197,26 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
-	fmt.Fprintf(cpp, "void %s::unpack(BincodeBuf& buf, %s kind) {\n", name, kindTypeName)
-	fmt.Fprintf(cpp, "    _kind = kind;\n")
-	fmt.Fprintf(cpp, "    switch (kind) {\n")
+	fmt.Fprintf(cpp, "void %s::unpack(BincodeBuf& buf) {\n", name)
+	fmt.Fprintf(cpp, "    _kind = buf.unpackScalar<%s>();\n", kindTypeName)
+	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		fmt.Fprintf(cpp, "        _data.emplace<%d>().unpack(buf);\n", i)
+		if typ.typ.Name() == "EggsError" {
+			fmt.Fprintf(cpp, "        _data.emplace<%d>(buf.unpackScalar<%s>());\n", i, cppType(typ.typ))
+		} else {
+			fmt.Fprintf(cpp, "        _data.emplace<%d>().unpack(buf);\n", i)
+		}
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        throw BINCODE_EXCEPTION(\"bad %s kind %%s\", kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "        throw BINCODE_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
 	fmt.Fprintf(cpp, "bool %s::operator==(const %s& other) const {\n", name, name)
 	fmt.Fprintf(cpp, "    if (_kind != other.kind()) { return false; }\n")
-	fmt.Fprintf(cpp, "    if (_kind == (%s)0) { return true; }\n", kindTypeName) // empty container
+	fmt.Fprintf(cpp, "    if (_kind == %s::EMPTY) { return true; }\n", kindTypeName) // empty container
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for _, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
@@ -1206,6 +1234,9 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		fmt.Fprintf(cpp, "        out << x.get%s();\n", typ.name)
 		fmt.Fprintf(cpp, "        break;\n")
 	}
+	fmt.Fprintf(cpp, "    case %s::EMPTY:\n", kindTypeName)
+	fmt.Fprintf(cpp, "        out << \"EMPTY\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    default:\n")
 	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", x.kind());\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
@@ -1217,7 +1248,7 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, what string, types []re
 	containerTypes := make([]containerType, len(types))
 	fmt.Fprintf(hpp, "enum class %sLogEntryKind : uint16_t {\n", what)
 	for i, typ := range types {
-		fmt.Fprintf(hpp, "    %s = %d,\n", enumName(typ), i+1) // skip 0 since we use it as an empty value
+		fmt.Fprintf(hpp, "    %s = %d,\n", enumName(typ), i+1) // skip 0 since we use it as an error value
 		containerTypes[i].typ = typ
 		containerTypes[i].enum = enumName(typ)
 		if !strings.HasSuffix(typ.Name(), "Entry") {
@@ -1225,6 +1256,7 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, what string, types []re
 		}
 		containerTypes[i].name = string([]byte(types[i].Name())[:len(types[i].Name())-len("Entry")])
 	}
+	fmt.Fprintf(hpp, "    EMPTY = 255,\n") // add EMPTY entry at the end
 	fmt.Fprintf(hpp, "};\n\n")
 	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, %sLogEntryKind err);\n\n", what)
 	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, %sLogEntryKind err) {\n", what)
@@ -1234,6 +1266,9 @@ func generateCppLogEntries(hpp io.Writer, cpp io.Writer, what string, types []re
 		fmt.Fprintf(cpp, "        out << \"%s\";\n", typ.enum)
 		fmt.Fprintf(cpp, "        break;\n")
 	}
+	fmt.Fprintf(cpp, "    case %sLogEntryKind::EMPTY:\n", what)
+	fmt.Fprintf(cpp, "        out << \"EMPTY\";\n")
+	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    default:\n")
 	fmt.Fprintf(cpp, "        out << \"%sLogEntryKind(\" << ((int)err) << \")\";\n", what)
 	fmt.Fprintf(cpp, "        break;\n")
@@ -1257,9 +1292,15 @@ func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []re
 		}
 	}
 	generateCppContainer(hpp, cpp, what+"ReqContainer", what+"MessageKind", reqContainerTypes)
-	respContainerTypes := make([]containerType, len(reqResps))
+	respContainerTypes := make([]containerType, len(reqResps)+1)
+	var errType msgs.EggsError
+	respContainerTypes[0] = containerType{
+		name: "Error",
+		enum: "ERROR",
+		typ:  reflect.TypeOf(errType),
+	}
 	for i, reqResp := range reqResps {
-		respContainerTypes[i] = containerType{
+		respContainerTypes[i+1] = containerType{
 			name: string([]byte(reqResp.resp.Name())[:len(reqResp.resp.Name())-len("Resp")]),
 			enum: reqRespEnum(reqResp),
 			typ:  reqResp.resp,
@@ -1283,7 +1324,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 
 	fmt.Fprintln(cppOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(cppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
-	fmt.Fprintln(cppOut, "#include \"Msgs.hpp\"")
+	fmt.Fprintln(cppOut, "#include \"MsgsGen.hpp\"")
 	fmt.Fprintln(cppOut)
 
 	generateCppErr(hppOut, cppOut, errors)

@@ -7,9 +7,8 @@
 #include "Assert.hpp"
 #include "Bincode.hpp"
 #include "Exception.hpp"
-#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
-#include "Msgs.hpp"
 #include "Time.hpp"
 #include "CDCDB.hpp"
 
@@ -120,7 +119,7 @@ struct MakeDirectoryState {
         setDirId(NULL_INODE_ID);
         setOldCreationTime({});
         setCreationTime({});
-        setExitError(NO_ERROR);
+        setExitError(EggsError::NO_ERROR);
     }
 };
 
@@ -135,7 +134,7 @@ struct RenameFileState {
     void start() {
         setNewOldCreationTime({});
         setNewCreationTime({});
-        setExitError(NO_ERROR);
+        setExitError(EggsError::NO_ERROR);
     }
 };
 
@@ -147,7 +146,7 @@ struct SoftUnlinkDirectoryState {
     )
 
     void start() {
-        setExitError(NO_ERROR);
+        setExitError(EggsError::NO_ERROR);
     }
 };
 
@@ -162,7 +161,7 @@ struct RenameDirectoryState {
     void start() {
         setNewOldCreationTime({});
         setNewCreationTime({});
-        setExitError(NO_ERROR);
+        setExitError(EggsError::NO_ERROR);
     }
 };
 
@@ -237,7 +236,7 @@ struct TxnState {
             v.start(); \
             return v; \
         }
-    
+
     TXN_STATE(MAKE_DIRECTORY,               MakeDirectoryState,            getMakeDirectory,            startMakeDirectory)
     TXN_STATE(RENAME_FILE,                  RenameFileState,               getRenameFile,               startRenameFile)
     TXN_STATE(SOFT_UNLINK_DIRECTORY,        SoftUnlinkDirectoryState,      getSoftUnlinkDirectory,      startSoftUnlinkDirectory)

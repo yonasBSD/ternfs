@@ -50,9 +50,8 @@ public:
     ~ShardDB();
     void close();
 
-    // Performs a read-only request, responding immediately. If an error is returned,
-    // the contents of `resp` should be ignored.
-    EggsError read(const ShardReqContainer& req, ShardRespContainer& resp);
+    // Performs a read-only request, responding immediately.
+    void read(const ShardReqContainer& req, ShardRespContainer& resp);
 
     // Prepares and persists a log entry to be applied.
     //
@@ -100,12 +99,10 @@ public:
     // state. If the log entry is persisted before `applyLogEntry` is applied, this might
     // not be necessary. If it is not, then it is certainly necessary.
     //
-    // As usual, if an error is returned, the contents of `resp` should be ignored.
-    //
     // This function does NOT persist the changes (in fact it doesn't even write
     // to the WAL). You need to call flush(). But this allows you to apply many
     // log entries without any write/fsync.
-    EggsError applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
+    void applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp);
 
     // Flushes the changes to the WAL, and persists it if sync=true (won't be
     // required when we have a distributed log).

@@ -12,8 +12,8 @@ func (c *Client) checkRepeatedCDCRequestError(
 	// these are already filled in by now
 	reqBody msgs.CDCRequest,
 	resp msgs.CDCResponse,
-	respErr msgs.ErrCode,
-) msgs.ErrCode {
+	respErr msgs.EggsError,
+) msgs.EggsError {
 	switch reqBody := reqBody.(type) {
 	case *msgs.RenameDirectoryReq:
 		// We repeat the request, but the previous had actually gone through:

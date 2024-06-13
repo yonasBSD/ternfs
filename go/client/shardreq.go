@@ -72,8 +72,8 @@ func (c *Client) checkRepeatedShardRequestError(
 	// these are already filled in by now
 	reqBody msgs.ShardRequest,
 	resp msgs.ShardResponse,
-	respErr msgs.ErrCode,
-) msgs.ErrCode {
+	respErr msgs.EggsError,
+) msgs.EggsError {
 	switch reqBody := reqBody.(type) {
 	case *msgs.SameDirectoryRenameReq:
 		if respErr == msgs.EDGE_NOT_FOUND {

@@ -6,7 +6,7 @@
 
 #include "Exception.hpp"
 #include "Time.hpp"
-#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Metrics.hpp"
 
 struct Timings {

@@ -1,13 +1,13 @@
 #pragma once
 
 #include <cstdint>
-#include <unordered_map>
-
 #include <rocksdb/db.h>
+#include <unordered_map>
 #include <vector>
+
 #include "Bincode.hpp"
-#include "Msgs.hpp"
 #include "Env.hpp"
+#include "MsgsGen.hpp"
 #include "SharedRocksDB.hpp"
 #include "Shuckle.hpp"
 
@@ -50,16 +50,8 @@ struct CDCShardReq {
 
 std::ostream& operator<<(std::ostream& out, const CDCShardReq& x);
 
-struct CDCFinished {
-    // If err is not NO_ERROR, resp is not filled in
-    EggsError err;
-    CDCRespContainer resp;
-};
-
-std::ostream& operator<<(std::ostream& out, const CDCFinished& x);
-
 struct CDCStep {
-    std::vector<std::pair<CDCTxnId, CDCFinished>> finishedTxns; // txns which have finished
+    std::vector<std::pair<CDCTxnId, CDCRespContainer>> finishedTxns; // txns which have finished
     std::vector<std::pair<CDCTxnId, CDCShardReq>> runningTxns;  // txns which need a new shard request
 
     void clear() {

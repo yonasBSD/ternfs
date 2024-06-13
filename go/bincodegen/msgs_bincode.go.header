@@ -54,23 +54,23 @@ func TagToDirInfoEntry(tag DirectoryInfoTag) IsDirectoryInfoEntry {
 	}
 }
 
-func (err ErrCode) Error() string {
+func (err EggsError) Error() string {
 	return err.String()
 }
 
-func (err *ErrCode) Pack(w io.Writer) error {
+func (err *EggsError) Pack(w io.Writer) error {
 	return bincode.PackScalar(w, uint16(*err))
 }
-	
-func (errCode *ErrCode) Unpack(r io.Reader) error {
+
+func (errCode *EggsError) Unpack(r io.Reader) error {
 	var c uint16
 	if err := bincode.UnpackScalar(r, &c); err != nil {
 		return err
 	}
-	*errCode = ErrCode(c)
+	*errCode = EggsError(c)
 	return nil
-}	
-	
+}
+
 func (fs *FetchedSpan) Pack(w io.Writer) error {
 	if fs.Header.StorageClass == EMPTY_STORAGE {
 		return fmt.Errorf("cannot have EMPTY_STORAGE in fetched span")

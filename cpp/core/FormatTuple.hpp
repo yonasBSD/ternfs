@@ -52,7 +52,7 @@ void write_fmt_tail(std::ostream &os, const char *fmt);
 
 template<size_t Skip = 0, typename Tuple, size_t... I>
 void format_tuple(std::ostream &os, const char *fmt, const Tuple &t, std::integer_sequence<size_t, I...>) {
-    ((fmt = write_up_to_next_percent_s(os, fmt), os << std::get<Skip + I>(t)), ...), write_fmt_tail(os, fmt); 
+    ((fmt = write_up_to_next_percent_s(os, fmt), os << std::get<Skip + I>(t)), ...), write_fmt_tail(os, fmt);
 }
 
 inline constexpr bool placeholders_count_is(const char* s, size_t expected_count) {
@@ -64,7 +64,7 @@ inline constexpr bool placeholders_count_is(do_not_validate_t, size_t) {
 }
 
 template <typename ...Args>
-constexpr auto argument_counter(Args... args) -> std::integral_constant<size_t, sizeof...(Args)>;
+constexpr auto argument_counter(Args&&... args) -> std::integral_constant<size_t, sizeof...(Args)>;
 
 template<size_t NPlaceholders>
 class FString {

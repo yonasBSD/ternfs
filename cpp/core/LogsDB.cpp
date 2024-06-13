@@ -1,8 +1,6 @@
 #include "LogsDB.hpp"
 
 #include <algorithm>
-#include <atomic>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <rocksdb/comparator.h>
@@ -11,16 +9,11 @@
 #include <rocksdb/options.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
-#include <sys/types.h>
 #include <unordered_map>
 #include <vector>
 
 #include "Assert.hpp"
-#include "Common.hpp"
-#include "Env.hpp"
 #include "LogsDBData.hpp"
-#include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "Time.hpp"
 
@@ -30,17 +23,11 @@ std::ostream& operator<<(std::ostream& out, const LogsDBLogEntry& entry) {
 }
 
 std::ostream& operator<<(std::ostream& out, const LogsDBRequest& entry) {
-    out << "replicaId: " << entry.replicaId
-        << "[ " << entry.header.requestId << ":" << entry.header.kind << " ]"
-        << " " << entry.requestContainer;
-    return out;
+    return out << "replicaId: " << entry.replicaId << "[ " << entry.msg << "]";
 }
 
 std::ostream& operator<<(std::ostream& out, const LogsDBResponse& entry) {
-    out << "replicaId: " << entry.replicaId
-        << "[ " << entry.header.requestId << ":" << entry.header.kind << " ]"
-        << " " << entry.responseContainer;
-    return out;
+    return out << "replicaId: " << entry.replicaId << "[ " << entry.msg << "]";
 }
 
 static bool tryGet(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, const rocksdb::Slice& key, std::string& value) {
@@ -264,7 +251,7 @@ public:
         ROCKS_DB_CHECKED(status);
         entry.idx = logIdx;
         entry.value.assign((const uint8_t*)value.data(), (const uint8_t*)value.data() + value.size());
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     void writeLogEntries(const std::vector<LogsDBLogEntry>& entries) {
@@ -468,7 +455,7 @@ public:
             return EggsError::LEADER_PREEMPTED;
         }
         if (likely(token == _leaderToken)) {
-            return NO_ERROR;
+            return EggsError::NO_ERROR;
         }
         _data.dropEntriesAfterIdx(_lastReleased);
         ROCKS_DB_CHECKED(_sharedDb.db()->Put({}, _cf, logsDBMetadataKey(LEADER_TOKEN_KEY), U64Value::Static(token.u64).toSlice()));
@@ -479,7 +466,7 @@ public:
         _leaderToken = token;
         _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
         _nomineeToken = LeaderToken(0,0);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     LeaderToken getNomineeToken() const {
@@ -546,11 +533,10 @@ class ReqResp {
 
         ReqResp(LogsDBStats& stats) : _stats(stats), _lastAssignedRequest(CONFIRMED_REQ_ID) {}
 
-        LogsDBRequest& newRequest(LogMessageKind kind, ReplicaId targetReplicaId) {
+        LogsDBRequest& newRequest(ReplicaId targetReplicaId) {
             auto& request = _requests[++_lastAssignedRequest];
             request.replicaId = targetReplicaId;
-            request.header.requestId = _lastAssignedRequest;
-            request.header.kind = kind;
+            request.msg.id = _lastAssignedRequest;
             return request;
         }
 
@@ -584,7 +570,7 @@ class ReqResp {
             auto cutoffTime = now;
             uint64_t timedOutCount{0};
             for (auto& r : _requests) {
-                switch (r.second.header.kind) {
+                switch (r.second.msg.body.kind()) {
                 case LogMessageKind::RELEASE:
                     cutoffTime = releaseCutoffTime;
                     break;
@@ -597,7 +583,7 @@ class ReqResp {
                 if (r.second.sentTime < cutoffTime) {
                     r.second.sentTime = now;
                     _requestsToSend.emplace_back(&r.second);
-                    if (r.second.header.kind != LogMessageKind::RELEASE) {
+                    if (r.second.msg.body.kind() != LogMessageKind::RELEASE) {
                         ++timedOutCount;
                     }
                 }
@@ -611,12 +597,11 @@ class ReqResp {
             _requestsToSend.clear();
         }
 
-        LogsDBResponse& newResponse(LogMessageKind kind, ReplicaId targetReplicaId, uint64_t requestId) {
+        LogsDBResponse& newResponse(ReplicaId targetReplicaId, uint64_t requestId) {
             _responses.emplace_back();
             auto& response = _responses.back();
             response.replicaId = targetReplicaId;
-            response.header.requestId = requestId;
-            response.header.kind = kind;
+            response.msg.id = requestId;
             return response;
         }
 
@@ -744,10 +729,10 @@ public:
                 newLeaderRequestIds[replicaId.u8] = ReqResp::CONFIRMED_REQ_ID;
                 continue;
             }
-            auto& request = _reqResp.newRequest(LogMessageKind::NEW_LEADER, replicaId);
-            newLeaderRequestIds[replicaId.u8] = request.header.requestId;
+            auto& request = _reqResp.newRequest(replicaId);
+            newLeaderRequestIds[replicaId.u8] = request.msg.id;
 
-            auto& newLeaderRequest = request.requestContainer.setNewLeader();
+            auto& newLeaderRequest = request.msg.body.setNewLeader();
             newLeaderRequest.nomineeToken = nomineeToken;
         }
     }
@@ -758,10 +743,10 @@ public:
         ALWAYS_ASSERT(_electionState->requestIds[fromReplicaId.u8] == request.replicaId);
         auto result = EggsError(response.result);
         switch (result) {
-            case NO_ERROR:
+            case EggsError::NO_ERROR:
                 _electionState->requestIds[request.replicaId.u8] = 0;
                 _electionState->lastReleased = std::max(_electionState->lastReleased, response.lastReleased);
-                _reqResp.eraseRequest(request.header.requestId);
+                _reqResp.eraseRequest(request.msg.id);
                 _tryProgressToDigest();
                 break;
             case EggsError::LEADER_PREEMPTED:
@@ -779,9 +764,9 @@ public:
 
         auto result = EggsError(response.result);
         switch (result) {
-        case NO_ERROR:
+        case EggsError::NO_ERROR:
             _electionState->requestIds[request.replicaId.u8] = 0;
-            _reqResp.eraseRequest(request.header.requestId);
+            _reqResp.eraseRequest(request.msg.id);
             _tryBecomeLeader();
             break;
         case EggsError::LEADER_PREEMPTED:
@@ -798,13 +783,13 @@ public:
         auto& state = *_electionState;
         auto result = EggsError(response.result);
         switch (result) {
-            case NO_ERROR:
+            case EggsError::NO_ERROR:
             case EggsError::LOG_ENTRY_MISSING:
             {
-                ALWAYS_ASSERT(state.lastReleased < request.requestContainer.getLogRecoveryRead().idx);
-                auto entryOffset = request.requestContainer.getLogRecoveryRead().idx.u64 - state.lastReleased.u64 - 1;
+                ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryRead().idx);
+                auto entryOffset = request.msg.body.getLogRecoveryRead().idx.u64 - state.lastReleased.u64 - 1;
                 ALWAYS_ASSERT(entryOffset < LogsDB::IN_FLIGHT_APPEND_WINDOW);
-                ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.header.requestId);
+                ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.msg.id);
                 auto& entry = state.recoveryEntries[entryOffset];
                 if (response.value.els.size() != 0) {
                     // we found a record here, we don't care about other answers
@@ -812,7 +797,7 @@ public:
                     _reqResp.cleanupRequests(state.recoveryRequests[entryOffset]);
                 } else {
                     state.recoveryRequests[entryOffset][request.replicaId.u8] = 0;
-                    _reqResp.eraseRequest(request.header.requestId);
+                    _reqResp.eraseRequest(request.msg.id);
                 }
                 _tryProgressToReplication();
                 break;
@@ -831,14 +816,14 @@ public:
         auto& state = *_electionState;
         auto result = EggsError(response.result);
         switch (result) {
-            case NO_ERROR:
+            case EggsError::NO_ERROR:
             {
-                ALWAYS_ASSERT(state.lastReleased < request.requestContainer.getLogRecoveryWrite().idx);
-                auto entryOffset = request.requestContainer.getLogRecoveryWrite().idx.u64 - state.lastReleased.u64 - 1;
+                ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryWrite().idx);
+                auto entryOffset = request.msg.body.getLogRecoveryWrite().idx.u64 - state.lastReleased.u64 - 1;
                 ALWAYS_ASSERT(entryOffset < LogsDB::IN_FLIGHT_APPEND_WINDOW);
-                ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.header.requestId);
+                ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.msg.id);
                 state.recoveryRequests[entryOffset][request.replicaId.u8] = 0;
-                _reqResp.eraseRequest(request.header.requestId);
+                _reqResp.eraseRequest(request.msg.id);
                 _tryProgressToLeaderConfirm();
                 break;
             }
@@ -856,15 +841,15 @@ public:
             LOG_ERROR(_env, "Nominee token from replica id %s does not have matching replica id. Token: %s", fromReplicaId, request.nomineeToken);
             return;
         }
-        auto& response = _reqResp.newResponse(LogMessageKind::NEW_LEADER, fromReplicaId, requestId);
-        auto& newLeaderResponse = response.responseContainer.setNewLeader();
+        auto& response = _reqResp.newResponse( fromReplicaId, requestId);
+        auto& newLeaderResponse = response.msg.body.setNewLeader();
 
         if (request.nomineeToken.idx() <= _metadata.getLeaderToken().idx() || request.nomineeToken < _metadata.getNomineeToken()) {
-            newLeaderResponse.result = (uint16_t)EggsError::LEADER_PREEMPTED;
+            newLeaderResponse.result = EggsError::LEADER_PREEMPTED;
             return;
         }
 
-        newLeaderResponse.result = (uint16_t)NO_ERROR;
+        newLeaderResponse.result = EggsError::NO_ERROR;
         newLeaderResponse.lastReleased = _metadata.getLastReleased();
         _leaderLastActive = eggsNow();
 
@@ -881,15 +866,15 @@ public:
             LOG_ERROR(_env, "Nominee token from replica id %s does not have matching replica id. Token: %s", fromReplicaId, request.nomineeToken);
             return;
         }
-        auto& response = _reqResp.newResponse(LogMessageKind::NEW_LEADER_CONFIRM, fromReplicaId, requestId);
-        auto& newLeaderConfirmResponse = response.responseContainer.setNewLeaderConfirm();
+        auto& response = _reqResp.newResponse(fromReplicaId, requestId);
+        auto& newLeaderConfirmResponse = response.msg.body.setNewLeaderConfirm();
         if (_metadata.getNomineeToken() == request.nomineeToken) {
             _metadata.setLastReleased(request.releasedIdx);
         }
 
         auto err = _metadata.updateLeaderToken(request.nomineeToken);
-        newLeaderConfirmResponse.result = (uint16_t)err;
-        if (err == NO_ERROR) {
+        newLeaderConfirmResponse.result = err;
+        if (err == EggsError::NO_ERROR) {
             _leaderLastActive = eggsNow();
             resetLeaderElection();
         }
@@ -900,17 +885,17 @@ public:
             LOG_ERROR(_env, "Nominee token from replica id %s does not have matching replica id. Token: %s", fromReplicaId, request.nomineeToken);
             return;
         }
-        auto& response = _reqResp.newResponse(LogMessageKind::LOG_RECOVERY_READ, fromReplicaId, requestId);
-        auto& recoveryReadResponse = response.responseContainer.setLogRecoveryRead();
+        auto& response = _reqResp.newResponse(fromReplicaId, requestId);
+        auto& recoveryReadResponse = response.msg.body.setLogRecoveryRead();
         if (request.nomineeToken != _metadata.getNomineeToken()) {
-            recoveryReadResponse.result = (uint16_t)EggsError::LEADER_PREEMPTED;
+            recoveryReadResponse.result = EggsError::LEADER_PREEMPTED;
             return;
         }
         _leaderLastActive = eggsNow();
         LogsDBLogEntry entry;
         auto err = _data.readLogEntry(request.idx, entry);
-        recoveryReadResponse.result = (uint16_t)err;
-        if (err == NO_ERROR) {
+        recoveryReadResponse.result = err;
+        if (err == EggsError::NO_ERROR) {
             recoveryReadResponse.value.els = entry.value;
         }
     }
@@ -920,10 +905,10 @@ public:
             LOG_ERROR(_env, "Nominee token from replica id %s does not have matching replica id. Token: %s", fromReplicaId, request.nomineeToken);
             return;
         }
-        auto& response = _reqResp.newResponse(LogMessageKind::LOG_RECOVERY_WRITE, fromReplicaId, requestId);
-        auto& recoveryWriteResponse = response.responseContainer.setLogRecoveryWrite();
+        auto& response = _reqResp.newResponse(fromReplicaId, requestId);
+        auto& recoveryWriteResponse = response.msg.body.setLogRecoveryWrite();
         if (request.nomineeToken != _metadata.getNomineeToken()) {
-            recoveryWriteResponse.result = (uint16_t)EggsError::LEADER_PREEMPTED;
+            recoveryWriteResponse.result = EggsError::LEADER_PREEMPTED;
             return;
         }
         _leaderLastActive = eggsNow();
@@ -931,12 +916,12 @@ public:
         entry.idx = request.idx;
         entry.value = request.value.els;
         _data.writeLogEntry(entry);
-        recoveryWriteResponse.result = (uint16_t)NO_ERROR;
+        recoveryWriteResponse.result = EggsError::NO_ERROR;
     }
 
     EggsError writeLogEntries(LeaderToken token, LogIdx newlastReleased, std::vector<LogsDBLogEntry>& entries) {
         auto err = _metadata.updateLeaderToken(token);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         _clearElectionState();
@@ -944,7 +929,7 @@ public:
         if (_metadata.getLastReleased() < newlastReleased) {
             _metadata.setLastReleased(newlastReleased);
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     void resetLeaderElection() {
@@ -1005,11 +990,11 @@ private:
                     requestIds[replicaId.u8] = ReqResp::UNUSED_REQ_ID;
                     continue;
                 }
-                auto& request = _reqResp.newRequest(LogMessageKind::LOG_RECOVERY_READ, replicaId);
-                auto& recoveryRead = request.requestContainer.setLogRecoveryRead();
+                auto& request = _reqResp.newRequest(replicaId);
+                auto& recoveryRead = request.msg.body.setLogRecoveryRead();
                 recoveryRead.idx = entry.idx;
                 recoveryRead.nomineeToken = _metadata.getNomineeToken();
-                requestIds[replicaId.u8] = request.header.requestId;
+                requestIds[replicaId.u8] = request.msg.id;
             }
         }
     }
@@ -1052,12 +1037,12 @@ private:
                     continue;
                 }
                 entries.emplace_back(entry);
-                auto& request = _reqResp.newRequest(LogMessageKind::LOG_RECOVERY_WRITE, replicaId);
-                auto& recoveryWrite = request.requestContainer.setLogRecoveryWrite();
+                auto& request = _reqResp.newRequest(replicaId);
+                auto& recoveryWrite = request.msg.body.setLogRecoveryWrite();
                 recoveryWrite.idx = entry.idx;
                 recoveryWrite.nomineeToken = _metadata.getNomineeToken();
                 recoveryWrite.value.els = entry.value;
-                requestIds[replicaId.u8] = request.header.requestId;
+                requestIds[replicaId.u8] = request.msg.id;
             }
         }
         _data.writeLogEntries(entries);
@@ -1095,8 +1080,8 @@ private:
             if (requestIds[replicaId.u8] == ReqResp::UNUSED_REQ_ID) {
                 continue;
             }
-            auto& request = _reqResp.newRequest(LogMessageKind::NEW_LEADER_CONFIRM, replicaId);
-            auto& recoveryConfirm = request.requestContainer.setNewLeaderConfirm();
+            auto& request = _reqResp.newRequest(replicaId);
+            auto& recoveryConfirm = request.msg.body.setNewLeaderConfirm();
             recoveryConfirm.nomineeToken = _metadata.getNomineeToken();
             recoveryConfirm.releasedIdx = _metadata.getLastReleased();
         }
@@ -1110,7 +1095,7 @@ private:
         ALWAYS_ASSERT(nomineeToken.replica() == _replicaId);
         LOG_INFO(_env,"Became leader with token %s", nomineeToken);
         _state = LeadershipState::LEADER;
-        ALWAYS_ASSERT(_metadata.updateLeaderToken(nomineeToken) == NO_ERROR);
+        ALWAYS_ASSERT(_metadata.updateLeaderToken(nomineeToken) == EggsError::NO_ERROR);
         _clearElectionState();
     }
 
@@ -1154,16 +1139,16 @@ public:
         _lastReleased(0) {}
 
     void proccessLogWriteRequest(LogsDBRequest& request) {
-        ALWAYS_ASSERT(request.header.kind == LogMessageKind::LOG_WRITE);
-        const auto& writeRequest = request.requestContainer.getLogWrite();
+        ALWAYS_ASSERT(request.msg.body.kind() == LogMessageKind::LOG_WRITE);
+        const auto& writeRequest = request.msg.body.getLogWrite();
         if (unlikely(request.replicaId != writeRequest.token.replica())) {
             LOG_ERROR(_env, "Token from replica id %s does not have matching replica id. Token: %s", request.replicaId, writeRequest.token);
             return;
         }
         if (unlikely(writeRequest.token < _token)) {
-            auto& resp = _reqResp.newResponse(LogMessageKind::LOG_WRITE, request.replicaId, request.header.requestId);
-            auto& writeResponse = resp.responseContainer.setLogWrite();
-            writeResponse.result = (uint16_t)EggsError::LEADER_PREEMPTED;
+            auto& resp = _reqResp.newResponse(request.replicaId, request.msg.id);
+            auto& writeResponse = resp.msg.body.setLogWrite();
+            writeResponse.result = EggsError::LEADER_PREEMPTED;
             return;
         }
         if (unlikely(_token < writeRequest.token )) {
@@ -1205,9 +1190,9 @@ public:
         }
         auto response = _leaderElection.writeLogEntries(_token, _lastReleased, _entries);
         for (auto req : _requests) {
-            auto& resp = _reqResp.newResponse(LogMessageKind::LOG_WRITE, req->replicaId, req->header.requestId);
-            auto& writeResponse = resp.responseContainer.setLogWrite();
-            writeResponse.result = (uint16_t)response;
+            auto& resp = _reqResp.newResponse(req->replicaId, req->msg.id);
+            auto& writeResponse = resp.msg.body.setLogWrite();
+            writeResponse.result = response;
         }
         _requests.clear();
         _entries.clear();
@@ -1282,26 +1267,26 @@ public:
 
 
     void proccessLogReadRequest(ReplicaId fromReplicaId, uint64_t requestId, const LogReadReq& request) {
-        auto& response = _reqResp.newResponse(LogMessageKind::LOG_READ, fromReplicaId, requestId);
-        auto& readResponse = response.responseContainer.setLogRead();
+        auto& response = _reqResp.newResponse(fromReplicaId, requestId);
+        auto& readResponse = response.msg.body.setLogRead();
         if (_metadata.getLastReleased() < request.idx) {
-            readResponse.result = (uint16_t)EggsError::LOG_ENTRY_UNRELEASED;
+            readResponse.result = EggsError::LOG_ENTRY_UNRELEASED;
             return;
         }
         LogsDBLogEntry entry;
         auto err =_data.readLogEntry(request.idx, entry);
-        readResponse.result = (uint16_t) err;
-        if (err == NO_ERROR) {
+        readResponse.result = err;
+        if (err == EggsError::NO_ERROR) {
             readResponse.value.els = entry.value;
         }
     }
 
     void proccessLogReadResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogReadResp& response) {
-        if (response.result != (uint16_t) NO_ERROR) {
+        if (response.result != EggsError::NO_ERROR) {
             return;
         }
 
-        auto idx = request.requestContainer.getLogRead().idx;
+        auto idx = request.msg.body.getLogRead().idx;
 
         size_t i = 0;
         for (; i < _missingEntries.size(); ++i) {
@@ -1368,10 +1353,10 @@ private:
                     requests[replicaId.u8] = 0;
                     continue;
                 }
-                auto& request = _reqResp.newRequest(LogMessageKind::LOG_READ, replicaId);
-                auto& readRequest  = request.requestContainer.setLogRead();
+                auto& request = _reqResp.newRequest(replicaId);
+                auto& readRequest  = request.msg.body.setLogRead();
                 readRequest.idx = logIdx;
-                requests[replicaId.u8] = request.header.requestId;
+                requests[replicaId.u8] = request.msg.id;
             }
         }
     }
@@ -1436,14 +1421,14 @@ public:
         }
 
         auto err = _leaderElection.writeLogEntries(_metadata.getLeaderToken(), newRelease, entriesToWrite);
-        ALWAYS_ASSERT(err == NO_ERROR);
+        ALWAYS_ASSERT(err == EggsError::NO_ERROR);
         for (auto reqId : _releaseRequests) {
             if (reqId == 0) {
                 continue;
             }
             auto request = _reqResp.getRequest(reqId);
-            ALWAYS_ASSERT(request->header.kind == LogMessageKind::RELEASE);
-            auto& releaseReq = request->requestContainer.setRelease();
+            ALWAYS_ASSERT(request->msg.body.kind() == LogMessageKind::RELEASE);
+            auto& releaseReq = request->msg.body.setRelease();
             releaseReq.token = _metadata.getLeaderToken();
             releaseReq.lastReleased = _metadata.getLastReleased();
         }
@@ -1469,20 +1454,20 @@ public:
                     requestIds[replicaId.u8] = 0;
                     continue;
                 }
-                auto& req = _reqResp.newRequest(LogMessageKind::LOG_WRITE, replicaId);
-                auto& writeReq = req.requestContainer.setLogWrite();
+                auto& req = _reqResp.newRequest(replicaId);
+                auto& writeReq = req.msg.body.setLogWrite();
                 writeReq.token = _metadata.getLeaderToken();
                 writeReq.lastReleased = _metadata.getLastReleased();
                 writeReq.idx = _entries[offset].idx;
                 writeReq.value.els = _entries[offset].value;
-                requestIds[replicaId.u8] = req.header.requestId;
+                requestIds[replicaId.u8] = req.msg.id;
             }
         }
         for (size_t i = countToAppend; i < entries.size(); ++i) {
             entries[i].idx = 0;
         }
         _entriesEnd += countToAppend;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     void proccessLogWriteResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogWriteResp& response) {
@@ -1490,7 +1475,7 @@ public:
             return;
         }
         switch ((EggsError)response.result) {
-            case NO_ERROR:
+            case EggsError::NO_ERROR:
                 break;
             case EggsError::LEADER_PREEMPTED:
                 _leaderElection.resetLeaderElection();
@@ -1500,19 +1485,19 @@ public:
                 return;
         }
 
-        auto logIdx = request.requestContainer.getLogWrite().idx;
+        auto logIdx = request.msg.body.getLogWrite().idx;
         ALWAYS_ASSERT(_metadata.getLastReleased() < logIdx);
         auto offset = _entriesStart + (logIdx.u64 - _metadata.getLastReleased().u64  - 1);
         ALWAYS_ASSERT(offset < _entriesEnd);
         offset &= IN_FLIGHT_MASK;
         ALWAYS_ASSERT(_entries[offset].idx == logIdx);
         auto& requestIds = _requestIds[offset];
-        if (requestIds[fromReplicaId.u8] != request.header.requestId) {
+        if (requestIds[fromReplicaId.u8] != request.msg.id) {
             LOG_ERROR(_env, "Mismatch in expected requestId in LOG_WRITE response %s", response);
             return;
         }
         requestIds[fromReplicaId.u8] = 0;
-        _reqResp.eraseRequest(request.header.requestId);
+        _reqResp.eraseRequest(request.msg.id);
     }
 
     uint64_t entriesInFlight() const {
@@ -1527,11 +1512,11 @@ private:
                 _releaseRequests[replicaId.u8] = 0;
                 continue;
             }
-            auto& req = _reqResp.newRequest(LogMessageKind::RELEASE, replicaId);
-            auto& releaseReq = req.requestContainer.setRelease();
+            auto& req = _reqResp.newRequest(replicaId);
+            auto& releaseReq = req.msg.body.setRelease();
             releaseReq.token = _metadata.getLeaderToken();
             releaseReq.lastReleased = _metadata.getLastReleased();
-            _releaseRequests[replicaId.u8] = req.header.requestId;
+            _releaseRequests[replicaId.u8] = req.msg.id;
         }
         _currentIsLeader = true;
     }
@@ -1642,7 +1627,7 @@ public:
         auto processingStarted = eggsNow();
         _maybeLogStatus(processingStarted);
         for(auto& resp : responses) {
-            auto request = _reqResp.getRequest(resp.header.requestId);
+            auto request = _reqResp.getRequest(resp.msg.id);
             if (request == nullptr) {
                 // We often don't care about all responses and remove requests as soon as we can make progress
                 continue;
@@ -1651,43 +1636,46 @@ public:
             // Mismatch in responses could be due to network issues we don't want to crash but we will ignore and retry
             // Mismatch in internal state is asserted on.
             if (unlikely(request->replicaId != resp.replicaId)) {
-                LOG_ERROR(_env, "Expected response from replica %s, got it from replica %s. Response: %s", request->replicaId, resp.header.requestId, resp);
+                LOG_ERROR(_env, "Expected response from replica %s, got it from replica %s. Response: %s", request->replicaId, resp.msg.id, resp);
                 continue;
             }
-            if (unlikely(request->header.kind != resp.header.kind)) {
-                LOG_ERROR(_env, "Expected response of type %s, got type %s. Response: %s", request->header.kind, resp.header.kind, resp);
+            if (unlikely(request->msg.body.kind() != resp.msg.body.kind())) {
+                LOG_ERROR(_env, "Expected response of type %s, got type %s. Response: %s", request->msg.body.kind(), resp.msg.body.kind(), resp);
                 continue;
             }
 
-            switch(resp.header.kind) {
+            switch(resp.msg.body.kind()) {
             case LogMessageKind::RELEASE:
                 // We don't track release requests. This response is unexpected
             case LogMessageKind::ERROR:
                 LOG_ERROR(_env, "Bad response %s", resp);
                 break;
             case LogMessageKind::LOG_WRITE:
-                _appender.proccessLogWriteResponse(request->replicaId, *request, resp.responseContainer.getLogWrite());
+                _appender.proccessLogWriteResponse(request->replicaId, *request, resp.msg.body.getLogWrite());
                 break;
             case LogMessageKind::LOG_READ:
-                _catchupReader.proccessLogReadResponse(request->replicaId, *request, resp.responseContainer.getLogRead());
+                _catchupReader.proccessLogReadResponse(request->replicaId, *request, resp.msg.body.getLogRead());
                 break;
             case LogMessageKind::NEW_LEADER:
-                _leaderElection.proccessNewLeaderResponse(request->replicaId, *request, resp.responseContainer.getNewLeader());
+                _leaderElection.proccessNewLeaderResponse(request->replicaId, *request, resp.msg.body.getNewLeader());
                 break;
             case LogMessageKind::NEW_LEADER_CONFIRM:
-                _leaderElection.proccessNewLeaderConfirmResponse(request->replicaId, *request, resp.responseContainer.getNewLeaderConfirm());
+                _leaderElection.proccessNewLeaderConfirmResponse(request->replicaId, *request, resp.msg.body.getNewLeaderConfirm());
                 break;
             case LogMessageKind::LOG_RECOVERY_READ:
-                _leaderElection.proccessRecoveryReadResponse(request->replicaId, *request, resp.responseContainer.getLogRecoveryRead());
+                _leaderElection.proccessRecoveryReadResponse(request->replicaId, *request, resp.msg.body.getLogRecoveryRead());
                 break;
             case LogMessageKind::LOG_RECOVERY_WRITE:
-                _leaderElection.proccessRecoveryWriteResponse(request->replicaId, *request, resp.responseContainer.getLogRecoveryWrite());
+                _leaderElection.proccessRecoveryWriteResponse(request->replicaId, *request, resp.msg.body.getLogRecoveryWrite());
                 break;
+            case LogMessageKind::EMPTY:
+                ALWAYS_ASSERT("LogMessageKind::EMPTY should not happen");
+              break;
             }
         }
         for(auto& req : requests) {
-            ALWAYS_ASSERT(req.header.kind == req.requestContainer.kind());
-            switch (req.header.kind) {
+            ALWAYS_ASSERT(req.msg.body.kind() == req.msg.body.kind());
+            switch (req.msg.body.kind()) {
             case LogMessageKind::ERROR:
                 LOG_ERROR(_env, "Bad request %s", req);
                 break;
@@ -1695,23 +1683,26 @@ public:
                 _batchWriter.proccessLogWriteRequest(req);
                 break;
             case LogMessageKind::RELEASE:
-                _batchWriter.proccessReleaseRequest(req.replicaId, req.header.requestId, req.requestContainer.getRelease());
+                _batchWriter.proccessReleaseRequest(req.replicaId, req.msg.id, req.msg.body.getRelease());
                 break;
             case LogMessageKind::LOG_READ:
-                _catchupReader.proccessLogReadRequest(req.replicaId, req.header.requestId, req.requestContainer.getLogRead());
+                _catchupReader.proccessLogReadRequest(req.replicaId, req.msg.id, req.msg.body.getLogRead());
                 break;
             case LogMessageKind::NEW_LEADER:
-                _leaderElection.proccessNewLeaderRequest(req.replicaId, req.header.requestId, req.requestContainer.getNewLeader());
+                _leaderElection.proccessNewLeaderRequest(req.replicaId, req.msg.id, req.msg.body.getNewLeader());
                 break;
             case LogMessageKind::NEW_LEADER_CONFIRM:
-                _leaderElection.proccessNewLeaderConfirmRequest(req.replicaId, req.header.requestId, req.requestContainer.getNewLeaderConfirm());
+                _leaderElection.proccessNewLeaderConfirmRequest(req.replicaId, req.msg.id, req.msg.body.getNewLeaderConfirm());
                 break;
             case LogMessageKind::LOG_RECOVERY_READ:
-                _leaderElection.proccessRecoveryReadRequest(req.replicaId, req.header.requestId, req.requestContainer.getLogRecoveryRead());
+                _leaderElection.proccessRecoveryReadRequest(req.replicaId, req.msg.id, req.msg.body.getLogRecoveryRead());
                 break;
             case LogMessageKind::LOG_RECOVERY_WRITE:
-                _leaderElection.proccessRecoveryWriteRequest(req.replicaId, req.header.requestId, req.requestContainer.getLogRecoveryWrite());
+                _leaderElection.proccessRecoveryWriteRequest(req.replicaId, req.msg.id, req.msg.body.getLogRecoveryWrite());
                 break;
+            case LogMessageKind::EMPTY:
+                ALWAYS_ASSERT("LogMessageKind::EMPTY should not happen");
+              break;
             }
         }
         _leaderElection.maybeStartLeaderElection();

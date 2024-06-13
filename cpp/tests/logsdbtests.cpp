@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "LogsDB.hpp"
-#include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Time.hpp"
 #include "utils/TempLogsDB.hpp"
@@ -69,10 +68,9 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
             inReq.emplace_back();
             auto& req = inReq.back();
             req.replicaId = token.replica();
-            req.header.kind = LogMessageKind::LOG_WRITE;
-            req.header.requestId = requestId++;
-            reqIds.emplace(req.header.requestId);
-            auto& writeReq = req.requestContainer.setLogWrite();
+            req.msg.id = requestId++;
+            reqIds.emplace(req.msg.id);
+            auto& writeReq = req.msg.body.setLogWrite();
             writeReq.idx = entry.idx;
             writeReq.token = token;
             writeReq.value.els = entry.value;
@@ -84,9 +82,9 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
         REQUIRE(outResp.size() == entries.size());
         for (auto& resp : outResp) {
             REQUIRE(resp.replicaId == token.replica());
-            REQUIRE(resp.header.kind == LogMessageKind::LOG_WRITE);
-            REQUIRE(resp.responseContainer.getLogWrite().result == 0);
-            reqIds.erase(resp.header.requestId);
+            REQUIRE(resp.msg.body.kind() == LogMessageKind::LOG_WRITE);
+            REQUIRE(resp.msg.body.getLogWrite().result == EggsError::NO_ERROR);
+            reqIds.erase(resp.msg.id);
         }
         REQUIRE(reqIds.empty());
         entries.clear();
@@ -100,13 +98,11 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
         LeaderToken token(1, 1);
         std::unordered_set<size_t> reqIds;
         inReq.clear();
-        inReq.emplace_back();
-        auto& req = inReq.back();
+        auto& req = inReq.emplace_back();
         req.replicaId = token.replica();
-        req.header.kind = LogMessageKind::RELEASE;
-        req.header.requestId = requestId++;
-        reqIds.emplace(req.header.requestId);
-        auto& releaseReq = req.requestContainer.setRelease();
+        req.msg.id = requestId++;
+        reqIds.emplace(req.msg.id);
+        auto& releaseReq = req.msg.body.setRelease();;
         releaseReq.lastReleased = 3;
         releaseReq.token = token;
         db->processIncomingMessages(inReq, inResp);
@@ -139,7 +135,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
     };
     auto err = db->appendEntries(entries);
     db->processIncomingMessages(inReq, inResp);
-    REQUIRE(err == NO_ERROR);
+    REQUIRE(err == EggsError::NO_ERROR);
     for(size_t i = 0; i < entries.size(); ++i) {
         REQUIRE(entries[i].idx == readUpTo + i + 1);
     }
@@ -201,8 +197,8 @@ TEST_CASE("EmptyLogsDBLeaderElection") {
     for (size_t replicaId = 1, reqIdx = 0; replicaId < LogsDB::REPLICA_COUNT; ++replicaId, ++reqIdx) {
         auto& req = *outReq[reqIdx];
         replicaIds.erase(req.replicaId.u8);
-        REQUIRE(req.header.kind == LogMessageKind::NEW_LEADER);
-        REQUIRE(req.requestContainer.getNewLeader().nomineeToken == LeaderToken(0, 1));
+        REQUIRE(req.msg.body.kind() == LogMessageKind::NEW_LEADER);
+        REQUIRE(req.msg.body.getNewLeader().nomineeToken == LeaderToken(0, 1));
     }
     REQUIRE(replicaIds.empty());
 }

@@ -58,7 +58,7 @@ func readShuckleResponse(
 		if err := binary.Read(r, binary.LittleEndian, &err); err != nil {
 			return nil, fmt.Errorf("could not read error: %w", err)
 		}
-		return nil, msgs.ErrCode(err)
+		return nil, msgs.EggsError(err)
 	}
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse

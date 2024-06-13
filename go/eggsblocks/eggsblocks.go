@@ -352,7 +352,7 @@ func writeBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse)
 	return nil
 }
 
-func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
+func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.EggsError) error {
 	log.Debug("writing blocks error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
@@ -661,7 +661,7 @@ func handleRequestError(
 		}
 		atomic.AddUint64(&blockService.ioErrors, 1)
 		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, block service %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, blockServiceId, err, *lastError)
-		writeBlocksResponseError(log, conn, err.(msgs.ErrCode))
+		writeBlocksResponseError(log, conn, err.(msgs.EggsError))
 		return false
 	}
 
@@ -672,7 +672,7 @@ func handleRequestError(
 	// since it's an indication that we haven't migrated stuff.
 	if _, isDead := deadBlockServices[blockServiceId]; isDead && req == msgs.CHECK_BLOCK {
 		log.Debug("got check block request for dead block service %v", blockServiceId)
-		if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+		if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 			writeBlocksResponseError(log, conn, eggsErr)
 		}
 		return true
@@ -681,7 +681,7 @@ func handleRequestError(
 	// we always raise an alert since this is almost always bad news in the block service
 	log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
-	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 		writeBlocksResponseError(log, conn, eggsErr)
 		// kill the connection in bad cases
 		// BLOCK_NOT_FOUND + WriteBlock is bad because we get

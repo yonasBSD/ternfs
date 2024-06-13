@@ -1,21 +1,18 @@
 #pragma once
 
-#include <cstdint>
-#include <cstdlib>
-#include <string.h>
-#include <sys/types.h>
-#include <exception>
-#include <type_traits>
-#include <rocksdb/slice.h>
-#include <iomanip>
-#include <bit>
-#include <vector>
 #include <array>
 #include <bit>
-#include <stdint.h>
+#include <cstdint>
+#include <exception>
+#include <iomanip>
+#include <rocksdb/slice.h>
+#include <string>
+#include <type_traits>
+#include <vector>
 
-#include "Common.hpp"
 #include "Assert.hpp"
+#include "Common.hpp"
+#include "Crypto.hpp"
 
 struct BincodeBytesRef {
 private:
@@ -385,24 +382,86 @@ struct BincodeBuf {
     }
 };
 
-template<typename T>
-void bincodeMessagePack(const T& message, BincodeBuf& buf) {
-    static_assert(sizeof(message.kind()) == 1);
-    buf.packScalar(message.kind());
-    message.pack(buf);
-}
+// Utility class for serialization of Requests/Responses in all protocols
+template<uint32_t P, typename R, bool CheckBuffFullyUsed = true>
+class ProtocolMessage {
+public:
+    uint64_t id;
+    R body;
 
-template<typename T>
-void bincodeMessageUnpack(T& message, BincodeBuf& buf) {
-    static_assert(sizeof(message.kind()) == 1);
-    auto kind = buf.unpackScalar<typeof(message.kind())>();
-    message.unpack(buf, kind);
-}
+    ProtocolMessage(): id(0) { body.clear(); }
+    ProtocolMessage(const ProtocolMessage&) = delete;
+    ProtocolMessage(ProtocolMessage&&) = default;
+    ProtocolMessage& operator=(ProtocolMessage&&) = default;
 
-template<typename T>
-size_t bincodeMessagePackedSize(const T& message) {
-    static_assert(sizeof(message.kind()) == 1);
-    return 1 + message.packedSize();
+    static constexpr uint16_t STATIC_SIZE = R::STATIC_SIZE + sizeof(P) + sizeof(id);
+
+    size_t packedSize() const {
+        return sizeof(P) + sizeof(id) + body.packedSize();
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar(P);
+        buf.packScalar(id);
+        body.pack(buf);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        uint32_t version = buf.unpackScalar<uint32_t>();
+        if (version != P) {
+            throw BINCODE_EXCEPTION("bad protocol version %s, expected %s", version, P);
+        }
+        id = buf.unpackScalar<uint64_t>();
+        body.unpack(buf);
+        if (CheckBuffFullyUsed) {
+            if (unlikely(buf.remaining() != 0)) {
+                throw BINCODE_EXCEPTION("Buf not empty after deserializing message with protocol %s, kind %s", P, body.kind());
+            }
+        }
+    }
+};
+
+template<uint32_t P, typename R, bool CheckBuffFullyUsed = true>
+class SignedProtocolMessage : public ProtocolMessage<P, R, false> {
+public:
+
+    static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE + ProtocolMessage<P, R, false>::STATIC_SIZE;
+    size_t packedSize() const {
+        return 8 + ProtocolMessage<P, R, false>::packedSize();
+    }
+
+    void pack(BincodeBuf& buf, const AES128Key& key) const {
+        auto begin = buf.cursor;
+        ProtocolMessage<P, R, false>::pack(buf);
+        auto end = buf.cursor;
+        BincodeFixedBytes<8> mac = cbcmac(key, begin, end - begin);
+        buf.packFixedBytes<8>(mac);
+    }
+
+    void unpack(BincodeBuf& buf, const AES128Key& key) {
+        auto begin = buf.cursor;
+        ProtocolMessage<P, R, false>::unpack(buf);
+        auto end = buf.cursor;
+        BincodeFixedBytes<8> expectedMac = cbcmac(key, begin, end - begin);
+        BincodeFixedBytes<8> receivedMac;
+        buf.unpackFixedBytes<8>(receivedMac);
+        if (expectedMac != receivedMac) {
+            throw BINCODE_EXCEPTION("Signature not matching when deserializing signed message with protocol %s, kind %s", P, ProtocolMessage<P, R, false>::body.kind());
+        }
+        if (CheckBuffFullyUsed) {
+            if (unlikely(buf.remaining() != 0)) {
+                throw BINCODE_EXCEPTION("Buf not empty after deserializing signed message with protocol %s, kind %s", P, ProtocolMessage<P, R, false>::body.kind());
+            }
+        }
+    }
+private:
+    void pack(BincodeBuf&) const { ALWAYS_ASSERT(false, "Called unsigned pack on signed message type"); }
+    void unpack(BincodeBuf& buf) { ALWAYS_ASSERT(false, "Called unsigned unpack on signed message type"); }
+};
+
+template<uint32_t P, typename R, bool CheckBuffFullyUsed>
+std::ostream& operator<<(std::ostream& out, const ProtocolMessage<P,R, CheckBuffFullyUsed>& msg) {
+    return out << msg.id << " : " << msg.body;
 }
 
 constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header

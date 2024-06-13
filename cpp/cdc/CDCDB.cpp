@@ -1,29 +1,22 @@
-#include <cstdint>
+#include "CDCDB.hpp"
+
 #include <limits>
 #include <memory>
-#include <rocksdb/db.h>
 #include <rocksdb/iterator.h>
 #include <rocksdb/options.h>
 #include <rocksdb/statistics.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction.h>
 #include <rocksdb/utilities/optimistic_transaction_db.h>
-#include <fstream>
 #include <unordered_set>
 
 #include "Assert.hpp"
-#include "Bincode.hpp"
-#include "CDCDB.hpp"
 #include "AssertiveLock.hpp"
 #include "CDCDBData.hpp"
 #include "Common.hpp"
-#include "Env.hpp"
 #include "Exception.hpp"
-#include "Msgs.hpp"
-#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
-#include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "XmonAgent.hpp"
 
@@ -83,17 +76,6 @@ std::ostream& operator<<(std::ostream& out, const CDCShardReq& x) {
     return out;
 }
 
-std::ostream& operator<<(std::ostream& out, const CDCFinished& x) {
-    out << "CDCFinished(";
-    if (x.err != NO_ERROR) {
-        out << "err=" << x.err;
-    } else {
-        out << "resp=" << x.resp;
-    }
-    out << ")";
-    return out;
-}
-
 std::ostream& operator<<(std::ostream& out, const CDCStep& x) {
     out << "CDCStep(finishedTxns=[";
     for (int i = 0; i < x.finishedTxns.size(); i++) {
@@ -121,7 +103,7 @@ std::ostream& operator<<(std::ostream& out, CDCTxnId id) {
 
 std::ostream& operator<<(std::ostream& out, const CDCShardResp& x) {
     out << "CDCShardResp(txnId=" << x.txnId << ", ";
-    if (x.err == NO_ERROR) {
+    if (x.err == EggsError::NO_ERROR) {
         out << "resp=" << x.resp;
     } else {
         out << "err=" << x.err;
@@ -269,16 +251,15 @@ struct StateMachineEnv {
         this->finished = true;
         auto& finished = cdcStep.finishedTxns.emplace_back();
         finished.first = txnId;
-        finished.second.err = NO_ERROR;
-        return finished.second.resp;
+        return finished.second;
     }
 
     void finishWithError(EggsError err) {
         this->finished = true;
-        ALWAYS_ASSERT(err != NO_ERROR);
+        ALWAYS_ASSERT(err != EggsError::NO_ERROR);
         auto& errored = cdcStep.finishedTxns.emplace_back();
         errored.first = txnId;
-        errored.second.err = err;
+        errored.second.setError() = err;
     }
 };
 
@@ -320,7 +301,7 @@ struct MakeDirectoryStateMachine {
             start();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case MAKE_DIRECTORY_LOOKUP: lookup(); break;
                 case MAKE_DIRECTORY_CREATE_DIR: createDirectoryInode(); break;
@@ -363,7 +344,7 @@ struct MakeDirectoryStateMachine {
             // normal case, let's proceed
             createDirectoryInode();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             const auto& lookupResp = resp->getLookup();
             if (lookupResp.targetId.type() == InodeType::DIRECTORY) {
                 // we're good already
@@ -387,7 +368,7 @@ struct MakeDirectoryStateMachine {
             // Try again -- note that the call to create directory inode is idempotent.
             createDirectoryInode(true);
         } else {
-            ALWAYS_ASSERT(shardRespError == NO_ERROR);
+            ALWAYS_ASSERT(shardRespError == EggsError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -410,7 +391,7 @@ struct MakeDirectoryStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp->getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -449,7 +430,7 @@ struct MakeDirectoryStateMachine {
             //
             // We also cannot get MISMATCHING_TARGET since we are the only one
             // creating locked edges, and transactions execute serially.
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             state.setCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
             unlockEdge();
         }
@@ -469,7 +450,7 @@ struct MakeDirectoryStateMachine {
             // retry
             unlockEdge(true);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             // We're done, record the parent relationship and finish
             {
                 auto k = InodeIdKey::Static(state.dirId());
@@ -495,7 +476,7 @@ struct MakeDirectoryStateMachine {
         if (err == EggsError::TIMEOUT) {
             rollback(true); // retry
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             env.finishWithError(state.exitError());
         }
     }
@@ -523,7 +504,7 @@ struct HardUnlinkDirectoryStateMachine {
             removeInode();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case HARD_UNLINK_DIRECTORY_REMOVE_INODE: removeInode(); break;
                 default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
@@ -549,7 +530,7 @@ struct HardUnlinkDirectoryStateMachine {
         ) {
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             env.finish().setHardUnlinkDirectory();
         }
     }
@@ -587,7 +568,7 @@ struct RenameFileStateMachine {
             start();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case RENAME_FILE_LOCK_OLD_EDGE: lockOldEdge(); break;
                 case RENAME_FILE_LOOKUP_OLD_CREATION_TIME: lookupOldCreationTime(); break;
@@ -642,7 +623,7 @@ struct RenameFileStateMachine {
             }
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -665,7 +646,7 @@ struct RenameFileStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp->getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -716,7 +697,7 @@ struct RenameFileStateMachine {
         if (err == EggsError::TIMEOUT) {
             unlockNewEdge(true); // retry
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             unlockOldEdge();
         }
     }
@@ -738,7 +719,7 @@ struct RenameFileStateMachine {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
             // we're finally done
             auto& resp = env.finish().setRenameFile();
             resp.creationTime = state.newCreationTime();
@@ -758,7 +739,7 @@ struct RenameFileStateMachine {
         if (err == EggsError::TIMEOUT) {
             rollback(true); // retry
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             env.finishWithError(state.exitError());
         }
     }
@@ -797,7 +778,7 @@ struct SoftUnlinkDirectoryStateMachine {
             start();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case SOFT_UNLINK_DIRECTORY_LOCK_EDGE: lockEdge(); break;
                 case SOFT_UNLINK_DIRECTORY_STAT: stat(); break;
@@ -841,7 +822,7 @@ struct SoftUnlinkDirectoryStateMachine {
         } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_FOUND) {
             env.finishWithError(err); // no rollback to be done
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             state.setStatDirId(req.targetId);
             stat();
         }
@@ -856,7 +837,7 @@ struct SoftUnlinkDirectoryStateMachine {
         if (err == EggsError::TIMEOUT) {
             stat(true); // retry
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             const auto& statResp = resp->getStatDirectory();
             // insert tags
             for (const auto& newEntry : statResp.info.entries.els) {
@@ -892,7 +873,7 @@ struct SoftUnlinkDirectoryStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             unlockEdge();
         }
     }
@@ -916,7 +897,7 @@ struct SoftUnlinkDirectoryStateMachine {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
             auto& cdcResp = env.finish().setSoftUnlinkDirectory();
             // Update parent map
             {
@@ -942,7 +923,7 @@ struct SoftUnlinkDirectoryStateMachine {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
             env.finishWithError(state.exitError());
         }
     }
@@ -984,7 +965,7 @@ struct RenameDirectoryStateMachine {
             start();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case RENAME_DIRECTORY_LOCK_OLD_EDGE: lockOldEdge(); break;
                 case RENAME_DIRECTORY_LOOKUP_OLD_CREATION_TIME: lookupOldCreationTime(); break;
@@ -1069,7 +1050,7 @@ struct RenameDirectoryStateMachine {
             }
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -1091,7 +1072,7 @@ struct RenameDirectoryStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp->getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -1123,7 +1104,7 @@ struct RenameDirectoryStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             state.setNewCreationTime(resp->getCreateLockedCurrentEdge().creationTime);
             unlockNewEdge();
         }
@@ -1147,7 +1128,7 @@ struct RenameDirectoryStateMachine {
             // TODO it would be cleaner to verify this with a lookup
             unlockOldEdge();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             unlockOldEdge();
         }
     }
@@ -1170,7 +1151,7 @@ struct RenameDirectoryStateMachine {
             // TODO it would be cleaner to verify this with a lookup
             setOwner();
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             setOwner();
         }
     }
@@ -1185,7 +1166,7 @@ struct RenameDirectoryStateMachine {
         if (err == EggsError::TIMEOUT) {
             setOwner(true);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             auto& resp = env.finish().setRenameDirectory();
             resp.creationTime = state.newCreationTime();
             // update cache
@@ -1240,7 +1221,7 @@ struct CrossShardHardUnlinkFileStateMachine {
             start();
             return;
         }
-        if (unlikely(err == NO_ERROR && resp == nullptr)) { // we're resuming with no response
+        if (unlikely(err == EggsError::NO_ERROR && resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE: removeEdge(); break;
                 case CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT: makeTransient(); break;
@@ -1279,7 +1260,7 @@ struct CrossShardHardUnlinkFileStateMachine {
         } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             makeTransient();
         }
     }
@@ -1294,60 +1275,35 @@ struct CrossShardHardUnlinkFileStateMachine {
         if (err == EggsError::TIMEOUT) {
             makeTransient(true);
         } else {
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             env.finish().setCrossShardHardUnlinkFile();
         }
-    }
-};
-
-// Wrapper types to pack/unpack with kind
-struct PackCDCReq {
-    const CDCReqContainer& req;
-
-    PackCDCReq(const CDCReqContainer& req_): req(req_) {}
-
-    void pack(BincodeBuf& buf) const {
-        buf.packScalar<CDCMessageKind>(req.kind());
-        req.pack(buf);
-    }
-
-    size_t packedSize() const {
-        return 1 + req.packedSize();
-    }
-};
-struct UnpackCDCReq {
-    CDCReqContainer& req;
-
-    UnpackCDCReq(CDCReqContainer& req_): req(req_) {}
-
-    void unpack(BincodeBuf& buf) {
-        auto kind = buf.unpackScalar<CDCMessageKind>();
-        req.unpack(buf, kind);
     }
 };
 
 void CDCShardResp::pack(BincodeBuf& buf) const {
     buf.packScalar(txnId.x);
     buf.packScalar(err);
-    if (err != NO_ERROR) {
+    if (err != EggsError::NO_ERROR) {
         return;
     }
-    bincodeMessagePack(resp, buf);
+    resp.pack(buf);
 }
 
 void CDCShardResp::unpack(BincodeBuf& buf) {
     txnId.x = buf.unpackScalar<uint64_t>();
     err = (EggsError)buf.unpackScalar<uint16_t>();
-    if (err != NO_ERROR) {
+    if (err != EggsError::NO_ERROR) {
+        resp.setError() = err;
         return;
     }
-    bincodeMessageUnpack(resp, buf);
+    resp.unpack(buf);
 }
 
 size_t CDCShardResp::packedSize() const {
     size_t size{10};
-    if (err == NO_ERROR) {
-        size += bincodeMessagePackedSize(resp);
+    if (err == EggsError::NO_ERROR) {
+        size += resp.packedSize();
     }
     return size;
 }
@@ -1367,7 +1323,7 @@ void CDCLogEntry::prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::
         ALWAYS_ASSERT(usedSize <= maxPackedSize);
     }
     for (auto& cdcReq : cdcReqs) {
-        auto reqSize = bincodeMessagePackedSize(cdcReq);
+        auto reqSize = cdcReq.packedSize();
         ALWAYS_ASSERT(reqSize < maxPackedSize);
         if (unlikely(maxPackedSize - reqSize < usedSize)) {
             curEntry = &entriesOut.emplace_back();
@@ -1391,7 +1347,7 @@ void CDCLogEntry::pack(BincodeBuf& buf) const {
     buf.packScalar<bool>(_bootstrapEntry);
     buf.packScalar<uint32_t>(_cdcReqs.size());
     for (auto& cdcReq : _cdcReqs) {
-        bincodeMessagePack(cdcReq, buf);
+        cdcReq.pack(buf);
     }
     buf.packScalar<uint32_t>(_shardResps.size());
     for (auto& shardResp : _shardResps) {
@@ -1403,7 +1359,7 @@ void CDCLogEntry::unpack(BincodeBuf& buf) {
     _bootstrapEntry = buf.unpackScalar<bool>();
     _cdcReqs.resize(buf.unpackScalar<uint32_t>());
     for (auto& cdcReq : _cdcReqs) {
-        bincodeMessageUnpack(cdcReq, buf);
+        cdcReq.unpack(buf);
     }
     _shardResps.resize(buf.unpackScalar<uint32_t>());
     for (auto& shardResp : _shardResps) {
@@ -1414,7 +1370,7 @@ void CDCLogEntry::unpack(BincodeBuf& buf) {
 size_t CDCLogEntry::packedSize() const {
     size_t size{1 + 2 * sizeof(uint32_t)};
     for (auto& cdcReq : _cdcReqs) {
-        size += bincodeMessagePackedSize(cdcReq);
+        size += cdcReq.packedSize();
     }
     for (auto& shardResp : _shardResps) {
         size += shardResp.packedSize();
@@ -1557,8 +1513,7 @@ struct CDCDBImpl {
                 std::string reqV;
                 ROCKS_DB_CHECKED(dbTxn.Get({}, _reqQueueCfLegacy, txnK.toSlice(), &reqV));
                 CDCReqContainer req;
-                UnpackCDCReq ureq(req);
-                bincodeFromRocksValue(reqV, ureq);
+                bincodeFromRocksValue(reqV, req);
                 ROCKS_DB_CHECKED(dbTxn.Put(_enqueuedCf, txnK.toSlice(), reqV));
                 // EXECUTING_TXN_KEY -> _executingCf
                 std::string txnStateV;
@@ -1757,7 +1712,7 @@ struct CDCDBImpl {
     void _addToEnqueued(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
         {
             auto k = CDCTxnIdKey::Static(txnId);
-            std::string v = bincodeToRocksValue(PackCDCReq(req));
+            std::string v = bincodeToRocksValue(req);
             ROCKS_DB_CHECKED(dbTxn.Put(_enqueuedCf, k.toSlice(), v));
         }
         _addToDirsToTxns(dbTxn, txnId, req);
@@ -1771,7 +1726,7 @@ struct CDCDBImpl {
         CDCTxnId txnId,
         const CDCReqContainer& req,
         // If `shardRespError` and `shardResp` are null, we're starting to execute.
-        // Otherwise, (err == NO_ERROR) == (req != nullptr).
+        // Otherwise, (err == EggsError::NO_ERROR) == (req != nullptr).
         EggsError shardRespError,
         const ShardRespContainer* shardResp,
         V<TxnState>& state,
@@ -1856,15 +1811,14 @@ struct CDCDBImpl {
             auto reqK = CDCTxnIdKey::Static(txnId);
             std::string reqV;
             ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCf, reqK.toSlice(), &reqV));
-            UnpackCDCReq ureq(req);
-            bincodeFromRocksValue(reqV, ureq);
+            bincodeFromRocksValue(reqV, req);
             if (!_isExecuting(dbTxn, txnId)) {
                 if (_isReadyToGo(dbTxn, txnId, req)) {
                     LOG_DEBUG(_env, "starting to execute txn %s with req %s, since it is ready to go and not executing already", txnId, req);
                     StaticValue<TxnState> txnState;
                     txnState().start(req.kind());
                     _setExecuting(dbTxn, txnId, txnState);
-                    _advance(dbTxn, txnId, req, NO_ERROR, nullptr, txnState, step, txnIds);
+                    _advance(dbTxn, txnId, req, EggsError::NO_ERROR, nullptr, txnState, step, txnIds);
                 } else {
                     LOG_DEBUG(_env, "waiting before executing txn %s with req %s, since it is not ready to go", txnId, req);
                 }
@@ -1913,8 +1867,7 @@ struct CDCDBImpl {
         {
             std::string reqV;
             ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCf, txnIdK.toSlice(), &reqV));
-            UnpackCDCReq ureq(cdcReq);
-            bincodeFromRocksValue(reqV, ureq);
+            bincodeFromRocksValue(reqV, cdcReq);
         }
 
         // Get the state
@@ -1977,7 +1930,7 @@ struct CDCDBImpl {
         std::unique_ptr<rocksdb::Iterator> it(dbTxn->GetIterator({}, _executingCf));
         for (it->Seek(""); it->Valid(); it->Next()) {
             auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
-            _advanceWithResp(*dbTxn, txnIdK().id(), NO_ERROR, nullptr, step, txnIdsToStart);
+            _advanceWithResp(*dbTxn, txnIdK().id(), EggsError::NO_ERROR, nullptr, step, txnIdsToStart);
         }
         ROCKS_DB_CHECKED(it->status());
 

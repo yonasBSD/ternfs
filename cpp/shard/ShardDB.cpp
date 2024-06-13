@@ -1,3 +1,5 @@
+#include "ShardDB.hpp"
+
 #include <atomic>
 #include <bit>
 #include <chrono>
@@ -15,26 +17,22 @@
 #include <fstream>
 #include <memory>
 
+#include "Assert.hpp"
+#include "AssertiveLock.hpp"
 #include "Bincode.hpp"
+#include "BlockServicesCacheDB.hpp"
 #include "Common.hpp"
+#include "crc32c.h"
 #include "Crypto.hpp"
 #include "Env.hpp"
-#include "Msgs.hpp"
-#include "ShardDB.hpp"
-#include "MsgsGen.hpp"
-#include "ShardDBData.hpp"
-#include "Assert.hpp"
 #include "Exception.hpp"
-#include "Msgs.hpp"
-#include "SharedRocksDB.hpp"
-#include "Time.hpp"
+#include "Protocol.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
-#include "AssertiveLock.hpp"
-#include "XmonAgent.hpp"
-#include "crc32c.h"
+#include "SharedRocksDB.hpp"
+#include "Time.hpp"
 #include "wyhash.h"
-#include "BlockServicesCacheDB.hpp"
+#include "XmonAgent.hpp"
 
 // TODO maybe revisit all those ALWAYS_ASSERTs
 
@@ -126,7 +124,6 @@ void ShardLogEntry::pack(BincodeBuf& buf) const {
     buf.packScalar<uint32_t>(SHARD_LOG_PROTOCOL_VERSION);
     idx.pack(buf);
     time.pack(buf);
-    buf.packScalar<uint16_t>((uint16_t)body.kind());
     body.pack(buf);
 }
 
@@ -135,8 +132,7 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
     ALWAYS_ASSERT(protocol == SHARD_LOG_PROTOCOL_VERSION);
     idx.unpack(buf);
     time.unpack(buf);
-    ShardLogEntryKind kind = (ShardLogEntryKind)buf.unpackScalar<uint16_t>();
-    body.unpack(buf, kind);
+    body.unpack(buf);
 }
 
 static char maxNameChars[255];
@@ -313,13 +309,13 @@ struct ShardDBImpl {
         std::string fileValue;
         ExternalValue<FileBody> file;
         EggsError err = _getFile(options, req.id, fileValue, file);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         resp.mtime = file().mtime();
         resp.atime = file().atime();
         resp.size = file().fileSize();
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _statTransientFile(const rocksdb::ReadOptions& options, const StatTransientFileReq& req, StatTransientFileResp& resp) {
@@ -336,7 +332,7 @@ struct ShardDBImpl {
         resp.mtime = body().mtime();
         resp.size = body().fileSize();
         resp.note = body().note();
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _statDirectory(const rocksdb::ReadOptions& options, const StatDirectoryReq& req, StatDirectoryResp& resp) {
@@ -344,13 +340,13 @@ struct ShardDBImpl {
         ExternalValue<DirectoryBody> dir;
         // allowSnapshot=true, the caller can very easily detect if it's snapshot or not
         EggsError err = _getDirectory(options, req.id, true, dirValue, dir);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         resp.mtime = dir().mtime();
         resp.owner = dir().ownerId();
         dir().info(resp.info);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _readDir(rocksdb::ReadOptions& options, const ReadDirReq& req, ReadDirResp& resp) {
@@ -359,7 +355,7 @@ struct ShardDBImpl {
             std::string dirValue;
             ExternalValue<DirectoryBody> dir;
             EggsError err = _getDirectory(options, req.dirId, false, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -379,7 +375,7 @@ struct ShardDBImpl {
             beginKey().setDirIdWithCurrent(req.dirId, true); // current = true
             beginKey().setNameHash(req.startHash);
             beginKey().setName({});
-            int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - ReadDirResp::STATIC_SIZE;
+            int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - ReadDirResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto key = ExternalValue<EdgeKey>::FromSlice(it->key());
                 ALWAYS_ASSERT(key().dirId() == req.dirId && key().current());
@@ -402,7 +398,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(it->status());
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     // returns whether we're done
@@ -464,7 +460,7 @@ struct ShardDBImpl {
 
         uint64_t nameHash = computeHash(hashMode, req.startName.ref());
 
-        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
 
         // returns whether we're done
         const auto lookupCurrent = [&]() -> bool {
@@ -481,10 +477,10 @@ struct ShardDBImpl {
         };
 
         // begin current
-        if (current) { if (lookupCurrent()) { return NO_ERROR; } }
+        if (current) { if (lookupCurrent()) { return EggsError::NO_ERROR; } }
 
         // we looked at the current and we're going forward, nowhere to go from here.
-        if (current && forwards) { return NO_ERROR; }
+        if (current && forwards) { return EggsError::NO_ERROR; }
 
         // we're looking at snapshot edges now -- first pick the bounds (important to
         // minimize tripping over tombstones)
@@ -527,12 +523,12 @@ struct ShardDBImpl {
         options.iterate_upper_bound = {};
 
         // we were looking at the snapshots and we're going backwards, nowhere to go from here.
-        if (!forwards) { return NO_ERROR; }
+        if (!forwards) { return EggsError::NO_ERROR; }
 
         // end current
-        if (lookupCurrent()) { return NO_ERROR; }
+        if (lookupCurrent()) { return EggsError::NO_ERROR; }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     template<bool forwards>
@@ -566,7 +562,7 @@ struct ShardDBImpl {
             startKey().setCreationTime(req.startTime);
         }
         auto it = std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(options, _edgesCf));
-        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
         for (
             forwards ? it->Seek(startKey.toSlice()) : it->SeekForPrev(startKey.toSlice());
             it->Valid();
@@ -580,7 +576,7 @@ struct ShardDBImpl {
         }
         ROCKS_DB_CHECKED(it->status());
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _fullReadDir(rocksdb::ReadOptions& options, const FullReadDirReq& req, FullReadDirResp& resp) {
@@ -598,7 +594,7 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnaphsot=true, we're in fullReadDir
             EggsError err = _getDirectory(options, req.dirId, true, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
             hashMode = dir().hashMode();
@@ -623,7 +619,7 @@ struct ShardDBImpl {
         uint64_t nameHash;
         {
             EggsError err = _getDirectoryAndHash(options, req.dirId, false, req.name.ref(), nameHash);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -644,7 +640,7 @@ struct ShardDBImpl {
             resp.targetId = edge().targetIdWithLocked().id();
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _visitTransientFiles(const rocksdb::ReadOptions& options, const VisitTransientFilesReq& req, VisitTransientFilesResp& resp) {
@@ -653,7 +649,7 @@ struct ShardDBImpl {
         {
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _transientCf));
             auto beginKey = InodeIdKey::Static(req.beginId);
-            int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - VisitTransientFilesResp::STATIC_SIZE;
+            int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - VisitTransientFilesResp::STATIC_SIZE;
             for (it->Seek(beginKey.toSlice()); it->Valid(); it->Next()) {
                 auto id = ExternalValue<InodeIdKey>::FromSlice(it->key());
                 auto file = ExternalValue<TransientFileBody>::FromSlice(it->value());
@@ -673,14 +669,14 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(it->status());
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     template<typename Req, typename Resp>
     EggsError _visitInodes(const rocksdb::ReadOptions& options, rocksdb::ColumnFamilyHandle* cf, const Req& req, Resp& resp) {
         resp.nextId = NULL_INODE_ID;
 
-        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - Resp::STATIC_SIZE;
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - Resp::STATIC_SIZE;
         int maxIds = (budget/8) + 1; // include next inode
         {
             std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, cf));
@@ -701,7 +697,7 @@ struct ShardDBImpl {
             resp.ids.els.pop_back();
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _visitDirectories(const rocksdb::ReadOptions& options, const VisitDirectoriesReq& req, VisitDirectoriesResp& resp) {
@@ -723,7 +719,7 @@ struct ShardDBImpl {
 
         auto inMemoryBlockServicesData = _blockServicesCache.getCache();
 
-        int budget = pickMtu(req.mtu) - ShardResponseHeader::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
         const auto addBlockService = [&resp, &budget, &inMemoryBlockServicesData](BlockServiceId blockServiceId) -> int {
             // See if we've placed it already
@@ -810,14 +806,14 @@ struct ShardDBImpl {
             std::string fileValue;
             ExternalValue<FileBody> file;
             EggsError err = _getFile(options, req.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 // might be a transient file, let's check
                 bool isTransient = false;
                 if (err == EggsError::FILE_NOT_FOUND) {
                     std::string transientFileValue;
                     ExternalValue<TransientFileBody> transientFile;
                     EggsError transError = _getTransientFile(options, 0, true, req.fileId, transientFileValue, transientFile);
-                    if (transError == NO_ERROR) {
+                    if (transError == EggsError::NO_ERROR) {
                         isTransient = true;
                     } else if (transError != EggsError::FILE_NOT_FOUND) {
                         LOG_INFO(_env, "Dropping error gotten when doing fallback transient lookup for id %s: %s", req.fileId, transError);
@@ -829,11 +825,11 @@ struct ShardDBImpl {
             }
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _blockServiceFiles(rocksdb::ReadOptions& options, const BlockServiceFilesReq& req, BlockServiceFilesResp& resp) {
-        int maxFiles = (DEFAULT_UDP_MTU - ShardResponseHeader::STATIC_SIZE - BlockServiceFilesResp::STATIC_SIZE) / 8;
+        int maxFiles = (DEFAULT_UDP_MTU - ShardRespMsg::STATIC_SIZE - BlockServiceFilesResp::STATIC_SIZE) / 8;
         resp.fileIds.els.reserve(maxFiles);
 
         StaticValue<BlockServiceToFileKey> beginKey;
@@ -860,17 +856,17 @@ struct ShardDBImpl {
             break;
         }
         ROCKS_DB_CHECKED(it->status());
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _visitFiles(const rocksdb::ReadOptions& options, const VisitFilesReq& req, VisitFilesResp& resp) {
         return _visitInodes(options, _filesCf, req, resp);
     }
 
-    EggsError read(const ShardReqContainer& req, ShardRespContainer& resp) {
+    void read(const ShardReqContainer& req, ShardRespContainer& resp) {
         LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
 
-        EggsError err = NO_ERROR;
+        auto err = EggsError::NO_ERROR;
         resp.clear();
 
         auto snapshot = _getCurrentReadSnapshot();
@@ -915,9 +911,11 @@ struct ShardDBImpl {
             throw EGGS_EXCEPTION("bad read-only shard message kind %s", req.kind());
         }
 
-        ALWAYS_ASSERT(req.kind() == resp.kind());
-
-        return err;
+        if (unlikely(err != EggsError::NO_ERROR)) {
+            resp.setError() = err;
+        } else {
+            ALWAYS_ASSERT(req.kind() == resp.kind());
+        }
     }
 
 
@@ -932,7 +930,7 @@ struct ShardDBImpl {
         entry.note = req.note;
         entry.deadlineTime = time + _transientDeadlineInterval;
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _checkTransientFileCookie(InodeId id, std::array<uint8_t, 8> cookie) {
@@ -943,7 +941,7 @@ struct ShardDBImpl {
         if (cookie != _calcCookie(id)) {
             return EggsError::BAD_COOKIE;
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareLinkFile(EggsTime time, const LinkFileReq& req, LinkFileEntry& entry) {
@@ -955,7 +953,7 @@ struct ShardDBImpl {
             return EggsError::BAD_SHARD;
         }
         EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
 
@@ -963,7 +961,7 @@ struct ShardDBImpl {
         entry.name = req.name;
         entry.ownerId = req.ownerId;
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     template<bool DontAllowDifferentNames, typename Req, typename Entry>
@@ -985,7 +983,7 @@ struct ShardDBImpl {
         entry.oldName = req.oldName;
         entry.newName = req.newName;
         entry.targetId = req.targetId;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSoftUnlinkFile(EggsTime time, const SoftUnlinkFileReq& req, SoftUnlinkFileEntry& entry) {
@@ -1002,7 +1000,7 @@ struct ShardDBImpl {
         entry.fileId = req.fileId;
         entry.name = req.name;
         entry.creationTime = req.creationTime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareCreateDirectoryInode(EggsTime time, const CreateDirectoryInodeReq& req, CreateDirectoryInodeEntry& entry) {
@@ -1015,7 +1013,7 @@ struct ShardDBImpl {
         entry.id = req.id;
         entry.ownerId = req.ownerId;
         entry.info = req.info;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareCreateLockedCurrentEdge(EggsTime time, const CreateLockedCurrentEdgeReq& req, CreateLockedCurrentEdgeEntry& entry) {
@@ -1033,7 +1031,7 @@ struct ShardDBImpl {
         entry.targetId = req.targetId;
         entry.name = req.name;
         entry.oldCreationTime = req.oldCreationTime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareUnlockCurrentEdge(EggsTime time, const UnlockCurrentEdgeReq& req, UnlockCurrentEdgeEntry& entry) {
@@ -1048,7 +1046,7 @@ struct ShardDBImpl {
         entry.name = req.name;
         entry.wasMoved = req.wasMoved;
         entry.creationTime = req.creationTime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareLockCurrentEdge(EggsTime time, const LockCurrentEdgeReq& req, LockCurrentEdgeEntry& entry) {
@@ -1062,7 +1060,7 @@ struct ShardDBImpl {
         entry.name = req.name;
         entry.targetId = req.targetId;
         entry.creationTime = req.creationTime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveDirectoryOwner(EggsTime time, const RemoveDirectoryOwnerReq& req, RemoveDirectoryOwnerEntry& entry) {
@@ -1075,7 +1073,7 @@ struct ShardDBImpl {
         ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID); // TODO proper error
         entry.dirId = req.dirId;
         entry.info = req.info;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveInode(EggsTime time, const RemoveInodeReq& req, RemoveInodeEntry& entry) {
@@ -1086,7 +1084,7 @@ struct ShardDBImpl {
             return EggsError::CANNOT_REMOVE_ROOT_DIRECTORY;
         }
         entry.id = req.id;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSetDirectoryOwner(EggsTime time, const SetDirectoryOwnerReq& req, SetDirectoryOwnerEntry& entry) {
@@ -1101,7 +1099,7 @@ struct ShardDBImpl {
         }
         entry.dirId = req.dirId;
         entry.ownerId = req.ownerId;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSetDirectoryInfo(EggsTime time, const SetDirectoryInfoReq& req, SetDirectoryInfoEntry& entry) {
@@ -1113,7 +1111,7 @@ struct ShardDBImpl {
         }
         entry.dirId = req.id;
         entry.info = req.info;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveNonOwnedEdge(EggsTime time, const RemoveNonOwnedEdgeReq& req, RemoveNonOwnedEdgeEntry& entry) {
@@ -1126,7 +1124,7 @@ struct ShardDBImpl {
         entry.dirId = req.dirId;
         entry.creationTime = req.creationTime;
         entry.name = req.name;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSameShardHardFileUnlink(EggsTime time, const SameShardHardFileUnlinkReq& req, SameShardHardFileUnlinkEntry& entry) {
@@ -1143,7 +1141,7 @@ struct ShardDBImpl {
         entry.targetId = req.targetId;
         entry.name = req.name;
         entry.creationTime = req.creationTime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveSpanInitiate(EggsTime time, const RemoveSpanInitiateReq& req, RemoveSpanInitiateEntry& entry) {
@@ -1155,12 +1153,12 @@ struct ShardDBImpl {
         }
         {
             EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
         entry.fileId = req.fileId;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     bool _checkSpanBody(const AddSpanInitiateReq& req) {
@@ -1240,7 +1238,7 @@ struct ShardDBImpl {
         }
         {
             EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -1279,7 +1277,7 @@ struct ShardDBImpl {
         entry.body = req.body;
         entry.crc = req.crc;
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry, bool withReference) {
@@ -1294,7 +1292,7 @@ struct ShardDBImpl {
         }
         {
             EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -1439,7 +1437,7 @@ struct ShardDBImpl {
             }
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareAddSpanCertify(EggsTime time, const AddSpanCertifyReq& req, AddSpanCertifyEntry& entry) {
@@ -1451,14 +1449,14 @@ struct ShardDBImpl {
         }
         {
             EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
         entry.fileId = req.fileId;
         entry.byteOffset = req.byteOffset;
         entry.proofs = req.proofs;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientEntry& entry) {
@@ -1470,7 +1468,7 @@ struct ShardDBImpl {
         }
         entry.id = req.id;
         entry.note = req.note;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveSpanCertify(EggsTime time, const RemoveSpanCertifyReq& req, RemoveSpanCertifyEntry& entry) {
@@ -1482,14 +1480,14 @@ struct ShardDBImpl {
         }
         {
             EggsError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
         entry.fileId = req.fileId;
         entry.byteOffset = req.byteOffset;
         entry.proofs = req.proofs;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveOwnedSnapshotFileEdge(EggsTime time, const RemoveOwnedSnapshotFileEdgeReq& req, RemoveOwnedSnapshotFileEdgeEntry& entry) {
@@ -1506,7 +1504,7 @@ struct ShardDBImpl {
         entry.targetId = req.targetId;
         entry.creationTime = req.creationTime;
         entry.name = req.name;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSwapBlocks(EggsTime time, const SwapBlocksReq& req, SwapBlocksEntry& entry) {
@@ -1523,7 +1521,7 @@ struct ShardDBImpl {
         entry.fileId2 = req.fileId2;
         entry.byteOffset2 = req.byteOffset2;
         entry.blockId2 = req.blockId2;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSwapSpans(EggsTime time, const SwapSpansReq& req, SwapSpansEntry& entry) {
@@ -1540,7 +1538,7 @@ struct ShardDBImpl {
         entry.fileId2 = req.fileId2;
         entry.byteOffset2 = req.byteOffset2;
         entry.blocks2 = req.blocks2;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareMoveSpan(EggsTime time, const MoveSpanReq& req, MoveSpanEntry& entry) {
@@ -1551,11 +1549,11 @@ struct ShardDBImpl {
             return EggsError::BAD_SHARD;
         }
         EggsError err = _checkTransientFileCookie(req.fileId1, req.cookie1.data);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         err = _checkTransientFileCookie(req.fileId2, req.cookie2.data);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         entry.fileId1 = req.fileId1;
@@ -1565,7 +1563,7 @@ struct ShardDBImpl {
         entry.cookie2 = req.cookie2;
         entry.byteOffset2 = req.byteOffset2;
         entry.spanSize = req.spanSize;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareSetTime(EggsTime time, const SetTimeReq& req, SetTimeEntry& entry) {
@@ -1578,19 +1576,19 @@ struct ShardDBImpl {
         entry.id = req.id;
         entry.atime = req.atime;
         entry.mtime = req.mtime;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _prepareRemoveZeroBlockServiceFiles(EggsTime time, const RemoveZeroBlockServiceFilesReq& req, RemoveZeroBlockServiceFilesEntry& entry) {
         entry.startBlockService = req.startBlockService;
         entry.startFile = req.startFile;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
         LOG_DEBUG(_env, "processing write request of kind %s", req.kind());
         logEntry.clear();
-        EggsError err = NO_ERROR;
+        auto err = EggsError::NO_ERROR;
 
         EggsTime time = eggsNow();
         logEntry.time = time;
@@ -1691,7 +1689,7 @@ struct ShardDBImpl {
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
         }
 
-        if (err == NO_ERROR) {
+        if (err == EggsError::NO_ERROR) {
             LOG_DEBUG(_env, "prepared log entry of kind %s, for request of kind %s", logEntryBody.kind(), req.kind());
             LOG_TRACE(_env, "log entry body: %s", logEntryBody);
         } else {
@@ -1746,7 +1744,7 @@ struct ShardDBImpl {
         resp.id = id;
         resp.cookie.data = _calcCookie(resp.id);
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyLinkFile(rocksdb::WriteBatch& batch, EggsTime time, const LinkFileEntry& entry, LinkFileResp& resp) {
@@ -1759,7 +1757,7 @@ struct ShardDBImpl {
                 // clients.
                 uint64_t nameHash;
                 // Return original error if the dir doens't exist, since this is some recovery mechanism anyway
-                if (_getDirectoryAndHash({}, entry.ownerId, false /*allowSnapshot*/, entry.name.ref(), nameHash) != NO_ERROR) {
+                if (_getDirectoryAndHash({}, entry.ownerId, false /*allowSnapshot*/, entry.name.ref(), nameHash) != EggsError::NO_ERROR) {
                     LOG_DEBUG(_env, "could not find directory after FILE_NOT_FOUND for link file");
                     return err;
                 }
@@ -1782,8 +1780,8 @@ struct ShardDBImpl {
                     return err;
                 }
                 resp.creationTime = edge().creationTime();
-                return NO_ERROR;
-            } else if (err != NO_ERROR) {
+                return EggsError::NO_ERROR;
+            } else if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -1804,18 +1802,18 @@ struct ShardDBImpl {
         // create edge in owner.
         {
             EggsError err = ShardDBImpl::_createCurrentEdge(time, batch, entry.ownerId, entry.name, entry.fileId, false, 0, resp.creationTime);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _initiateDirectoryModification(EggsTime time, bool allowSnapshot, rocksdb::WriteBatch& batch, InodeId dirId, std::string& dirValue, ExternalValue<DirectoryBody>& dir) {
         ExternalValue<DirectoryBody> tmpDir;
         EggsError err = _getDirectory({}, dirId, allowSnapshot, dirValue, tmpDir);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
 
@@ -1835,7 +1833,7 @@ struct ShardDBImpl {
         }
 
         dir = tmpDir;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     // When we just want to compute the hash of something when modifying the dir
@@ -1843,11 +1841,11 @@ struct ShardDBImpl {
         ExternalValue<DirectoryBody> dir;
         std::string dirValue;
         EggsError err = _initiateDirectoryModification(time, allowSnapshot, batch, dirId, dirValue, dir);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         nameHash = computeHash(dir().hashMode(), name);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     // Note that we cannot expose an API which allows us to create non-locked current edges,
@@ -1869,7 +1867,7 @@ struct ShardDBImpl {
         {
             // allowSnaphsot=false since we cannot create current edges in snapshot directories.
             EggsError err = _initiateDirectoryModificationAndHash(logEntryTime, false, batch, dirId, name.ref(), nameHash);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -1961,7 +1959,7 @@ struct ShardDBImpl {
         edgeBody().setCreationTime(creationTime);
         ROCKS_DB_CHECKED(batch.Put(_edgesCf, edgeKey.toSlice(), edgeBody.toSlice()));
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
 
     }
 
@@ -1969,18 +1967,18 @@ struct ShardDBImpl {
         // First, remove the old edge -- which won't be owned anymore, since we're renaming it.
         {
             EggsError err = _softUnlinkCurrentEdge(time, batch, entry.dirId, entry.oldName, entry.oldCreationTime, entry.targetId, false);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
         // Now, create the new one
         {
             EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, 0, resp.newCreationTime);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySameDirectoryRenameSnapshot(EggsTime time, rocksdb::WriteBatch& batch, const SameDirectoryRenameSnapshotEntry& entry, SameDirectoryRenameSnapshotResp& resp) {
@@ -1991,7 +1989,7 @@ struct ShardDBImpl {
             {
                 // allowSnaphsot=false since we can't have owned edges in snapshot dirs
                 EggsError err = _initiateDirectoryModificationAndHash(time, false, batch, entry.dirId, entry.oldName.ref(), nameHash);
-                if (err != NO_ERROR) {
+                if (err != EggsError::NO_ERROR) {
                     return err;
                 }
             }
@@ -2034,11 +2032,11 @@ struct ShardDBImpl {
         // Now, create the new one
         {
             EggsError err = _createCurrentEdge(time, batch, entry.dirId, entry.newName, entry.targetId, false, 0, resp.newCreationTime);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     // the creation time of the delete edge is always `time`.
@@ -2048,7 +2046,7 @@ struct ShardDBImpl {
         {
             // allowSnaphsot=false since we can't have current edges in snapshot dirs
             EggsError err = _initiateDirectoryModificationAndHash(time, false, batch, dirId, name.ref(), nameHash);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2097,14 +2095,14 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, k.toSlice(), v.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySoftUnlinkFile(EggsTime time, rocksdb::WriteBatch& batch, const SoftUnlinkFileEntry& entry, SoftUnlinkFileResp& resp) {
         EggsError err = _softUnlinkCurrentEdge(time, batch, entry.ownerId, entry.name, entry.creationTime, entry.fileId, true);
-        if (err != NO_ERROR) { return err; }
+        if (err != EggsError::NO_ERROR) { return err; }
         resp.deleteCreationTime = time;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyCreateDirectoryInode(EggsTime time, rocksdb::WriteBatch& batch, const CreateDirectoryInodeEntry& entry, CreateDirectoryInodeResp& resp) {
@@ -2116,11 +2114,11 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // we never create directories as snapshot
             EggsError err = _getDirectory({}, entry.id, false, dirValue, dir);
-            if (err == NO_ERROR) {
+            if (err == EggsError::NO_ERROR) {
                 if (dir().ownerId() != entry.ownerId) {
                     return EggsError::MISMATCHING_OWNER;
                 } else {
-                    return NO_ERROR;
+                    return EggsError::NO_ERROR;
                 }
             } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
                 // we continue
@@ -2141,15 +2139,15 @@ struct ShardDBImpl {
 
         resp.mtime = time;
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyCreateLockedCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const CreateLockedCurrentEdgeEntry& entry, CreateLockedCurrentEdgeResp& resp) {
         auto err = _createCurrentEdge(time, batch, entry.dirId, entry.name, entry.targetId, true, entry.oldCreationTime, resp.creationTime); // locked=true
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyUnlockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const UnlockCurrentEdgeEntry& entry, UnlockCurrentEdgeResp& resp) {
@@ -2159,7 +2157,7 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnaphsot=false since no current edges in snapshot dirs
             EggsError err = _initiateDirectoryModification(time, false, batch, entry.dirId, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
             nameHash = computeHash(dir().hashMode(), entry.name.ref());
@@ -2204,7 +2202,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, snapshotKey.toSlice(), snapshotBody.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyLockCurrentEdge(EggsTime time, rocksdb::WriteBatch& batch, const LockCurrentEdgeEntry& entry, LockCurrentEdgeResp& resp) {
@@ -2215,7 +2213,7 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnaphsot=false since no current edges in snapshot dirs
             EggsError err = _initiateDirectoryModification(time, false, batch, entry.dirId, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
             nameHash = computeHash(dir().hashMode(), entry.name.ref());
@@ -2243,7 +2241,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_edgesCf, currentKey.toSlice(), edge.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveDirectoryOwner(EggsTime time, rocksdb::WriteBatch& batch, const RemoveDirectoryOwnerEntry& entry, RemoveDirectoryOwnerResp& resp) {
@@ -2252,11 +2250,11 @@ struct ShardDBImpl {
         {
             // allowSnapshot=true for idempotency (see below)
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.dirId, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
             if (dir().ownerId() == NULL_INODE_ID) {
-                return NO_ERROR; // already done
+                return EggsError::NO_ERROR; // already done
             }
         }
 
@@ -2292,7 +2290,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveDirectoryInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
@@ -2303,9 +2301,9 @@ struct ShardDBImpl {
         {
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.id, dirValue, dir);
             if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                return NO_ERROR; // we're already done
+                return EggsError::NO_ERROR; // we're already done
             }
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2340,7 +2338,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Delete(_directoriesCf, dirKey.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveFileInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
@@ -2356,17 +2354,17 @@ struct ShardDBImpl {
                 std::string fileValue;
                 ExternalValue<FileBody> file;
                 EggsError err = _getFile({}, entry.id, fileValue, file);
-                if (err == NO_ERROR) {
+                if (err == EggsError::NO_ERROR) {
                     return EggsError::FILE_IS_NOT_TRANSIENT;
                 } else if (err == EggsError::FILE_NOT_FOUND) {
                     // In this case the inode is just gone. The best thing to do is
                     // to just be OK with it, since we need to handle repeated calls
                     // nicely.
-                    return NO_ERROR;
+                    return EggsError::NO_ERROR;
                 } else {
                     return err;
                 }
-            } else if (err == NO_ERROR) {
+            } else if (err == EggsError::NO_ERROR) {
                 // keep going
             } else {
                 return err;
@@ -2398,7 +2396,7 @@ struct ShardDBImpl {
             auto fileKey = InodeIdKey::Static(entry.id);
             ROCKS_DB_CHECKED(batch.Delete(_transientCf, fileKey.toSlice()));
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveInode(EggsTime time, rocksdb::WriteBatch& batch, const RemoveInodeEntry& entry, RemoveInodeResp& resp) {
@@ -2414,7 +2412,7 @@ struct ShardDBImpl {
         ExternalValue<DirectoryBody> dir;
         {
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.dirId, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2426,7 +2424,7 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(entry.dirId);
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), dir.toSlice()));
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySetDirectoryInfo(EggsTime time, rocksdb::WriteBatch& batch, const SetDirectoryInfoEntry& entry, SetDirectoryInfoResp& resp) {
@@ -2436,7 +2434,7 @@ struct ShardDBImpl {
             // allowSnapshot=true since we might want to influence deletion policies for already deleted
             // directories.
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.dirId, dirValue, dir);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2451,7 +2449,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_directoriesCf, k.toSlice(), newDir.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveNonOwnedEdge(EggsTime time, rocksdb::WriteBatch& batch, const RemoveNonOwnedEdgeEntry& entry, RemoveNonOwnedEdgeResp& resp) {
@@ -2459,7 +2457,7 @@ struct ShardDBImpl {
         {
             // allowSnapshot=true since GC needs to be able to remove non-owned edges from snapshot dir
             EggsError err = _initiateDirectoryModificationAndHash(time, true, batch, entry.dirId, entry.name.ref(), nameHash);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2474,7 +2472,7 @@ struct ShardDBImpl {
             std::string edgeValue;
             auto status = _db->Get({}, _edgesCf, k.toSlice(), &edgeValue);
             if (status.IsNotFound()) {
-                return NO_ERROR; // make the client's life easier
+                return EggsError::NO_ERROR; // make the client's life easier
             }
             ROCKS_DB_CHECKED(status);
             ExternalValue<SnapshotEdgeBody> edge(edgeValue);
@@ -2486,7 +2484,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, k.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySameShardHardFileUnlink(EggsTime time, rocksdb::WriteBatch& batch, const SameShardHardFileUnlinkEntry& entry, SameShardHardFileUnlinkResp& resp) {
@@ -2500,14 +2498,14 @@ struct ShardDBImpl {
                 std::string transientFileValue;
                 ExternalValue<TransientFileBody> transientFile;
                 EggsError err = _getTransientFile({}, time, true, entry.targetId, fileValue, transientFile);
-                if (err == NO_ERROR) {
-                    return NO_ERROR;
+                if (err == EggsError::NO_ERROR) {
+                    return EggsError::NO_ERROR;
                 } else if (err == EggsError::FILE_NOT_FOUND) {
                     return EggsError::FILE_NOT_FOUND;
                 } else {
                     return err;
                 }
-            } else if (err != NO_ERROR) {
+            } else if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2535,7 +2533,7 @@ struct ShardDBImpl {
             std::string edgeValue;
             auto status = _db->Get({}, _edgesCf, k.toSlice(), &edgeValue);
             if (status.IsNotFound()) {
-                return EggsError::EDGE_NOT_FOUND; // can't return NO_ERROR, since the transient file still exists
+                return EggsError::EDGE_NOT_FOUND; // can't return EggsError::NO_ERROR, since the transient file still exists
             }
             ROCKS_DB_CHECKED(status);
             ExternalValue<SnapshotEdgeBody> edge(edgeValue);
@@ -2560,7 +2558,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const RemoveSpanInitiateEntry& entry, RemoveSpanInitiateResp& resp) {
@@ -2568,7 +2566,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> file;
         {
             EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2610,7 +2608,7 @@ struct ShardDBImpl {
                 auto k = InodeIdKey::Static(entry.fileId);
                 ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
             }
-            return NO_ERROR;
+            return EggsError::NO_ERROR;
         }
         const auto blocks = span().blocksBody();
 
@@ -2639,7 +2637,7 @@ struct ShardDBImpl {
             }
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     uint64_t _getNextBlockId() {
@@ -2691,14 +2689,14 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> file;
         {
             EggsError err = _initiateTransientFileModification(time, false, batch, entry.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
 
         // Special case -- for empty spans we have nothing to do
         if (entry.body.size() == 0) {
-            return NO_ERROR;
+            return EggsError::NO_ERROR;
         }
 
         StaticValue<SpanKey> spanKey;
@@ -2734,7 +2732,7 @@ struct ShardDBImpl {
                     LOG_DEBUG(_env, "file size does not match, and existing span does not match");
                     return EggsError::SPAN_NOT_FOUND;
                 }
-                return NO_ERROR;
+                return EggsError::NO_ERROR;
             }
             LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
             return EggsError::SPAN_NOT_FOUND;
@@ -2762,7 +2760,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), spanBody.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
 
     }
 
@@ -2771,7 +2769,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> file;
         {
             EggsError err = _initiateTransientFileModification(time, false, batch, entry.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2812,7 +2810,7 @@ struct ShardDBImpl {
                     return EggsError::SPAN_NOT_FOUND;
                 }
                 _fillInAddSpanInitiate(existingSpan().blocksBody(), resp);
-                return NO_ERROR;
+                return EggsError::NO_ERROR;
             }
             LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
             return EggsError::SPAN_NOT_FOUND;
@@ -2862,7 +2860,7 @@ struct ShardDBImpl {
         // Fill in the response
         _fillInAddSpanInitiate(spanBody().blocksBody(), resp);
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     std::array<uint8_t, 8> _blockWriteCertificate(uint32_t blockSize, const BlockBody block, const AES128Key& secretKey) {
@@ -2936,7 +2934,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> file;
         {
             EggsError err = _initiateTransientFileModification(time, false, batch, entry.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -2957,10 +2955,10 @@ struct ShardDBImpl {
             ExternalValue<SpanBody> span(spanValue);
             // "Is the span still there"
             if (file().fileSize() > entry.byteOffset+span().spanSize()) {
-                return NO_ERROR; // already certified (we're past it)
+                return EggsError::NO_ERROR; // already certified (we're past it)
             }
             if (file().lastSpanState() == SpanState::CLEAN) {
-                return NO_ERROR; // already certified
+                return EggsError::NO_ERROR; // already certified
             }
             if (file().lastSpanState() == SpanState::CONDEMNED) {
                 return EggsError::SPAN_NOT_FOUND; // we could probably have a better error here
@@ -2992,7 +2990,7 @@ struct ShardDBImpl {
         }
 
         // We're done.
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyMakeFileTransient(EggsTime time, rocksdb::WriteBatch& batch, const MakeFileTransientEntry& entry, MakeFileTransientResp& resp) {
@@ -3005,11 +3003,11 @@ struct ShardDBImpl {
                 std::string transientFileValue;
                 ExternalValue<TransientFileBody> transientFile;
                 EggsError err = _getTransientFile({}, time, true, entry.id, transientFileValue, transientFile);
-                if (err == NO_ERROR) {
-                    return NO_ERROR;
+                if (err == EggsError::NO_ERROR) {
+                    return EggsError::NO_ERROR;
                 }
             }
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3028,7 +3026,7 @@ struct ShardDBImpl {
         transientFile().setNoteDangerous(entry.note.ref());
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveSpanCertify(EggsTime time, rocksdb::WriteBatch& batch, const RemoveSpanCertifyEntry& entry, RemoveSpanCertifyResp& resp) {
@@ -3036,7 +3034,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> file;
         {
             EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId, fileValue, file);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3051,7 +3049,7 @@ struct ShardDBImpl {
             auto status = _db->Get({}, _spansCf, spanKey.toSlice(), &spanValue);
             if (status.IsNotFound()) {
                 LOG_DEBUG(_env, "skipping removal of span for file %s, offset %s, since we're already done", entry.fileId, entry.byteOffset);
-                return NO_ERROR; // already done
+                return EggsError::NO_ERROR; // already done
             }
             ROCKS_DB_CHECKED(status);
             span = ExternalValue<SpanBody>(spanValue);
@@ -3099,7 +3097,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), file.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveOwnedSnapshotFileEdge(EggsTime time, rocksdb::WriteBatch& batch, const RemoveOwnedSnapshotFileEdgeEntry& entry, RemoveOwnedSnapshotFileEdgeResp& resp) {
@@ -3107,7 +3105,7 @@ struct ShardDBImpl {
         {
             // the GC needs to work on deleted dirs who might still have owned files, so allowSnapshot=true
             EggsError err = _initiateDirectoryModificationAndHash(time, true, batch, entry.ownerId, entry.name.ref(), nameHash);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3121,7 +3119,7 @@ struct ShardDBImpl {
             ROCKS_DB_CHECKED(batch.Delete(_edgesCf, edgeKey.toSlice()));
         }
 
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     bool _fetchSpan(InodeId fileId, uint64_t byteOffset, StaticValue<SpanKey>& spanKey, std::string& spanValue, ExternalValue<SpanBody>& span) {
@@ -3142,14 +3140,14 @@ struct ShardDBImpl {
         std::string fileValue;
         ExternalValue<FileBody> file;
         auto err = _getFile({}, fileId, fileValue, file);
-        ALWAYS_ASSERT(err == NO_ERROR || err == EggsError::FILE_NOT_FOUND);
-        if (err == NO_ERROR) {
+        ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::FILE_NOT_FOUND);
+        if (err == EggsError::NO_ERROR) {
             return SpanState::CLEAN;
         }
         // couldn't find normal file, must be transient
         ExternalValue<TransientFileBody> transientFile;
         err = _getTransientFile({}, time, true, fileId, fileValue, transientFile);
-        ALWAYS_ASSERT(err == NO_ERROR);
+        ALWAYS_ASSERT(err == EggsError::NO_ERROR);
         if (spanEnd == transientFile().fileSize()) {
             return transientFile().lastSpanState();
         } else {
@@ -3206,7 +3204,7 @@ struct ShardDBImpl {
             // if neither are found, check if we haven't swapped already, for idempotency
             if (block1Ix < 0 && block2Ix < 0) {
                 if (findBlock(blocks1, entry.blockId2, block1) >= 0 && findBlock(blocks2, entry.blockId1, block2) >= 0) {
-                    return NO_ERROR;
+                    return EggsError::NO_ERROR;
                 }
             }
             RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "blocks not found when swapping blocks, are you running two migrations at once? fileId1=%s offset1=%s block1=%s fileId2=%s offset2=%s block2=%s", entry.fileId1, entry.byteOffset1, entry.blockId1, entry.fileId2, entry.byteOffset2, entry.blockId2);
@@ -3226,15 +3224,15 @@ struct ShardDBImpl {
                     return EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE;
                 }
             }
-            return NO_ERROR;
+            return EggsError::NO_ERROR;
         };
         {
             EggsError err = checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
             err = checkNoDuplicateBlockServices(blocks2, block2Ix, block1);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3250,7 +3248,7 @@ struct ShardDBImpl {
         memcpy(block2._data, tmp.data(), decltype(block1)::SIZE);
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span1.toSlice()));
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyMoveSpan(EggsTime time, rocksdb::WriteBatch& batch, const MoveSpanEntry& entry, MoveSpanResp& resp) {
@@ -3259,7 +3257,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> transientFile1;
         {
             EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId1, transientValue1, transientFile1);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3267,7 +3265,7 @@ struct ShardDBImpl {
         ExternalValue<TransientFileBody> transientFile2;
         {
             EggsError err = _initiateTransientFileModification(time, true, batch, entry.fileId2, transientValue2, transientFile2);
-            if (err != NO_ERROR) {
+            if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
@@ -3278,7 +3276,7 @@ struct ShardDBImpl {
             transientFile1().fileSize() == entry.byteOffset1 && transientFile1().lastSpanState() == SpanState::CLEAN &&
             transientFile2().fileSize() == entry.byteOffset2 + entry.spanSize && transientFile2().lastSpanState() == SpanState::DIRTY
         ) {
-            return NO_ERROR;
+            return EggsError::NO_ERROR;
         }
         if (
             transientFile1().lastSpanState() != SpanState::DIRTY ||
@@ -3332,7 +3330,7 @@ struct ShardDBImpl {
             _addBlockServicesToFiles(batch, block.blockService(), entry.fileId2, +1);
         }
         // we're done
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySwapSpans(EggsTime time, rocksdb::WriteBatch& batch, const SwapSpansEntry& entry, SwapSpansResp& resp) {
@@ -3375,7 +3373,7 @@ struct ShardDBImpl {
             return true;
         };
         if (blocksMatch(blocks1, entry.blocks2) && blocksMatch(blocks2, entry.blocks1)) {
-            return NO_ERROR; // we're already done
+            return EggsError::NO_ERROR; // we're already done
         }
         if (!(blocksMatch(blocks1, entry.blocks1) && blocksMatch(blocks2, entry.blocks2))) {
             return EggsError::SWAP_SPANS_MISMATCHING_BLOCKS;
@@ -3393,14 +3391,14 @@ struct ShardDBImpl {
         // now do the swap
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span2.toSlice()));
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span1.toSlice()));
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applySetTime(EggsTime time, rocksdb::WriteBatch& batch, const SetTimeEntry& entry, SetTimeResp& resp) {
         std::string fileValue;
         ExternalValue<FileBody> file;
         EggsError err = _getFile({}, entry.id, fileValue, file);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         const auto set = [&file](uint64_t entryT, void (FileBody::*setTime)(EggsTime t)) {
@@ -3415,7 +3413,7 @@ struct ShardDBImpl {
             auto fileKey = InodeIdKey::Static(entry.id);
             ROCKS_DB_CHECKED(batch.Put(_filesCf, fileKey.toSlice(), file.toSlice()));
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _applyRemoveZeroBlockServiceFiles(EggsTime time, rocksdb::WriteBatch& batch, const RemoveZeroBlockServiceFilesEntry& entry, RemoveZeroBlockServiceFilesResp& resp) {
@@ -3455,17 +3453,17 @@ struct ShardDBImpl {
             resp.nextBlockService = 0;
             resp.nextFile = NULL_INODE_ID;
         }
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
-    EggsError applyLogEntry(uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    void applyLogEntry(uint64_t logIndex, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
         // TODO figure out the story with what regards time monotonicity (possibly drop non-monotonic log
         // updates?)
 
         LOG_DEBUG(_env, "applying log at index %s", logIndex);
         auto locked = _applyLogEntryLock.lock();
         resp.clear();
-        EggsError err = NO_ERROR;
+        auto err = EggsError::NO_ERROR;
 
         rocksdb::WriteBatch batch;
         _advanceLastAppliedLogEntry(batch, logIndex);
@@ -3574,7 +3572,8 @@ struct ShardDBImpl {
             throw EGGS_EXCEPTION("bad log entry kind %s", logEntryBody.kind());
         }
 
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
+            resp.setError() = err;
             LOG_DEBUG(_env, "could not apply log entry %s, index %s, because of err %s", logEntryBody.kind(), logIndex, err);
             batch.RollbackToSavePoint();
         } else {
@@ -3582,8 +3581,6 @@ struct ShardDBImpl {
         }
 
         ROCKS_DB_CHECKED(_db->Write({}, &batch));
-
-        return err;
     }
 
     // ----------------------------------------------------------------
@@ -3615,18 +3612,18 @@ struct ShardDBImpl {
             return EggsError::DIRECTORY_NOT_FOUND;
         }
         dir = tmpDir;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _getDirectoryAndHash(const rocksdb::ReadOptions& options, InodeId id, bool allowSnapshot, const BincodeBytesRef& name, uint64_t& nameHash) {
         std::string dirValue;
         ExternalValue<DirectoryBody> dir;
         EggsError err = _getDirectory(options, id, allowSnapshot, dirValue, dir);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
         nameHash = computeHash(dir().hashMode(), name);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _getFile(const rocksdb::ReadOptions& options, InodeId id, std::string& fileValue, ExternalValue<FileBody>& file) {
@@ -3640,7 +3637,7 @@ struct ShardDBImpl {
         }
         ROCKS_DB_CHECKED(status);
         file = ExternalValue<FileBody>(fileValue);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _getTransientFile(const rocksdb::ReadOptions& options, EggsTime time, bool allowPastDeadline, InodeId id, std::string& value, ExternalValue<TransientFileBody>& file) {
@@ -3660,7 +3657,7 @@ struct ShardDBImpl {
             return EggsError::FILE_NOT_FOUND;
         }
         file = tmpFile;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     EggsError _initiateTransientFileModification(
@@ -3668,7 +3665,7 @@ struct ShardDBImpl {
     ) {
         ExternalValue<TransientFileBody> tmpTf;
         EggsError err = _getTransientFile({}, time, allowPastDeadline, id, tfValue, tmpTf);
-        if (err != NO_ERROR) {
+        if (err != EggsError::NO_ERROR) {
             return err;
         }
 
@@ -3689,7 +3686,7 @@ struct ShardDBImpl {
         }
 
         tf = tmpTf;
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
 
     std::shared_ptr<const rocksdb::Snapshot> _getCurrentReadSnapshot() {
@@ -3809,7 +3806,10 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");
+    case ShardMessageKind::EMPTY:
+        throw EGGS_EXCEPTION("unexpected EMPTY shard message kind");
     }
+
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
@@ -3826,16 +3826,16 @@ ShardDB::~ShardDB() {
     _impl = nullptr;
 }
 
-EggsError ShardDB::read(const ShardReqContainer& req, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->read(req, resp);
+void ShardDB::read(const ShardReqContainer& req, ShardRespContainer& resp) {
+    ((ShardDBImpl*)_impl)->read(req, resp);
 }
 
 EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
     return ((ShardDBImpl*)_impl)->prepareLogEntry(req, logEntry);
 }
 
-EggsError ShardDB::applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
-    return ((ShardDBImpl*)_impl)->applyLogEntry(logEntryIx, logEntry, resp);
+void ShardDB::applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, ShardRespContainer& resp) {
+    ((ShardDBImpl*)_impl)->applyLogEntry(logEntryIx, logEntry, resp);
 }
 
 uint64_t ShardDB::lastAppliedLogEntry() {

@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "Assert.hpp"
-#include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "Time.hpp"
@@ -204,7 +203,7 @@ EggsError SharedRocksDB::snapshot(const std::string& path) {
     std::error_code ec;
     if (fs::is_directory(path, ec)) {
         LOG_INFO(_env, "Snapshot exists in  %s", path);
-        return NO_ERROR;
+        return EggsError::NO_ERROR;
     }
     if (fs::exists(path, ec)) {
         LOG_ERROR(_env, "Provided path exists and is not an existing snapshot  %s", path);
@@ -251,5 +250,5 @@ EggsError SharedRocksDB::snapshot(const std::string& path) {
         fs::remove_all(tmpPath, ec);
         return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
     }
-    return NO_ERROR;
+    return EggsError::NO_ERROR;
 }

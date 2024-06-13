@@ -1,45 +1,37 @@
+#include "Shard.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <netinet/in.h>
-#include <netinet/ip.h>
 #include <ostream>
 #include <string>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 #include <vector>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"
 #include "BlockServicesCacheDB.hpp"
+#include "CDCKey.hpp"
 #include "Common.hpp"
 #include "Crypto.hpp"
+#include "Env.hpp"
+#include "ErrorCount.hpp"
 #include "Exception.hpp"
 #include "LogsDB.hpp"
-#include "Msgs.hpp"
-#include "MsgsGen.hpp"
-#include "Shard.hpp"
-#include "Env.hpp"
-#include "Msgs.hpp"
+#include "Loop.hpp"
+#include "Metrics.hpp"
 #include "MultiplexedChannel.hpp"
+#include "PeriodicLoop.hpp"
+#include "Protocol.hpp"
 #include "ShardDB.hpp"
 #include "ShardKey.hpp"
-#include "CDCKey.hpp"
 #include "SharedRocksDB.hpp"
 #include "Shuckle.hpp"
+#include "SPSC.hpp"
 #include "Time.hpp"
-#include "Time.hpp"
+#include "Timings.hpp"
 #include "UDPSocketPair.hpp"
 #include "wyhash.h"
 #include "Xmon.hpp"
-#include "Timings.hpp"
-#include "ErrorCount.hpp"
-#include "PeriodicLoop.hpp"
-#include "Metrics.hpp"
-#include "Loop.hpp"
-#include "SPSC.hpp"
 
 struct QueuedShardLogEntry {
     ShardLogEntry logEntry;
@@ -95,10 +87,6 @@ std::ostream& operator<<(std::ostream& out, WriterQueueEntryKind kind) {
 class ShardWriterRequest {
 public:
     ShardWriterRequest() { clear(); }
-    ShardWriterRequest(const ShardWriterRequest& other) {
-        _kind = other._kind;
-        _data = other._data;
-    }
 
     ShardWriterRequest(ShardWriterRequest&& other) {
         *this = std::move(other);
@@ -252,49 +240,52 @@ static void packShardResponse(
     ShardShared& shared,
     const AddrsInfo& srcAddr,
     UDPSender& sender,
-    uint64_t requestId,
-    ShardMessageKind kind,
     Duration elapsed,
     bool dropArtificially,
     const IpPort& clientAddr,
     uint8_t sockIx,
-    EggsError err,
-    const ShardRespContainer& resp
+    ShardMessageKind reqKind,
+    const ShardRespMsg& msg
 ) {
-    shared.timings[(int)kind].add(elapsed);
-    shared.errors[(int)kind].add(err);
+    auto respKind = msg.body.kind();
+    shared.timings[(int)reqKind].add(elapsed);
+    shared.errors[(int)reqKind].add( respKind != ShardMessageKind::ERROR ? EggsError::NO_ERROR : msg.body.getError());
     if (unlikely(dropArtificially)) {
-        LOG_DEBUG(env, "artificially dropping response %s", requestId);
+        LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
     }
     ALWAYS_ASSERT(clientAddr.port != 0);
 
-    if (err == NO_ERROR) {
-        LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", requestId, kind, elapsed);
-        if (bigResponse(kind)) {
+    if (respKind != ShardMessageKind::ERROR) {
+        LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
+        if (bigResponse(respKind)) {
             if (unlikely(env._shouldLog(LogLevel::LOG_TRACE))) {
-                LOG_TRACE(env, "resp body: %s", resp);
+                LOG_TRACE(env, "resp: %s", msg);
             } else {
-                LOG_DEBUG(env, "resp body: <omitted>");
+                LOG_DEBUG(env, "resp: <omitted>");
             }
         } else {
-            LOG_DEBUG(env, "resp body: %s", resp);
+            LOG_DEBUG(env, "resp: %s", msg);
         }
-        sender.prepareOutgoingMessage(env, srcAddr, sockIx, clientAddr,
-            [requestId, kind, &resp](BincodeBuf& buf) {
-                ShardResponseHeader(requestId, kind).pack(buf);
-                resp.pack(buf);
-            });
     } else {
-        LOG_DEBUG(env, "request %s failed with error %s in %s", kind, err, elapsed);
-        sender.prepareOutgoingMessage(env, srcAddr, sockIx, clientAddr,
-            [requestId, err](BincodeBuf& buf) {
-                ShardResponseHeader(requestId, ShardMessageKind::ERROR).pack(buf);
-                buf.packScalar<uint16_t>((uint16_t)err);
-            });
+        LOG_DEBUG(env, "request %s failed with error %s in %s", reqKind, msg.body.getError(), elapsed);
     }
+    sender.prepareOutgoingMessage(env, srcAddr, sockIx, clientAddr,
+        [&msg](BincodeBuf& buf) {
+            msg.pack(buf);
+        });
+    LOG_DEBUG(env, "will send response for req id %s kind %s to %s", msg.id, reqKind, clientAddr);
+}
 
-    LOG_DEBUG(env, "will send response for req id %s kind %s to %s", requestId, kind, clientAddr);
+// a hack while parts of messages in shard protocol are signed and part are unsigned
+static ShardMessageKind peekKind(const BincodeBuf& buf) {
+    auto tmpBuf = buf;
+    uint32_t version = tmpBuf.unpackScalar<uint32_t>();
+    if (version != SHARD_REQ_PROTOCOL_VERSION) {
+        throw BINCODE_EXCEPTION("bad protocol version %s, expected %s", version, SHARD_REQ_PROTOCOL_VERSION);
+    }
+    tmpBuf.unpackScalar<uint64_t>();
+    return tmpBuf.unpackScalar<ShardMessageKind>();
 }
 
 struct ShardServer : Loop {
@@ -355,41 +346,13 @@ private:
         resp.replicaId = replicaId;
 
         try {
-            resp.header.unpack(msg.buf);
+            resp.msg.unpack(msg.buf, _expandedShardKey);
         } catch (const BincodeException& err) {
-            LOG_ERROR(_env, "Could not parse LogsDBResponse.header: %s", err.what());
+            LOG_ERROR(_env, "Could not parse LogsDBResponse: %s", err.what());
             _logEntries.pop_back();
             return;
         }
-
-        try {
-            resp.responseContainer.unpack(msg.buf, resp.header.kind);
-        } catch (const BincodeException& exc) {
-            LOG_ERROR(_env, "Could not parse LogsDBResponse.responseContainer of kind %s: %s", resp.header.kind, exc.what());
-            _logEntries.pop_back();
-            return;
-        }
-
-        if (unlikely(msg.buf.remaining() < 8)) {
-            LOG_ERROR(_env, "Could not parse LogsDBResponse of kind %s from %s. Message signature is 8 bytes, only %s remaining", resp.header.kind, msg.clientAddr, msg.buf.remaining());
-            _logEntries.pop_back();
-            return;
-        }
-
-        auto expectedMac = cbcmac(_expandedShardKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
-        BincodeFixedBytes<8> receivedMac;
-        msg.buf.unpackFixedBytes<8>(receivedMac);
-        if (unlikely(expectedMac != receivedMac.data)) {
-            LOG_ERROR(_env, "Incorrect signature for LogsDBResponse %s from %s", resp.header.kind, msg.clientAddr);
-            _logEntries.pop_back();
-            return;
-        }
-
-        if (unlikely(msg.buf.remaining())) {
-            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBResponse %s from %s", msg.buf.remaining(), resp.header.kind, msg.clientAddr);
-            _logEntries.pop_back();
-        }
-        LOG_DEBUG(_env, "Received response %s for requests id %s from replica id %s", resp.header.kind, resp.header.requestId, resp.replicaId);
+        LOG_DEBUG(_env, "Received response %s for requests id %s from replica id %s", resp.msg.body.kind(), resp.msg.id, resp.replicaId);
     }
 
     void _handleLogsDBRequest(UDPMessage& msg) {
@@ -406,35 +369,13 @@ private:
         req.replicaId = replicaId;
 
         try {
-            req.header.unpack(msg.buf);
-            req.requestContainer.unpack(msg.buf, req.header.kind);
+            req.msg.unpack(msg.buf, _expandedShardKey);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBRequest: %s", err.what());
             _logEntries.pop_back();
             return;
         }
-
-
-        if (unlikely(msg.buf.remaining() < 8)) {
-            LOG_ERROR(_env, "Could not parse LogsDBRequest of kind %s from %s, message signature is 8 bytes, only %s remaining", req.header.kind, msg.clientAddr, msg.buf.remaining());
-            _logEntries.pop_back();
-            return;
-        }
-
-        auto expectedMac = cbcmac(_expandedShardKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
-        BincodeFixedBytes<8> receivedMac;
-        msg.buf.unpackFixedBytes<8>(receivedMac);
-        if (unlikely(expectedMac != receivedMac.data)) {
-            LOG_ERROR(_env, "Incorrect signature for LogsDBRequest %s from %s", req.header.kind, msg.clientAddr);
-            _logEntries.pop_back();
-            return;
-        }
-
-        if (unlikely(msg.buf.remaining())) {
-            LOG_ERROR(_env, "Malformed message. Extra %s bytes for LogsDBRequest %s from %s", msg.buf.remaining(), req.header.kind, msg.clientAddr);
-            _logEntries.pop_back();
-        }
-        LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", req.header.kind, req.header.requestId, req.replicaId);
+        LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", req.msg.body.kind(), req.msg.id, req.replicaId);
     }
 
     uint8_t _getReplicaId(const IpPort& clientAddress) {
@@ -460,99 +401,70 @@ private:
         }
 
         // First, try to parse the header
-        ShardRequestHeader reqHeader;
+        ShardReqMsg req;
         try {
-            reqHeader.unpack(msg.buf);
+            if (isPrivilegedRequestKind((uint8_t)peekKind(msg.buf))) {
+                SignedShardReqMsg signedReq;
+                signedReq.unpack(msg.buf, _expandedCDCKey);
+                req.id = signedReq.id;
+                req.body = std::move(signedReq.body);
+            } else {
+                req.unpack(msg.buf);
+            }
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse: %s", err.what());
-            RAISE_ALERT(_env, "could not parse request header from %s, dropping it.", msg.clientAddr);
+            RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
             return;
         }
 
         auto t0 = eggsNow();
 
-        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", reqHeader.requestId, reqHeader.kind, msg.clientAddr);
+        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", req.id, req.body.kind(), msg.clientAddr);
 
-        // If this will be filled in with an actual code, it means that we couldn't process
-        // the request.
-        EggsError err = NO_ERROR;
-
-        // Now, try to parse the body
-        ShardReqContainer reqContainer;
-        try {
-            reqContainer.unpack(msg.buf, reqHeader.kind);
-            if (bigRequest(reqHeader.kind)) {
+        if (bigRequest(req.body.kind())) {
                 if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
-                    LOG_TRACE(_env, "parsed request: %s", reqContainer);
+                    LOG_TRACE(_env, "parsed request: %s", req);
                 } else {
                     LOG_DEBUG(_env, "parsed request: <omitted>");
                 }
-            } else {
-                LOG_DEBUG(_env, "parsed request: %s", reqContainer);
-            }
-        } catch (const BincodeException& exc) {
-            LOG_ERROR(_env, "Could not parse: %s", exc.what());
-            RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, msg.clientAddr);
-            err = EggsError::MALFORMED_REQUEST;
-        }
-
-        if (likely(err == NO_ERROR)) {
-            // authenticate, if necessary
-            if (isPrivilegedRequestKind(reqHeader.kind)) {
-                if (unlikely(msg.buf.remaining() < 8)) {
-                    LOG_ERROR(_env, "Could not parse request of kind %s from %s, message signature is 8 bytes, only %s remaining", reqHeader.kind, msg.clientAddr, msg.buf.remaining());
-                    RAISE_ALERT(_env, "could not parse request of kind %s from %s, will reply with error.", reqHeader.kind, msg.clientAddr);
-                    err = EggsError::MALFORMED_REQUEST;
-                } else {
-                    auto expectedMac = cbcmac(_expandedCDCKey, msg.buf.data, msg.buf.cursor - msg.buf.data);
-                    BincodeFixedBytes<8> receivedMac;
-                    msg.buf.unpackFixedBytes<8>(receivedMac);
-                    if (expectedMac != receivedMac.data) {
-                        err = EggsError::NOT_AUTHORISED;
-                    }
-                }
-            }
-        }
-
-        // Make sure nothing is left
-        if (unlikely(err == NO_ERROR && msg.buf.remaining() != 0)) {
-            RAISE_ALERT(_env, "%s bytes remaining after parsing request of kind %s from %s, will reply with error", msg.buf.remaining(), reqHeader.kind, msg.clientAddr);
-            err = EggsError::MALFORMED_REQUEST;
+        } else {
+            LOG_DEBUG(_env, "parsed request: %s", req);
         }
 
         // At this point, if it's a read request, we can process it,
         // if it's a write request we prepare the log entry and
         // send it off.
-        ShardRespContainer respContainer;
-        if (likely(err == NO_ERROR)) {
-            if (readOnlyShardReq(reqContainer.kind())) {
-                err = _shared.shardDB.read(reqContainer, respContainer);
-            } else if (unlikely(reqContainer.kind() == ShardMessageKind::SHARD_SNAPSHOT)) {
-                auto& entry = _logEntries.emplace_back().setSnapshotRequest();
-                entry.sockIx = msg.socketIx;
-                entry.clientAddr = msg.clientAddr;
-                entry.receivedAt = t0;
-                entry.snapshotId = reqContainer.getShardSnapshot().snapshotId;
-                entry.requestId = reqHeader.requestId;
+        ShardRespMsg respContainer;
+        respContainer.id = req.id;
+        if (readOnlyShardReq(req.body.kind())) {
+            _shared.shardDB.read(req.body, respContainer.body);
+        } else if (unlikely(req.body.kind() == ShardMessageKind::SHARD_SNAPSHOT)) {
+            auto& entry = _logEntries.emplace_back().setSnapshotRequest();
+            entry.sockIx = msg.socketIx;
+            entry.clientAddr = msg.clientAddr;
+            entry.receivedAt = t0;
+            entry.snapshotId = req.body.getShardSnapshot().snapshotId;
+            entry.requestId = req.id;
+            return;
+        } else {
+            auto& entry = _logEntries.emplace_back().setQueuedShardLogEntry();
+            entry.sockIx = msg.socketIx;
+            entry.clientAddr = msg.clientAddr;
+            entry.receivedAt = t0;
+            entry.requestKind = req.body.kind();
+            entry.requestId = req.id;
+            auto err = _shared.shardDB.prepareLogEntry(req.body, entry.logEntry);
+            if (likely(err == EggsError::NO_ERROR)) {
+                return; // we're done here, move along
             } else {
-                auto& entry = _logEntries.emplace_back().setQueuedShardLogEntry();
-                entry.sockIx = msg.socketIx;
-                entry.clientAddr = msg.clientAddr;
-                entry.receivedAt = t0;
-                entry.requestKind = reqHeader.kind;
-                entry.requestId = reqHeader.requestId;
-                err = _shared.shardDB.prepareLogEntry(reqContainer, entry.logEntry);
-                if (likely(err == NO_ERROR)) {
-                    return; // we're done here, move along
-                } else {
-                    _logEntries.pop_back(); // back out the log entry
-                }
+                respContainer.body.setError() = err;
+                _logEntries.pop_back(); // back out the log entry
             }
         }
 
         Duration elapsed = eggsNow() - t0;
         bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-        packShardResponse(_env, _shared, _shared.sock().addr(), *_sender, reqHeader.requestId, reqHeader.kind, elapsed, dropArtificially, msg.clientAddr, msg.socketIx, err, respContainer);
+        packShardResponse(_env, _shared, _shared.sock().addr(), *_sender, elapsed, dropArtificially, msg.clientAddr, msg.socketIx, req.body.kind(), respContainer);
     }
 
 public:
@@ -609,7 +521,7 @@ private:
     ShardShared& _shared;
     AES128Key _expandedShardKey;
     uint64_t _currentLogIndex;
-    ShardRespContainer _respContainer;
+    ShardRespMsg _respContainer;
     std::vector<ShardWriterRequest> _requests;
     const size_t _maxWritesAtOnce;
 
@@ -700,7 +612,7 @@ public:
             }
 
             auto err = _logsDB.appendEntries(logsDBEntries);
-            ALWAYS_ASSERT(err == NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
             ALWAYS_ASSERT(_logEntries.size() == logsDBEntries.size());
             for (size_t i = 0; i < _logEntries.size(); ++i) {
                 if (logsDBEntries[i].idx == 0) {
@@ -756,7 +668,7 @@ public:
                 ALWAYS_ASSERT(shardEntry == it->second.logEntry);
             }
 
-            auto err = _shared.shardDB.applyLogEntry(logsDBEntry.idx.u64, shardEntry, _respContainer);
+            _shared.shardDB.applyLogEntry(logsDBEntry.idx.u64, shardEntry, _respContainer.body);
             if (it != _inFlightEntries.end()) {
                 auto& logEntry = _outgoingLogEntries.emplace_back(std::move(it->second));
                 _inFlightEntries.erase(it);
@@ -768,11 +680,12 @@ public:
                     LOG_DEBUG(_env, "applying request-less log entry");
                 }
                 if (likely(logEntry.requestId)) {
+                    _respContainer.id = logEntry.requestId;
                     Duration elapsed = eggsNow() - logEntry.receivedAt;
                     bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
-                    packShardResponse(_env, _shared, _shared.sock().addr(), _sender, logEntry.requestId, logEntry.requestKind, elapsed, dropArtificially, logEntry.clientAddr, logEntry.sockIx, err, _respContainer);
-                } else if (unlikely(err != NO_ERROR)) {
-                    RAISE_ALERT(_env, "could not apply request-less log entry: %s", err);
+                    packShardResponse(_env, _shared, _shared.sock().addr(), _sender, elapsed, dropArtificially, logEntry.clientAddr, logEntry.sockIx, logEntry.requestKind, _respContainer);
+                } else if (unlikely(_respContainer.body.kind() == ShardMessageKind::ERROR)) {
+                    RAISE_ALERT(_env, "could not apply request-less log entry: %s", _respContainer.body.getError());
                 }
             }
         }
@@ -785,10 +698,15 @@ public:
         // _logsDB.flush(true);
 
         if (unlikely(_snapshotRequest.requestId != 0)) {
-            _respContainer.setShardSnapshot();
+            _respContainer.id = _snapshotRequest.requestId;
             auto err = _shared.sharedDB.snapshot(_basePath +"/snapshot-" + std::to_string(_snapshotRequest.snapshotId));
             Duration elapsed = eggsNow() - _snapshotRequest.receivedAt;
-            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, _snapshotRequest.requestId, ShardMessageKind::SHARD_SNAPSHOT, elapsed, false, _snapshotRequest.clientAddr, _snapshotRequest.sockIx, err, _respContainer);
+            if (err == EggsError::NO_ERROR) {
+                _respContainer.body.setShardSnapshot();
+            } else {
+                _respContainer.body.setError() = err;
+            }
+            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, elapsed, false, _snapshotRequest.clientAddr, _snapshotRequest.sockIx, ShardMessageKind::SHARD_SNAPSHOT, _respContainer);
             _snapshotRequest.requestId = 0;
         }
 
@@ -818,7 +736,7 @@ public:
 
         bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
         if (unlikely(dropArtificially)) {
-            LOG_DEBUG(_env, "artificially dropping response %s", response.header.requestId);
+            LOG_DEBUG(_env, "artificially dropping response %s", response.msg.id);
             return;
         }
 
@@ -827,12 +745,10 @@ public:
             _shared.sock().addr(),
             addrInfo,
             [&response,this](BincodeBuf& buf) {
-                response.header.pack(buf);
-                response.responseContainer.pack(buf);
-                buf.packFixedBytes<8>({cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data)});
+                response.msg.pack(buf, _expandedShardKey);
             });
 
-        LOG_DEBUG(_env, "will send response for req id %s kind %s to %s", response.header.requestId, response.header.kind, addrInfo);
+        LOG_DEBUG(_env, "will send response for req id %s kind %s to %s", response.msg.id, response.msg.body.kind(), addrInfo);
     }
 
     void packLogsDBRequest(LogsDBRequest& request) {
@@ -845,7 +761,7 @@ public:
 
         bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
         if (unlikely(dropArtificially)) {
-            LOG_DEBUG(_env, "artificially dropping request %s", request.header.requestId);
+            LOG_DEBUG(_env, "artificially dropping request %s", request.msg.id);
             return;
         }
 
@@ -854,12 +770,10 @@ public:
             _shared.sock().addr(),
             addrInfo,
             [&request,this](BincodeBuf& buf) {
-                request.header.pack(buf);
-                request.requestContainer.pack(buf);
-                buf.packFixedBytes<8>({cbcmac(_expandedShardKey, buf.data, buf.cursor - buf.data)});
+                request.msg.pack(buf, _expandedShardKey);
             });
 
-        LOG_DEBUG(_env, "will send request for req id %s kind %s to %s", request.header.requestId, request.header.kind, addrInfo);
+        LOG_DEBUG(_env, "will send request for req id %s kind %s to %s", request.msg.id, request.msg.body.kind(), addrInfo);
     }
 
     virtual void step() override {

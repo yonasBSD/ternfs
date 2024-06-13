@@ -88,7 +88,7 @@ func readBlocksResponse(
 			log.Info("could not read error: %v", err)
 			return err
 		}
-		return msgs.ErrCode(err)
+		return msgs.EggsError(err)
 	}
 	kind := msgs.BlocksMessageKind(kindByte[0])
 	if kind != resp.BlocksResponseKind() {

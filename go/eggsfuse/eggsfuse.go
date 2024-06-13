@@ -121,7 +121,7 @@ func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardRespo
 func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 	if err := c.CDCRequest(logger, req, resp); err != nil {
 		switch eggsErr := err.(type) {
-		case msgs.ErrCode:
+		case msgs.EggsError:
 			return eggsErrToErrno(eggsErr)
 		}
 		panic(err)
@@ -155,7 +155,7 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 		err := c.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
 
 		// if we tolerate transient files, try that
-		if eggsErr, ok := err.(msgs.ErrCode); ok && eggsErr == msgs.FILE_NOT_FOUND && allowTransient {
+		if eggsErr, ok := err.(msgs.EggsError); ok && eggsErr == msgs.FILE_NOT_FOUND && allowTransient {
 			resp := msgs.StatTransientFileResp{}
 			if newErr := c.ShardRequest(logger, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &resp); newErr != nil {
 				logger.Debug("ignoring transient stat error %v", newErr)

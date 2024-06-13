@@ -46,7 +46,7 @@ func writeShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleRespons
 	return nil
 }
 
-func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.ErrCode) error {
+func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.EggsError) error {
 	log.Debug("writing shuckle error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
@@ -79,7 +79,7 @@ func handleError(
 	log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
 
 	// attempt to say goodbye, ignore errors
-	if eggsErr, isEggsErr := err.(msgs.ErrCode); isEggsErr {
+	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 		writeShuckleResponseError(log, conn, eggsErr)
 	} else {
 		writeShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)

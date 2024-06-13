@@ -540,7 +540,7 @@ func (i *IpPort) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type ErrCode uint16
+type EggsError uint16
 
 type ShardMessageKind uint8
 
@@ -2189,7 +2189,7 @@ type LogWriteReq struct {
 }
 
 type LogWriteResp struct {
-	Result ErrCode
+	Result EggsError
 }
 
 type ReleaseReq struct {
@@ -2198,7 +2198,7 @@ type ReleaseReq struct {
 }
 
 type ReleaseResp struct {
-	Result ErrCode
+	Result EggsError
 }
 
 type LogReadReq struct {
@@ -2206,7 +2206,7 @@ type LogReadReq struct {
 }
 
 type LogReadResp struct {
-	Result ErrCode
+	Result EggsError
 	Value  bincode.Blob
 }
 
@@ -2215,7 +2215,7 @@ type NewLeaderReq struct {
 }
 
 type NewLeaderResp struct {
-	Result       ErrCode
+	Result       EggsError
 	LastReleased LogIdx
 }
 
@@ -2225,7 +2225,7 @@ type NewLeaderConfirmReq struct {
 }
 
 type NewLeaderConfirmResp struct {
-	Result ErrCode
+	Result EggsError
 }
 
 type LogRecoveryReadReq struct {
@@ -2234,7 +2234,7 @@ type LogRecoveryReadReq struct {
 }
 
 type LogRecoveryReadResp struct {
-	Result ErrCode
+	Result EggsError
 	Value  bincode.Blob
 }
 
@@ -2245,5 +2245,5 @@ type LogRecoveryWriteReq struct {
 }
 
 type LogRecoveryWriteResp struct {
-	Result ErrCode
+	Result EggsError
 }

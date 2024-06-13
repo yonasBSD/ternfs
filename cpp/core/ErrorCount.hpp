@@ -1,9 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
-#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Metrics.hpp"
 
 struct ErrorCount {

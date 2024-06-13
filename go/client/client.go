@@ -392,7 +392,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 			log.RaiseAlert("bad error response length %v, expected %v", rawResp.respLen, 4+8+1+2)
 			err = msgs.MALFORMED_RESPONSE
 		} else {
-			err = msgs.ErrCode(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
+			err = msgs.EggsError(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
 		}
 		req.respCh <- &metadataProcessorResponse{
 			requestId: req.requestId,

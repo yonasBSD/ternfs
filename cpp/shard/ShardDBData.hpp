@@ -7,7 +7,7 @@
 #include "Assert.hpp"
 #include "Common.hpp"
 #include "Bincode.hpp"
-#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
 

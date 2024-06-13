@@ -64,15 +64,12 @@ std::ostream& operator<<(std::ostream& out, const CDCStep& x);
 
 struct CDCShardResp {
     CDCTxnId txnId; // the transaction id we're getting a response for
-    // if err != NO_ERROR, resp is not filled in
-    EggsError err;
     ShardRespContainer resp;
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     size_t packedSize() const;
     bool operator==(const CDCShardResp& rhs) const {
-        return txnId == rhs.txnId && err == rhs.err &&
-            resp == rhs.resp;
+        return txnId == rhs.txnId && resp == rhs.resp;
     }
 };
 

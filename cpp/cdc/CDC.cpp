@@ -543,19 +543,19 @@ private:
     }
 
     void _recordCDCShardResp(uint64_t requestId, CDCShardResp& resp) {
-        resp.err = resp.resp.kind() != ShardMessageKind::ERROR ? EggsError::NO_ERROR : resp.resp.getError();
-        _shared.shardErrors.add(resp.err);
-        if (resp.err == EggsError::NO_ERROR) {
+        auto err = resp.resp.kind() != ShardMessageKind::ERROR ? EggsError::NO_ERROR : resp.resp.getError();
+        _shared.shardErrors.add(err);
+        if (err == EggsError::NO_ERROR) {
             LOG_DEBUG(_env, "successfully parsed shard response %s with kind %s, process soon", requestId, resp.resp.kind());
             return;
-        } else if (resp.err == EggsError::TIMEOUT) {
+        } else if (err == EggsError::TIMEOUT) {
             LOG_DEBUG(_env, "txn %s shard req %s, timed out", resp.txnId, requestId);
-        } else if (innocuousShardError(resp.err)) {
-            LOG_DEBUG(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, resp.err);
-        } else if (rareInnocuousShardError(resp.err)) {
-            LOG_INFO(_env, "txn %s shard req %s, finished with rare innocuous error %s", resp.txnId, requestId, resp.err);
+        } else if (innocuousShardError(err)) {
+            LOG_DEBUG(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, err);
+        } else if (rareInnocuousShardError(err)) {
+            LOG_INFO(_env, "txn %s shard req %s, finished with rare innocuous error %s", resp.txnId, requestId, err);
         } else {
-            RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", resp.txnId, requestId, resp.err);
+            RAISE_ALERT(_env, "txn %s, req id %s, finished with error %s", resp.txnId, requestId, err);
         }
     }
 

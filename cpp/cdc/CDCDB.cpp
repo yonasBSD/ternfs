@@ -1305,29 +1305,18 @@ struct CrossShardHardUnlinkFileStateMachine {
 
 void CDCShardResp::pack(BincodeBuf& buf) const {
     buf.packScalar(txnId.x);
-    auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-    buf.packScalar(err);
-    if (err == EggsError::NO_ERROR) {
-        resp.pack(buf);
-    }
+    checkPoint.pack(buf);
+    resp.pack(buf);
 }
 
 void CDCShardResp::unpack(BincodeBuf& buf) {
     txnId.x = buf.unpackScalar<uint64_t>();
-    auto err = buf.unpackScalar<EggsError>();
-    if (err == EggsError::NO_ERROR) {
-        resp.unpack(buf);
-    } else {
-        resp.setError() = err;
-    }
+    checkPoint.unpack(buf);
+    resp.unpack(buf);
 }
 
 size_t CDCShardResp::packedSize() const {
-    size_t size = sizeof(uint64_t) + sizeof(EggsError);
-    if (resp.kind() != ShardMessageKind::ERROR) {
-        size += resp.packedSize();
-    }
-    return size;
+    return sizeof(uint64_t) + checkPoint.packedSize() + resp.packedSize();
 }
 
 void CDCLogEntry::prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::vector<CDCShardResp>& shardResps, size_t maxPackedSize, std::vector<CDCLogEntry>& entriesOut) {

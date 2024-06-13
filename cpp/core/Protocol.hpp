@@ -64,6 +64,10 @@ public:
         return checkPointIdx == other.checkPointIdx && resp == other.resp;
     }
 
+    ShardMessageKind kind() const {
+        return resp.kind();
+    }
+
     void clear() {
         checkPointIdx = 0;
         resp.clear();

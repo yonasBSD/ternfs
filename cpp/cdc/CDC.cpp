@@ -215,7 +215,7 @@ private:
     // We receive everything at once, but we send stuff from
     // separate threads.
     UDPReceiver<2> _receiver;
-    MultiplexedChannel<4, std::array<uint32_t, 4>{CDC_REQ_PROTOCOL_VERSION, SHARD_RESP_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
+    MultiplexedChannel<4, std::array<uint32_t, 4>{CDC_REQ_PROTOCOL_VERSION, SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
     UDPSender _cdcSender;
     UDPSender _shardSender;
 
@@ -320,6 +320,7 @@ public:
                 uint64_t requestId = oldest->first;
                 auto resp = _prepareCDCShardResp(requestId);
                 ALWAYS_ASSERT(resp != nullptr); // must be there, we've just timed it out
+                resp->checkPoint = 0;
                 resp->resp.setError() = EggsError::TIMEOUT;
                 _recordCDCShardResp(requestId, *resp);
                 ++oldest;
@@ -675,12 +676,12 @@ private:
     }
 
     void _processShardMessages() {
-        for (auto& msg : _channel.protocolMessages(SHARD_RESP_PROTOCOL_VERSION)) {
+        for (auto& msg : _channel.protocolMessages(SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION)) {
             LOG_DEBUG(_env, "received response from shard");
 
-            ShardRespMsg respMsg;
+            ShardCheckPointedRespMsg respMsg;
             try {
-                respMsg.unpack(msg.buf);
+                respMsg.unpack(msg.buf, _expandedCDCKey);
             } catch (BincodeException err) {
                 LOG_ERROR(_env, "could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse response, dropping response");
@@ -694,7 +695,8 @@ private:
                 // we couldn't find it
                 continue;
             }
-            shardResp->resp = std::move(respMsg.body);
+            shardResp->checkPoint = respMsg.body.checkPointIdx;
+            shardResp->resp = std::move(respMsg.body.resp);
 
             _recordCDCShardResp(respMsg.id, *shardResp);
         }
@@ -744,7 +746,7 @@ private:
         for (const auto& [txnId, shardReq]: _step.runningTxns) {
             CDCShardReq prevReq;
             LOG_TRACE(_env, "txn %s needs shard %s, req %s", txnId, shardReq.shid, shardReq.req);
-            ShardReqMsg shardReqMsg;
+            ShardCheckPointedReqMsg shardReqMsg;
 
             // Do not allocate new req id for repeated requests, so that we'll just accept
             // the first one that comes back. There's a chance for the txnId to not be here
@@ -772,14 +774,7 @@ private:
 
             LOG_DEBUG(_env, "sending request for txn %s with req id %s to shard %s (%s)", txnId, shardReqMsg.id, shardReq.shid, shardInfo.addrs);
             _shardSender.prepareOutgoingMessage(_env, _shared.socks[SHARD_SOCK].addr(), shardInfo.addrs, [this, &shardReqMsg](BincodeBuf& bbuf) {
-                if (isPrivilegedRequestKind((uint8_t)shardReqMsg.body.kind())) {
-                    SignedShardReqMsg signedReq;
-                    signedReq.id = shardReqMsg.id;
-                    signedReq.body = std::move(shardReqMsg.body);
-                    signedReq.pack(bbuf, _expandedCDCKey);
-                } else {
-                    shardReqMsg.pack(bbuf);
-                }
+                    shardReqMsg.pack(bbuf, _expandedCDCKey);
             });
             // Record the in-flight req
             _inFlightShardReqs.insert(shardReqMsg.id, InFlightShardRequest{

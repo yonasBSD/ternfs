@@ -863,7 +863,7 @@ struct ShardDBImpl {
         return _visitInodes(options, _filesCf, req, resp);
     }
 
-    void read(const ShardReqContainer& req, ShardRespContainer& resp) {
+    uint64_t read(const ShardReqContainer& req, ShardRespContainer& resp) {
         LOG_DEBUG(_env, "processing read-only request of kind %s", req.kind());
 
         auto err = EggsError::NO_ERROR;
@@ -916,6 +916,7 @@ struct ShardDBImpl {
         } else {
             ALWAYS_ASSERT(req.kind() == resp.kind());
         }
+        return _lastAppliedLogEntry(options);
     }
 
 
@@ -1703,7 +1704,7 @@ struct ShardDBImpl {
     // log application
 
     void _advanceLastAppliedLogEntry(rocksdb::WriteBatch& batch, uint64_t index) {
-        uint64_t oldIndex = _lastAppliedLogEntry();
+        uint64_t oldIndex = _lastAppliedLogEntry({});
         ALWAYS_ASSERT(oldIndex+1 == index, "old index is %s, expected %s, got %s", oldIndex, oldIndex+1, index);
         LOG_DEBUG(_env, "bumping log index from %s to %s", oldIndex, index);
         StaticValue<U64Value> v;
@@ -3590,9 +3591,9 @@ struct ShardDBImpl {
         return cbcmac(_expandedSecretKey, (const uint8_t*)&id, sizeof(id));
     }
 
-    uint64_t _lastAppliedLogEntry() {
+    uint64_t _lastAppliedLogEntry(const rocksdb::ReadOptions& options) {
         std::string value;
-        ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
+        ROCKS_DB_CHECKED(_db->Get(options, shardMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), &value));
         ExternalValue<U64Value> v(value);
         return v().u64();
     }
@@ -3826,8 +3827,8 @@ ShardDB::~ShardDB() {
     _impl = nullptr;
 }
 
-void ShardDB::read(const ShardReqContainer& req, ShardRespContainer& resp) {
-    ((ShardDBImpl*)_impl)->read(req, resp);
+uint64_t ShardDB::read(const ShardReqContainer& req, ShardRespContainer& resp) {
+    return ((ShardDBImpl*)_impl)->read(req, resp);
 }
 
 EggsError ShardDB::prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry) {
@@ -3839,7 +3840,7 @@ void ShardDB::applyLogEntry(uint64_t logEntryIx, const ShardLogEntry& logEntry, 
 }
 
 uint64_t ShardDB::lastAppliedLogEntry() {
-    return ((ShardDBImpl*)_impl)->_lastAppliedLogEntry();
+    return ((ShardDBImpl*)_impl)->_lastAppliedLogEntry({});
 }
 
 const std::array<uint8_t, 16>& ShardDB::secretKey() const {

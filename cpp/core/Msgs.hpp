@@ -407,6 +407,7 @@ std::ostream& operator<<(std::ostream& out, BlockServiceId crc);
 
 // we reserve 3 bits so that we can fit ReplicaId in LeaderToken
 struct LogIdx {
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
     uint64_t u64;
 
     constexpr LogIdx(): u64(0) {}
@@ -442,6 +443,10 @@ struct LogIdx {
 
     void unpack(BincodeBuf& buf) {
         u64 = buf.unpackScalar<uint64_t>();
+    }
+
+    constexpr size_t packedSize() const {
+        return STATIC_SIZE;
     }
 
     constexpr bool valid() const {

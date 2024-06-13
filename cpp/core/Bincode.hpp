@@ -464,6 +464,11 @@ std::ostream& operator<<(std::ostream& out, const ProtocolMessage<P,R, CheckBuff
     return out << msg.id << " : " << msg.body;
 }
 
+template<uint32_t P, typename R, bool CheckBuffFullyUsed>
+std::ostream& operator<<(std::ostream& out, const SignedProtocolMessage<P,R, CheckBuffFullyUsed>& msg) {
+    return out << msg.id << " : " << msg.body;
+}
+
 constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header
 constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IP header - ICMP header
 

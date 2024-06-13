@@ -14,6 +14,14 @@ constexpr uint32_t SHARD_RESP_PROTOCOL_VERSION = 0x1414853;
 // '2414853'
 constexpr uint32_t SHARD_LOG_PROTOCOL_VERSION = 0x2414853;
 
+// >>> format(struct.unpack('<I', b'SHA\3')[0], 'x')
+// '3414853'
+constexpr uint32_t SHARD_CHECK_POINTED_REQ_PROTOCOL_VERSION = 0x3414853;
+
+// >>> format(struct.unpack('<I', b'SHA\4')[0], 'x')
+// '4414853'
+constexpr uint32_t SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION = 0x4414853;
+
 // >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
 // '434443'
 constexpr uint32_t CDC_REQ_PROTOCOL_VERSION = 0x434443;
@@ -38,6 +46,37 @@ constexpr uint32_t  LOG_REQ_PROTOCOL_VERSION = 0x474f4c;
 // '1474f4c'
 constexpr uint32_t LOG_RESP_PROTOCOL_VERSION = 0x1474f4c;
 
+struct ShardCheckPointedResp {
+public:
+    static constexpr size_t STATIC_SIZE = LogIdx::STATIC_SIZE + ShardRespContainer::STATIC_SIZE;
+    size_t packedSize() const {
+        return checkPointIdx.packedSize() + resp.packedSize();
+    }
+    void pack(BincodeBuf& buf) const {
+        checkPointIdx.pack(buf);
+        resp.pack(buf);
+    }
+    void unpack(BincodeBuf& buf) {
+        checkPointIdx.unpack(buf);
+        resp.unpack(buf);
+    }
+    bool operator==(const ShardCheckPointedResp& other) const {
+        return checkPointIdx == other.checkPointIdx && resp == other.resp;
+    }
+
+    void clear() {
+        checkPointIdx = 0;
+        resp.clear();
+    }
+
+    LogIdx  checkPointIdx;
+    ShardRespContainer resp;
+};
+
+inline std::ostream& operator<<(std::ostream& out, const ShardCheckPointedResp& resp) {
+    return out << "checkPointIdx: " << resp.checkPointIdx << " resp: " << resp.resp;
+}
+
 using ShardReqMsg = ProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
 using SignedShardReqMsg = SignedProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
 using ShardRespMsg = ProtocolMessage<SHARD_RESP_PROTOCOL_VERSION, ShardRespContainer>;
@@ -45,3 +84,5 @@ using CDCReqMsg = ProtocolMessage<CDC_REQ_PROTOCOL_VERSION, CDCReqContainer>;
 using CDCRespMsg = ProtocolMessage<CDC_RESP_PROTOCOL_VERSION, CDCRespContainer>;
 using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContainer>;
 using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer>;
+using ShardCheckPointedReqMsg = SignedProtocolMessage<SHARD_CHECK_POINTED_REQ_PROTOCOL_VERSION, ShardReqContainer>;
+using ShardCheckPointedRespMsg = SignedProtocolMessage<SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;

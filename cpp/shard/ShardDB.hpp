@@ -51,7 +51,8 @@ public:
     void close();
 
     // Performs a read-only request, responding immediately.
-    void read(const ShardReqContainer& req, ShardRespContainer& resp);
+    // Returns last applied log entry at the point of reading
+    uint64_t read(const ShardReqContainer& req, ShardRespContainer& resp);
 
     // Prepares and persists a log entry to be applied.
     //

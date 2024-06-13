@@ -85,16 +85,16 @@ func scrubWorker(
 			log.Debug("worker for shard %v terminating", shid)
 			return
 		}
-		// block services which are stale are almost certainly unavailable, skip
-		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) {
-			log.Debug("skipping block %v in file %v since its block service %v is stale", req.block, req.file, req.blockService.Id)
+		// If we don't expect the block to be read, do not even bother, it might
+		// be some known problem (i.e. NR because of temporary maintenance)
+		if !req.blockService.Flags.CanRead() {
+			log.Debug("skipping block %v in file %v since given its block service %v flags %v", req.block, req.file, req.blockService.Id, req.blockService.Flags)
 			continue
 		}
 		if rateLimit != nil {
 			rateLimit.Acquire()
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workerChan)))
-		canIgnoreError := !req.blockService.Flags.CanRead()
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 		}
@@ -128,16 +128,12 @@ func scrubWorker(
 			// these errors.
 			log.Info("got IO error for file %v (block %v, block service %v), ignoring: %v", req.file, req.block, req.blockService.Id, err)
 		} else if err != nil {
-			if canIgnoreError {
-				log.Debug("could not check block %v in file %v block service %v, but can ignore error (block service is probably decommissioned): %v", req.block, req.file, req.blockService.Id, err)
-			} else {
-				log.Info("could not check block %v for file %v, will terminate: %v", req.block, req.file, err)
-				select {
-				case terminateChan <- err:
-				default:
-				}
-				return
+			log.Info("could not check block %v for file %v, will terminate: %v", req.block, req.file, err)
+			select {
+			case terminateChan <- err:
+			default:
 			}
+			return
 		} else {
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))

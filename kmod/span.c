@@ -1237,9 +1237,13 @@ out_shrinker:
 void eggsfs_span_exit(void) {
     eggsfs_debug("span exit");
     unregister_shrinker(&eggsfs_stripe_shrinker);
-    // All the stripes should be freed up when removing spans from inodes.
+    // All the stripes should be freed up when removing spans from inodes,
+    // but it seems like the inode cache is not always purged before calling
+    // the exit function.
     u64 pages = eggsfs_drop_all_stripes();
-    BUG_ON(pages != 0);
+    if (pages != 0) {
+        eggsfs_info("expected to drop 0 pages, but dropped %llu", pages);
+    }
     kmem_cache_destroy(eggsfs_block_span_cachep);
     kmem_cache_destroy(eggsfs_inline_span_cachep);
     kmem_cache_destroy(eggsfs_stripe_cachep);

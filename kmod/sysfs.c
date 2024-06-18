@@ -67,13 +67,23 @@ static umode_t eggsfs_stat_visible(struct kobject *kobj, struct attribute *attr,
 #define EGGSFS_SYSFS_ATOMIC64_PTR(_name) (&eggsfs_sysfs_atomic64_##_name.kobj_attr.attr)
 
 EGGSFS_SYSFS_COUNTER(dir_revalidations);
-EGGSFS_SYSFS_COUNTER(cached_spans);
-EGGSFS_SYSFS_ATOMIC64(cached_span_pages);
+EGGSFS_SYSFS_COUNTER(stripe_cache_hit);
+EGGSFS_SYSFS_COUNTER(stripe_cache_miss);
+EGGSFS_SYSFS_COUNTER(stripe_page_cache_hit);
+EGGSFS_SYSFS_COUNTER(stripe_page_cache_miss);
+EGGSFS_SYSFS_COUNTER(cached_stripes);
+EGGSFS_SYSFS_COUNTER(dropped_stripes_refetched);
+EGGSFS_SYSFS_ATOMIC64(cached_stripe_pages);
 
 static struct attribute* eggsfs_stat_attrs[] = {
     EGGSFS_SYSFS_COUNTER_PTR(dir_revalidations),
-    EGGSFS_SYSFS_COUNTER_PTR(cached_spans),
-    EGGSFS_SYSFS_ATOMIC64_PTR(cached_span_pages),
+    EGGSFS_SYSFS_COUNTER_PTR(stripe_cache_hit),
+    EGGSFS_SYSFS_COUNTER_PTR(stripe_cache_miss),
+    EGGSFS_SYSFS_COUNTER_PTR(stripe_page_cache_hit),
+    EGGSFS_SYSFS_COUNTER_PTR(stripe_page_cache_miss),
+    EGGSFS_SYSFS_COUNTER_PTR(cached_stripes),
+    EGGSFS_SYSFS_COUNTER_PTR(dropped_stripes_refetched),
+    EGGSFS_SYSFS_ATOMIC64_PTR(cached_stripe_pages),
     NULL
 };
 

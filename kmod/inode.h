@@ -83,6 +83,7 @@ struct eggsfs_inode_file {
     // mechanism to try to make sure that every in-flight operation is done
     // before the file is closed. This should ensure that we don't leak inodes
     // after unmounting.
+    // TODO we only use this for file _writing_ now. Do we still need it?
     atomic_t in_flight;
     wait_queue_head_t in_flight_wq;
 

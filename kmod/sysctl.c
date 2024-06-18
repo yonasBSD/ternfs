@@ -31,9 +31,9 @@ int eggsfs_prefetch = 0;
     } \
     return 0;
 
-static int drop_cached_spans;
-static int eggsfs_drop_spans_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
-    eggsfs_do_sysctl(eggsfs_drop_all_spans);
+static int drop_cached_stripes;
+static int eggsfs_drop_stripes_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+    eggsfs_do_sysctl(eggsfs_drop_all_stripes);
 }
 
 static int drop_fetch_block_sockets;
@@ -109,11 +109,11 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     },
 
     {
-        .procname = "drop_cached_spans",
-        .data = &drop_cached_spans,
+        .procname = "drop_cached_stripes",
+        .data = &drop_cached_stripes,
         .maxlen = sizeof(int),
         .mode = 0200,
-        .proc_handler = eggsfs_drop_spans_sysctl,
+        .proc_handler = eggsfs_drop_stripes_sysctl,
     },
 
     {
@@ -150,12 +150,12 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_UINT(atime_update_interval_sec),
     EGGSFS_CTL_UINT(disable_ftruncate),
 
-    EGGSFS_CTL_ULONG(span_cache_max_size_async),
-    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_async),
-    EGGSFS_CTL_ULONG(span_cache_max_size_sync),
-    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_sync),
-    EGGSFS_CTL_ULONG(span_cache_max_size_drop),
-    EGGSFS_CTL_ULONG(span_cache_min_avail_mem_drop),
+    EGGSFS_CTL_ULONG(stripe_cache_max_size_async),
+    EGGSFS_CTL_ULONG(stripe_cache_min_avail_mem_async),
+    EGGSFS_CTL_ULONG(stripe_cache_max_size_sync),
+    EGGSFS_CTL_ULONG(stripe_cache_min_avail_mem_sync),
+    EGGSFS_CTL_ULONG(stripe_cache_max_size_drop),
+    EGGSFS_CTL_ULONG(stripe_cache_min_avail_mem_drop),
 
     {
         .procname = "mtu",

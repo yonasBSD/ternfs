@@ -22,6 +22,8 @@ import (
 	"xtx/eggsfs/managedprocess"
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
+
+	"golang.org/x/sys/unix"
 )
 
 func formatNanos(nanos uint64) string {
@@ -77,10 +79,28 @@ type RunTests struct {
 	short                   bool
 	filter                  *regexp.Regexp
 	pauseBlockServiceKiller *sync.Mutex
+	// If configured, the test start and end markers will also be printed to kmsg.
+	// It is done to make it easier to tie kernel logs to the tests that caused them.
+	kmsgFd *os.File
 }
 
 func (r *RunTests) shuckleAddress() string {
 	return fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
+}
+
+func (r *RunTests) print(format string, a ...any) error {
+	fmt.Printf(format, a...)
+	if r.kmsgFd != nil {
+		s := fmt.Sprintf(format, a...)
+		n, err := r.kmsgFd.Write([]byte(s))
+		if err != nil {
+			return fmt.Errorf("failed writing kmsg: %w", err)
+		}
+		if n != len(s) {
+			return fmt.Errorf("only written %d out of %d to kmsg", n, len(s))
+		}
+	}
+	return nil
 }
 
 func (r *RunTests) test(
@@ -96,7 +116,7 @@ func (r *RunTests) test(
 
 	counters := client.NewClientCounters()
 
-	fmt.Printf("running %s test, %s\n", name, extra)
+	r.print("running %s test, %s\n", name, extra)
 	log.Info("running %s test, %s\n", name, extra) // also in log to track progress in CI more easily
 	t0 := time.Now()
 	run(counters)
@@ -108,7 +128,7 @@ func (r *RunTests) test(
 	}
 	totalShardRequests := totalRequests(cumShardCounters)
 	totalCDCRequests := totalRequests(counters.CDC)
-	fmt.Printf("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
+	r.print("  ran test in %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
 		formatCounters[msgs.ShardMessageKind]("shard", cumShardCounters)
 	}
@@ -126,7 +146,7 @@ func (r *RunTests) test(
 	}
 	totalShardRequests = totalRequests(cumShardCounters)
 	totalCDCRequests = totalRequests(counters.CDC)
-	fmt.Printf("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
+	r.print("  cleanup took %v, %v shard requests performed, %v CDC requests performed\n", elapsed, totalShardRequests, totalCDCRequests)
 	if totalShardRequests > 0 {
 		formatCounters[msgs.ShardMessageKind]("shard", cumShardCounters)
 	}
@@ -833,6 +853,7 @@ func main() {
 	buildType := flag.String("build-type", "release", "C++ build type")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
+	kmsg := flag.Bool("kmsg", false, "")
 	dataDir := flag.String("data-dir", "", "Directory where to store the EggsFS data. If not present a temporary directory will be used.")
 	preserveDbDir := flag.Bool("preserve-data-dir", false, "Whether to preserve the temp data dir (if we're using a temp data dir).")
 	filter := flag.String("filter", "", "Regex to match against test names -- only matching ones will be ran.")
@@ -996,7 +1017,7 @@ func main() {
 		fmt.Printf("will drop cached spans every %v\n", *dropCachedSpansEvery)
 		go func() {
 			for {
-				cmd := exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.drop_cached_spans=1")
+				cmd := exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.drop_cached_stripes=1")
 				cmd.Stdout = io.Discard
 				cmd.Stderr = io.Discard
 				if err := cmd.Run(); err != nil {
@@ -1264,6 +1285,15 @@ func main() {
 	*/
 
 	// start tests
+	var kfd *os.File = nil
+	var kerr error
+	if *kmsg {
+		kfd, kerr = os.OpenFile("/dev/kmsg", os.O_RDWR|unix.O_CLOEXEC|unix.O_NONBLOCK|unix.O_NOCTTY, 0o666)
+		if kerr != nil {
+			panic(fmt.Errorf("failed to open /dev/kmsg: %w", kerr))
+		}
+		defer kfd.Close()
+	}
 	go func() {
 		r := RunTests{
 			overrides:               &overrides,
@@ -1275,6 +1305,7 @@ func main() {
 			short:                   *short,
 			filter:                  filterRe,
 			pauseBlockServiceKiller: &pauseBlockServiceKiller,
+			kmsgFd:                  kfd,
 		}
 		r.run(terminateChan, log)
 	}()

@@ -52,7 +52,7 @@ void eggsfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        eggsfs_drop_file_spans(enode);
+        eggsfs_unlink_spans(enode);
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);

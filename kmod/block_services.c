@@ -5,6 +5,7 @@
 #include <linux/slab.h>
 
 #include "block_services.h"
+#include "trace.h"
 
 struct eggsfs_stored_block_service {
     struct hlist_node hnode;
@@ -37,11 +38,12 @@ struct eggsfs_stored_block_service* eggsfs_upsert_block_service(struct eggsfs_bl
             struct eggsfs_block_service* existing_bs = rcu_dereference(bs_node->bs);
             if (memcmp(bs, existing_bs, sizeof(*bs)) == 0) { // still the same, no update needed
                 rcu_read_unlock();
-                return bs_node;;
+                trace_eggsfs_upsert_block_service(bs->id, EGGSFS_UPSERT_BLOCKSERVICE_MATCH);
+                return bs_node;
             }
         }
         rcu_read_unlock();
-
+        trace_eggsfs_upsert_block_service(bs->id, EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH);
         // Things differ, we do need to update, 
         struct eggsfs_block_service* new_bs = kmalloc(sizeof(struct eggsfs_block_service), GFP_KERNEL);
         if (new_bs == NULL) {
@@ -58,6 +60,8 @@ struct eggsfs_stored_block_service* eggsfs_upsert_block_service(struct eggsfs_bl
         // Free old thing
         synchronize_rcu();
         kfree(old_bs);
+    } else {
+        trace_eggsfs_upsert_block_service(bs->id, EGGSFS_UPSERT_BLOCKSERVICE_NEW);
     }
 
     // We need to add a new one. Allocate both struct and body

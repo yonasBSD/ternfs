@@ -587,6 +587,32 @@ TRACE_EVENT(eggsfs_fetch_stripe,
     )
 );
 
+#define EGGSFS_UPSERT_BLOCKSERVICE_MATCH 0
+#define EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH 1
+#define EGGSFS_UPSERT_BLOCKSERVICE_NEW 2
+
+TRACE_EVENT(eggsfs_upsert_block_service,
+    TP_PROTO(u64 bs_id, u8 event),
+    TP_ARGS(     bs_id,    event),
+    TP_STRUCT__entry(
+        __field(u64, bs_id)
+        __field(u8, event)
+    ),
+    TP_fast_assign(
+        __entry->bs_id = bs_id;
+        __entry->event = event;
+    ),
+    TP_printk(
+        "bs_id=%016llx event=%s", __entry->bs_id,
+        __print_symbolic(
+            __entry->event,
+            { EGGSFS_UPSERT_BLOCKSERVICE_MATCH, "match" },
+            { EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH, "nomatch" },
+            { EGGSFS_UPSERT_BLOCKSERVICE_NEW, "new" }
+        )
+    )
+);
+
 #if 0
 #define EGGSFS_FETCH_BLOCK_SOCKET_START 0
 #define EGGSFS_FETCH_BLOCK_SOCKET_BLOCK_START 1

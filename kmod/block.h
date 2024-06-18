@@ -16,7 +16,6 @@ extern int eggsfs_write_block_timeout_jiffies;
 extern int eggsfs_block_service_connect_timeout_jiffies;
 
 struct eggsfs_block_service {
-    u8 failure_domain[16];
     u64 id;
     u32 ip1;
     u32 ip2;

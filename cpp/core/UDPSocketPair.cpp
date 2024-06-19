@@ -62,7 +62,12 @@ void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
             };
             hdr.msg_len = vec.iov_len;
         }
-        int ret = sendmmsg(socks.socks()[i].get(), &_sendHdrs[i][0], _sendHdrs[i].size(), 0);
+        size_t sentMessages{0};
+        int ret{1};
+        while (sentMessages < _sendHdrs[i].size() && ret > 0) {
+            ret = sendmmsg(socks.socks()[i].get(), &_sendHdrs[i][sentMessages], _sendHdrs[i].size() - sentMessages, 0);
+            sentMessages += ret;
+        }
         if (unlikely(ret < 0)) {
             // we get this when nf drops packets
             if (errno != EPERM) {
@@ -70,8 +75,8 @@ void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
             } else {
                 LOG_INFO(env, "dropping %s messages because of EPERM", _sendHdrs[i].size());
             }
-        } else if (unlikely(ret < _sendHdrs[i].size())) {
-            LOG_INFO(env, "dropping %s out of %s messages since `sendmmsg` could not send them all", _sendHdrs[i].size()-ret, _sendHdrs[i].size());
+        } else if (unlikely(sentMessages < _sendHdrs[i].size())) {
+            LOG_INFO(env, "dropping %s out of %s messages since `sendmmsg` could not send them all", _sendHdrs[i].size()-sentMessages, _sendHdrs[i].size());
         }
     }
 

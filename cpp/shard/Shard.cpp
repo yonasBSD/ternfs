@@ -856,6 +856,7 @@ public:
         _outgoingLogEntries.clear();
         _replicaInfo = _shared.replicas;
         uint32_t pulled = _shared.writerRequestsQueue.pull(_requests, _maxWritesAtOnce, _logsDB.getNextTimeout());
+        auto start = eggsNow();
         if (likely(pulled > 0)) {
             LOG_DEBUG(_env, "pulled %s requests from write queue", pulled);
             _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)pulled)*0.05;
@@ -883,6 +884,7 @@ public:
             }
         }
         logsDBStep();
+        auto loopTime = eggsNow() - start;
     }
 };
 

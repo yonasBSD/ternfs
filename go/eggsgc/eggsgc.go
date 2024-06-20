@@ -96,6 +96,8 @@ func main() {
 	metrics := flag.Bool("metrics", false, "Send metrics")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	migrate := flag.Bool("migrate", false, "migrate")
+	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
+	migratorIdx := flag.Int("migrator-idx", 0, "Which migrate instance is this. should be less than num-migrators. 0 by default")
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
@@ -343,6 +345,9 @@ func main() {
 				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 				blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 				for _, bs := range blockServices.BlockServices {
+					if uint64(bs.Id)%uint64(*numMigrators) != uint64(*migratorIdx) {
+						continue
+					}
 					if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 						bss := blockServicesToMigrate[bs.FailureDomain.String()]
 						if bss == nil {
@@ -372,6 +377,8 @@ func main() {
 				time.Sleep(time.Minute)
 			}
 		}()
+	} else {
+
 	}
 
 	defragStats := &cleanup.DefragStats{}

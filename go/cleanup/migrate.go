@@ -28,9 +28,11 @@ import (
 )
 
 type MigrateStats struct {
+	SkippedFiles   uint64
 	MigratedFiles  uint64
 	MigratedBlocks uint64
 	MigratedBytes  uint64
+	FilesToMigrate uint64
 }
 
 type MigrateState struct {
@@ -235,7 +237,7 @@ func printStatsLastReport(log *lib.Logger, what string, c *client.Client, stats 
 	overallMBs := 1000.0 * overallMB / float64(timeSinceStart.Milliseconds())
 	recentMB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / 1e6
 	recentMBs := 1000.0 * recentMB / float64(timeSinceLastReport.Milliseconds())
-	log.RaiseNC(progressReportAlert, "%s %0.2fMB in %v blocks in %v files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles, recentMBs, overallMBs)
+	log.RaiseNC(progressReportAlert, "%s %0.2fMB in %v blocks in %v/%v (%v skipped) files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles+stats.SkippedFiles, stats.FilesToMigrate, stats.SkippedFiles, recentMBs, overallMBs)
 	timeStats.lastReportAt = now
 	timeStats.lastReportBytes = stats.MigratedBytes
 }
@@ -277,6 +279,7 @@ func migrateBlocksInFileGeneric(
 				return nil
 			}
 			log.Debug("skipping transient file %v", fileId)
+			atomic.AddUint64(&stats.SkippedFiles, 1)
 			return nil
 		}
 		if err != nil {
@@ -542,4 +545,121 @@ func MigrateBlocksInAllShards(
 		return fmt.Errorf("some shards failed to migrate, check logs")
 	}
 	return nil
+}
+
+func MigrateAllFilesFromBlockServices(
+	log *lib.Logger,
+	c *client.Client,
+	stats *MigrateStats,
+	progressReportAlert *lib.XmonNCAlert,
+	blockServiceIds []msgs.BlockServiceId,
+	filterInodeIdx uint64,
+	filterInodeNumMigrators uint64,
+) error {
+	timeStats := newTimeStats()
+	bufPool := lib.NewBufPool()
+	var wg sync.WaitGroup
+	wg.Add(256)
+	failed := int32(0)
+	blockServiceMap := map[msgs.BlockServiceId]bool{}
+	for _, blockService := range blockServiceIds {
+		blockServiceMap[blockService] = true
+	}
+	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+		_, ok := blockServiceMap[blockService.Id]
+		return ok, nil
+	}
+	for i := 0; i < 256; i++ {
+		shid := msgs.ShardId(i)
+		go func() {
+			files, err := fetchAllAffectedFilesOnShard(log, c, blockServiceIds, shid, filterInodeIdx, filterInodeNumMigrators)
+			if err != nil {
+				log.Info("Failed getting affected file info from shard %v : %v", shid, err)
+				atomic.StoreInt32(&failed, 1)
+			} else {
+				atomic.AddUint64(&stats.FilesToMigrate, uint64(len(files)))
+				scratchFile := scratchFile{}
+				keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
+				defer keepAlive.stop()
+				blockNotFoundAlert := log.NewNCAlert(0)
+				for _, file := range files {
+					for attempts := 1; ; attempts++ {
+						if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", shid), badBlock, &scratchFile, file); err != nil {
+							if err == msgs.BLOCK_NOT_FOUND {
+								log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
+								time.Sleep(time.Second)
+							} else {
+								log.Info("could not migrate file in shard %v: %v", file, shid, err)
+								atomic.StoreInt32(&failed, 1)
+								break
+							}
+						} else {
+							break
+						}
+					}
+				}
+			}
+			log.Info("finished migrating blocks out of shard %v", shid)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	printMigrateStats(log, "migrated", c, stats, timeStats, progressReportAlert)
+	log.Info("finished migrating blocks in all shards, stats: %+v", stats)
+	if atomic.LoadInt32(&failed) == 1 {
+		return fmt.Errorf("some files failed to migrate, check logs")
+	}
+	return nil
+
+}
+
+func fetchAllAffectedFilesOnShard(
+	log *lib.Logger,
+	c *client.Client,
+	blockServiceIds []msgs.BlockServiceId,
+	shid msgs.ShardId,
+	filterInodeIdx uint64,
+	filterInodeNumMigrators uint64,
+) ([]msgs.InodeId, error) {
+	filesReq := msgs.BlockServiceFilesReq{}
+	filesResp := msgs.BlockServiceFilesResp{}
+	filesMap := map[msgs.InodeId]int{}
+	maxErrors := 0
+	for _, blockServiceId := range blockServiceIds {
+		filesReq.BlockServiceId = blockServiceId
+		filesReq.StartFrom = 0
+		for {
+			if err := c.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
+				return nil, fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
+			}
+			if len(filesResp.FileIds) == 0 {
+				break
+			}
+			for _, file := range filesResp.FileIds {
+				if (uint64(file)>>8)%filterInodeNumMigrators != filterInodeIdx {
+					continue
+				}
+				filesMap[file] += 1
+				if filesMap[file] > maxErrors {
+					maxErrors = filesMap[file]
+				}
+			}
+			filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1
+		}
+	}
+	filesPerErrorCount := make([][]msgs.InodeId, maxErrors+1)
+	for i := 0; i < len(filesPerErrorCount); i++ {
+		filesPerErrorCount[i] = []msgs.InodeId{}
+	}
+	for file, errorCount := range filesMap {
+		filesPerErrorCount[errorCount] = append(filesPerErrorCount[errorCount], file)
+	}
+	files := []msgs.InodeId{}
+	for i := len(filesPerErrorCount) - 1; i >= 0; i-- {
+		if len(filesPerErrorCount[i]) > 0 {
+			log.Info("Shard %v: Found %v files with blocks in %v faulty block services", shid, len(filesPerErrorCount[i]), i)
+		}
+		files = append(files, filesPerErrorCount[i]...)
+	}
+	return files, nil
 }

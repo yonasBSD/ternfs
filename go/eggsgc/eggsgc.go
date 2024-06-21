@@ -343,34 +343,23 @@ func main() {
 					return
 				}
 				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
-				blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
+				blockServicesToMigrate := []msgs.BlockServiceId{}
 				for _, bs := range blockServices.BlockServices {
-					if uint64(bs.Id)%uint64(*numMigrators) != uint64(*migratorIdx) {
-						continue
-					}
 					if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
-						bss := blockServicesToMigrate[bs.FailureDomain.String()]
-						if bss == nil {
-							bss = &[]msgs.BlockServiceId{}
-							blockServicesToMigrate[bs.FailureDomain.String()] = bss
-						}
-						*bss = append(*bss, bs.Id)
+						blockServicesToMigrate = append(blockServicesToMigrate, bs.Id)
 					}
 				}
 
 				progressReportAlert := log.NewNCAlert(10 * time.Second)
 				progressReportAlert.SetAppType(lib.XMON_NEVER)
-				for failureDomain, bss := range blockServicesToMigrate {
-					for _, blockServiceId := range *bss {
-						log.RaiseNC(progressReportAlert, "migrating block service %v, %v", blockServiceId, failureDomain)
-						if err := cleanup.MigrateBlocksInAllShards(log, c, &migrateState.Stats, progressReportAlert, blockServiceId); err != nil {
-							log.RaiseAlert("could not migrate blocks out of block service %v, stats so far %+v: %v", blockServiceId, migrateState.Stats, err)
-						} else {
-							log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, migrateState.Stats)
-						}
-						log.ClearNC(progressReportAlert)
-					}
+
+				log.RaiseNC(progressReportAlert, "migrating %v block services", len(blockServicesToMigrate))
+				if err := cleanup.MigrateAllFilesFromBlockServices(log, c, &migrateState.Stats, progressReportAlert, blockServicesToMigrate, uint64(*migratorIdx), uint64(*numMigrators)); err != nil {
+					log.RaiseAlert("could not migrate blocks out of block services, stats so far %+v: %v", migrateState.Stats, err)
+				} else {
+					log.Info("finished migrating blocks away from block services, stats so far: %+v", migrateState.Stats)
 				}
+				log.ClearNC(progressReportAlert)
 				if migrateState.Stats.MigratedBlocks > 0 {
 					log.Info("finished migrating away from all block services, stats: %+v", migrateState.Stats)
 				}

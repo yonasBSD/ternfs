@@ -890,7 +890,7 @@ func fsTestInternal[Id comparable](
 			log.Info("will migrate block service %v", blockServiceToPurge)
 			progressReportAlert := log.NewNCAlert(10 * time.Second)
 			migrateStats := cleanup.MigrateStats{}
-			err = cleanup.MigrateBlocksInAllShards(log, c, &migrateStats, progressReportAlert, blockServiceToPurge)
+			err = cleanup.MigrateAllFilesFromBlockServices(log, c, &migrateStats, progressReportAlert, []msgs.BlockServiceId{blockServiceToPurge}, 0, 1)
 			if err != nil {
 				panic(fmt.Errorf("could not migrate: %w", err))
 			}

@@ -668,10 +668,10 @@ func handleRequestError(
 	// In general, refuse to service requests for block services that we
 	// don't have. In the case of checking a dead block, we don't emit
 	// an alert, since it's expected when the scrubber is running.
-	// We still want to know when clients try to read dead block services
-	// since it's an indication that we haven't migrated stuff.
-	if _, isDead := deadBlockServices[blockServiceId]; isDead && req == msgs.CHECK_BLOCK {
-		log.Debug("got check block request for dead block service %v", blockServiceId)
+	// Similarly, reading blocks from old block services can happen if
+	// the cached span structure is used in the kmod.
+	if _, isDead := deadBlockServices[blockServiceId]; isDead && (req == msgs.CHECK_BLOCK || req == msgs.FETCH_BLOCK) {
+		log.Info("got fetch/check block request for dead block service %v", blockServiceId)
 		if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 			writeBlocksResponseError(log, conn, eggsErr)
 		}

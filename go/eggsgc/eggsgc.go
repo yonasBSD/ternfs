@@ -98,6 +98,7 @@ func main() {
 	migrate := flag.Bool("migrate", false, "migrate")
 	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
 	migratorIdx := flag.Int("migrator-idx", 0, "Which migrate instance is this. should be less than num-migrators. 0 by default")
+	numMigrationsPerShard := flag.Int("num-migrations-per-shard", 1, "Number of file migrations to do in parallel per shard. 1 by default")
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
@@ -213,8 +214,6 @@ func main() {
 	if err := loadState(db, "count", countState); err != nil {
 		panic(err)
 	}
-
-	migrateState := &cleanup.MigrateState{}
 
 	// store the state
 	go func() {
@@ -335,36 +334,8 @@ func main() {
 	if *migrate {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			for {
-				log.Info("requesting block services")
-				blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
-				if err != nil {
-					terminateChan <- err
-					return
-				}
-				blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
-				blockServicesToMigrate := []msgs.BlockServiceId{}
-				for _, bs := range blockServices.BlockServices {
-					if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
-						blockServicesToMigrate = append(blockServicesToMigrate, bs.Id)
-					}
-				}
-
-				progressReportAlert := log.NewNCAlert(10 * time.Second)
-				progressReportAlert.SetAppType(lib.XMON_NEVER)
-
-				log.RaiseNC(progressReportAlert, "migrating %v block services", len(blockServicesToMigrate))
-				if err := cleanup.MigrateAllFilesFromBlockServices(log, c, &migrateState.Stats, progressReportAlert, blockServicesToMigrate, uint64(*migratorIdx), uint64(*numMigrators)); err != nil {
-					log.RaiseAlert("could not migrate blocks out of block services, stats so far %+v: %v", migrateState.Stats, err)
-				} else {
-					log.Info("finished migrating blocks away from block services, stats so far: %+v", migrateState.Stats)
-				}
-				log.ClearNC(progressReportAlert)
-				if migrateState.Stats.MigratedBlocks > 0 {
-					log.Info("finished migrating away from all block services, stats: %+v", migrateState.Stats)
-				}
-				time.Sleep(time.Minute)
-			}
+			migrator := cleanup.Migrator(*shuckleAddress, log, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard)
+			migrator.Run()
 		}()
 	} else {
 

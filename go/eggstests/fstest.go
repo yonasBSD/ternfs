@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"xtx/eggsfs/cleanup"
@@ -888,12 +889,19 @@ func fsTestInternal[Id comparable](
 			defer c.Close()
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
-			progressReportAlert := log.NewNCAlert(10 * time.Second)
-			migrateStats := cleanup.MigrateStats{}
-			err = cleanup.MigrateAllFilesFromBlockServices(log, c, &migrateStats, progressReportAlert, []msgs.BlockServiceId{blockServiceToPurge}, 0, 1)
-			if err != nil {
-				panic(fmt.Errorf("could not migrate: %w", err))
-			}
+
+			migrator := cleanup.Migrator(shuckleAddress, log, c, 1, 0, 1)
+			wg := sync.WaitGroup{}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				migrator.Run()
+			}()
+			migrator.ScheduleBlockService(blockServiceToPurge)
+			migrateStats := <-migrator.MigrationFinishedStats()
+			migrator.Stop()
+			wg.Wait()
+
 			if migrateStats.MigratedBlocks == 0 {
 				panic(fmt.Errorf("migrate didn't migrate any blocks"))
 			}

@@ -15,6 +15,7 @@ package cleanup
 
 import (
 	"bytes"
+	"container/heap"
 	"fmt"
 	"io"
 	"sync"
@@ -28,7 +29,6 @@ import (
 )
 
 type MigrateStats struct {
-	SkippedFiles   uint64
 	MigratedFiles  uint64
 	MigratedBlocks uint64
 	MigratedBytes  uint64
@@ -237,7 +237,7 @@ func printStatsLastReport(log *lib.Logger, what string, c *client.Client, stats 
 	overallMBs := 1000.0 * overallMB / float64(timeSinceStart.Milliseconds())
 	recentMB := float64(stats.MigratedBytes-timeStats.lastReportBytes) / 1e6
 	recentMBs := 1000.0 * recentMB / float64(timeSinceLastReport.Milliseconds())
-	log.RaiseNC(progressReportAlert, "%s %0.2fMB in %v blocks in %v/%v (%v skipped) files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles+stats.SkippedFiles, stats.FilesToMigrate, stats.SkippedFiles, recentMBs, overallMBs)
+	log.RaiseNC(progressReportAlert, "%s %0.2fMB in %v blocks in %v files, at %.2fMB/s (recent), %0.2fMB/s (overall)", what, overallMB, stats.MigratedBlocks, stats.MigratedFiles, recentMBs, overallMBs)
 	timeStats.lastReportAt = now
 	timeStats.lastReportBytes = stats.MigratedBytes
 }
@@ -279,7 +279,6 @@ func migrateBlocksInFileGeneric(
 				return nil
 			}
 			log.Debug("skipping transient file %v", fileId)
-			atomic.AddUint64(&stats.SkippedFiles, 1)
 			return nil
 		}
 		if err != nil {
@@ -547,119 +546,342 @@ func MigrateBlocksInAllShards(
 	return nil
 }
 
-func MigrateAllFilesFromBlockServices(
-	log *lib.Logger,
-	c *client.Client,
-	stats *MigrateStats,
-	progressReportAlert *lib.XmonNCAlert,
-	blockServiceIds []msgs.BlockServiceId,
-	filterInodeIdx uint64,
-	filterInodeNumMigrators uint64,
-) error {
-	timeStats := newTimeStats()
-	bufPool := lib.NewBufPool()
-	var wg sync.WaitGroup
-	wg.Add(256)
-	failed := int32(0)
-	blockServiceMap := map[msgs.BlockServiceId]bool{}
-	for _, blockService := range blockServiceIds {
-		blockServiceMap[blockService] = true
+type fileMigrationResult struct {
+	id  msgs.InodeId
+	err error
+}
+
+type migrator struct {
+	shuckleAddress            string
+	log                       *lib.Logger
+	client                    *client.Client
+	numMigrators              uint64
+	migratorIdx               uint64
+	numFilesPerShard          int
+	stats                     MigrateStats
+	blockServicesLock         *sync.RWMutex
+	scheduledBlockServices    map[msgs.BlockServiceId]any
+	fileFetchers              [256]chan msgs.BlockServiceId
+	fileAggregatorNewFile     chan msgs.InodeId
+	fileAggregatoFileFinished chan fileMigrationResult
+	fileMigratorsNewFile      [256]chan msgs.InodeId
+	statsC                    chan MigrateStats
+	stopC                     chan bool
+}
+
+func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int) *migrator {
+	res := migrator{
+		shuckleAddress,
+		log,
+		client,
+		numMigrators,
+		migratorIdx,
+		numFilesPerShard,
+		MigrateStats{},
+		&sync.RWMutex{},
+		map[msgs.BlockServiceId]any{},
+		[256]chan msgs.BlockServiceId{},
+		make(chan msgs.InodeId, 10000),
+		make(chan fileMigrationResult, 256*numFilesPerShard),
+		[256]chan msgs.InodeId{},
+		make(chan MigrateStats, 10),
+		make(chan bool)}
+	for i := 0; i < len(res.fileMigratorsNewFile); i++ {
+		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
+		res.fileMigratorsNewFile[i] = make(chan msgs.InodeId, res.numFilesPerShard)
 	}
+	return &res
+}
+
+func (m *migrator) Run() {
+	m.log.Debug("migrator started")
+	fetchersWaitGroup := sync.WaitGroup{}
+	aggregatorWaitGroup := sync.WaitGroup{}
+	migratorsWaitGroup := sync.WaitGroup{}
+	m.runFileFetchers(&fetchersWaitGroup)
+	m.runFileAggregator(&aggregatorWaitGroup)
+	m.runFileMigrators(&migratorsWaitGroup)
+	shuckleResponseAlert := m.log.NewNCAlert(5 * time.Minute)
+	shuckleResponseAlert.SetAppType(lib.XMON_DAYTIME)
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+OUT:
+	for {
+		select {
+		case <-m.stopC:
+			m.log.Debug("stop received")
+			for _, c := range m.fileFetchers {
+				close(c)
+			}
+			break OUT
+		case <-ticker.C:
+		}
+		m.log.Debug("requesting block services")
+		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesReq{})
+		if err != nil {
+			m.log.RaiseNC(shuckleResponseAlert, "error getting block services from shuckle: %v", err)
+		} else {
+			m.log.ClearNC(shuckleResponseAlert)
+			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+			for _, bs := range blockServices.BlockServices {
+				if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
+					m.ScheduleBlockService(bs.Id)
+				} else {
+					delete(m.scheduledBlockServices, bs.Id)
+				}
+			}
+
+		}
+	}
+	m.log.Debug("stop received waiting for fetchers to stop")
+	fetchersWaitGroup.Wait()
+	m.log.Debug("closing aggregator channel and waiting for aggregator")
+	close(m.fileAggregatorNewFile)
+	aggregatorWaitGroup.Wait()
+	m.log.Debug("aggregator stopped, waiting for file migrators to stop")
+	migratorsWaitGroup.Wait()
+	m.log.Debug("migrator stopped")
+}
+
+func (m *migrator) ScheduleBlockService(bs msgs.BlockServiceId) {
+	m.blockServicesLock.Lock()
+	defer m.blockServicesLock.Unlock()
+	if _, ok := m.scheduledBlockServices[bs]; !ok {
+		m.log.Info("scheduling block service %v", bs)
+		m.scheduledBlockServices[bs] = nil
+		for _, c := range m.fileFetchers {
+			c <- bs
+		}
+	}
+}
+
+func (m *migrator) Stop() {
+	m.log.Debug("sending stop signal to migrator")
+	close(m.stopC)
+}
+
+func (m *migrator) MigrationFinishedStats() <-chan MigrateStats {
+	return m.statsC
+}
+
+func (m *migrator) runFileFetchers(wg *sync.WaitGroup) {
+	wg.Add(len(m.fileFetchers))
+	for idx, c := range m.fileFetchers {
+		go func(shid msgs.ShardId, c <-chan msgs.BlockServiceId) {
+			defer wg.Done()
+			for {
+				blockServiceId, ok := <-c
+				if !ok {
+					m.log.Debug("received stop signal in fileFetcher for shard %v", shid)
+					break
+				}
+				m.log.Debug("fetching files for block service %v in shard %v", blockServiceId, shid)
+				filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId, StartFrom: 0}
+				filesResp := msgs.BlockServiceFilesResp{}
+				shardResponseAlert := m.log.NewNCAlert(5 * time.Minute)
+				filesScheduled := uint64(0)
+				for {
+					if err := m.client.ShardRequest(m.log, shid, &filesReq, &filesResp); err != nil {
+						m.log.RaiseNC(shardResponseAlert, "error while trying to get files for block service %v: %w", blockServiceId, err)
+						time.Sleep(1 * time.Minute)
+						continue
+					}
+					m.log.ClearNC(shardResponseAlert)
+					if len(filesResp.FileIds) == 0 {
+						break
+					}
+					for _, file := range filesResp.FileIds {
+						if (uint64(file)>>8)%m.numMigrators != m.migratorIdx {
+							continue
+						}
+						filesScheduled++
+						m.fileAggregatorNewFile <- file
+					}
+					filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1
+				}
+				m.log.Debug("finished fetching files for block service %v in shard %v, scheduled %d files", blockServiceId, shid, filesScheduled)
+			}
+		}(msgs.ShardId(idx), c)
+	}
+}
+
+type fileInfo struct {
+	id         msgs.InodeId
+	errorCount int
+}
+
+type filePQ struct {
+	pq         []fileInfo
+	inodeToIdx map[msgs.InodeId]int
+}
+
+func (pq filePQ) Len() int { return len(pq.pq) }
+
+func (pq filePQ) Less(i, j int) bool {
+	if pq.pq[i].errorCount == pq.pq[j].errorCount {
+		return pq.pq[i].id > pq.pq[j].id
+	}
+	return pq.pq[i].errorCount > pq.pq[j].errorCount
+}
+
+func (pq *filePQ) Swap(i, j int) {
+	pq.pq[i], pq.pq[j] = pq.pq[j], pq.pq[i]
+	pq.inodeToIdx[pq.pq[i].id] = i
+	pq.inodeToIdx[pq.pq[j].id] = j
+}
+
+func (pq *filePQ) Push(x any) {
+	n := len(pq.pq)
+	item := x.(fileInfo)
+	pq.inodeToIdx[item.id] = n
+	pq.pq = append(pq.pq, item)
+}
+
+func (pq *filePQ) Pop() any {
+	old := pq.pq
+	n := len(old)
+	item := old[n-1]
+	delete(pq.inodeToIdx, item.id)
+	pq.pq = old[0 : n-1]
+	return item
+}
+
+func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer m.closeMigrators()
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		timeStats := newTimeStats()
+		totalInProgress := uint64(0)
+		inProgressPerShard := [256]int{}
+		queuePerShard := [256]filePQ{}
+		for i := 0; i < len(queuePerShard); i++ {
+			queuePerShard[i].inodeToIdx = make(map[msgs.InodeId]int)
+			heap.Init(&queuePerShard[i])
+		}
+		pushMoreWork := func(shid msgs.ShardId) {
+			for inProgressPerShard[shid] < m.numFilesPerShard && queuePerShard[shid].Len() > 0 {
+				newFile := heap.Pop(&queuePerShard[shid]).(fileInfo)
+				inProgressPerShard[shid]++
+				totalInProgress++
+				m.fileMigratorsNewFile[shid] <- newFile.id
+			}
+		}
+		inProgressAlert := m.log.NewNCAlert(1 * time.Minute)
+		inProgressAlert.SetAppType(lib.XMON_NEVER)
+		for {
+			select {
+			case newFileId, ok := <-m.fileAggregatorNewFile:
+				if !ok {
+					m.log.Debug("received stop in fileAggregator")
+					return
+				}
+				shid := newFileId.Shard()
+				idx, ok := queuePerShard[shid].inodeToIdx[newFileId]
+				if !ok {
+					heap.Push(&queuePerShard[shid], fileInfo{newFileId, 1})
+					m.stats.FilesToMigrate++
+					pushMoreWork(shid)
+				} else {
+					queuePerShard[shid].pq[idx].errorCount++
+					heap.Fix(&queuePerShard[shid], idx)
+				}
+			case fileResult, ok := <-m.fileAggregatoFileFinished:
+				if !ok {
+					return
+				}
+				shid := fileResult.id.Shard()
+				inProgressPerShard[shid]--
+				totalInProgress--
+				m.stats.FilesToMigrate--
+				pushMoreWork(shid)
+				if fileResult.err != nil {
+					m.fileAggregatorNewFile <- fileResult.id
+				}
+			case <-ticker.C:
+				if m.stats.FilesToMigrate == 0 {
+					if m.stats.MigratedFiles != 0 && len(m.statsC) < 10 {
+						m.log.Debug("migration finished sending out stats")
+						m.statsC <- m.stats
+					} else {
+						m.log.Debug("no migrations in progress")
+					}
+					m.log.ClearNC(inProgressAlert)
+					m.stats = MigrateStats{}
+					timeStats = newTimeStats()
+				} else {
+					printMigrateStats(m.log, fmt.Sprintf("migrating: files: %v/%v (in progress/remaining). ", totalInProgress, m.stats.FilesToMigrate), m.client, &m.stats, timeStats, inProgressAlert)
+				}
+			}
+		}
+	}()
+}
+
+func (m *migrator) closeMigrators() {
+	m.log.Debug("stopping fileMigrators")
+	for _, c := range m.fileMigratorsNewFile {
+		close(c)
+	}
+}
+
+func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
-		_, ok := blockServiceMap[blockService.Id]
+		m.blockServicesLock.RLock()
+		defer m.blockServicesLock.RUnlock()
+		_, ok := m.scheduledBlockServices[blockService.Id]
 		return ok, nil
 	}
-	for i := 0; i < 256; i++ {
-		shid := msgs.ShardId(i)
-		go func() {
-			files, err := fetchAllAffectedFilesOnShard(log, c, blockServiceIds, shid, filterInodeIdx, filterInodeNumMigrators)
-			if err != nil {
-				log.Info("Failed getting affected file info from shard %v : %v", shid, err)
-				atomic.StoreInt32(&failed, 1)
-			} else {
-				atomic.AddUint64(&stats.FilesToMigrate, uint64(len(files)))
-				scratchFile := scratchFile{}
-				keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
-				defer keepAlive.stop()
-				blockNotFoundAlert := log.NewNCAlert(0)
-				for _, file := range files {
-					for attempts := 1; ; attempts++ {
-						if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", shid), badBlock, &scratchFile, file); err != nil {
-							if err == msgs.BLOCK_NOT_FOUND {
-								log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
-								time.Sleep(time.Second)
-							} else {
-								log.Info("could not migrate file in shard %v: %v", file, shid, err)
-								atomic.StoreInt32(&failed, 1)
+	bufPool := lib.NewBufPool()
+	for i := 0; i < len(m.fileMigratorsNewFile); i++ {
+		for j := 0; j < m.numFilesPerShard; j++ {
+			wg.Add(1)
+			go func(idx int, shid msgs.ShardId, c <-chan msgs.InodeId) {
+				defer wg.Done()
+				ticker := time.NewTicker(10 * time.Minute)
+				defer ticker.Stop()
+				tmpFile := scratchFile{}
+				tmpFileActive := false
+				var keepAlive keepScratchFileAlive
+				blockNotFoundAlert := m.log.NewNCAlert(0)
+				for {
+					select {
+					case file, ok := <-c:
+						ticker.Reset(10 * time.Minute)
+						if !ok {
+							if tmpFileActive {
+								keepAlive.stop()
+							}
+							m.log.Debug("recived stop signal in fileMigrator %v for shard %v", idx, shid)
+							return
+						}
+						if !tmpFileActive {
+							tmpFileActive = true
+							keepAlive = startToKeepScratchFileAlive(m.log, m.client, &tmpFile)
+						}
+						err := error(nil)
+						for {
+							if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, &tmpFile, file); err == nil {
 								break
 							}
-						} else {
-							break
+							if err != msgs.BLOCK_NOT_FOUND {
+								m.log.Info("could not migrate file in shard %v: %v", file, shid, err)
+								break
+							}
+							m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
+							time.Sleep(time.Second)
+						}
+						m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
+					case <-ticker.C:
+						if tmpFileActive {
+							tmpFileActive = false
+							keepAlive.stop()
+							tmpFile = scratchFile{}
 						}
 					}
 				}
-			}
-			log.Info("finished migrating blocks out of shard %v", shid)
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-	printMigrateStats(log, "migrated", c, stats, timeStats, progressReportAlert)
-	log.Info("finished migrating blocks in all shards, stats: %+v", stats)
-	if atomic.LoadInt32(&failed) == 1 {
-		return fmt.Errorf("some files failed to migrate, check logs")
-	}
-	return nil
-
-}
-
-func fetchAllAffectedFilesOnShard(
-	log *lib.Logger,
-	c *client.Client,
-	blockServiceIds []msgs.BlockServiceId,
-	shid msgs.ShardId,
-	filterInodeIdx uint64,
-	filterInodeNumMigrators uint64,
-) ([]msgs.InodeId, error) {
-	filesReq := msgs.BlockServiceFilesReq{}
-	filesResp := msgs.BlockServiceFilesResp{}
-	filesMap := map[msgs.InodeId]int{}
-	maxErrors := 0
-	for _, blockServiceId := range blockServiceIds {
-		filesReq.BlockServiceId = blockServiceId
-		filesReq.StartFrom = 0
-		for {
-			if err := c.ShardRequest(log, shid, &filesReq, &filesResp); err != nil {
-				return nil, fmt.Errorf("error while trying to get files for block service %v: %w", blockServiceId, err)
-			}
-			if len(filesResp.FileIds) == 0 {
-				break
-			}
-			for _, file := range filesResp.FileIds {
-				if (uint64(file)>>8)%filterInodeNumMigrators != filterInodeIdx {
-					continue
-				}
-				filesMap[file] += 1
-				if filesMap[file] > maxErrors {
-					maxErrors = filesMap[file]
-				}
-			}
-			filesReq.StartFrom = filesResp.FileIds[len(filesResp.FileIds)-1] + 1
+			}(j, msgs.ShardId(i), m.fileMigratorsNewFile[i])
 		}
 	}
-	filesPerErrorCount := make([][]msgs.InodeId, maxErrors+1)
-	for i := 0; i < len(filesPerErrorCount); i++ {
-		filesPerErrorCount[i] = []msgs.InodeId{}
-	}
-	for file, errorCount := range filesMap {
-		filesPerErrorCount[errorCount] = append(filesPerErrorCount[errorCount], file)
-	}
-	files := []msgs.InodeId{}
-	for i := len(filesPerErrorCount) - 1; i >= 0; i-- {
-		if len(filesPerErrorCount[i]) > 0 {
-			log.Info("Shard %v: Found %v files with blocks in %v faulty block services", shid, len(filesPerErrorCount[i]), i)
-		}
-		files = append(files, filesPerErrorCount[i]...)
-	}
-	return files, nil
 }

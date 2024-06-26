@@ -627,7 +627,9 @@ OUT:
 				if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 					m.ScheduleBlockService(bs.Id)
 				} else {
+					m.blockServicesLock.Lock()
 					delete(m.scheduledBlockServices, bs.Id)
+					m.blockServicesLock.Unlock()
 				}
 			}
 
@@ -757,6 +759,7 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 		totalInProgress := uint64(0)
 		inProgressPerShard := [256]int{}
 		queuePerShard := [256]filePQ{}
+		inProgressFiles := map[msgs.InodeId]int{}
 		for i := 0; i < len(queuePerShard); i++ {
 			queuePerShard[i].inodeToIdx = make(map[msgs.InodeId]int)
 			heap.Init(&queuePerShard[i])
@@ -766,6 +769,7 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 				newFile := heap.Pop(&queuePerShard[shid]).(fileInfo)
 				inProgressPerShard[shid]++
 				totalInProgress++
+				inProgressFiles[newFile.id] = 1
 				m.fileMigratorsNewFile[shid] <- newFile.id
 			}
 		}
@@ -778,15 +782,19 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 					m.log.Debug("received stop in fileAggregator")
 					return
 				}
-				shid := newFileId.Shard()
-				idx, ok := queuePerShard[shid].inodeToIdx[newFileId]
-				if !ok {
-					heap.Push(&queuePerShard[shid], fileInfo{newFileId, 1})
-					m.stats.FilesToMigrate++
-					pushMoreWork(shid)
+				if errorCount, ok := inProgressFiles[newFileId]; ok {
+					inProgressFiles[newFileId] = errorCount + 1
 				} else {
-					queuePerShard[shid].pq[idx].errorCount++
-					heap.Fix(&queuePerShard[shid], idx)
+					shid := newFileId.Shard()
+					idx, ok := queuePerShard[shid].inodeToIdx[newFileId]
+					if !ok {
+						heap.Push(&queuePerShard[shid], fileInfo{newFileId, 1})
+						m.stats.FilesToMigrate++
+						pushMoreWork(shid)
+					} else {
+						queuePerShard[shid].pq[idx].errorCount++
+						heap.Fix(&queuePerShard[shid], idx)
+					}
 				}
 			case fileResult, ok := <-m.fileAggregatoFileFinished:
 				if !ok {
@@ -796,8 +804,15 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 				inProgressPerShard[shid]--
 				totalInProgress--
 				m.stats.FilesToMigrate--
+				errorCount := inProgressFiles[fileResult.id] - 1
+				if errorCount > 0 {
+					// we saw the file again in another block service while it was processed
+					// queue it again
+					heap.Push(&queuePerShard[shid], fileInfo{fileResult.id, errorCount})
+					m.stats.FilesToMigrate++
+				}
 				pushMoreWork(shid)
-				if fileResult.err != nil {
+				if fileResult.err != nil && errorCount == 0 {
 					m.fileAggregatorNewFile <- fileResult.id
 				}
 			case <-ticker.C:

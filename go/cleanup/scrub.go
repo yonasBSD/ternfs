@@ -75,6 +75,8 @@ func scrubWorker(
 	terminateChan chan any,
 	scratchFile *scratchFile,
 	scrubbingMu *sync.Mutex,
+	migratingFiles map[msgs.InodeId]any,
+	migratingFilesMu *sync.RWMutex,
 ) {
 	bufPool := lib.NewBufPool()
 	blockNotFoundAlert := log.NewNCAlert(0)
@@ -84,6 +86,13 @@ func scrubWorker(
 		if !ok {
 			log.Debug("worker for shard %v terminating", shid)
 			return
+		}
+		migratingFilesMu.RLock()
+		_, ok = migratingFiles[req.file]
+		migratingFilesMu.RUnlock()
+		if ok {
+			// no point in checking this block as file is being migrated and all blocks will be checked in process
+			continue
 		}
 		// If we don't expect the block to be read, do not even bother, it might
 		// be some known problem (i.e. NR because of temporary maintenance)
@@ -100,6 +109,15 @@ func scrubWorker(
 		}
 		err := c.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
 		if badBlockError(err) {
+			migratingFilesMu.Lock()
+			_, ok = migratingFiles[req.file]
+			migratingFiles[req.file] = nil
+			migratingFilesMu.Unlock()
+			if ok {
+				// file already being migrated, nothing to do
+				continue
+			}
+
 			atomic.AddUint64(&stats.CheckedBlocks, 1)
 			if err == msgs.BAD_BLOCK_CRC {
 				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
@@ -122,6 +140,9 @@ func scrubWorker(
 					break
 				}
 			}
+			migratingFilesMu.Lock()
+			delete(migratingFiles, req.file)
+			migratingFilesMu.Unlock()
 		} else if err == msgs.BLOCK_IO_ERROR_DEVICE {
 			// This is almost certainly a broken server. We want migration to take
 			// care of this -- otherwise the scrubber will be stuck on tons of
@@ -250,10 +271,13 @@ func ScrubFiles(
 	var workersWg sync.WaitGroup
 	workersWg.Add(opts.NumWorkersPerShard)
 	var scrubbingMu sync.Mutex
+	migratingFiles := map[msgs.InodeId]any{}
+	migratingFilesMu := sync.RWMutex{}
+
 	for i := 0; i < opts.NumWorkersPerShard; i++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			scrubWorker(log, c, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu)
+			scrubWorker(log, c, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu, migratingFiles, &migratingFilesMu)
 			workersWg.Done()
 		}()
 	}

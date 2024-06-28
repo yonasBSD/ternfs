@@ -75,7 +75,7 @@ func scrubWorker(
 	terminateChan chan any,
 	scratchFile *scratchFile,
 	scrubbingMu *sync.Mutex,
-	migratingFiles map[msgs.InodeId]any,
+	migratingFiles map[msgs.InodeId]struct{},
 	migratingFilesMu *sync.RWMutex,
 ) {
 	bufPool := lib.NewBufPool()
@@ -109,40 +109,9 @@ func scrubWorker(
 		}
 		err := c.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
 		if badBlockError(err) {
-			migratingFilesMu.Lock()
-			_, ok = migratingFiles[req.file]
-			migratingFiles[req.file] = nil
-			migratingFilesMu.Unlock()
-			if ok {
-				// file already being migrated, nothing to do
-				continue
+			if !migrateFileOnError(log, c, stats, shid, terminateChan, scratchFile, scrubbingMu, migratingFiles, migratingFilesMu, req, err, bufPool, blockNotFoundAlert) {
+				return
 			}
-
-			atomic.AddUint64(&stats.CheckedBlocks, 1)
-			if err == msgs.BAD_BLOCK_CRC {
-				atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
-			}
-			for attempts := 1; ; attempts++ {
-				if err := scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
-					if err == msgs.BLOCK_NOT_FOUND {
-						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
-						time.Sleep(time.Second)
-					} else {
-						log.Info("could not scrub file %v, will terminate: %v", req.file, err)
-						select {
-						case terminateChan <- err:
-						default:
-						}
-						return
-					}
-				} else {
-					log.ClearNC(blockNotFoundAlert)
-					break
-				}
-			}
-			migratingFilesMu.Lock()
-			delete(migratingFiles, req.file)
-			migratingFilesMu.Unlock()
 		} else if err == msgs.BLOCK_IO_ERROR_DEVICE {
 			// This is almost certainly a broken server. We want migration to take
 			// care of this -- otherwise the scrubber will be stuck on tons of
@@ -160,6 +129,60 @@ func scrubWorker(
 			atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 		}
 	}
+}
+
+func migrateFileOnError(
+	log *lib.Logger,
+	c *client.Client,
+	stats *ScrubState,
+	shid msgs.ShardId,
+	terminateChan chan any,
+	scratchFile *scratchFile,
+	scrubbingMu *sync.Mutex,
+	migratingFiles map[msgs.InodeId]struct{},
+	migratingFilesMu *sync.RWMutex,
+	req *scrubRequest,
+	err error,
+	bufPool *lib.BufPool,
+	blockNotFoundAlert *lib.XmonNCAlert,
+) bool {
+	migratingFilesMu.Lock()
+	_, ok := migratingFiles[req.file]
+	migratingFiles[req.file] = struct{}{}
+	migratingFilesMu.Unlock()
+	if ok {
+		// file already being migrated, nothing to do
+		return true
+	}
+	defer func() {
+		migratingFilesMu.Lock()
+		delete(migratingFiles, req.file)
+		migratingFilesMu.Unlock()
+	}()
+
+	atomic.AddUint64(&stats.CheckedBlocks, 1)
+	if err == msgs.BAD_BLOCK_CRC {
+		atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
+	}
+	for attempts := 1; ; attempts++ {
+		if err := scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
+			if err == msgs.BLOCK_NOT_FOUND {
+				log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
+				time.Sleep(time.Second)
+			} else {
+				log.Info("could not scrub file %v, will terminate: %v", req.file, err)
+				select {
+				case terminateChan <- err:
+				default:
+				}
+				return false
+			}
+		} else {
+			log.ClearNC(blockNotFoundAlert)
+			break
+		}
+	}
+	return true
 }
 
 func scrubScraper(
@@ -271,7 +294,7 @@ func ScrubFiles(
 	var workersWg sync.WaitGroup
 	workersWg.Add(opts.NumWorkersPerShard)
 	var scrubbingMu sync.Mutex
-	migratingFiles := map[msgs.InodeId]any{}
+	migratingFiles := map[msgs.InodeId]struct{}{}
 	migratingFilesMu := sync.RWMutex{}
 
 	for i := 0; i < opts.NumWorkersPerShard; i++ {

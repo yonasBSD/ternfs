@@ -887,6 +887,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 							m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
 							time.Sleep(time.Second)
 						}
+						m.log.ClearNC(blockNotFoundAlert)
 						m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
 					case <-ticker.C:
 						if tmpFileActive {

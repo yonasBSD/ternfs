@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
 	"database/sql"
 	_ "embed"
 	"encoding/binary"
@@ -32,6 +33,7 @@ import (
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
+	"xtx/eggsfs/certificate"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -926,6 +928,28 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 	return &msgs.ClearShardInfoResp{}, nil
 }
 
+func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.EraseDecommissionedBlockReq) (*msgs.EraseDecommissionedBlockResp, error) {
+	blockServices, err := s.selectBlockServices(&req.BlockServiceId, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	blockService := blockServices[req.BlockServiceId]
+	if blockService.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
+		log.RaiseAlert("got an EraseDecommissionedBlockReq for a non-decommissioned block service %v", req.BlockServiceId)
+		return nil, fmt.Errorf("block service not decommissioned %v", req.BlockServiceId)
+	}
+	key, err := aes.NewCipher(blockService.SecretKey[:])
+	if err != nil {
+		return nil, fmt.Errorf("failed creating cipher for block service %v", blockService.Id)
+	}
+	expectedMac, good := certificate.CheckBlockEraseCertificate(req.BlockServiceId, key, &msgs.EraseBlockReq{BlockId: req.BlockId, Certificate: req.Certificate})
+	if !good {
+		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
+		return nil, msgs.BAD_CERTIFICATE
+	}
+	return &msgs.EraseDecommissionedBlockResp{Proof: certificate.BlockEraseProof(req.BlockServiceId, req.BlockId, key)}, nil
+}
+
 func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
 	n := sql.Named
 	end := req.EndTime
@@ -1024,6 +1048,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleMoveShardLeader(log, s, whichReq)
 	case *msgs.ClearShardInfoReq:
 		resp, err = handleClearShardInfo(log, s, whichReq)
+	case *msgs.EraseDecommissionedBlockReq:
+		resp, err = handleEraseDecomissionedBlockReq(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1178,6 +1204,8 @@ func readShuckleRequest(
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
+	case msgs.ERASE_DECOMMISSIONED_BLOCK:
+		req = &msgs.EraseDecommissionedBlockReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

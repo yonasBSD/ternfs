@@ -751,6 +751,8 @@ func (k ShuckleMessageKind) String() string {
 		return "REGISTER_BLOCK_SERVICES"
 	case 25:
 		return "CDC_WITH_REPLICAS"
+	case 32:
+		return "ERASE_DECOMMISSIONED_BLOCK"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -781,6 +783,7 @@ const (
 	CLEAR_SHARD_INFO ShuckleMessageKind = 0x17
 	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x18
 	CDC_WITH_REPLICAS ShuckleMessageKind = 0x19
+	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -807,9 +810,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	CLEAR_SHARD_INFO,
 	REGISTER_BLOCK_SERVICES,
 	CDC_WITH_REPLICAS,
+	ERASE_DECOMMISSIONED_BLOCK,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 25
+const MaxShuckleMessageKind ShuckleMessageKind = 32
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -859,6 +863,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &RegisterBlockServicesReq{}, &RegisterBlockServicesResp{}, nil
 	case k == "CDC_WITH_REPLICAS":
 		return &CdcWithReplicasReq{}, &CdcWithReplicasResp{}, nil
+	case k == "ERASE_DECOMMISSIONED_BLOCK":
+		return &EraseDecommissionedBlockReq{}, &EraseDecommissionedBlockResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5415,6 +5421,54 @@ func (v *CdcWithReplicasResp) Unpack(r io.Reader) error {
 		if err := v.Replicas[i].Unpack(r); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (v *EraseDecommissionedBlockReq) ShuckleRequestKind() ShuckleMessageKind {
+	return ERASE_DECOMMISSIONED_BLOCK
+}
+
+func (v *EraseDecommissionedBlockReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.Certificate[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *EraseDecommissionedBlockReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServiceId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.Certificate[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *EraseDecommissionedBlockResp) ShuckleResponseKind() ShuckleMessageKind {
+	return ERASE_DECOMMISSIONED_BLOCK
+}
+
+func (v *EraseDecommissionedBlockResp) Pack(w io.Writer) error {
+	if err := bincode.PackFixedBytes(w, 8, v.Proof[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *EraseDecommissionedBlockResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackFixedBytes(r, 8, v.Proof[:]); err != nil {
+		return err
 	}
 	return nil
 }

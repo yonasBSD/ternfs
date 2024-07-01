@@ -1897,6 +1897,11 @@ func main() {
 			reflect.TypeOf(msgs.CdcWithReplicasReq{}),
 			reflect.TypeOf(msgs.CdcWithReplicasResp{}),
 		},
+		{
+			0x20,
+			reflect.TypeOf(msgs.EraseDecommissionedBlockReq{}),
+			reflect.TypeOf(msgs.EraseDecommissionedBlockResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

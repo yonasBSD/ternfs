@@ -920,16 +920,18 @@ type Client struct {
 	cdcTimeout           *lib.ReqTimeouts
 	blockTimeout         *lib.ReqTimeouts
 	requestIdCounter     uint64
+	shuckleAddress       string
 	addrsRefreshTicker   *time.Ticker
 	addrsRefreshClose    chan (struct{})
+	shuckleConn          *ShuckleConn
 }
 
-func (c *Client) refreshAddrs(log *lib.Logger, shuckleTimeout *lib.ReqTimeouts, shuckleAddress string) error {
+func (c *Client) refreshAddrs(log *lib.Logger) error {
 	var shardAddrs [256]msgs.AddrsInfo
 	var cdcAddrs msgs.AddrsInfo
 	{
-		log.Info("Getting shard/CDC info from shuckle at '%v'", shuckleAddress)
-		resp, err := ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.ShardsReq{})
+		log.Info("Getting shard/CDC info from shuckle at '%v'", c.shuckleAddress)
+		resp, err := c.shuckleConn.Request(&msgs.ShardsReq{})
 		if err != nil {
 			return fmt.Errorf("could not request shards from shuckle: %w", err)
 		}
@@ -940,7 +942,7 @@ func (c *Client) refreshAddrs(log *lib.Logger, shuckleTimeout *lib.ReqTimeouts, 
 			}
 			shardAddrs[i] = shard.Addrs
 		}
-		resp, err = ShuckleRequest(log, shuckleTimeout, shuckleAddress, &msgs.CdcReq{})
+		resp, err = c.shuckleConn.Request(&msgs.CdcReq{})
 		if err != nil {
 			return fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
@@ -965,7 +967,10 @@ func NewClient(
 	if err != nil {
 		return nil, err
 	}
-	if err := c.refreshAddrs(log, shuckleTimeout, shuckleAddress); err != nil {
+	c.shuckleAddress = shuckleAddress
+	c.shuckleConn = MakeShuckleConn(log, shuckleTimeout, shuckleAddress)
+	if err := c.refreshAddrs(log); err != nil {
+		c.shuckleConn.Close()
 		return nil, err
 	}
 	c.addrsRefreshTicker = time.NewTicker(time.Minute)
@@ -976,7 +981,7 @@ func NewClient(
 			case <-c.addrsRefreshClose:
 				return
 			case <-c.addrsRefreshTicker.C:
-				if err := c.refreshAddrs(log, shuckleTimeout, shuckleAddress); err != nil {
+				if err := c.refreshAddrs(log); err != nil {
 					log.RaiseAlert("could not refresh shard & cdc addresses: %v", err)
 				}
 			}
@@ -1126,6 +1131,9 @@ func (c *Client) Close() {
 	c.fetchBlockProcessors.close()
 	c.eraseBlockProcessors.close()
 	c.checkBlockProcessors.close()
+	if c.shuckleConn != nil {
+		c.shuckleConn.Close()
+	}
 }
 
 // Not atomic between the read/write
@@ -1397,6 +1405,18 @@ func (c *Client) EraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlock
 		return proof, err
 	}
 	return resp.(*msgs.EraseBlockResp).Proof, nil
+}
+
+func (c Client) ShuckleAddress() string {
+	return c.shuckleAddress
+}
+
+func (c Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
+	resp, err := c.shuckleConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
+	if err != nil {
+		return [8]byte{}, err
+	}
+	return resp.(*msgs.EraseDecommissionedBlockResp).Proof, nil
 }
 
 func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any) *sendArgs {

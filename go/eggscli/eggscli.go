@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/certificate"
 	"xtx/eggsfs/cleanup"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
@@ -641,7 +642,7 @@ func main() {
 			Crc:     msgs.Crc(crc32c.Sum(0, fileContents)),
 			Size:    uint32(len(fileContents)),
 		}
-		req.Certificate = client.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
+		req.Certificate = certificate.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
 		log.Info("request: %+v", req)
 	}
 	commands["write-block-req"] = commandSpec{

@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"xtx/eggsfs/certificate"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
@@ -116,16 +117,6 @@ func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
 	buf.Write([]byte{'W'})
 	binary.Write(buf, binary.LittleEndian, uint64(blockId))
-	return lib.CBCMAC(key, buf.Bytes())
-}
-
-func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
-	buf := bytes.NewBuffer([]byte{})
-	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
-	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
-	buf.Write([]byte{'E'})
-	binary.Write(buf, binary.LittleEndian, uint64(blockId))
-
 	return lib.CBCMAC(key, buf.Bytes())
 }
 
@@ -299,7 +290,7 @@ func updateBlockServiceInfoCapacityForever(
 }
 
 func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) error {
-	expectedMac, good := client.CheckBlockEraseCertificate(blockServiceId, cipher, req)
+	expectedMac, good := certificate.CheckBlockEraseCertificate(blockServiceId, cipher, req)
 	if !good {
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
 		return msgs.BAD_CERTIFICATE
@@ -489,7 +480,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 }
 
 func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
-	expectedMac, good := client.CheckBlockWriteCertificate(cipher, blockServiceId, req)
+	expectedMac, good := certificate.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
 		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
@@ -798,7 +789,7 @@ func handleSingleRequest(
 			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
 				log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
 				resp := msgs.EraseBlockResp{
-					Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
+					Proof: certificate.BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
 				}
 				if err := writeBlocksResponse(log, conn, &resp); err != nil {
 					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
@@ -828,7 +819,7 @@ func handleSingleRequest(
 		}
 
 		resp := msgs.EraseBlockResp{
-			Proof: BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
+			Proof: certificate.BlockEraseProof(blockServiceId, whichReq.BlockId, blockService.cipher),
 		}
 		if err := writeBlocksResponse(log, conn, &resp); err != nil {
 			log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)

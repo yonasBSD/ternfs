@@ -2081,6 +2081,16 @@ type ClearShardInfoReq struct {
 
 type ClearShardInfoResp struct{}
 
+type EraseDecommissionedBlockReq struct {
+	BlockServiceId BlockServiceId
+	BlockId        BlockId
+	Certificate    [8]byte
+}
+
+type EraseDecommissionedBlockResp struct {
+	Proof [8]byte
+}
+
 // --------------------------------------------------------------------
 // block service requests/responses
 

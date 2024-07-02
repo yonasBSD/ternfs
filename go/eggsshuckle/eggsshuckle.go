@@ -81,6 +81,9 @@ type state struct {
 	// separate mutex to manage `lastAutoDecom`
 	decomMutex    sync.Mutex
 	lastAutoDecom time.Time
+	// speed up generating proof for decommed block deletion
+	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceInfo
+	decommedBlockServicesMu sync.RWMutex
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -217,15 +220,27 @@ func newState(
 	conf *shuckleConfig,
 ) (*state, error) {
 	st := &state{
-		db:     db,
-		mutex:  sync.Mutex{},
-		config: conf,
+		db:                      db,
+		mutex:                   sync.Mutex{},
+		config:                  conf,
+		decommedBlockServices:   make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		decommedBlockServicesMu: sync.RWMutex{},
+	}
+	blockServices, err := st.selectBlockServices(nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	for id, bs := range blockServices {
+		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
+			continue
+		}
+		st.decommedBlockServices[id] = bs
 	}
 	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
 		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
-	var err error
+
 	st.client, err = client.NewClientDirectNoAddrs(log)
 	if err != nil {
 		return nil, err
@@ -500,6 +515,16 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	if nrows != 1 {
 		ll.RaiseAlert("unexpected number of rows affected when setting flags for %d, got:%d, want:1", req.Id, nrows)
 		return nil, err
+	}
+	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
+		s.decommedBlockServicesMu.Lock()
+		defer s.decommedBlockServicesMu.Unlock()
+		bs, err := s.selectBlockServices(&req.Id, 0, 0)
+		if err != nil {
+			ll.RaiseAlert("couldnt select block service after decommissioning")
+		} else {
+			s.decommedBlockServices[req.Id] = bs[req.Id]
+		}
 	}
 	return &msgs.SetBlockServiceFlagsResp{}, nil
 }
@@ -929,12 +954,11 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 }
 
 func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.EraseDecommissionedBlockReq) (*msgs.EraseDecommissionedBlockResp, error) {
-	blockServices, err := s.selectBlockServices(&req.BlockServiceId, 0, 0)
-	if err != nil {
-		return nil, err
-	}
-	blockService := blockServices[req.BlockServiceId]
-	if blockService.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
+	s.decommedBlockServicesMu.RLock()
+	defer s.decommedBlockServicesMu.RUnlock()
+
+	blockService, ok := s.decommedBlockServices[req.BlockServiceId]
+	if !ok || blockService.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
 		log.RaiseAlert("got an EraseDecommissionedBlockReq for a non-decommissioned block service %v", req.BlockServiceId)
 		return nil, fmt.Errorf("block service not decommissioned %v", req.BlockServiceId)
 	}

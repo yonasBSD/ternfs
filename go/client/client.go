@@ -968,7 +968,7 @@ func NewClient(
 		return nil, err
 	}
 	c.shuckleAddress = shuckleAddress
-	c.shuckleConn = MakeShuckleConn(log, shuckleTimeout, shuckleAddress)
+	c.shuckleConn = MakeShuckleConn(log, shuckleTimeout, shuckleAddress, 1)
 	if err := c.refreshAddrs(log); err != nil {
 		c.shuckleConn.Close()
 		return nil, err
@@ -1012,6 +1012,10 @@ func (c *Client) SetCDCTimeouts(t *lib.ReqTimeouts) {
 // This is only safe to use during initialization.
 func (c *Client) SetBlockTimeout(t *lib.ReqTimeouts) {
 	c.blockTimeout = t
+}
+
+func (c *Client) IncreaseNumShuckleHandlersTo(numHandlers uint) {
+	c.shuckleConn.IncreaseNumHandlersTo(numHandlers)
 }
 
 var clientMtu uint16 = msgs.DEFAULT_UDP_MTU

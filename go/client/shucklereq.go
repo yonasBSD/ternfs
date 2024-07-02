@@ -123,7 +123,7 @@ func ShuckleRequest(
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
-	conn := MakeShuckleConn(log, timeout, shuckleAddress)
+	conn := MakeShuckleConn(log, timeout, shuckleAddress, 1)
 	defer conn.Close()
 	return conn.Request(req)
 }
@@ -139,28 +139,37 @@ type shuckReq struct {
 }
 
 type ShuckleConn struct {
-	log     *lib.Logger
-	reqChan chan shuckReq
+	log            *lib.Logger
+	timeout        *lib.ReqTimeouts
+	shuckleAddress string
+	reqChan        chan shuckReq
+	numHandlers    uint
 }
 
 func MakeShuckleConn(
 	log *lib.Logger,
 	timeout *lib.ReqTimeouts,
 	shuckleAddress string,
+	numHandlers uint,
 ) *ShuckleConn {
-	shuckConn := ShuckleConn{log, make(chan shuckReq)}
-	for i := 0; i < 10; i++ {
-		go func() {
-			shuckConn.requestHandler(timeout, shuckleAddress)
-		}()
-	}
-	return &shuckConn
-}
-
-func (c *ShuckleConn) requestHandler(timeout *lib.ReqTimeouts, shuckleAddress string) {
 	if timeout == nil {
 		timeout = &DefaultShuckleTimeout
 	}
+	shuckConn := ShuckleConn{log, timeout, shuckleAddress, make(chan shuckReq), 0}
+	shuckConn.IncreaseNumHandlersTo(numHandlers)
+	return &shuckConn
+}
+
+func (c *ShuckleConn) IncreaseNumHandlersTo(numHandlers uint) {
+	for i := c.numHandlers; i < numHandlers; i++ {
+		go func() {
+			c.requestHandler()
+		}()
+	}
+	c.numHandlers = numHandlers
+}
+
+func (c *ShuckleConn) requestHandler() {
 	var conn net.Conn
 	var err error
 	defer func() {
@@ -178,7 +187,7 @@ func (c *ShuckleConn) requestHandler(timeout *lib.ReqTimeouts, shuckleAddress st
 		if conn == nil {
 			if !reconnectAttempted {
 				reconnectAttempted = true
-				if conn, err = c.connect(timeout, shuckleAddress); err != nil {
+				if conn, err = c.connect(); err != nil {
 					req.respC <- shuckResp{nil, err}
 					continue
 				}
@@ -203,7 +212,7 @@ func (c *ShuckleConn) requestHandler(timeout *lib.ReqTimeouts, shuckleAddress st
 	}
 }
 
-func (c *ShuckleConn) connect(timeout *lib.ReqTimeouts, shuckleAddress string) (net.Conn, error) {
+func (c *ShuckleConn) connect() (net.Conn, error) {
 	start := time.Now()
 
 	var err error
@@ -213,7 +222,7 @@ func (c *ShuckleConn) connect(timeout *lib.ReqTimeouts, shuckleAddress string) (
 	goto ReconnectBegin
 
 Reconnect:
-	delay = timeout.Next(start)
+	delay = c.timeout.Next(start)
 	if delay == 0 {
 		c.log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
@@ -221,7 +230,7 @@ Reconnect:
 	time.Sleep(delay)
 
 ReconnectBegin:
-	conn, err = net.Dial("tcp", shuckleAddress)
+	conn, err = net.Dial("tcp", c.shuckleAddress)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {

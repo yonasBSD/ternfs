@@ -149,9 +149,11 @@ func MakeShuckleConn(
 	shuckleAddress string,
 ) *ShuckleConn {
 	shuckConn := ShuckleConn{log, make(chan shuckReq)}
-	go func() {
-		shuckConn.requestHandler(timeout, shuckleAddress)
-	}()
+	for i := 0; i < 10; i++ {
+		go func() {
+			shuckConn.requestHandler(timeout, shuckleAddress)
+		}()
+	}
 	return &shuckConn
 }
 

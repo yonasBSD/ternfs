@@ -3678,6 +3678,8 @@ struct ShardDBImpl {
         }
 
         tmpTf().setMtime(time);
+        // For operations that do not care about deadlines (such as removing spans),
+        // do not bump the deadline since the whole point is to clean those files up.
         if (!allowPastDeadline) {
             tmpTf().setDeadline(time + _transientDeadlineInterval);
         }

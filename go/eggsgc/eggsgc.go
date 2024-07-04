@@ -284,12 +284,21 @@ func main() {
 			shid := msgs.ShardId(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				timesFailed := 0
 				for {
 					if err := cleanup.DestructFiles(log, c, opts, destructFilesState, shid); err != nil {
-						panic(fmt.Errorf("could not destruct files: %v", err))
+						timesFailed++
+						if timesFailed > 5 {
+							panic(fmt.Errorf("could not destruct files: %v", err))
+						} else {
+							log.Info("destructing files in shard %v failed, sleeping for 10 minutes", shid)
+							time.Sleep(10 * time.Minute)
+						}
+					} else {
+						timesFailed = 0
+						log.Info("finished destructing in shard %v, sleeping for one hour", shid)
+						time.Sleep(time.Hour)
 					}
-					log.Info("finished destructing in shard %v, sleeping for one hour", shid)
-					time.Sleep(time.Hour)
 				}
 			}()
 		}

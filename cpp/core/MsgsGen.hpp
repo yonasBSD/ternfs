@@ -302,25 +302,30 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind);
 
 enum class ShuckleMessageKind : uint8_t {
     ERROR = 0,
-    SHARDS = 3,
-    CDC = 7,
+    LOCAL_SHARDS = 3,
+    LOCAL_CDC = 7,
     INFO = 8,
     SHUCKLE = 15,
-    BLOCK_SERVICES_WITH_FLAG_CHANGE = 34,
+    LOCAL_CHANGED_BLOCK_SERVICES = 34,
+    CREATE_LOCATION = 1,
+    RENAME_LOCATION = 2,
+    LOCATIONS = 5,
     REGISTER_SHARD = 4,
     REGISTER_CDC = 6,
     SET_BLOCK_SERVICE_FLAGS = 9,
-    BLOCK_SERVICE = 10,
-    SHARD = 12,
-    SHARD_REPLICAS = 16,
+    REGISTER_BLOCK_SERVICES = 10,
+    CHANGED_BLOCK_SERVICES_AT_LOCATION = 11,
+    SHARDS_AT_LOCATION = 12,
+    CDC_AT_LOCATION = 13,
+    SHARD_REPLICAS_DE_PR_EC_AT_ED = 16,
     SHARD_BLOCK_SERVICES = 17,
-    CDC_REPLICAS = 19,
-    SHARDS_WITH_REPLICAS = 20,
-    SET_BLOCK_SERVICE_DECOMMISSIONED = 21,
+    CDC_REPLICAS_DE_PR_EC_AT_ED = 19,
+    ALL_SHARDS = 20,
+    DECOMMISSION_BLOCK_SERVICE = 21,
     MOVE_SHARD_LEADER = 22,
     CLEAR_SHARD_INFO = 23,
-    REGISTER_BLOCK_SERVICES = 24,
-    CDC_WITH_REPLICAS = 25,
+    REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED = 24,
+    ALL_CDC = 25,
     ERASE_DECOMMISSIONED_BLOCK = 32,
     ALL_BLOCK_SERVICES = 33,
     MOVE_CDC_LEADER = 35,
@@ -329,25 +334,30 @@ enum class ShuckleMessageKind : uint8_t {
 };
 
 const std::vector<ShuckleMessageKind> allShuckleMessageKind {
-    ShuckleMessageKind::SHARDS,
-    ShuckleMessageKind::CDC,
+    ShuckleMessageKind::LOCAL_SHARDS,
+    ShuckleMessageKind::LOCAL_CDC,
     ShuckleMessageKind::INFO,
     ShuckleMessageKind::SHUCKLE,
-    ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE,
+    ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES,
+    ShuckleMessageKind::CREATE_LOCATION,
+    ShuckleMessageKind::RENAME_LOCATION,
+    ShuckleMessageKind::LOCATIONS,
     ShuckleMessageKind::REGISTER_SHARD,
     ShuckleMessageKind::REGISTER_CDC,
     ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS,
-    ShuckleMessageKind::BLOCK_SERVICE,
-    ShuckleMessageKind::SHARD,
-    ShuckleMessageKind::SHARD_REPLICAS,
+    ShuckleMessageKind::REGISTER_BLOCK_SERVICES,
+    ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION,
+    ShuckleMessageKind::SHARDS_AT_LOCATION,
+    ShuckleMessageKind::CDC_AT_LOCATION,
+    ShuckleMessageKind::SHARD_REPLICAS_DE_PR_EC_AT_ED,
     ShuckleMessageKind::SHARD_BLOCK_SERVICES,
-    ShuckleMessageKind::CDC_REPLICAS,
-    ShuckleMessageKind::SHARDS_WITH_REPLICAS,
-    ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED,
+    ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED,
+    ShuckleMessageKind::ALL_SHARDS,
+    ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE,
     ShuckleMessageKind::MOVE_SHARD_LEADER,
     ShuckleMessageKind::CLEAR_SHARD_INFO,
-    ShuckleMessageKind::REGISTER_BLOCK_SERVICES,
-    ShuckleMessageKind::CDC_WITH_REPLICAS,
+    ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED,
+    ShuckleMessageKind::ALL_CDC,
     ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK,
     ShuckleMessageKind::ALL_BLOCK_SERVICES,
     ShuckleMessageKind::MOVE_CDC_LEADER,
@@ -1084,32 +1094,34 @@ struct SnapshotPolicy {
 
 std::ostream& operator<<(std::ostream& out, const SnapshotPolicy& x);
 
-struct ShardWithReplicasInfo {
+struct FullShardInfo {
     ShardReplicaId id;
     bool isLeader;
     AddrsInfo addrs;
     EggsTime lastSeen;
+    uint8_t locationId;
 
-    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 8; // id + isLeader + addrs + lastSeen
+    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 8 + 1; // id + isLeader + addrs + lastSeen + locationId
 
-    ShardWithReplicasInfo() { clear(); }
+    FullShardInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // id
         _size += 1; // isLeader
         _size += addrs.packedSize(); // addrs
         _size += 8; // lastSeen
+        _size += 1; // locationId
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardWithReplicasInfo&rhs) const;
+    bool operator==(const FullShardInfo&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardWithReplicasInfo& x);
+std::ostream& operator<<(std::ostream& out, const FullShardInfo& x);
 
-struct RegisterBlockServiceInfo {
+struct RegisterBlockServiceInfoDEPRECATED {
     BlockServiceId id;
     AddrsInfo addrs;
     uint8_t storageClass;
@@ -1124,10 +1136,51 @@ struct RegisterBlockServiceInfo {
 
     static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + addrs + storageClass + failureDomain + secretKey + flags + flagsMask + capacityBytes + availableBytes + blocks + path
 
+    RegisterBlockServiceInfoDEPRECATED() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // id
+        _size += addrs.packedSize(); // addrs
+        _size += 1; // storageClass
+        _size += failureDomain.packedSize(); // failureDomain
+        _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
+        _size += 1; // flags
+        _size += 1; // flagsMask
+        _size += 8; // capacityBytes
+        _size += 8; // availableBytes
+        _size += 8; // blocks
+        _size += path.packedSize(); // path
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RegisterBlockServiceInfoDEPRECATED&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfoDEPRECATED& x);
+
+struct RegisterBlockServiceInfo {
+    BlockServiceId id;
+    uint8_t locationId;
+    AddrsInfo addrs;
+    uint8_t storageClass;
+    FailureDomain failureDomain;
+    BincodeFixedBytes<16> secretKey;
+    uint8_t flags;
+    uint8_t flagsMask;
+    uint64_t capacityBytes;
+    uint64_t availableBytes;
+    uint64_t blocks;
+    BincodeBytes path;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 1 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + locationId + addrs + storageClass + failureDomain + secretKey + flags + flagsMask + capacityBytes + availableBytes + blocks + path
+
     RegisterBlockServiceInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
+        _size += 1; // locationId
         _size += addrs.packedSize(); // addrs
         _size += 1; // storageClass
         _size += failureDomain.packedSize(); // failureDomain
@@ -1148,18 +1201,20 @@ struct RegisterBlockServiceInfo {
 
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x);
 
-struct CdcWithReplicasInfo {
+struct CdcInfo {
     ReplicaId replicaId;
+    uint8_t locationId;
     bool isLeader;
     AddrsInfo addrs;
     EggsTime lastSeen;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // replicaId + isLeader + addrs + lastSeen
+    static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // replicaId + locationId + isLeader + addrs + lastSeen
 
-    CdcWithReplicasInfo() { clear(); }
+    CdcInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replicaId
+        _size += 1; // locationId
         _size += 1; // isLeader
         _size += addrs.packedSize(); // addrs
         _size += 8; // lastSeen
@@ -1168,10 +1223,31 @@ struct CdcWithReplicasInfo {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcWithReplicasInfo&rhs) const;
+    bool operator==(const CdcInfo&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcWithReplicasInfo& x);
+std::ostream& operator<<(std::ostream& out, const CdcInfo& x);
+
+struct LocationInfo {
+    uint8_t id;
+    BincodeBytes name;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
+
+    LocationInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // id
+        _size += name.packedSize(); // name
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LocationInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocationInfo& x);
 
 struct LookupReq {
     InodeId dirId;
@@ -3183,11 +3259,11 @@ struct CdcSnapshotResp {
 
 std::ostream& operator<<(std::ostream& out, const CdcSnapshotResp& x);
 
-struct ShardsReq {
+struct LocalShardsReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    ShardsReq() { clear(); }
+    LocalShardsReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3195,17 +3271,17 @@ struct ShardsReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardsReq&rhs) const;
+    bool operator==(const LocalShardsReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardsReq& x);
+std::ostream& operator<<(std::ostream& out, const LocalShardsReq& x);
 
-struct ShardsResp {
+struct LocalShardsResp {
     BincodeList<ShardInfo> shards;
 
     static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
 
-    ShardsResp() { clear(); }
+    LocalShardsResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += shards.packedSize(); // shards
@@ -3214,16 +3290,16 @@ struct ShardsResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardsResp&rhs) const;
+    bool operator==(const LocalShardsResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardsResp& x);
+std::ostream& operator<<(std::ostream& out, const LocalShardsResp& x);
 
-struct CdcReq {
+struct LocalCdcReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    CdcReq() { clear(); }
+    LocalCdcReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3231,18 +3307,18 @@ struct CdcReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcReq&rhs) const;
+    bool operator==(const LocalCdcReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcReq& x);
+std::ostream& operator<<(std::ostream& out, const LocalCdcReq& x);
 
-struct CdcResp {
+struct LocalCdcResp {
     AddrsInfo addrs;
     EggsTime lastSeen;
 
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
-    CdcResp() { clear(); }
+    LocalCdcResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -3252,10 +3328,10 @@ struct CdcResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcResp&rhs) const;
+    bool operator==(const LocalCdcResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcResp& x);
+std::ostream& operator<<(std::ostream& out, const LocalCdcResp& x);
 
 struct InfoReq {
 
@@ -3337,12 +3413,12 @@ struct ShuckleResp {
 
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
 
-struct BlockServicesWithFlagChangeReq {
+struct LocalChangedBlockServicesReq {
     EggsTime changedSince;
 
     static constexpr uint16_t STATIC_SIZE = 8; // changedSince
 
-    BlockServicesWithFlagChangeReq() { clear(); }
+    LocalChangedBlockServicesReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // changedSince
@@ -3351,18 +3427,18 @@ struct BlockServicesWithFlagChangeReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockServicesWithFlagChangeReq&rhs) const;
+    bool operator==(const LocalChangedBlockServicesReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeReq& x);
+std::ostream& operator<<(std::ostream& out, const LocalChangedBlockServicesReq& x);
 
-struct BlockServicesWithFlagChangeResp {
+struct LocalChangedBlockServicesResp {
     EggsTime lastChange;
     BincodeList<BlockService> blockServices;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
 
-    BlockServicesWithFlagChangeResp() { clear(); }
+    LocalChangedBlockServicesResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // lastChange
@@ -3372,10 +3448,122 @@ struct BlockServicesWithFlagChangeResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockServicesWithFlagChangeResp&rhs) const;
+    bool operator==(const LocalChangedBlockServicesResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeResp& x);
+std::ostream& operator<<(std::ostream& out, const LocalChangedBlockServicesResp& x);
+
+struct CreateLocationReq {
+    uint8_t id;
+    BincodeBytes name;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
+
+    CreateLocationReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // id
+        _size += name.packedSize(); // name
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CreateLocationReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CreateLocationReq& x);
+
+struct CreateLocationResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    CreateLocationResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CreateLocationResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CreateLocationResp& x);
+
+struct RenameLocationReq {
+    uint8_t id;
+    BincodeBytes name;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
+
+    RenameLocationReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // id
+        _size += name.packedSize(); // name
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RenameLocationReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RenameLocationReq& x);
+
+struct RenameLocationResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    RenameLocationResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RenameLocationResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RenameLocationResp& x);
+
+struct LocationsReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    LocationsReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LocationsReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocationsReq& x);
+
+struct LocationsResp {
+    BincodeList<LocationInfo> locations;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<LocationInfo>::STATIC_SIZE; // locations
+
+    LocationsResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += locations.packedSize(); // locations
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LocationsResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocationsResp& x);
 
 struct RegisterShardReq {
     ShardReplicaId shrid;
@@ -3501,50 +3689,168 @@ struct SetBlockServiceFlagsResp {
 
 std::ostream& operator<<(std::ostream& out, const SetBlockServiceFlagsResp& x);
 
-struct BlockServiceReq {
-    BlockServiceId id;
+struct RegisterBlockServicesReq {
+    BincodeList<RegisterBlockServiceInfo> blockServices;
 
-    static constexpr uint16_t STATIC_SIZE = 8; // id
+    static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfo>::STATIC_SIZE; // blockServices
 
-    BlockServiceReq() { clear(); }
+    RegisterBlockServicesReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += 8; // id
+        _size += blockServices.packedSize(); // blockServices
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockServiceReq&rhs) const;
+    bool operator==(const RegisterBlockServicesReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockServiceReq& x);
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesReq& x);
 
-struct BlockServiceResp {
-    BlockServiceInfo info;
+struct RegisterBlockServicesResp {
 
-    static constexpr uint16_t STATIC_SIZE = BlockServiceInfo::STATIC_SIZE; // info
+    static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    BlockServiceResp() { clear(); }
+    RegisterBlockServicesResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += info.packedSize(); // info
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockServiceResp&rhs) const;
+    bool operator==(const RegisterBlockServicesResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockServiceResp& x);
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x);
 
-struct ShardReq {
+struct ChangedBlockServicesAtLocationReq {
+    uint8_t locationId;
+    EggsTime changedSince;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 8; // locationId + changedSince
+
+    ChangedBlockServicesAtLocationReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // locationId
+        _size += 8; // changedSince
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ChangedBlockServicesAtLocationReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesAtLocationReq& x);
+
+struct ChangedBlockServicesAtLocationResp {
+    EggsTime lastChange;
+    BincodeList<BlockService> blockServices;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
+
+    ChangedBlockServicesAtLocationResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // lastChange
+        _size += blockServices.packedSize(); // blockServices
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ChangedBlockServicesAtLocationResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesAtLocationResp& x);
+
+struct ShardsAtLocationReq {
+    uint8_t locationId;
+
+    static constexpr uint16_t STATIC_SIZE = 1; // locationId
+
+    ShardsAtLocationReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // locationId
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardsAtLocationReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardsAtLocationReq& x);
+
+struct ShardsAtLocationResp {
+    BincodeList<ShardInfo> shards;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
+
+    ShardsAtLocationResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += shards.packedSize(); // shards
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ShardsAtLocationResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ShardsAtLocationResp& x);
+
+struct CdcAtLocationReq {
+    uint8_t locationId;
+
+    static constexpr uint16_t STATIC_SIZE = 1; // locationId
+
+    CdcAtLocationReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // locationId
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CdcAtLocationReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CdcAtLocationReq& x);
+
+struct CdcAtLocationResp {
+    AddrsInfo addrs;
+    EggsTime lastSeen;
+
+    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
+
+    CdcAtLocationResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += addrs.packedSize(); // addrs
+        _size += 8; // lastSeen
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const CdcAtLocationResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const CdcAtLocationResp& x);
+
+struct ShardReplicasDEPRECATEDReq {
     ShardId id;
 
     static constexpr uint16_t STATIC_SIZE = 1; // id
 
-    ShardReq() { clear(); }
+    ShardReplicasDEPRECATEDReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
@@ -3553,55 +3859,17 @@ struct ShardReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardReq&rhs) const;
+    bool operator==(const ShardReplicasDEPRECATEDReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardReq& x);
+std::ostream& operator<<(std::ostream& out, const ShardReplicasDEPRECATEDReq& x);
 
-struct ShardResp {
-    ShardInfo info;
-
-    static constexpr uint16_t STATIC_SIZE = ShardInfo::STATIC_SIZE; // info
-
-    ShardResp() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += info.packedSize(); // info
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ShardResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ShardResp& x);
-
-struct ShardReplicasReq {
-    ShardId id;
-
-    static constexpr uint16_t STATIC_SIZE = 1; // id
-
-    ShardReplicasReq() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += 1; // id
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ShardReplicasReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ShardReplicasReq& x);
-
-struct ShardReplicasResp {
+struct ShardReplicasDEPRECATEDResp {
     BincodeList<AddrsInfo> replicas;
 
     static constexpr uint16_t STATIC_SIZE = BincodeList<AddrsInfo>::STATIC_SIZE; // replicas
 
-    ShardReplicasResp() { clear(); }
+    ShardReplicasDEPRECATEDResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -3610,10 +3878,10 @@ struct ShardReplicasResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardReplicasResp&rhs) const;
+    bool operator==(const ShardReplicasDEPRECATEDResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardReplicasResp& x);
+std::ostream& operator<<(std::ostream& out, const ShardReplicasDEPRECATEDResp& x);
 
 struct ShardBlockServicesReq {
     ShardId shardId;
@@ -3653,11 +3921,11 @@ struct ShardBlockServicesResp {
 
 std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x);
 
-struct CdcReplicasReq {
+struct CdcReplicasDEPRECATEDReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    CdcReplicasReq() { clear(); }
+    CdcReplicasDEPRECATEDReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3665,17 +3933,17 @@ struct CdcReplicasReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcReplicasReq&rhs) const;
+    bool operator==(const CdcReplicasDEPRECATEDReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcReplicasReq& x);
+std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDReq& x);
 
-struct CdcReplicasResp {
+struct CdcReplicasDEPRECATEDResp {
     BincodeList<AddrsInfo> replicas;
 
     static constexpr uint16_t STATIC_SIZE = BincodeList<AddrsInfo>::STATIC_SIZE; // replicas
 
-    CdcReplicasResp() { clear(); }
+    CdcReplicasDEPRECATEDResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -3684,16 +3952,16 @@ struct CdcReplicasResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcReplicasResp&rhs) const;
+    bool operator==(const CdcReplicasDEPRECATEDResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcReplicasResp& x);
+std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDResp& x);
 
-struct ShardsWithReplicasReq {
+struct AllShardsReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    ShardsWithReplicasReq() { clear(); }
+    AllShardsReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3701,17 +3969,17 @@ struct ShardsWithReplicasReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardsWithReplicasReq&rhs) const;
+    bool operator==(const AllShardsReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardsWithReplicasReq& x);
+std::ostream& operator<<(std::ostream& out, const AllShardsReq& x);
 
-struct ShardsWithReplicasResp {
-    BincodeList<ShardWithReplicasInfo> shards;
+struct AllShardsResp {
+    BincodeList<FullShardInfo> shards;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<ShardWithReplicasInfo>::STATIC_SIZE; // shards
+    static constexpr uint16_t STATIC_SIZE = BincodeList<FullShardInfo>::STATIC_SIZE; // shards
 
-    ShardsWithReplicasResp() { clear(); }
+    AllShardsResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += shards.packedSize(); // shards
@@ -3720,17 +3988,17 @@ struct ShardsWithReplicasResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const ShardsWithReplicasResp&rhs) const;
+    bool operator==(const AllShardsResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const ShardsWithReplicasResp& x);
+std::ostream& operator<<(std::ostream& out, const AllShardsResp& x);
 
-struct SetBlockServiceDecommissionedReq {
+struct DecommissionBlockServiceReq {
     BlockServiceId id;
 
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
-    SetBlockServiceDecommissionedReq() { clear(); }
+    DecommissionBlockServiceReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -3739,16 +4007,16 @@ struct SetBlockServiceDecommissionedReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const SetBlockServiceDecommissionedReq&rhs) const;
+    bool operator==(const DecommissionBlockServiceReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedReq& x);
+std::ostream& operator<<(std::ostream& out, const DecommissionBlockServiceReq& x);
 
-struct SetBlockServiceDecommissionedResp {
+struct DecommissionBlockServiceResp {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    SetBlockServiceDecommissionedResp() { clear(); }
+    DecommissionBlockServiceResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3756,10 +4024,10 @@ struct SetBlockServiceDecommissionedResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const SetBlockServiceDecommissionedResp&rhs) const;
+    bool operator==(const DecommissionBlockServiceResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedResp& x);
+std::ostream& operator<<(std::ostream& out, const DecommissionBlockServiceResp& x);
 
 struct MoveShardLeaderReq {
     ShardReplicaId shrid;
@@ -3837,12 +4105,12 @@ struct ClearShardInfoResp {
 
 std::ostream& operator<<(std::ostream& out, const ClearShardInfoResp& x);
 
-struct RegisterBlockServicesReq {
-    BincodeList<RegisterBlockServiceInfo> blockServices;
+struct RegisterBlockServicesDEPRECATEDReq {
+    BincodeList<RegisterBlockServiceInfoDEPRECATED> blockServices;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfo>::STATIC_SIZE; // blockServices
+    static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfoDEPRECATED>::STATIC_SIZE; // blockServices
 
-    RegisterBlockServicesReq() { clear(); }
+    RegisterBlockServicesDEPRECATEDReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -3851,16 +4119,16 @@ struct RegisterBlockServicesReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const RegisterBlockServicesReq&rhs) const;
+    bool operator==(const RegisterBlockServicesDEPRECATEDReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesReq& x);
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesDEPRECATEDReq& x);
 
-struct RegisterBlockServicesResp {
+struct RegisterBlockServicesDEPRECATEDResp {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    RegisterBlockServicesResp() { clear(); }
+    RegisterBlockServicesDEPRECATEDResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3868,16 +4136,16 @@ struct RegisterBlockServicesResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const RegisterBlockServicesResp&rhs) const;
+    bool operator==(const RegisterBlockServicesDEPRECATEDResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x);
+std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesDEPRECATEDResp& x);
 
-struct CdcWithReplicasReq {
+struct AllCdcReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
-    CdcWithReplicasReq() { clear(); }
+    AllCdcReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3885,17 +4153,17 @@ struct CdcWithReplicasReq {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcWithReplicasReq&rhs) const;
+    bool operator==(const AllCdcReq&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcWithReplicasReq& x);
+std::ostream& operator<<(std::ostream& out, const AllCdcReq& x);
 
-struct CdcWithReplicasResp {
-    BincodeList<CdcWithReplicasInfo> replicas;
+struct AllCdcResp {
+    BincodeList<CdcInfo> replicas;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<CdcWithReplicasInfo>::STATIC_SIZE; // replicas
+    static constexpr uint16_t STATIC_SIZE = BincodeList<CdcInfo>::STATIC_SIZE; // replicas
 
-    CdcWithReplicasResp() { clear(); }
+    AllCdcResp() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -3904,10 +4172,10 @@ struct CdcWithReplicasResp {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const CdcWithReplicasResp&rhs) const;
+    bool operator==(const AllCdcResp&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const CdcWithReplicasResp& x);
+std::ostream& operator<<(std::ostream& out, const AllCdcResp& x);
 
 struct EraseDecommissionedBlockReq {
     BlockServiceId blockServiceId;
@@ -4933,9 +5201,9 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 
 struct ShuckleReqContainer {
 private:
-    static constexpr std::array<size_t,23> _staticSizes = {ShardsReq::STATIC_SIZE, CdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, ShuckleReq::STATIC_SIZE, BlockServicesWithFlagChangeReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, BlockServiceReq::STATIC_SIZE, ShardReq::STATIC_SIZE, ShardReplicasReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, CdcReplicasReq::STATIC_SIZE, ShardsWithReplicasReq::STATIC_SIZE, SetBlockServiceDecommissionedReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, CdcWithReplicasReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesReq::STATIC_SIZE, MoveCdcLeaderReq::STATIC_SIZE, ClearCdcInfoReq::STATIC_SIZE};
+    static constexpr std::array<size_t,28> _staticSizes = {LocalShardsReq::STATIC_SIZE, LocalCdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, ShuckleReq::STATIC_SIZE, LocalChangedBlockServicesReq::STATIC_SIZE, CreateLocationReq::STATIC_SIZE, RenameLocationReq::STATIC_SIZE, LocationsReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, ChangedBlockServicesAtLocationReq::STATIC_SIZE, ShardsAtLocationReq::STATIC_SIZE, CdcAtLocationReq::STATIC_SIZE, ShardReplicasDEPRECATEDReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, CdcReplicasDEPRECATEDReq::STATIC_SIZE, AllShardsReq::STATIC_SIZE, DecommissionBlockServiceReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, RegisterBlockServicesDEPRECATEDReq::STATIC_SIZE, AllCdcReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesReq::STATIC_SIZE, MoveCdcLeaderReq::STATIC_SIZE, ClearCdcInfoReq::STATIC_SIZE};
     ShuckleMessageKind _kind = ShuckleMessageKind::EMPTY;
-    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, BlockServicesWithFlagChangeReq, RegisterShardReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, ShardReq, ShardReplicasReq, ShardBlockServicesReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq, MoveShardLeaderReq, ClearShardInfoReq, RegisterBlockServicesReq, CdcWithReplicasReq, EraseDecommissionedBlockReq, AllBlockServicesReq, MoveCdcLeaderReq, ClearCdcInfoReq> _data;
+    std::variant<LocalShardsReq, LocalCdcReq, InfoReq, ShuckleReq, LocalChangedBlockServicesReq, CreateLocationReq, RenameLocationReq, LocationsReq, RegisterShardReq, RegisterCdcReq, SetBlockServiceFlagsReq, RegisterBlockServicesReq, ChangedBlockServicesAtLocationReq, ShardsAtLocationReq, CdcAtLocationReq, ShardReplicasDEPRECATEDReq, ShardBlockServicesReq, CdcReplicasDEPRECATEDReq, AllShardsReq, DecommissionBlockServiceReq, MoveShardLeaderReq, ClearShardInfoReq, RegisterBlockServicesDEPRECATEDReq, AllCdcReq, EraseDecommissionedBlockReq, AllBlockServicesReq, MoveCdcLeaderReq, ClearCdcInfoReq> _data;
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
@@ -4945,44 +5213,54 @@ public:
 
     ShuckleMessageKind kind() const { return _kind; }
 
-    const ShardsReq& getShards() const;
-    ShardsReq& setShards();
-    const CdcReq& getCdc() const;
-    CdcReq& setCdc();
+    const LocalShardsReq& getLocalShards() const;
+    LocalShardsReq& setLocalShards();
+    const LocalCdcReq& getLocalCdc() const;
+    LocalCdcReq& setLocalCdc();
     const InfoReq& getInfo() const;
     InfoReq& setInfo();
     const ShuckleReq& getShuckle() const;
     ShuckleReq& setShuckle();
-    const BlockServicesWithFlagChangeReq& getBlockServicesWithFlagChange() const;
-    BlockServicesWithFlagChangeReq& setBlockServicesWithFlagChange();
+    const LocalChangedBlockServicesReq& getLocalChangedBlockServices() const;
+    LocalChangedBlockServicesReq& setLocalChangedBlockServices();
+    const CreateLocationReq& getCreateLocation() const;
+    CreateLocationReq& setCreateLocation();
+    const RenameLocationReq& getRenameLocation() const;
+    RenameLocationReq& setRenameLocation();
+    const LocationsReq& getLocations() const;
+    LocationsReq& setLocations();
     const RegisterShardReq& getRegisterShard() const;
     RegisterShardReq& setRegisterShard();
     const RegisterCdcReq& getRegisterCdc() const;
     RegisterCdcReq& setRegisterCdc();
     const SetBlockServiceFlagsReq& getSetBlockServiceFlags() const;
     SetBlockServiceFlagsReq& setSetBlockServiceFlags();
-    const BlockServiceReq& getBlockService() const;
-    BlockServiceReq& setBlockService();
-    const ShardReq& getShard() const;
-    ShardReq& setShard();
-    const ShardReplicasReq& getShardReplicas() const;
-    ShardReplicasReq& setShardReplicas();
+    const RegisterBlockServicesReq& getRegisterBlockServices() const;
+    RegisterBlockServicesReq& setRegisterBlockServices();
+    const ChangedBlockServicesAtLocationReq& getChangedBlockServicesAtLocation() const;
+    ChangedBlockServicesAtLocationReq& setChangedBlockServicesAtLocation();
+    const ShardsAtLocationReq& getShardsAtLocation() const;
+    ShardsAtLocationReq& setShardsAtLocation();
+    const CdcAtLocationReq& getCdcAtLocation() const;
+    CdcAtLocationReq& setCdcAtLocation();
+    const ShardReplicasDEPRECATEDReq& getShardReplicasDEPRECATED() const;
+    ShardReplicasDEPRECATEDReq& setShardReplicasDEPRECATED();
     const ShardBlockServicesReq& getShardBlockServices() const;
     ShardBlockServicesReq& setShardBlockServices();
-    const CdcReplicasReq& getCdcReplicas() const;
-    CdcReplicasReq& setCdcReplicas();
-    const ShardsWithReplicasReq& getShardsWithReplicas() const;
-    ShardsWithReplicasReq& setShardsWithReplicas();
-    const SetBlockServiceDecommissionedReq& getSetBlockServiceDecommissioned() const;
-    SetBlockServiceDecommissionedReq& setSetBlockServiceDecommissioned();
+    const CdcReplicasDEPRECATEDReq& getCdcReplicasDEPRECATED() const;
+    CdcReplicasDEPRECATEDReq& setCdcReplicasDEPRECATED();
+    const AllShardsReq& getAllShards() const;
+    AllShardsReq& setAllShards();
+    const DecommissionBlockServiceReq& getDecommissionBlockService() const;
+    DecommissionBlockServiceReq& setDecommissionBlockService();
     const MoveShardLeaderReq& getMoveShardLeader() const;
     MoveShardLeaderReq& setMoveShardLeader();
     const ClearShardInfoReq& getClearShardInfo() const;
     ClearShardInfoReq& setClearShardInfo();
-    const RegisterBlockServicesReq& getRegisterBlockServices() const;
-    RegisterBlockServicesReq& setRegisterBlockServices();
-    const CdcWithReplicasReq& getCdcWithReplicas() const;
-    CdcWithReplicasReq& setCdcWithReplicas();
+    const RegisterBlockServicesDEPRECATEDReq& getRegisterBlockServicesDEPRECATED() const;
+    RegisterBlockServicesDEPRECATEDReq& setRegisterBlockServicesDEPRECATED();
+    const AllCdcReq& getAllCdc() const;
+    AllCdcReq& setAllCdc();
     const EraseDecommissionedBlockReq& getEraseDecommissionedBlock() const;
     EraseDecommissionedBlockReq& setEraseDecommissionedBlock();
     const AllBlockServicesReq& getAllBlockServices() const;
@@ -5005,9 +5283,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 
 struct ShuckleRespContainer {
 private:
-    static constexpr std::array<size_t,24> _staticSizes = {sizeof(EggsError), ShardsResp::STATIC_SIZE, CdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, BlockServicesWithFlagChangeResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, BlockServiceResp::STATIC_SIZE, ShardResp::STATIC_SIZE, ShardReplicasResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, CdcReplicasResp::STATIC_SIZE, ShardsWithReplicasResp::STATIC_SIZE, SetBlockServiceDecommissionedResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, CdcWithReplicasResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE};
+    static constexpr std::array<size_t,29> _staticSizes = {sizeof(EggsError), LocalShardsResp::STATIC_SIZE, LocalCdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, LocalChangedBlockServicesResp::STATIC_SIZE, CreateLocationResp::STATIC_SIZE, RenameLocationResp::STATIC_SIZE, LocationsResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, ChangedBlockServicesAtLocationResp::STATIC_SIZE, ShardsAtLocationResp::STATIC_SIZE, CdcAtLocationResp::STATIC_SIZE, ShardReplicasDEPRECATEDResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, CdcReplicasDEPRECATEDResp::STATIC_SIZE, AllShardsResp::STATIC_SIZE, DecommissionBlockServiceResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, RegisterBlockServicesDEPRECATEDResp::STATIC_SIZE, AllCdcResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE};
     ShuckleMessageKind _kind = ShuckleMessageKind::EMPTY;
-    std::variant<EggsError, ShardsResp, CdcResp, InfoResp, ShuckleResp, BlockServicesWithFlagChangeResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, ShardResp, ShardReplicasResp, ShardBlockServicesResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp, MoveShardLeaderResp, ClearShardInfoResp, RegisterBlockServicesResp, CdcWithReplicasResp, EraseDecommissionedBlockResp, AllBlockServicesResp, MoveCdcLeaderResp, ClearCdcInfoResp> _data;
+    std::variant<EggsError, LocalShardsResp, LocalCdcResp, InfoResp, ShuckleResp, LocalChangedBlockServicesResp, CreateLocationResp, RenameLocationResp, LocationsResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, RegisterBlockServicesResp, ChangedBlockServicesAtLocationResp, ShardsAtLocationResp, CdcAtLocationResp, ShardReplicasDEPRECATEDResp, ShardBlockServicesResp, CdcReplicasDEPRECATEDResp, AllShardsResp, DecommissionBlockServiceResp, MoveShardLeaderResp, ClearShardInfoResp, RegisterBlockServicesDEPRECATEDResp, AllCdcResp, EraseDecommissionedBlockResp, AllBlockServicesResp, MoveCdcLeaderResp, ClearCdcInfoResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -5019,44 +5297,54 @@ public:
 
     const EggsError& getError() const;
     EggsError& setError();
-    const ShardsResp& getShards() const;
-    ShardsResp& setShards();
-    const CdcResp& getCdc() const;
-    CdcResp& setCdc();
+    const LocalShardsResp& getLocalShards() const;
+    LocalShardsResp& setLocalShards();
+    const LocalCdcResp& getLocalCdc() const;
+    LocalCdcResp& setLocalCdc();
     const InfoResp& getInfo() const;
     InfoResp& setInfo();
     const ShuckleResp& getShuckle() const;
     ShuckleResp& setShuckle();
-    const BlockServicesWithFlagChangeResp& getBlockServicesWithFlagChange() const;
-    BlockServicesWithFlagChangeResp& setBlockServicesWithFlagChange();
+    const LocalChangedBlockServicesResp& getLocalChangedBlockServices() const;
+    LocalChangedBlockServicesResp& setLocalChangedBlockServices();
+    const CreateLocationResp& getCreateLocation() const;
+    CreateLocationResp& setCreateLocation();
+    const RenameLocationResp& getRenameLocation() const;
+    RenameLocationResp& setRenameLocation();
+    const LocationsResp& getLocations() const;
+    LocationsResp& setLocations();
     const RegisterShardResp& getRegisterShard() const;
     RegisterShardResp& setRegisterShard();
     const RegisterCdcResp& getRegisterCdc() const;
     RegisterCdcResp& setRegisterCdc();
     const SetBlockServiceFlagsResp& getSetBlockServiceFlags() const;
     SetBlockServiceFlagsResp& setSetBlockServiceFlags();
-    const BlockServiceResp& getBlockService() const;
-    BlockServiceResp& setBlockService();
-    const ShardResp& getShard() const;
-    ShardResp& setShard();
-    const ShardReplicasResp& getShardReplicas() const;
-    ShardReplicasResp& setShardReplicas();
+    const RegisterBlockServicesResp& getRegisterBlockServices() const;
+    RegisterBlockServicesResp& setRegisterBlockServices();
+    const ChangedBlockServicesAtLocationResp& getChangedBlockServicesAtLocation() const;
+    ChangedBlockServicesAtLocationResp& setChangedBlockServicesAtLocation();
+    const ShardsAtLocationResp& getShardsAtLocation() const;
+    ShardsAtLocationResp& setShardsAtLocation();
+    const CdcAtLocationResp& getCdcAtLocation() const;
+    CdcAtLocationResp& setCdcAtLocation();
+    const ShardReplicasDEPRECATEDResp& getShardReplicasDEPRECATED() const;
+    ShardReplicasDEPRECATEDResp& setShardReplicasDEPRECATED();
     const ShardBlockServicesResp& getShardBlockServices() const;
     ShardBlockServicesResp& setShardBlockServices();
-    const CdcReplicasResp& getCdcReplicas() const;
-    CdcReplicasResp& setCdcReplicas();
-    const ShardsWithReplicasResp& getShardsWithReplicas() const;
-    ShardsWithReplicasResp& setShardsWithReplicas();
-    const SetBlockServiceDecommissionedResp& getSetBlockServiceDecommissioned() const;
-    SetBlockServiceDecommissionedResp& setSetBlockServiceDecommissioned();
+    const CdcReplicasDEPRECATEDResp& getCdcReplicasDEPRECATED() const;
+    CdcReplicasDEPRECATEDResp& setCdcReplicasDEPRECATED();
+    const AllShardsResp& getAllShards() const;
+    AllShardsResp& setAllShards();
+    const DecommissionBlockServiceResp& getDecommissionBlockService() const;
+    DecommissionBlockServiceResp& setDecommissionBlockService();
     const MoveShardLeaderResp& getMoveShardLeader() const;
     MoveShardLeaderResp& setMoveShardLeader();
     const ClearShardInfoResp& getClearShardInfo() const;
     ClearShardInfoResp& setClearShardInfo();
-    const RegisterBlockServicesResp& getRegisterBlockServices() const;
-    RegisterBlockServicesResp& setRegisterBlockServices();
-    const CdcWithReplicasResp& getCdcWithReplicas() const;
-    CdcWithReplicasResp& setCdcWithReplicas();
+    const RegisterBlockServicesDEPRECATEDResp& getRegisterBlockServicesDEPRECATED() const;
+    RegisterBlockServicesDEPRECATEDResp& setRegisterBlockServicesDEPRECATED();
+    const AllCdcResp& getAllCdc() const;
+    AllCdcResp& setAllCdc();
     const EraseDecommissionedBlockResp& getEraseDecommissionedBlock() const;
     EraseDecommissionedBlockResp& setEraseDecommissionedBlock();
     const AllBlockServicesResp& getAllBlockServices() const;

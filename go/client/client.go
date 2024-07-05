@@ -975,22 +975,22 @@ func (c *Client) refreshAddrs(log *lib.Logger) error {
 	var cdcAddrs msgs.AddrsInfo
 	{
 		log.Info("Getting shard/CDC info from shuckle at '%v'", c.shuckleAddress)
-		resp, err := c.shuckleConn.Request(&msgs.ShardsReq{})
+		resp, err := c.shuckleConn.Request(&msgs.LocalShardsReq{})
 		if err != nil {
 			return fmt.Errorf("could not request shards from shuckle: %w", err)
 		}
-		shards := resp.(*msgs.ShardsResp)
+		shards := resp.(*msgs.LocalShardsResp)
 		for i, shard := range shards.Shards {
 			if shard.Addrs.Addr1.Port == 0 {
 				return fmt.Errorf("shard %v not present in shuckle", i)
 			}
 			shardAddrs[i] = shard.Addrs
 		}
-		resp, err = c.shuckleConn.Request(&msgs.CdcReq{})
+		resp, err = c.shuckleConn.Request(&msgs.LocalCdcReq{})
 		if err != nil {
 			return fmt.Errorf("could not request CDC from shuckle: %w", err)
 		}
-		cdc := resp.(*msgs.CdcResp)
+		cdc := resp.(*msgs.LocalCdcResp)
 		if cdc.Addrs.Addr1.Port == 0 {
 			return fmt.Errorf("CDC not present in shuckle")
 		}

@@ -120,12 +120,12 @@ const char* eggsfs_shard_kind_str(int kind);
 static const u8 __eggsfs_cdc_kind_index_mappings[256] = {255, 0, 1, 2, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_cdc_kind_str(int kind);
 
-#define EGGSFS_SHUCKLE_SHARDS 0x3
-#define EGGSFS_SHUCKLE_CDC 0x7
+#define EGGSFS_SHUCKLE_LOCAL_SHARDS 0x3
+#define EGGSFS_SHUCKLE_LOCAL_CDC 0x7
 #define EGGSFS_SHUCKLE_INFO 0x8
 #define EGGSFS_SHUCKLE_SHUCKLE 0xF
-#define EGGSFS_SHUCKLE_BLOCK_SERVICES_WITH_FLAG_CHANGE 0x22
-#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" }, { 34, "BLOCK_SERVICES_WITH_FLAG_CHANGE" })
+#define EGGSFS_SHUCKLE_LOCAL_CHANGED_BLOCK_SERVICES 0x22
+#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "LOCAL_SHARDS" }, { 7, "LOCAL_CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" }, { 34, "LOCAL_CHANGED_BLOCK_SERVICES" })
 #define EGGSFS_SHUCKLE_KIND_MAX 5
 static const u8 __eggsfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_shuckle_kind_str(int kind);
@@ -5699,32 +5699,32 @@ static inline void _eggsfs_rename_directory_resp_put_creation_time(struct eggsfs
     { struct eggsfs_rename_directory_resp_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_rename_directory_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_SHARDS_REQ_SIZE 0
-struct eggsfs_shards_req_start;
-#define eggsfs_shards_req_get_start(ctx, start) struct eggsfs_shards_req_start* start = NULL
+#define EGGSFS_LOCAL_SHARDS_REQ_SIZE 0
+struct eggsfs_local_shards_req_start;
+#define eggsfs_local_shards_req_get_start(ctx, start) struct eggsfs_local_shards_req_start* start = NULL
 
-struct eggsfs_shards_req_end;
-#define eggsfs_shards_req_get_end(ctx, prev, next) \
-    { struct eggsfs_shards_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_shards_req_end* next = NULL
+struct eggsfs_local_shards_req_end;
+#define eggsfs_local_shards_req_get_end(ctx, prev, next) \
+    { struct eggsfs_local_shards_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_shards_req_end* next = NULL
 
-static inline void eggsfs_shards_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shards_req_end* end) {
+static inline void eggsfs_local_shards_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_shards_req_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_shards_req_put_start(ctx, start) struct eggsfs_shards_req_start* start = NULL
+#define eggsfs_local_shards_req_put_start(ctx, start) struct eggsfs_local_shards_req_start* start = NULL
 
-#define eggsfs_shards_req_put_end(ctx, prev, next) \
-    { struct eggsfs_shards_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_shards_req_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_shards_req_put_end(ctx, prev, next) \
+    { struct eggsfs_local_shards_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_shards_req_end* next __attribute__((unused)) = NULL
 
-struct eggsfs_shards_resp_start;
-#define eggsfs_shards_resp_get_start(ctx, start) struct eggsfs_shards_resp_start* start = NULL
+struct eggsfs_local_shards_resp_start;
+#define eggsfs_local_shards_resp_get_start(ctx, start) struct eggsfs_local_shards_resp_start* start = NULL
 
-struct eggsfs_shards_resp_shards { u16 len; };
-static inline void _eggsfs_shards_resp_get_shards(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shards_resp_start** prev, struct eggsfs_shards_resp_shards* next) {
+struct eggsfs_local_shards_resp_shards { u16 len; };
+static inline void _eggsfs_local_shards_resp_get_shards(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_shards_resp_start** prev, struct eggsfs_local_shards_resp_shards* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -5736,69 +5736,69 @@ static inline void _eggsfs_shards_resp_get_shards(struct eggsfs_bincode_get_ctx*
         next->len = 0;
     }
 }
-#define eggsfs_shards_resp_get_shards(ctx, prev, next) \
-    struct eggsfs_shards_resp_shards next; \
-    _eggsfs_shards_resp_get_shards(ctx, &(prev), &(next))
+#define eggsfs_local_shards_resp_get_shards(ctx, prev, next) \
+    struct eggsfs_local_shards_resp_shards next; \
+    _eggsfs_local_shards_resp_get_shards(ctx, &(prev), &(next))
 
-struct eggsfs_shards_resp_end;
-#define eggsfs_shards_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_shards_resp_shards* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_shards_resp_end* next = NULL
+struct eggsfs_local_shards_resp_end;
+#define eggsfs_local_shards_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_local_shards_resp_shards* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_shards_resp_end* next = NULL
 
-static inline void eggsfs_shards_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_shards_resp_end* end) {
+static inline void eggsfs_local_shards_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_shards_resp_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_shards_resp_put_start(ctx, start) struct eggsfs_shards_resp_start* start = NULL
+#define eggsfs_local_shards_resp_put_start(ctx, start) struct eggsfs_local_shards_resp_start* start = NULL
 
-static inline void _eggsfs_shards_resp_put_shards(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_shards_resp_start** prev, struct eggsfs_shards_resp_shards* next, int len) {
+static inline void _eggsfs_local_shards_resp_put_shards(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_shards_resp_start** prev, struct eggsfs_local_shards_resp_shards* next, int len) {
     next = NULL;
     BUG_ON(len < 0 || len >= 1<<16);
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(len, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_shards_resp_put_shards(ctx, prev, next, len) \
-    struct eggsfs_shards_resp_shards next; \
-    _eggsfs_shards_resp_put_shards(ctx, &(prev), &(next), len)
+#define eggsfs_local_shards_resp_put_shards(ctx, prev, next, len) \
+    struct eggsfs_local_shards_resp_shards next; \
+    _eggsfs_local_shards_resp_put_shards(ctx, &(prev), &(next), len)
 
-#define eggsfs_shards_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_shards_resp_shards* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_shards_resp_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_shards_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_local_shards_resp_shards* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_shards_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_CDC_REQ_SIZE 0
-struct eggsfs_cdc_req_start;
-#define eggsfs_cdc_req_get_start(ctx, start) struct eggsfs_cdc_req_start* start = NULL
+#define EGGSFS_LOCAL_CDC_REQ_SIZE 0
+struct eggsfs_local_cdc_req_start;
+#define eggsfs_local_cdc_req_get_start(ctx, start) struct eggsfs_local_cdc_req_start* start = NULL
 
-struct eggsfs_cdc_req_end;
-#define eggsfs_cdc_req_get_end(ctx, prev, next) \
-    { struct eggsfs_cdc_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_cdc_req_end* next = NULL
+struct eggsfs_local_cdc_req_end;
+#define eggsfs_local_cdc_req_get_end(ctx, prev, next) \
+    { struct eggsfs_local_cdc_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_cdc_req_end* next = NULL
 
-static inline void eggsfs_cdc_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_req_end* end) {
+static inline void eggsfs_local_cdc_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_cdc_req_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_cdc_req_put_start(ctx, start) struct eggsfs_cdc_req_start* start = NULL
+#define eggsfs_local_cdc_req_put_start(ctx, start) struct eggsfs_local_cdc_req_start* start = NULL
 
-#define eggsfs_cdc_req_put_end(ctx, prev, next) \
-    { struct eggsfs_cdc_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_cdc_req_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_cdc_req_put_end(ctx, prev, next) \
+    { struct eggsfs_local_cdc_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_cdc_req_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_CDC_RESP_SIZE 20
-struct eggsfs_cdc_resp_start;
-#define eggsfs_cdc_resp_get_start(ctx, start) struct eggsfs_cdc_resp_start* start = NULL
+#define EGGSFS_LOCAL_CDC_RESP_SIZE 20
+struct eggsfs_local_cdc_resp_start;
+#define eggsfs_local_cdc_resp_get_start(ctx, start) struct eggsfs_local_cdc_resp_start* start = NULL
 
-#define eggsfs_cdc_resp_get_addrs(ctx, prev, next) \
-    { struct eggsfs_cdc_resp_start** __dummy __attribute__((unused)) = &(prev); }; \
+#define eggsfs_local_cdc_resp_get_addrs(ctx, prev, next) \
+    { struct eggsfs_local_cdc_resp_start** __dummy __attribute__((unused)) = &(prev); }; \
     struct eggsfs_addrs_info_start* next = NULL
 
-struct eggsfs_cdc_resp_last_seen { u64 x; };
-static inline void _eggsfs_cdc_resp_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_addrs_info_end** prev, struct eggsfs_cdc_resp_last_seen* next) {
+struct eggsfs_local_cdc_resp_last_seen { u64 x; };
+static inline void _eggsfs_local_cdc_resp_get_last_seen(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_addrs_info_end** prev, struct eggsfs_local_cdc_resp_last_seen* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -5808,36 +5808,36 @@ static inline void _eggsfs_cdc_resp_get_last_seen(struct eggsfs_bincode_get_ctx*
         }
     }
 }
-#define eggsfs_cdc_resp_get_last_seen(ctx, prev, next) \
-    struct eggsfs_cdc_resp_last_seen next; \
-    _eggsfs_cdc_resp_get_last_seen(ctx, &(prev), &(next))
+#define eggsfs_local_cdc_resp_get_last_seen(ctx, prev, next) \
+    struct eggsfs_local_cdc_resp_last_seen next; \
+    _eggsfs_local_cdc_resp_get_last_seen(ctx, &(prev), &(next))
 
-struct eggsfs_cdc_resp_end;
-#define eggsfs_cdc_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_cdc_resp_last_seen* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_cdc_resp_end* next = NULL
+struct eggsfs_local_cdc_resp_end;
+#define eggsfs_local_cdc_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_local_cdc_resp_last_seen* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_cdc_resp_end* next = NULL
 
-static inline void eggsfs_cdc_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_cdc_resp_end* end) {
+static inline void eggsfs_local_cdc_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_cdc_resp_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_cdc_resp_put_start(ctx, start) struct eggsfs_cdc_resp_start* start = NULL
+#define eggsfs_local_cdc_resp_put_start(ctx, start) struct eggsfs_local_cdc_resp_start* start = NULL
 
-static inline void _eggsfs_cdc_resp_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_cdc_resp_start** prev, struct eggsfs_cdc_resp_last_seen* next, u64 x) {
+static inline void _eggsfs_local_cdc_resp_put_last_seen(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_cdc_resp_start** prev, struct eggsfs_local_cdc_resp_last_seen* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_cdc_resp_put_last_seen(ctx, prev, next, x) \
-    struct eggsfs_cdc_resp_last_seen next; \
-    _eggsfs_cdc_resp_put_last_seen(ctx, &(prev), &(next), x)
+#define eggsfs_local_cdc_resp_put_last_seen(ctx, prev, next, x) \
+    struct eggsfs_local_cdc_resp_last_seen next; \
+    _eggsfs_local_cdc_resp_put_last_seen(ctx, &(prev), &(next), x)
 
-#define eggsfs_cdc_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_cdc_resp_last_seen* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_cdc_resp_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_cdc_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_local_cdc_resp_last_seen* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_cdc_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_INFO_REQ_SIZE 0
 struct eggsfs_info_req_start;
@@ -6052,12 +6052,12 @@ static inline void eggsfs_shuckle_resp_get_finish(struct eggsfs_bincode_get_ctx*
     { struct eggsfs_shuckle_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_shuckle_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE 8
-struct eggsfs_block_services_with_flag_change_req_start;
-#define eggsfs_block_services_with_flag_change_req_get_start(ctx, start) struct eggsfs_block_services_with_flag_change_req_start* start = NULL
+#define EGGSFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE 8
+struct eggsfs_local_changed_block_services_req_start;
+#define eggsfs_local_changed_block_services_req_get_start(ctx, start) struct eggsfs_local_changed_block_services_req_start* start = NULL
 
-struct eggsfs_block_services_with_flag_change_req_changed_since { u64 x; };
-static inline void _eggsfs_block_services_with_flag_change_req_get_changed_since(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_start** prev, struct eggsfs_block_services_with_flag_change_req_changed_since* next) {
+struct eggsfs_local_changed_block_services_req_changed_since { u64 x; };
+static inline void _eggsfs_local_changed_block_services_req_get_changed_since(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_changed_block_services_req_start** prev, struct eggsfs_local_changed_block_services_req_changed_since* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -6067,42 +6067,42 @@ static inline void _eggsfs_block_services_with_flag_change_req_get_changed_since
         }
     }
 }
-#define eggsfs_block_services_with_flag_change_req_get_changed_since(ctx, prev, next) \
-    struct eggsfs_block_services_with_flag_change_req_changed_since next; \
-    _eggsfs_block_services_with_flag_change_req_get_changed_since(ctx, &(prev), &(next))
+#define eggsfs_local_changed_block_services_req_get_changed_since(ctx, prev, next) \
+    struct eggsfs_local_changed_block_services_req_changed_since next; \
+    _eggsfs_local_changed_block_services_req_get_changed_since(ctx, &(prev), &(next))
 
-struct eggsfs_block_services_with_flag_change_req_end;
-#define eggsfs_block_services_with_flag_change_req_get_end(ctx, prev, next) \
-    { struct eggsfs_block_services_with_flag_change_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_services_with_flag_change_req_end* next = NULL
+struct eggsfs_local_changed_block_services_req_end;
+#define eggsfs_local_changed_block_services_req_get_end(ctx, prev, next) \
+    { struct eggsfs_local_changed_block_services_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_changed_block_services_req_end* next = NULL
 
-static inline void eggsfs_block_services_with_flag_change_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_end* end) {
+static inline void eggsfs_local_changed_block_services_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_changed_block_services_req_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_block_services_with_flag_change_req_put_start(ctx, start) struct eggsfs_block_services_with_flag_change_req_start* start = NULL
+#define eggsfs_local_changed_block_services_req_put_start(ctx, start) struct eggsfs_local_changed_block_services_req_start* start = NULL
 
-static inline void _eggsfs_block_services_with_flag_change_req_put_changed_since(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_start** prev, struct eggsfs_block_services_with_flag_change_req_changed_since* next, u64 x) {
+static inline void _eggsfs_local_changed_block_services_req_put_changed_since(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_changed_block_services_req_start** prev, struct eggsfs_local_changed_block_services_req_changed_since* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_services_with_flag_change_req_put_changed_since(ctx, prev, next, x) \
-    struct eggsfs_block_services_with_flag_change_req_changed_since next; \
-    _eggsfs_block_services_with_flag_change_req_put_changed_since(ctx, &(prev), &(next), x)
+#define eggsfs_local_changed_block_services_req_put_changed_since(ctx, prev, next, x) \
+    struct eggsfs_local_changed_block_services_req_changed_since next; \
+    _eggsfs_local_changed_block_services_req_put_changed_since(ctx, &(prev), &(next), x)
 
-#define eggsfs_block_services_with_flag_change_req_put_end(ctx, prev, next) \
-    { struct eggsfs_block_services_with_flag_change_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_services_with_flag_change_req_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_changed_block_services_req_put_end(ctx, prev, next) \
+    { struct eggsfs_local_changed_block_services_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_changed_block_services_req_end* next __attribute__((unused)) = NULL
 
-struct eggsfs_block_services_with_flag_change_resp_start;
-#define eggsfs_block_services_with_flag_change_resp_get_start(ctx, start) struct eggsfs_block_services_with_flag_change_resp_start* start = NULL
+struct eggsfs_local_changed_block_services_resp_start;
+#define eggsfs_local_changed_block_services_resp_get_start(ctx, start) struct eggsfs_local_changed_block_services_resp_start* start = NULL
 
-struct eggsfs_block_services_with_flag_change_resp_last_change { u64 x; };
-static inline void _eggsfs_block_services_with_flag_change_resp_get_last_change(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_start** prev, struct eggsfs_block_services_with_flag_change_resp_last_change* next) {
+struct eggsfs_local_changed_block_services_resp_last_change { u64 x; };
+static inline void _eggsfs_local_changed_block_services_resp_get_last_change(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_changed_block_services_resp_start** prev, struct eggsfs_local_changed_block_services_resp_last_change* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -6112,12 +6112,12 @@ static inline void _eggsfs_block_services_with_flag_change_resp_get_last_change(
         }
     }
 }
-#define eggsfs_block_services_with_flag_change_resp_get_last_change(ctx, prev, next) \
-    struct eggsfs_block_services_with_flag_change_resp_last_change next; \
-    _eggsfs_block_services_with_flag_change_resp_get_last_change(ctx, &(prev), &(next))
+#define eggsfs_local_changed_block_services_resp_get_last_change(ctx, prev, next) \
+    struct eggsfs_local_changed_block_services_resp_last_change next; \
+    _eggsfs_local_changed_block_services_resp_get_last_change(ctx, &(prev), &(next))
 
-struct eggsfs_block_services_with_flag_change_resp_block_services { u16 len; };
-static inline void _eggsfs_block_services_with_flag_change_resp_get_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_last_change* prev, struct eggsfs_block_services_with_flag_change_resp_block_services* next) {
+struct eggsfs_local_changed_block_services_resp_block_services { u16 len; };
+static inline void _eggsfs_local_changed_block_services_resp_get_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_changed_block_services_resp_last_change* prev, struct eggsfs_local_changed_block_services_resp_block_services* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -6129,47 +6129,47 @@ static inline void _eggsfs_block_services_with_flag_change_resp_get_block_servic
         next->len = 0;
     }
 }
-#define eggsfs_block_services_with_flag_change_resp_get_block_services(ctx, prev, next) \
-    struct eggsfs_block_services_with_flag_change_resp_block_services next; \
-    _eggsfs_block_services_with_flag_change_resp_get_block_services(ctx, &(prev), &(next))
+#define eggsfs_local_changed_block_services_resp_get_block_services(ctx, prev, next) \
+    struct eggsfs_local_changed_block_services_resp_block_services next; \
+    _eggsfs_local_changed_block_services_resp_get_block_services(ctx, &(prev), &(next))
 
-struct eggsfs_block_services_with_flag_change_resp_end;
-#define eggsfs_block_services_with_flag_change_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_block_services_with_flag_change_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_services_with_flag_change_resp_end* next = NULL
+struct eggsfs_local_changed_block_services_resp_end;
+#define eggsfs_local_changed_block_services_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_local_changed_block_services_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_changed_block_services_resp_end* next = NULL
 
-static inline void eggsfs_block_services_with_flag_change_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_end* end) {
+static inline void eggsfs_local_changed_block_services_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_changed_block_services_resp_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_block_services_with_flag_change_resp_put_start(ctx, start) struct eggsfs_block_services_with_flag_change_resp_start* start = NULL
+#define eggsfs_local_changed_block_services_resp_put_start(ctx, start) struct eggsfs_local_changed_block_services_resp_start* start = NULL
 
-static inline void _eggsfs_block_services_with_flag_change_resp_put_last_change(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_start** prev, struct eggsfs_block_services_with_flag_change_resp_last_change* next, u64 x) {
+static inline void _eggsfs_local_changed_block_services_resp_put_last_change(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_changed_block_services_resp_start** prev, struct eggsfs_local_changed_block_services_resp_last_change* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_block_services_with_flag_change_resp_put_last_change(ctx, prev, next, x) \
-    struct eggsfs_block_services_with_flag_change_resp_last_change next; \
-    _eggsfs_block_services_with_flag_change_resp_put_last_change(ctx, &(prev), &(next), x)
+#define eggsfs_local_changed_block_services_resp_put_last_change(ctx, prev, next, x) \
+    struct eggsfs_local_changed_block_services_resp_last_change next; \
+    _eggsfs_local_changed_block_services_resp_put_last_change(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_block_services_with_flag_change_resp_put_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_last_change* prev, struct eggsfs_block_services_with_flag_change_resp_block_services* next, int len) {
+static inline void _eggsfs_local_changed_block_services_resp_put_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_changed_block_services_resp_last_change* prev, struct eggsfs_local_changed_block_services_resp_block_services* next, int len) {
     next = NULL;
     BUG_ON(len < 0 || len >= 1<<16);
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(len, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_block_services_with_flag_change_resp_put_block_services(ctx, prev, next, len) \
-    struct eggsfs_block_services_with_flag_change_resp_block_services next; \
-    _eggsfs_block_services_with_flag_change_resp_put_block_services(ctx, &(prev), &(next), len)
+#define eggsfs_local_changed_block_services_resp_put_block_services(ctx, prev, next, len) \
+    struct eggsfs_local_changed_block_services_resp_block_services next; \
+    _eggsfs_local_changed_block_services_resp_put_block_services(ctx, &(prev), &(next), len)
 
-#define eggsfs_block_services_with_flag_change_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_block_services_with_flag_change_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_block_services_with_flag_change_resp_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_changed_block_services_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_local_changed_block_services_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_changed_block_services_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FETCH_BLOCK_REQ_SIZE 16
 struct eggsfs_fetch_block_req_start;

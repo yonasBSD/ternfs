@@ -92,7 +92,7 @@ int eggsfs_create_shuckle_socket(atomic64_t* addr1, atomic64_t* addr2, struct so
         struct kvec iov;
         struct msghdr msg = {NULL};
 
-        static_assert(EGGSFS_SHARDS_REQ_SIZE == 0);
+        static_assert(EGGSFS_LOCAL_SHARDS_REQ_SIZE == 0);
         char shuckle_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
         eggsfs_write_shuckle_req_header(shuckle_req, 0, EGGSFS_SHUCKLE_SHUCKLE);
         int written_so_far;

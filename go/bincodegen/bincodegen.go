@@ -1782,13 +1782,13 @@ func main() {
 	kernelShuckleReqResps := []reqRespType{
 		{
 			0x03,
-			reflect.TypeOf(msgs.ShardsReq{}),
-			reflect.TypeOf(msgs.ShardsResp{}),
+			reflect.TypeOf(msgs.LocalShardsReq{}),
+			reflect.TypeOf(msgs.LocalShardsResp{}),
 		},
 		{
 			0x07,
-			reflect.TypeOf(msgs.CdcReq{}),
-			reflect.TypeOf(msgs.CdcResp{}),
+			reflect.TypeOf(msgs.LocalCdcReq{}),
+			reflect.TypeOf(msgs.LocalCdcResp{}),
 		},
 		{
 			0x08,
@@ -1802,12 +1802,27 @@ func main() {
 		},
 		{
 			0x22,
-			reflect.TypeOf(msgs.BlockServicesWithFlagChangeReq{}),
-			reflect.TypeOf(msgs.BlockServicesWithFlagChangeResp{}),
+			reflect.TypeOf(msgs.LocalChangedBlockServicesReq{}),
+			reflect.TypeOf(msgs.LocalChangedBlockServicesResp{}),
 		},
 	}
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.CreateLocationReq{}),
+			reflect.TypeOf(msgs.CreateLocationResp{}),
+		},
+		{
+			0x02,
+			reflect.TypeOf(msgs.RenameLocationReq{}),
+			reflect.TypeOf(msgs.RenameLocationResp{}),
+		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.LocationsReq{}),
+			reflect.TypeOf(msgs.LocationsResp{}),
+		},
 		{
 			0x04,
 			reflect.TypeOf(msgs.RegisterShardReq{}),
@@ -1825,18 +1840,28 @@ func main() {
 		},
 		{
 			0x0A,
-			reflect.TypeOf(msgs.BlockServiceReq{}),
-			reflect.TypeOf(msgs.BlockServiceResp{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
+		},
+		{
+			0x0B,
+			reflect.TypeOf(msgs.ChangedBlockServicesAtLocationReq{}),
+			reflect.TypeOf(msgs.ChangedBlockServicesAtLocationResp{}),
 		},
 		{
 			0x0C,
-			reflect.TypeOf(msgs.ShardReq{}),
-			reflect.TypeOf(msgs.ShardResp{}),
+			reflect.TypeOf(msgs.ShardsAtLocationReq{}),
+			reflect.TypeOf(msgs.ShardsAtLocationResp{}),
+		},
+		{
+			0x0D,
+			reflect.TypeOf(msgs.CdcAtLocationReq{}),
+			reflect.TypeOf(msgs.CdcAtLocationResp{}),
 		},
 		{
 			0x10,
-			reflect.TypeOf(msgs.ShardReplicasReq{}),
-			reflect.TypeOf(msgs.ShardReplicasResp{}),
+			reflect.TypeOf(msgs.ShardReplicasDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.ShardReplicasDEPRECATEDResp{}),
 		},
 		{
 			0x11,
@@ -1845,18 +1870,18 @@ func main() {
 		},
 		{
 			0x13,
-			reflect.TypeOf(msgs.CdcReplicasReq{}),
-			reflect.TypeOf(msgs.CdcReplicasResp{}),
+			reflect.TypeOf(msgs.CdcReplicasDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.CdcReplicasDEPRECATEDResp{}),
 		},
 		{
 			0x14,
-			reflect.TypeOf(msgs.ShardsWithReplicasReq{}),
-			reflect.TypeOf(msgs.ShardsWithReplicasResp{}),
+			reflect.TypeOf(msgs.AllShardsReq{}),
+			reflect.TypeOf(msgs.AllShardsResp{}),
 		},
 		{
 			0x15,
-			reflect.TypeOf(msgs.SetBlockServiceDecommissionedReq{}),
-			reflect.TypeOf(msgs.SetBlockServiceDecommissionedResp{}),
+			reflect.TypeOf(msgs.DecommissionBlockServiceReq{}),
+			reflect.TypeOf(msgs.DecommissionBlockServiceResp{}),
 		},
 		{
 			0x16,
@@ -1870,13 +1895,13 @@ func main() {
 		},
 		{
 			0x18,
-			reflect.TypeOf(msgs.RegisterBlockServicesReq{}),
-			reflect.TypeOf(msgs.RegisterBlockServicesResp{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.RegisterBlockServicesDEPRECATEDResp{}),
 		},
 		{
 			0x19,
-			reflect.TypeOf(msgs.CdcWithReplicasReq{}),
-			reflect.TypeOf(msgs.CdcWithReplicasResp{}),
+			reflect.TypeOf(msgs.AllCdcReq{}),
+			reflect.TypeOf(msgs.AllCdcResp{}),
 		},
 		{
 			0x20,
@@ -2008,9 +2033,11 @@ func main() {
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
-		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
+		reflect.TypeOf(msgs.FullShardInfo{}),
+		reflect.TypeOf(msgs.RegisterBlockServiceInfoDEPRECATED{}),
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
-		reflect.TypeOf(msgs.CdcWithReplicasInfo{}),
+		reflect.TypeOf(msgs.CdcInfo{}),
+		reflect.TypeOf(msgs.LocationInfo{}),
 	}...)...)
 
 	goExtras := append(extras, []reflect.Type{

@@ -345,12 +345,22 @@ function stringifyAgo(then, now) {
 export function renderIndex() {
     function BlockServices() {
         const [blockServices, setBlockServices] = useState(null);
+        const [locations, setLocations] = useState(null);
         useEffect(async () => {
             const resp = await shuckleReq('ALL_BLOCK_SERVICES', {});
             setBlockServices(resp);
         }, []);
 
-        if (blockServices === null) {
+        useEffect(async () => {
+            const resp = await shuckleReq('LOCATIONS', {});
+            var locationsMap = new Map();
+            for (const location of resp.Locations) {
+                locationsMap.set(location.Id, location.Name);
+            }
+            setLocations(locationsMap);
+        }, []);
+
+        if (blockServices === null || locations === null) {
             return p.h('em', null, 'Loading...');
         }
 
@@ -410,12 +420,22 @@ export function renderIndex() {
 
     function Shards() {
         const [shards, setShards] = useState(null);
+        const [locations, setLocations] = useState(null);
         useEffect(async () => {
-            const resp = await shuckleReq('SHARDS_WITH_REPLICAS', {});
+            const resp = await shuckleReq('ALL_SHARDS', {});
             setShards(resp);
         }, []);
 
-        if (shards === null) {
+        useEffect(async () => {
+            const resp = await shuckleReq('LOCATIONS', {});
+            var locationsMap = new Map();
+            for (const location of resp.Locations) {
+                locationsMap.set(location.Id, location.Name);
+            }
+            setLocations(locationsMap);
+        }, []);
+
+        if (shards === null || locations === null) {
             return p.h('em', null, 'Loading...');
         }
 
@@ -423,6 +443,7 @@ export function renderIndex() {
         const rows = [];
         shards.Shards.forEach(shard => {
             rows.push([
+                shard.LocationId,
                 parseInt(shard.Id.split(':')[0], 10),
                 parseInt(shard.Id.split(':')[1], 10),
                 shard.IsLeader ? 'yes' : 'no',
@@ -432,6 +453,7 @@ export function renderIndex() {
             ])
         });
         const cols = [
+            {name: 'Location', string: i => locations.get(i)},
             {name: 'Id', string: i => i.toString().padStart(3, '0'), render: t => p.h('code', {}, t)},
             {name: 'Replica', render: t => p.h('code', {}, t)},
             {name: 'Leader', render: s => s === 'yes' ? p.h('strong', {}, s) : s},
@@ -446,12 +468,23 @@ export function renderIndex() {
 
     function Cdc() {
         const [cdcReplicas, setCdcReplicas] = useState(null);
+        const [locations, setLocations] = useState(null);
+
         useEffect(async () => {
-            const resp = await shuckleReq('CDC_WITH_REPLICAS', {});
+            const resp = await shuckleReq('ALL_CDC', {});
             setCdcReplicas(resp);
         }, []);
 
-        if (cdcReplicas === null) {
+        useEffect(async () => {
+            const resp = await shuckleReq('LOCATIONS', {});
+            var locationsMap = new Map();
+            for (const location of resp.Locations) {
+                locationsMap.set(location.Id, location.Name);
+            }
+            setLocations(locationsMap);
+        }, []);
+
+        if (cdcReplicas === null || locations === null) {
             return p.h('em', null, 'Loading...');
         }
 
@@ -459,6 +492,7 @@ export function renderIndex() {
         const rows = [];
         cdcReplicas.Replicas.forEach(cdc => {
             rows.push([
+                cdc.LocationId,
                 cdc.ReplicaId,
                 cdc.IsLeader ? 'yes' : 'no',
                 cdc.Addrs.Addr1,
@@ -467,6 +501,7 @@ export function renderIndex() {
             ])
         });
         const cols = [
+            {name: 'Location', string: i => locations.get(i)},
             {name: 'Replica', render: t => p.h('code', {}, t)},
             {name: 'Leader', render: s => s === 'yes' ? p.h('strong', {}, s) : s},
             {name: 'Address 1', render: t => p.h('code', {}, t)},
@@ -474,7 +509,7 @@ export function renderIndex() {
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
         ];
 
-        return p.h(Table, { identifier: 'shards', cols, rows })
+        return p.h(Table, { identifier: 'cdc', cols, rows })
     }
     p.render(p.h(Cdc), document.getElementById('cdc-table'));
 }

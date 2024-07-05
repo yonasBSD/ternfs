@@ -96,11 +96,11 @@ type state struct {
 	currentShardBlockServicesMu sync.RWMutex
 }
 
-func (s *state) selectCDC() (*cdcState, error) {
+func (s *state) selectCDC(locationId msgs.Location) (*cdcState, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var cdc cdcState
-	rows, err := s.db.Query("SELECT ip1, port1, ip2, port2, last_seen FROM cdc WHERE is_leader = true AND location_id = 0")
+	rows, err := s.db.Query("SELECT ip1, port1, ip2, port2, last_seen FROM cdc WHERE is_leader = true AND location_id = ?", locationId)
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc: %s", err)
 	}
@@ -123,12 +123,12 @@ func (s *state) selectCDC() (*cdcState, error) {
 	return &cdc, nil
 }
 
-func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
+func (s *state) selectShards(locationId msgs.Location) (*[256]msgs.ShardInfo, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var ret [256]msgs.ShardInfo
 
-	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true")
+	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true AND location_id = ?", locationId)
 	if err != nil {
 		return nil, fmt.Errorf("error selecting shards: %s", err)
 	}
@@ -159,39 +159,8 @@ func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 	return &ret, nil
 }
 
-func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
-	s.semaphore.Acquire(context.Background(), 1)
-	defer s.semaphore.Release(1)
-	n := sql.Named
-
-	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true AND id = :id", n("id", shid))
-	if err != nil {
-		return nil, fmt.Errorf("error selecting shards: %s", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		si := msgs.ShardInfo{}
-		var ip1, ip2 []byte
-		var id int
-		var replicaId int
-		var isLeader bool
-		var loc msgs.Location
-		err = rows.Scan(&id, &replicaId, &loc, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
-		if err != nil {
-			return nil, fmt.Errorf("error decoding shard row: %s", err)
-		}
-		copy(si.Addrs.Addr1.Addrs[:], ip1)
-		copy(si.Addrs.Addr2.Addrs[:], ip2)
-		return &si, nil
-	}
-
-	// can only happen at the very beginning of a deployment
-	return &msgs.ShardInfo{}, nil
-}
-
 // if flagsFilter&flags is non-zero, things won't be returned
-func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	n := sql.Named
@@ -202,6 +171,10 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 		q += " AND available_bytes > 0"
 	}
 	args := []any{n("flags", flagsFilter), n("changed_since", uint64(flagsChangedSince))}
+	if locationId != nil {
+		q += " AND location_id = :location_id"
+		args = append(args, n("location_id", locationId))
+	}
 	if id != nil {
 		q += " AND id = :id"
 		args = append(args, n("id", *id))
@@ -257,7 +230,7 @@ func newState(
 		currentShardBlockServicesMu: sync.RWMutex{},
 	}
 
-	blockServices, err := st.selectBlockServices(nil, 0, 0, false)
+	blockServices, err := st.selectBlockServices(nil, nil, 0, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +338,8 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
 		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
-		blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
+		location_id := msgs.Location(0)
+		blockServicesMap, err := s.selectBlockServices(&location_id, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 		}
@@ -523,7 +497,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.selectBlockServices(nil, 0, 0, false)
+	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, false)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -539,10 +513,19 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	return &resp, nil
 }
 
-func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.BlockServicesWithFlagChangeReq) (*msgs.BlockServicesWithFlagChangeResp, error) {
-	resp := msgs.BlockServicesWithFlagChangeResp{}
+func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalChangedBlockServicesReq) (*msgs.LocalChangedBlockServicesResp, error) {
+	reqAtLocation := &msgs.ChangedBlockServicesAtLocationReq{0, req.ChangedSince}
+	respAtLocation, err := handleChangedBlockServicesAtLocation(ll, s, reqAtLocation)
+	if err != nil {
+		return nil, err
+	}
+	return &msgs.LocalChangedBlockServicesResp{respAtLocation.LastChange, respAtLocation.BlockServices}, nil
+}
 
-	blockServices, err := s.selectBlockServices(nil, 0, req.ChangedSince, false)
+func handleChangedBlockServicesAtLocation(ll *lib.Logger, s *state, req *msgs.ChangedBlockServicesAtLocationReq) (*msgs.ChangedBlockServicesAtLocationResp, error) {
+	resp := msgs.ChangedBlockServicesAtLocationResp{}
+
+	blockServices, err := s.selectBlockServices(&req.LocationId, nil, 0, req.ChangedSince, false)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -561,21 +544,34 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 	return &resp, nil
 }
 
-func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
-	blockServices, err := s.selectBlockServices(&req.Id, 0, 0, false)
+func handleRegisterBlockServicesDEPRECATED(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesDEPRECATEDReq) (*msgs.RegisterBlockServicesDEPRECATEDResp, error) {
+	newReq := &msgs.RegisterBlockServicesReq{}
+	for _, bs := range req.BlockServices {
+		newReq.BlockServices = append(
+			newReq.BlockServices,
+			msgs.RegisterBlockServiceInfo{
+				Id:             bs.Id,
+				LocationId:     0,
+				Addrs:          bs.Addrs,
+				StorageClass:   bs.StorageClass,
+				FailureDomain:  bs.FailureDomain,
+				SecretKey:      bs.SecretKey,
+				Flags:          bs.Flags,
+				FlagsMask:      bs.FlagsMask,
+				CapacityBytes:  bs.CapacityBytes,
+				AvailableBytes: bs.AvailableBytes,
+				Blocks:         bs.Blocks,
+				Path:           bs.Path,
+			})
+	}
+	_, err := handleRegisterBlockServices(ll, s, newReq)
 	if err != nil {
 		return nil, err
 	}
-	if len(blockServices) > 1 {
-		panic(fmt.Errorf("impossible: %v results for id blocks selection", len(blockServices)))
-	}
-	for _, bs := range blockServices {
-		return &msgs.BlockServiceResp{Info: bs}, nil
-	}
-	return nil, msgs.BLOCK_SERVICE_NOT_FOUND
+	return &msgs.RegisterBlockServicesDEPRECATEDResp{}, nil
 }
 
-func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
+func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
 	if len(req.BlockServices) == 0 {
 		return &msgs.RegisterBlockServicesResp{}, nil
 	}
@@ -700,7 +696,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	rand.Seed(time.Now().UnixNano())
 
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0, false)
+		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, false)
 		if err != nil {
 			ll.RaiseNC(blockServicesAlert, "error reading block services, will try again in %v: %s", sleepInterval, err)
 			time.Sleep(sleepInterval)
@@ -741,7 +737,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	}
 }
 
-func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.SetBlockServiceDecommissionedReq) (*msgs.SetBlockServiceDecommissionedResp, error) {
+func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.DecommissionBlockServiceReq) (*msgs.DecommissionBlockServiceResp, error) {
 	// This lock effectively prevents decom requests running in parallel
 	// we don't want to take any chances here.
 	s.decomMutex.Lock()
@@ -752,7 +748,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
-	blockServices, err := s.selectBlockServices(nil, 0, 0, false)
+	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +774,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 	}
 
 	s.lastAutoDecom = time.Now()
-	return &msgs.SetBlockServiceDecommissionedResp{}, nil
+	return &msgs.DecommissionBlockServiceResp{}, nil
 }
 
 func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
@@ -816,7 +812,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
 		s.decommedBlockServicesMu.Lock()
 		defer s.decommedBlockServicesMu.Unlock()
-		bs, err := s.selectBlockServices(&req.Id, 0, 0, false)
+		bs, err := s.selectBlockServices(nil, &req.Id, 0, 0, false)
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
@@ -826,10 +822,19 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	return &msgs.SetBlockServiceFlagsResp{}, nil
 }
 
-func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsResp, error) {
-	resp := msgs.ShardsResp{}
+func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.LocalShardsResp, error) {
+	reqAtLocation := &msgs.ShardsAtLocationReq{0}
+	resp, err := handleShardsAtLocation(ll, s, reqAtLocation)
+	if err != nil {
+		return nil, err
+	}
+	return &msgs.LocalShardsResp{resp.Shards}, nil
+}
 
-	shards, err := s.selectShards()
+func handleShardsAtLocation(ll *lib.Logger, s *state, req *msgs.ShardsAtLocationReq) (*msgs.ShardsAtLocationResp, error) {
+	resp := msgs.ShardsAtLocationResp{}
+
+	shards, err := s.selectShards(req.LocationId)
 	if err != nil {
 		ll.RaiseAlert("error reading shards: %s", err)
 		return nil, err
@@ -839,29 +844,26 @@ func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsRe
 	return &resp, nil
 }
 
-func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithReplicasReq) (*msgs.ShardsWithReplicasResp, error) {
+func handleAllShards(ll *lib.Logger, s *state, _ *msgs.AllShardsReq) (*msgs.AllShardsResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
-	ret := []msgs.ShardWithReplicasInfo{}
+	ret := []msgs.FullShardInfo{}
 
 	rows, err := s.db.Query("SELECT * FROM shards")
 	if err != nil {
+		ll.RaiseAlert("error reading shards: %s", err)
 		return nil, fmt.Errorf("error selecting shards: %s", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		si := msgs.ShardWithReplicasInfo{}
+		si := msgs.FullShardInfo{}
 		var ip1, ip2 []byte
 		var id int
 		var replicaId int
-		var loc msgs.Location
-		err = rows.Scan(&id, &replicaId, &loc, &si.IsLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
+		err = rows.Scan(&id, &replicaId, &si.LocationId, &si.IsLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
-		}
-		if si.Addrs.Addr1.Port == 0 {
-			continue
 		}
 		si.Id = msgs.MakeShardReplicaId(msgs.ShardId(id), msgs.ReplicaId(replicaId))
 		copy(si.Addrs.Addr1.Addrs[:], ip1)
@@ -869,15 +871,7 @@ func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithRepl
 		ret = append(ret, si)
 	}
 
-	return &msgs.ShardsWithReplicasResp{Shards: ret}, nil
-}
-
-func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp, error) {
-	info, err := s.selectShard(req.Id)
-	if err != nil {
-		return nil, err
-	}
-	return &msgs.ShardResp{Info: *info}, nil
+	return &msgs.AllShardsResp{Shards: ret}, nil
 }
 
 func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (resp *msgs.RegisterShardResp, err error) {
@@ -924,7 +918,7 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 	return
 }
 
-func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (*msgs.ShardReplicasResp, error) {
+func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasDEPRECATEDReq) (*msgs.ShardReplicasDEPRECATEDResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var ret [5]msgs.AddrsInfo
@@ -958,12 +952,12 @@ func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (
 		i += 1
 	}
 
-	return &msgs.ShardReplicasResp{Replicas: ret[:]}, nil
+	return &msgs.ShardReplicasDEPRECATEDResp{Replicas: ret[:]}, nil
 }
 
-func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, error) {
-	resp := msgs.CdcResp{}
-	cdc, err := s.selectCDC()
+func handleCdcAtLocation(log *lib.Logger, s *state, req *msgs.CdcAtLocationReq) (*msgs.CdcAtLocationResp, error) {
+	resp := msgs.CdcAtLocationResp{}
+	cdc, err := s.selectCDC(req.LocationId)
 	if err != nil {
 		log.RaiseAlert("error reading cdc: %s", err)
 		return nil, err
@@ -974,20 +968,30 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 	return &resp, nil
 }
 
-func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasReq) (*msgs.CdcWithReplicasResp, error) {
+func handleLocalCdc(log *lib.Logger, s *state, req *msgs.LocalCdcReq) (*msgs.LocalCdcResp, error) {
+	reqAtLocation := &msgs.CdcAtLocationReq{LocationId: 0}
+	respAtLocation, err := handleCdcAtLocation(log, s, reqAtLocation)
+	if err != nil {
+		return nil, err
+	}
+
+	return &msgs.LocalCdcResp{respAtLocation.Addrs, respAtLocation.LastSeen}, nil
+}
+
+func handleAllCdc(log *lib.Logger, s *state, req *msgs.AllCdcReq) (*msgs.AllCdcResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
-	var ret []msgs.CdcWithReplicasInfo
-	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc WHERE location_id = 0")
+	var ret []msgs.CdcInfo
+	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader, location_id FROM cdc")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc replicas: %s", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		si := msgs.CdcWithReplicasInfo{}
+		si := msgs.CdcInfo{}
 		var ip1, ip2 []byte
-		err = rows.Scan(&si.ReplicaId, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen, &si.IsLeader)
+		err = rows.Scan(&si.ReplicaId, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen, &si.IsLeader, &si.LocationId)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding cdc row: %s", err)
 		}
@@ -996,10 +1000,10 @@ func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasR
 		ret = append(ret, si)
 	}
 
-	return &msgs.CdcWithReplicasResp{Replicas: ret}, nil
+	return &msgs.AllCdcResp{Replicas: ret}, nil
 }
 
-func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*msgs.CdcReplicasResp, error) {
+func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasDEPRECATEDReq) (*msgs.CdcReplicasDEPRECATEDResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var ret [5]msgs.AddrsInfo
@@ -1028,7 +1032,7 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 		i += 1
 	}
 
-	return &msgs.CdcReplicasResp{Replicas: ret[:]}, nil
+	return &msgs.CdcReplicasDEPRECATEDResp{Replicas: ret[:]}, nil
 }
 
 func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (resp *msgs.RegisterCdcResp, err error) {
@@ -1191,6 +1195,59 @@ func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) 
 	return &msgs.MoveCdcLeaderResp{}, nil
 }
 
+func handleCreateLocation(log *lib.Logger, s *state, req *msgs.CreateLocationReq) (*msgs.CreateLocationResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if _, err := s.db.Exec("INSERT INTO location (id, name) VALUES (?, ?)", req.Id, req.Name); err != nil {
+		return nil, err
+	}
+	if err := populateCDCTableForLocation(s.db, req.Id); err != nil {
+		return nil, err
+	}
+	if err := populateShardsTableForLocation(s.db, req.Id); err != nil {
+		return nil, err
+	}
+	log.Info("created location id: %v, name: %v", req.Id, req.Name)
+	return &msgs.CreateLocationResp{}, nil
+}
+
+func handleRenameLocation(log *lib.Logger, s *state, req *msgs.RenameLocationReq) (*msgs.RenameLocationResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	res, err := s.db.Exec("UPDATE location SET name = ? WHERE id = ?", req.Name, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
+		return nil, fmt.Errorf("no such location: %d", req.Id)
+	}
+	log.Info("renamed location %d to %s", req.Id, req.Name)
+	return &msgs.RenameLocationResp{}, nil
+}
+
+func handleLocations(log *lib.Logger, s *state, req *msgs.LocationsReq) (*msgs.LocationsResp, error) {
+	resp := &msgs.LocationsResp{}
+	rows, err := s.db.Query("SELECT id, name FROM location")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		loc := msgs.LocationInfo{}
+		err = rows.Scan(&loc.Id, &loc.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding location row: %s", err)
+		}
+		resp.Locations = append(resp.Locations, loc)
+	}
+	return resp, nil
+
+}
+
 func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -1279,38 +1336,34 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	var err error
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
-	case *msgs.RegisterBlockServicesReq:
-		resp, err = handleNewRegisterBlockServices(log, s, whichReq)
+	case *msgs.RegisterBlockServicesDEPRECATEDReq:
+		resp, err = handleRegisterBlockServicesDEPRECATED(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
-	case *msgs.SetBlockServiceDecommissionedReq:
+	case *msgs.DecommissionBlockServiceReq:
 		resp, err = handleSetBlockserviceDecommissioned(log, s, whichReq)
-	case *msgs.ShardsReq:
-		resp, err = handleShards(log, s, whichReq)
-	case *msgs.ShardsWithReplicasReq:
-		resp, err = handleShardsWithReplicas(log, s, whichReq)
+	case *msgs.LocalShardsReq:
+		resp, err = handleLocalShards(log, s, whichReq)
+	case *msgs.AllShardsReq:
+		resp, err = handleAllShards(log, s, whichReq)
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
-	case *msgs.ShardReplicasReq:
+	case *msgs.ShardReplicasDEPRECATEDReq:
 		resp, err = handleShardReplicas(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
 		resp, err = handleAllBlockServices(log, s, whichReq)
-	case *msgs.BlockServicesWithFlagChangeReq:
-		resp, err = handleBlockServicesWithFlagChange(log, s, whichReq)
-	case *msgs.CdcReq:
-		resp, err = handleCdc(log, s, whichReq)
-	case *msgs.CdcWithReplicasReq:
-		resp, err = handleCdcWithReplicas(log, s, whichReq)
-	case *msgs.CdcReplicasReq:
+	case *msgs.LocalChangedBlockServicesReq:
+		resp, err = handleLocalChangedBlockServices(log, s, whichReq)
+	case *msgs.LocalCdcReq:
+		resp, err = handleLocalCdc(log, s, whichReq)
+	case *msgs.AllCdcReq:
+		resp, err = handleAllCdc(log, s, whichReq)
+	case *msgs.CdcReplicasDEPRECATEDReq:
 		resp, err = handleCdcReplicas(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
 		resp, err = handleRegisterCDC(log, s, whichReq)
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, whichReq)
-	case *msgs.BlockServiceReq:
-		resp, err = handleBlockService(log, s, whichReq)
-	case *msgs.ShardReq:
-		resp, err = handleShard(log, s, whichReq)
 	case *msgs.ShuckleReq:
 		resp, err = handleShuckle(log, s)
 	case *msgs.ShardBlockServicesReq:
@@ -1325,6 +1378,20 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleEraseDecomissionedBlockReq(log, s, whichReq)
 	case *msgs.MoveCdcLeaderReq:
 		resp, err = handleMoveCDCLeader(log, s, whichReq)
+	case *msgs.CreateLocationReq:
+		resp, err = handleCreateLocation(log, s, whichReq)
+	case *msgs.RenameLocationReq:
+		resp, err = handleRenameLocation(log, s, whichReq)
+	case *msgs.LocationsReq:
+		resp, err = handleLocations(log, s, whichReq)
+	case *msgs.RegisterBlockServicesReq:
+		resp, err = handleRegisterBlockServices(log, s, whichReq)
+	case *msgs.CdcAtLocationReq:
+		resp, err = handleCdcAtLocation(log, s, whichReq)
+	case *msgs.ChangedBlockServicesAtLocationReq:
+		resp, err = handleChangedBlockServicesAtLocation(log, s, whichReq)
+	case *msgs.ShardsAtLocationReq:
+		resp, err = handleShardsAtLocation(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1441,52 +1508,56 @@ func readShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES:
-		req = &msgs.RegisterBlockServicesReq{}
-	case msgs.SHARDS:
-		req = &msgs.ShardsReq{}
+	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		req = &msgs.RegisterBlockServicesDEPRECATEDReq{}
+	case msgs.LOCAL_SHARDS:
+		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.SHARD_REPLICAS:
-		req = &msgs.ShardReplicasReq{}
+	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
+		req = &msgs.ShardReplicasDEPRECATEDReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
-	case msgs.BLOCK_SERVICES_WITH_FLAG_CHANGE:
-		req = &msgs.BlockServicesWithFlagChangeReq{}
-	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
-		req = &msgs.SetBlockServiceDecommissionedReq{}
+	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
+		req = &msgs.LocalChangedBlockServicesReq{}
+	case msgs.DECOMMISSION_BLOCK_SERVICE:
+		req = &msgs.DecommissionBlockServiceReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
-	case msgs.CDC:
-		req = &msgs.CdcReq{}
-	case msgs.CDC_REPLICAS:
-		req = &msgs.CdcReplicasReq{}
+	case msgs.LOCAL_CDC:
+		req = &msgs.LocalCdcReq{}
+	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
+		req = &msgs.CdcReplicasDEPRECATEDReq{}
 	case msgs.INFO:
 		req = &msgs.InfoReq{}
-	case msgs.BLOCK_SERVICE:
-		req = &msgs.BlockServiceReq{}
-	case msgs.SHARD:
-		req = &msgs.ShardReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
-	case msgs.CDC_WITH_REPLICAS:
-		req = &msgs.CdcWithReplicasReq{}
+	case msgs.ALL_CDC:
+		req = &msgs.AllCdcReq{}
 	case msgs.CLEAR_SHARD_INFO:
 		req = &msgs.ClearShardInfoReq{}
 	case msgs.MOVE_SHARD_LEADER:
 		req = &msgs.MoveShardLeaderReq{}
-	case msgs.SHARDS_WITH_REPLICAS:
-		req = &msgs.ShardsWithReplicasReq{}
+	case msgs.ALL_SHARDS:
+		req = &msgs.AllShardsReq{}
 	case msgs.MOVE_CDC_LEADER:
 		req = &msgs.MoveCdcLeaderReq{}
 	case msgs.CLEAR_CDC_INFO:
 		req = &msgs.ClearCdcInfoReq{}
+	case msgs.CREATE_LOCATION:
+		req = &msgs.CreateLocationReq{}
+	case msgs.RENAME_LOCATION:
+		req = &msgs.RenameLocationReq{}
+	case msgs.LOCATIONS:
+		req = &msgs.LocationsReq{}
+	case msgs.REGISTER_BLOCK_SERVICES:
+		req = &msgs.RegisterBlockServicesReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}
@@ -1728,7 +1799,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.selectBlockServices(nil, 0, 0, false)
+			blockServices, err := state.selectBlockServices(nil, nil, 0, 0, false)
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -1816,11 +1887,11 @@ type directoryData struct {
 }
 
 func refreshClient(log *lib.Logger, state *state) error {
-	shards, err := state.selectShards()
+	shards, err := state.selectShards(0)
 	if err != nil {
 		return fmt.Errorf("error reading shards: %s", err)
 	}
-	cdc, err := state.selectCDC()
+	cdc, err := state.selectCDC(0)
 	if err != nil {
 		return fmt.Errorf("error reading cdc: %s", err)
 	}
@@ -2616,7 +2687,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0, false)
+		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, false)
 		if err != nil {
 			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)
@@ -2694,15 +2765,16 @@ func initDb(dbFile string) (*sql.DB, error) {
 	}
 
 	err = initLocationTable(db)
+	if err != nil {
+		return nil, err
+	}
 
 	err = initCDCTable(db)
-
 	if err != nil {
 		return nil, err
 	}
 
 	err = initAndPopulateShardsTable(db)
-
 	if err != nil {
 		return nil, err
 	}
@@ -2718,7 +2790,7 @@ func initDb(dbFile string) (*sql.DB, error) {
 func initLocationTable(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS location(
 		id INT NOT NULL PRIMARY KEY,
-		name TEXT NOT NULL,
+		name TEXT NOT NULL
 	)`)
 	if err != nil {
 		return err
@@ -2774,6 +2846,18 @@ func initBlockServicesTable(db *sql.DB) error {
 	return err
 }
 
+func populateCDCTableForLocation(db *sql.DB, location msgs.Location) error {
+	// Prepopulate cdc rows to simplify register operation checking if ip has changed
+	for replicaId := 0; replicaId < 5; replicaId++ {
+		n := sql.Named
+		_, err := db.Exec("INSERT OR IGNORE INTO cdc VALUES(:replica_id, :location_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId), n("location_id", location), n("is_leader", replicaId == 0))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func initCDCTable(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS cdc(
@@ -2792,32 +2876,41 @@ func initCDCTable(db *sql.DB) error {
 		return err
 	}
 
-	// Prepopulate cdc rows to simplify register operation checking if ip has changed
-	for replicaId := 0; replicaId < 5; replicaId++ {
+	// populate default location
+	err = populateCDCTableForLocation(db, 0)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func populateShardsTableForLocation(db *sql.DB, location msgs.Location) error {
+	// Prepopulate shard rows to simplify register operation checking if ip has changed
+	for id := msgs.MakeShardReplicaId(0, 0); id < msgs.MakeShardReplicaId(0, 5); id++ {
 		n := sql.Named
-		_, err = db.Exec("INSERT OR IGNORE INTO cdc VALUES(:replica_id, 0, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId), n("is_leader", replicaId == 0))
+		_, err := db.Exec("INSERT OR IGNORE INTO shards VALUES(:id, :replica_id, :location_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()), n("location_id", location), n("is_leader", id.Replica() == 0))
 		if err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
 func initAndPopulateShardsTable(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS shards(
-			id INT NOT NULL,
-			replica_id INT NOT NULL,
-			location_id INT NOT NULL,
-			is_leader BOOL NOT NULL,
-			ip1 BLOB NOT NULL,
-			port1 INT NOT NULL,
-			ip2 BLOB NOT NULL,
-			port2 INT NOT NULL,
-			last_seen INT NOT NULL,
-			PRIMARY KEY (id, replica_id)
-		)`)
+		id INT NOT NULL,
+		replica_id INT NOT NULL,
+		location_id INT NOT NULL,
+		is_leader BOOL NOT NULL,
+		ip1 BLOB NOT NULL,
+		port1 INT NOT NULL,
+		ip2 BLOB NOT NULL,
+		port2 INT NOT NULL,
+		last_seen INT NOT NULL,
+		PRIMARY KEY (id, replica_id, location_id)
+	)`)
 	if err != nil {
 		return err
 	}
@@ -2827,13 +2920,10 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 		return err
 	}
 
-	// Prepopulate shard rows to simplify register operation checking if ip has changed
-	for id := msgs.MakeShardReplicaId(0, 0); id < msgs.MakeShardReplicaId(0, 5); id++ {
-		n := sql.Named
-		_, err = db.Exec("INSERT OR IGNORE INTO shards VALUES(:id, :replica_id, 0, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()), n("is_leader", id.Replica() == 0))
-		if err != nil {
-			return err
-		}
+	// populate default location
+	err = populateShardsTableForLocation(db, 0)
+	if err != nil {
+		return err
 	}
 
 	return nil

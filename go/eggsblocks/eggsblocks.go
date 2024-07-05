@@ -268,7 +268,7 @@ func registerPeriodically(
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	shuckleAddress string,
 ) {
-	req := msgs.RegisterBlockServicesReq{}
+	req := msgs.RegisterBlockServicesDEPRECATEDReq{}
 	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		req.BlockServices = req.BlockServices[:0]
@@ -1027,7 +1027,7 @@ func handleRequestError(
 type deadBlockService struct {
 	cipher cipher.Block
 	// we store the last seen data from shuckle so that we keep registering that
-	info msgs.RegisterBlockServiceInfo
+	info msgs.RegisterBlockServiceInfoDEPRECATED
 }
 
 func readBlocksRequest(
@@ -1443,7 +1443,7 @@ type blockService struct {
 	key                             [16]byte
 	cipher                          cipher.Block
 	storageClass                    msgs.StorageClass
-	cachedInfo                      msgs.RegisterBlockServiceInfo
+	cachedInfo                      msgs.RegisterBlockServiceInfoDEPRECATED
 	extraCachedInfo                 blockServiceExtraInfo
 	couldNotUpdateInfoBlocks        bool
 	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
@@ -1475,18 +1475,18 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 	return ret, nil
 }
 
-func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfo {
+func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfoDEPRECATED {
 	// Everything else is filled in by `initBlockServicesInfo`
-	return &msgs.RegisterBlockServiceInfo{
+	return &msgs.RegisterBlockServiceInfoDEPRECATED{
 		CapacityBytes:  info.CapacityBytes,
 		AvailableBytes: info.AvailableBytes,
 		Blocks:         info.Blocks,
 	}
 }
 
-func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfo {
+func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfoDEPRECATED {
 	// We just replicate everything from the cached one, forever -- but no flags.
-	return &msgs.RegisterBlockServiceInfo{
+	return &msgs.RegisterBlockServiceInfoDEPRECATED{
 		Id:             info.Id,
 		Addrs:          info.Addrs,
 		StorageClass:   info.StorageClass,
@@ -1730,7 +1730,7 @@ func main() {
 			// fill in information from shuckle, if it's recent enough
 			if weHaveBs && time.Since(bs.LastSeen.Time()) < maximumRegisterInterval*2 {
 				// everything else is filled in by initBlockServicesInfo
-				ourBs.cachedInfo = msgs.RegisterBlockServiceInfo{
+				ourBs.cachedInfo = msgs.RegisterBlockServiceInfoDEPRECATED{
 					CapacityBytes:  bs.CapacityBytes,
 					AvailableBytes: bs.AvailableBytes,
 					Blocks:         bs.Blocks,

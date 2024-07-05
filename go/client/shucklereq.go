@@ -63,36 +63,62 @@ func readShuckleResponse(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES:
-		resp = &msgs.RegisterBlockServicesResp{}
-	case msgs.SHARDS:
-		resp = &msgs.ShardsResp{}
+	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		resp = &msgs.RegisterBlockServicesDEPRECATEDResp{}
+	case msgs.LOCAL_SHARDS:
+		resp = &msgs.LocalShardsResp{}
 	case msgs.REGISTER_SHARD:
 		resp = &msgs.RegisterShardResp{}
-	case msgs.SHARD_REPLICAS:
-		resp = &msgs.ShardReplicasResp{}
+	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
+		resp = &msgs.ShardReplicasDEPRECATEDResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		resp = &msgs.SetBlockServiceFlagsResp{}
-	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
-		resp = &msgs.SetBlockServiceDecommissionedResp{}
+	case msgs.DECOMMISSION_BLOCK_SERVICE:
+		resp = &msgs.DecommissionBlockServiceResp{}
 	case msgs.REGISTER_CDC:
 		resp = &msgs.RegisterCdcResp{}
-	case msgs.CDC:
-		resp = &msgs.CdcResp{}
-	case msgs.CDC_REPLICAS:
-		resp = &msgs.CdcReplicasResp{}
+	case msgs.LOCAL_CDC:
+		resp = &msgs.LocalCdcResp{}
+	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
+		resp = &msgs.CdcReplicasDEPRECATEDResp{}
 	case msgs.INFO:
 		resp = &msgs.InfoResp{}
-	case msgs.BLOCK_SERVICE:
-		resp = &msgs.BlockServiceResp{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		resp = &msgs.ShardBlockServicesResp{}
-	case msgs.SHARD:
-		resp = &msgs.ShardResp{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		resp = &msgs.EraseDecommissionedBlockResp{}
+	case msgs.ALL_CDC:
+		resp = &msgs.AllCdcResp{}
+	case msgs.CLEAR_CDC_INFO:
+		resp = &msgs.ClearCdcInfoResp{}
+	case msgs.CLEAR_SHARD_INFO:
+		resp = &msgs.ClearShardInfoResp{}
+	case msgs.CREATE_LOCATION:
+		resp = &msgs.CreateLocationResp{}
+	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
+		resp = &msgs.LocalChangedBlockServicesResp{}
+	case msgs.LOCATIONS:
+		resp = &msgs.LocationsResp{}
+	case msgs.MOVE_CDC_LEADER:
+		resp = &msgs.MoveCdcLeaderResp{}
+	case msgs.MOVE_SHARD_LEADER:
+		resp = &msgs.MoveShardLeaderResp{}
+	case msgs.RENAME_LOCATION:
+		resp = &msgs.RenameLocationResp{}
+	case msgs.ALL_SHARDS:
+		resp = &msgs.AllShardsResp{}
+	case msgs.SHUCKLE:
+		resp = &msgs.ShuckleResp{}
+	case msgs.CDC_AT_LOCATION:
+		resp = &msgs.CdcAtLocationResp{}
+	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
+		resp = &msgs.ChangedBlockServicesAtLocationResp{}
+	case msgs.REGISTER_BLOCK_SERVICES:
+		resp = &msgs.RegisterBlockServicesResp{}
+	case msgs.SHARDS_AT_LOCATION:
+		resp = &msgs.ShardsAtLocationResp{}
 	default:
 		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
 	}

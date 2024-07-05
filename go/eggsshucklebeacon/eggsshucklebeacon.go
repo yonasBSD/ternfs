@@ -108,52 +108,62 @@ func readShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES:
-		req = &msgs.RegisterBlockServicesReq{}
-	case msgs.SHARDS:
-		req = &msgs.ShardsReq{}
+	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		req = &msgs.RegisterBlockServicesDEPRECATEDReq{}
+	case msgs.LOCAL_SHARDS:
+		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.SHARD_REPLICAS:
-		req = &msgs.ShardReplicasReq{}
+	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
+		req = &msgs.ShardReplicasDEPRECATEDReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
-	case msgs.BLOCK_SERVICES_WITH_FLAG_CHANGE:
-		req = &msgs.BlockServicesWithFlagChangeReq{}
-	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
-		req = &msgs.SetBlockServiceDecommissionedReq{}
+	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
+		req = &msgs.LocalChangedBlockServicesReq{}
+	case msgs.DECOMMISSION_BLOCK_SERVICE:
+		req = &msgs.DecommissionBlockServiceReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
-	case msgs.CDC:
-		req = &msgs.CdcReq{}
-	case msgs.CDC_REPLICAS:
-		req = &msgs.CdcReplicasReq{}
+	case msgs.LOCAL_CDC:
+		req = &msgs.LocalCdcReq{}
+	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
+		req = &msgs.CdcReplicasDEPRECATEDReq{}
 	case msgs.INFO:
 		req = &msgs.InfoReq{}
-	case msgs.BLOCK_SERVICE:
-		req = &msgs.BlockServiceReq{}
-	case msgs.SHARD:
-		req = &msgs.ShardReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
-	case msgs.CDC_WITH_REPLICAS:
-		req = &msgs.CdcWithReplicasReq{}
+	case msgs.ALL_CDC:
+		req = &msgs.AllCdcReq{}
 	case msgs.CLEAR_SHARD_INFO:
 		req = &msgs.ClearShardInfoReq{}
 	case msgs.MOVE_SHARD_LEADER:
 		req = &msgs.MoveShardLeaderReq{}
-	case msgs.SHARDS_WITH_REPLICAS:
-		req = &msgs.ShardsWithReplicasReq{}
+	case msgs.ALL_SHARDS:
+		req = &msgs.AllShardsReq{}
 	case msgs.MOVE_CDC_LEADER:
 		req = &msgs.MoveCdcLeaderReq{}
 	case msgs.CLEAR_CDC_INFO:
 		req = &msgs.ClearCdcInfoReq{}
+	case msgs.CREATE_LOCATION:
+		req = &msgs.CreateLocationReq{}
+	case msgs.RENAME_LOCATION:
+		req = &msgs.RenameLocationReq{}
+	case msgs.LOCATIONS:
+		req = &msgs.LocationsReq{}
+	case msgs.CDC_AT_LOCATION:
+		req = &msgs.CdcAtLocationReq{}
+	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
+		req = &msgs.ChangedBlockServicesAtLocationReq{}
+	case msgs.REGISTER_BLOCK_SERVICES:
+		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.SHARDS_AT_LOCATION:
+		req = &msgs.ShardsAtLocationReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

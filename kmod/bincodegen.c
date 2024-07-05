@@ -123,11 +123,11 @@ const char* eggsfs_cdc_kind_str(int kind) {
 
 const char* eggsfs_shuckle_kind_str(int kind) {
     switch (kind) {
-    case 3: return "SHARDS";
-    case 7: return "CDC";
+    case 3: return "LOCAL_SHARDS";
+    case 7: return "LOCAL_CDC";
     case 8: return "INFO";
     case 15: return "SHUCKLE";
-    case 34: return "BLOCK_SERVICES_WITH_FLAG_CHANGE";
+    case 34: return "LOCAL_CHANGED_BLOCK_SERVICES";
     default: return "UNKNOWN";
     }
 }

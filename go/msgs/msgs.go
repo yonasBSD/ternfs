@@ -1898,11 +1898,31 @@ type ShuckleResponse interface {
 	ShuckleResponseKind() ShuckleMessageKind
 }
 
-type SetBlockServiceDecommissionedReq struct {
+type InfoReq struct{}
+
+type InfoResp struct {
+	NumBlockServices  uint32
+	NumFailureDomains uint32
+	Capacity          uint64
+	Available         uint64
+	Blocks            uint64
+}
+
+type ShuckleReq struct{}
+
+type AddrsInfo struct {
+	Addr1 IpPort
+	Addr2 IpPort
+}
+type ShuckleResp struct {
+	Addrs AddrsInfo
+}
+
+type DecommissionBlockServiceReq struct {
 	Id BlockServiceId
 }
 
-type SetBlockServiceDecommissionedResp struct{}
+type DecommissionBlockServiceResp struct{}
 
 type SetBlockServiceFlagsReq struct {
 	Id        BlockServiceId
@@ -1918,17 +1938,28 @@ type AllBlockServicesResp struct {
 	BlockServices []BlockServiceInfo
 }
 
-type BlockServicesWithFlagChangeReq struct {
+type LocalChangedBlockServicesReq struct {
 	ChangedSince EggsTime
 }
 
-type BlockServicesWithFlagChangeResp struct {
+type LocalChangedBlockServicesResp struct {
+	LastChange    EggsTime
+	BlockServices []BlockService
+}
+
+type ChangedBlockServicesAtLocationReq struct {
+	LocationId   Location
+	ChangedSince EggsTime
+}
+
+type ChangedBlockServicesAtLocationResp struct {
 	LastChange    EggsTime
 	BlockServices []BlockService
 }
 
 type RegisterBlockServiceInfo struct {
 	Id             BlockServiceId
+	LocationId     Location
 	Addrs          AddrsInfo
 	StorageClass   StorageClass
 	FailureDomain  FailureDomain
@@ -1947,22 +1978,14 @@ type RegisterBlockServicesReq struct {
 
 type RegisterBlockServicesResp struct{}
 
-type ShardsReq struct{}
-
-type ShardInfo struct {
-	Addrs    AddrsInfo
-	LastSeen EggsTime
+type EraseDecommissionedBlockReq struct {
+	BlockServiceId BlockServiceId
+	BlockId        BlockId
+	Certificate    [8]byte
 }
 
-type ShardsResp struct {
-	// Always 256 length. If we don't have info for some shards, the ShardInfo
-	// is zeroed.
-	Shards []ShardInfo
-}
-
-type AddrsInfo struct {
-	Addr1 IpPort
-	Addr2 IpPort
+type EraseDecommissionedBlockResp struct {
+	Proof [8]byte
 }
 
 type RegisterShardReq struct {
@@ -1974,83 +1997,28 @@ type RegisterShardReq struct {
 
 type RegisterShardResp struct{}
 
-type ShardReplicasReq struct {
-	Id ShardId
-}
+// Depending on which shuckle is asked it always returns local shards
+type LocalShardsReq struct{}
 
-type ShardReplicasResp struct {
-	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
-	// is zeroed.
-	Replicas []AddrsInfo
-}
-
-type RegisterCdcReq struct {
-	Replica  ReplicaId
-	Location Location
-	IsLeader bool
-	Addrs    AddrsInfo
-}
-
-type RegisterCdcResp struct{}
-
-type CdcReq struct{}
-
-type CdcResp struct {
+type ShardInfo struct {
 	Addrs    AddrsInfo
 	LastSeen EggsTime
 }
 
-type CdcWithReplicasReq struct{}
-
-type CdcWithReplicasInfo struct {
-	ReplicaId ReplicaId
-	IsLeader  bool
-	Addrs     AddrsInfo
-	LastSeen  EggsTime
-}
-
-type CdcWithReplicasResp struct {
-	Replicas []CdcWithReplicasInfo
-}
-
-type CdcReplicasReq struct{}
-
-type CdcReplicasResp struct {
-	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
+type LocalShardsResp struct {
+	// Always 256 length. If we don't have info for some shards, the ShardInfo
 	// is zeroed.
-	Replicas []AddrsInfo
+	Shards []ShardInfo
 }
 
-type InfoReq struct{}
-
-type InfoResp struct {
-	NumBlockServices  uint32
-	NumFailureDomains uint32
-	Capacity          uint64
-	Available         uint64
-	Blocks            uint64
+type ShardsAtLocationReq struct {
+	LocationId Location
 }
 
-type BlockServiceReq struct {
-	Id BlockServiceId
-}
-
-type BlockServiceResp struct {
-	Info BlockServiceInfo
-}
-
-type ShardReq struct {
-	Id ShardId
-}
-
-type ShardResp struct {
-	Info ShardInfo
-}
-
-type ShuckleReq struct{}
-
-type ShuckleResp struct {
-	Addrs AddrsInfo
+type ShardsAtLocationResp struct {
+	// Always 256 length. If we don't have info for some shards, the ShardInfo
+	// is zeroed.
+	Shards []ShardInfo
 }
 
 // Gets the block services a shard should use to write
@@ -2062,17 +2030,18 @@ type ShardBlockServicesResp struct {
 	BlockServices []BlockServiceId
 }
 
-type ShardsWithReplicasReq struct{}
+type AllShardsReq struct{}
 
-type ShardWithReplicasInfo struct {
-	Id       ShardReplicaId
-	IsLeader bool
-	Addrs    AddrsInfo
-	LastSeen EggsTime
+type FullShardInfo struct {
+	Id         ShardReplicaId
+	IsLeader   bool
+	Addrs      AddrsInfo
+	LastSeen   EggsTime
+	LocationId Location
 }
 
-type ShardsWithReplicasResp struct {
-	Shards []ShardWithReplicasInfo
+type AllShardsResp struct {
+	Shards []FullShardInfo
 }
 
 type MoveShardLeaderReq struct {
@@ -2082,19 +2051,58 @@ type MoveShardLeaderReq struct {
 
 type MoveShardLeaderResp struct{}
 
-type MoveCdcLeaderReq struct {
-	Replica  ReplicaId
-	Location Location
-}
-
-type MoveCdcLeaderResp struct{}
-
 type ClearShardInfoReq struct {
 	Shrid    ShardReplicaId
 	Location Location
 }
 
 type ClearShardInfoResp struct{}
+
+type RegisterCdcReq struct {
+	Replica  ReplicaId
+	Location Location
+	IsLeader bool
+	Addrs    AddrsInfo
+}
+
+type RegisterCdcResp struct{}
+
+type LocalCdcReq struct{}
+
+type LocalCdcResp struct {
+	Addrs    AddrsInfo
+	LastSeen EggsTime
+}
+
+type CdcAtLocationReq struct {
+	LocationId Location
+}
+
+type CdcAtLocationResp struct {
+	Addrs    AddrsInfo
+	LastSeen EggsTime
+}
+
+type AllCdcReq struct{}
+
+type CdcInfo struct {
+	ReplicaId  ReplicaId
+	LocationId Location
+	IsLeader   bool
+	Addrs      AddrsInfo
+	LastSeen   EggsTime
+}
+
+type AllCdcResp struct {
+	Replicas []CdcInfo
+}
+
+type MoveCdcLeaderReq struct {
+	Replica  ReplicaId
+	Location Location
+}
+
+type MoveCdcLeaderResp struct{}
 
 type ClearCdcInfoReq struct {
 	Replica  ReplicaId
@@ -2103,14 +2111,65 @@ type ClearCdcInfoReq struct {
 
 type ClearCdcInfoResp struct{}
 
-type EraseDecommissionedBlockReq struct {
-	BlockServiceId BlockServiceId
-	BlockId        BlockId
-	Certificate    [8]byte
+type CreateLocationReq struct {
+	Id   Location
+	Name string
 }
 
-type EraseDecommissionedBlockResp struct {
-	Proof [8]byte
+type CreateLocationResp struct{}
+
+type RenameLocationReq struct {
+	Id   Location
+	Name string
+}
+
+type RenameLocationResp struct{}
+
+type LocationsReq struct{}
+
+type LocationInfo struct {
+	Id   Location
+	Name string
+}
+type LocationsResp struct {
+	Locations []LocationInfo
+}
+
+type CdcReplicasDEPRECATEDReq struct{}
+
+type CdcReplicasDEPRECATEDResp struct {
+	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
+	// is zeroed.
+	Replicas []AddrsInfo
+}
+
+type RegisterBlockServiceInfoDEPRECATED struct {
+	Id             BlockServiceId
+	Addrs          AddrsInfo
+	StorageClass   StorageClass
+	FailureDomain  FailureDomain
+	SecretKey      [16]byte
+	Flags          BlockServiceFlags
+	FlagsMask      uint8
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64 // how many blocks we have
+	Path           string
+}
+
+type RegisterBlockServicesDEPRECATEDReq struct {
+	BlockServices []RegisterBlockServiceInfoDEPRECATED
+}
+
+type RegisterBlockServicesDEPRECATEDResp struct{}
+type ShardReplicasDEPRECATEDReq struct {
+	Id ShardId
+}
+
+type ShardReplicasDEPRECATEDResp struct {
+	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
+	// is zeroed.
+	Replicas []AddrsInfo
 }
 
 // --------------------------------------------------------------------

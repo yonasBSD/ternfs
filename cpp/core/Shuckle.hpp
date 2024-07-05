@@ -58,7 +58,7 @@ std::pair<int, std::string> fetchCDCReplicas(
     std::array<AddrsInfo, 5>& replicas
 );
 
-std::pair<int, std::string> fetchShards(
+std::pair<int, std::string> fetchLocalShards(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,

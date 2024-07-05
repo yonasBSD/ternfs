@@ -793,7 +793,7 @@ func main() {
 		}
 		bsId := msgs.BlockServiceId(*decommissionBlockserviceId)
 		log.Info("decommissioning block service %v using dedicated rate-limited endpoint", bsId)
-		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceDecommissionedReq{
+		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.DecommissionBlockServiceReq{
 			Id: bsId,
 		})
 		if err != nil {

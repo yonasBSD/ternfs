@@ -848,7 +848,7 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
-        const auto [err, errStr] = fetchShards(_shuckleHost, _shucklePort, 10_sec, _shards);
+        const auto [err, errStr] = fetchLocalShards(_shuckleHost, _shucklePort, 10_sec, _shards);
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, errStr);

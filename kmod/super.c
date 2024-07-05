@@ -42,9 +42,9 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
     struct kvec iov;
     struct msghdr msg = {NULL};
     {
-        static_assert(EGGSFS_SHARDS_REQ_SIZE == 0);
+        static_assert(EGGSFS_LOCAL_SHARDS_REQ_SIZE == 0);
         char shuckle_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
-        eggsfs_write_shuckle_req_header(shuckle_req, EGGSFS_SHARDS_REQ_SIZE, EGGSFS_SHUCKLE_SHARDS);
+        eggsfs_write_shuckle_req_header(shuckle_req, EGGSFS_LOCAL_SHARDS_REQ_SIZE, EGGSFS_SHUCKLE_LOCAL_SHARDS);
         int written_so_far;
         for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
             iov.iov_base = shuckle_req + written_so_far;
@@ -115,9 +115,9 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
         }
     }
     {
-        static_assert(EGGSFS_CDC_REQ_SIZE == 0);
+        static_assert(EGGSFS_LOCAL_CDC_REQ_SIZE == 0);
         char cdc_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
-        eggsfs_write_shuckle_req_header(cdc_req, EGGSFS_CDC_REQ_SIZE, EGGSFS_SHUCKLE_CDC);
+        eggsfs_write_shuckle_req_header(cdc_req, EGGSFS_LOCAL_CDC_REQ_SIZE, EGGSFS_SHUCKLE_LOCAL_CDC);
         int written_so_far;
         for (written_so_far = 0; written_so_far < sizeof(cdc_req);) {
             iov.iov_base = cdc_req + written_so_far;
@@ -141,12 +141,12 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
         u8 shuckle_resp_kind;
         err = eggsfs_read_shuckle_resp_header(cdc_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
         if (err < 0) { goto out_sock; }
-        if (shuckle_resp_len != EGGSFS_CDC_RESP_SIZE) {
-            eggsfs_debug("expected size of %d, got %d", EGGSFS_CDC_RESP_SIZE, shuckle_resp_len);
+        if (shuckle_resp_len != EGGSFS_LOCAL_CDC_RESP_SIZE) {
+            eggsfs_debug("expected size of %d, got %d", EGGSFS_LOCAL_CDC_RESP_SIZE, shuckle_resp_len);
             err = -EINVAL; goto out_sock;
         }
         {
-            char cdc_resp[EGGSFS_CDC_RESP_SIZE];
+            char cdc_resp[EGGSFS_LOCAL_CDC_RESP_SIZE];
             for (read_so_far = 0; read_so_far < sizeof(cdc_resp);) {
                 iov.iov_base = (char*)&cdc_resp + read_so_far;
                 iov.iov_len = sizeof(cdc_resp) - read_so_far;
@@ -160,8 +160,8 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
                 .end = cdc_resp + sizeof(cdc_resp),
                 .err = 0,
             };
-            eggsfs_cdc_resp_get_start(&ctx, start);
-            eggsfs_cdc_resp_get_addrs(&ctx, start, addr_start);
+            eggsfs_local_cdc_resp_get_start(&ctx, start);
+            eggsfs_local_cdc_resp_get_addrs(&ctx, start, addr_start);
             eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
             eggsfs_ip_port_get_addrs(&ctx, ipport1_start, cdc_ip1);
             eggsfs_ip_port_get_port(&ctx, cdc_ip1, cdc_port1);
@@ -171,9 +171,9 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
             eggsfs_ip_port_get_port(&ctx, cdc_ip2, cdc_port2);
             eggsfs_ip_port_get_end(&ctx, cdc_port2, ipport2_end);
             eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
-            eggsfs_cdc_resp_get_last_seen(&ctx, addr_end, last_seen);
-            eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
-            eggsfs_cdc_resp_get_finish(&ctx, end);
+            eggsfs_local_cdc_resp_get_last_seen(&ctx, addr_end, last_seen);
+            eggsfs_local_cdc_resp_get_end(&ctx, last_seen, end);
+            eggsfs_local_cdc_resp_get_finish(&ctx, end);
             if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 
             atomic64_set(&info->cdc_addr1, eggsfs_mk_addr(cdc_ip1.x, cdc_port1.x));
@@ -183,16 +183,16 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
 
     {
         {
-            char changed_block_services_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE + EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE];
+            char changed_block_services_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE + EGGSFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE];
             struct eggsfs_bincode_put_ctx ctx = {
                 .start = changed_block_services_req + EGGSFS_SHUCKLE_REQ_HEADER_SIZE,
                 .cursor = changed_block_services_req + EGGSFS_SHUCKLE_REQ_HEADER_SIZE,
                 .end = changed_block_services_req + sizeof(changed_block_services_req),
             };
-            eggsfs_block_services_with_flag_change_req_put_start(&ctx, start);
-            eggsfs_block_services_with_flag_change_req_put_changed_since(&ctx, start, changed_since, info->block_services_last_changed_time);
-            eggsfs_block_services_with_flag_change_req_put_end(&ctx, changed_since, end);
-            eggsfs_write_shuckle_req_header(changed_block_services_req, EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE, EGGSFS_SHUCKLE_BLOCK_SERVICES_WITH_FLAG_CHANGE);
+            eggsfs_local_changed_block_services_req_put_start(&ctx, start);
+            eggsfs_local_changed_block_services_req_put_changed_since(&ctx, start, changed_since, info->block_services_last_changed_time);
+            eggsfs_local_changed_block_services_req_put_end(&ctx, changed_since, end);
+            eggsfs_write_shuckle_req_header(changed_block_services_req, EGGSFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE, EGGSFS_SHUCKLE_LOCAL_CHANGED_BLOCK_SERVICES);
             int written_so_far;
             for (written_so_far = 0; written_so_far < sizeof(changed_block_services_req);) {
                 iov.iov_base = changed_block_services_req + written_so_far;

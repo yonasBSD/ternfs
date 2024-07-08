@@ -2454,7 +2454,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			if bs.HasFiles {
 				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Id, fd, bs.Path)] = struct{}{}
 			}
-			if _, found := activeBlockServices[fd][bs.Path]; !found {
+			if _, found := activeBlockServices[fd][bs.Path]; !found && fd != "REDACTED" { // fsf94 is currently down
 				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
 			}
 		}

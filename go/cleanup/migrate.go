@@ -561,6 +561,7 @@ type migrator struct {
 	stats                     MigrateStats
 	blockServicesLock         *sync.RWMutex
 	scheduledBlockServices    map[msgs.BlockServiceId]any
+	blockServiceLastScheduled map[msgs.BlockServiceId]time.Time
 	fileFetchers              [256]chan msgs.BlockServiceId
 	fileAggregatorNewFile     chan msgs.InodeId
 	fileAggregatoFileFinished chan fileMigrationResult
@@ -580,6 +581,7 @@ func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, num
 		MigrateStats{},
 		&sync.RWMutex{},
 		map[msgs.BlockServiceId]any{},
+		map[msgs.BlockServiceId]time.Time{},
 		[256]chan msgs.BlockServiceId{},
 		make(chan msgs.InodeId, 10000),
 		make(chan fileMigrationResult, 256*numFilesPerShard),
@@ -616,6 +618,7 @@ OUT:
 			break OUT
 		case <-ticker.C:
 		}
+		m.cleanVisitedBlockService()
 		m.log.Debug("requesting block services")
 		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
@@ -648,9 +651,14 @@ OUT:
 func (m *migrator) ScheduleBlockService(bs msgs.BlockServiceId) {
 	m.blockServicesLock.Lock()
 	defer m.blockServicesLock.Unlock()
+	now := time.Now()
+	if _, ok := m.blockServiceLastScheduled[bs]; ok {
+		return
+	}
 	if _, ok := m.scheduledBlockServices[bs]; !ok {
 		m.log.Info("scheduling block service %v", bs)
 		m.scheduledBlockServices[bs] = nil
+		m.blockServiceLastScheduled[bs] = now
 		for _, c := range m.fileFetchers {
 			c <- bs
 		}
@@ -664,6 +672,17 @@ func (m *migrator) Stop() {
 
 func (m *migrator) MigrationFinishedStats() <-chan MigrateStats {
 	return m.statsC
+}
+
+func (m *migrator) cleanVisitedBlockService() {
+	m.blockServicesLock.Lock()
+	defer m.blockServicesLock.Unlock()
+	now := time.Now()
+	for id, scheduled := range m.blockServiceLastScheduled {
+		if now.Sub(scheduled) > time.Hour {
+			delete(m.blockServiceLastScheduled, id)
+		}
+	}
 }
 
 func (m *migrator) runFileFetchers(wg *sync.WaitGroup) {

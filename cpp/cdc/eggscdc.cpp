@@ -179,8 +179,6 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
-        } else if (arg == "-shuckle-stats") {
-            options.shuckleStats = true;
         } else if (arg == "-use-logsdb") {
             std::string logsDBMode = getNextArg();
             if (logsDBMode == "LEADER") {

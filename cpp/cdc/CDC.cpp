@@ -925,57 +925,6 @@ public:
     }
 };
 
-struct CDCStatsInserter : PeriodicLoop {
-private:
-    CDCShared& _shared;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
-    XmonNCAlert _alert;
-    std::vector<Stat> _stats;
-
-public:
-    CDCStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
-        PeriodicLoop(logger, xmon, "stats_inserter", {1_sec, 1_hours}),
-        _shared(shared),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
-        _alert(XmonAppType::DAYTIME, 10_sec)
-    {}
-
-    virtual ~CDCStatsInserter() = default;
-
-    virtual bool periodicStep() override {
-        for (CDCMessageKind kind : allCDCMessageKind) {
-            {
-                std::ostringstream prefix;
-                prefix << "cdc." << kind;
-                _shared.timingsTotal[(int)kind].toStats(prefix.str(), _stats);
-                _shared.errors[(int)kind].toStats(prefix.str(), _stats);
-            }
-        }
-        const auto [err, errStr] = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
-        if (err == EINTR) { return false; }
-        _stats.clear();
-        if (err == 0) {
-            _env.clearAlert(_alert);
-            for (CDCMessageKind kind : allCDCMessageKind) {
-                _shared.timingsTotal[(int)kind].reset();
-                _shared.errors[(int)kind].reset();
-            }
-            return true;
-        } else {
-            _env.updateAlert(_alert, "Could not insert stats: %s", errStr);
-            return false;
-        }
-    }
-
-    // TODO restore this when we can
-    // virtual void finish() override {
-    //     LOG_INFO(_env, "inserting stats one last time");
-    //     periodicStep();
-    // }
-};
-
 static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ReplicaId replicaId, EggsTime now) {
     {
         metricsBuilder.measurement("eggsfs_cdc_logsdb");
@@ -1248,9 +1197,6 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared, dbDir)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
-    if (options.shuckleStats) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCStatsInserter>(logger, xmon, options, shared)));
-    }
     if (options.metrics) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared, options.replicaId)));
     }

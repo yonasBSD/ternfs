@@ -1014,57 +1014,6 @@ public:
     }
 };
 
-struct ShardStatsInserter : PeriodicLoop {
-private:
-    ShardShared& _shared;
-    ShardReplicaId _shrid;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
-    XmonNCAlert _alert;
-    std::vector<Stat> _stats;
-public:
-    ShardStatsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "stats", {1_mins, 1_hours}),
-        _shared(shared),
-        _shrid(shrid),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
-        _alert(XmonAppType::DAYTIME)
-    {}
-
-    virtual ~ShardStatsInserter() = default;
-
-    virtual bool periodicStep() override {
-        for (ShardMessageKind kind : allShardMessageKind) {
-            std::ostringstream prefix;
-            prefix << "shard." << _shrid << "." << kind;
-            _shared.timings[(int)kind].toStats(prefix.str(), _stats);
-            _shared.errors[(int)kind].toStats(prefix.str(), _stats);
-        }
-        LOG_INFO(_env, "inserting stats");
-        auto [err, errStr] = insertStats(_shuckleHost, _shucklePort, 10_sec, _stats);
-        if (err == EINTR) { return false; }
-        _stats.clear();
-        if (err == 0) {
-            _env.clearAlert(_alert);
-            for (ShardMessageKind kind : allShardMessageKind) {
-                _shared.timings[(int)kind].reset();
-                _shared.errors[(int)kind].reset();
-            }
-            return true;
-        } else {
-            _env.updateAlert(_alert, "Could not insert stats: %s", errStr);
-            return false;
-        }
-    }
-
-    // TODO restore this when we have the functionality to do so
-    // virtual void finish() override {
-    //     LOG_INFO(_env, "insert stats one last time");
-    //     periodicStep();
-    // }
-};
-
 static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ShardReplicaId shrid, EggsTime now) {
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
@@ -1355,9 +1304,6 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared, dbDir)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shrid, options, shared)));
-    if (options.shuckleStats) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardStatsInserter>(logger, xmon, shrid, options, shared)));
-    }
     if (options.metrics) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shrid, shared)));
     }

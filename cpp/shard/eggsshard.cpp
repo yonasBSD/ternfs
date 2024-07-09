@@ -42,8 +42,6 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER. Default is FOLLOWER.\n");
     fprintf(stderr, " -force-last-released LogIdx\n");
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
-    fprintf(stderr, " -shuckle-stats\n");
-    fprintf(stderr, "    	Insert shuckle histogram stats.\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -213,8 +211,6 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
-        } else if (arg == "-shuckle-stats") {
-            options.shuckleStats = true;
         } else if (arg == "-transient-deadline-interval") {
             options.transientDeadlineInterval = parseDuration(getNextArg());
         } else if (arg == "-use-logsdb") {

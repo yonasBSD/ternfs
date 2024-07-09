@@ -29,7 +29,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
@@ -838,31 +837,6 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 	return &resp, nil
 }
 
-func handleInsertStats(log *lib.Logger, s *state, req *msgs.InsertStatsReq) (*msgs.InsertStatsResp, error) {
-	var fmtBuilder strings.Builder
-	fmtBuilder.Write([]byte("INSERT INTO stats (name, time, value) VALUES "))
-	values := make([]any, 0, len(req.Stats)*3) // 3: number of columns
-	for i, s := range req.Stats {
-		values = append(values, s.Name, s.Time, []byte(s.Value))
-		if i > 0 {
-			fmtBuilder.Write([]byte(", "))
-		}
-		fmtBuilder.Write([]byte("(?, ?, ?)"))
-	}
-
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	_, err := s.db.Exec(fmtBuilder.String(), values...)
-
-	if err != nil {
-		log.RaiseAlert("error inserting stats: %s", err)
-		return nil, err
-	}
-
-	return &msgs.InsertStatsResp{}, nil
-}
-
 func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
 	// only select block services we're willing to write
 	blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes)
@@ -974,41 +948,6 @@ func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.Erase
 	return &msgs.EraseDecommissionedBlockResp{Proof: certificate.BlockEraseProof(req.BlockServiceId, req.BlockId, key)}, nil
 }
 
-func handleGetStats(log *lib.Logger, s *state, req *msgs.GetStatsReq) (*msgs.GetStatsResp, error) {
-	n := sql.Named
-	end := req.EndTime
-	if end == 0 {
-		end = msgs.EggsTime(^uint64(0) & ^(uint64(1) << 63)) // sqlite doesn't have full uint64
-	}
-	log.Debug("start time %v", req.StartTime)
-	// the limit is due to the max list size in bincode (but probably a good thing anyhow)
-	rowsLimit := 1 << 16
-	rows, err := s.db.Query(
-		"SELECT name, time, value FROM stats WHERE time >= :start AND time < :end ORDER BY time, name LIMIT :limit",
-		n("start", req.StartTime), n("end", end), n("limit", rowsLimit),
-	)
-	if err != nil {
-		panic(err)
-	}
-	defer rows.Close()
-	resp := &msgs.GetStatsResp{}
-	for rows.Next() {
-		resp.Stats = append(resp.Stats, msgs.Stat{})
-		stat := &resp.Stats[len(resp.Stats)-1]
-		err = rows.Scan(&stat.Name, &stat.Time, &stat.Value)
-		if err != nil {
-			panic(err)
-		}
-	}
-	if len(resp.Stats) == rowsLimit {
-		lastStat := resp.Stats[len(resp.Stats)-1]
-		resp.Stats = resp.Stats[:len(resp.Stats)-1]
-		resp.NextName = lastStat.Name
-		resp.NextTime = lastStat.Time
-	}
-	return resp, nil
-}
-
 func handleShuckle(log *lib.Logger, s *state) (*msgs.ShuckleResp, error) {
 	resp := &msgs.ShuckleResp{
 		Addrs: s.config.addrs,
@@ -1058,12 +997,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.BlockServiceReq:
 		resp, err = handleBlockService(log, s, whichReq)
-	case *msgs.InsertStatsReq:
-		resp, err = handleInsertStats(log, s, whichReq)
 	case *msgs.ShardReq:
 		resp, err = handleShard(log, s, whichReq)
-	case *msgs.GetStatsReq:
-		resp, err = handleGetStats(log, s, whichReq)
 	case *msgs.ShuckleReq:
 		resp, err = handleShuckle(log, s)
 	case *msgs.ShardBlockServicesReq:
@@ -1218,12 +1153,8 @@ func readShuckleRequest(
 		req = &msgs.InfoReq{}
 	case msgs.BLOCK_SERVICE:
 		req = &msgs.BlockServiceReq{}
-	case msgs.INSERT_STATS:
-		req = &msgs.InsertStatsReq{}
 	case msgs.SHARD:
 		req = &msgs.ShardReq{}
-	case msgs.GET_STATS:
-		req = &msgs.GetStatsReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
@@ -1926,32 +1857,6 @@ func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reque
 	)
 }
 
-//go:embed stats.html
-var statsTemplateStr string
-
-var statsTemplate *template.Template
-
-//go:embed chart-4.3.0.js
-var chartsJsStr []byte
-
-func handleStats(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
-	handlePage(
-		log, w, r,
-		func(query url.Values) (*template.Template, *pageData, int) {
-			path := r.URL.Path[len("/stats"):]
-			path = normalizePath(path)
-			if len(path) > 0 {
-				return errorPage(http.StatusNotFound, "path should be just /stats")
-			}
-			pd := pageData{
-				Title: "stats",
-				Body:  nil,
-			}
-			return statsTemplate, &pd, http.StatusOK
-		},
-	)
-}
-
 //go:embed transient.html
 var transientTemplateStr string
 
@@ -2118,14 +2023,6 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 		},
 	)
 	http.HandleFunc(
-		"/static/chart-4.3.0.js",
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/javascript")
-			w.Header().Set("Cache-Control", "max-age=31536000")
-			w.Write(chartsJsStr)
-		},
-	)
-	http.HandleFunc(
 		"/static/preact-10.18.1.module.js",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/javascript")
@@ -2198,12 +2095,6 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 	)
 	setupPage("/browse/", handleInode)
 
-	statsTemplate = parseTemplates(
-		namedTemplate{name: "base", body: baseTemplateStr},
-		namedTemplate{name: "file", body: statsTemplateStr},
-	)
-	setupPage("/stats", handleStats)
-
 	transientTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "transient", body: transientTemplateStr},
@@ -2237,39 +2128,6 @@ func sendMetrics(log *lib.Logger, st *state) error {
 			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
 			time.Sleep(time.Second)
 		}
-	}
-}
-
-func deleteOldStats(ll *lib.Logger, st *state) error {
-	ll.Info("clearing out old stats")
-	n := sql.Named
-
-	st.mutex.Lock()
-	defer st.mutex.Unlock()
-
-	_, err := st.db.Exec(
-		"DELETE FROM stats WHERE time < :time",
-		n("time", time.Now().Add(-time.Hour*24*7).UnixNano()),
-	)
-	return err
-}
-
-func writeStats(ll *lib.Logger, st *state) {
-	stats := lib.TimingsToStats("shuckle", st.counters)
-	st.resetTimings()
-	ll.Info("writing %v stats to database", len(stats))
-	if _, err := handleInsertStats(ll, st, &msgs.InsertStatsReq{Stats: stats}); err != nil {
-		panic(err)
-	}
-	if err := deleteOldStats(ll, st); err != nil {
-		panic(err)
-	}
-}
-
-func statsWriter(ll *lib.Logger, st *state) {
-	for {
-		writeStats(ll, st)
-		time.Sleep(time.Hour)
 	}
 }
 
@@ -2506,16 +2364,11 @@ func initDb(dbFile string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS stats(
-		name TEXT NOT NULL,
-		time INT NOT NULL,
-		value BLOB NOT NULL,
-		PRIMARY KEY (name, time)
-	)`)
+	_, err = db.Exec(`DROP TABLE IF EXISTS stats`)
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.Exec("CREATE INDEX IF NOT EXISTS stats_by_time on stats (time, name)")
+	_, err = db.Exec(`DROP TABLE IF EXISTS stats_by_time`)
 	if err != nil {
 		return nil, err
 	}
@@ -2524,7 +2377,7 @@ func initDb(dbFile string) (*sql.DB, error) {
 }
 
 func initBlockServicesTable(db *sql.DB) error {
-	blockServicesDefinition := `(
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
 		id INT NOT NULL PRIMARY KEY,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
@@ -2540,46 +2393,9 @@ func initBlockServicesTable(db *sql.DB) error {
 		path TEXT NOT NULL,
 		last_seen INT NOT NULL,
 		has_files INT NOT NULL
-	)`
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services` + blockServicesDefinition)
+	)`)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%has_files%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'block_services'
-	`)
-	var hasNewFormat bool
-	err = row.Scan(&hasNewFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services_` + blockServicesDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO block_services_ (id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files)
-			SELECT id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, 0 FROM block_services
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE block_services`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE block_services_ RENAME TO block_services`)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
@@ -2587,7 +2403,8 @@ func initBlockServicesTable(db *sql.DB) error {
 }
 
 func initCDCTable(db *sql.DB) error {
-	cdcDefinition := `(
+
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
 		replica_id INT PRIMARY KEY,
 		is_leader BOOL NOT NULL,
 		ip1 BLOB NOT NULL,
@@ -2595,48 +2412,10 @@ func initCDCTable(db *sql.DB) error {
 		ip2 BLOB NOT NULL,
 		port2 INT NOT NULL,
 		last_seen INT NOT NULL
-	)`
+	)`)
 
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc` + cdcDefinition)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old cdc table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%replica_id%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'cdc'
-	`)
-	var hasNewCDCFormat bool
-	err = row.Scan(&hasNewCDCFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewCDCFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc_` + cdcDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO cdc_
-			SELECT 0, false, ifnull(ip1,` + zeroIPString + `), ifnull(port1,0), ifnull(ip2,` + zeroIPString + `), ifnull(port2,0), ifnull(last_seen,0)
-			FROM cdc
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE cdc`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE cdc_ RENAME TO cdc`)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Prepopulate cdc rows to simplify register operation checking if ip has changed
@@ -2673,7 +2452,8 @@ func initCDCTable(db *sql.DB) error {
 }
 
 func initAndPopulateShardsTable(db *sql.DB) error {
-	shardsDefinition := `(
+
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS shards(
 		id INT NOT NULL,
 		replica_id INT NOT NULL,
 		is_leader BOOL NOT NULL,
@@ -2683,47 +2463,9 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 		port2 INT NOT NULL,
 		last_seen INT NOT NULL,
 		PRIMARY KEY (id, replica_id)
-	)`
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS shards` + shardsDefinition)
+	)`)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old shards table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%replica_id%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'shards'
-	`)
-	var hasNewShardsFormat bool
-	err = row.Scan(&hasNewShardsFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewShardsFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards_` + shardsDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO shards_
-			SELECT id, 0, false, ifnull(ip1,` + zeroIPString + `), ifnull(port1,0), ifnull(ip2,` + zeroIPString + `), ifnull(port2,0), ifnull(last_seen,0)
-			FROM shards
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE shards`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE shards_ RENAME TO shards`)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_s ON shards (last_seen)")
@@ -2897,19 +2639,11 @@ func main() {
 		panic(err)
 	}
 
-	statsWrittenBeforeQuitting := int32(0)
-	writeStatsBeforeQuitting := func() {
-		if atomic.CompareAndSwapInt32(&statsWrittenBeforeQuitting, 0, 1) {
-			writeStats(log, state)
-		}
-	}
-	defer writeStatsBeforeQuitting()
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGILL, syscall.SIGTRAP, syscall.SIGABRT, syscall.SIGSTKFLT, syscall.SIGSYS)
 	go func() {
 		sig := <-signalChan
 		signal.Stop(signalChan)
-		writeStatsBeforeQuitting()
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
 	}()
 
@@ -2947,11 +2681,6 @@ func main() {
 		defer func() { lib.HandleRecoverPanic(log, recover()) }()
 		err := serviceMonitor(log, state, *stale)
 		log.RaiseAlert("serviceMonitor ended with error %s", err)
-	}()
-
-	go func() {
-		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		statsWriter(log, state)
 	}()
 
 	go func() {

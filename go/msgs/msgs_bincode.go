@@ -723,12 +723,8 @@ func (k ShuckleMessageKind) String() string {
 		return "SET_BLOCK_SERVICE_FLAGS"
 	case 10:
 		return "BLOCK_SERVICE"
-	case 11:
-		return "INSERT_STATS"
 	case 12:
 		return "SHARD"
-	case 13:
-		return "GET_STATS"
 	case 14:
 		return "REGISTER_SHARD_REPLICA"
 	case 16:
@@ -769,9 +765,7 @@ const (
 	REGISTER_CDC ShuckleMessageKind = 0x6
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 	BLOCK_SERVICE ShuckleMessageKind = 0xA
-	INSERT_STATS ShuckleMessageKind = 0xB
 	SHARD ShuckleMessageKind = 0xC
-	GET_STATS ShuckleMessageKind = 0xD
 	REGISTER_SHARD_REPLICA ShuckleMessageKind = 0xE
 	SHARD_REPLICAS ShuckleMessageKind = 0x10
 	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x11
@@ -796,9 +790,7 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	REGISTER_CDC,
 	SET_BLOCK_SERVICE_FLAGS,
 	BLOCK_SERVICE,
-	INSERT_STATS,
 	SHARD,
-	GET_STATS,
 	REGISTER_SHARD_REPLICA,
 	SHARD_REPLICAS,
 	SHARD_BLOCK_SERVICES,
@@ -835,12 +827,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &SetBlockServiceFlagsReq{}, &SetBlockServiceFlagsResp{}, nil
 	case k == "BLOCK_SERVICE":
 		return &BlockServiceReq{}, &BlockServiceResp{}, nil
-	case k == "INSERT_STATS":
-		return &InsertStatsReq{}, &InsertStatsResp{}, nil
 	case k == "SHARD":
 		return &ShardReq{}, &ShardResp{}, nil
-	case k == "GET_STATS":
-		return &GetStatsReq{}, &GetStatsResp{}, nil
 	case k == "REGISTER_SHARD_REPLICA":
 		return &RegisterShardReplicaReq{}, &RegisterShardReplicaResp{}, nil
 	case k == "SHARD_REPLICAS":
@@ -4275,32 +4263,6 @@ func (v *SnapshotPolicy) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *Stat) Pack(w io.Writer) error {
-	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.Time)); err != nil {
-		return err
-	}
-	if err := bincode.PackBlob(w, v.Value); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *Stat) Unpack(r io.Reader) error {
-	if err := bincode.UnpackString(r, &v.Name); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Time)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackBlob(r, &v.Value); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (v *ShardWithReplicasInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint16(v.Id)); err != nil {
 		return err
@@ -4829,49 +4791,6 @@ func (v *BlockServiceResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *InsertStatsReq) ShuckleRequestKind() ShuckleMessageKind {
-	return INSERT_STATS
-}
-
-func (v *InsertStatsReq) Pack(w io.Writer) error {
-	len1 := len(v.Stats)
-	if err := bincode.PackLength(w, len1); err != nil {
-		return err
-	}
-	for i := 0; i < len1; i++ {
-		if err := v.Stats[i].Pack(w); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *InsertStatsReq) Unpack(r io.Reader) error {
-	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
-		return err
-	}
-	bincode.EnsureLength(&v.Stats, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Stats[i].Unpack(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *InsertStatsResp) ShuckleResponseKind() ShuckleMessageKind {
-	return INSERT_STATS
-}
-
-func (v *InsertStatsResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *InsertStatsResp) Unpack(r io.Reader) error {
-	return nil
-}
-
 func (v *ShardReq) ShuckleRequestKind() ShuckleMessageKind {
 	return SHARD
 }
@@ -4904,79 +4823,6 @@ func (v *ShardResp) Pack(w io.Writer) error {
 func (v *ShardResp) Unpack(r io.Reader) error {
 	if err := v.Info.Unpack(r); err != nil {
 		return err
-	}
-	return nil
-}
-
-func (v *GetStatsReq) ShuckleRequestKind() ShuckleMessageKind {
-	return GET_STATS
-}
-
-func (v *GetStatsReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.StartTime)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.StartName)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.EndTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *GetStatsReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.StartTime)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.StartName); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.EndTime)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *GetStatsResp) ShuckleResponseKind() ShuckleMessageKind {
-	return GET_STATS
-}
-
-func (v *GetStatsResp) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.NextTime)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.NextName)); err != nil {
-		return err
-	}
-	len1 := len(v.Stats)
-	if err := bincode.PackLength(w, len1); err != nil {
-		return err
-	}
-	for i := 0; i < len1; i++ {
-		if err := v.Stats[i].Pack(w); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *GetStatsResp) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextTime)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.NextName); err != nil {
-		return err
-	}
-	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
-		return err
-	}
-	bincode.EnsureLength(&v.Stats, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Stats[i].Unpack(r); err != nil {
-			return err
-		}
 	}
 	return nil
 }

@@ -1828,19 +1828,9 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceResp{}),
 		},
 		{
-			0x0B,
-			reflect.TypeOf(msgs.InsertStatsReq{}),
-			reflect.TypeOf(msgs.InsertStatsResp{}),
-		},
-		{
 			0x0C,
 			reflect.TypeOf(msgs.ShardReq{}),
 			reflect.TypeOf(msgs.ShardResp{}),
-		},
-		{
-			0x0D,
-			reflect.TypeOf(msgs.GetStatsReq{}),
-			reflect.TypeOf(msgs.GetStatsResp{}),
 		},
 		{
 			0x0E,
@@ -2002,7 +1992,6 @@ func main() {
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
-		reflect.TypeOf(msgs.Stat{}),
 		reflect.TypeOf(msgs.ShardWithReplicasInfo{}),
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 		reflect.TypeOf(msgs.CdcWithReplicasInfo{}),

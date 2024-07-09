@@ -91,12 +91,8 @@ func readShuckleResponse(
 		resp = &msgs.InfoResp{}
 	case msgs.BLOCK_SERVICE:
 		resp = &msgs.BlockServiceResp{}
-	case msgs.INSERT_STATS:
-		resp = &msgs.InsertStatsResp{}
 	case msgs.SHARD:
 		resp = &msgs.ShardResp{}
-	case msgs.GET_STATS:
-		resp = &msgs.GetStatsResp{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		resp = &msgs.EraseDecommissionedBlockResp{}
 	default:

@@ -134,12 +134,8 @@ func readShuckleRequest(
 		req = &msgs.InfoReq{}
 	case msgs.BLOCK_SERVICE:
 		req = &msgs.BlockServiceReq{}
-	case msgs.INSERT_STATS:
-		req = &msgs.InsertStatsReq{}
 	case msgs.SHARD:
 		req = &msgs.ShardReq{}
-	case msgs.GET_STATS:
-		req = &msgs.GetStatsReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:

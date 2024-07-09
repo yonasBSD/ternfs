@@ -2152,30 +2152,6 @@ type CheckBlockReq struct {
 
 type CheckBlockResp struct{}
 
-type Stat struct {
-	Name  string
-	Time  EggsTime
-	Value bincode.Blob
-}
-
-type InsertStatsReq struct {
-	Stats []Stat
-}
-
-type InsertStatsResp struct{}
-
-type GetStatsReq struct {
-	StartTime EggsTime
-	StartName string
-	EndTime   EggsTime
-}
-
-type GetStatsResp struct {
-	NextTime EggsTime
-	NextName string
-	Stats    []Stat
-}
-
 // --------------------------------------------------------------------
 // Distributed log requests/responses
 

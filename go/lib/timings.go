@@ -1,13 +1,10 @@
 package lib
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"reflect"
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/msgs"
 )
 
 type Timings struct {
@@ -119,34 +116,4 @@ func (t *Timings) P(target float64) time.Duration {
 
 func (t *Timings) Median() time.Duration {
 	return t.P(0.5)
-}
-
-func (t *Timings) ToStats(statTime msgs.EggsTime, prefix string) []msgs.Stat {
-	stats := make([]msgs.Stat, 0, 1)
-	// hist
-	hist := t.Histogram()
-	histBuf := bytes.NewBuffer(make([]byte, 0, 8+len(hist)*8*2))
-	binary.Write(histBuf, binary.LittleEndian, time.Since(t.startedAt))
-	for _, bin := range hist {
-		binary.Write(histBuf, binary.LittleEndian, bin.UpperBound.Nanoseconds())
-		binary.Write(histBuf, binary.LittleEndian, bin.Count)
-	}
-	stats = append(stats, msgs.Stat{
-		Name:  prefix + ".latency",
-		Time:  statTime,
-		Value: histBuf.Bytes(),
-	})
-	return stats
-}
-
-func TimingsToStats[K interface {
-	~uint8
-	fmt.Stringer
-}](prefix string, timings map[K]*Timings) []msgs.Stat {
-	stats := make([]msgs.Stat, 0, len(timings)*2) // count, histogram
-	now := msgs.Now()
-	for k, t := range timings {
-		stats = append(stats, t.ToStats(now, fmt.Sprintf("%s.%s", prefix, k.String()))...)
-	}
-	return stats
 }

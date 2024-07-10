@@ -80,10 +80,22 @@ static int file_open(struct inode* inode, struct file* filp) {
             u64 diff = atime_ts.tv_sec - enode->inode.i_atime.tv_sec;
             if (diff >= eggsfs_atime_update_interval_sec) {
                 u64 atime = atime_ns | (1ull<<63);
-                int err = eggsfs_shard_set_time((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
+                // internal-repo/issues/292
+                // we might have cached data and another client updated atime.
+                // eggsfs_do_getattr is orders of magnitude cheaper than eggsfs_shard_set_time,
+                // so we might as well refresh and re-check
+                int err = eggsfs_do_getattr(enode, false);
                 if (err) {
                     inode_unlock(inode);
                     return err;
+                }
+                diff = atime_ts.tv_sec - enode->inode.i_atime.tv_sec;
+                if (diff >= eggsfs_atime_update_interval_sec) {
+                    err = eggsfs_shard_set_time((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
+                    if (err) {
+                        inode_unlock(inode);
+                        return err;
+                    }
                 }
             }
         }

@@ -876,23 +876,16 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 				ticker := time.NewTicker(10 * time.Minute)
 				defer ticker.Stop()
 				tmpFile := scratchFile{}
-				tmpFileActive := false
-				var keepAlive keepScratchFileAlive
+				keepAlive := startToKeepScratchFileAlive(m.log, m.client, &tmpFile)
+				defer keepAlive.stop()
 				blockNotFoundAlert := m.log.NewNCAlert(0)
 				for {
 					select {
 					case file, ok := <-c:
 						ticker.Reset(10 * time.Minute)
 						if !ok {
-							if tmpFileActive {
-								keepAlive.stop()
-							}
 							m.log.Debug("recived stop signal in fileMigrator %v for shard %v", idx, shid)
 							return
-						}
-						if !tmpFileActive {
-							tmpFileActive = true
-							keepAlive = startToKeepScratchFileAlive(m.log, m.client, &tmpFile)
 						}
 						err := error(nil)
 						for {
@@ -909,11 +902,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 						m.log.ClearNC(blockNotFoundAlert)
 						m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
 					case <-ticker.C:
-						if tmpFileActive {
-							tmpFileActive = false
-							keepAlive.stop()
-							tmpFile = scratchFile{}
-						}
+						tmpFile.clear()
 					}
 				}
 			}(j, msgs.ShardId(i), m.fileMigratorsNewFile[i])

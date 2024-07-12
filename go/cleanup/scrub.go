@@ -282,9 +282,7 @@ func ScrubFiles(
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
 	scratchFile := &scratchFile{}
 	keepAlive := startToKeepScratchFileAlive(log, c, scratchFile)
-	defer func() {
-		keepAlive.stop()
-	}()
+	defer keepAlive.stop()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -310,6 +308,23 @@ func ScrubFiles(
 		select {
 		case terminateChan <- nil:
 		default:
+		}
+	}()
+
+	scratchResetStopC := make(chan struct{})
+	defer close(scratchResetStopC)
+	scratchResetTicker := time.NewTicker(3 * time.Hour)
+	defer scratchResetTicker.Stop()
+	go func() {
+		select {
+		case <-scratchResetTicker.C:
+			scrubbingMu.Lock()
+			scratchFile.clear()
+			scrubbingMu.Unlock()
+		case _, ok := <-scratchResetStopC:
+			if !ok {
+				return
+			}
 		}
 	}()
 

@@ -1,6 +1,7 @@
 package cleanup
 
 import (
+	"sync/atomic"
 	"time"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
@@ -14,7 +15,7 @@ type scratchFile struct {
 }
 
 func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, file *scratchFile, note string) error {
-	if file.id != msgs.NULL_INODE_ID {
+	if msgs.InodeId(atomic.LoadUint64((*uint64)(&file.id))) != msgs.NULL_INODE_ID {
 		return nil
 	}
 	resp := msgs.ConstructFileResp{}
@@ -31,15 +32,19 @@ func ensureScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, fi
 		return err
 	}
 	log.Debug("created scratch file %v", resp.Id)
-	file.id = resp.Id
 	file.cookie = resp.Cookie
 	file.size = 0
+	atomic.StoreUint64((*uint64)(&file.id), uint64(resp.Id))
 	return nil
 }
 
+func (f *scratchFile) clear() {
+	atomic.StoreUint64((*uint64)(&f.id), uint64(msgs.NULL_INODE_ID))
+}
+
 type keepScratchFileAlive struct {
-	stopHeartbeat    chan struct{}
-	heartbeatStopped chan struct{}
+	ticker *time.Ticker
+	stopC  chan struct{}
 }
 
 func startToKeepScratchFileAlive(
@@ -47,12 +52,11 @@ func startToKeepScratchFileAlive(
 	c *client.Client,
 	scratchFile *scratchFile,
 ) keepScratchFileAlive {
-	stopHeartbeat := make(chan struct{})
-	heartbeatStopped := make(chan struct{})
-	timerExpired := make(chan struct{}, 1)
+	ticker := time.NewTicker(10 * time.Second)
+	stopC := make(chan struct{})
 	go func() {
 		for {
-			if scratchFile.id != msgs.NULL_INODE_ID {
+			if msgs.InodeId(atomic.LoadUint64((*uint64)(&scratchFile.id))) != msgs.NULL_INODE_ID {
 				// bump the deadline, makes sure the file stays alive for
 				// the duration of this function
 				log.Debug("bumping deadline for scratch file %v", scratchFile.id)
@@ -65,28 +69,20 @@ func startToKeepScratchFileAlive(
 					log.RaiseAlert("could not bump scratch file deadline when migrating blocks: %v", err)
 				}
 			}
-			go func() {
-				time.Sleep(10 * time.Second)
-				select {
-				case timerExpired <- struct{}{}:
-				default:
-				}
-			}()
 			select {
-			case <-stopHeartbeat:
-				heartbeatStopped <- struct{}{}
-				return
-			case <-timerExpired:
+			case <-ticker.C:
+				break
+			case _, ok := <-stopC:
+				if !ok {
+					return
+				}
 			}
 		}
 	}()
-	return keepScratchFileAlive{
-		stopHeartbeat:    stopHeartbeat,
-		heartbeatStopped: heartbeatStopped,
-	}
+	return keepScratchFileAlive{ticker, stopC}
 }
 
 func (k *keepScratchFileAlive) stop() {
-	k.stopHeartbeat <- struct{}{}
-	<-k.heartbeatStopped
+	k.ticker.Stop()
+	close(k.stopC)
 }

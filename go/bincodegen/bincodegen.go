@@ -1905,6 +1905,11 @@ func main() {
 			reflect.TypeOf(msgs.WriteBlockReq{}),
 			reflect.TypeOf(msgs.WriteBlockResp{}),
 		},
+		{
+			0x04,
+			reflect.TypeOf(msgs.FetchBlockWithCrcReq{}),
+			reflect.TypeOf(msgs.FetchBlockWithCrcResp{}),
+		},
 	}
 
 	blocksReqResps := append(kernelBlocksReqResps, []reqRespType{

@@ -98,6 +98,11 @@ const (
 	EGGSFS_BLOCK_SERVICE_DECOMMISSIONED BlockServiceFlags = 0x8
 )
 
+const (
+	EGGS_PAGE_SIZE          uint32 = 1 << 12 // 4KB
+	EGGS_PAGE_WITH_CRC_SIZE uint32 = EGGS_PAGE_SIZE + 4
+)
+
 func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
 	switch n {
 	case "0":
@@ -2123,6 +2128,17 @@ type FetchBlockReq struct {
 
 // Followed by data
 type FetchBlockResp struct{}
+
+// Offset needs to be multiple of 4K and count as well
+type FetchBlockWithCrcReq struct {
+	BlockId  BlockId
+	BlockCrc Crc
+	Offset   uint32
+	Count    uint32
+}
+
+// Followed by data with CRC inserted after every 4K
+type FetchBlockWithCrcResp struct{}
 
 type WriteBlockReq struct {
 	BlockId     BlockId

@@ -526,6 +526,9 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::WRITE_BLOCK:
         out << "WRITE_BLOCK";
         break;
+    case BlocksMessageKind::FETCH_BLOCK_WITH_CRC:
+        out << "FETCH_BLOCK_WITH_CRC";
+        break;
     case BlocksMessageKind::ERASE_BLOCK:
         out << "ERASE_BLOCK";
         break;
@@ -4354,6 +4357,50 @@ bool WriteBlockResp::operator==(const WriteBlockResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x) {
     out << "WriteBlockResp(" << "Proof=" << x.proof << ")";
+    return out;
+}
+
+void FetchBlockWithCrcReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockId);
+    blockCrc.pack(buf);
+    buf.packScalar<uint32_t>(offset);
+    buf.packScalar<uint32_t>(count);
+}
+void FetchBlockWithCrcReq::unpack(BincodeBuf& buf) {
+    blockId = buf.unpackScalar<uint64_t>();
+    blockCrc.unpack(buf);
+    offset = buf.unpackScalar<uint32_t>();
+    count = buf.unpackScalar<uint32_t>();
+}
+void FetchBlockWithCrcReq::clear() {
+    blockId = uint64_t(0);
+    blockCrc = Crc(0);
+    offset = uint32_t(0);
+    count = uint32_t(0);
+}
+bool FetchBlockWithCrcReq::operator==(const FetchBlockWithCrcReq& rhs) const {
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if ((Crc)this->blockCrc != (Crc)rhs.blockCrc) { return false; };
+    if ((uint32_t)this->offset != (uint32_t)rhs.offset) { return false; };
+    if ((uint32_t)this->count != (uint32_t)rhs.count) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchBlockWithCrcReq& x) {
+    out << "FetchBlockWithCrcReq(" << "BlockId=" << x.blockId << ", " << "BlockCrc=" << x.blockCrc << ", " << "Offset=" << x.offset << ", " << "Count=" << x.count << ")";
+    return out;
+}
+
+void FetchBlockWithCrcResp::pack(BincodeBuf& buf) const {
+}
+void FetchBlockWithCrcResp::unpack(BincodeBuf& buf) {
+}
+void FetchBlockWithCrcResp::clear() {
+}
+bool FetchBlockWithCrcResp::operator==(const FetchBlockWithCrcResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchBlockWithCrcResp& x) {
+    out << "FetchBlockWithCrcResp(" << ")";
     return out;
 }
 

@@ -864,6 +864,8 @@ func (k BlocksMessageKind) String() string {
 		return "FETCH_BLOCK"
 	case 3:
 		return "WRITE_BLOCK"
+	case 4:
+		return "FETCH_BLOCK_WITH_CRC"
 	case 1:
 		return "ERASE_BLOCK"
 	case 5:
@@ -879,6 +881,7 @@ func (k BlocksMessageKind) String() string {
 const (
 	FETCH_BLOCK BlocksMessageKind = 0x2
 	WRITE_BLOCK BlocksMessageKind = 0x3
+	FETCH_BLOCK_WITH_CRC BlocksMessageKind = 0x4
 	ERASE_BLOCK BlocksMessageKind = 0x1
 	TEST_WRITE BlocksMessageKind = 0x5
 	CHECK_BLOCK BlocksMessageKind = 0x6
@@ -887,6 +890,7 @@ const (
 var AllBlocksMessageKind = [...]BlocksMessageKind{
 	FETCH_BLOCK,
 	WRITE_BLOCK,
+	FETCH_BLOCK_WITH_CRC,
 	ERASE_BLOCK,
 	TEST_WRITE,
 	CHECK_BLOCK,
@@ -900,6 +904,8 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 		return &FetchBlockReq{}, &FetchBlockResp{}, nil
 	case k == "WRITE_BLOCK":
 		return &WriteBlockReq{}, &WriteBlockResp{}, nil
+	case k == "FETCH_BLOCK_WITH_CRC":
+		return &FetchBlockWithCrcReq{}, &FetchBlockWithCrcResp{}, nil
 	case k == "ERASE_BLOCK":
 		return &EraseBlockReq{}, &EraseBlockResp{}, nil
 	case k == "TEST_WRITE":
@@ -5412,6 +5418,54 @@ func (v *WriteBlockResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 8, v.Proof[:]); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (v *FetchBlockWithCrcReq) BlocksRequestKind() BlocksMessageKind {
+	return FETCH_BLOCK_WITH_CRC
+}
+
+func (v *FetchBlockWithCrcReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.BlockCrc)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Offset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Count)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FetchBlockWithCrcReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.BlockCrc)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Offset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Count)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FetchBlockWithCrcResp) BlocksResponseKind() BlocksMessageKind {
+	return FETCH_BLOCK_WITH_CRC
+}
+
+func (v *FetchBlockWithCrcResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *FetchBlockWithCrcResp) Unpack(r io.Reader) error {
 	return nil
 }
 

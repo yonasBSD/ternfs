@@ -134,6 +134,7 @@ const char* eggsfs_blocks_kind_str(int kind) {
     switch (kind) {
     case 2: return "FETCH_BLOCK";
     case 3: return "WRITE_BLOCK";
+    case 4: return "FETCH_BLOCK_WITH_CRC";
     default: return "UNKNOWN";
     }
 }

@@ -361,7 +361,28 @@ func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.EggsError) 
 	return nil
 }
 
-func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn) error {
+func getFileSizeAndCrc(env *env, f *os.File) (uint32, uint32, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, 0, err
+	}
+	size := uint32(fi.Size())
+	buf := env.bufPool.Get(1 << 20)
+	defer env.bufPool.Put(buf)
+	cursor := uint32(0)
+	actualCrc := uint32(0)
+	for cursor < size {
+		read, err := f.Read(*buf)
+		if err != nil {
+			return 0, 0, err
+		}
+		actualCrc = crc32c.Sum(actualCrc, (*buf)[:read])
+		cursor += uint32(read)
+	}
+	return size, actualCrc, nil
+}
+
+func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, crc msgs.Crc) error {
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("fetching block id %v at path %v", blockId, blockPath)
 	f, err := os.Open(blockPath)
@@ -394,23 +415,74 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
-	if _, err := f.Seek(int64(offset), 0); err != nil {
-		return err
-	}
-	if err := writeBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
-		return err
-	}
-	lf := io.LimitedReader{
-		R: f,
-		N: int64(count),
-	}
-	read, err := conn.ReadFrom(&lf)
-	if err != nil {
-		return err
-	}
-	if read != int64(count) {
-		log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", count, read, blockPath)
-		return msgs.INTERNAL_ERROR
+	if withCrc {
+		if offset%msgs.EGGS_PAGE_SIZE != 0 {
+			log.RaiseAlert("trying to read from offset other than page boundary")
+			writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+			return nil
+		}
+		if count%msgs.EGGS_PAGE_SIZE != 0 {
+			log.RaiseAlert("trying to read count which is not a multiple of page size")
+			writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+			return nil
+		}
+		_, actualCrc, err := getFileSizeAndCrc(env, f)
+		if err != nil {
+			log.RaiseAlert("could not read file %v: %v", blockPath, err)
+			writeBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR_FILE)
+			return nil
+		}
+		if crc != msgs.Crc(actualCrc) {
+			writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
+			return nil
+		}
+		if _, err := f.Seek(int64(offset), 0); err != nil {
+			return err
+		}
+		if err := writeBlocksResponse(log, conn, &msgs.FetchBlockWithCrcResp{}); err != nil {
+			return err
+		}
+		pageCount := count / msgs.EGGS_PAGE_SIZE
+		var page [msgs.EGGS_PAGE_WITH_CRC_SIZE]byte
+		for i := uint32(0); i < pageCount; i++ {
+			bytesRead := uint32(0)
+			for bytesRead < msgs.EGGS_PAGE_SIZE {
+				read, err := f.Read(page[bytesRead:msgs.EGGS_PAGE_SIZE])
+				if err != nil {
+					log.RaiseAlert("could not read file %v: %v", blockPath, err)
+					return err
+				}
+				bytesRead += uint32(read)
+			}
+			binary.LittleEndian.PutUint32(page[msgs.EGGS_PAGE_SIZE:], crc32c.Sum(0, page[:msgs.EGGS_PAGE_SIZE]))
+			bytesWritten := uint32(0)
+			for bytesWritten < msgs.EGGS_PAGE_WITH_CRC_SIZE {
+				written, err := conn.Write(page[bytesWritten:])
+				if err != nil {
+					return err
+				}
+				bytesWritten += uint32(written)
+			}
+		}
+	} else {
+		if _, err := f.Seek(int64(offset), 0); err != nil {
+			return err
+		}
+		if err := writeBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
+			return err
+		}
+		lf := io.LimitedReader{
+			R: f,
+			N: int64(count),
+		}
+		read, err := conn.ReadFrom(&lf)
+		if err != nil {
+			return err
+		}
+		if read != int64(count) {
+			log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", count, read, blockPath)
+			return msgs.INTERNAL_ERROR
+		}
 	}
 	s := env.stats[blockServiceId]
 	atomic.AddUint64(&s.blocksFetched, 1)
@@ -444,27 +516,14 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	fi, err := f.Stat()
+	actualSize, actualCrc, err := getFileSizeAndCrc(env, f)
 	if err != nil {
+		log.RaiseAlert("could not read file %v : %v", blockPath, err)
 		return err
 	}
-	if fi.Size() != int64(size) {
-		log.RaiseAlert("expected size %v for block %v, got size %v instead", size, blockPath, fi.Size())
+	if actualSize != size {
+		log.RaiseAlert("expected size %v for block %v, got size %v instead", size, blockPath, actualSize)
 		return msgs.BAD_BLOCK_CRC
-	}
-	buf := env.bufPool.Get(1 << 20)
-	defer env.bufPool.Put(buf)
-	cursor := uint32(0)
-	actualCrc := uint32(0)
-	for cursor < size {
-		read, err := f.Read(*buf)
-		if err != nil {
-			log.RaiseAlert("could not read file %v at %v: %v", blockPath, cursor, err)
-			return err
-		}
-		actualCrc = crc32c.Sum(actualCrc, (*buf)[:read])
-		cursor += uint32(read)
 	}
 	s := env.stats[blockServiceId]
 	atomic.AddUint64(&s.blocksChecked, 1)
@@ -661,7 +720,7 @@ func handleRequestError(
 	// an alert, since it's expected when the scrubber is running.
 	// Similarly, reading blocks from old block services can happen if
 	// the cached span structure is used in the kmod.
-	if _, isDead := deadBlockServices[blockServiceId]; isDead && (req == msgs.CHECK_BLOCK || req == msgs.FETCH_BLOCK) {
+	if _, isDead := deadBlockServices[blockServiceId]; isDead && (req == msgs.CHECK_BLOCK || req == msgs.FETCH_BLOCK || req == msgs.FETCH_BLOCK_WITH_CRC) {
 		log.Info("got fetch/check block request for dead block service %v", blockServiceId)
 		if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 			writeBlocksResponseError(log, conn, eggsErr)
@@ -727,6 +786,8 @@ func readBlocksRequest(
 		req = &msgs.EraseBlockReq{}
 	case msgs.FETCH_BLOCK:
 		req = &msgs.FetchBlockReq{}
+	case msgs.FETCH_BLOCK_WITH_CRC:
+		req = &msgs.FetchBlockWithCrcReq{}
 	case msgs.WRITE_BLOCK:
 		req = &msgs.WriteBlockReq{}
 	case msgs.TEST_WRITE:
@@ -826,7 +887,12 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false, 0); err != nil {
+			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
+	case *msgs.FetchBlockWithCrcReq:
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true, whichReq.BlockCrc); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}

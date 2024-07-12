@@ -130,9 +130,10 @@ const char* eggsfs_shuckle_kind_str(int kind);
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
 #define EGGSFS_BLOCKS_WRITE_BLOCK 0x3
-#define __print_eggsfs_blocks_kind(k) __print_symbolic(k, { 2, "FETCH_BLOCK" }, { 3, "WRITE_BLOCK" })
-#define EGGSFS_BLOCKS_KIND_MAX 2
-static const u8 __eggsfs_blocks_kind_index_mappings[256] = {255, 255, 0, 1, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+#define EGGSFS_BLOCKS_FETCH_BLOCK_WITH_CRC 0x4
+#define __print_eggsfs_blocks_kind(k) __print_symbolic(k, { 2, "FETCH_BLOCK" }, { 3, "WRITE_BLOCK" }, { 4, "FETCH_BLOCK_WITH_CRC" })
+#define EGGSFS_BLOCKS_KIND_MAX 3
+static const u8 __eggsfs_blocks_kind_index_mappings[256] = {255, 255, 0, 1, 2, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_blocks_kind_str(int kind);
 
 
@@ -6332,4 +6333,146 @@ static inline void _eggsfs_write_block_resp_put_proof(struct eggsfs_bincode_put_
 #define eggsfs_write_block_resp_put_end(ctx, prev, next) \
     { struct eggsfs_write_block_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_write_block_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE 20
+struct eggsfs_fetch_block_with_crc_req_start;
+#define eggsfs_fetch_block_with_crc_req_get_start(ctx, start) struct eggsfs_fetch_block_with_crc_req_start* start = NULL
+
+struct eggsfs_fetch_block_with_crc_req_block_id { u64 x; };
+static inline void _eggsfs_fetch_block_with_crc_req_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_block_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_fetch_block_with_crc_req_get_block_id(ctx, prev, next) \
+    struct eggsfs_fetch_block_with_crc_req_block_id next; \
+    _eggsfs_fetch_block_with_crc_req_get_block_id(ctx, &(prev), &(next))
+
+struct eggsfs_fetch_block_with_crc_req_block_crc { u32 x; };
+static inline void _eggsfs_fetch_block_with_crc_req_get_block_crc(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_block_id* prev, struct eggsfs_fetch_block_with_crc_req_block_crc* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetch_block_with_crc_req_get_block_crc(ctx, prev, next) \
+    struct eggsfs_fetch_block_with_crc_req_block_crc next; \
+    _eggsfs_fetch_block_with_crc_req_get_block_crc(ctx, &(prev), &(next))
+
+struct eggsfs_fetch_block_with_crc_req_offset { u32 x; };
+static inline void _eggsfs_fetch_block_with_crc_req_get_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_block_crc* prev, struct eggsfs_fetch_block_with_crc_req_offset* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetch_block_with_crc_req_get_offset(ctx, prev, next) \
+    struct eggsfs_fetch_block_with_crc_req_offset next; \
+    _eggsfs_fetch_block_with_crc_req_get_offset(ctx, &(prev), &(next))
+
+struct eggsfs_fetch_block_with_crc_req_count { u32 x; };
+static inline void _eggsfs_fetch_block_with_crc_req_get_count(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_offset* prev, struct eggsfs_fetch_block_with_crc_req_count* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetch_block_with_crc_req_get_count(ctx, prev, next) \
+    struct eggsfs_fetch_block_with_crc_req_count next; \
+    _eggsfs_fetch_block_with_crc_req_get_count(ctx, &(prev), &(next))
+
+struct eggsfs_fetch_block_with_crc_req_end;
+#define eggsfs_fetch_block_with_crc_req_get_end(ctx, prev, next) \
+    { struct eggsfs_fetch_block_with_crc_req_count* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetch_block_with_crc_req_end* next = NULL
+
+static inline void eggsfs_fetch_block_with_crc_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_fetch_block_with_crc_req_put_start(ctx, start) struct eggsfs_fetch_block_with_crc_req_start* start = NULL
+
+static inline void _eggsfs_fetch_block_with_crc_req_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_block_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_fetch_block_with_crc_req_put_block_id(ctx, prev, next, x) \
+    struct eggsfs_fetch_block_with_crc_req_block_id next; \
+    _eggsfs_fetch_block_with_crc_req_put_block_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetch_block_with_crc_req_put_block_crc(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_block_id* prev, struct eggsfs_fetch_block_with_crc_req_block_crc* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetch_block_with_crc_req_put_block_crc(ctx, prev, next, x) \
+    struct eggsfs_fetch_block_with_crc_req_block_crc next; \
+    _eggsfs_fetch_block_with_crc_req_put_block_crc(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetch_block_with_crc_req_put_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_block_crc* prev, struct eggsfs_fetch_block_with_crc_req_offset* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetch_block_with_crc_req_put_offset(ctx, prev, next, x) \
+    struct eggsfs_fetch_block_with_crc_req_offset next; \
+    _eggsfs_fetch_block_with_crc_req_put_offset(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetch_block_with_crc_req_put_count(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_offset* prev, struct eggsfs_fetch_block_with_crc_req_count* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetch_block_with_crc_req_put_count(ctx, prev, next, x) \
+    struct eggsfs_fetch_block_with_crc_req_count next; \
+    _eggsfs_fetch_block_with_crc_req_put_count(ctx, &(prev), &(next), x)
+
+#define eggsfs_fetch_block_with_crc_req_put_end(ctx, prev, next) \
+    { struct eggsfs_fetch_block_with_crc_req_count* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetch_block_with_crc_req_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_FETCH_BLOCK_WITH_CRC_RESP_SIZE 0
+struct eggsfs_fetch_block_with_crc_resp_start;
+#define eggsfs_fetch_block_with_crc_resp_get_start(ctx, start) struct eggsfs_fetch_block_with_crc_resp_start* start = NULL
+
+struct eggsfs_fetch_block_with_crc_resp_end;
+#define eggsfs_fetch_block_with_crc_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_fetch_block_with_crc_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetch_block_with_crc_resp_end* next = NULL
+
+static inline void eggsfs_fetch_block_with_crc_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_fetch_block_with_crc_resp_put_start(ctx, start) struct eggsfs_fetch_block_with_crc_resp_start* start = NULL
+
+#define eggsfs_fetch_block_with_crc_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_fetch_block_with_crc_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetch_block_with_crc_resp_end* next __attribute__((unused)) = NULL
 

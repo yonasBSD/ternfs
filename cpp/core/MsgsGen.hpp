@@ -358,6 +358,7 @@ enum class BlocksMessageKind : uint8_t {
     ERROR = 0,
     FETCH_BLOCK = 2,
     WRITE_BLOCK = 3,
+    FETCH_BLOCK_WITH_CRC = 4,
     ERASE_BLOCK = 1,
     TEST_WRITE = 5,
     CHECK_BLOCK = 6,
@@ -367,6 +368,7 @@ enum class BlocksMessageKind : uint8_t {
 const std::vector<BlocksMessageKind> allBlocksMessageKind {
     BlocksMessageKind::FETCH_BLOCK,
     BlocksMessageKind::WRITE_BLOCK,
+    BlocksMessageKind::FETCH_BLOCK_WITH_CRC,
     BlocksMessageKind::ERASE_BLOCK,
     BlocksMessageKind::TEST_WRITE,
     BlocksMessageKind::CHECK_BLOCK,
@@ -4086,6 +4088,48 @@ struct WriteBlockResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x);
+
+struct FetchBlockWithCrcReq {
+    uint64_t blockId;
+    Crc blockCrc;
+    uint32_t offset;
+    uint32_t count;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4 + 4; // blockId + blockCrc + offset + count
+
+    FetchBlockWithCrcReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // blockId
+        _size += 4; // blockCrc
+        _size += 4; // offset
+        _size += 4; // count
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FetchBlockWithCrcReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FetchBlockWithCrcReq& x);
+
+struct FetchBlockWithCrcResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    FetchBlockWithCrcResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FetchBlockWithCrcResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FetchBlockWithCrcResp& x);
 
 struct EraseBlockReq {
     uint64_t blockId;

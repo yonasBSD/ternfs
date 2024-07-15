@@ -975,6 +975,7 @@ func NewClient(
 	}
 	c.addrsRefreshTicker = time.NewTicker(time.Minute)
 	c.addrsRefreshClose = make(chan struct{})
+	addressRefreshAlert := log.NewNCAlert(5 * time.Minute)
 	go func() {
 		for {
 			select {
@@ -982,7 +983,9 @@ func NewClient(
 				return
 			case <-c.addrsRefreshTicker.C:
 				if err := c.refreshAddrs(log); err != nil {
-					log.RaiseAlert("could not refresh shard & cdc addresses: %v", err)
+					log.RaiseNC(addressRefreshAlert, "could not refresh shard & cdc addresses: %v", err)
+				} else {
+					log.ClearNC(addressRefreshAlert)
 				}
 			}
 		}

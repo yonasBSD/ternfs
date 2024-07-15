@@ -829,6 +829,8 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 					// queue it again
 					heap.Push(&queuePerShard[shid], fileInfo{fileResult.id, errorCount})
 					m.stats.FilesToMigrate++
+				} else {
+					delete(inProgressFiles, fileResult.id)
 				}
 				pushMoreWork(shid)
 				if fileResult.err != nil && errorCount == 0 {

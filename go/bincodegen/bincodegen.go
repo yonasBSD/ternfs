@@ -1808,11 +1808,6 @@ func main() {
 			reflect.TypeOf(msgs.RegisterShardResp{}),
 		},
 		{
-			0x05,
-			reflect.TypeOf(msgs.AllBlockServicesWithoutFlagsLastChangedReq{}),
-			reflect.TypeOf(msgs.AllBlockServicesWithoutFlagsLastChangedResp{}),
-		},
-		{
 			0x06,
 			reflect.TypeOf(msgs.RegisterCdcReq{}),
 			reflect.TypeOf(msgs.RegisterCdcResp{}),
@@ -1997,7 +1992,6 @@ func main() {
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
-		reflect.TypeOf(msgs.BlockServiceInfoWithoutFlagsLastChanged{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
 
 		reflect.TypeOf(msgs.SpanPolicy{}),

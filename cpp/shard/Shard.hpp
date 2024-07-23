@@ -31,6 +31,10 @@ struct ShardOptions {
     // LogsDB settings
     bool avoidBeingLeader = true;
     bool noReplication = false;
+
+    // implicit options
+    bool isLeader() const { return !avoidBeingLeader; }
+    bool isProxyLocation() const { return location != 0; }
 };
 
 void runShard(ShardOptions& options);

@@ -221,7 +221,7 @@ private:
     // We receive everything at once, but we send stuff from
     // separate threads.
     UDPReceiver<2> _receiver;
-    MultiplexedChannel<4, std::array<uint32_t, 4>{CDC_REQ_PROTOCOL_VERSION, SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
+    MultiplexedChannel<4, std::array<uint32_t, 4>{CDC_REQ_PROTOCOL_VERSION, CDC_TO_SHARD_RESP_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}> _channel;
     UDPSender _cdcSender;
     UDPSender _shardSender;
 
@@ -691,10 +691,10 @@ private:
     }
 
     void _processShardMessages() {
-        for (auto& msg : _channel.protocolMessages(SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION)) {
+        for (auto& msg : _channel.protocolMessages(CDC_TO_SHARD_RESP_PROTOCOL_VERSION)) {
             LOG_DEBUG(_env, "received response from shard");
 
-            ShardCheckPointedRespMsg respMsg;
+            CdcToShardRespMsg respMsg;
             try {
                 respMsg.unpack(msg.buf, _expandedCDCKey);
             } catch (BincodeException err) {
@@ -765,7 +765,7 @@ private:
         for (const auto& [txnId, shardReq]: _step.runningTxns) {
             CDCShardReq prevReq;
             LOG_TRACE(_env, "txn %s needs shard %s, req %s", txnId, shardReq.shid, shardReq.req);
-            ShardCheckPointedReqMsg shardReqMsg;
+            CdcToShardReqMsg shardReqMsg;
 
             // Do not allocate new req id for repeated requests, so that we'll just accept
             // the first one that comes back. There's a chance for the txnId to not be here

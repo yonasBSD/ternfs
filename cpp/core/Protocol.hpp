@@ -16,11 +16,19 @@ constexpr uint32_t SHARD_LOG_PROTOCOL_VERSION = 0x2414853;
 
 // >>> format(struct.unpack('<I', b'SHA\3')[0], 'x')
 // '3414853'
-constexpr uint32_t SHARD_CHECK_POINTED_REQ_PROTOCOL_VERSION = 0x3414853;
+constexpr uint32_t CDC_TO_SHARD_REQ_PROTOCOL_VERSION = 0x3414853;
 
 // >>> format(struct.unpack('<I', b'SHA\4')[0], 'x')
 // '4414853'
-constexpr uint32_t SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION = 0x4414853;
+constexpr uint32_t CDC_TO_SHARD_RESP_PROTOCOL_VERSION = 0x4414853;
+
+// >>> format(struct.unpack('<I', b'SHA\5')[0], 'x')
+// '5414853'
+constexpr uint32_t PROXY_SHARD_REQ_PROTOCOL_VERSION = 0x5414853;
+
+// >>> format(struct.unpack('<I', b'SHA\6')[0], 'x')
+// '6414853'
+constexpr uint32_t PROXY_SHARD_RESP_PROTOCOL_VERSION = 0x6414853;
 
 // >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
 // '434443'
@@ -82,11 +90,12 @@ inline std::ostream& operator<<(std::ostream& out, const ShardCheckPointedResp& 
 }
 
 using ShardReqMsg = ProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
-using SignedShardReqMsg = SignedProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
 using ShardRespMsg = ProtocolMessage<SHARD_RESP_PROTOCOL_VERSION, ShardRespContainer>;
+using CdcToShardReqMsg = SignedProtocolMessage<CDC_TO_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
+using CdcToShardRespMsg = SignedProtocolMessage<CDC_TO_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
 using CDCReqMsg = ProtocolMessage<CDC_REQ_PROTOCOL_VERSION, CDCReqContainer>;
 using CDCRespMsg = ProtocolMessage<CDC_RESP_PROTOCOL_VERSION, CDCRespContainer>;
 using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContainer>;
 using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer>;
-using ShardCheckPointedReqMsg = SignedProtocolMessage<SHARD_CHECK_POINTED_REQ_PROTOCOL_VERSION, ShardReqContainer>;
-using ShardCheckPointedRespMsg = SignedProtocolMessage<SHARD_CHECK_POINTED_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
+using ProxyShardReqMsg = SignedProtocolMessage<PROXY_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
+using ProxyShardRespMsg = SignedProtocolMessage<PROXY_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;

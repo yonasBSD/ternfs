@@ -254,6 +254,21 @@ public:
         return EggsError::NO_ERROR;
     }
 
+    void readIndexedEntries(const std::vector<LogIdx>& indices, std::vector<LogsDBLogEntry>& entries) const {
+        entries.clear();
+        if (indices.empty()) {
+            return;
+        }
+        // TODO: This is not very efficient as we're doing a lookup for each index.
+        entries.reserve(indices.size());
+        for (auto idx : indices) {
+            LogsDBLogEntry& entry = entries.emplace_back();
+            if (readLogEntry(idx, entry) != EggsError::NO_ERROR) {
+                entry.idx = 0;
+            }
+        }
+    }
+
     void writeLogEntries(const std::vector<LogsDBLogEntry>& entries) {
         _maybeRotate();
 
@@ -1744,6 +1759,10 @@ public:
         _catchupReader.readEntries(entries, maxEntries);
     }
 
+    void readIndexedEntries(const std::vector<LogIdx> &indices, std::vector<LogsDBLogEntry> &entries) const {
+        _partitions.readIndexedEntries(indices, entries);
+    }
+
     Duration getNextTimeout() const {
         return _reqResp.getNextTimeout();
     }
@@ -1823,6 +1842,10 @@ EggsError LogsDB::appendEntries(std::vector<LogsDBLogEntry>& entries) {
 
 void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
     _impl->readEntries(entries, maxEntries);
+}
+
+void LogsDB::readIndexedEntries(const std::vector<LogIdx> &indices, std::vector<LogsDBLogEntry> &entries) const {
+    _impl->readIndexedEntries(indices, entries);
 }
 
 Duration LogsDB::getNextTimeout() const {

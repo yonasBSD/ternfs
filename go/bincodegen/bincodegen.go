@@ -1859,11 +1859,6 @@ func main() {
 			reflect.TypeOf(msgs.CdcAtLocationResp{}),
 		},
 		{
-			0x10,
-			reflect.TypeOf(msgs.ShardReplicasDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.ShardReplicasDEPRECATEDResp{}),
-		},
-		{
 			0x11,
 			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
 			reflect.TypeOf(msgs.ShardBlockServicesResp{}),

@@ -114,8 +114,6 @@ func readShuckleRequest(
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
-		req = &msgs.ShardReplicasDEPRECATEDReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
 	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:

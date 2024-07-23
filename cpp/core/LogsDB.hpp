@@ -126,6 +126,10 @@ public:
 
     void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries = IN_FLIGHT_APPEND_WINDOW);
 
+    // Takes a sorted vector of log inxices and returns the corresponding entries
+    // If an entry is missing and empty entry with LogIdx 0 is returned
+    void readIndexedEntries(const std::vector<LogIdx>& indices, std::vector<LogsDBLogEntry>& entries) const;
+
     Duration getNextTimeout() const;
 
     LogIdx getLastReleased() const;

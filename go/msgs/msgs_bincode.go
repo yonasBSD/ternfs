@@ -738,8 +738,6 @@ func (k ShuckleMessageKind) String() string {
 		return "SHARDS_AT_LOCATION"
 	case 13:
 		return "CDC_AT_LOCATION"
-	case 16:
-		return "SHARD_REPLICAS_DE_PR_EC_AT_ED"
 	case 17:
 		return "SHARD_BLOCK_SERVICES"
 	case 19:
@@ -786,7 +784,6 @@ const (
 	CHANGED_BLOCK_SERVICES_AT_LOCATION ShuckleMessageKind = 0xB
 	SHARDS_AT_LOCATION ShuckleMessageKind = 0xC
 	CDC_AT_LOCATION ShuckleMessageKind = 0xD
-	SHARD_REPLICAS_DE_PR_EC_AT_ED ShuckleMessageKind = 0x10
 	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x11
 	CDC_REPLICAS_DE_PR_EC_AT_ED ShuckleMessageKind = 0x13
 	ALL_SHARDS ShuckleMessageKind = 0x14
@@ -817,7 +814,6 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	CHANGED_BLOCK_SERVICES_AT_LOCATION,
 	SHARDS_AT_LOCATION,
 	CDC_AT_LOCATION,
-	SHARD_REPLICAS_DE_PR_EC_AT_ED,
 	SHARD_BLOCK_SERVICES,
 	CDC_REPLICAS_DE_PR_EC_AT_ED,
 	ALL_SHARDS,
@@ -866,8 +862,6 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ShardsAtLocationReq{}, &ShardsAtLocationResp{}, nil
 	case k == "CDC_AT_LOCATION":
 		return &CdcAtLocationReq{}, &CdcAtLocationResp{}, nil
-	case k == "SHARD_REPLICAS_DE_PR_EC_AT_ED":
-		return &ShardReplicasDEPRECATEDReq{}, &ShardReplicasDEPRECATEDResp{}, nil
 	case k == "SHARD_BLOCK_SERVICES":
 		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
 	case k == "CDC_REPLICAS_DE_PR_EC_AT_ED":
@@ -5272,55 +5266,6 @@ func (v *CdcAtLocationResp) Unpack(r io.Reader) error {
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
 		return err
-	}
-	return nil
-}
-
-func (v *ShardReplicasDEPRECATEDReq) ShuckleRequestKind() ShuckleMessageKind {
-	return SHARD_REPLICAS_DE_PR_EC_AT_ED
-}
-
-func (v *ShardReplicasDEPRECATEDReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint8(v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ShardReplicasDEPRECATEDReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.Id)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ShardReplicasDEPRECATEDResp) ShuckleResponseKind() ShuckleMessageKind {
-	return SHARD_REPLICAS_DE_PR_EC_AT_ED
-}
-
-func (v *ShardReplicasDEPRECATEDResp) Pack(w io.Writer) error {
-	len1 := len(v.Replicas)
-	if err := bincode.PackLength(w, len1); err != nil {
-		return err
-	}
-	for i := 0; i < len1; i++ {
-		if err := v.Replicas[i].Pack(w); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *ShardReplicasDEPRECATEDResp) Unpack(r io.Reader) error {
-	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
-		return err
-	}
-	bincode.EnsureLength(&v.Replicas, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Replicas[i].Unpack(r); err != nil {
-			return err
-		}
 	}
 	return nil
 }

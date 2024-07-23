@@ -69,8 +69,6 @@ func readShuckleResponse(
 		resp = &msgs.LocalShardsResp{}
 	case msgs.REGISTER_SHARD:
 		resp = &msgs.RegisterShardResp{}
-	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
-		resp = &msgs.ShardReplicasDEPRECATEDResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:

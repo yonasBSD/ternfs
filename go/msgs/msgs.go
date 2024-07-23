@@ -2162,15 +2162,6 @@ type RegisterBlockServicesDEPRECATEDReq struct {
 }
 
 type RegisterBlockServicesDEPRECATEDResp struct{}
-type ShardReplicasDEPRECATEDReq struct {
-	Id ShardId
-}
-
-type ShardReplicasDEPRECATEDResp struct {
-	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
-	// is zeroed.
-	Replicas []AddrsInfo
-}
 
 // --------------------------------------------------------------------
 // block service requests/responses

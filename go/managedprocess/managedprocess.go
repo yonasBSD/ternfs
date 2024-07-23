@@ -477,6 +477,7 @@ type ShardOpts struct {
 	Addr2                     string
 	TransientDeadlineInterval *time.Duration
 	Xmon                      string
+	Location                  msgs.Location
 	LogsDBFlags               []string
 }
 
@@ -517,6 +518,7 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		opts.Dir,
 		fmt.Sprintf("%d", int(opts.Shrid.Shard())),
 		fmt.Sprintf("%d", int(opts.Shrid.Replica())),
+		fmt.Sprintf("%d", int(opts.Location)),
 	)
 	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{

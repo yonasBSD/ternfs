@@ -40,6 +40,7 @@ func main() {
 	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
+	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/shuckle/cdc/storages to simulate multi data centre setup")
 	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
 	flag.Parse()
 	noRunawayArgs()
@@ -136,6 +137,22 @@ func main() {
 		Addr1:     "127.0.0.1:10001",
 	})
 
+	if *multiLocation {
+		// Waiting for shuckle
+		err := client.WaitForShuckle(log, shuckleAddress, 10*time.Second)
+		if err != nil {
+			panic(fmt.Errorf("failed to connect to shuckle %v", err))
+		}
+		_, err = client.ShuckleRequest(log, nil, shuckleAddress, &msgs.CreateLocationReq{1, "location1"})
+		if err != nil {
+			// it's possible location already exits, try renaming it
+			_, err = client.ShuckleRequest(log, nil, shuckleAddress, &msgs.RenameLocationReq{1, "location1"})
+			if err != nil {
+				panic(fmt.Errorf("failed to create location %v", err))
+			}
+		}
+	}
+
 	// Start block services
 	storageClasses := make([]msgs.StorageClass, *hddBlockServices+*flashBlockServices)
 	for i := range storageClasses {
@@ -210,36 +227,47 @@ func main() {
 	}
 
 	// Start shards
-	for i := 0; i < 256; i++ {
-		for r := uint8(0); r < 5; r++ {
-			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
-			opts := managedprocess.ShardOpts{
-				Exe:            cppExes.ShardExe,
-				Shrid:          shrid,
-				Dir:            path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r)),
-				LogLevel:       level,
-				Valgrind:       *buildType == "valgrind",
-				ShuckleAddress: shuckleAddress,
-				Perf:           *profile,
-				Xmon:           *xmon,
-				LogsDBFlags:    nil,
-			}
-			if *leaderOnly && r > 0 {
-				continue
-			}
-			if r == 0 {
-				if *leaderOnly {
-					opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
-				} else {
-					opts.LogsDBFlags = []string{"-logsdb-leader"}
+	numLocations := 1
+	if *multiLocation {
+		numLocations = 2
+	}
+	for loc := 0; loc < numLocations; loc++ {
+		for i := 0; i < 256; i++ {
+			for r := uint8(0); r < 5; r++ {
+				shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
+				dirName := fmt.Sprintf("shard_%03d_%d", i, r)
+				if loc > 0 {
+					dirName = fmt.Sprintf("%s_loc%d", dirName, loc)
 				}
+				opts := managedprocess.ShardOpts{
+					Exe:            cppExes.ShardExe,
+					Shrid:          shrid,
+					Dir:            path.Join(*dataDir, dirName),
+					LogLevel:       level,
+					Valgrind:       *buildType == "valgrind",
+					ShuckleAddress: shuckleAddress,
+					Perf:           *profile,
+					Xmon:           *xmon,
+					Location:       msgs.Location(loc),
+					LogsDBFlags:    nil,
+				}
+				if *leaderOnly && r > 0 {
+					continue
+				}
+				if r == 0 {
+					if *leaderOnly {
+						opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
+					} else {
+						opts.LogsDBFlags = []string{"-logsdb-leader"}
+					}
+				}
+				if *startingPort != 0 {
+					opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(i)+uint16(r)*256+5*256*uint16(loc))
+				} else {
+					opts.Addr1 = "127.0.0.1:0"
+				}
+				procs.StartShard(log, *repoDir, &opts)
 			}
-			if *startingPort != 0 {
-				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(i)+uint16(r)*256)
-			} else {
-				opts.Addr1 = "127.0.0.1:0"
-			}
-			procs.StartShard(log, *repoDir, &opts)
 		}
 	}
 

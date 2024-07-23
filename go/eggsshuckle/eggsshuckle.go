@@ -45,6 +45,7 @@ import (
 )
 
 const zeroIPString = "x'00000000'"
+const DEFAULT_LOCATION = 0
 
 type namedTemplate struct {
 	name string
@@ -514,7 +515,7 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 }
 
 func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalChangedBlockServicesReq) (*msgs.LocalChangedBlockServicesResp, error) {
-	reqAtLocation := &msgs.ChangedBlockServicesAtLocationReq{0, req.ChangedSince}
+	reqAtLocation := &msgs.ChangedBlockServicesAtLocationReq{DEFAULT_LOCATION, req.ChangedSince}
 	respAtLocation, err := handleChangedBlockServicesAtLocation(ll, s, reqAtLocation)
 	if err != nil {
 		return nil, err
@@ -823,7 +824,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 }
 
 func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.LocalShardsResp, error) {
-	reqAtLocation := &msgs.ShardsAtLocationReq{0}
+	reqAtLocation := &msgs.ShardsAtLocationReq{DEFAULT_LOCATION}
 	resp, err := handleShardsAtLocation(ll, s, reqAtLocation)
 	if err != nil {
 		return nil, err
@@ -916,43 +917,6 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 		resp = &msgs.RegisterShardResp{}
 	}
 	return
-}
-
-func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasDEPRECATEDReq) (*msgs.ShardReplicasDEPRECATEDResp, error) {
-	s.semaphore.Acquire(context.Background(), 1)
-	defer s.semaphore.Release(1)
-	var ret [5]msgs.AddrsInfo
-	n := sql.Named
-	rows, err := s.db.Query("SELECT * FROM shards WHERE last_seen IS NOT NULL AND id = :id AND location_id = 0", n("id", req.Id))
-	if err != nil {
-		return nil, fmt.Errorf("error selecting shard replicas: %s", err)
-	}
-	defer rows.Close()
-
-	i := 0
-	for rows.Next() {
-		if i > 5 {
-			return nil, fmt.Errorf("the number of shards returned exceeded 5")
-		}
-
-		si := msgs.AddrsInfo{}
-		var ip1, ip2 []byte
-		var id int
-		var replicaId int
-		var isLeader bool
-		var lastSeen uint64
-		var loc msgs.Location
-		err = rows.Scan(&id, &replicaId, &loc, &isLeader, &ip1, &si.Addr1.Port, &ip2, &si.Addr2.Port, &lastSeen)
-		if err != nil {
-			return nil, fmt.Errorf("error decoding shard row: %s", err)
-		}
-		copy(si.Addr1.Addrs[:], ip1)
-		copy(si.Addr2.Addrs[:], ip2)
-		ret[replicaId] = si
-		i += 1
-	}
-
-	return &msgs.ShardReplicasDEPRECATEDResp{Replicas: ret[:]}, nil
 }
 
 func handleCdcAtLocation(log *lib.Logger, s *state, req *msgs.CdcAtLocationReq) (*msgs.CdcAtLocationResp, error) {
@@ -1348,8 +1312,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleAllShards(log, s, whichReq)
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
-	case *msgs.ShardReplicasDEPRECATEDReq:
-		resp, err = handleShardReplicas(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
 		resp, err = handleAllBlockServices(log, s, whichReq)
 	case *msgs.LocalChangedBlockServicesReq:
@@ -1514,8 +1476,6 @@ func readShuckleRequest(
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.SHARD_REPLICAS_DE_PR_EC_AT_ED:
-		req = &msgs.ShardReplicasDEPRECATEDReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
 	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:

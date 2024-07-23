@@ -39,6 +39,20 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 	}
 }
 
+func WaitForShuckle(ll *lib.Logger, shuckleAddress string, timeout time.Duration) error {
+	t0 := time.Now()
+	for {
+		_, err := ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShuckleReq{})
+		if err == nil {
+			return nil
+		}
+		if time.Since(t0) > timeout {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // getting a client implies having all shards and cdc.
 func WaitForClient(log *lib.Logger, shuckleAddress string, timeout time.Duration) {
 	t0 := time.Now()

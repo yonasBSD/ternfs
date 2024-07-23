@@ -242,7 +242,7 @@ std::pair<int, std::string> registerShard(
 }
 
 std::pair<int, std::string> fetchShardReplicas(
-    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, std::array<AddrsInfo, 5>& replicas
+    const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<FullShardInfo>& replicas
 ) {
     const auto [sock, errStr] = shuckleSock(addr, port, timeout);
     if (sock.error()) {
@@ -250,9 +250,7 @@ std::pair<int, std::string> fetchShardReplicas(
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setShardReplicasDEPRECATED();
-    req.id = shrid.shardId();
-
+    auto& req = reqContainer.setAllShards();
     {
         const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
@@ -264,11 +262,10 @@ std::pair<int, std::string> fetchShardReplicas(
         if (err) { return {err, errStr}; }
     }
 
-    if (respContainer.getShardReplicasDEPRECATED().replicas.els.size() != replicas.size()) {
-        throw EGGS_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getShardReplicasDEPRECATED().replicas.els.size());
-    }
-    for (int i = 0; i < replicas.size(); i++) {
-        replicas[i] = respContainer.getShardReplicasDEPRECATED().replicas.els[i];
+    for(auto& shard : respContainer.getAllShards().shards.els) {
+        if (shard.id.shardId() == shid) {
+            replicas.emplace_back(std::move(shard));
+        }
     }
 
     return {};

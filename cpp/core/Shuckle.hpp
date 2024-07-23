@@ -37,8 +37,8 @@ std::pair<int, std::string> fetchShardReplicas(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
-    ShardReplicaId shrid,
-    std::array<AddrsInfo, 5>& replicas
+    ShardId shid,
+    std::vector<FullShardInfo>& replicas
 );
 
 std::pair<int, std::string> registerCDCReplica(

@@ -118,8 +118,12 @@ func readShuckleRequest(
 		req = &msgs.RegisterShardReplicaReq{}
 	case msgs.SHARD_REPLICAS:
 		req = &msgs.ShardReplicasReq{}
+	case msgs.ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+		req = &msgs.AllBlockServicesWithoutFlagsLastChangedReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
+		req = &msgs.SetBlockServiceDecommissionedReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
@@ -140,6 +144,8 @@ func readShuckleRequest(
 		req = &msgs.ShuckleReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
+	case msgs.ERASE_DECOMMISSIONED_BLOCK:
+		req = &msgs.EraseDecommissionedBlockReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

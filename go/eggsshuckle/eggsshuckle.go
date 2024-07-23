@@ -287,6 +287,35 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	return &resp, nil
 }
 
+func handleAllBlockServicesWithoutFlagsLastChanged(ll *lib.Logger, s *state, req *msgs.AllBlockServicesWithoutFlagsLastChangedReq) (*msgs.AllBlockServicesWithoutFlagsLastChangedResp, error) {
+	resp := msgs.AllBlockServicesWithoutFlagsLastChangedResp{}
+	blockServices, err := s.selectBlockServices(nil, 0, 0)
+	if err != nil {
+		ll.RaiseAlert("error reading block services: %s", err)
+		return nil, err
+	}
+
+	resp.BlockServices = make([]msgs.BlockServiceInfoWithoutFlagsLastChanged, len(blockServices))
+	i := 0
+	for _, bs := range blockServices {
+		resp.BlockServices[i].Addrs = bs.Addrs
+		resp.BlockServices[i].AvailableBytes = bs.AvailableBytes
+		resp.BlockServices[i].Blocks = bs.Blocks
+		resp.BlockServices[i].CapacityBytes = bs.CapacityBytes
+		resp.BlockServices[i].FailureDomain = bs.FailureDomain
+		resp.BlockServices[i].Flags = bs.Flags
+		resp.BlockServices[i].HasFiles = bs.HasFiles
+		resp.BlockServices[i].Id = bs.Id
+		resp.BlockServices[i].LastSeen = bs.LastSeen
+		resp.BlockServices[i].Path = bs.Path
+		resp.BlockServices[i].SecretKey = bs.SecretKey
+		resp.BlockServices[i].StorageClass = bs.StorageClass
+		i++
+	}
+
+	return &resp, nil
+}
+
 func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
 	blockServices, err := s.selectBlockServices(&req.Id, 0, 0)
 	if err != nil {
@@ -981,6 +1010,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleRegisterShardReplica(log, s, whichReq)
 	case *msgs.ShardReplicasReq:
 		resp, err = handleShardReplicas(log, s, whichReq)
+	case *msgs.AllBlockServicesWithoutFlagsLastChangedReq:
+		resp, err = handleAllBlockServicesWithoutFlagsLastChanged(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
 		resp, err = handleAllBlockServices(log, s, whichReq)
 	case *msgs.CdcReq:
@@ -1135,6 +1166,8 @@ func readShuckleRequest(
 		req = &msgs.RegisterShardReplicaReq{}
 	case msgs.SHARD_REPLICAS:
 		req = &msgs.ShardReplicasReq{}
+	case msgs.ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+		req = &msgs.AllBlockServicesWithoutFlagsLastChangedReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
 	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:

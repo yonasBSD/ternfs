@@ -1783,7 +1783,7 @@ type AddInlineSpanEntry struct {
 	Body         []byte
 }
 
-type BlockServiceInfo struct {
+type BlockServiceInfoWithoutFlagsLastChanged struct {
 	Id             BlockServiceId
 	Addrs          AddrsInfo
 	StorageClass   StorageClass
@@ -1796,6 +1796,22 @@ type BlockServiceInfo struct {
 	Path           string
 	LastSeen       EggsTime
 	HasFiles       bool
+}
+
+type BlockServiceInfo struct {
+	Id               BlockServiceId
+	Addrs            AddrsInfo
+	StorageClass     StorageClass
+	FailureDomain    FailureDomain
+	SecretKey        [16]byte
+	Flags            BlockServiceFlags
+	CapacityBytes    uint64
+	AvailableBytes   uint64
+	Blocks           uint64 // how many blocks we have
+	Path             string
+	LastSeen         EggsTime
+	HasFiles         bool
+	FlagsLastChanged EggsTime
 }
 
 type EntryNewBlockInfo struct {
@@ -1908,6 +1924,12 @@ type SetBlockServiceFlagsReq struct {
 }
 
 type SetBlockServiceFlagsResp struct{}
+
+type AllBlockServicesWithoutFlagsLastChangedReq struct{}
+
+type AllBlockServicesWithoutFlagsLastChangedResp struct {
+	BlockServices []BlockServiceInfoWithoutFlagsLastChanged
+}
 
 type AllBlockServicesReq struct{}
 

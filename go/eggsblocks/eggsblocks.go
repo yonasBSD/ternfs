@@ -1173,7 +1173,7 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 	return ret, nil
 }
 
-func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfo {
+func normalBlockServiceInfo(info *msgs.BlockServiceInfoWithoutFlagsLastChanged) *msgs.RegisterBlockServiceInfo {
 	// Everything else is filled in by `initBlockServicesInfo`
 	return &msgs.RegisterBlockServiceInfo{
 		CapacityBytes:  info.CapacityBytes,
@@ -1182,7 +1182,7 @@ func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServ
 	}
 }
 
-func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfo {
+func deadBlockServiceInfo(info *msgs.BlockServiceInfoWithoutFlagsLastChanged) *msgs.RegisterBlockServiceInfo {
 	// We just replicate everything from the cached one, forever -- but no flags.
 	return &msgs.RegisterBlockServiceInfo{
 		Id:             info.Id,
@@ -1370,17 +1370,17 @@ func main() {
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		var shuckleBlockServices []msgs.BlockServiceInfo
+		var shuckleBlockServices []msgs.BlockServiceInfoWithoutFlagsLastChanged
 		{
 			alert := log.NewNCAlert(0)
 			log.RaiseNC(alert, "fetching block services")
 			timeouts := lib.NewReqTimeouts(client.DefaultShuckleTimeout.Initial, client.DefaultShuckleTimeout.Max, 0, client.DefaultShuckleTimeout.Growth, client.DefaultShuckleTimeout.Jitter)
-			resp, err := client.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
+			resp, err := client.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
 			if err != nil {
 				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 			}
 			log.ClearNC(alert)
-			shuckleBlockServices = resp.(*msgs.AllBlockServicesResp).BlockServices
+			shuckleBlockServices = resp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp).BlockServices
 		}
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]

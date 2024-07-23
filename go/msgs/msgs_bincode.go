@@ -716,7 +716,7 @@ func (k ShuckleMessageKind) String() string {
 	case 4:
 		return "REGISTER_SHARD"
 	case 5:
-		return "ALL_BLOCK_SERVICES"
+		return "ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED"
 	case 6:
 		return "REGISTER_CDC"
 	case 9:
@@ -749,6 +749,8 @@ func (k ShuckleMessageKind) String() string {
 		return "CDC_WITH_REPLICAS"
 	case 32:
 		return "ERASE_DECOMMISSIONED_BLOCK"
+	case 33:
+		return "ALL_BLOCK_SERVICES"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -761,7 +763,7 @@ const (
 	INFO ShuckleMessageKind = 0x8
 	SHUCKLE ShuckleMessageKind = 0xF
 	REGISTER_SHARD ShuckleMessageKind = 0x4
-	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x5
+	ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED ShuckleMessageKind = 0x5
 	REGISTER_CDC ShuckleMessageKind = 0x6
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 	BLOCK_SERVICE ShuckleMessageKind = 0xA
@@ -778,6 +780,7 @@ const (
 	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0x18
 	CDC_WITH_REPLICAS ShuckleMessageKind = 0x19
 	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
+	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x21
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -786,7 +789,7 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	INFO,
 	SHUCKLE,
 	REGISTER_SHARD,
-	ALL_BLOCK_SERVICES,
+	ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED,
 	REGISTER_CDC,
 	SET_BLOCK_SERVICE_FLAGS,
 	BLOCK_SERVICE,
@@ -803,9 +806,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	REGISTER_BLOCK_SERVICES,
 	CDC_WITH_REPLICAS,
 	ERASE_DECOMMISSIONED_BLOCK,
+	ALL_BLOCK_SERVICES,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 32
+const MaxShuckleMessageKind ShuckleMessageKind = 33
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -819,8 +823,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ShuckleReq{}, &ShuckleResp{}, nil
 	case k == "REGISTER_SHARD":
 		return &RegisterShardReq{}, &RegisterShardResp{}, nil
-	case k == "ALL_BLOCK_SERVICES":
-		return &AllBlockServicesReq{}, &AllBlockServicesResp{}, nil
+	case k == "ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED":
+		return &AllBlockServicesWithoutFlagsLastChangedReq{}, &AllBlockServicesWithoutFlagsLastChangedResp{}, nil
 	case k == "REGISTER_CDC":
 		return &RegisterCdcReq{}, &RegisterCdcResp{}, nil
 	case k == "SET_BLOCK_SERVICE_FLAGS":
@@ -853,6 +857,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &CdcWithReplicasReq{}, &CdcWithReplicasResp{}, nil
 	case k == "ERASE_DECOMMISSIONED_BLOCK":
 		return &EraseDecommissionedBlockReq{}, &EraseDecommissionedBlockResp{}, nil
+	case k == "ALL_BLOCK_SERVICES":
+		return &AllBlockServicesReq{}, &AllBlockServicesResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -4115,6 +4121,86 @@ func (v *EntryNewBlockInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *BlockServiceInfoWithoutFlagsLastChanged) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Path)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.HasFiles)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceInfoWithoutFlagsLastChanged) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Path); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.HasFiles)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
@@ -4150,6 +4236,9 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 		return err
 	}
 	if err := bincode.PackScalar(w, bool(v.HasFiles)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.FlagsLastChanged)); err != nil {
 		return err
 	}
 	return nil
@@ -4190,6 +4279,9 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*bool)(&v.HasFiles)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FlagsLastChanged)); err != nil {
 		return err
 	}
 	return nil
@@ -4646,23 +4738,23 @@ func (v *RegisterShardResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
-	return ALL_BLOCK_SERVICES
+func (v *AllBlockServicesWithoutFlagsLastChangedReq) ShuckleRequestKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED
 }
 
-func (v *AllBlockServicesReq) Pack(w io.Writer) error {
+func (v *AllBlockServicesWithoutFlagsLastChangedReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllBlockServicesReq) Unpack(r io.Reader) error {
+func (v *AllBlockServicesWithoutFlagsLastChangedReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
-	return ALL_BLOCK_SERVICES
+func (v *AllBlockServicesWithoutFlagsLastChangedResp) ShuckleResponseKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED
 }
 
-func (v *AllBlockServicesResp) Pack(w io.Writer) error {
+func (v *AllBlockServicesWithoutFlagsLastChangedResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -4675,7 +4767,7 @@ func (v *AllBlockServicesResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllBlockServicesResp) Unpack(r io.Reader) error {
+func (v *AllBlockServicesWithoutFlagsLastChangedResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -5321,6 +5413,49 @@ func (v *EraseDecommissionedBlockResp) Pack(w io.Writer) error {
 func (v *EraseDecommissionedBlockResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackFixedBytes(r, 8, v.Proof[:]); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (v *AllBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES
+}
+
+func (v *AllBlockServicesReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *AllBlockServicesReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *AllBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES
+}
+
+func (v *AllBlockServicesResp) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllBlockServicesResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
 	}
 	return nil
 }

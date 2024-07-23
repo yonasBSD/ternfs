@@ -454,8 +454,8 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::REGISTER_SHARD:
         out << "REGISTER_SHARD";
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << "ALL_BLOCK_SERVICES";
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        out << "ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED";
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         out << "REGISTER_CDC";
@@ -504,6 +504,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
         break;
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << "ERASE_DECOMMISSIONED_BLOCK";
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        out << "ALL_BLOCK_SERVICES";
         break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";
@@ -1114,7 +1117,7 @@ std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
     return out;
 }
 
-void BlockServiceInfo::pack(BincodeBuf& buf) const {
+void BlockServiceInfoWithoutFlagsLastChanged::pack(BincodeBuf& buf) const {
     id.pack(buf);
     addrs.pack(buf);
     buf.packScalar<uint8_t>(storageClass);
@@ -1128,7 +1131,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     lastSeen.pack(buf);
     buf.packScalar<bool>(hasFiles);
 }
-void BlockServiceInfo::unpack(BincodeBuf& buf) {
+void BlockServiceInfoWithoutFlagsLastChanged::unpack(BincodeBuf& buf) {
     id.unpack(buf);
     addrs.unpack(buf);
     storageClass = buf.unpackScalar<uint8_t>();
@@ -1142,7 +1145,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     lastSeen.unpack(buf);
     hasFiles = buf.unpackScalar<bool>();
 }
-void BlockServiceInfo::clear() {
+void BlockServiceInfoWithoutFlagsLastChanged::clear() {
     id = BlockServiceId(0);
     addrs.clear();
     storageClass = uint8_t(0);
@@ -1156,7 +1159,7 @@ void BlockServiceInfo::clear() {
     lastSeen = EggsTime();
     hasFiles = bool(0);
 }
-bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
+bool BlockServiceInfoWithoutFlagsLastChanged::operator==(const BlockServiceInfoWithoutFlagsLastChanged& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if (addrs != rhs.addrs) { return false; };
     if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
@@ -1171,8 +1174,74 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
     return true;
 }
+std::ostream& operator<<(std::ostream& out, const BlockServiceInfoWithoutFlagsLastChanged& x) {
+    out << "BlockServiceInfoWithoutFlagsLastChanged(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ")";
+    return out;
+}
+
+void BlockServiceInfo::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    addrs.pack(buf);
+    buf.packScalar<uint8_t>(storageClass);
+    failureDomain.pack(buf);
+    buf.packFixedBytes<16>(secretKey);
+    buf.packScalar<uint8_t>(flags);
+    buf.packScalar<uint64_t>(capacityBytes);
+    buf.packScalar<uint64_t>(availableBytes);
+    buf.packScalar<uint64_t>(blocks);
+    buf.packBytes(path);
+    lastSeen.pack(buf);
+    buf.packScalar<bool>(hasFiles);
+    flagsLastChanged.pack(buf);
+}
+void BlockServiceInfo::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    addrs.unpack(buf);
+    storageClass = buf.unpackScalar<uint8_t>();
+    failureDomain.unpack(buf);
+    buf.unpackFixedBytes<16>(secretKey);
+    flags = buf.unpackScalar<uint8_t>();
+    capacityBytes = buf.unpackScalar<uint64_t>();
+    availableBytes = buf.unpackScalar<uint64_t>();
+    blocks = buf.unpackScalar<uint64_t>();
+    buf.unpackBytes(path);
+    lastSeen.unpack(buf);
+    hasFiles = buf.unpackScalar<bool>();
+    flagsLastChanged.unpack(buf);
+}
+void BlockServiceInfo::clear() {
+    id = BlockServiceId(0);
+    addrs.clear();
+    storageClass = uint8_t(0);
+    failureDomain.clear();
+    secretKey.clear();
+    flags = uint8_t(0);
+    capacityBytes = uint64_t(0);
+    availableBytes = uint64_t(0);
+    blocks = uint64_t(0);
+    path.clear();
+    lastSeen = EggsTime();
+    hasFiles = bool(0);
+    flagsLastChanged = EggsTime();
+}
+bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if (addrs != rhs.addrs) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if (failureDomain != rhs.failureDomain) { return false; };
+    if (secretKey != rhs.secretKey) { return false; };
+    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
+    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
+    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
+    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
+    if (path != rhs.path) { return false; };
+    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
+    if ((EggsTime)this->flagsLastChanged != (EggsTime)rhs.flagsLastChanged) { return false; };
+    return true;
+}
 std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ")";
+    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ", " << "FlagsLastChanged=" << x.flagsLastChanged << ")";
     return out;
 }
 
@@ -3676,35 +3745,35 @@ std::ostream& operator<<(std::ostream& out, const RegisterShardResp& x) {
     return out;
 }
 
-void AllBlockServicesReq::pack(BincodeBuf& buf) const {
+void AllBlockServicesWithoutFlagsLastChangedReq::pack(BincodeBuf& buf) const {
 }
-void AllBlockServicesReq::unpack(BincodeBuf& buf) {
+void AllBlockServicesWithoutFlagsLastChangedReq::unpack(BincodeBuf& buf) {
 }
-void AllBlockServicesReq::clear() {
+void AllBlockServicesWithoutFlagsLastChangedReq::clear() {
 }
-bool AllBlockServicesReq::operator==(const AllBlockServicesReq& rhs) const {
+bool AllBlockServicesWithoutFlagsLastChangedReq::operator==(const AllBlockServicesWithoutFlagsLastChangedReq& rhs) const {
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesReq& x) {
-    out << "AllBlockServicesReq(" << ")";
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesWithoutFlagsLastChangedReq& x) {
+    out << "AllBlockServicesWithoutFlagsLastChangedReq(" << ")";
     return out;
 }
 
-void AllBlockServicesResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceInfo>(blockServices);
+void AllBlockServicesWithoutFlagsLastChangedResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceInfoWithoutFlagsLastChanged>(blockServices);
 }
-void AllBlockServicesResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceInfo>(blockServices);
+void AllBlockServicesWithoutFlagsLastChangedResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceInfoWithoutFlagsLastChanged>(blockServices);
 }
-void AllBlockServicesResp::clear() {
+void AllBlockServicesWithoutFlagsLastChangedResp::clear() {
     blockServices.clear();
 }
-bool AllBlockServicesResp::operator==(const AllBlockServicesResp& rhs) const {
+bool AllBlockServicesWithoutFlagsLastChangedResp::operator==(const AllBlockServicesWithoutFlagsLastChangedResp& rhs) const {
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
-    out << "AllBlockServicesResp(" << "BlockServices=" << x.blockServices << ")";
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesWithoutFlagsLastChangedResp& x) {
+    out << "AllBlockServicesWithoutFlagsLastChangedResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -4269,6 +4338,38 @@ bool EraseDecommissionedBlockResp::operator==(const EraseDecommissionedBlockResp
 }
 std::ostream& operator<<(std::ostream& out, const EraseDecommissionedBlockResp& x) {
     out << "EraseDecommissionedBlockResp(" << "Proof=" << x.proof << ")";
+    return out;
+}
+
+void AllBlockServicesReq::pack(BincodeBuf& buf) const {
+}
+void AllBlockServicesReq::unpack(BincodeBuf& buf) {
+}
+void AllBlockServicesReq::clear() {
+}
+bool AllBlockServicesReq::operator==(const AllBlockServicesReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesReq& x) {
+    out << "AllBlockServicesReq(" << ")";
+    return out;
+}
+
+void AllBlockServicesResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceInfo>(blockServices);
+}
+void AllBlockServicesResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceInfo>(blockServices);
+}
+void AllBlockServicesResp::clear() {
+    blockServices.clear();
+}
+bool AllBlockServicesResp::operator==(const AllBlockServicesResp& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
+    out << "AllBlockServicesResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -7541,12 +7642,12 @@ RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
     auto& x = _data.emplace<4>();
     return x;
 }
-const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+const AllBlockServicesWithoutFlagsLastChangedReq& ShuckleReqContainer::getAllBlockServicesWithoutFlagsLastChanged() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED);
     return std::get<5>(_data);
 }
-AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+AllBlockServicesWithoutFlagsLastChangedReq& ShuckleReqContainer::setAllBlockServicesWithoutFlagsLastChanged() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED;
     auto& x = _data.emplace<5>();
     return x;
 }
@@ -7694,6 +7795,15 @@ EraseDecommissionedBlockReq& ShuckleReqContainer::setEraseDecommissionedBlock() 
     auto& x = _data.emplace<21>();
     return x;
 }
+const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+    return std::get<22>(_data);
+}
+AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+    auto& x = _data.emplace<22>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -7726,8 +7836,8 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        setAllBlockServices() = other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        setAllBlockServicesWithoutFlagsLastChanged() = other.getAllBlockServicesWithoutFlagsLastChanged();
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         setRegisterCdc() = other.getRegisterCdc();
@@ -7777,6 +7887,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        setAllBlockServices() = other.getAllBlockServices();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -7800,7 +7913,7 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<3>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_SHARD:
         return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_CDC:
         return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
@@ -7834,6 +7947,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7857,7 +7972,7 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::REGISTER_SHARD:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         std::get<5>(_data).pack(buf);
         break;
     case ShuckleMessageKind::REGISTER_CDC:
@@ -7908,6 +8023,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<21>(_data).pack(buf);
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        std::get<22>(_data).pack(buf);
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7931,7 +8049,7 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::REGISTER_SHARD:
         _data.emplace<4>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         _data.emplace<5>().unpack(buf);
         break;
     case ShuckleMessageKind::REGISTER_CDC:
@@ -7982,6 +8100,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<21>().unpack(buf);
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        _data.emplace<22>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8001,8 +8122,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getShuckle() == other.getShuckle();
     case ShuckleMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        return getAllBlockServicesWithoutFlagsLastChanged() == other.getAllBlockServicesWithoutFlagsLastChanged();
     case ShuckleMessageKind::REGISTER_CDC:
         return getRegisterCdc() == other.getRegisterCdc();
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
@@ -8035,6 +8156,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getCdcWithReplicas() == other.getCdcWithReplicas();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return getAllBlockServices() == other.getAllBlockServices();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8057,8 +8180,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << x.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        out << x.getAllBlockServicesWithoutFlagsLastChanged();
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
@@ -8107,6 +8230,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        out << x.getAllBlockServices();
         break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";
@@ -8171,12 +8297,12 @@ RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
     auto& x = _data.emplace<5>();
     return x;
 }
-const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+const AllBlockServicesWithoutFlagsLastChangedResp& ShuckleRespContainer::getAllBlockServicesWithoutFlagsLastChanged() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED);
     return std::get<6>(_data);
 }
-AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+AllBlockServicesWithoutFlagsLastChangedResp& ShuckleRespContainer::setAllBlockServicesWithoutFlagsLastChanged() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED;
     auto& x = _data.emplace<6>();
     return x;
 }
@@ -8324,6 +8450,15 @@ EraseDecommissionedBlockResp& ShuckleRespContainer::setEraseDecommissionedBlock(
     auto& x = _data.emplace<22>();
     return x;
 }
+const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+    return std::get<23>(_data);
+}
+AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+    auto& x = _data.emplace<23>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -8359,8 +8494,8 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        setAllBlockServices() = other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        setAllBlockServicesWithoutFlagsLastChanged() = other.getAllBlockServicesWithoutFlagsLastChanged();
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         setRegisterCdc() = other.getRegisterCdc();
@@ -8410,6 +8545,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        setAllBlockServices() = other.getAllBlockServices();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -8435,7 +8573,7 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_SHARD:
         return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
     case ShuckleMessageKind::REGISTER_CDC:
         return sizeof(ShuckleMessageKind) + std::get<7>(_data).packedSize();
@@ -8469,6 +8607,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8495,7 +8635,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::REGISTER_SHARD:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         std::get<6>(_data).pack(buf);
         break;
     case ShuckleMessageKind::REGISTER_CDC:
@@ -8546,6 +8686,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<22>(_data).pack(buf);
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        std::get<23>(_data).pack(buf);
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8572,7 +8715,7 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::REGISTER_SHARD:
         _data.emplace<5>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
         _data.emplace<6>().unpack(buf);
         break;
     case ShuckleMessageKind::REGISTER_CDC:
@@ -8623,6 +8766,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<22>().unpack(buf);
         break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        _data.emplace<23>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8644,8 +8790,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getShuckle() == other.getShuckle();
     case ShuckleMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        return getAllBlockServicesWithoutFlagsLastChanged() == other.getAllBlockServicesWithoutFlagsLastChanged();
     case ShuckleMessageKind::REGISTER_CDC:
         return getRegisterCdc() == other.getRegisterCdc();
     case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
@@ -8678,6 +8824,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getCdcWithReplicas() == other.getCdcWithReplicas();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return getAllBlockServices() == other.getAllBlockServices();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8703,8 +8851,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << x.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_WITHOUT_FLAGS_LAST_CHANGED:
+        out << x.getAllBlockServicesWithoutFlagsLastChanged();
         break;
     case ShuckleMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
@@ -8753,6 +8901,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        out << x.getAllBlockServices();
         break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";

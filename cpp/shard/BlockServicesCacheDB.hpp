@@ -64,7 +64,7 @@ public:
     BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB);
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
-    void updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceId>& currentBlockServices);
+    void updateCache(const std::vector<BlockServiceInfoWithoutFlagsLastChanged>& blockServices, const std::vector<BlockServiceId>& currentBlockServices);
 
     // We've seen at least one `updateCache()`, or we've loaded the
     // block services from the cache.

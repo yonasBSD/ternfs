@@ -1809,8 +1809,8 @@ func main() {
 		},
 		{
 			0x05,
-			reflect.TypeOf(msgs.AllBlockServicesReq{}),
-			reflect.TypeOf(msgs.AllBlockServicesResp{}),
+			reflect.TypeOf(msgs.AllBlockServicesWithoutFlagsLastChangedReq{}),
+			reflect.TypeOf(msgs.AllBlockServicesWithoutFlagsLastChangedResp{}),
 		},
 		{
 			0x06,
@@ -1891,6 +1891,11 @@ func main() {
 			0x20,
 			reflect.TypeOf(msgs.EraseDecommissionedBlockReq{}),
 			reflect.TypeOf(msgs.EraseDecommissionedBlockResp{}),
+		},
+		{
+			0x21,
+			reflect.TypeOf(msgs.AllBlockServicesReq{}),
+			reflect.TypeOf(msgs.AllBlockServicesResp{}),
 		},
 	}...)
 
@@ -1992,6 +1997,7 @@ func main() {
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
+		reflect.TypeOf(msgs.BlockServiceInfoWithoutFlagsLastChanged{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
 
 		reflect.TypeOf(msgs.SpanPolicy{}),

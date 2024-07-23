@@ -658,11 +658,11 @@ func corruptFiles(
 ) uint64 {
 	blockServicesToDataDirs := make(map[msgs.BlockServiceId]string)
 	{
-		resp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		resp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		body := resp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
+		body := resp.(*msgs.AllBlockServicesResp)
 		for _, block := range body.BlockServices {
 			blockServicesToDataDirs[block.Id] = block.Path
 		}
@@ -942,12 +942,12 @@ func fsTestInternal[Id comparable](
 			panic(err)
 		}
 		// check that we have no flash block
-		blockServicesResp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		blockServicesResp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := blockServicesResp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
-		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceInfoWithoutFlagsLastChanged)
+		blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo)
 		for i := range blockServices.BlockServices {
 			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}

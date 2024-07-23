@@ -7,17 +7,17 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) []msgs.BlockServiceInfoWithoutFlagsLastChanged {
+func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) []msgs.BlockServiceInfo {
 	var err error
 	for {
 		var resp msgs.ShuckleResponse
-		var bss []msgs.BlockServiceInfoWithoutFlagsLastChanged
-		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		var bss []msgs.BlockServiceInfo
+		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			ll.Debug("got error while getting block services from shuckle, will keep waiting: %v", err)
 			goto KeepChecking
 		}
-		bss = resp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp).BlockServices
+		bss = resp.(*msgs.AllBlockServicesResp).BlockServices
 		if len(bss) < expectedBlockServices {
 			err = fmt.Errorf("not all block services are up yet, will keep waiting")
 			ll.Debug("%v", err)

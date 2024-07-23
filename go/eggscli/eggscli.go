@@ -347,11 +347,11 @@ func main() {
 			os.Exit(2)
 		}
 		log.Info("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := blockServicesResp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
+		blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 		blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 		numBlockServicesToMigrate := 0
 		for _, bs := range blockServices.BlockServices {
@@ -617,12 +617,12 @@ func main() {
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
 	blockReqRun := func() {
-		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := resp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
-		var blockServiceInfo msgs.BlockServiceInfoWithoutFlagsLastChanged
+		blockServices := resp.(*msgs.AllBlockServicesResp)
+		var blockServiceInfo msgs.BlockServiceInfo
 		for _, bsInfo := range blockServices.BlockServices {
 			if bsInfo.Id == msgs.BlockServiceId(*blockReqBlockService) {
 				blockServiceInfo = bsInfo
@@ -654,12 +654,12 @@ func main() {
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
 	testBlockWriteRun := func() {
-		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := resp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
-		bsInfos := []msgs.BlockServiceInfoWithoutFlagsLastChanged{}
+		blockServices := resp.(*msgs.AllBlockServicesResp)
+		bsInfos := []msgs.BlockServiceInfo{}
 		for _, str := range strings.Split(*testBlockWriteBlockService, ",") {
 			bsId, err := strconv.ParseUint(str, 0, 64)
 			if err != nil {
@@ -736,11 +736,11 @@ func main() {
 		}
 		if *blockserviceFlagsFailureDomain != "" {
 			log.Info("requesting block services")
-			blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+			blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesReq{})
 			if err != nil {
 				panic(err)
 			}
-			blockServices := blockServicesResp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
+			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 			for _, bs := range blockServices.BlockServices {
 				if bs.FailureDomain.String() == *blockserviceFlagsFailureDomain {
 					blockServiceIds = append(blockServiceIds, bs.Id)

@@ -620,12 +620,12 @@ OUT:
 		}
 		m.cleanVisitedBlockService()
 		m.log.Debug("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesWithoutFlagsLastChangedReq{})
+		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesReq{})
 		if err != nil {
 			m.log.RaiseNC(shuckleResponseAlert, "error getting block services from shuckle: %v", err)
 		} else {
 			m.log.ClearNC(shuckleResponseAlert)
-			blockServices := blockServicesResp.(*msgs.AllBlockServicesWithoutFlagsLastChangedResp)
+			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 			for _, bs := range blockServices.BlockServices {
 				if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 					m.ScheduleBlockService(bs.Id)

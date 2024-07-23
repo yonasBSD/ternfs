@@ -117,7 +117,7 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
     return {};
 }
 
-std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfoWithoutFlagsLastChanged>& blockServices, std::vector<BlockServiceId>& currentBlockServices) {
+std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfo>& blockServices, std::vector<BlockServiceId>& currentBlockServices) {
     blockServices.clear();
     currentBlockServices.clear();
 
@@ -131,7 +131,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // all block services
     {
         ShuckleReqContainer reqContainer;
-        auto& req = reqContainer.setAllBlockServicesWithoutFlagsLastChanged();
+        auto& req = reqContainer.setAllBlockServices();
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
             if (err) { FAIL(err, errStr); }
@@ -143,7 +143,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
             if (err) { FAIL(err, errStr); }
         }
 
-        blockServices = respContainer.getAllBlockServicesWithoutFlagsLastChanged().blockServices.els;
+        blockServices = respContainer.getAllBlockServices().blockServices.els;
     }
 
     // current block services

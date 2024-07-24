@@ -7,6 +7,7 @@
 #include <linux/workqueue.h>
 #include <linux/parser.h>
 
+#include "block_services.h"
 #include "log.h"
 #include "inode.h"
 #include "export.h"
@@ -38,137 +39,261 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
 
     struct kvec iov;
     struct msghdr msg = {NULL};
+    {
+        static_assert(EGGSFS_SHARDS_REQ_SIZE == 0);
+        char shuckle_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
+        eggsfs_write_shuckle_req_header(shuckle_req, EGGSFS_SHARDS_REQ_SIZE, EGGSFS_SHUCKLE_SHARDS);
+        int written_so_far;
+        for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
+            iov.iov_base = shuckle_req + written_so_far;
+            iov.iov_len = sizeof(shuckle_req) - written_so_far;
+            int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+            if (written < 0) { err = written; goto out_sock; }
+            written_so_far += written;
+        }
 
-    static_assert(EGGSFS_SHARDS_REQ_SIZE == 0);
-    char shuckle_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
-    eggsfs_write_shuckle_req_header(shuckle_req, 0, EGGSFS_SHUCKLE_SHARDS);
-    int written_so_far;
-    for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
-        iov.iov_base = shuckle_req + written_so_far;
-        iov.iov_len = sizeof(shuckle_req) - written_so_far;
-        int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
-        if (written < 0) { err = written; goto out_sock; }
-        written_so_far += written;
-    }
-
-    char shards_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE + 2]; // + 2 = list len
-    int read_so_far;
-    for (read_so_far = 0; read_so_far < sizeof(shards_resp_header);) {
-        iov.iov_base = shards_resp_header + read_so_far;
-        iov.iov_len = sizeof(shards_resp_header) - read_so_far;
-        int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ECONNRESET; goto out_sock; }
-        if (read < 0) { err = read; goto out_sock; }
-        read_so_far += read;
-    }
-    u32 shuckle_resp_len;
-    u8 shuckle_resp_kind;
-    err = eggsfs_read_shuckle_resp_header(shards_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
-    if (err < 0) { goto out_sock; }
-    u16 shard_info_len = get_unaligned_le16(shards_resp_header + sizeof(shards_resp_header) - 2);
-    if (shard_info_len != 256) {
-        eggsfs_info("expected 256 shard infos, got %d", shard_info_len);
-        err = -EIO; goto out_sock;
-    }
-    if (shuckle_resp_len != 2 + EGGSFS_SHARD_INFO_SIZE*256) {
-        eggsfs_info("expected size of %d, got %d", 2 + EGGSFS_SHARD_INFO_SIZE*256, shuckle_resp_len);
-        err = -EIO; goto out_sock;
-    }
-
-    int shid;
-    for (shid = 0; shid < 256; shid++) {
-        char shard_info_resp[EGGSFS_SHARD_INFO_SIZE];
-        for (read_so_far = 0; read_so_far < EGGSFS_SHARD_INFO_SIZE;) {
-            iov.iov_base = shard_info_resp + read_so_far;
-            iov.iov_len = sizeof(shard_info_resp) - read_so_far;
+        char shards_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE + 2]; // + 2 = list len
+        int read_so_far;
+        for (read_so_far = 0; read_so_far < sizeof(shards_resp_header);) {
+            iov.iov_base = shards_resp_header + read_so_far;
+            iov.iov_len = sizeof(shards_resp_header) - read_so_far;
             int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
-        struct eggsfs_bincode_get_ctx ctx = {
-            .buf = shard_info_resp,
-            .end = shard_info_resp + sizeof(shard_info_resp),
-            .err = 0,
-        };
-        eggsfs_shard_info_get_start(&ctx, start);
-        eggsfs_shard_info_get_addrs(&ctx, start, addr_start);
-        eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
-        eggsfs_ip_port_get_addrs(&ctx, ipport1_start, shard_ip1);
-        eggsfs_ip_port_get_port(&ctx, shard_ip1, shard_port1);
-        eggsfs_ip_port_get_end(&ctx, shard_port1, ipport1_end);
-        eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
-        eggsfs_ip_port_get_addrs(&ctx, ipport2_start, shard_ip2);
-        eggsfs_ip_port_get_port(&ctx, shard_ip2, shard_port2);
-        eggsfs_ip_port_get_end(&ctx, shard_port2, ipport2_end);
-        eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
-        eggsfs_shard_info_get_last_seen(&ctx, addr_end, last_seen);
-        eggsfs_shard_info_get_end(&ctx, last_seen, end);
-        eggsfs_shard_info_get_finish(&ctx, end);
-        if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
+        u32 shuckle_resp_len;
+        u8 shuckle_resp_kind;
+        err = eggsfs_read_shuckle_resp_header(shards_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+        if (err < 0) { goto out_sock; }
+        u16 shard_info_len = get_unaligned_le16(shards_resp_header + sizeof(shards_resp_header) - 2);
+        if (shard_info_len != 256) {
+            eggsfs_info("expected 256 shard infos, got %d", shard_info_len);
+            err = -EIO; goto out_sock;
+        }
+        if (shuckle_resp_len != 2 + EGGSFS_SHARD_INFO_SIZE*256) {
+            eggsfs_info("expected size of %d, got %d", 2 + EGGSFS_SHARD_INFO_SIZE*256, shuckle_resp_len);
+            err = -EIO; goto out_sock;
+        }
 
-        atomic64_set(&info->shard_addrs1[shid], eggsfs_mk_addr(shard_ip1.x, shard_port1.x));
-        atomic64_set(&info->shard_addrs2[shid], eggsfs_mk_addr(shard_ip2.x, shard_port2.x));
-    }
+        int shid;
+        for (shid = 0; shid < 256; shid++) {
+            char shard_info_resp[EGGSFS_SHARD_INFO_SIZE];
+            for (read_so_far = 0; read_so_far < EGGSFS_SHARD_INFO_SIZE;) {
+                iov.iov_base = shard_info_resp + read_so_far;
+                iov.iov_len = sizeof(shard_info_resp) - read_so_far;
+                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                if (read == 0) { err = -ECONNRESET; goto out_sock; }
+                if (read < 0) { err = read; goto out_sock; }
+                read_so_far += read;
+            }
+            struct eggsfs_bincode_get_ctx ctx = {
+                .buf = shard_info_resp,
+                .end = shard_info_resp + sizeof(shard_info_resp),
+                .err = 0,
+            };
+            eggsfs_shard_info_get_start(&ctx, start);
+            eggsfs_shard_info_get_addrs(&ctx, start, addr_start);
+            eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport1_start, shard_ip1);
+            eggsfs_ip_port_get_port(&ctx, shard_ip1, shard_port1);
+            eggsfs_ip_port_get_end(&ctx, shard_port1, ipport1_end);
+            eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport2_start, shard_ip2);
+            eggsfs_ip_port_get_port(&ctx, shard_ip2, shard_port2);
+            eggsfs_ip_port_get_end(&ctx, shard_port2, ipport2_end);
+            eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+            eggsfs_shard_info_get_last_seen(&ctx, addr_end, last_seen);
+            eggsfs_shard_info_get_end(&ctx, last_seen, end);
+            eggsfs_shard_info_get_finish(&ctx, end);
+            if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 
-    static_assert(EGGSFS_CDC_REQ_SIZE == 0);
-    eggsfs_write_shuckle_req_header(shuckle_req, EGGSFS_SHARDS_REQ_SIZE, EGGSFS_SHUCKLE_CDC);
-    for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
-        iov.iov_base = shuckle_req + written_so_far;
-        iov.iov_len = sizeof(shuckle_req) - written_so_far;
-        int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
-        if (written < 0) { err = written; goto out_sock; }
-        written_so_far += written;
-    }
-
-    char cdc_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE];
-    for (read_so_far = 0; read_so_far < sizeof(cdc_resp_header);) {
-        iov.iov_base = cdc_resp_header + read_so_far;
-        iov.iov_len = sizeof(cdc_resp_header) - read_so_far;
-        int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
-        if (read == 0) { err = -ECONNRESET; goto out_sock; }
-        if (read < 0) { err = read; goto out_sock; }
-        read_so_far += read;
-    }
-    err = eggsfs_read_shuckle_resp_header(cdc_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
-    if (err < 0) { goto out_sock; }
-    if (shuckle_resp_len != EGGSFS_CDC_RESP_SIZE) {
-        eggsfs_debug("expected size of %d, got %d", EGGSFS_CDC_RESP_SIZE, shuckle_resp_len);
-        err = -EINVAL; goto out_sock;
+            atomic64_set(&info->shard_addrs1[shid], eggsfs_mk_addr(shard_ip1.x, shard_port1.x));
+            atomic64_set(&info->shard_addrs2[shid], eggsfs_mk_addr(shard_ip2.x, shard_port2.x));
+        }
     }
     {
-        char cdc_resp[EGGSFS_CDC_RESP_SIZE];
-        for (read_so_far = 0; read_so_far < sizeof(cdc_resp);) {
-            iov.iov_base = (char*)&cdc_resp + read_so_far;
-            iov.iov_len = sizeof(cdc_resp) - read_so_far;
+        static_assert(EGGSFS_CDC_REQ_SIZE == 0);
+        char cdc_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE];
+        eggsfs_write_shuckle_req_header(cdc_req, EGGSFS_CDC_REQ_SIZE, EGGSFS_SHUCKLE_CDC);
+        int written_so_far;
+        for (written_so_far = 0; written_so_far < sizeof(cdc_req);) {
+            iov.iov_base = cdc_req + written_so_far;
+            iov.iov_len = sizeof(cdc_req) - written_so_far;
+            int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+            if (written < 0) { err = written; goto out_sock; }
+            written_so_far += written;
+        }
+
+        char cdc_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE];
+        int read_so_far;
+        for (read_so_far = 0; read_so_far < sizeof(cdc_resp_header);) {
+            iov.iov_base = cdc_resp_header + read_so_far;
+            iov.iov_len = sizeof(cdc_resp_header) - read_so_far;
             int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
-        struct eggsfs_bincode_get_ctx ctx = {
-            .buf = cdc_resp,
-            .end = cdc_resp + sizeof(cdc_resp),
-            .err = 0,
-        };
-        eggsfs_cdc_resp_get_start(&ctx, start);
-        eggsfs_cdc_resp_get_addrs(&ctx, start, addr_start);
-        eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
-        eggsfs_ip_port_get_addrs(&ctx, ipport1_start, cdc_ip1);
-        eggsfs_ip_port_get_port(&ctx, cdc_ip1, cdc_port1);
-        eggsfs_ip_port_get_end(&ctx, cdc_port1, ipport1_end);
-        eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
-        eggsfs_ip_port_get_addrs(&ctx, ipport2_start, cdc_ip2);
-        eggsfs_ip_port_get_port(&ctx, cdc_ip2, cdc_port2);
-        eggsfs_ip_port_get_end(&ctx, cdc_port2, ipport2_end);
-        eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
-        eggsfs_cdc_resp_get_last_seen(&ctx, addr_end, last_seen);
-        eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
-        eggsfs_cdc_resp_get_finish(&ctx, end);
-        if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
+        u32 shuckle_resp_len;
+        u8 shuckle_resp_kind;
+        err = eggsfs_read_shuckle_resp_header(cdc_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+        if (err < 0) { goto out_sock; }
+        if (shuckle_resp_len != EGGSFS_CDC_RESP_SIZE) {
+            eggsfs_debug("expected size of %d, got %d", EGGSFS_CDC_RESP_SIZE, shuckle_resp_len);
+            err = -EINVAL; goto out_sock;
+        }
+        {
+            char cdc_resp[EGGSFS_CDC_RESP_SIZE];
+            for (read_so_far = 0; read_so_far < sizeof(cdc_resp);) {
+                iov.iov_base = (char*)&cdc_resp + read_so_far;
+                iov.iov_len = sizeof(cdc_resp) - read_so_far;
+                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                if (read == 0) { err = -ECONNRESET; goto out_sock; }
+                if (read < 0) { err = read; goto out_sock; }
+                read_so_far += read;
+            }
+            struct eggsfs_bincode_get_ctx ctx = {
+                .buf = cdc_resp,
+                .end = cdc_resp + sizeof(cdc_resp),
+                .err = 0,
+            };
+            eggsfs_cdc_resp_get_start(&ctx, start);
+            eggsfs_cdc_resp_get_addrs(&ctx, start, addr_start);
+            eggsfs_addrs_info_get_addr1(&ctx, addr_start, ipport1_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport1_start, cdc_ip1);
+            eggsfs_ip_port_get_port(&ctx, cdc_ip1, cdc_port1);
+            eggsfs_ip_port_get_end(&ctx, cdc_port1, ipport1_end);
+            eggsfs_addrs_info_get_addr2(&ctx, ipport1_end, ipport2_start);
+            eggsfs_ip_port_get_addrs(&ctx, ipport2_start, cdc_ip2);
+            eggsfs_ip_port_get_port(&ctx, cdc_ip2, cdc_port2);
+            eggsfs_ip_port_get_end(&ctx, cdc_port2, ipport2_end);
+            eggsfs_addrs_info_get_end(&ctx, ipport2_end, addr_end);
+            eggsfs_cdc_resp_get_last_seen(&ctx, addr_end, last_seen);
+            eggsfs_cdc_resp_get_end(&ctx, last_seen, end);
+            eggsfs_cdc_resp_get_finish(&ctx, end);
+            if (ctx.err != 0) { err = eggsfs_error_to_linux(ctx.err); goto out_sock; }
 
-        atomic64_set(&info->cdc_addr1, eggsfs_mk_addr(cdc_ip1.x, cdc_port1.x));
-        atomic64_set(&info->cdc_addr2, eggsfs_mk_addr(cdc_ip2.x, cdc_port2.x));
+            atomic64_set(&info->cdc_addr1, eggsfs_mk_addr(cdc_ip1.x, cdc_port1.x));
+            atomic64_set(&info->cdc_addr2, eggsfs_mk_addr(cdc_ip2.x, cdc_port2.x));
+        }
+    }
+
+    {
+        {
+            char changed_block_services_req[EGGSFS_SHUCKLE_REQ_HEADER_SIZE + EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE];
+            struct eggsfs_bincode_put_ctx ctx = {
+                .start = changed_block_services_req + EGGSFS_SHUCKLE_REQ_HEADER_SIZE,
+                .cursor = changed_block_services_req + EGGSFS_SHUCKLE_REQ_HEADER_SIZE,
+                .end = changed_block_services_req + sizeof(changed_block_services_req),
+            };
+            eggsfs_block_services_with_flag_change_req_put_start(&ctx, start);
+            eggsfs_block_services_with_flag_change_req_put_changed_since(&ctx, start, changed_since, info->block_services_last_changed_time);
+            eggsfs_block_services_with_flag_change_req_put_end(&ctx, changed_since, end);
+            eggsfs_write_shuckle_req_header(changed_block_services_req, EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE, EGGSFS_SHUCKLE_BLOCK_SERVICES_WITH_FLAG_CHANGE);
+            int written_so_far;
+            for (written_so_far = 0; written_so_far < sizeof(changed_block_services_req);) {
+                iov.iov_base = changed_block_services_req + written_so_far;
+                iov.iov_len = sizeof(changed_block_services_req) - written_so_far;
+                int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+                if (written < 0) { err = written; goto out_sock; }
+                written_so_far += written;
+            }
+        }
+        u32 shuckle_resp_len;
+        u8 shuckle_resp_kind;
+        {
+            char block_services_resp_header[EGGSFS_SHUCKLE_RESP_HEADER_SIZE];
+            int read_so_far;
+            for (read_so_far = 0; read_so_far < sizeof(block_services_resp_header);) {
+                iov.iov_base = block_services_resp_header + read_so_far;
+                iov.iov_len = sizeof(block_services_resp_header) - read_so_far;
+                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                if (read == 0) { err = -ECONNRESET; goto out_sock; }
+                if (read < 0) { err = read; goto out_sock; }
+                read_so_far += read;
+            }
+            err = eggsfs_read_shuckle_resp_header(block_services_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+            if (err < 0) { goto out_sock; }
+        }
+        u64 last_changed;
+        u16 block_services_len;
+        {
+            char last_changed_and_len[sizeof(last_changed) + sizeof(block_services_len)];
+            if (shuckle_resp_len < sizeof(last_changed_and_len)) {
+                eggsfs_debug("expected size of at least %d for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), shuckle_resp_len);
+                err = -EINVAL;
+                goto out_sock;
+            }
+            int read_so_far;
+            for (read_so_far = 0; read_so_far < sizeof(last_changed_and_len);) {
+                iov.iov_base = last_changed_and_len + read_so_far;
+                iov.iov_len = sizeof(last_changed_and_len) - read_so_far;
+                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                if (read == 0) { err = -ECONNRESET; goto out_sock; }
+                if (read < 0) { err = read; goto out_sock; }
+                read_so_far += read;
+            }
+            last_changed = get_unaligned_le64(last_changed_and_len);
+            block_services_len = get_unaligned_le16(last_changed_and_len + sizeof(last_changed));
+            shuckle_resp_len -= sizeof(last_changed_and_len);
+        }
+        {
+            if (shuckle_resp_len != EGGSFS_BLOCK_SERVICE_SIZE * block_services_len) {
+                eggsfs_debug("expected size of at least %d for %d BlockServices in BlockServicesWithFlagChangeResp, got %d",
+                    EGGSFS_BLOCK_SERVICE_SIZE * block_services_len, block_services_len, shuckle_resp_len);
+                err = -EINVAL;
+                goto out_sock;
+            }
+            u16 block_service_idx;
+            int read_so_far;
+            for (block_service_idx = 0; block_service_idx < block_services_len; block_service_idx++) {
+                char block_service_buf[EGGSFS_BLOCK_SERVICE_SIZE];
+                for (read_so_far = 0; read_so_far < sizeof(block_service_buf);) {
+                    iov.iov_base = block_service_buf + read_so_far;
+                    iov.iov_len = sizeof(block_service_buf) - read_so_far;
+                    int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                    if (read == 0) { err = -ECONNRESET; goto out_sock; }
+                    if (read < 0) { err = read; goto out_sock; }
+                    read_so_far += read;
+                }
+                struct eggsfs_bincode_get_ctx bs_ctx = {
+                    .buf = block_service_buf,
+                    .end = block_service_buf + sizeof(block_service_buf),
+                    .err = 0,
+                };
+                eggsfs_block_service_get_start(&bs_ctx, start);
+                eggsfs_block_service_get_addrs(&bs_ctx, start, addr_start);
+                eggsfs_addrs_info_get_addr1(&bs_ctx, addr_start, ipport1_start);
+                eggsfs_ip_port_get_addrs(&bs_ctx, ipport1_start, ip1);
+                eggsfs_ip_port_get_port(&bs_ctx, ip1, port1);
+                eggsfs_ip_port_get_end(&bs_ctx, port1, ipport1_end);
+                eggsfs_addrs_info_get_addr2(&bs_ctx, ipport1_end, ipport2_start);
+                eggsfs_ip_port_get_addrs(&bs_ctx, ipport2_start, ip2);
+                eggsfs_ip_port_get_port(&bs_ctx, ip2, port2);
+                eggsfs_ip_port_get_end(&bs_ctx, port2, ipport2_end);
+                eggsfs_addrs_info_get_end(&bs_ctx, ipport2_end, addr_end);
+                eggsfs_block_service_get_id(&bs_ctx, addr_end, bs_id);
+                eggsfs_block_service_get_flags(&bs_ctx, bs_id, bs_flags);
+                eggsfs_block_service_get_end(&bs_ctx, bs_flags, end);
+                eggsfs_block_service_get_finish(&bs_ctx, end);
+                if (bs_ctx.err != 0) { err = eggsfs_error_to_linux(bs_ctx.err); goto out_sock; }
+
+                struct eggsfs_block_service bs;
+                bs.id = bs_id.x;
+                bs.ip1 = ip1.x;
+                bs.port1 = port1.x;
+                bs.ip2 = ip2.x;
+                bs.port2 = port2.x;
+                bs.flags = bs_flags.x;
+                struct eggsfs_stored_block_service* sbs = eggsfs_upsert_block_service(&bs);
+                if (IS_ERR(sbs)) {
+                    err = PTR_ERR(sbs);
+                    goto out_sock;
+                }
+            }
+        }
+        info->block_services_last_changed_time = last_changed;
     }
 
     sock_release(shuckle_sock);
@@ -278,6 +403,10 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* op
 
     err = eggsfs_refresh_fs_info(eggsfs_info);
     if (err != 0) { goto out_socket; }
+
+    // for the first update we will ask for everything that changed in last day.
+    // this is more than enough time for any older changed to be visible to shards and propagated through block info
+    eggsfs_info->block_services_last_changed_time = ktime_get_real_ns() - 86400000000000ull;
 
     INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
     queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);
